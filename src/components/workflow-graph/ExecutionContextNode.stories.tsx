@@ -113,6 +113,7 @@ export const DependencyBlocked: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 5,
@@ -146,6 +147,7 @@ export const Ready: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -175,6 +177,7 @@ export const WaitingForLane: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -204,6 +207,7 @@ export const WaitingForJoin: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -233,6 +237,7 @@ export const Running: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -262,6 +267,7 @@ export const Validating: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -291,6 +297,7 @@ export const Completed: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "completed",
         totalTaskCount: 5,
@@ -320,6 +327,7 @@ export const Published: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "completed",
         totalTaskCount: 5,
@@ -353,6 +361,7 @@ export const AwaitingApproval: Story = {
           requestedAt: "2026-06-10T09:00:00.000Z",
           decision: null,
         },
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "awaiting_approval",
         totalTaskCount: 5,
@@ -374,6 +383,43 @@ export const AwaitingApproval: Story = {
   },
 };
 
+export const AwaitingUserInput: Story = {
+  args: {
+    data: {
+      context: makeContext(),
+      tasks: makeTasks(2),
+      mode: "execution",
+      contextState: {
+        pendingApproval: null,
+        pendingUserInput: {
+          conversationId: "conv-1",
+          lane: "implementer",
+          questionBatchId: "qb-1",
+          questions: [],
+          requestedAt: "2026-07-03T09:00:00.000Z",
+          answers: null,
+        },
+        contextId: "ctx-1",
+        status: "awaiting_user_input",
+        totalTaskCount: 2,
+        completedTaskCount: 1,
+        iterationCount: 1,
+        consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        laneId: null,
+        joinId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
+      },
+      waitState: { kind: "awaiting-user-input" },
+    },
+  },
+};
+
 export const BlockedBehindGate: Story = {
   args: {
     data: {
@@ -382,6 +428,7 @@ export const BlockedBehindGate: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 5,
@@ -415,6 +462,7 @@ export const Halted: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "halted",
         totalTaskCount: 5,
@@ -455,6 +503,7 @@ export const SelectedRunning: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -485,6 +534,7 @@ export const Merging: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -614,6 +664,7 @@ export const ValidatorsInheritedClaude: Story = {
         },
         scriptValidator: { enabled: false },
         humanApprovalGate: { enabled: false },
+        askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -647,6 +698,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
         },
         scriptValidator: { enabled: true },
         humanApprovalGate: { enabled: false },
+        askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -705,6 +757,7 @@ export const ApprovalGateWithValidators: Story = {
         },
         scriptValidator: { enabled: true },
         humanApprovalGate: { enabled: true },
+        askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

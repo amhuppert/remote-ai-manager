@@ -497,6 +497,32 @@ cctl ask --question "Which migration order?" --option "Phases in order" --option
 - Exit `1` with `no turn is running`: `ask` only works from inside a live
   conversation turn.
 
+### Asking from graph-workflow lanes
+
+Graph-workflow **implementer** and **context-validator** lane agents may use
+`cctl ask` when the workflow's `askUserQuestions` toggle resolves enabled
+(three-tier cascade: global `workflowDefaults` → workflow → per-context;
+default **disabled**; one value covers both roles). The mechanics differ from
+ordinary conversations:
+
+- Asking **parks the execution context** in `awaiting_user_input` until the
+  user answers — the pause is real, not free. It burns no iterations and no
+  failure count, sibling contexts keep running, and the workflow cannot
+  complete while any context is parked, but your context makes zero progress
+  until the answer lands. Ask only at consequential, hard-to-reverse, or
+  genuinely ambiguous forks; batch related questions; end your turn after
+  asking.
+- The answer does **not** arrive through the message queue. The workflow
+  resumes the asking conversation (even when continuity is off; a scheduled
+  context-window rotation instead delivers the answers in the replacement
+  conversation's first prompt) with the standard `<cc-question-answers>`
+  block embedded in the resumed turn's prompt. `skipped: true` still means
+  proceed with best judgment.
+- When the toggle is disabled — and always for the planner session and
+  collaboration second-agents — the ask is refused with the existing
+  `autonomous conversation — proceed with best judgment` error: decide
+  yourself and record the rationale.
+
 ### Reading the answer
 
 The answer arrives in your next user message as a self-contained block:

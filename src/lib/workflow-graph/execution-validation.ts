@@ -8,8 +8,10 @@ import type {
   WorkflowValidatorIssue,
 } from "@/lib/workflows/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
+import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";
+import type { ResumeUserInputContext } from "./user-input-gate";
 
 export interface GraphWorkflowContextValidatorInput {
   projectPath: string;
@@ -24,6 +26,14 @@ export interface GraphWorkflowContextValidatorInput {
    * preserving the pre-parallelization behavior.
    */
   executionTarget?: ExecutionTarget;
+  /**
+   * When set, this validator run is a resume after the asking validator's
+   * question was answered. The runner pins the asking conversation (rotation
+   * still outranks) and embeds the answers block in the validation prompt so
+   * the re-run validator sees the answers before rendering its verdict (5.1,
+   * 5.3, 5.5).
+   */
+  resumeUserInput?: ResumeUserInputContext;
 }
 
 export interface GraphWorkflowContextValidationInput {
@@ -37,6 +47,11 @@ export interface GraphWorkflowContextValidationInput {
    * worktree, matching where the implementer turn ran.
    */
   executionTarget?: ExecutionTarget;
+  /**
+   * Set on a validator resume so the runner pins the asking conversation and
+   * delivers the answers block into the re-run validator's prompt (5.1, 5.3).
+   */
+  resumeUserInput?: ResumeUserInputContext;
 }
 
 export type GraphWorkflowContextValidationOutcome =
@@ -65,6 +80,15 @@ export type GraphWorkflowContextValidationOutcome =
       engine: "claude" | "codex";
       sessionRef: null;
       reviewArtifact: null;
+    }
+  // The validator asked the user a question and rendered no verdict. Propagated
+  // unchanged so the orchestrator maps it to the awaiting-user-input park path,
+  // never to the validation-failure accounting (Req 3.2, 3.3).
+  | {
+      kind: "asked_user";
+      conversationId: string;
+      questionBatchId: string;
+      questions: AskQuestionItem[];
     };
 
 export interface GraphWorkflowValidationServiceDeps {
@@ -141,6 +165,15 @@ function mapRunnerOutcomeToContextOutcome(
     };
   }
 
+  if (outcome.kind === "asked_user") {
+    return {
+      kind: "asked_user",
+      conversationId: outcome.conversationId,
+      questionBatchId: outcome.questionBatchId,
+      questions: outcome.questions,
+    };
+  }
+
   return {
     kind: "infra_error",
     reason: outcome.reason,
@@ -201,6 +234,7 @@ export function createGraphWorkflowValidationService(
       context,
       validator,
       executionTarget: input.executionTarget,
+      resumeUserInput: input.resumeUserInput,
     });
 
     const outcome = mapRunnerOutcomeToContextOutcome(
@@ -227,6 +261,18 @@ export function createGraphWorkflowValidationService(
         contextId: input.contextId,
         reason: outcome.reason,
         engine: outcome.engine,
+      });
+    } else if (outcome.kind === "asked_user") {
+      execLogger?.validation(input.contextId, "context_validation.completed", {
+        kind: outcome.kind,
+        questionBatchId: outcome.questionBatchId,
+        questionCount: outcome.questions.length,
+      });
+      validationLogger.info("graph-workflow.context_validation.completed", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        kind: outcome.kind,
+        questionBatchId: outcome.questionBatchId,
       });
     } else {
       execLogger?.validation(input.contextId, "context_validation.completed", {

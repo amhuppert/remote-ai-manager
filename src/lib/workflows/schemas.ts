@@ -6,6 +6,10 @@ import {
   effortLevelSchema,
 } from "@/lib/agent-backends/schemas";
 import {
+  askQuestionAnswerSchema,
+  askQuestionItemSchema,
+} from "@/lib/conversations/schemas";
+import {
   conflictDecisionInputSchema,
   conflictEntrySchema,
 } from "@/lib/jobs/schemas";
@@ -118,6 +122,17 @@ export const graphWorkflowHumanApprovalGateConfigSchema = z.object({
 });
 export type GraphWorkflowHumanApprovalGateConfig = z.infer<
   typeof graphWorkflowHumanApprovalGateConfigSchema
+>;
+
+// One cascading toggle (global → workflow → per-context) controlling whether a
+// context's workflow agents may ask the user questions. A single value covers
+// both the implementer and the context-validator role — there is no per-role
+// split (Req 1.5).
+export const graphWorkflowAskUserQuestionsConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+});
+export type GraphWorkflowAskUserQuestionsConfig = z.infer<
+  typeof graphWorkflowAskUserQuestionsConfigSchema
 >;
 
 export const contextValidatorOverrideSchema = z.discriminatedUnion("kind", [
@@ -243,6 +258,7 @@ export const workflowConfigOverrideSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
 });
 export type WorkflowConfigOverride = z.infer<
   typeof workflowConfigOverrideSchema
@@ -268,6 +284,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
@@ -481,6 +498,9 @@ export const graphWorkflowResolvedContextSchema = z.object({
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.default({
     enabled: false,
   }),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.default({
+    enabled: false,
+  }),
   mutability: graphWorkflowMutabilityPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
@@ -584,6 +604,7 @@ export const graphWorkflowContextStatusSchema = z.enum([
   "completed",
   "halted",
   "awaiting_approval",
+  "awaiting_user_input",
 ]);
 export type GraphWorkflowContextStatus = z.infer<
   typeof graphWorkflowContextStatusSchema
@@ -920,6 +941,32 @@ export type GraphWorkflowPendingApproval = z.infer<
   typeof graphWorkflowPendingApprovalSchema
 >;
 
+// Answers recorded for a parked user-input question batch. The answer
+// primitives are reused from the conversation domain (never duplicated).
+export const graphWorkflowUserInputAnswersSchema = z.object({
+  byQuestionId: z.record(z.string(), askQuestionAnswerSchema),
+  answeredAt: z.string().trim().min(1),
+});
+export type GraphWorkflowUserInputAnswers = z.infer<
+  typeof graphWorkflowUserInputAnswersSchema
+>;
+
+// The parked-question record on a context awaiting user input. `questions` is a
+// snapshot copied from the lane conversation at park time so the graph UI and
+// the resume prompt are self-sufficient; `answers` is null until the operator
+// answers (or is set pre-park for a fast answer).
+export const graphWorkflowPendingUserInputSchema = z.object({
+  conversationId: z.string().trim().min(1),
+  lane: z.enum(["implementer", "context_validator"]),
+  questionBatchId: z.string().trim().min(1),
+  questions: z.array(askQuestionItemSchema),
+  requestedAt: z.string().trim().min(1),
+  answers: graphWorkflowUserInputAnswersSchema.nullable().default(null),
+});
+export type GraphWorkflowPendingUserInput = z.infer<
+  typeof graphWorkflowPendingUserInputSchema
+>;
+
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
   status: graphWorkflowContextStatusSchema,
@@ -948,6 +995,9 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
     .default("not-applicable"),
   lastMergeError: z.string().nullable().default(null),
   pendingApproval: graphWorkflowPendingApprovalSchema.nullable().default(null),
+  pendingUserInput: graphWorkflowPendingUserInputSchema
+    .nullable()
+    .default(null),
 });
 export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
@@ -1253,6 +1303,36 @@ export type GraphWorkflowApprovalResolvedEvent = z.infer<
   typeof graphWorkflowApprovalResolvedEventSchema
 >;
 
+export const graphWorkflowUserInputPendingEventSchema = z.object({
+  type: z.literal("graph-workflow-user-input-pending"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  contextTitle: z.string().nullable(),
+  conversationId: z.string(),
+  questionBatchId: z.string(),
+  requestedAt: z.string(),
+});
+export type GraphWorkflowUserInputPendingEvent = z.infer<
+  typeof graphWorkflowUserInputPendingEventSchema
+>;
+
+export const graphWorkflowUserInputResolvedEventSchema = z.object({
+  type: z.literal("graph-workflow-user-input-resolved"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  conversationId: z.string(),
+  questionBatchId: z.string(),
+  resolution: z.enum(["answered", "withdrawn"]),
+  resolvedAt: z.string(),
+});
+export type GraphWorkflowUserInputResolvedEvent = z.infer<
+  typeof graphWorkflowUserInputResolvedEventSchema
+>;
+
 export const graphWorkflowCharterRegisteredEventSchema = z.object({
   type: z.literal("graph-workflow-charter-registered"),
   projectName: z.string(),
@@ -1296,6 +1376,8 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowJoinStatusEventSchema,
   graphWorkflowApprovalPendingEventSchema,
   graphWorkflowApprovalResolvedEventSchema,
+  graphWorkflowUserInputPendingEventSchema,
+  graphWorkflowUserInputResolvedEventSchema,
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
 ]);

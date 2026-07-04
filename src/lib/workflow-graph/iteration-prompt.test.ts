@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
+import {
+  formatQuestionAnswersBlock,
+  splitQuestionAnswersBlock,
+} from "@/lib/conversations/question-answers-block";
+import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type {
   GraphWorkflowCollaborationContinuation,
@@ -50,6 +55,7 @@ function makeContext(
     contextValidator: null,
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
+    askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
@@ -928,5 +934,164 @@ describe("background-task-handling prompt invariance (Req 6.3)", () => {
     });
 
     assertNoBackgroundTaskLanguage(prompt);
+  });
+});
+
+describe("answer resume delivery", () => {
+  const questionBatchId = "batch-plan-1";
+  const answers: Record<string, AskQuestionAnswer> = {
+    q1: {
+      selected: ["Postgres"],
+      note: "Prefer managed hosting.",
+      skipped: false,
+      question: "Which datastore should the billing service use?",
+    },
+  };
+
+  it("buildFollowUpPrompt embeds the framed answers block (pinned variant)", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 1,
+      maxAttempts: 3,
+      resumeUserInput: { questionBatchId, answers },
+    });
+
+    const split = splitQuestionAnswersBlock(prompt);
+    expect(split).not.toBeNull();
+    expect(split?.block.questionBatchId).toBe(questionBatchId);
+    expect(split?.block.answers).toEqual(answers);
+    expect(prompt).toContain(
+      formatQuestionAnswersBlock(questionBatchId, answers),
+    );
+    expect(prompt).toContain("## Your Question Was Answered");
+  });
+
+  it("buildIterationPrompt embeds the framed answers block (rotated seed variant)", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      resumeUserInput: { questionBatchId, answers },
+    });
+
+    const split = splitQuestionAnswersBlock(prompt);
+    expect(split).not.toBeNull();
+    expect(split?.block.questionBatchId).toBe(questionBatchId);
+    expect(split?.block.answers).toEqual(answers);
+    expect(prompt).toContain(
+      formatQuestionAnswersBlock(questionBatchId, answers),
+    );
+    expect(prompt).toContain("## Your Question Was Answered");
+  });
+
+  it("omits the answers section when resumeUserInput is undefined", () => {
+    const followUp = buildFollowUpPrompt({
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 1,
+      maxAttempts: 3,
+    });
+    const seed = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(splitQuestionAnswersBlock(followUp)).toBeNull();
+    expect(splitQuestionAnswersBlock(seed)).toBeNull();
+    expect(followUp).not.toContain("## Your Question Was Answered");
+    expect(seed).not.toContain("## Your Question Was Answered");
+  });
+});
+
+describe("ask-protocol reminder (Req 8.1-8.4)", () => {
+  const heading = "## Asking the User";
+
+  it("buildIterationPrompt adds the protocol reminder when askUserQuestionsEnabled is true", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      askUserQuestionsEnabled: true,
+    });
+
+    expect(prompt).toContain(heading);
+    // The tool is available for questions to the user.
+    expect(prompt).toContain("cctl ask");
+    expect(prompt).toMatch(/available/i);
+    // Ask only at consequential / hard-to-reverse / genuinely ambiguous forks.
+    expect(prompt).toMatch(/consequential/i);
+    expect(prompt).toMatch(/hard-to-reverse/i);
+    expect(prompt).toMatch(/ambiguous/i);
+    // Batch related questions into one call.
+    expect(prompt).toMatch(/batch/i);
+    // End the turn after asking.
+    expect(prompt).toMatch(/end your turn/i);
+    // Answers arrive when the context resumes.
+    expect(prompt).toMatch(/resume/i);
+    // Skipped means proceed with best judgment.
+    expect(prompt).toMatch(/skipped/i);
+    expect(prompt).toMatch(/best judgment/i);
+    // The workflow pauses the context until answered (asking is not free).
+    expect(prompt).toMatch(/pause/i);
+  });
+
+  it("buildFollowUpPrompt adds the protocol reminder when askUserQuestionsEnabled is true", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 1,
+      maxAttempts: 3,
+      askUserQuestionsEnabled: true,
+    });
+
+    expect(prompt).toContain(heading);
+    expect(prompt).toContain("cctl ask");
+    expect(prompt).toMatch(/end your turn/i);
+    expect(prompt).toMatch(/pause/i);
+    expect(prompt).toMatch(/best judgment/i);
+  });
+
+  it("omits the reminder when askUserQuestionsEnabled is false or undefined", () => {
+    const seedDisabled = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      askUserQuestionsEnabled: false,
+    });
+    const seedUnset = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+    const followUpDisabled = buildFollowUpPrompt({
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 1,
+      maxAttempts: 3,
+      askUserQuestionsEnabled: false,
+    });
+    const followUpUnset = buildFollowUpPrompt({
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 1,
+      maxAttempts: 3,
+    });
+
+    expect(seedDisabled).not.toContain(heading);
+    expect(seedUnset).not.toContain(heading);
+    expect(followUpDisabled).not.toContain(heading);
+    expect(followUpUnset).not.toContain(heading);
   });
 });

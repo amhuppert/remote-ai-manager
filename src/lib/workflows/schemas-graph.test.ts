@@ -699,6 +699,7 @@ function createWorkflowDefaults() {
     },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
+    askUserQuestions: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },
@@ -724,8 +725,16 @@ describe("workflowDefaultsSchema", () => {
     if (result.success) {
       expect(result.data.contextValidator.type).toBe("claude");
       expect(result.data.scriptValidator.enabled).toBe(false);
+      expect(result.data.askUserQuestions.enabled).toBe(false);
       expect(result.data.collaboration.negotiationRounds).toBe(3);
     }
+  });
+
+  it("rejects workflowDefaults missing the askUserQuestions block", () => {
+    const defaults = createWorkflowDefaults();
+    const { askUserQuestions: _removed, ...withoutAskUserQuestions } = defaults;
+    const result = workflowDefaultsSchema.safeParse(withoutAskUserQuestions);
+    expect(result.success).toBe(false);
   });
 
   it("requires every top-level block", () => {

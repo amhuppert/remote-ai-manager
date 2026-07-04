@@ -280,6 +280,7 @@ function createInitialExecution(
   for (const id of contextIds) {
     contextStates[id] = {
       pendingApproval: null,
+      pendingUserInput: null,
       contextId: id,
       status: "pending",
       totalTaskCount: 1,

@@ -81,6 +81,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         autonomousResolutionThreshold: "major",
       },
       humanApprovalGate: { enabled: true },
+      askUserQuestions: { enabled: true },
     },
     charter: makeTestCharter(),
     parameters: [
@@ -157,6 +158,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           autonomousResolutionThreshold: "minor",
         },
         humanApprovalGate: { enabled: true },
+        askUserQuestions: { enabled: true },
       },
       // A second context exists only as the edge target so the single
       // representative edge can connect two distinct contexts (a self-loop

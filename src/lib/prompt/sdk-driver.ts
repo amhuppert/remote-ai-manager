@@ -212,6 +212,32 @@ export const ASK_QUESTION_INSTRUCTIONS =
   "<asking-questions>To ask the user a question, run `cctl ask` (see the cc-cli skill) — it renders your questions as a rich multiple-choice panel the user answers in a couple of clicks, so asking is far cheaper than guessing wrong on a consequential, hard-to-reverse, or genuinely ambiguous decision; default to asking at real forks instead of silently deciding for the user. Batch related questions into one call (a single batch pends at a time). Asking is ASYNC: after `cctl ask` succeeds, write a brief handoff note (what you asked, what you'll do with each possible answer) and END YOUR TURN — do not start new work. The answers arrive as a <cc-question-answers> block in your next user message; an answer with `skipped: true` means the user declined that question — proceed with best judgment. Skip asking for trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. (Asking is denied for autonomous turns; use your best judgment there.)</asking-questions>";
 
 /**
+ * The workflow-lane variant of {@link ASK_QUESTION_INSTRUCTIONS}, selected when
+ * a graph-workflow context resolves its ask-user-questions toggle on AND the
+ * lane holds a real CC conversation (see `selectAskQuestionInstructions`). It
+ * tells the lane agent the tool IS available and states the full protocol,
+ * including that the workflow PAUSES this context until the user answers — so
+ * asking is a real, non-free action, not a throwaway. Unlike the default
+ * variant it omits the autonomous-denied disclaimer.
+ */
+export const ASK_QUESTION_INSTRUCTIONS_ENABLED =
+  "<asking-questions>The `cctl ask` tool IS available on this turn to ask the user a question (see the cc-cli skill) — it renders your questions as a rich multiple-choice panel the user answers in a couple of clicks. Ask ONLY at a consequential, hard-to-reverse, or genuinely ambiguous decision point where a wrong guess would send this context and its downstream dependents down the wrong path; do not ask about trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. Batch related questions into ONE `cctl ask` invocation (a single batch pends at a time). After `cctl ask` succeeds, write a brief handoff note (what you asked, what you'll do with each possible answer) and END YOUR TURN — do not start new work. The workflow PAUSES this context until the user answers, so asking is not a lightweight or free action — the whole context waits. The answers arrive as a <cc-question-answers> block when this context RESUMES; an answer with `skipped: true` means the user declined that question — proceed with your best judgment.</asking-questions>";
+
+/**
+ * Chooses the asking-questions session-instruction block for a turn. Workflow
+ * lanes whose effective toggle is on (resolved toggle AND lane-can-ask) get the
+ * enabled variant; every other turn (non-workflow conversations, disabled
+ * lanes, Codex validator lanes) keeps the default autonomous-denied guidance.
+ */
+export function selectAskQuestionInstructions(
+  askUserQuestionsEnabled: boolean | undefined,
+): string {
+  return askUserQuestionsEnabled === true
+    ? ASK_QUESTION_INSTRUCTIONS_ENABLED
+    : ASK_QUESTION_INSTRUCTIONS;
+}
+
+/**
  * One-line nudge (docs/design/cc-cli/01 §7) pointing every CC agent at the
  * cctl CLI; detail lives in the command-center:cc-cli skill, loaded on demand.
  */
@@ -498,6 +524,14 @@ export interface PromptStreamOptions {
    * Unset for every non-feedback send.
    */
   documentFeedback?: DocumentFeedbackPayload;
+  /**
+   * Effective ask-user-questions availability for this turn: the resolved
+   * per-context toggle AND the lane holding a real conversation. Set only by
+   * the graph-workflow runners; when true the session instructions select the
+   * enabled asking-questions variant. Every other caller leaves it unset, so
+   * non-workflow conversations keep the default autonomous-denied guidance.
+   */
+  askUserQuestionsEnabled?: boolean;
 }
 
 export interface PromptStreamResult {
@@ -893,6 +927,9 @@ export async function executePromptStream(
         ...(options?.documentFeedback
           ? { documentFeedback: options.documentFeedback }
           : {}),
+        ...(options?.askUserQuestionsEnabled
+          ? { askUserQuestionsEnabled: true }
+          : {}),
       },
     );
 
@@ -1027,7 +1064,8 @@ function readContextFromSnapshot(
 
 /**
  * Wait for the conversation actor to finish the current turn.
- * Resolves when the actor returns to idle/debug/done state.
+ * Resolves when the actor settles into a between-turn boundary
+ * (idle, waitingForInput, or debug.*) or reaches the done state.
  * Rejects if the actor errors.
  */
 function waitForTurnCompletion(actor: ConversationActorRef): Promise<void> {
@@ -1041,6 +1079,12 @@ function waitForTurnCompletion(actor: ConversationActorRef): Promise<void> {
 
     const isSettled = (stateValue: unknown): boolean => {
       if (stateValue === "idle") return true;
+      // A turn that ends by asking the user (`cctl ask`) settles into the
+      // top-level `waitingForInput` state — a between-turn boundary alongside
+      // `idle`/`debug.*` (see conversation machine). The turn is complete, so
+      // the autonomous/workflow caller must return here to run its post-turn
+      // handling (e.g. parking the graph-workflow context) instead of hanging.
+      if (stateValue === "waitingForInput") return true;
       if (
         typeof stateValue === "object" &&
         stateValue !== null &&

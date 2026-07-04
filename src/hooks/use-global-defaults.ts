@@ -25,6 +25,9 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   humanApprovalGate: {
     enabled: false,
   },
+  askUserQuestions: {
+    enabled: false,
+  },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },
@@ -66,6 +69,8 @@ export function useGlobalDefaults(): UseGlobalDefaultsResult {
         defaults.scriptValidator ?? SEEDED_DEFAULTS.scriptValidator,
       humanApprovalGate:
         defaults.humanApprovalGate ?? SEEDED_DEFAULTS.humanApprovalGate,
+      askUserQuestions:
+        defaults.askUserQuestions ?? SEEDED_DEFAULTS.askUserQuestions,
       iterationPolicy:
         defaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
       circuitBreaker: defaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,

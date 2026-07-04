@@ -137,6 +137,8 @@ function contextStatusToDot(status: GraphWorkflowContextStatus): EventDotKind {
       return "neutral";
     case "awaiting_approval":
       return "neutral";
+    case "awaiting_user_input":
+      return "neutral";
   }
 }
 
@@ -154,6 +156,8 @@ function contextStatusVerb(status: GraphWorkflowContextStatus): string {
       return "pending";
     case "awaiting_approval":
       return "awaiting approval";
+    case "awaiting_user_input":
+      return "awaiting input";
   }
 }
 
@@ -414,6 +418,8 @@ function normalizeEvent(
     case "graph-workflow-pending-halt-reason":
     case "graph-workflow-approval-pending":
     case "graph-workflow-approval-resolved":
+    case "graph-workflow-user-input-pending":
+    case "graph-workflow-user-input-resolved":
     case "graph-workflow-charter-registered":
     case "graph-workflow-charter-updated":
       return null;

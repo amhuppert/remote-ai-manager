@@ -244,6 +244,7 @@ function buildMaximalExecution(): unknown {
           },
           scriptValidator: { enabled: true },
           humanApprovalGate: { enabled: true },
+          askUserQuestions: { enabled: true },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: { consecutiveFailureThreshold: 5 },
           iterationPolicy: {
@@ -274,7 +275,13 @@ function buildMaximalExecution(): unknown {
     contextStates: {
       "ctx-1": {
         contextId: "ctx-1",
-        status: "awaiting_approval",
+        // Maximal durability entry: the harness only descends into the FIRST
+        // context-state record entry, so this one co-populates BOTH parked
+        // records (pendingApproval AND pendingUserInput) to prove every
+        // persisted key path survives the round-trip — a schema-valid but not
+        // runtime-reachable superimposition. `status` uses the user-input value
+        // so the widened enum value is exercised on write.
+        status: "awaiting_user_input",
         totalTaskCount: 4,
         completedTaskCount: 2,
         iterationCount: 3,
@@ -295,6 +302,45 @@ function buildMaximalExecution(): unknown {
             type: "rejected",
             message: "needs more tests before merge",
             decidedAt: "2026-01-01T00:00:45.000Z",
+          },
+        },
+        pendingUserInput: {
+          conversationId: "conv-userinput-1",
+          lane: "context_validator",
+          questionBatchId: "qb-1",
+          requestedAt: "2026-01-01T00:01:00.000Z",
+          questions: [
+            {
+              id: "q-1",
+              question: "Which storage backend should the cache use?",
+              header: "Cache backend",
+              context: "Redis adds a dependency; in-memory is simpler.",
+              options: [
+                {
+                  label: "Redis",
+                  description: "Shared, survives restarts",
+                  recommended: true,
+                  tradeoff: {
+                    pro: "durable across restarts",
+                    con: "adds an external service",
+                  },
+                },
+              ],
+              multiSelect: true,
+              required: false,
+              allowNote: false,
+            },
+          ],
+          answers: {
+            byQuestionId: {
+              "q-1": {
+                selected: ["Redis"],
+                note: "use the existing cluster",
+                skipped: false,
+                question: "Which storage backend should the cache use?",
+              },
+            },
+            answeredAt: "2026-01-01T00:02:00.000Z",
           },
         },
       },

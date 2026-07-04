@@ -82,6 +82,7 @@ function makeExecution(
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 1,
@@ -846,6 +847,301 @@ describe("resolveValidatorCall", () => {
     expect(
       valResult.execution.laneStates["ctx-1"]?.["context_validator"]?.engine,
     ).toBe("claude");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Resume conversation pin (task 4.4)
+// ---------------------------------------------------------------------------
+
+describe("resolveImplementerCall — resume conversation pin", () => {
+  it("reuses the pinned lane conversation even when continuity is disabled", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const definition = makeDefinition();
+    definition.executionContexts[0]!.iterationPolicy = {
+      maxIterations: 5,
+      continuity: { enabled: false },
+    };
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-pinned",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-pinned",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      workingDefinition:
+        definition as unknown as ResolvedWorkflowSemanticDefinition,
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      pinnedConversationId: "conv-pinned",
+    });
+
+    expect(deps.createConversation).not.toHaveBeenCalled();
+    expect(result.sessionAction).toBe("reuse");
+    expect(result.promptMode).toBe("follow_up");
+    expect(result.conversationId).toBe("conv-pinned");
+  });
+
+  it("lets rotateBeforeNextTurn outrank the pin and rotates to a fresh conversation", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const definition = makeDefinition();
+    definition.executionContexts[0]!.iterationPolicy = {
+      maxIterations: 5,
+      continuity: { enabled: false },
+    };
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-pinned",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-pinned",
+      },
+      lastContextTokens: 180000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: true,
+      limitEvaluation: "supported",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      workingDefinition:
+        definition as unknown as ResolvedWorkflowSemanticDefinition,
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      pinnedConversationId: "conv-pinned",
+    });
+
+    expect(deps.createConversation).toHaveBeenCalledOnce();
+    expect(result.sessionAction).toBe("create");
+    expect(result.promptMode).toBe("iteration_seed");
+    expect(result.conversationId).toBe("conv-new");
+  });
+
+  it("ignores a pin that does not match the lane conversation when continuity is disabled", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const definition = makeDefinition();
+    definition.executionContexts[0]!.iterationPolicy = {
+      maxIterations: 5,
+      continuity: { enabled: false },
+    };
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-other",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-other",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      workingDefinition:
+        definition as unknown as ResolvedWorkflowSemanticDefinition,
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      pinnedConversationId: "conv-pinned",
+    });
+
+    expect(deps.createConversation).toHaveBeenCalledOnce();
+    expect(result.sessionAction).toBe("create");
+  });
+
+  it("pins a Codex implementer lane by its workflow conversation id", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const definition = makeDefinition();
+    definition.executionContexts[0]!.iterationPolicy = {
+      maxIterations: 5,
+      continuity: { enabled: false },
+    };
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-pinned",
+      sessionRef: {
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-existing",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      workingDefinition:
+        definition as unknown as ResolvedWorkflowSemanticDefinition,
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+      pinnedConversationId: "conv-pinned",
+    });
+
+    expect(deps.createConversation).not.toHaveBeenCalled();
+    expect(result.sessionAction).toBe("reuse");
+    expect(result.conversationId).toBe("conv-pinned");
+  });
+});
+
+describe("resolveValidatorCall — resume conversation pin", () => {
+  it("reuses the pinned claude validator conversation when continuity is disabled", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const definition =
+      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
+    definition.executionContexts[0]!.contextValidator = {
+      type: "claude",
+      enabled: true,
+      continuity: { enabled: false },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    };
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "context_validator",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-pinned-val",
+      sessionRef: {
+        engine: "claude",
+        lane: "context_validator",
+        conversationId: "conv-pinned-val",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      workingDefinition: definition,
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.resolveValidatorCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      lane: "context_validator",
+      engine: "claude",
+      pinnedConversationId: "conv-pinned-val",
+    });
+
+    expect(deps.createConversation).not.toHaveBeenCalled();
+    expect(result.sessionAction).toBe("reuse");
+    expect(result.engine).toBe("claude");
+    if (result.engine === "claude") {
+      expect(result.conversationId).toBe("conv-pinned-val");
+    }
+  });
+
+  it("lets rotateBeforeNextTurn outrank the pin for the claude validator", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const definition =
+      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
+    definition.executionContexts[0]!.contextValidator = {
+      type: "claude",
+      enabled: true,
+      continuity: { enabled: false },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    };
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "context_validator",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-pinned-val",
+      sessionRef: {
+        engine: "claude",
+        lane: "context_validator",
+        conversationId: "conv-pinned-val",
+      },
+      lastContextTokens: 180000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: true,
+      limitEvaluation: "supported",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      workingDefinition: definition,
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.resolveValidatorCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      lane: "context_validator",
+      engine: "claude",
+      pinnedConversationId: "conv-pinned-val",
+    });
+
+    expect(deps.createConversation).toHaveBeenCalledOnce();
+    expect(result.sessionAction).toBe("create");
   });
 });
 

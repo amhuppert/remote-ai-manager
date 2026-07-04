@@ -45,6 +45,8 @@ const STATUS_UNSELECTED: Partial<Record<WaitKind, string>> = {
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a30)] [border-top-color:var(--cc-amber-a55)] [animation:pulse-node_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   "awaiting-approval":
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  "awaiting-user-input":
+    "[--node-color:var(--violet)] [--node-color-glow:var(--violet-glow)] border-[color-mix(in_srgb,var(--violet)_40%,transparent)] [border-top-color:color-mix(in_srgb,var(--violet)_60%,transparent)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   completed:
     "[--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)] before:opacity-100 after:opacity-70 " +
     HOVER_LIFT,
@@ -63,6 +65,8 @@ const STATUS_SELECTED: Partial<Record<WaitKind, string>> = {
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a45)] [animation:pulse-node-validating-selected_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   "awaiting-approval":
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  "awaiting-user-input":
+    "[--node-color:var(--violet)] [--node-color-glow:var(--violet-glow)] border-[color-mix(in_srgb,var(--violet)_45%,transparent)] [border-top-color:color-mix(in_srgb,var(--violet)_60%,transparent)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   completed:
     "[--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)] shadow-[0_0_20px_var(--cyan-glow)] before:opacity-100 after:opacity-70",
   merging:
@@ -98,6 +102,8 @@ const BADGE_VARIANT: Record<string, string> = {
     "border border-solid border-[var(--cc-red-a25)] bg-[var(--cc-red-a08)] text-red",
   "awaiting-approval":
     "border border-solid border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] text-amber",
+  "awaiting-user-input":
+    "border border-solid border-[color-mix(in_srgb,var(--violet)_35%,transparent)] bg-[var(--violet-glow)] text-violet",
   merging:
     "border border-solid border-[var(--cc-green-a35)] bg-[var(--cc-green-a10)] text-green",
 };
@@ -118,6 +124,7 @@ const PROGRESS_FILL_VARIANT: Record<string, string> = {
 const FOOTER_COLOR: Partial<Record<WaitKind, string>> = {
   running: "text-text-secondary",
   validating: "text-amber",
+  "awaiting-user-input": "text-violet",
   completed: "text-text-secondary",
   halted: "text-text-secondary",
 };
@@ -167,6 +174,8 @@ function getStatusBadge(
       return { label: "Halted", className: "halted" };
     case "awaiting-approval":
       return { label: "Awaiting Approval", className: "awaiting-approval" };
+    case "awaiting-user-input":
+      return { label: "Awaiting Input", className: "awaiting-user-input" };
     case "ready":
       return { label: "Ready", className: "pending" };
     case "waiting-for-lane":
@@ -214,6 +223,8 @@ function getFooterText(
       return "Validating context";
     case "awaiting-approval":
       return "Awaiting your approval";
+    case "awaiting-user-input":
+      return "Awaiting your answer";
     case "merging":
       return waitState.targetBranch
         ? `Merging → ${waitState.targetBranch}`

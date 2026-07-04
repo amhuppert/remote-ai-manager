@@ -21,6 +21,7 @@ export type ContextWaitState =
   | { kind: "running" }
   | { kind: "validating" }
   | { kind: "awaiting-approval" }
+  | { kind: "awaiting-user-input" }
   | { kind: "merging"; targetBranch: string | null }
   | { kind: "completed" }
   | { kind: "halted" }
@@ -65,6 +66,10 @@ export function deriveContextWaitState(input: {
 
   if (ctxState.status === "awaiting_approval") {
     return { kind: "awaiting-approval" };
+  }
+
+  if (ctxState.status === "awaiting_user_input") {
+    return { kind: "awaiting-user-input" };
   }
 
   const unmetDependencyIds = getUnmetDependencyIds(

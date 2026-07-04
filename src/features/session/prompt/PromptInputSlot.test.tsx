@@ -80,6 +80,22 @@ describe("resolvePromptSlotView", () => {
     ).toEqual({ showApprovalGate: false, content: "readonly" });
   });
 
+  it("renders the question panel for a workflow-managed lane conversation with a pending question", () => {
+    // A graph-workflow lane parked awaiting user input (ask-in-workflow) must
+    // surface its question panel on the lane conversation view — the read-only
+    // treatment is bypassed exactly as it is for the approval gate. A
+    // workflow-managed conversation only ever holds a pending question via the
+    // ask gate this feature lifts (task_run/smart-merge turns cannot ask), so
+    // this never re-opens ordinary read-only lanes (Req 4.2).
+    expect(
+      resolvePromptSlotView({
+        hasApprovalGate: false,
+        isWorkflowManagedConversation: true,
+        hasPendingQuestions: true,
+      }),
+    ).toEqual({ showApprovalGate: false, content: "questions" });
+  });
+
   it("selects questions then composer for regular conversations", () => {
     expect(
       resolvePromptSlotView({
@@ -119,7 +135,7 @@ describe("PromptInputSlot", () => {
     ).toBeInTheDocument();
   });
 
-  it("takes the workflow-managed branch even when pending questions exist", () => {
+  it("renders the question panel (not the read-only banner) for a workflow-managed lane with a pending question", () => {
     render(
       <PromptInputSlot
         isWorkflowManagedConversation
@@ -134,10 +150,14 @@ describe("PromptInputSlot", () => {
       />,
     );
 
+    // Ask-in-workflow: the parked lane conversation must present its question
+    // panel here, not the read-only banner (Req 4.2).
     expect(
-      screen.getByText(/managed by a workflow execution and is read-only/i),
+      screen.getByRole("dialog", { name: /agent question/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Pick a flavor/)).toBeNull();
+    expect(
+      screen.queryByText(/managed by a workflow execution and is read-only/i),
+    ).toBeNull();
   });
 
   it("renders AskQuestionPanel when pendingQuestions and pendingQuestionId are set", () => {

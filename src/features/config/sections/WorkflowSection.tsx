@@ -3,6 +3,7 @@ import { ConfigSubsection } from "../components/ConfigSubsection";
 import { SettingsPage } from "../components/SettingsPage";
 import { deepEqual, SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
 import type { ConfigFormController } from "./types";
+import { AskUserQuestionsFields } from "./workflow/AskUserQuestionsFields";
 import { CircuitBreakerFields } from "./workflow/CircuitBreakerFields";
 import { CollaborationFields } from "./workflow/CollaborationFields";
 import { ContextValidatorFields } from "./workflow/ContextValidatorFields";
@@ -51,6 +52,10 @@ function WorkflowDefaultsSubsections({
   const scriptValidatorIsDefault = deepEqual(
     effective.scriptValidator,
     SEEDED_WORKFLOW_DEFAULTS.scriptValidator,
+  );
+  const askUserQuestionsIsDefault = deepEqual(
+    effective.askUserQuestions,
+    SEEDED_WORKFLOW_DEFAULTS.askUserQuestions,
   );
   const iterationIsDefault = deepEqual(
     effective.iterationPolicy,
@@ -112,6 +117,17 @@ function WorkflowDefaultsSubsections({
         <ScriptValidatorFields
           value={effective.scriptValidator}
           onChange={(v) => onChangeBlock("scriptValidator", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="askUserQuestions"
+        title="Ask user questions"
+        isDefault={askUserQuestionsIsDefault}
+      >
+        <AskUserQuestionsFields
+          value={effective.askUserQuestions}
+          onChange={(v) => onChangeBlock("askUserQuestions", v)}
         />
       </ConfigSubsection>
 

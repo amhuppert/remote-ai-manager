@@ -1888,6 +1888,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         contextValidator: null,
         scriptValidator: { enabled: false },
         humanApprovalGate: { enabled: false },
+        askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -1913,6 +1914,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
     contextStates: {
       "context-codex": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-codex",
         status: "running",
         totalTaskCount: 1,

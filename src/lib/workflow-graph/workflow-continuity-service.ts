@@ -90,6 +90,12 @@ export interface ResolveImplementerCallInput {
   sessionName: string;
   contextId: string;
   engine?: "claude" | "codex";
+  /**
+   * Resume pin: when set and it matches the lane's `workflowConversationId`,
+   * the asking conversation is reused even with continuity configured off.
+   * Context-window rotation (`rotateBeforeNextTurn`) still outranks the pin.
+   */
+  pinnedConversationId?: string;
 }
 
 export interface ResolveValidatorCallInput {
@@ -99,6 +105,12 @@ export interface ResolveValidatorCallInput {
   contextId: string;
   lane: "context_validator";
   engine: "claude" | "codex";
+  /**
+   * Resume pin: when set and it matches the lane's `workflowConversationId`,
+   * the asking conversation is reused even with continuity configured off.
+   * Context-window rotation (`rotateBeforeNextTurn`) still outranks the pin.
+   */
+  pinnedConversationId?: string;
 }
 
 export interface RecordClaudeLaneTurnInput {
@@ -132,16 +144,39 @@ function getNow(deps: WorkflowContinuityServiceDeps): string {
   return deps.now?.() ?? new Date().toISOString();
 }
 
-/** Returns true when the lane should start a fresh session instead of reusing. */
+/**
+ * True when a resume pin should force reuse of this lane conversation. The pin
+ * matches the engine-uniform `workflowConversationId` (never `sessionRef`, which
+ * only the Claude variant carries), so Codex implementer lanes pin identically.
+ */
+function laneMatchesPin(
+  laneState: GraphWorkflowAgentSessionState | undefined,
+  pinnedConversationId: string | undefined,
+): boolean {
+  return (
+    pinnedConversationId !== undefined &&
+    laneState?.workflowConversationId === pinnedConversationId
+  );
+}
+
+/**
+ * Returns true when the lane should start a fresh session instead of reusing.
+ *
+ * A resume pin forces reuse even when continuity is configured off, but never
+ * overrides `rotateBeforeNextTurn` (context-window rotation) or a structural
+ * mismatch (missing lane, changed context, changed engine).
+ */
 function shouldRotate(
   laneState: GraphWorkflowAgentSessionState | undefined,
   contextId: string,
   continuityEnabled: boolean,
   engine?: "claude" | "codex",
+  pinnedConversationId?: string,
 ): boolean {
   if (!laneState) return true;
   if (laneState.contextId !== contextId) return true;
-  if (!continuityEnabled) return true;
+  if (!continuityEnabled && !laneMatchesPin(laneState, pinnedConversationId))
+    return true;
   if (laneState.rotateBeforeNextTurn) return true;
   if (engine !== undefined && laneState.engine !== engine) return true;
   return false;
@@ -340,11 +375,13 @@ export function createWorkflowContinuityService(
       execution,
       contextId,
     );
+    const pinned = laneMatchesPin(laneState, input.pinnedConversationId);
     const rotate = shouldRotate(
       laneState,
       contextId,
       continuityEnabled,
       engine,
+      input.pinnedConversationId,
     );
     const now = getNow(deps);
 
@@ -353,7 +390,7 @@ export function createWorkflowContinuityService(
         ? "no_prior_lane"
         : laneState.contextId !== contextId
           ? "context_changed"
-          : !continuityEnabled
+          : !continuityEnabled && !pinned
             ? "continuity_disabled"
             : laneState.engine !== engine
               ? "engine_changed"
@@ -596,11 +633,13 @@ export function createWorkflowContinuityService(
       execution,
       contextId,
     );
+    const pinned = laneMatchesPin(laneState, input.pinnedConversationId);
     const rotate = shouldRotate(
       laneState,
       contextId,
       continuityEnabled,
       engine,
+      input.pinnedConversationId,
     );
     const now = getNow(deps);
 
@@ -610,7 +649,7 @@ export function createWorkflowContinuityService(
           ? "no_prior_lane"
           : laneState.contextId !== contextId
             ? "context_changed"
-            : !continuityEnabled
+            : !continuityEnabled && !pinned
               ? "continuity_disabled"
               : "rotation_scheduled";
 
@@ -701,7 +740,7 @@ export function createWorkflowContinuityService(
         ? "no_prior_lane"
         : laneState.contextId !== contextId
           ? "context_changed"
-          : !continuityEnabled
+          : !continuityEnabled && !pinned
             ? "continuity_disabled"
             : "rotation_scheduled";
 

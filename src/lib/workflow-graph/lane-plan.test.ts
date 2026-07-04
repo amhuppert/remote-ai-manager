@@ -41,6 +41,7 @@ function makeDefinition(
       contextValidator: null,
       scriptValidator: { enabled: false as const },
       humanApprovalGate: { enabled: false },
+      askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
       iterationPolicy: { maxIterations: 1, continuity: { enabled: true } },

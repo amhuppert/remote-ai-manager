@@ -240,10 +240,10 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen.queryByRole("button", { name: /Implementer/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/^Implementer$/i)).toBeVisible();
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(7);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(8);
   });
 
-  it("renders all seven workflow default blocks at the page top level", () => {
+  it("renders all eight workflow default blocks at the page top level", () => {
     renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
@@ -252,6 +252,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       "Collaboration",
       "Context validator",
       "Script validator",
+      "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
       "Mutability",
@@ -265,7 +266,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(7);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(8);
   });
 
   it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", () => {

@@ -657,6 +657,7 @@ describe("classifyContextSchedulability", () => {
         },
         "context-busy": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-busy",
           status: "running",
           totalTaskCount: 1,
@@ -1132,6 +1133,7 @@ describe("classifyContextSchedulability", () => {
         },
         "context-busy": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-busy",
           status: "running",
           totalTaskCount: 1,

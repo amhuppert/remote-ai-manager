@@ -65,7 +65,11 @@ import type {
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
-import { CC_CLI_INSTRUCTIONS } from "@/lib/prompt/sdk-driver";
+import {
+  ASK_QUESTION_INSTRUCTIONS,
+  ASK_QUESTION_INSTRUCTIONS_ENABLED,
+  CC_CLI_INSTRUCTIONS,
+} from "@/lib/prompt/sdk-driver";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -3988,6 +3992,40 @@ describe("executePromptForMachine alignment injection", () => {
     expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
     expect(capturedAlignmentVersion()).toBeNull();
     expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
+  });
+
+  it("selects the enabled ask-question variant when askUserQuestionsEnabled is true", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => null),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({ askUserQuestionsEnabled: true });
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).toContain(ASK_QUESTION_INSTRUCTIONS_ENABLED);
+    expect(instructions).not.toContain(ASK_QUESTION_INSTRUCTIONS);
+  });
+
+  it("keeps the default ask-question variant when the flag is unset", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => null),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).toContain(ASK_QUESTION_INSTRUCTIONS);
+    expect(instructions).not.toContain(ASK_QUESTION_INSTRUCTIONS_ENABLED);
   });
 
   it("injects neither the charter nor the suggestion for a project conversation", async () => {

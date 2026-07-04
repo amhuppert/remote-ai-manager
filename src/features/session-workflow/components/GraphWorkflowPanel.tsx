@@ -19,6 +19,7 @@ import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
+import { useUserInputGate } from "@/features/session/hooks/use-user-input-gate";
 
 interface GraphWorkflowPanelProps {
   projectName: string;
@@ -128,6 +129,16 @@ export default function GraphWorkflowPanel({
     return generateWorkflowLayout(execution.workingDefinition, layout ?? null);
   }, [execution, layout]);
 
+  // Answer panel for the selected context when it is parked awaiting user
+  // input. The container owns the answer mutation (QueryClient lives here);
+  // the inspector only mounts the panel with these props.
+  const userInputPanel = useUserInputGate({
+    projectName,
+    sessionName,
+    execution,
+    contextId: selectedContextId,
+  });
+
   const viewingTask =
     execution && viewingTaskId
       ? resolveViewingTask(execution, viewingTaskId)
@@ -175,6 +186,7 @@ export default function GraphWorkflowPanel({
                 execution={execution}
                 events={events}
                 selectedContextId={selectedContextId}
+                userInputPanel={userInputPanel}
                 onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
                 onAddTask={onAddTask}
@@ -250,6 +262,7 @@ export default function GraphWorkflowPanel({
                 execution={execution}
                 events={events}
                 selectedContextId={selectedContextId}
+                userInputPanel={userInputPanel}
                 onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
                 onAddTask={onAddTask}

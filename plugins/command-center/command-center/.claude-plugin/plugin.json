@@ -1,7 +1,7 @@
 {
   "name": "command-center",
   "description": "Command Center (CC) — project configuration and tooling",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "author": {
     "name": "Alex Huppert",
     "url": "https://github.com/amhuppert/remote-ai-manager"

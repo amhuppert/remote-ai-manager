@@ -75,6 +75,10 @@ export interface ConversationTurnActive {
    *  agent-facing prompt text is derived from it when no explicit text was
    *  supplied. Unset for every non-feedback turn. */
   documentFeedback?: DocumentFeedbackPayload;
+  /** Effective ask-user-questions availability for this turn (resolved toggle
+   *  AND lane-can-ask). Set only by graph-workflow runners; selects the enabled
+   *  asking-questions session-instruction variant. Unset for every other turn. */
+  askUserQuestionsEnabled?: boolean;
 }
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
@@ -187,6 +191,7 @@ export type ConversationEvent =
       waitForBackgroundTasks?: boolean;
       queuedDelivery?: QueuedDeliveryMetadata;
       documentFeedback?: DocumentFeedbackPayload;
+      askUserQuestionsEnabled?: boolean;
     }
   | {
       type: "SUBMIT_TASK_RUN";
@@ -337,6 +342,10 @@ export interface ExecutePromptInput {
    *  transcript records a `document_feedback` block and the agent-facing prompt
    *  text is derived from it when `promptText` is empty. Unset otherwise. */
   documentFeedback?: DocumentFeedbackPayload;
+  /** Effective ask-user-questions availability for this turn (resolved toggle
+   *  AND lane-can-ask). Selects the enabled asking-questions session-instruction
+   *  variant. Set only by graph-workflow runners; unset for every other turn. */
+  askUserQuestionsEnabled?: boolean;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */

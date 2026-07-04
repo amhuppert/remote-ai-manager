@@ -41,6 +41,7 @@ const workflowDefaults: WorkflowDefaults = {
   },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
+  askUserQuestions: { enabled: false },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },

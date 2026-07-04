@@ -4,6 +4,7 @@ import type {
   CollaborationAutonomousResolutionThreshold,
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
+  GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowIterationPolicy,
@@ -56,11 +57,16 @@ const GLOBAL_SCRIPT_VALIDATOR: GraphWorkflowScriptValidatorConfig = {
   enabled: false,
 };
 
+const GLOBAL_ASK_USER_QUESTIONS: GraphWorkflowAskUserQuestionsConfig = {
+  enabled: false,
+};
+
 const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: GLOBAL_IMPLEMENTER,
   contextValidator: GLOBAL_VALIDATOR,
   scriptValidator: GLOBAL_SCRIPT_VALIDATOR,
   humanApprovalGate: { enabled: false },
+  askUserQuestions: GLOBAL_ASK_USER_QUESTIONS,
   iterationPolicy: GLOBAL_ITERATION,
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
@@ -239,6 +245,55 @@ describe("resolveContext", () => {
     expect(resolved.scriptValidator).toEqual({ enabled: false });
   });
 
+  it("resolves askUserQuestions to disabled when no layer overrides (1.3)", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: false });
+  });
+
+  it("inherits askUserQuestions from global when neither workflow nor context override (1.2)", () => {
+    const resolved = resolveContext(
+      { ...GLOBAL_DEFAULTS, askUserQuestions: { enabled: true } },
+      {},
+      makeContext(),
+    );
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: true });
+  });
+
+  it("inherits askUserQuestions from workflow when context omits it (1.2)", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { askUserQuestions: { enabled: true } },
+      makeContext(),
+    );
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: true });
+  });
+
+  it("uses context askUserQuestions verbatim when overridden, disabling an enabled workflow value (1.2)", () => {
+    const resolved = resolveContext(
+      { ...GLOBAL_DEFAULTS, askUserQuestions: { enabled: true } },
+      { askUserQuestions: { enabled: true } },
+      makeContext({ askUserQuestions: { enabled: false } }),
+    );
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: false });
+  });
+
+  it("applies one resolved askUserQuestions value shared by both agent roles (1.5)", () => {
+    // The block is a single per-context value with no per-role split; both the
+    // implementer and the context-validator of a context read the same
+    // resolved toggle. Enabling it at the context tier yields exactly one value.
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {},
+      makeContext({ askUserQuestions: { enabled: true } }),
+    );
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: true });
+  });
+
   it("resolves humanApprovalGate to disabled when no layer overrides", () => {
     const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
 
@@ -319,6 +374,27 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.humanApprovalGate).toEqual({ enabled: true });
   });
 
+  it("uses workflow-level askUserQuestions when present, ignoring global (1.2)", () => {
+    const definition = makeDefinition({
+      workflowConfig: { askUserQuestions: { enabled: true } },
+    });
+    const resolved = resolveWorkflowConfig(makeGlobalConfig(), definition);
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: true });
+  });
+
+  it("uses global workflowDefaults.askUserQuestions when workflow-level toggle is missing (1.2)", () => {
+    const global = makeGlobalConfig({
+      workflowDefaults: {
+        ...GLOBAL_DEFAULTS,
+        askUserQuestions: { enabled: true },
+      },
+    });
+    const resolved = resolveWorkflowConfig(global, makeDefinition());
+
+    expect(resolved.askUserQuestions).toEqual({ enabled: true });
+  });
+
   it("fills missing global blocks from seeded defaults", () => {
     const partialGlobal: WorkflowDefaults = {
       implementer: GLOBAL_IMPLEMENTER,
@@ -328,6 +404,8 @@ describe("resolveWorkflowConfig", () => {
         undefined as unknown as GraphWorkflowScriptValidatorConfig,
       humanApprovalGate:
         undefined as unknown as WorkflowDefaults["humanApprovalGate"],
+      askUserQuestions:
+        undefined as unknown as GraphWorkflowAskUserQuestionsConfig,
       iterationPolicy: undefined as unknown as GraphWorkflowIterationPolicy,
       circuitBreaker: undefined as unknown as GraphWorkflowCircuitBreakerPolicy,
       mutability: undefined as unknown as GraphWorkflowMutabilityPolicy,
@@ -341,6 +419,7 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.contextValidator.type).toBe("claude");
     expect(resolved.scriptValidator.enabled).toBe(false);
     expect(resolved.humanApprovalGate.enabled).toBe(false);
+    expect(resolved.askUserQuestions.enabled).toBe(false);
     expect(resolved.iterationPolicy.maxIterations).toBeGreaterThan(0);
     expect(resolved.circuitBreaker.consecutiveFailureThreshold).toBe(3);
     expect(resolved.mutability.allowAgentTaskAdd).toBe(false);
@@ -369,6 +448,42 @@ describe("resolveWorkflowDefinition", () => {
     }
     expect(resolved.executionContexts[0]?.acceptanceCriteria).toBe("A-AC");
     expect(resolved.executionContexts[1]?.acceptanceCriteria).toBe("B-AC");
+  });
+
+  it("snapshots the resolved askUserQuestions per context into the working definition (1.4, 1.5)", () => {
+    // resolveWorkflowDefinition is the seed-time resolution whose output is
+    // persisted as the execution's workingDefinition; a per-context override
+    // must be captured on that context so later config edits cannot alter the
+    // running execution.
+    const global = makeGlobalConfig({
+      workflowDefaults: {
+        ...GLOBAL_DEFAULTS,
+        askUserQuestions: { enabled: false },
+      },
+    });
+    const definition = makeDefinition({
+      workflowConfig: { askUserQuestions: { enabled: true } },
+      executionContexts: [
+        makeContext({ id: "a", title: "A", acceptanceCriteria: "A-AC" }),
+        makeContext({
+          id: "b",
+          title: "B",
+          acceptanceCriteria: "B-AC",
+          askUserQuestions: { enabled: false },
+        }),
+      ],
+    });
+
+    const resolved = resolveWorkflowDefinition(global, definition);
+
+    // Context "a" inherits the workflow-level enabled value; context "b"
+    // overrides back to disabled. Each is fixed independently at seed time.
+    expect(resolved.executionContexts[0]?.askUserQuestions).toEqual({
+      enabled: true,
+    });
+    expect(resolved.executionContexts[1]?.askUserQuestions).toEqual({
+      enabled: false,
+    });
   });
 
   it("treats a definition with absent workflowConfig as all-inherited from global", () => {

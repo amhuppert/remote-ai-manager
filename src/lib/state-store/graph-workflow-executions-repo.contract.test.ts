@@ -148,6 +148,31 @@ describe("graph-workflow-executions-repo behavior", () => {
     expect(repo.getActive(PROJECT_PATH, SESSION_NAME)).toBeNull();
   });
 
+  it("round-trips the awaiting_user_input status and a populated pendingUserInput record", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    // A fresh repo instance bypasses the parsed-row cache so the read decodes
+    // the persisted blob rather than returning the in-memory object.
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    const ctx = reloaded?.contextStates["ctx-1"];
+    expect(ctx?.status).toBe("awaiting_user_input");
+    expect(ctx?.pendingUserInput).toEqual(
+      execution.contextStates["ctx-1"]?.pendingUserInput,
+    );
+    expect(
+      ctx?.pendingUserInput?.answers?.byQuestionId["q-1"]?.selected,
+    ).toEqual(["Redis"]);
+  });
+
   it("deletes the active row on setActive(null)", () => {
     repo.setActive(
       PROJECT_PATH,

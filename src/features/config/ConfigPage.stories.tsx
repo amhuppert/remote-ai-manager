@@ -118,6 +118,7 @@ const fullyConfiguredConfig: GlobalConfig = {
     humanApprovalGate: {
       enabled: false,
     },
+    askUserQuestions: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },

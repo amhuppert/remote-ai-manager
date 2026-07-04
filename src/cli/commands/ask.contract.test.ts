@@ -73,6 +73,9 @@ function makeHost(
         : null;
     },
     sendConversationEvent: send,
+    async resolveLaneAskPermission() {
+      return { allowed: false };
+    },
     generateQuestionBatchId: () => "q_contract1",
   };
   const handlers = createAskQuestionHandlers(deps);

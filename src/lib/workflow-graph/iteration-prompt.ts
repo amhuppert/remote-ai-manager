@@ -2,6 +2,8 @@ import {
   CHARTER_DOCUMENT_PATH,
   renderCharterPromptSection,
 } from "@/lib/workflow-graph/charter/render";
+import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
+import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type {
   GraphWorkflowCollaborationContinuation,
@@ -27,6 +29,53 @@ function buildCharterSection(charter: WorkflowCharter): string {
     "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
   ]);
 }
+
+/**
+ * The recorded answers delivered into a resumed turn. Carried into both the
+ * pinned follow-up prompt and the rotated seed prompt; the answers block echoes
+ * the original question text, so a fresh conversation is self-sufficient (5.3).
+ */
+export interface ResumeUserInputPromptInput {
+  questionBatchId: string;
+  answers: Record<string, AskQuestionAnswer>;
+}
+
+/**
+ * The framed answers section: one line of context ahead of the standard
+ * `<cc-question-answers>` block so the agent reads the answers before the task
+ * list. Rendered identically in the pinned and rotated variants.
+ */
+function buildResumeUserInputSection(
+  resumeUserInput: ResumeUserInputPromptInput,
+): string {
+  return [
+    "## Your Question Was Answered",
+    "The user answered the question(s) you asked. Use these answers to continue:",
+    "",
+    formatQuestionAnswersBlock(
+      resumeUserInput.questionBatchId,
+      resumeUserInput.answers,
+    ),
+  ].join("\n");
+}
+
+/**
+ * Short in-prompt reminder of the ask protocol, added only when the context's
+ * effective ask-user-questions flag is on (resolved toggle AND lane-can-ask).
+ * The full protocol lives in the session instructions
+ * (`ASK_QUESTION_INSTRUCTIONS_ENABLED`); this keeps the salient rules — the
+ * tool is available, ask only at real forks, end the turn, the context PAUSES
+ * until answered, skipped = best judgment — in view of every iteration and
+ * validator prompt. Shared by the implementer and validator prompt builders so
+ * there is one source of the reminder text (Req 8.1-8.4).
+ */
+export function buildAskUserQuestionsReminderSection(): string {
+  return [
+    "## Asking the User",
+    "The `cctl ask` tool is available on this turn. Ask ONLY at a consequential, hard-to-reverse, or genuinely ambiguous decision point — not for trivial or reversible choices. Batch related questions into one `cctl ask` call, then END YOUR TURN. The workflow PAUSES this context until the user answers (asking is not free), and the answers arrive when this context resumes; a skipped question means proceed with your best judgment.",
+  ].join("\n");
+}
+
 interface LatestContextValidationFailureFeedbackIssue {
   title: string;
   description: string;
@@ -54,6 +103,17 @@ export interface BuildIterationPromptInput {
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
   charter?: WorkflowCharter;
+  /**
+   * Answers delivered into a rotated resume: the asking conversation reached its
+   * context-window limit, so this fresh (seed) conversation carries the block in
+   * its first prompt (5.3).
+   */
+  resumeUserInput?: ResumeUserInputPromptInput;
+  /**
+   * Effective ask-user-questions availability (resolved toggle AND lane-can-ask).
+   * When true a short ask-protocol reminder section is added; otherwise none.
+   */
+  askUserQuestionsEnabled?: boolean;
 }
 
 function buildTaskLines(
@@ -200,6 +260,12 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     ].join("\n"),
   );
 
+  // Answers first: a rotated resume seeds a fresh conversation, so the block
+  // opens the prompt (after the header) before the task list (5.3).
+  if (input.resumeUserInput) {
+    sections.push(buildResumeUserInputSection(input.resumeUserInput));
+  }
+
   const latestContextValidationFailureSection =
     buildLatestContextValidationFailureSection(
       input.latestContextValidationFailure,
@@ -232,6 +298,10 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
         input.contextValidationAcceptanceCriteria,
       ].join("\n"),
     );
+  }
+
+  if (input.askUserQuestionsEnabled) {
+    sections.push(buildAskUserQuestionsReminderSection());
   }
 
   // Protocol
@@ -318,6 +388,16 @@ export interface BuildFollowUpPromptInput {
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
   charter?: WorkflowCharter;
+  /**
+   * Answers delivered into a pinned resume: the asking conversation is reused,
+   * so the block rides its follow-up prompt (5.1).
+   */
+  resumeUserInput?: ResumeUserInputPromptInput;
+  /**
+   * Effective ask-user-questions availability (resolved toggle AND lane-can-ask).
+   * When true a short ask-protocol reminder section is added; otherwise none.
+   */
+  askUserQuestionsEnabled?: boolean;
 }
 
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
@@ -334,6 +414,11 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     );
   }
 
+  // Answers first so the agent reads them before the remaining task list (5.1).
+  if (input.resumeUserInput) {
+    sections.push(buildResumeUserInputSection(input.resumeUserInput));
+  }
+
   const latestContextValidationFailureSection =
     buildLatestContextValidationFailureSection(
       input.latestContextValidationFailure,
@@ -346,6 +431,10 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     buildCollaborationContinuationSection(input.collaborationContinuations);
   if (collaborationContinuationSection) {
     sections.push(collaborationContinuationSection);
+  }
+
+  if (input.askUserQuestionsEnabled) {
+    sections.push(buildAskUserQuestionsReminderSection());
   }
 
   sections.push(

@@ -321,6 +321,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       reasoningEffort: input.reasoningEffort,
       toolServer: input.toolServer,
       executionTarget: input.executionTarget,
+      askUserQuestionsEnabled: input.askUserQuestionsEnabled,
     });
   },
   validationService,

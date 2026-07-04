@@ -237,7 +237,8 @@ Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); resolved c
     "scriptValidator":  { "enabled": false },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
-    "mutability":       { "allowAgentTaskAdd": false }
+    "mutability":       { "allowAgentTaskAdd": false },
+    "askUserQuestions": { "enabled": false }
   }
 }
 ```
@@ -265,7 +266,7 @@ for non-default implementer or validator settings.
 
 ## `workflowDefaults` blocks
 
-Six blocks, all individually overridable per tier:
+Seven blocks, all individually overridable per tier:
 
 | Block | Purpose |
 |---|---|
@@ -275,6 +276,40 @@ Six blocks, all individually overridable per tier:
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
 | `mutability` | E.g. `allowAgentTaskAdd` |
+| `askUserQuestions` | Whether lane agents may ask the operator questions mid-task via `cctl ask`. `{ enabled: boolean }`, default disabled; one value covers both the implementer and context-validator roles |
+
+## Ask-user-questions gate (`awaiting_user_input`)
+
+When `askUserQuestions` resolves enabled for a context, its implementer and
+context-validator agents may invoke `cctl ask`; the batch registers under the
+same rules as ordinary conversations and notifies the user. The lifecycle
+mirrors the human approval gate:
+
+- **Park** — a turn that ends with a question pending parks the context:
+  status `awaiting_user_input`, the batch snapshotted into the context state's
+  `pendingUserInput` record. Parking consumes no iteration and no failure
+  count; sibling contexts keep scheduling; the completion guard refuses to
+  finish the execution while any context is parked. Park detection runs after
+  **every** agent turn (including between follow-up turns — a follow-up
+  dispatched onto an asking conversation would wipe the question) in
+  `iteration-orchestrator.ts`; a validator question maps to an `asked_user`
+  outcome, never a validation failure.
+- **Answer** — from the graph page (inline panel on the parked node) or the
+  lane conversation view. Lane answers record on the execution record via the
+  user-input gate (`user-input-gate.ts`) — never queued to the conversation,
+  no auto-drain — and exactly one answer set is accepted per batch.
+- **Resume** — the loop (`execution-loop.ts`) polls the record, consumes the
+  answers, and re-runs the lane with the asking conversation pinned
+  (`workflow-continuity-service.ts`; a scheduled context-window rotation
+  outranks the pin and the answers ride the replacement conversation's first
+  prompt). The resumed turn carries the standard `<cc-question-answers>` block
+  and runs under normal iteration accounting.
+- **Durability** — the parked state survives pause/halt/restart (re-entry
+  restores the wait; answers recorded meanwhile apply immediately); abort
+  withdraws all parked questions.
+
+Planner and collaboration conversations stay denied regardless of the toggle;
+Codex validator lanes have no real CC conversation and never see the tool.
 
 ## Planning source of truth
 

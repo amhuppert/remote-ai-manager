@@ -242,6 +242,7 @@ describe("deriveNodes", () => {
 
     const ctxState: GraphWorkflowExecutionContextState = {
       pendingApproval: null,
+      pendingUserInput: null,
       contextId: "ctx-1",
       status: "running",
       totalTaskCount: 1,
@@ -321,6 +322,7 @@ describe("deriveNodes wait state attachment", () => {
       cleanupStatus: "not-applicable",
       lastMergeError: null,
       pendingApproval: null,
+      pendingUserInput: null,
       ...overrides,
     };
   }
@@ -447,6 +449,7 @@ describe("getContextDisplayPhase", () => {
       cleanupStatus: "not-applicable",
       lastMergeError: null,
       pendingApproval: null,
+      pendingUserInput: null,
       ...overrides,
     };
   }
@@ -566,6 +569,7 @@ describe("getDisplayValidators", () => {
       contextValidator: null,
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
+      askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -766,6 +770,7 @@ describe("getDisplayApprovalGate", () => {
       contextValidator: null,
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
+      askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -839,6 +844,7 @@ describe("deriveEdges", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "ctx-1",
           status: "completed" as GraphWorkflowContextStatus,
           totalTaskCount: 1,
@@ -857,6 +863,7 @@ describe("deriveEdges", () => {
         },
         "ctx-2": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "ctx-2",
           status: "running" as GraphWorkflowContextStatus,
           totalTaskCount: 1,

@@ -6,6 +6,7 @@ import {
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+import { askQuestionItemSchema } from "@/lib/conversations/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
@@ -1277,5 +1278,65 @@ describe("ExecutionInspectorPanel — Launch Inputs audit surface", () => {
     );
 
     expect(screen.queryByText("Launch Inputs")).not.toBeInTheDocument();
+  });
+});
+
+describe("ExecutionInspectorPanel — parked user-input question", () => {
+  const QUESTION_TEXT = "Which database should we use?";
+  const parkedPanel = () => ({
+    questions: [
+      askQuestionItemSchema.parse({
+        id: "q1",
+        question: QUESTION_TEXT,
+        options: [{ label: "Postgres" }, { label: "SQLite" }],
+      }),
+    ],
+    questionId: "qb-1",
+    currentIndex: 0,
+    onNavigate: vi.fn(),
+    onSubmit: vi.fn(),
+  });
+
+  it("mounts the question panel for the selected parked context when userInputPanel is provided", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        userInputPanel={parkedPanel()}
+      />,
+    );
+
+    expect(screen.getByText(QUESTION_TEXT)).toBeInTheDocument();
+    expect(screen.getByText("Postgres")).toBeInTheDocument();
+  });
+
+  it("renders no question panel when userInputPanel is null", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        userInputPanel={null}
+      />,
+    );
+
+    expect(screen.queryByText(QUESTION_TEXT)).not.toBeInTheDocument();
+  });
+
+  it("renders no question panel in the overview (no context selected) even if props carry a panel", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+        userInputPanel={parkedPanel()}
+      />,
+    );
+
+    expect(screen.queryByText(QUESTION_TEXT)).not.toBeInTheDocument();
   });
 });

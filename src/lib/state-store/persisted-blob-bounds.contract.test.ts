@@ -99,6 +99,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
       contextStates:
         "bounded: keyed by the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.pendingUserInput.**":
+        "bounded: one in-flight AskUserQuestion set snapshotted at park (plus its recorded answers), cleared on resume or withdraw. In graph_workflow_executions.runtime_json.",
       taskStates:
         "bounded: keyed by the author-fixed task graph. In graph_workflow_executions.runtime_json.",
       "taskStates.*.failureHistory":

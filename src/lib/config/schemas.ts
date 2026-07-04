@@ -13,6 +13,7 @@ import {
 import {
   graphWorkflowAgentConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
+  graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
@@ -31,6 +32,7 @@ export const workflowDefaultsSchema = z.object({
   contextValidator: graphWorkflowAgentValidatorConfigSchema,
   scriptValidator: graphWorkflowScriptValidatorConfigSchema,
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema,
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   mutability: graphWorkflowMutabilityPolicySchema,
@@ -43,6 +45,7 @@ const rawWorkflowDefaultsSchema = z.object({
   contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),

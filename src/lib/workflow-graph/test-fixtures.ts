@@ -171,6 +171,7 @@ export function createResolvedWorkflowDefinition(
       contextValidator: null,
       scriptValidator: ctx.scriptValidator ?? { enabled: false },
       humanApprovalGate: ctx.humanApprovalGate ?? { enabled: false },
+      askUserQuestions: { enabled: false },
       mutability: ctx.mutability ?? { allowAgentTaskAdd: false },
       circuitBreaker: ctx.circuitBreaker ?? {},
       iterationPolicy: ctx.iterationPolicy ?? {
@@ -203,6 +204,7 @@ export function createWorkflowExecution(
     contextStates: {
       "context-plan": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-plan",
         status: "pending",
         totalTaskCount: 1,
@@ -221,6 +223,7 @@ export function createWorkflowExecution(
       },
       "context-implement": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-implement",
         status: "pending",
         totalTaskCount: 1,
@@ -239,6 +242,7 @@ export function createWorkflowExecution(
       },
       "context-verify": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,

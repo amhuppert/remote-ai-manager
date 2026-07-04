@@ -67,6 +67,7 @@ function makeNode(
           cleanupStatus: "not-applicable",
           lastMergeError: null,
           pendingApproval: null,
+          pendingUserInput: null,
         },
       }),
     },

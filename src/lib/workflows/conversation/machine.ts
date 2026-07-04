@@ -102,6 +102,7 @@ function conversationTurnFromEvent(
     ...(event.documentFeedback
       ? { documentFeedback: event.documentFeedback }
       : {}),
+    ...(event.askUserQuestionsEnabled ? { askUserQuestionsEnabled: true } : {}),
   };
 }
 
@@ -551,6 +552,9 @@ export const conversationMachine = setup({
                   : {}),
                 ...(activeTurn.documentFeedback
                   ? { documentFeedback: activeTurn.documentFeedback }
+                  : {}),
+                ...(activeTurn.askUserQuestionsEnabled
+                  ? { askUserQuestionsEnabled: true }
                   : {}),
               };
             },
@@ -1006,6 +1010,23 @@ export const conversationMachine = setup({
         // pending question — after a stop the next input comes from the user
         // anyway, so the question is moot.
         ABORT_TURN: {
+          target: "idle",
+          actions: [
+            assign({
+              pendingQuestion: null,
+              status: "awaiting" as const,
+              lastActivityAt: () => new Date().toISOString(),
+            }),
+            "syncDerivedFields",
+            "broadcastConversationStatus",
+            "persistSnapshot",
+          ],
+        },
+        // A graph-workflow lane answer records on the execution record without
+        // queueing a message, so no SUBMIT_PROMPT drain settles this parked
+        // turn. The answer route clears the marker directly, settling the
+        // conversation to idle.
+        CLEAR_PENDING_QUESTION: {
           target: "idle",
           actions: [
             assign({

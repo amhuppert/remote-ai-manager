@@ -39,6 +39,13 @@ import {
   createApprovalGateService,
   type ApprovalGateService,
 } from "@/lib/workflow-graph/approval-gate";
+import {
+  createUserInputGateService,
+  type ResumeUserInputContext,
+  type UserInputGateService,
+} from "@/lib/workflow-graph/user-input-gate";
+import { getConversation as defaultGetConversation } from "@/lib/state-store";
+import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { ToolResultBlock } from "./tool-dispatcher";
@@ -110,6 +117,13 @@ export interface GraphWorkflowRunAgentIterationInput {
    * branch; otherwise it carries the session worktree/branch.
    */
   executionTarget?: ExecutionTarget;
+  /**
+   * Effective ask-user-questions availability for this implementer turn — the
+   * context's resolved toggle (an implementer lane always holds a real
+   * conversation). Threaded into the runner's prompt-stream options so the
+   * session instructions advertise the tool (Req 8.1-8.4).
+   */
+  askUserQuestionsEnabled?: boolean;
 }
 
 export interface GraphWorkflowAgentIterationResult {
@@ -189,6 +203,26 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   validationService?: GraphWorkflowValidationService;
   scriptValidatorService?: IterationOrchestratorScriptValidatorService;
   approvalGateService?: ApprovalGateService;
+  /**
+   * Gate that owns the `pendingUserInput` lifecycle. The orchestrator calls
+   * `enterAwaitingUserInput` from the post-turn park check; a default is built
+   * from `executionRepository` + `eventPublisher` when not injected.
+   */
+  userInputGateService?: UserInputGateService;
+  /**
+   * Read the post-turn pending-question state of a lane conversation. The
+   * post-turn park check reads it to decide whether the turn ended with a
+   * question batch pending on its conversation. Returns null when the
+   * conversation is unknown.
+   */
+  readLaneConversation?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<{
+    pendingQuestionId: string | null;
+    pendingQuestions: AskQuestionItem[];
+  } | null>;
   createTaskId?(): string;
   now?(): string;
   eventPublisher?: ReturnType<
@@ -229,6 +263,14 @@ export interface GraphWorkflowIterationInput {
    * back to the session worktree/branch.
    */
   executionTarget?: ExecutionTarget;
+  /**
+   * Set when the loop resumes a context after its parked question was answered.
+   * The asking conversation is pinned (rotation still outranks) and the answers
+   * block is embedded in the resumed turn's prompt — the follow-up (pinned) or
+   * seed (rotated) implementer prompt, or the validator prompt when the resumed
+   * lane is `context_validator` (5.1, 5.3, 5.5).
+   */
+  resumeUserInput?: ResumeUserInputContext;
 }
 
 export interface GraphWorkflowIterationResult {
@@ -609,6 +651,47 @@ export function createGraphWorkflowIterationOrchestrator(
       mutateActive: (projectPath, sessionName, fn) =>
         deps.executionRepository.mutateActive(projectPath, sessionName, fn),
       now: () => getNow(deps),
+    });
+  const userInputGateService =
+    deps.userInputGateService ??
+    createUserInputGateService({
+      getActive: (projectPath, sessionName) =>
+        deps.executionRepository.getActive(projectPath, sessionName),
+      mutateActive: (projectPath, sessionName, fn) =>
+        deps.executionRepository.mutateActive(projectPath, sessionName, fn),
+      publishUserInputPending: eventPublisher.publishUserInputPending,
+      publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      // Withdraw-only concern; the orchestrator never calls `withdrawAll`, so a
+      // no-op refusal (actor treated as not live) is correct on the park path.
+      sendConversationEvent: () => false,
+      now: () => getNow(deps),
+    });
+  const readLaneConversation =
+    deps.readLaneConversation ??
+    (async (projectPath, sessionName, conversationId) => {
+      try {
+        const conversation = await defaultGetConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+        );
+        if (!conversation) {
+          return null;
+        }
+        return {
+          pendingQuestionId: conversation.pendingQuestionId,
+          pendingQuestions: conversation.pendingQuestions ?? [],
+        };
+      } catch (error) {
+        // A read failure cannot confirm a pending question, so the park check
+        // treats it as "no question" (deny-by-default). Logged so a systematic
+        // failure is visible rather than silently suppressing every park.
+        logger.warn("graph-workflow.iteration.read_lane_conversation_failed", {
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
     });
   const signalHalt =
     deps.signalHalt ??
@@ -1027,11 +1110,107 @@ export function createGraphWorkflowIterationOrchestrator(
     return "fail";
   }
 
+  /**
+   * Shared awaiting-user-input park for both the implementer and context-
+   * validator lanes (design "Park detection"; Req 3.2, 3.3). Hands the batch to
+   * the user-input gate; on `"answers_ready"` (fast answer) returns null so the
+   * caller proceeds. On `"parked"` it commits the park mutation — dropping the
+   * context from `activeContextIds`, rebuilding the machine snapshot, and (for
+   * the implementer seed increment only) restoring the pre-seed iteration count
+   * so parking consumes no iteration — then re-reads and returns the parked
+   * iteration result. It never touches `consecutiveFailureCount` or reopens
+   * tasks.
+   */
+  async function parkContextForUserInput(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    lane: "implementer" | "context_validator";
+    conversationId: string;
+    questionBatchId: string;
+    questions: AskQuestionItem[];
+    /** When set, the context's iterationCount is restored to this value. */
+    restoreIterationCount?: number;
+  }): Promise<GraphWorkflowIterationResult | null> {
+    const {
+      input,
+      execLogger,
+      lane,
+      conversationId,
+      questionBatchId,
+      questions,
+      restoreIterationCount,
+    } = params;
+
+    const outcome = await userInputGateService.enterAwaitingUserInput({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      contextId: input.contextId,
+      lane,
+      conversationId,
+      questionBatchId,
+      questions,
+    });
+
+    if (outcome === "answers_ready") {
+      execLogger?.iteration(
+        input.contextId,
+        "iteration.user_input_fast_answer",
+        { lane, conversationId, questionBatchId },
+      );
+      logger.info("graph-workflow.iteration.user_input_fast_answer", {
+        contextId: input.contextId,
+        lane,
+        questionBatchId,
+      });
+      return null;
+    }
+
+    const parkedExecution = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const parkedContextState = next.contextStates[input.contextId];
+        if (parkedContextState && restoreIterationCount !== undefined) {
+          parkedContextState.iterationCount = restoreIterationCount;
+        }
+        next.activeContextIds = next.activeContextIds.filter(
+          (id) => id !== input.contextId,
+        );
+        next.machineSnapshot = buildMachineSnapshot(next, false);
+        return next;
+      },
+    );
+
+    execLogger?.iteration(
+      input.contextId,
+      "iteration.parked_awaiting_user_input",
+      {
+        lane,
+        conversationId,
+        questionBatchId,
+        questionCount: questions.length,
+      },
+    );
+    logger.info("graph-workflow.iteration.parked_awaiting_user_input", {
+      executionId: parkedExecution.id,
+      contextId: input.contextId,
+      lane,
+      questionBatchId,
+    });
+
+    return {
+      conversationId,
+      execution: parkedExecution,
+      shouldContinueInContext: false,
+    };
+  }
+
   async function processContextCompletionValidation(params: {
     input: GraphWorkflowIterationInput;
     execLogger: ReturnType<typeof getExecutionLogger>;
     onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
-  }): Promise<void> {
+  }): Promise<GraphWorkflowIterationResult | null> {
     const { input, execLogger, onHalt } = params;
     const preContextValidationExecution = await loadCurrentExecution(
       input.projectPath,
@@ -1039,7 +1218,7 @@ export function createGraphWorkflowIterationOrchestrator(
     );
 
     if (preContextValidationExecution.status !== "running") {
-      return;
+      return null;
     }
 
     const remainingTasks = getIncompleteTasks(
@@ -1047,7 +1226,7 @@ export function createGraphWorkflowIterationOrchestrator(
       input.contextId,
     );
     if (remainingTasks.length > 0) {
-      return;
+      return null;
     }
 
     const scriptStageResult = await processScriptValidation({
@@ -1058,7 +1237,7 @@ export function createGraphWorkflowIterationOrchestrator(
     });
 
     if (scriptStageResult === "fail") {
-      return;
+      return null;
     }
 
     const executionForAgentValidation = await loadCurrentExecution(
@@ -1067,8 +1246,17 @@ export function createGraphWorkflowIterationOrchestrator(
     );
 
     if (executionForAgentValidation.status !== "running") {
-      return;
+      return null;
     }
+
+    // Only a validator resume delivers the answers block into the validation
+    // prompt and pins the validator conversation. An implementer resume reaches
+    // this inline completion check on the same turn; its answers belong in the
+    // implementer prompt, never the validator's, so it is excluded here.
+    const validatorResume =
+      input.resumeUserInput?.lane === "context_validator"
+        ? input.resumeUserInput
+        : undefined;
 
     const validation = await validationService.validateContextCompletion({
       projectPath: input.projectPath,
@@ -1076,6 +1264,7 @@ export function createGraphWorkflowIterationOrchestrator(
       execution: executionForAgentValidation,
       contextId: input.contextId,
       executionTarget: input.executionTarget,
+      resumeUserInput: validatorResume,
     });
 
     if (validation.kind === "infra_error") {
@@ -1125,6 +1314,22 @@ export function createGraphWorkflowIterationOrchestrator(
       };
       await onHalt(haltReason);
       throw new IterationHaltedError(haltReason);
+    }
+
+    // The validator turn ended with a pending question and no verdict (Req 3.2).
+    // Park the context on the context_validator lane — never reopen tasks, never
+    // increment consecutiveFailureCount, never record a validation-failure event
+    // (Req 3.3). `answers_ready` (fast answer) → null, and the caller falls
+    // through to the normal finalize path.
+    if (validation.kind === "asked_user") {
+      return parkContextForUserInput({
+        input,
+        execLogger,
+        lane: "context_validator",
+        conversationId: validation.conversationId,
+        questionBatchId: validation.questionBatchId,
+        questions: validation.questions,
+      });
     }
 
     if (validation.kind === "fail") {
@@ -1191,7 +1396,7 @@ export function createGraphWorkflowIterationOrchestrator(
         await onHalt(haltReason);
         throw new IterationHaltedError(haltReason);
       }
-      return;
+      return null;
     }
 
     execLogger?.validation(input.contextId, "context_validation.passed", {
@@ -1234,6 +1439,8 @@ export function createGraphWorkflowIterationOrchestrator(
         };
       },
     );
+
+    return null;
   }
 
   async function finalizeIterationResult(params: {
@@ -1456,8 +1663,9 @@ export function createGraphWorkflowIterationOrchestrator(
     }
 
     let terminalErrorCaught = false;
+    let parkedResult: GraphWorkflowIterationResult | null = null;
     try {
-      await processContextCompletionValidation({
+      parkedResult = await processContextCompletionValidation({
         input,
         execLogger,
         onHalt: signalHaltOnly,
@@ -1475,6 +1683,12 @@ export function createGraphWorkflowIterationOrchestrator(
         },
       );
       terminalErrorCaught = true;
+    }
+
+    // A validator that asked during the re-entry path parks the context; short-
+    // circuit finalize so it stays parked (Req 3.2, 3.3).
+    if (parkedResult !== null) {
+      return parkedResult;
     }
 
     const conversationId = pickConversationIdForValidationOnlyIteration(
@@ -1574,6 +1788,7 @@ export function createGraphWorkflowIterationOrchestrator(
         sessionName: input.sessionName,
         contextId: input.contextId,
         engine: context.implementer.backend,
+        pinnedConversationId: input.resumeUserInput?.conversationId,
       });
       conversationId = resolved.conversationId;
       resolvedImplementerLaneState =
@@ -1636,6 +1851,11 @@ export function createGraphWorkflowIterationOrchestrator(
         `Execution context "${input.contextId}" does not exist in runtime state`,
       );
     }
+    // Pre-seed iteration count. A parked iteration must not consume an
+    // iteration (Req 3.3, design 3.3 "bypasses seed/failure branches"), so the
+    // park short-circuit rolls the seed increment back to this value.
+    const iterationCountBeforeSeed =
+      initialExecution.contextStates[input.contextId]?.iterationCount ?? 0;
     const collaborationContinuations = getUndeliveredCollaborationContinuations(
       seededExecution,
       input.contextId,
@@ -1790,6 +2010,40 @@ export function createGraphWorkflowIterationOrchestrator(
     const MAX_FOLLOW_UPS = 2;
     let completedTurnCount = 0;
     let terminalErrorCaught = false;
+    let parkedResult: GraphWorkflowIterationResult | null = null;
+
+    // Post-turn park check (Req 3.1, 3.3, 5.4; design "Park detection"). Runs
+    // after the agent turn(s) settle and before any continue/validate
+    // evaluation: if the lane conversation ended with a question batch pending,
+    // hand it to the user-input gate. A `parked` outcome short-circuits the
+    // iteration — it skips validation, failure accounting, and
+    // continue-scheduling, and rolls the seed iteration increment back so the
+    // park consumes no iteration. `answers_ready` (fast answer, 5.4) falls
+    // through to the normal finalize path with no park.
+    async function parkContextIfQuestionPending(): Promise<GraphWorkflowIterationResult | null> {
+      const laneConversation = await readLaneConversation(
+        input.projectPath,
+        input.sessionName,
+        conversation.id,
+      );
+      const pendingQuestionId = laneConversation?.pendingQuestionId ?? null;
+      if (pendingQuestionId === null) {
+        return null;
+      }
+
+      // Parking rolls the seed increment back (Req 3.3: parking consumes no
+      // iteration); the shared helper flips the status, drops the context from
+      // the active set, and returns the parked snapshot.
+      return parkContextForUserInput({
+        input,
+        execLogger,
+        lane: "implementer",
+        conversationId: conversation.id,
+        questionBatchId: pendingQuestionId,
+        questions: laneConversation?.pendingQuestions ?? [],
+        restoreIterationCount: iterationCountBeforeSeed,
+      });
+    }
 
     try {
       const agentCallBase = {
@@ -1804,6 +2058,7 @@ export function createGraphWorkflowIterationOrchestrator(
         reasoningEffort: context.implementer.reasoningEffort,
         toolServer: toolServer.server,
         executionTarget: input.executionTarget,
+        askUserQuestionsEnabled: context.askUserQuestions.enabled,
       } as const;
 
       async function recordTurnOutcome(
@@ -1847,6 +2102,15 @@ export function createGraphWorkflowIterationOrchestrator(
 
       // Initial agent call — seed prompt for fresh sessions, follow-up for resumed sessions
       const initialTasks = getIncompleteTasks(seededExecution, input.contextId);
+      // A resume delivers the answers block in whichever prompt this turn uses:
+      // the follow-up when the asking conversation is reused (pinned), or the
+      // seed when rotation forced a fresh conversation (5.1, 5.3).
+      const resumeUserInputPrompt = input.resumeUserInput
+        ? {
+            questionBatchId: input.resumeUserInput.questionBatchId,
+            answers: input.resumeUserInput.answers,
+          }
+        : undefined;
       const initialPrompt =
         promptMode === "follow_up"
           ? buildFollowUpPrompt({
@@ -1857,6 +2121,8 @@ export function createGraphWorkflowIterationOrchestrator(
               latestContextValidationFailure,
               collaborationContinuations,
               charter: context.charter,
+              resumeUserInput: resumeUserInputPrompt,
+              askUserQuestionsEnabled: context.askUserQuestions.enabled,
             })
           : buildIterationPrompt({
               context,
@@ -1865,6 +2131,7 @@ export function createGraphWorkflowIterationOrchestrator(
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
               charter: context.charter,
+              askUserQuestionsEnabled: context.askUserQuestions.enabled,
               // Mirrors the request_collaboration registration gate in the
               // workflow-execution MCP server, which exposes the tool to every
               // implementer context. Keep these in lockstep if an enable toggle
@@ -1877,6 +2144,7 @@ export function createGraphWorkflowIterationOrchestrator(
                   : undefined,
               latestContextValidationFailure,
               collaborationContinuations,
+              resumeUserInput: resumeUserInputPrompt,
             });
 
       // Log the prompt sent to the agent
@@ -2073,6 +2341,21 @@ export function createGraphWorkflowIterationOrchestrator(
           }
         }
 
+        // Park before dispatching the next follow-up. The conversation
+        // machine's waitingForInput state accepts SUBMIT_PROMPT by wiping the
+        // pending question (any claimed turn supersedes it), so a follow-up
+        // sent onto an ask-ended conversation destroys the batch the user is
+        // being asked to answer — the post-loop check would then find nothing
+        // and the ask would be lost (design "Park detection": the check runs
+        // after every agent turn). Runs after the other break conditions so a
+        // loop that is exiting anyway leaves the question to the post-loop
+        // check. `answers_ready` (fast answer, 5.4) falls through and the
+        // follow-up proceeds.
+        parkedResult = await parkContextIfQuestionPending();
+        if (parkedResult !== null) {
+          break;
+        }
+
         const followUpPrompt = buildFollowUpPrompt({
           remainingTasks: remaining,
           taskStates: midExecution.taskStates,
@@ -2086,6 +2369,7 @@ export function createGraphWorkflowIterationOrchestrator(
             ),
           collaborationContinuations: [],
           charter: context.charter,
+          askUserQuestionsEnabled: context.askUserQuestions.enabled,
         });
         execLogger?.writePrompt(
           input.contextId,
@@ -2130,8 +2414,18 @@ export function createGraphWorkflowIterationOrchestrator(
         );
       }
 
-      if (!stoppedForCollaboration) {
-        await processContextCompletionValidation({
+      if (!stoppedForCollaboration && parkedResult === null) {
+        // Park before validation/continue so a question-ending turn skips both
+        // (design "Park detection": the check runs before finalize evaluates
+        // continue/validate). Covers the final turn of an exhausted follow-up
+        // loop, which the pre-dispatch check inside the loop never sees.
+        parkedResult = await parkContextIfQuestionPending();
+      }
+
+      if (!stoppedForCollaboration && parkedResult === null) {
+        // The validator can also park (it asked a question); its parked result
+        // flows through the same short-circuit as the implementer park below.
+        parkedResult = await processContextCompletionValidation({
           input,
           execLogger,
           onHalt: haltIteration,
@@ -2139,25 +2433,45 @@ export function createGraphWorkflowIterationOrchestrator(
       }
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {
-        if (completedTurnCount > 0) {
-          throw new IterationFailureWithProgressError(
-            error,
-            completedTurnCount,
-          );
+        // Park before failure classification (design "Park detection" ordering).
+        // A lane agent that asked and ended its turn can surface as a transient
+        // sessionDiedMidTurn SDK error: the implementer runner's
+        // waitForBackgroundTasks settlement barrier holds the query pump past the
+        // `result` message, so the ask-interrupt is reported as a thrown turn
+        // error rather than a clean return. A pending user question is a
+        // legitimate turn ending and must win over that error — otherwise it is
+        // misclassified as a failure and retried instead of parked. The park
+        // check only parks when a question is actually pending, so a genuine
+        // failure still propagates.
+        parkedResult = await parkContextIfQuestionPending();
+        if (parkedResult === null) {
+          if (completedTurnCount > 0) {
+            throw new IterationFailureWithProgressError(
+              error,
+              completedTurnCount,
+            );
+          }
+          throw error;
         }
-        throw error;
+      } else {
+        execLogger?.iteration(
+          input.contextId,
+          "iteration.terminal_error_caught",
+          {
+            errorType: error.name,
+            message: error.message,
+          },
+        );
+        terminalErrorCaught = true;
       }
-      execLogger?.iteration(
-        input.contextId,
-        "iteration.terminal_error_caught",
-        {
-          errorType: error.name,
-          message: error.message,
-        },
-      );
-      terminalErrorCaught = true;
     } finally {
       await toolServer.close?.();
+    }
+
+    // A parked context short-circuits finalize: no validation, no failure
+    // accounting, no continue-scheduling (Req 3.1, 3.3).
+    if (parkedResult !== null) {
+      return parkedResult;
     }
 
     return finalizeIterationResult({

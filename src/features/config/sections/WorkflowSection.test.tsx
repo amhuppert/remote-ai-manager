@@ -7,7 +7,7 @@ import { WorkflowSection } from "./WorkflowSection";
 import { makeController } from "./test-controller";
 
 describe("WorkflowSection", () => {
-  it("renders all seven default sub-sections with DEFAULT badges when matching seed", () => {
+  it("renders all eight default sub-sections with DEFAULT badges when matching seed", () => {
     const { controller } = makeController();
     const { container } = render(<WorkflowSection controller={controller} />);
     const expected = [
@@ -15,6 +15,7 @@ describe("WorkflowSection", () => {
       "Collaboration",
       "Context validator",
       "Script validator",
+      "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
       "Mutability",
@@ -23,7 +24,7 @@ describe("WorkflowSection", () => {
       expect(screen.getByText(new RegExp(`^${title}$`))).toBeVisible();
     }
     const subs = container.querySelectorAll("[data-subsection]");
-    expect(subs.length).toBe(7);
+    expect(subs.length).toBe(8);
     for (const el of subs) {
       expect(el.textContent).toContain("DEFAULT");
       expect(el.textContent).not.toContain("MODIFIED");
@@ -93,6 +94,19 @@ describe("WorkflowSection", () => {
     )! as HTMLElement;
     fireEvent.click(toggle);
     expect(getState().workflowDefaults?.scriptValidator?.enabled).toBe(true);
+  });
+
+  it("toggling Ask user questions updates only that block via the controller", () => {
+    const { controller, getState } = makeController();
+    const { container } = render(<WorkflowSection controller={controller} />);
+    const askUserQuestions = container.querySelector(
+      '[data-subsection="askUserQuestions"]',
+    )! as HTMLElement;
+    const toggle = askUserQuestions.querySelector(
+      '[role="switch"]',
+    )! as HTMLElement;
+    fireEvent.click(toggle);
+    expect(getState().workflowDefaults?.askUserQuestions?.enabled).toBe(true);
   });
 
   it("does not render the literal 'disabled' or 'use' kind labels in the validator", () => {

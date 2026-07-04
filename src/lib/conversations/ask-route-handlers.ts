@@ -16,12 +16,26 @@ import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import { getSession } from "@/lib/state-store";
+import {
+  getSession,
+  getActiveGraphWorkflowExecution,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
+} from "@/lib/state-store";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
+import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
+import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
+import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
+import {
+  createUserInputGateService,
+  type LaneAskPermission,
+} from "@/lib/workflow-graph/user-input-gate";
 import {
   askQuestionItemSchema,
   type AskQuestionItem,
+  type ConversationRole,
   type ConversationState,
 } from "./schemas";
 
@@ -48,8 +62,15 @@ export interface AskRouteDeps {
     conversationId: string,
     event: ConversationEvent,
   ): boolean;
+  resolveLaneAskPermission(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<LaneAskPermission>;
   generateQuestionBatchId(): string;
 }
+
+const LANE_ASK_ROLES = new Set<ConversationRole>(["iteration", "validator"]);
 
 export function createAskQuestionHandlers(deps: AskRouteDeps) {
   async function post(
@@ -90,9 +111,35 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
       );
     }
 
-    // Mode gate: lane conversations (role set) and workflow-driven turns are
-    // autonomous — asking is denied server-side, backend-agnostic.
-    if (
+    // Mode gate. A graph-workflow lane conversation (role "iteration" =
+    // implementer, or "validator") may ask only when its context's resolved
+    // askUserQuestions toggle is enabled — the gate reverse-looks-up the lane
+    // and applies the cascade. An allowed lane ask falls through to the same
+    // turn / single-batch / Zod / registration path as an ordinary
+    // conversation. Every other conversation (planner, initialization, no role,
+    // or a non-lane workflow-driven turn) is autonomous and denied server-side.
+    const isLaneConversation =
+      conversation.role !== null && LANE_ASK_ROLES.has(conversation.role);
+
+    if (isLaneConversation) {
+      const permission = await deps.resolveLaneAskPermission(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      if (!permission.allowed) {
+        log.info("ask.denied_lane_gate", {
+          conversationId,
+          sessionName,
+          role: conversation.role,
+          reason: "lane_ask_not_permitted",
+        });
+        return NextResponse.json(
+          { error: AUTONOMOUS_DENIAL } satisfies ApiError,
+          { status: 403 },
+        );
+      }
+    } else if (
       conversation.role !== null ||
       conversation.activeTurnSource === "workflow"
     ) {
@@ -210,11 +257,34 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
   return { POST: post };
 }
 
+const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+  dispatchPush: dispatchPushForGraphWorkflowEvent,
+});
+
+const executionRepository = createGraphWorkflowExecutionRepository({
+  getSession,
+  getActiveGraphWorkflowExecution,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
+  eventPublisher,
+});
+
+const userInputGateService = createUserInputGateService({
+  getActive: executionRepository.getActive,
+  mutateActive: executionRepository.mutateActive,
+  publishUserInputPending: eventPublisher.publishUserInputPending,
+  publishUserInputResolved: eventPublisher.publishUserInputResolved,
+  sendConversationEvent,
+  now: () => new Date().toISOString(),
+});
+
 const defaultHandlers = createAskQuestionHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
   sendConversationEvent,
+  resolveLaneAskPermission: userInputGateService.resolveLaneAskPermission,
   generateQuestionBatchId: () => `q_${randomUUID()}`,
 });
 

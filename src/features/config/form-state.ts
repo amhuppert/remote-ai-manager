@@ -26,6 +26,9 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   humanApprovalGate: {
     enabled: false,
   },
+  askUserQuestions: {
+    enabled: false,
+  },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },
@@ -146,6 +149,7 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "workflowDefaults.collaboration",
   "workflowDefaults.contextValidator",
   "workflowDefaults.scriptValidator",
+  "workflowDefaults.askUserQuestions",
   "workflowDefaults.iterationPolicy",
   "workflowDefaults.circuitBreaker",
   "workflowDefaults.mutability",

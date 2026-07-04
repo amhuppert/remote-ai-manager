@@ -50,6 +50,7 @@ interface ExecutePromptStreamFn {
       workflowContext?: { executionId: string; contextId: string };
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks?: boolean;
+      askUserQuestionsEnabled?: boolean;
     },
   ): Promise<PromptStreamResult>;
 }
@@ -78,6 +79,13 @@ export interface RunIterationInput {
    * behavior of running directly inside the session worktree.
    */
   executionTarget?: ExecutionTarget;
+  /**
+   * Effective ask-user-questions availability for this implementer turn: the
+   * context's resolved toggle (an implementer lane always holds a real
+   * conversation, so lane-can-ask is always true here). Threaded into the
+   * prompt-stream options so the session instructions advertise the tool.
+   */
+  askUserQuestionsEnabled?: boolean;
 }
 
 export function createGraphWorkflowImplementerRunner(
@@ -117,6 +125,7 @@ export function createGraphWorkflowImplementerRunner(
       workflowContext: { executionId: string; contextId: string };
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks: boolean;
+      askUserQuestionsEnabled: boolean;
     } = {
       autonomous: true,
       backend: input.backend,
@@ -133,6 +142,9 @@ export function createGraphWorkflowImplementerRunner(
       // Deterministically opt this implementer turn into holding open for
       // in-flight waitable background tasks. No agent involvement (Req 6.3).
       waitForBackgroundTasks: true,
+      // Effective ask-user-questions availability drives the enabled/disabled
+      // asking-questions session instructions (Req 8.1-8.4).
+      askUserQuestionsEnabled: input.askUserQuestionsEnabled === true,
     };
     if (input.executionTarget !== undefined) {
       promptOptions.executionTarget = input.executionTarget;

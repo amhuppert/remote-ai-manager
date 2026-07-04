@@ -1532,6 +1532,125 @@ describe("NotificationListener", () => {
     expect(notificationStoreMocks.enqueueInputToast).not.toHaveBeenCalled();
   });
 
+  it("enqueues a workflow-question toast and invalidates execution, event log, and conversation views on graph-workflow-user-input-pending", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-user-input-pending", {
+      type: "graph-workflow-user-input-pending",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      contextTitle: "Build the API",
+      conversationId: "conv-1",
+      questionBatchId: "qb-1",
+      requestedAt: "2026-07-03T00:00:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(notificationStoreMocks.enqueueInputToast).toHaveBeenCalledWith({
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv-1",
+        title: "Workflow question",
+        contextTitle: "Build the API",
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+  });
+
+  it("falls back to the context id in the workflow-question toast when the pending context has no title", async () => {
+    const { es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-user-input-pending", {
+      type: "graph-workflow-user-input-pending",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      contextTitle: null,
+      conversationId: "conv-1",
+      questionBatchId: "qb-1",
+      requestedAt: "2026-07-03T00:00:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(notificationStoreMocks.enqueueInputToast).toHaveBeenCalledWith(
+        expect.objectContaining({ contextTitle: "ctx-1" }),
+      ),
+    );
+  });
+
+  it("invalidates execution, event log, and conversation views on graph-workflow-user-input-resolved without a toast", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-user-input-resolved", {
+      type: "graph-workflow-user-input-resolved",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      conversationId: "conv-1",
+      questionBatchId: "qb-1",
+      resolution: "answered",
+      resolvedAt: "2026-07-03T00:01:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+    expect(notificationStoreMocks.enqueueInputToast).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed user-input events without invalidating caches or toasting", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    invalidateQueries.mockClear();
+
+    // Missing required fields (executionId / conversationId / questionBatchId):
+    // both must be ignored.
+    es.emit("graph-workflow-user-input-pending", {
+      type: "graph-workflow-user-input-pending",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+    es.emit("graph-workflow-user-input-resolved", {
+      type: "graph-workflow-user-input-resolved",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(notificationStoreMocks.enqueueInputToast).not.toHaveBeenCalled();
+  });
+
   it("ignores malformed queue events without throwing or mutating caches", async () => {
     const client = makeClient();
     const invalidateQueries = vi.spyOn(client, "invalidateQueries");

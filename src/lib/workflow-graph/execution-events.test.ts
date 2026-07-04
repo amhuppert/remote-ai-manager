@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
+  graphWorkflowExecutionEventSchema,
 } from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
@@ -22,6 +23,7 @@ describe("graph workflow execution event publisher", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -40,6 +42,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-implement": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -58,6 +61,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-verify": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -419,6 +423,7 @@ describe("graph workflow execution event publisher", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -437,6 +442,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-implement": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -455,6 +461,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-verify": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -1233,6 +1240,147 @@ describe("graph workflow execution event publisher", () => {
       type: "graph-workflow-approval-resolved",
       decision: "rejected",
       message: "The plan misses the migration step.",
+    });
+    expect(dispatchPush).not.toHaveBeenCalled();
+  });
+
+  it("publishes user-input-pending carrying execution/context/conversation/batch identity and a schema-valid event-log row (no push)", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-06-11T09:00:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const eventLog = publisher.publishUserInputPending({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      questionBatchId: "batch-42",
+      requestedAt: "2026-06-11T08:59:00.000Z",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+      type: "graph-workflow-user-input-pending",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      contextId: "context-plan",
+      contextTitle: "Plan",
+      conversationId: "conversation-9",
+      questionBatchId: "batch-42",
+      requestedAt: "2026-06-11T08:59:00.000Z",
+    });
+    expect(eventLog).toHaveLength(1);
+    expect(eventLog[0]?.occurredAt).toBe("2026-06-11T09:00:00.000Z");
+    expect(eventLog[0]?.event).toMatchObject({
+      type: "graph-workflow-user-input-pending",
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      questionBatchId: "batch-42",
+    });
+    // The event-log row must satisfy the persisted event schema so the events
+    // repo accepts it (proves the SSE discriminated union was widened).
+    expect(() =>
+      graphWorkflowExecutionEventSchema.parse(eventLog[0]),
+    ).not.toThrow();
+    // The existing conversation ask-registration flow already notifies the
+    // operator; the workflow publisher must not double-notify with a push.
+    expect(dispatchPush).not.toHaveBeenCalled();
+  });
+
+  it("publishes user-input-resolved (answered) with broadcast and a schema-valid event-log row but no push", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-06-11T09:30:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const eventLog = publisher.publishUserInputResolved({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      questionBatchId: "batch-42",
+      resolution: "answered",
+      resolvedAt: "2026-06-11T09:29:00.000Z",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+      type: "graph-workflow-user-input-resolved",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      questionBatchId: "batch-42",
+      resolution: "answered",
+      resolvedAt: "2026-06-11T09:29:00.000Z",
+    });
+    expect(eventLog).toHaveLength(1);
+    expect(eventLog[0]?.occurredAt).toBe("2026-06-11T09:30:00.000Z");
+    expect(eventLog[0]?.event).toMatchObject({
+      type: "graph-workflow-user-input-resolved",
+      resolution: "answered",
+      questionBatchId: "batch-42",
+    });
+    expect(() =>
+      graphWorkflowExecutionEventSchema.parse(eventLog[0]),
+    ).not.toThrow();
+    expect(dispatchPush).not.toHaveBeenCalled();
+  });
+
+  it("publishes user-input-resolved (withdrawn) distinguishing it from answered", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-06-11T09:45:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const eventLog = publisher.publishUserInputResolved({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      questionBatchId: "batch-42",
+      resolution: "withdrawn",
+      resolvedAt: "2026-06-11T09:44:00.000Z",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: "graph-workflow-user-input-resolved",
+        resolution: "withdrawn",
+        questionBatchId: "batch-42",
+      }),
+    );
+    expect(eventLog[0]?.event).toMatchObject({
+      type: "graph-workflow-user-input-resolved",
+      resolution: "withdrawn",
     });
     expect(dispatchPush).not.toHaveBeenCalled();
   });

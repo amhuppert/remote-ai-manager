@@ -1,12 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -40,7 +34,7 @@ const noopCallbacks = {
 
 describe("GraphWorkflowPanel", () => {
   it("renders empty state when no execution exists", () => {
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={null}
         events={[]}
@@ -89,7 +83,7 @@ describe("GraphWorkflowPanel", () => {
       },
     });
 
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={execution}
         events={[]}
@@ -109,7 +103,7 @@ describe("GraphWorkflowPanel", () => {
     const onPause = vi.fn();
     const onAbort = vi.fn();
 
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "running" })}
         events={[]}
@@ -134,7 +128,7 @@ describe("GraphWorkflowPanel", () => {
   it("shows Resume button when paused", () => {
     const onResume = vi.fn();
 
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "paused" })}
         events={[]}
@@ -152,7 +146,7 @@ describe("GraphWorkflowPanel", () => {
   });
 
   it("shows only Clear button when execution is completed", () => {
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "completed" })}
         events={[]}
@@ -171,7 +165,7 @@ describe("GraphWorkflowPanel", () => {
     const onResume = vi.fn();
     const onClear = vi.fn();
 
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({
           status: "halted",
@@ -204,7 +198,7 @@ describe("GraphWorkflowPanel", () => {
   });
 
   it("shows only Clear button when execution is aborted", () => {
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({
           status: "aborted",
@@ -256,6 +250,7 @@ function createCodexExecutionWithRunningTask() {
         contextValidator: null,
         scriptValidator: { enabled: false },
         humanApprovalGate: { enabled: false },
+        askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -281,6 +276,7 @@ function createCodexExecutionWithRunningTask() {
     contextStates: {
       "context-codex-impl": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-codex-impl",
         status: "running",
         totalTaskCount: 1,
@@ -470,7 +466,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
   it("does not mount the transcript viewer until a task is selected (default render path for codex execution)", () => {
     const execution = createCodexExecutionWithRunningTask();
 
-    render(
+    renderWithQuery(
       <GraphWorkflowPanel
         execution={execution}
         events={[]}

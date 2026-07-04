@@ -20,6 +20,13 @@ import type {
   AgentBackendId,
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
+import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
+import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
+import type {
+  AskQuestionAnswer,
+  AskQuestionItem,
+} from "@/lib/conversations/schemas";
+import type { LaneConversationPendingState } from "./user-input-gate";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { GraphWorkflowContextValidatorInput } from "./execution-validation";
 import type {
@@ -35,6 +42,7 @@ import {
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
+import { getConversation as defaultGetConversation } from "@/lib/state-store";
 import {
   computeValidationDiffScope as defaultComputeValidationDiffScope,
   renderDiffScopeSection,
@@ -75,6 +83,36 @@ export interface BuildContextValidationPromptInput {
   // context's diff. Inserted after the acceptance criteria. Omitted when scope
   // computation is disabled or fails to produce a section.
   diffScopeSection?: string;
+  // Answers delivered into a validator resume: the asking validator conversation
+  // is reused (pinned) or, on rotation, a fresh one carries the block. Either
+  // way the re-run validator reads the answers before rendering its verdict
+  // (5.1, 5.3). The block echoes the question text, so it is self-sufficient.
+  resumeUserInput?: {
+    questionBatchId: string;
+    answers: Record<string, AskQuestionAnswer>;
+  };
+  /**
+   * Effective ask-user-questions availability for this validator turn. Only a
+   * Claude validator lane holds a real CC conversation, so a Codex validator is
+   * suppressed even when the toggle is on (see
+   * `resolveValidatorAskUserQuestionsEnabled`). When true a short ask-protocol
+   * reminder section is added; otherwise none (Req 8.1-8.4).
+   */
+  askUserQuestionsEnabled?: boolean;
+}
+
+/**
+ * The effective ask-user-questions flag for a context validator turn: the
+ * context's resolved toggle AND the lane holding a real CC conversation. Only a
+ * Claude validator lane holds one; a Codex validator runs headless, so it is
+ * always suppressed regardless of the toggle (Req 8.1). Pure so the suppression
+ * rule is unit-testable in isolation.
+ */
+export function resolveValidatorAskUserQuestionsEnabled(
+  validatorType: "claude" | "codex",
+  context: GraphWorkflowResolvedContext,
+): boolean {
+  return validatorType === "claude" && context.askUserQuestions.enabled;
 }
 
 function buildCharterSection(charter: WorkflowCharter): string {
@@ -109,9 +147,30 @@ export function buildContextValidationPrompt(
     ? `${buildCharterSection(input.charter)}\n\n`
     : "";
 
+  // A validator resume opens with the answers so the re-run validator reads them
+  // before its verdict; framed identically to the implementer variant (5.1, 5.3).
+  const resumeUserInputLines = input.resumeUserInput
+    ? [
+        "## Your Question Was Answered",
+        "The user answered the question(s) you asked. Use these answers to continue:",
+        "",
+        formatQuestionAnswersBlock(
+          input.resumeUserInput.questionBatchId,
+          input.resumeUserInput.answers,
+        ),
+        "",
+      ]
+    : [];
+
+  const askUserQuestionsLines = input.askUserQuestionsEnabled
+    ? [buildAskUserQuestionsReminderSection(), ""]
+    : [];
+
   return [
     charterSection + "# Context Validation",
     "",
+    ...resumeUserInputLines,
+    ...askUserQuestionsLines,
     "You are a validation agent reviewing a completed execution context in a graph workflow.",
     "You must inspect files and verify the agent's claims.",
     "Your job is to judge the *intent* of the acceptance criteria and decide whether the completed tasks satisfy that intent closely enough for the purposes of the overall objective.",
@@ -167,6 +226,17 @@ export type ValidatorOutcome =
       reason: "exception" | "unparseable" | "schema_mismatch";
       message: string;
       engine: "claude" | "codex";
+    }
+  // The validator turn ended with a pending question batch on its lane
+  // conversation and no verdict. Detected before verdict parsing (a pending
+  // question would otherwise surface as an unparseable verdict) and mapped by
+  // the orchestrator to the awaiting-user-input park path — never to the inline
+  // validation-failure accounting (Req 3.2, 3.3).
+  | {
+      kind: "asked_user";
+      conversationId: string;
+      questionBatchId: string;
+      questions: AskQuestionItem[];
     };
 
 function validateIssueTaskIds(
@@ -181,6 +251,19 @@ function validateIssueTaskIds(
     return null;
   }
   return `Validator issues referenced tasks outside the context: ${invalidTaskIds.join(", ")}`;
+}
+
+function validatorOutcomeLogFields(outcome: ValidatorOutcome): {
+  issueCount: number;
+  reopenTaskIds: string[];
+} {
+  if (outcome.kind === "pass" || outcome.kind === "fail") {
+    return {
+      issueCount: outcome.issues.length,
+      reopenTaskIds: outcome.reopenTaskIds,
+    };
+  }
+  return { issueCount: 0, reopenTaskIds: [] };
 }
 
 function deriveReopenTaskIds(issues: WorkflowValidatorIssue[]): string[] {
@@ -400,6 +483,19 @@ export interface ValidatorRunnerDeps {
   computeValidationDiffScope?: (
     worktreePath: string,
   ) => Promise<ValidationDiffScope>;
+  /**
+   * Read the post-turn pending-question state of the validator's lane
+   * conversation. Runs before verdict parsing so a question-ending turn yields
+   * `asked_user` instead of an unparseable verdict (Req 3.2). Returns null when
+   * the conversation is unknown — Codex validator lanes dispatch against a
+   * synthetic id with no CC conversation, so they never produce `asked_user`.
+   * Defaults to reading the conversation via the state store.
+   */
+  readLaneConversation?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<LaneConversationPendingState | null>;
 }
 
 const backendRefCache = new Map<string, AgentSessionRef>();
@@ -559,6 +655,36 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
   const computeValidationDiffScope =
     deps.computeValidationDiffScope ?? defaultComputeValidationDiffScope;
+  const readLaneConversation =
+    deps.readLaneConversation ??
+    (async (projectPath, sessionName, conversationId) => {
+      try {
+        const conversation = await defaultGetConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+        );
+        if (!conversation) {
+          return null;
+        }
+        return {
+          pendingQuestionId: conversation.pendingQuestionId,
+          pendingQuestions: conversation.pendingQuestions ?? [],
+        };
+      } catch (error) {
+        // A read failure cannot confirm a pending question, so the park check
+        // treats it as "no question" (deny-by-default). Logged so a systematic
+        // failure surfaces rather than silently suppressing every validator park.
+        validatorLogger.warn(
+          "graph-workflow.validator.read_lane_conversation_failed",
+          {
+            conversationId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        return null;
+      }
+    });
 
   async function dispatchValidatorTurn(
     invocation: ValidatorTaskInvocation,
@@ -600,6 +726,48 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     });
 
     return taskRunResultToValidatorTaskResult(result);
+  }
+
+  /**
+   * Pre-verdict pending-question check (Req 3.2, 3.3; design "Park detection →
+   * Validator"). Reads the lane conversation the turn dispatched against; if a
+   * question batch is pending, returns an `asked_user` outcome so the caller
+   * short-circuits before verdict parsing and the orchestrator maps it to the
+   * park path. Null → parse the verdict as normal. Codex validator lanes have no
+   * real conversation → the reader returns null → never `asked_user`.
+   */
+  async function checkValidatorPendingQuestion(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+    conversationId: string,
+    engine: "claude" | "codex",
+  ): Promise<Extract<ValidatorOutcome, { kind: "asked_user" }> | null> {
+    const laneConversation = await readLaneConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+    );
+    const pendingQuestionId = laneConversation?.pendingQuestionId ?? null;
+    if (pendingQuestionId === null) {
+      return null;
+    }
+    const questions = laneConversation?.pendingQuestions ?? [];
+    validatorLogger.info("graph-workflow.validator.asked_user", {
+      executionId,
+      contextId,
+      engine,
+      conversationId,
+      questionBatchId: pendingQuestionId,
+      questionCount: questions.length,
+    });
+    return {
+      kind: "asked_user",
+      conversationId,
+      questionBatchId: pendingQuestionId,
+      questions,
+    };
   }
 
   async function applyLaneStateUpdate(
@@ -666,6 +834,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     contextLimitTokens: number | undefined,
     allowedTaskIds: string[],
     overrideWorktreePath: string | undefined,
+    pinnedConversationId: string | undefined,
   ): Promise<ValidatorRunResult> {
     const execLogger = getExecutionLogger(execution.id);
     const worktreePath =
@@ -685,6 +854,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     });
 
     if (!deps.continuityService) {
+      const noServiceConversationId = syntheticValidatorConversationId(
+        execution.id,
+        contextId,
+        lane,
+        validatorType,
+      );
       const taskResult = await dispatchValidatorTurn({
         prompt,
         backend: validatorType,
@@ -696,12 +871,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         laneRef: { workflowId: execution.id, laneId: lane },
         projectPath,
         sessionName,
-        conversationId: syntheticValidatorConversationId(
-          execution.id,
-          contextId,
-          lane,
-          validatorType,
-        ),
+        conversationId: noServiceConversationId,
       });
 
       if (taskResult.transcript) {
@@ -710,6 +880,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           { lane, engine: validatorType },
           taskResult.transcript,
         );
+      }
+
+      const askedUser = await checkValidatorPendingQuestion(
+        projectPath,
+        sessionName,
+        execution.id,
+        contextId,
+        noServiceConversationId,
+        validatorType,
+      );
+      if (askedUser) {
+        return {
+          result: askedUser,
+          metadata: buildNoServiceMetadata(),
+        };
       }
 
       if (taskResult.error) {
@@ -746,9 +931,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         engine: validatorType,
         parsePath,
         kind: parsed.kind,
-        issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
-        reopenTaskIds:
-          parsed.kind === "infra_error" ? [] : parsed.reopenTaskIds,
+        ...validatorOutcomeLogFields(parsed),
       });
 
       return {
@@ -764,6 +947,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       contextId,
       lane,
       engine: validatorType,
+      pinnedConversationId,
     });
 
     const resolvedLaneState =
@@ -822,6 +1006,29 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         refCacheKey(execution.id, lane),
         taskResult.backendRef,
       );
+    }
+
+    // Pre-verdict park check: a pending question short-circuits before parsing
+    // and before the continuity turn bookkeeping, so the asking turn never
+    // reaches the inline validation-failure accounting (Req 3.2, 3.3).
+    const askedUser = await checkValidatorPendingQuestion(
+      projectPath,
+      sessionName,
+      execution.id,
+      contextId,
+      dispatchConversationId,
+      validatorType,
+    );
+    if (askedUser) {
+      return {
+        result: askedUser,
+        metadata: {
+          sessionRef: taskResult.backendRef ?? null,
+          reviewArtifact: null,
+          limitEvaluation: "disabled",
+          rotateBeforeNextTurn: false,
+        },
+      };
     }
 
     const runnerError = taskResult.error;
@@ -893,9 +1100,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         engine: "codex",
         parsePath,
         kind: parsed.kind,
-        issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
-        reopenTaskIds:
-          parsed.kind === "infra_error" ? [] : parsed.reopenTaskIds,
+        ...validatorOutcomeLogFields(parsed),
         sessionAction: resolved.sessionAction,
         threadId: codexThreadId,
       });
@@ -952,8 +1157,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       engine: "claude",
       parsePath,
       kind: parsed.kind,
-      issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
-      reopenTaskIds: parsed.kind === "infra_error" ? [] : parsed.reopenTaskIds,
+      ...validatorOutcomeLogFields(parsed),
       sessionAction: resolved.sessionAction,
       backendSessionId: backendSessionId || null,
     });
@@ -1059,6 +1263,20 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
       ...(input.context.charter ? { charter: input.context.charter } : {}),
       diffScopeSection: renderedDiffScope.section,
+      // A Codex validator lane holds no CC conversation, so the tool is
+      // suppressed even when the toggle is on (Req 8.1).
+      askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
+        input.validator.type,
+        input.context,
+      ),
+      ...(input.resumeUserInput
+        ? {
+            resumeUserInput: {
+              questionBatchId: input.resumeUserInput.questionBatchId,
+              answers: input.resumeUserInput.answers,
+            },
+          }
+        : {}),
     });
 
     execLogger?.writePrompt(input.context.id, "context-validator.md", prompt);
@@ -1088,6 +1306,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           contextLimitTokens,
           allowedTaskIds,
           overrideWorktreePath,
+          input.resumeUserInput?.conversationId,
         );
       }
 
@@ -1104,6 +1323,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         contextLimitTokens,
         allowedTaskIds,
         overrideWorktreePath,
+        input.resumeUserInput?.conversationId,
       );
     } catch (error) {
       const errorMessage =

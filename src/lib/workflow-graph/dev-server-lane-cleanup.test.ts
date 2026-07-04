@@ -16,6 +16,7 @@ function ctx(
 ): GraphWorkflowExecutionContextState {
   return {
     pendingApproval: null,
+    pendingUserInput: null,
     contextId,
     status: "running",
     totalTaskCount: 1,

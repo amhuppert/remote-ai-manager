@@ -213,6 +213,7 @@ function makeExecution(
           },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
+          askUserQuestions: { enabled: false },
         },
         {
           id: "ctx-2",
@@ -227,6 +228,7 @@ function makeExecution(
           contextValidator: null,
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
+          askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -243,6 +245,7 @@ function makeExecution(
           contextValidator: null,
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
+          askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },
@@ -324,6 +327,7 @@ const createUserSchema = z.object({
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 3,
@@ -342,6 +346,7 @@ const createUserSchema = z.object({
       },
       "ctx-2": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-2",
         status: "pending",
         totalTaskCount: 2,
@@ -360,6 +365,7 @@ const createUserSchema = z.object({
       },
       "ctx-3": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-3",
         status: "completed",
         totalTaskCount: 1,
@@ -470,6 +476,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-1",
         status: "halted",
         totalTaskCount: 3,
@@ -488,6 +495,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       "ctx-2": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-2",
         status: "pending",
         totalTaskCount: 2,
@@ -506,6 +514,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       "ctx-3": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "ctx-3",
         status: "completed",
         totalTaskCount: 1,

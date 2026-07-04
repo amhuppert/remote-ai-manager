@@ -22,6 +22,12 @@ export interface PromptSlotView {
  * standing, the workflow-managed read-only treatment is bypassed so the user
  * can chat alongside the gate panel (requirement 6.1); pending questions keep
  * precedence over the composer but render below the gate panel.
+ *
+ * A pending question also bypasses the read-only treatment: a workflow-managed
+ * lane conversation reaches this state only via the ask-in-workflow gate
+ * (task_run / smart-merge turns never register questions), so its parked
+ * question must be answerable on the lane conversation view rather than hidden
+ * behind the read-only banner (requirement 4.2).
  */
 export function resolvePromptSlotView({
   hasApprovalGate,
@@ -32,7 +38,11 @@ export function resolvePromptSlotView({
   isWorkflowManagedConversation: boolean;
   hasPendingQuestions: boolean;
 }): PromptSlotView {
-  if (!hasApprovalGate && isWorkflowManagedConversation) {
+  if (
+    !hasApprovalGate &&
+    isWorkflowManagedConversation &&
+    !hasPendingQuestions
+  ) {
     return { showApprovalGate: false, content: "readonly" };
   }
   return {

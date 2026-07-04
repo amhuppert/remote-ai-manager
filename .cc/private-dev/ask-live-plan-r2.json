@@ -1,0 +1,57 @@
+{
+  "name": "AskLive Theme Decision R2b",
+  "description": "Live verification of ask-question-in-graph-workflows after the follow-up-loop park fix: agent asks, context parks, operator answers inline, workflow resumes.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {
+      "askUserQuestions": { "enabled": true }
+    },
+    "charter": {
+      "mission": "Record a single branding decision that only the operator can make.",
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "acceptance-criteria",
+          "label": "Per-context acceptance criteria",
+          "type": "spec",
+          "locator": "context.acceptanceCriteria",
+          "description": "The acceptance criteria for the decision context.",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-decide",
+        "title": "Record theme decision",
+        "acceptanceCriteria": "A file DECISION.md exists at the repo root containing exactly one line 'theme: <chosen>' where <chosen> is the option the operator selected via the ask tool.",
+        "implementer": {
+          "backend": "claude",
+          "model": "opus",
+          "reasoningEffort": "medium"
+        },
+        "contextValidator": { "kind": "disabled" }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-decide",
+        "contextId": "context-decide",
+        "order": 1,
+        "title": "Ask which theme, then record it",
+        "instructions": "Your job is to record a branding decision in a NEW file at the repository root named DECISION.md. The decision is which primary theme color the project should adopt. There are exactly three candidate options and they are equally valid: this is a genuinely ambiguous, consequential, hard-to-reverse branding choice with NO sensible default, so you MUST NOT guess or pick one yourself.\n\nAsk the operator this question using EXACTLY this one command, and nothing else, on your very first action (the CC_SERVER_URL prefix is REQUIRED and correct — use it verbatim):\n\nCC_SERVER_URL=http://localhost:3071 cctl ask --question \"Primary theme color\" --option \"midnight-blue\" --option \"forest-green\" --option \"crimson-red\"\n\nDo NOT run any other command. Do NOT run cctl doctor, cctl --help, or probe servers. Do NOT change the CC_SERVER_URL value shown above. Run that single command exactly once. When it prints that the question batch was registered, immediately END YOUR TURN with a one-line handoff note. Do not create any file yet.\n\nWhen the workflow resumes and delivers the operator's answer, create the file DECISION.md at the repository root containing exactly one line: 'theme: <chosen>' where <chosen> is the exact option the operator selected. Then your task is complete.",
+        "source": "user"
+      }
+    ],
+    "edges": []
+  },
+  "layout": {
+    "workflowId": "asklive-r2",
+    "contextPositions": {
+      "context-decide": { "x": 0, "y": 0 }
+    },
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

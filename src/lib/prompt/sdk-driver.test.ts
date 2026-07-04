@@ -30,6 +30,8 @@ import {
   ConversationCommandDispatcherUnavailableError,
   DEBUG_MODE_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS,
+  ASK_QUESTION_INSTRUCTIONS_ENABLED,
+  selectAskQuestionInstructions,
   hasCollabPrefix,
   stripCollabPrefix,
   type PromptDeps,
@@ -259,6 +261,62 @@ describe("ASK_QUESTION_INSTRUCTIONS", () => {
     expect(ASK_QUESTION_INSTRUCTIONS).toContain("skipped");
     expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/batch related questions/i);
   });
+
+  it("keeps the disabled/default variant's autonomous-denied guidance (Req 8.4)", () => {
+    // Disabled lanes and non-workflow conversations must NOT be told the tool
+    // is available; the existing best-judgment guidance stays verbatim.
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/denied for autonomous turns/i);
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/best judgment/i);
+  });
+});
+
+describe("ASK_QUESTION_INSTRUCTIONS_ENABLED (workflow lane variant, Req 8.1-8.3)", () => {
+  it("is a single well-formed <asking-questions> block", () => {
+    expect(
+      ASK_QUESTION_INSTRUCTIONS_ENABLED.startsWith("<asking-questions>"),
+    ).toBe(true);
+    expect(
+      ASK_QUESTION_INSTRUCTIONS_ENABLED.endsWith("</asking-questions>"),
+    ).toBe(true);
+  });
+
+  it("states the tool is available and the full ask protocol (Req 8.1-8.3)", () => {
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toContain("cctl ask");
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/available/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/consequential/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/hard-to-reverse/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/ambiguous/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/batch/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/end your turn/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/resume/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toContain("skipped");
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/best judgment/i);
+    // The workflow pauses the context until answered — asking is not free.
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/pause/i);
+  });
+
+  it("does not carry the autonomous-denied disclaimer of the disabled variant", () => {
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).not.toMatch(
+      /denied for autonomous turns/i,
+    );
+  });
+});
+
+describe("selectAskQuestionInstructions", () => {
+  it("returns the enabled variant when askUserQuestionsEnabled is true", () => {
+    expect(selectAskQuestionInstructions(true)).toBe(
+      ASK_QUESTION_INSTRUCTIONS_ENABLED,
+    );
+  });
+
+  it("returns the disabled/default variant when false or undefined", () => {
+    expect(selectAskQuestionInstructions(false)).toBe(
+      ASK_QUESTION_INSTRUCTIONS,
+    );
+    expect(selectAskQuestionInstructions(undefined)).toBe(
+      ASK_QUESTION_INSTRUCTIONS,
+    );
+  });
 });
 
 describe("waitForTurnCompletion — failure during resource acquisition", () => {
@@ -304,6 +362,50 @@ describe("waitForTurnCompletion — failure during resource acquisition", () => 
     );
 
     expect(result.error).toContain("Query semaphore timeout");
+  });
+});
+
+describe("waitForTurnCompletion — turn ends parked on a user question", () => {
+  it("resolves (does not hang) when the turn settles into waitingForInput after an ask", async () => {
+    // A workflow/autonomous agent that ends its turn via `cctl ask` leaves the
+    // conversation machine in the top-level `waitingForInput` state — one of the
+    // three settled, turn-claimable boundaries the machine documents (idle |
+    // waitingForInput | debug.*). The turn IS complete; executePromptStream must
+    // return so the workflow can run its post-turn park check. Before the fix,
+    // isSettled omitted waitingForInput and the wait hung forever.
+    mockActor.getSnapshot.mockReturnValue({
+      value: "acquiringResources",
+      status: "active" as const,
+      context: {},
+    });
+    mockActor.subscribe.mockImplementation(
+      (callback: (snapshot: unknown) => void) => {
+        queueMicrotask(() => {
+          callback({ value: "generating", status: "active" });
+          queueMicrotask(() => {
+            callback({ value: "waitingForInput", status: "active" });
+          });
+        });
+        return { unsubscribe: vi.fn() };
+      },
+    );
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await withTimeout(
+      executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Which theme should we use?",
+        vi.fn(),
+        "conv-123",
+      ),
+      1000,
+    );
+
+    expect(result.conversationId).toBe("conv-123");
   });
 });
 

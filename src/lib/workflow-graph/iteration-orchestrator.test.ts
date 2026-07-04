@@ -23,12 +23,19 @@ import {
   IterationHaltedError,
 } from "./iteration-orchestrator";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
+import { AgentTurnFailedError } from "./errors";
 import type {
   ResolveImplementerCallInput,
   RecordClaudeLaneTurnInput,
   RecordCodexLaneTurnInput,
 } from "./workflow-continuity-service";
 import { createWorkflowContinuityService } from "./workflow-continuity-service";
+import { createUserInputGateService } from "./user-input-gate";
+import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
+import type {
+  AskQuestionAnswer,
+  AskQuestionItem,
+} from "@/lib/conversations/schemas";
 
 type MutateActiveReturn =
   | GraphWorkflowExecution
@@ -171,6 +178,7 @@ function createExecutionWithPlanTasks(
     contextStates: {
       "context-plan": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-plan",
         status: "running",
         totalTaskCount: 2,
@@ -189,6 +197,7 @@ function createExecutionWithPlanTasks(
       },
       "context-implement": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-implement",
         status: "pending",
         totalTaskCount: 1,
@@ -207,6 +216,7 @@ function createExecutionWithPlanTasks(
       },
       "context-verify": {
         pendingApproval: null,
+        pendingUserInput: null,
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,
@@ -659,6 +669,119 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.shouldContinueInContext).toBe(false);
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
+    );
+  });
+
+  it("threads the resolved askUserQuestions toggle into runAgentIteration (Req 8.1)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "completed",
+      "task-plan-2": "pending",
+    });
+    execution.workingDefinition.executionContexts =
+      execution.workingDefinition.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? { ...ctx, askUserQuestions: { enabled: true } }
+          : ctx,
+      );
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({ id: "conversation-aq" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Finished planning",
+        completedAt: "2026-03-27T16:22:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:20:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runAgentIteration).toHaveBeenCalledWith(
+      expect.objectContaining({ askUserQuestionsEnabled: true }),
+    );
+  });
+
+  it("passes askUserQuestionsEnabled false when the toggle is disabled", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "completed",
+        "task-plan-2": "pending",
+      }),
+    );
+    const createConversation = vi.fn(async () => ({ id: "conversation-aq2" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Finished planning",
+        completedAt: "2026-03-27T16:22:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:20:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runAgentIteration).toHaveBeenCalledWith(
+      expect.objectContaining({ askUserQuestionsEnabled: false }),
     );
   });
 
@@ -1218,6 +1341,108 @@ describe("graph workflow iteration orchestrator", () => {
         compacted: false,
       }),
     );
+  });
+
+  it("pins the asking conversation and embeds the answers block on an implementer resume", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const createConversation = vi.fn(async () => ({ id: "fallback-conv" }));
+    const createToolServer = vi.fn(() => ({ server: {} }));
+    const capturedPrompts: string[] = [];
+    const runAgentIteration = vi.fn(async (input: { prompt: string }) => {
+      capturedPrompts.push(input.prompt);
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:00:00.000Z",
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:01:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conv-ask",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    // The asking conversation is reused (pinned), so the follow-up prompt
+    // carries the block.
+    const resolveImplementerCall = vi.fn(
+      async (input: ResolveImplementerCallInput) => ({
+        execution: input.execution,
+        conversationId: "conv-ask",
+        sessionAction: "reuse" as const,
+        promptMode: "follow_up" as const,
+      }),
+    );
+    const recordClaudeTurnOutcome = vi.fn(
+      async (input: RecordClaudeLaneTurnInput) => input.execution,
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome: vi.fn(),
+      },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const answers: Record<string, AskQuestionAnswer> = {
+      q1: {
+        selected: ["A"],
+        note: "prefer A",
+        skipped: false,
+        question: "Which approach?",
+      },
+    };
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      resumeUserInput: {
+        conversationId: "conv-ask",
+        questionBatchId: "batch-conv-ask",
+        answers,
+        lane: "implementer",
+      },
+    });
+
+    // The pin threads the asking conversation into the resolver.
+    expect(resolveImplementerCall).toHaveBeenCalledWith(
+      expect.objectContaining({ pinnedConversationId: "conv-ask" }),
+    );
+    // The follow-up prompt embeds the answers block verbatim.
+    expect(capturedPrompts[0]).toContain(
+      formatQuestionAnswersBlock("batch-conv-ask", answers),
+    );
+    expect(capturedPrompts[0]).toContain("## Your Question Was Answered");
   });
 
   it("binds the live conversation to incomplete tasks before the agent turn begins", async () => {
@@ -2381,6 +2606,7 @@ describe("codex implementer continuity", () => {
           contextValidator: null,
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
+          askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -2417,6 +2643,7 @@ describe("codex implementer continuity", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 2,
@@ -3699,6 +3926,124 @@ describe("runIteration when all tasks are already completed on entry", () => {
       pass: true,
       summary: "Context passed on re-validation",
     });
+  });
+
+  it("forwards a validator resume into context validation (pin + answer block)", async () => {
+    const repository = seedRepoWithAllTasksCompleted();
+
+    let receivedResume:
+      | { conversationId: string; questionBatchId: string; lane: string }
+      | undefined;
+    const validateContextCompletion = vi.fn(
+      async (input: {
+        resumeUserInput?: {
+          conversationId: string;
+          questionBatchId: string;
+          lane: string;
+        };
+      }) => {
+        receivedResume = input.resumeUserInput;
+        return {
+          kind: "pass" as const,
+          summary: "Context passed after answer",
+          feedback: "Context validation passed.",
+          issues: [] as never[],
+          reopenTaskIds: [],
+          sessionRef: null,
+          reviewArtifact: null,
+        };
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(),
+      createToolServer: vi.fn(),
+      runAgentIteration: vi.fn(),
+      validationService: { validateContextCompletion },
+      now: () => NOW,
+    });
+
+    const answers: Record<string, AskQuestionAnswer> = {
+      q1: {
+        selected: ["Reopen"],
+        note: null,
+        skipped: false,
+        question: "Reopen the task?",
+      },
+    };
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      resumeUserInput: {
+        conversationId: "validator-conv-ask",
+        questionBatchId: "batch-validator",
+        answers,
+        lane: "context_validator",
+      },
+    });
+
+    // The validator resume is forwarded so the runner pins the asking
+    // validator conversation and embeds the answers block in its prompt.
+    expect(receivedResume).toEqual({
+      conversationId: "validator-conv-ask",
+      questionBatchId: "batch-validator",
+      answers,
+      lane: "context_validator",
+    });
+  });
+
+  it("does not forward an implementer resume into context validation", async () => {
+    const repository = seedRepoWithAllTasksCompleted();
+
+    let receivedResume: unknown = "unset";
+    const validateContextCompletion = vi.fn(
+      async (input: { resumeUserInput?: unknown }) => {
+        receivedResume = input.resumeUserInput;
+        return {
+          kind: "pass" as const,
+          summary: "Context passed",
+          feedback: "Context validation passed.",
+          issues: [] as never[],
+          reopenTaskIds: [],
+          sessionRef: null,
+          reviewArtifact: null,
+        };
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(),
+      createToolServer: vi.fn(),
+      runAgentIteration: vi.fn(),
+      validationService: { validateContextCompletion },
+      now: () => NOW,
+    });
+
+    // An implementer resume that happens to reach the inline completion check
+    // must not leak its answers into the validator prompt.
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      resumeUserInput: {
+        conversationId: "impl-conv-ask",
+        questionBatchId: "batch-impl",
+        answers: {},
+        lane: "implementer",
+      },
+    });
+
+    expect(receivedResume).toBeUndefined();
   });
 
   it("signals halt with validator_infra_error without running implementer when validator returns infra_error on re-validation", async () => {
@@ -5201,6 +5546,798 @@ describe("human approval gate at finalization", () => {
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(false);
+  });
+});
+
+// -- Awaiting-user-input park after an implementer turn ------------------------
+
+describe("awaiting-user-input park after an implementer turn", () => {
+  const NOW = "2026-07-03T16:00:00.000Z";
+
+  function question(id: string): AskQuestionItem {
+    return {
+      id,
+      question: `Which path for ${id}?`,
+      options: [
+        { label: "A", recommended: false },
+        { label: "B", recommended: false },
+      ],
+      multiSelect: false,
+      required: true,
+      allowNote: true,
+    };
+  }
+
+  /** Real gate over the in-memory repository — exercises the true park write. */
+  function createGate(
+    repository: ReturnType<typeof createRepository>,
+    eventPublisher: ReturnType<
+      typeof createGraphWorkflowExecutionEventPublisher
+    >,
+  ) {
+    return createUserInputGateService({
+      getActive: repository.getActive,
+      mutateActive: repository.mutateActive,
+      publishUserInputPending: eventPublisher.publishUserInputPending,
+      publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      sendConversationEvent: () => false,
+      now: () => NOW,
+    });
+  }
+
+  /** Agent turn that completes every plan task (so validation would run absent a park). */
+  function completeAllPlanTasks(
+    repository: ReturnType<typeof createRepository>,
+  ) {
+    return vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: NOW,
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: NOW,
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-ask",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+  }
+
+  it("parks the context when the lane conversation ends with a pending question", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    // Pre-set a non-zero failure count so we can prove parking leaves it alone.
+    execution.contextStates["context-plan"]!.consecutiveFailureCount = 2;
+    execution.contextStates["context-plan"]!.iterationCount = 4;
+    const repository = createRepository(execution);
+    const iterationCountBeforeTurn =
+      repository.read().contextStates["context-plan"]!.iterationCount;
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+
+    const questions = [question("q1"), question("q2")];
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: "batch-1",
+      pendingQuestions: questions,
+    }));
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "unreached",
+      feedback: "unreached",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Parked outcome: the context does not continue and validation never ran.
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.conversationId).toBe("conversation-ask");
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+
+    // The returned execution reflects the committed park.
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "awaiting_user_input",
+    );
+
+    // The gate was driven with the implementer lane, batch, and snapshot questions.
+    expect(enterSpy).toHaveBeenCalledTimes(1);
+    expect(enterSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextId: "context-plan",
+        lane: "implementer",
+        conversationId: "conversation-ask",
+        questionBatchId: "batch-1",
+        questions,
+      }),
+    );
+
+    // Persisted state: awaiting_user_input with the snapshot record.
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_user_input");
+    expect(contextState?.pendingUserInput).toMatchObject({
+      conversationId: "conversation-ask",
+      lane: "implementer",
+      questionBatchId: "batch-1",
+      questions,
+      answers: null,
+    });
+
+    // Req 3.3: no iteration consumed and no failure recorded while parked.
+    expect(contextState?.iterationCount).toBe(iterationCountBeforeTurn);
+    expect(contextState?.consecutiveFailureCount).toBe(2);
+
+    // The parked context is not scheduled to continue.
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+  });
+
+  it("parks after the asking turn without dispatching a follow-up (ask-ended turn never reaches the follow-up loop)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    execution.contextStates["context-plan"]!.consecutiveFailureCount = 1;
+    execution.contextStates["context-plan"]!.iterationCount = 3;
+    const repository = createRepository(execution);
+    const iterationCountBeforeTurn =
+      repository.read().contextStates["context-plan"]!.iterationCount;
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const questions = [question("q1")];
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: "batch-1",
+      pendingQuestions: questions,
+    }));
+
+    // The asking turn ends cleanly with its tasks still incomplete — the shape
+    // that would otherwise enter the follow-up loop. A follow-up SUBMIT_PROMPT
+    // onto a waitingForInput conversation wipes the pending question (the
+    // machine treats any claimed turn as superseding it), so the park check
+    // must run before every follow-up dispatch, not only after the loop.
+    const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conversation-ask",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    }));
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "unreached",
+      feedback: "unreached",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The discriminating assertion: exactly one agent turn ran. The ask-ended
+    // turn parks before any follow-up prompt is dispatched onto the asking
+    // conversation.
+    expect(runAgentIteration).toHaveBeenCalledTimes(1);
+    expect(enterSpy).toHaveBeenCalledTimes(1);
+
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_user_input");
+    expect(contextState?.pendingUserInput).toMatchObject({
+      conversationId: "conversation-ask",
+      lane: "implementer",
+      questionBatchId: "batch-1",
+      questions,
+      answers: null,
+    });
+
+    // Req 3.3 holds at this check site too: no iteration consumed, no failure
+    // recorded.
+    expect(contextState?.iterationCount).toBe(iterationCountBeforeTurn);
+    expect(contextState?.consecutiveFailureCount).toBe(1);
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+  });
+
+  it("parks the context when an ask-ended turn surfaces a sessionDiedMidTurn error (park wins over the transient error)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    // Pre-set a non-zero failure count to prove parking leaves it alone.
+    execution.contextStates["context-plan"]!.consecutiveFailureCount = 2;
+    execution.contextStates["context-plan"]!.iterationCount = 4;
+    const repository = createRepository(execution);
+    const iterationCountBeforeTurn =
+      repository.read().contextStates["context-plan"]!.iterationCount;
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+
+    const questions = [question("q1"), question("q2")];
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: "batch-1",
+      pendingQuestions: questions,
+    }));
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "unreached",
+      feedback: "unreached",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    // The lane agent asked and ended its turn, but the implementer runner's
+    // waitForBackgroundTasks settlement barrier surfaced the ask-interrupt as a
+    // sessionDiedMidTurn SDK error thrown out of the agent iteration. A pending
+    // question must still win over the transient error and park the context.
+    const runAgentIteration = vi.fn(async () => {
+      throw new AgentTurnFailedError(
+        "SDK error: QuerySession ended before the turn completed",
+        {
+          contextId: "context-plan",
+          engine: "claude",
+          cause: "sdk_error",
+          originalMessage: "QuerySession ended before the turn completed",
+        },
+      );
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Parked outcome: no continue, validation never ran, status is awaiting.
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "awaiting_user_input",
+    );
+
+    expect(enterSpy).toHaveBeenCalledTimes(1);
+    expect(enterSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextId: "context-plan",
+        lane: "implementer",
+        conversationId: "conversation-ask",
+        questionBatchId: "batch-1",
+        questions,
+      }),
+    );
+
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_user_input");
+    // Req 3.3: parking consumes no iteration and records no failure, even though
+    // the turn technically threw.
+    expect(contextState?.iterationCount).toBe(iterationCountBeforeTurn);
+    expect(contextState?.consecutiveFailureCount).toBe(2);
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+  });
+
+  it("re-throws an agent turn error when no question is pending (park never masks a real failure)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const repository = createRepository(execution);
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    // No pending question on the lane conversation → a genuine failure.
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: null,
+      pendingQuestions: [],
+    }));
+
+    const runAgentIteration = vi.fn(async () => {
+      throw new AgentTurnFailedError("SDK error: genuine-boom", {
+        contextId: "context-plan",
+        engine: "claude",
+        cause: "sdk_error",
+        originalMessage: "genuine-boom",
+      });
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      validationService: { validateContextCompletion: vi.fn() },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    await expect(
+      orchestrator.runIteration({
+        projectPath: "/repo",
+        projectName: "repo",
+        sessionName: "session-1",
+        contextId: "context-plan",
+      }),
+    ).rejects.toThrow(/genuine-boom|QuerySession/);
+    expect(enterSpy).not.toHaveBeenCalled();
+    expect(repository.read().contextStates["context-plan"]?.status).not.toBe(
+      "awaiting_user_input",
+    );
+  });
+
+  it("does not park when answers are already recorded at the check (fast answer)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    // Fast answer: a same-batch record with answers already exists pre-park.
+    execution.contextStates["context-plan"]!.pendingUserInput = {
+      conversationId: "conversation-ask",
+      lane: "implementer",
+      questionBatchId: "batch-1",
+      questions: [question("q1")],
+      requestedAt: NOW,
+      answers: {
+        byQuestionId: {
+          q1: { selected: ["A"], note: null, skipped: false, question: "?" },
+        },
+        answeredAt: NOW,
+      },
+    };
+    const repository = createRepository(execution);
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: "batch-1",
+      pendingQuestions: [question("q1")],
+    }));
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "All checks passed",
+      feedback: "Context validation passed.",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The gate was consulted but returned answers_ready → no park.
+    expect(enterSpy).toHaveBeenCalledTimes(1);
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).not.toBe(
+      "awaiting_user_input",
+    );
+
+    // Fell through to the normal finalize path: all tasks complete → validation ran.
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "completed",
+    );
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("behaves identically to today when the lane has no pending question", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const repository = createRepository(execution);
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: null,
+      pendingQuestions: [],
+    }));
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "All checks passed",
+      feedback: "Context validation passed.",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // No pending question → no park, no gate call, normal completion.
+    expect(enterSpy).not.toHaveBeenCalled();
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "completed",
+    );
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(
+      repository.read().contextStates["context-plan"]?.pendingUserInput,
+    ).toBeNull();
+  });
+});
+
+// -- Awaiting-user-input park after a context-validator turn ------------------
+
+describe("awaiting-user-input park after a context-validator turn", () => {
+  const NOW = "2026-07-03T16:00:00.000Z";
+
+  function question(id: string): AskQuestionItem {
+    return {
+      id,
+      question: `Which path for ${id}?`,
+      options: [
+        { label: "A", recommended: false },
+        { label: "B", recommended: false },
+      ],
+      multiSelect: false,
+      required: true,
+      allowNote: true,
+    };
+  }
+
+  function createGate(
+    repository: ReturnType<typeof createRepository>,
+    eventPublisher: ReturnType<
+      typeof createGraphWorkflowExecutionEventPublisher
+    >,
+  ) {
+    return createUserInputGateService({
+      getActive: repository.getActive,
+      mutateActive: repository.mutateActive,
+      publishUserInputPending: eventPublisher.publishUserInputPending,
+      publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      sendConversationEvent: () => false,
+      now: () => NOW,
+    });
+  }
+
+  /** Agent turn that completes every plan task, so validation runs after it. */
+  function completeAllPlanTasks(
+    repository: ReturnType<typeof createRepository>,
+  ) {
+    return vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: NOW,
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: NOW,
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-impl",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+  }
+
+  it("parks the context with lane=context_validator when the validator asks, leaving the failure count and tasks untouched", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    // Pre-set a non-zero failure count so we can prove parking leaves it alone.
+    execution.contextStates["context-plan"]!.consecutiveFailureCount = 2;
+    const repository = createRepository(execution);
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    // Implementer lane has no pending question → implementer park does not fire.
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: null,
+      pendingQuestions: [] as AskQuestionItem[],
+    }));
+
+    const questions = [question("qv1")];
+    // The validator's turn ended with a pending question and no verdict.
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "asked_user" as const,
+      conversationId: "conversation-validator",
+      questionBatchId: "batch-validator-1",
+      questions,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Validation ran (the validator asked), but the outcome parks — no continue.
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "awaiting_user_input",
+    );
+
+    // The gate was driven with the VALIDATOR lane, batch, and snapshot questions.
+    expect(enterSpy).toHaveBeenCalledTimes(1);
+    expect(enterSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextId: "context-plan",
+        lane: "context_validator",
+        conversationId: "conversation-validator",
+        questionBatchId: "batch-validator-1",
+        questions,
+      }),
+    );
+
+    // Persisted state: awaiting_user_input with the validator snapshot record.
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_user_input");
+    expect(contextState?.pendingUserInput).toMatchObject({
+      conversationId: "conversation-validator",
+      lane: "context_validator",
+      questionBatchId: "batch-validator-1",
+      questions,
+      answers: null,
+    });
+
+    // Req 3.2/3.3: the failure count is untouched and no task was reopened.
+    expect(contextState?.consecutiveFailureCount).toBe(2);
+    expect(persisted.taskStates["task-plan-1"]?.status).toBe("completed");
+    expect(persisted.taskStates["task-plan-2"]?.status).toBe("completed");
+    expect(persisted.taskStates["task-plan-2"]?.failureMessage).toBeNull();
+    expect(persisted.taskStates["task-plan-2"]?.failureHistory).toHaveLength(0);
+
+    // Req 3.2: no validation-failure event was recorded for the asking turn.
+    const validationResultEvents = repository.appendedEvents.filter(
+      (entry) => entry.event.type === "graph-workflow-validation-result",
+    );
+    expect(validationResultEvents).toHaveLength(0);
+
+    // The parked context is not scheduled to continue.
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+  });
+
+  it("parks from the validation-only re-entry path when the validator asks", async () => {
+    // All tasks already complete at entry → runIteration takes the
+    // validation-only path, which must also short-circuit to a park.
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "completed",
+      "task-plan-2": "completed",
+    });
+    execution.contextStates["context-plan"]!.consecutiveFailureCount = 1;
+    execution.contextStates["context-plan"]!.completedTaskCount = 2;
+    const repository = createRepository(execution);
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: null,
+      pendingQuestions: [] as AskQuestionItem[],
+    }));
+
+    const questions = [question("qv1")];
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "asked_user" as const,
+      conversationId: "conversation-validator",
+      questionBatchId: "batch-validator-2",
+      questions,
+    }));
+
+    const runAgentIteration = vi.fn(async () => {
+      throw new Error("validation-only path must not run the implementer");
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runAgentIteration).not.toHaveBeenCalled();
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+    expect(enterSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ lane: "context_validator" }),
+    );
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "awaiting_user_input",
+    );
+    const contextState = repository.read().contextStates["context-plan"];
+    expect(contextState?.consecutiveFailureCount).toBe(1);
+    expect(
+      repository.appendedEvents.filter(
+        (entry) => entry.event.type === "graph-workflow-validation-result",
+      ),
+    ).toHaveLength(0);
   });
 });
 

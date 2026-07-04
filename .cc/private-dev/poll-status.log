@@ -1,0 +1,113 @@
+[poll 1 @ 21:03:22]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 2 @ 21:03:27]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 3 @ 21:03:32]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 4 @ 21:03:37]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 5 @ 21:03:43]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 6 @ 21:03:48]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 7 @ 21:03:53]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 8 @ 21:03:58]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 9 @ 21:04:03]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 10 @ 21:04:09]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 11 @ 21:04:14]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 12 @ 21:04:19]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 13 @ 21:04:25]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 14 @ 21:04:30]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 15 @ 21:04:35]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 16 @ 21:04:40]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 17 @ 21:04:45]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 18 @ 21:04:51]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 19 @ 21:04:56]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 20 @ 21:05:01]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 21 @ 21:05:06]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 22 @ 21:05:11]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 23 @ 21:05:17]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 24 @ 21:05:22]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 25 @ 21:05:27]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 26 @ 21:05:32]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 27 @ 21:05:37]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 28 @ 21:05:43]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 29 @ 21:05:48]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 30 @ 21:05:53]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 31 @ 21:05:58]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 32 @ 21:06:03]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 33 @ 21:06:09]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 34 @ 21:06:14]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 35 @ 21:06:19]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 36 @ 21:06:24]
+f376dad2-be6d-4454-96a7-768e528ae8ed  running
+  context-decide  running  0/1
+[poll 37 @ 21:06:29]
+cannot reach the CC server — is the CC server running?
+fetch failed
+hint: start the CC server, then re-run `cctl doctor`
+>>> STATE REACHED at poll 37

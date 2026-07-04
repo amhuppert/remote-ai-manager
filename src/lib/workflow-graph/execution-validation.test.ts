@@ -215,6 +215,55 @@ describe("graph workflow execution validation service", () => {
     }
   });
 
+  it("propagates kind=asked_user unchanged when the runner reports a pending question", async () => {
+    const { execution } = buildExecutionWithContextValidator();
+    const questions = [
+      {
+        id: "q-1",
+        question:
+          "Should the validator treat the partial migration as passing?",
+        options: [
+          { label: "Yes", recommended: false },
+          { label: "No", recommended: false },
+        ],
+        multiSelect: false,
+        required: true,
+        allowNote: true,
+      },
+    ];
+    const runContextValidator = vi.fn(
+      async (): Promise<ValidatorRunResult> => ({
+        result: {
+          kind: "asked_user",
+          conversationId: "conversation-validator-1",
+          questionBatchId: "batch-validator-1",
+          questions,
+        },
+        metadata: emptyMetadata(),
+      }),
+    );
+    const service = createGraphWorkflowValidationService({
+      runContextValidator,
+    });
+
+    const result = await service.validateContextCompletion({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+    });
+
+    expect(result.kind).toBe("asked_user");
+    if (result.kind === "asked_user") {
+      expect(result.conversationId).toBe("conversation-validator-1");
+      expect(result.questionBatchId).toBe("batch-validator-1");
+      expect(result.questions).toHaveLength(1);
+      expect(result.questions[0]!.question).toBe(
+        "Should the validator treat the partial migration as passing?",
+      );
+    }
+  });
+
   it("returns kind=pass with disabled feedback when context validation is not enabled", async () => {
     const execution = createWorkflowExecution();
     const runContextValidator = vi.fn();

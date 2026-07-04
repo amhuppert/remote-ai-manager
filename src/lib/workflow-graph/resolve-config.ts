@@ -32,6 +32,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
+  askUserQuestions: { enabled: false },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },
@@ -65,6 +66,8 @@ export function coerceGlobalDefaults(
       globalDefaults.scriptValidator ?? SEEDED_DEFAULTS.scriptValidator,
     humanApprovalGate:
       globalDefaults.humanApprovalGate ?? SEEDED_DEFAULTS.humanApprovalGate,
+    askUserQuestions:
+      globalDefaults.askUserQuestions ?? SEEDED_DEFAULTS.askUserQuestions,
     iterationPolicy:
       globalDefaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
     circuitBreaker:
@@ -86,6 +89,7 @@ export function resolveWorkflowConfig(
     contextValidator: override.contextValidator ?? defaults.contextValidator,
     scriptValidator: override.scriptValidator ?? defaults.scriptValidator,
     humanApprovalGate: override.humanApprovalGate ?? defaults.humanApprovalGate,
+    askUserQuestions: override.askUserQuestions ?? defaults.askUserQuestions,
     iterationPolicy: override.iterationPolicy ?? defaults.iterationPolicy,
     circuitBreaker: override.circuitBreaker ?? defaults.circuitBreaker,
     mutability: override.mutability ?? defaults.mutability,
@@ -150,6 +154,11 @@ export function resolveContext(
     workflow.humanApprovalGate ??
     defaults.humanApprovalGate;
 
+  const askUserQuestions =
+    context.askUserQuestions ??
+    workflow.askUserQuestions ??
+    defaults.askUserQuestions;
+
   return {
     id: context.id,
     title: context.title,
@@ -161,6 +170,7 @@ export function resolveContext(
     contextValidator,
     scriptValidator,
     humanApprovalGate,
+    askUserQuestions,
     mutability,
     circuitBreaker,
     iterationPolicy,

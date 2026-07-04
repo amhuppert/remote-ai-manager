@@ -1,0 +1,2 @@
+[poll 1 @ 21:28:53] 4f128100-6c08-4b90-9c57-c65747cd19d3  halted  (halted: agent_turn_failed)   context-decide  ready  0/1  || agentURLs:    4 CC_SERVER_URL=http://127.0.0.1:3000    1 CC_SERVER_URL=http://127.0.0.1:3071    2 CC_SERVER_URL=http://localhost:3000    6 CC_SERVER_URL=http://localhost:3071 
+>>> REACHED at poll 1

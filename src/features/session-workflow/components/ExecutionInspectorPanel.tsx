@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/ui/cn";
+import AskQuestionPanel from "@/components/AskQuestionPanel";
+import type { AskQuestionPanelProps } from "@/features/session/hooks/use-user-input-gate";
 
 const wbBtn =
   "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
@@ -103,6 +105,13 @@ interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
   selectedContextId: string | null;
+  /**
+   * Answer-panel props for the selected context when it is parked awaiting user
+   * input, or null otherwise. The container derives these via `useUserInputGate`
+   * (it owns the answer mutation + QueryClient); the inspector only mounts the
+   * panel for the selected parked context.
+   */
+  userInputPanel?: AskQuestionPanelProps | null;
   onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
   onAddTask: (contextId: string, title: string, instructions: string) => void;
@@ -700,6 +709,7 @@ function DetailView({
   execution,
   events,
   contextId,
+  userInputPanel,
   onSelectContext,
   onDeselectContext,
   onAddTask,
@@ -715,6 +725,7 @@ function DetailView({
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
   contextId: string;
+  userInputPanel?: AskQuestionPanelProps | null;
   onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
   onAddTask: (contextId: string, title: string, instructions: string) => void;
@@ -869,6 +880,12 @@ function DetailView({
       </div>
 
       <div className={cn(wbInspectorBody, "wb-inspector-body")}>
+        {userInputPanel && (
+          <section className={wbOverviewSection}>
+            <div className={wbOverviewSectionTitle}>Question</div>
+            <AskQuestionPanel {...userInputPanel} compact />
+          </section>
+        )}
         {contextHaltReason && (
           <ContextHaltCard primary={contextHaltReason} variant="card" />
         )}
@@ -1216,6 +1233,7 @@ export default function ExecutionInspectorPanel({
   execution,
   events,
   selectedContextId,
+  userInputPanel,
   onSelectContext,
   onDeselectContext,
   onAddTask,
@@ -1250,6 +1268,7 @@ export default function ExecutionInspectorPanel({
       execution={execution}
       events={events}
       contextId={selectedContextId}
+      userInputPanel={userInputPanel}
       onSelectContext={onSelectContext}
       onDeselectContext={onDeselectContext}
       onAddTask={onAddTask}

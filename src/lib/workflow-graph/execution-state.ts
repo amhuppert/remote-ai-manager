@@ -49,6 +49,7 @@ export function buildInitialContextState(
     cleanupStatus: "not-applicable",
     lastMergeError: null,
     pendingApproval: null,
+    pendingUserInput: null,
   };
 }
 

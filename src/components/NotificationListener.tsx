@@ -64,6 +64,8 @@ import {
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowApprovalPendingEventSchema,
   graphWorkflowApprovalResolvedEventSchema,
+  graphWorkflowUserInputPendingEventSchema,
+  graphWorkflowUserInputResolvedEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowBatchScheduledEventSchema,
   graphWorkflowMergeStatusEventSchema,
@@ -998,6 +1000,51 @@ export default function NotificationListener(): null {
           parsed.data.projectName,
           parsed.data.sessionName,
         );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-user-input-pending", (event) => {
+      try {
+        const parsed = graphWorkflowUserInputPendingEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        const d = parsed.data;
+        invalidateGraphWorkflow(d.projectName, d.sessionName);
+        invalidateGraphWorkflowEvents(
+          d.projectName,
+          d.sessionName,
+          d.executionId,
+        );
+        invalidateConversationViews(d.projectName, d.sessionName);
+        actionsRef.current.enqueueInputToast({
+          projectName: d.projectName,
+          sessionName: d.sessionName,
+          conversationId: d.conversationId,
+          title: "Workflow question",
+          contextTitle: d.contextTitle ?? d.contextId,
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-user-input-resolved", (event) => {
+      try {
+        const parsed = graphWorkflowUserInputResolvedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        const d = parsed.data;
+        invalidateGraphWorkflow(d.projectName, d.sessionName);
+        invalidateGraphWorkflowEvents(
+          d.projectName,
+          d.sessionName,
+          d.executionId,
+        );
+        invalidateConversationViews(d.projectName, d.sessionName);
       } catch {
         // best-effort
       }

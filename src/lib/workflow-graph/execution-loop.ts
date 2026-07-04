@@ -18,6 +18,13 @@ import {
   createApprovalGateService,
   type ApprovalGateService,
 } from "@/lib/workflow-graph/approval-gate";
+import {
+  createUserInputGateService,
+  type ConsumeAnswersResult,
+  type ResumeUserInputContext,
+  type UserInputGateService,
+} from "@/lib/workflow-graph/user-input-gate";
+import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import type {
   ExecutionTargetResolver,
@@ -125,6 +132,7 @@ interface GraphWorkflowExecutionLoopIterationOrchestrator {
     sessionName: string;
     contextId: string;
     executionTarget?: ExecutionTarget;
+    resumeUserInput?: ResumeUserInputContext;
   }): Promise<GraphWorkflowIterationResult>;
 }
 
@@ -196,6 +204,26 @@ export interface GraphWorkflowExecutionLoopDeps {
    */
   approvalGateService?: ApprovalGateService;
   /**
+   * Poll interval for the user-input-gate wait, mirroring the approval gate's
+   * cadence. The loop refreshes execution state after each call until answers
+   * are recorded on the parked record, the record is withdrawn, or the
+   * execution leaves the running state. Defaults to the same ~1s wait as the
+   * approval gate so a parked question polls at the identical rhythm.
+   */
+  waitForUserInputProgress?(input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+    contextId: string;
+  }): Promise<void>;
+  /**
+   * User-input-gate service. The loop consumes recorded answers on resume and
+   * withdraws all parked questions on abort through it. Defaults to a service
+   * backed by the workflow manager's mutateActive/getActive, the event
+   * publisher, and the conversation-machine dispatch.
+   */
+  userInputGateService?: UserInputGateService;
+  /**
    * Publisher for the approval-resolved history/SSE event emitted after a
    * decision is applied.
    */
@@ -262,6 +290,14 @@ function hasAwaitingApprovalContexts(
   );
 }
 
+function hasAwaitingUserInputContexts(
+  execution: GraphWorkflowExecution,
+): boolean {
+  return Object.values(execution.contextStates).some(
+    (contextState) => contextState.status === "awaiting_user_input",
+  );
+}
+
 async function defaultWaitForCollaborationProgress(_input: {
   projectPath: string;
   sessionName: string;
@@ -271,6 +307,15 @@ async function defaultWaitForCollaborationProgress(_input: {
 }
 
 async function defaultWaitForApprovalProgress(_input: {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+  contextId: string;
+}): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+async function defaultWaitForUserInputProgress(_input: {
   projectPath: string;
   sessionName: string;
   executionId: string;
@@ -305,6 +350,21 @@ function buildMachineSnapshot(
  */
 type ApprovalWaitOutcome =
   | { kind: "decision"; decision: GraphWorkflowApprovalDecision }
+  | {
+      kind: "execution_exited";
+      status: Exclude<GraphWorkflowStatus, "running">;
+    };
+
+/**
+ * Outcome of the user-input-gate wait: answers were recorded on the parked
+ * record (the resume path consumes them), the record was withdrawn out from
+ * under the wait (abort raced — the context is no longer parked), or the
+ * execution left the running state and the wait exited without resolving (the
+ * record persists for resume on re-entry).
+ */
+type UserInputWaitOutcome =
+  | { kind: "answers" }
+  | { kind: "withdrawn" }
   | {
       kind: "execution_exited";
       status: Exclude<GraphWorkflowStatus, "running">;
@@ -356,6 +416,18 @@ export function createGraphWorkflowExecutionLoop(
     });
   const eventPublisher =
     deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
+  const userInputGateService =
+    deps.userInputGateService ??
+    createUserInputGateService({
+      getActive: (projectPath, sessionName) =>
+        deps.workflowManager.getActive(projectPath, sessionName),
+      mutateActive: (projectPath, sessionName, fn) =>
+        deps.workflowManager.mutateActive(projectPath, sessionName, fn),
+      publishUserInputPending: eventPublisher.publishUserInputPending,
+      publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      sendConversationEvent,
+      now: () => new Date().toISOString(),
+    });
   const isConversationBusy =
     deps.isConversationBusy ?? defaultIsConversationBusy;
   const acquireConversationLock =
@@ -378,6 +450,11 @@ export function createGraphWorkflowExecutionLoop(
     activeLoops.add(key);
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
+    // Answers consumed on the awaiting-user-input resume path, keyed by context.
+    // Stashed before `continue` re-schedules the context, then drained into the
+    // next `runIteration` call so the resumed turn pins the asking conversation
+    // and embeds the answers block. Deleted on drain — one resume.
+    const pendingResumeUserInput = new Map<string, ConsumeAnswersResult>();
     const inFlight = new Map<string, Promise<void>>();
     const maxConcurrency = await getMaxConcurrentQueries();
     const execLogger = getExecutionLogger(execution.id);
@@ -481,6 +558,93 @@ export function createGraphWorkflowExecutionLoop(
         }
 
         await (deps.waitForApprovalProgress ?? defaultWaitForApprovalProgress)({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId: execution.id,
+          contextId,
+        });
+
+        const refreshed = await deps.workflowManager.getActive(
+          input.projectPath,
+          input.sessionName,
+        );
+        if (refreshed) {
+          execution = refreshed;
+        }
+      }
+    }
+
+    /**
+     * Parks the context runner while its user-input gate is pending. Mirrors
+     * `waitForApprovalResolution`: polls via the injected wait and refreshes
+     * execution state until answers are recorded on the parked record (resume),
+     * the record disappears (withdrawn — abort raced), or the execution leaves
+     * the running state (the record persists for resume on re-entry). The
+     * answers-present check at the top short-circuits, so a context re-entered
+     * with answers already recorded (recorded while paused) applies immediately
+     * without a wait poll (Req 7.3).
+     */
+    async function waitForUserInputResolution(
+      contextId: string,
+    ): Promise<UserInputWaitOutcome> {
+      execLogger?.iteration(contextId, "user_input.waiting", {
+        conversationId:
+          execution.contextStates[contextId]?.pendingUserInput
+            ?.conversationId ?? null,
+      });
+      logger.info("graph-workflow.user_input.waiting", {
+        executionId: execution.id,
+        contextId,
+      });
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const status = execution.status;
+        if (status !== "running") {
+          execLogger?.iteration(contextId, "user_input.wait_exit", {
+            cause: status,
+          });
+          logger.info("graph-workflow.user_input.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: status,
+          });
+          return { kind: "execution_exited", status };
+        }
+
+        const pending = execution.contextStates[contextId]?.pendingUserInput;
+        if (!pending) {
+          // The record is gone while the execution is still running: it was
+          // withdrawn (abort cleanup raced this wait). The context is no
+          // longer parked — return per abort semantics.
+          execLogger?.iteration(contextId, "user_input.wait_exit", {
+            cause: "withdrawn",
+          });
+          logger.info("graph-workflow.user_input.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: "withdrawn",
+          });
+          return { kind: "withdrawn" };
+        }
+
+        if (pending.answers !== null) {
+          execLogger?.iteration(contextId, "user_input.wait_exit", {
+            cause: "answers_observed",
+            questionBatchId: pending.questionBatchId,
+          });
+          logger.info("graph-workflow.user_input.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: "answers_observed",
+            questionBatchId: pending.questionBatchId,
+          });
+          return { kind: "answers" };
+        }
+
+        await (
+          deps.waitForUserInputProgress ?? defaultWaitForUserInputProgress
+        )({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           executionId: execution.id,
@@ -1104,6 +1268,66 @@ export function createGraphWorkflowExecutionLoop(
             continue;
           }
 
+          // A context parked awaiting user input — whether it parked during
+          // this loop or was restored from a persisted execution on resume —
+          // enters the user-input wait directly; no iteration is seeded. When
+          // answers land, `consumeAnswers` clears the record and flips the
+          // status back to `running`, and the next iteration runs as an
+          // ordinary seeded turn (the answer-block prompt + conversation pin
+          // that deliver the answers into that turn are owned by later tasks).
+          if (
+            execution.contextStates[contextId]?.status === "awaiting_user_input"
+          ) {
+            const outcome = await waitForUserInputResolution(contextId);
+            if (outcome.kind === "execution_exited") {
+              // Pause/halt/abort raced the wait: the record persists for
+              // resume on re-entry (or was withdrawn by the abort path).
+              return;
+            }
+            if (outcome.kind === "withdrawn") {
+              // The parked question was withdrawn (abort cleanup): the context
+              // is no longer parked and this runner has no work to resume.
+              return;
+            }
+            // Answers observed — consume them (clears the record + flips to
+            // running) and re-iterate. `consumeAnswers` returning null would
+            // mean the record vanished between the wait and this mutation
+            // (withdrawn) — treat it as a withdrawal and exit.
+            const consumed = await userInputGateService.consumeAnswers({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              contextId,
+            });
+            const refreshed = await deps.workflowManager.getActive(
+              input.projectPath,
+              input.sessionName,
+            );
+            if (refreshed) {
+              execution = refreshed;
+            }
+            if (consumed === null) {
+              return;
+            }
+            // Carry the answers across the `continue` so the next iteration for
+            // this context delivers them (pin + answer block) into the resumed
+            // turn.
+            pendingResumeUserInput.set(contextId, consumed);
+            execLogger?.iteration(contextId, "user_input.resumed", {
+              conversationId: consumed.conversationId,
+              questionBatchId: consumed.questionBatchId,
+              lane: consumed.lane,
+            });
+            logger.info("graph-workflow.user_input.resumed", {
+              executionId: execution.id,
+              contextId,
+              lane: consumed.lane,
+            });
+            continue;
+          }
+
+          const resumeUserInput = pendingResumeUserInput.get(contextId);
+          pendingResumeUserInput.delete(contextId);
+
           let iterationResult: GraphWorkflowIterationResult;
           try {
             iterationResult = await deps.iterationOrchestrator.runIteration({
@@ -1112,6 +1336,7 @@ export function createGraphWorkflowExecutionLoop(
               sessionName: input.sessionName,
               contextId,
               executionTarget: target,
+              resumeUserInput,
             });
             retryableRecoveryAttempts.delete(contextId);
           } catch (error) {
@@ -1276,6 +1501,14 @@ export function createGraphWorkflowExecutionLoop(
           // park in the gate wait at the top of the loop instead of
           // proceeding to the commit/merge phase.
           if (contextState?.status === "awaiting_approval") {
+            continue;
+          }
+
+          // A context that parked awaiting user input during this iteration
+          // (the orchestrator's post-turn park check) loops back to the top so
+          // the user-input wait engages, mirroring the approval gate. No
+          // iteration is consumed and no commit/merge runs while parked.
+          if (contextState?.status === "awaiting_user_input") {
             continue;
           }
 
@@ -1764,6 +1997,39 @@ export function createGraphWorkflowExecutionLoop(
             await Promise.race(inFlight.values());
             continue;
           }
+          // Abort semantics: a parked question must not dangle as answerable
+          // after the execution is aborted (Req 7.4). Withdraw every parked
+          // record — clearing it, dispatching CLEAR_PENDING_QUESTION per
+          // parked conversation, and publishing resolved(withdrawn). Pause and
+          // halt intentionally preserve the record so the wait re-engages on
+          // resume; only an abort withdraws. The withdraw is idempotent, so a
+          // record already cleared by the answer flow is a safe no-op.
+          //
+          // NOTE (task 4.3 boundary): the true abort transition is owned by
+          // workflow-manager.ts send({ type: "abort" }) (its
+          // abortRunningTaskConversations seam, ~L773), which is out of this
+          // task's boundary. This loop reacts to the aborted status rather than
+          // owning the transition, so withdrawAll runs here at the loop's
+          // in-scope abort-handling point. If a future change needs the
+          // withdraw to happen atomically with the abort mutation, it belongs
+          // beside abortRunningTaskConversations in the manager.
+          if (
+            execution.status === "aborted" &&
+            hasAwaitingUserInputContexts(execution)
+          ) {
+            await userInputGateService.withdrawAll({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              executionId: execution.id,
+            });
+            const refreshed = await deps.workflowManager.getActive(
+              input.projectPath,
+              input.sessionName,
+            );
+            if (refreshed) {
+              execution = refreshed;
+            }
+          }
           break;
         }
 
@@ -1845,6 +2111,31 @@ export function createGraphWorkflowExecutionLoop(
           inFlight.set(contextId, task);
         }
 
+        // The same re-entry for user-input parks: a context restored as
+        // awaiting_user_input (park persisted across pause/halt/restart) gets
+        // its runner here and re-enters the user-input wait directly. If
+        // answers were recorded while suspended, the wait's answers-present
+        // check short-circuits and the context resumes immediately without
+        // re-waiting (Req 7.3). A context parked under this loop is skipped:
+        // its runner is still in flight, holding the wait.
+        for (const contextState of Object.values(execution.contextStates)) {
+          if (contextState.status !== "awaiting_user_input") continue;
+          const contextId = contextState.contextId;
+          if (inFlight.has(contextId)) continue;
+          execLogger?.iteration(contextId, "user_input.reentered", {
+            conversationId:
+              contextState.pendingUserInput?.conversationId ?? null,
+          });
+          logger.info("graph-workflow.user_input.reentered", {
+            executionId: execution.id,
+            contextId,
+          });
+          const task = runContextTask(contextId).finally(() => {
+            inFlight.delete(contextId);
+          });
+          inFlight.set(contextId, task);
+        }
+
         if (scheduleResult.scheduled.kind === "none") {
           if (inFlight.size > 0) {
             await Promise.race(inFlight.values());
@@ -1867,6 +2158,13 @@ export function createGraphWorkflowExecutionLoop(
           // flight for every parked context, so this guard backstops the
           // completion determination.
           if (hasAwaitingApprovalContexts(execution)) {
+            continue;
+          }
+          // The same completion guard for user-input parks (Req 3.5): the
+          // execution must never complete while a context awaits user input.
+          // The re-entry pass above keeps a runner in flight for every parked
+          // context, so this backstops the completion determination.
+          if (hasAwaitingUserInputContexts(execution)) {
             continue;
           }
           const joinOutcome = await runEligibleJoinIfAny();

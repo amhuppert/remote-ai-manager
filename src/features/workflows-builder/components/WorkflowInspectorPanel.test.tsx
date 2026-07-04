@@ -167,13 +167,13 @@ describe("WorkflowInspectorPanel — Radix tabpanel wiring", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly eight InspectorConfigBlocks and no AC, tasks, or delete", () => {
+  it("renders exactly nine InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(8);
+    expect(blocks).toHaveLength(9);
     const labels = Array.from(
       container.querySelectorAll("[data-section-label]"),
     ).map((el) => el.textContent);
@@ -183,6 +183,7 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
       "Context validator",
       "Script validator",
       "Human approval gate",
+      "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
       "Mutability",
@@ -314,6 +315,34 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
         .humanApprovalGate,
     ).toBeUndefined();
   });
+
+  it("toggling the workflow ask-user-questions gate creates and resets a workflow override", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /workflow ask user questions/i,
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(toggle);
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .askUserQuestions,
+    ).toEqual({ enabled: true });
+
+    const block = findBlockByLabel(container, "Ask user questions")!;
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .askUserQuestions,
+    ).toBeUndefined();
+  });
 });
 
 describe("WorkflowInspectorPanel — launch parameters editor", () => {
@@ -395,7 +424,7 @@ describe("WorkflowInspectorPanel — launch parameters editor", () => {
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC header, eight blocks, tasks editor, and delete button", () => {
+  it("renders AC header, nine blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
@@ -404,7 +433,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       container.querySelector("#context-acceptance-criteria"),
     ).not.toBeNull();
     const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(8);
+    expect(blocks).toHaveLength(9);
 
     expect(container.querySelector('[data-section="tasks"]')).not.toBeNull();
     expect(
@@ -524,6 +553,24 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.humanApprovalGate).toEqual({ enabled: true });
+  });
+
+  it("toggling the context ask-user-questions gate creates a context override", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /context ask user questions/i,
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(toggle);
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.askUserQuestions).toEqual({ enabled: true });
   });
 });
 

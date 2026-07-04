@@ -25,6 +25,8 @@ import type {
   GraphWorkflowSSEEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
   GraphWorkflowStatusEvent,
+  GraphWorkflowUserInputPendingEvent,
+  GraphWorkflowUserInputResolvedEvent,
   GraphWorkflowValidationResultEvent,
   GraphWorkflowValidationReviewArtifact,
   GraphWorkflowValidatorType,
@@ -75,6 +77,27 @@ interface PublishApprovalResolvedInput {
   decision: GraphWorkflowApprovalResolvedEvent["decision"];
   message: string | null;
   decidedAt: string;
+}
+
+interface PublishUserInputPendingInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  conversationId: string;
+  questionBatchId: string;
+  requestedAt: string;
+}
+
+interface PublishUserInputResolvedInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  conversationId: string;
+  questionBatchId: string;
+  resolution: GraphWorkflowUserInputResolvedEvent["resolution"];
+  resolvedAt: string;
 }
 
 interface PublishCharterRegisteredInput {
@@ -840,6 +863,53 @@ export function createGraphWorkflowExecutionEventPublisher(
     return buildEvents(getNow(deps), [event]);
   }
 
+  function publishUserInputPending(
+    input: PublishUserInputPendingInput,
+  ): GraphWorkflowExecutionEvent[] {
+    const projectName = getProjectName(input.projectPath);
+    const index = createExecutionIndex(
+      input.execution.workingDefinition,
+      input.execution,
+    );
+    const contextTitle = index.contextById.get(input.contextId)?.title ?? null;
+
+    const event: GraphWorkflowUserInputPendingEvent = {
+      type: "graph-workflow-user-input-pending",
+      projectName,
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      contextTitle,
+      conversationId: input.conversationId,
+      questionBatchId: input.questionBatchId,
+      requestedAt: input.requestedAt,
+    };
+
+    // No push here: the existing conversation ask-registration flow already
+    // notifies the operator when the question batch registers (Req 2.4).
+    publishEvents(deps, [event]);
+    return buildEvents(getNow(deps), [event]);
+  }
+
+  function publishUserInputResolved(
+    input: PublishUserInputResolvedInput,
+  ): GraphWorkflowExecutionEvent[] {
+    const event: GraphWorkflowUserInputResolvedEvent = {
+      type: "graph-workflow-user-input-resolved",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      conversationId: input.conversationId,
+      questionBatchId: input.questionBatchId,
+      resolution: input.resolution,
+      resolvedAt: input.resolvedAt,
+    };
+
+    publishEvents(deps, [event]);
+    return buildEvents(getNow(deps), [event]);
+  }
+
   function publishCharterRegistered(
     input: PublishCharterRegisteredInput,
   ): GraphWorkflowExecutionEvent[] {
@@ -879,6 +949,8 @@ export function createGraphWorkflowExecutionEventPublisher(
     publishValidationResult,
     publishApprovalPending,
     publishApprovalResolved,
+    publishUserInputPending,
+    publishUserInputResolved,
     publishCharterRegistered,
     publishCharterUpdated,
   };

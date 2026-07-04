@@ -6,6 +6,7 @@ import {
   createValidatorRunner,
   extractValidatorResult,
   parseValidatorResponse,
+  resolveValidatorAskUserQuestionsEnabled,
   VALIDATOR_OUTPUT_SCHEMA,
 } from "./validator-runner";
 import {
@@ -14,6 +15,11 @@ import {
   unregisterExecutionLogger,
 } from "./execution-logger";
 import type { ValidationDiffScope } from "./validation-diff-scope";
+import {
+  formatQuestionAnswersBlock,
+  splitQuestionAnswersBlock,
+} from "@/lib/conversations/question-answers-block";
+import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
@@ -97,6 +103,7 @@ const context: GraphWorkflowResolvedContext = {
   contextValidator: validatorConfig,
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
+  askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: {},
   iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
@@ -539,6 +546,150 @@ describe("buildContextValidationPrompt", () => {
       "reopenTaskIds",
     );
   });
+
+  it("embeds the framed answers block on a validator resume", () => {
+    const questionBatchId = "batch-validator-1";
+    const answers: Record<string, AskQuestionAnswer> = {
+      q1: {
+        selected: ["Reopen task-2"],
+        note: null,
+        skipped: false,
+        question: "Should the missing coverage reopen task-2?",
+      },
+    };
+
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      resumeUserInput: { questionBatchId, answers },
+    });
+
+    const split = splitQuestionAnswersBlock(prompt);
+    expect(split).not.toBeNull();
+    expect(split?.block.questionBatchId).toBe(questionBatchId);
+    expect(split?.block.answers).toEqual(answers);
+    expect(prompt).toContain(
+      formatQuestionAnswersBlock(questionBatchId, answers),
+    );
+    expect(prompt).toContain("## Your Question Was Answered");
+  });
+
+  it("omits the answers section without a validator resume", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    expect(splitQuestionAnswersBlock(prompt)).toBeNull();
+    expect(prompt).not.toContain("## Your Question Was Answered");
+  });
+
+  it("adds the ask-protocol reminder when askUserQuestionsEnabled is true", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      askUserQuestionsEnabled: true,
+    });
+
+    expect(prompt).toContain("## Asking the User");
+    expect(prompt).toContain("cctl ask");
+    expect(prompt).toMatch(/end your turn/i);
+    expect(prompt).toMatch(/pause/i);
+    expect(prompt).toMatch(/best judgment/i);
+  });
+
+  it("omits the ask-protocol reminder when askUserQuestionsEnabled is false or undefined", () => {
+    const disabled = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      askUserQuestionsEnabled: false,
+    });
+    const unset = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    expect(disabled).not.toContain("## Asking the User");
+    expect(unset).not.toContain("## Asking the User");
+  });
+});
+
+describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)", () => {
+  const claudeValidator: GraphWorkflowAgentValidatorConfig = {
+    type: "claude",
+    enabled: true,
+    continuity: { enabled: true },
+    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  };
+  const codexValidator: GraphWorkflowAgentValidatorConfig = {
+    type: "codex",
+    enabled: true,
+    continuity: { enabled: true },
+    codex: {},
+  };
+
+  it("is true only for a claude validator when the toggle is enabled", () => {
+    const enabledContext: GraphWorkflowResolvedContext = {
+      ...context,
+      askUserQuestions: { enabled: true },
+    };
+    expect(
+      resolveValidatorAskUserQuestionsEnabled(
+        claudeValidator.type,
+        enabledContext,
+      ),
+    ).toBe(true);
+  });
+
+  it("is false for a codex validator even when the toggle is enabled (suppressed)", () => {
+    const enabledContext: GraphWorkflowResolvedContext = {
+      ...context,
+      askUserQuestions: { enabled: true },
+    };
+    expect(
+      resolveValidatorAskUserQuestionsEnabled(
+        codexValidator.type,
+        enabledContext,
+      ),
+    ).toBe(false);
+  });
+
+  it("is false for a claude validator when the toggle is disabled", () => {
+    expect(
+      resolveValidatorAskUserQuestionsEnabled(claudeValidator.type, context),
+    ).toBe(false);
+  });
+
+  it("a codex-validator prompt built with the derived flag carries no reminder", () => {
+    const enabledContext: GraphWorkflowResolvedContext = {
+      ...context,
+      askUserQuestions: { enabled: true },
+    };
+    const derived = resolveValidatorAskUserQuestionsEnabled(
+      codexValidator.type,
+      enabledContext,
+    );
+    const prompt = buildContextValidationPrompt({
+      context: enabledContext,
+      tasks,
+      taskStates,
+      validator: codexValidator,
+      askUserQuestionsEnabled: derived,
+    });
+
+    expect(derived).toBe(false);
+    expect(prompt).not.toContain("## Asking the User");
+  });
 });
 
 describe("parseValidatorResponse", () => {
@@ -840,6 +991,95 @@ describe("createValidatorRunner", () => {
       expect(result.result.reason).toBe("unparseable");
       expect(result.result.engine).toBe("claude");
     }
+  });
+
+  it("runContextValidator returns asked_user when the lane conversation has a pending question, without parsing the verdict", async () => {
+    // The turn ends with no parseable verdict — normally infra_error/unparseable.
+    // Because the lane conversation has a pending question batch, the runner must
+    // short-circuit to asked_user before the verdict parser is ever consulted
+    // (design "Park detection → Validator"; Req 3.2).
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun("Let me ask the operator before I decide."),
+    );
+    const pendingQuestions = [
+      {
+        id: "q-1",
+        question: "Which approach should the validator prefer?",
+        options: [
+          { label: "A", recommended: false },
+          { label: "B", recommended: false },
+        ],
+        multiSelect: false,
+        required: true,
+        allowNote: true,
+      },
+    ];
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: "batch-validator-1",
+      pendingQuestions,
+    }));
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      readLaneConversation,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(readLaneConversation).toHaveBeenCalledTimes(1);
+    expect(result.result.kind).toBe("asked_user");
+    if (result.result.kind === "asked_user") {
+      expect(result.result.questionBatchId).toBe("batch-validator-1");
+      expect(result.result.questions).toHaveLength(1);
+      expect(result.result.questions[0]!.question).toBe(
+        "Which approach should the validator prefer?",
+      );
+      expect(result.result.conversationId.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("runContextValidator parses the verdict normally when the lane conversation has no pending question", async () => {
+    // The reader returns null (Codex validator lanes, or no question asked) →
+    // the runner falls through to normal verdict parsing (deny-by-default).
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(JSON.stringify({ summary: "Looks good", issues: [] })),
+    );
+    const readLaneConversation = vi.fn(async () => null);
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      readLaneConversation,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(result.result.kind).toBe("pass");
   });
 
   it("runContextValidator returns infra_error exception with engine=codex when executeWorkflowTaskRun throws", async () => {

@@ -70,7 +70,7 @@ import {
   CC_CONTEXT,
   CC_CLI_INSTRUCTIONS,
   TDD_INSTRUCTIONS,
-  ASK_QUESTION_INSTRUCTIONS,
+  selectAskQuestionInstructions,
 } from "@/lib/prompt/sdk-driver";
 import {
   isUndeliveredQuerySessionError,
@@ -1617,8 +1617,10 @@ export async function executePromptForMachine(
     const sessionInstructions = [
       ccContext,
       // `cctl ask` works for session and project conversations alike, so the
-      // ask-at-real-forks encouragement applies to every CC agent.
-      ASK_QUESTION_INSTRUCTIONS,
+      // ask-at-real-forks encouragement applies to every CC agent. Workflow
+      // lanes whose effective toggle is on get the enabled variant (tool
+      // available, protocol, context pauses); everyone else keeps the default.
+      selectAskQuestionInstructions(input.askUserQuestionsEnabled),
       // cctl is on PATH for every CC agent (session env contract), so the
       // CLI nudge applies to session and project conversations alike.
       CC_CLI_INSTRUCTIONS,

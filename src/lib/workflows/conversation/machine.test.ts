@@ -771,6 +771,22 @@ describe("conversationMachine", () => {
       expect(snap.context.status).toBe("awaiting");
     });
 
+    it("CLEAR_PENDING_QUESTION in waitingForInput clears the marker and settles to idle", async () => {
+      // A lane (graph-workflow) answer records on the execution record and does
+      // NOT queue a message, so the asking turn's pending marker is settled by a
+      // direct CLEAR_PENDING_QUESTION against the parked waitingForInput actor
+      // rather than by a SUBMIT_PROMPT drain.
+      const { actor } = await driveToWaitingForInput();
+      expect(actor.getSnapshot().value).toBe("waitingForInput");
+
+      actor.send({ type: "CLEAR_PENDING_QUESTION" });
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.pendingQuestion).toBeNull();
+      expect(snap.context.status).toBe("awaiting");
+    });
+
     it("wakes in waitingForInput with the question intact after snapshot restore", async () => {
       const { actor } = await driveToWaitingForInput();
       const persisted = actor.getPersistedSnapshot();

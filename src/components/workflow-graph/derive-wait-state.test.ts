@@ -46,6 +46,7 @@ function makeContextState(
     cleanupStatus: "not-applicable",
     lastMergeError: null,
     pendingApproval: null,
+    pendingUserInput: null,
     ...overrides,
   };
 }
@@ -355,6 +356,34 @@ describe("deriveContextWaitState", () => {
     });
 
     expect(result).toEqual({ kind: "awaiting-approval" });
+  });
+
+  it("reports awaiting-user-input for a context parked on a workflow question", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "awaiting_user_input",
+          totalTaskCount: 2,
+          completedTaskCount: 1,
+          pendingUserInput: {
+            conversationId: "conv-1",
+            lane: "implementer",
+            questionBatchId: "qb-1",
+            questions: [],
+            requestedAt: "2026-07-03T09:00:00.000Z",
+            answers: null,
+          },
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "awaiting-user-input" });
   });
 
   it("reports running when tasks are still in progress", () => {

@@ -28,6 +28,7 @@ import type {
   ContextValidatorOverride,
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
+  GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowHumanApprovalGateConfig,
@@ -122,6 +123,9 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
     enabled: false,
   },
   humanApprovalGate: {
+    enabled: false,
+  },
+  askUserQuestions: {
     enabled: false,
   },
   iterationPolicy: {
@@ -234,6 +238,12 @@ function summarizeHumanApprovalGate(
   return gate.enabled ? "enabled" : "off";
 }
 
+function summarizeAskUserQuestions(
+  config: GraphWorkflowAskUserQuestionsConfig,
+): string {
+  return config.enabled ? "enabled" : "off";
+}
+
 function summarizeIterationPolicy(
   policy: GraphWorkflowIterationPolicy,
 ): string {
@@ -277,6 +287,10 @@ type ResolvedContextCascade = {
     value: GraphWorkflowHumanApprovalGateConfig;
     source: Exclude<InspectorConfigBlockSource, "disabled">;
   };
+  askUserQuestions: {
+    value: GraphWorkflowAskUserQuestionsConfig;
+    source: Exclude<InspectorConfigBlockSource, "disabled">;
+  };
   iterationPolicy: {
     value: GraphWorkflowIterationPolicy;
     source: InspectorConfigBlockSource;
@@ -305,6 +319,7 @@ function computeContextCascade(
       | "implementer"
       | "scriptValidator"
       | "humanApprovalGate"
+      | "askUserQuestions"
       | "iterationPolicy"
       | "circuitBreaker"
       | "mutability",
@@ -354,6 +369,7 @@ function computeContextCascade(
     contextValidator: validator,
     scriptValidator: resolvePlain("scriptValidator"),
     humanApprovalGate: resolvePlain("humanApprovalGate"),
+    askUserQuestions: resolvePlain("askUserQuestions"),
     iterationPolicy: resolvePlain("iterationPolicy"),
     circuitBreaker: resolvePlain("circuitBreaker"),
     mutability: resolvePlain("mutability"),
@@ -380,6 +396,10 @@ type WorkflowCascade = {
   };
   humanApprovalGate: {
     value: GraphWorkflowHumanApprovalGateConfig;
+    source: "global" | "context-override";
+  };
+  askUserQuestions: {
+    value: GraphWorkflowAskUserQuestionsConfig;
     source: "global" | "context-override";
   };
   iterationPolicy: {
@@ -425,6 +445,7 @@ function computeWorkflowCascade(
     contextValidator: resolve("contextValidator"),
     scriptValidator: resolve("scriptValidator"),
     humanApprovalGate: resolve("humanApprovalGate"),
+    askUserQuestions: resolve("askUserQuestions"),
     iterationPolicy: resolve("iterationPolicy"),
     circuitBreaker: resolve("circuitBreaker"),
     mutability: resolve("mutability"),
@@ -797,6 +818,16 @@ function WorkflowTabBody({
         onReset={() => onClearOverride("humanApprovalGate")}
       />
 
+      <AskUserQuestionsBlock
+        scopeLabel="Workflow ask user questions"
+        hint="Let this workflow's implementer and validator agents ask you questions at consequential decision points. Applies to every context without its own override."
+        cascade={cascade.askUserQuestions}
+        onChange={(value) =>
+          onSetOverride("askUserQuestions", deepClone(value))
+        }
+        onReset={() => onClearOverride("askUserQuestions")}
+      />
+
       <InspectorConfigBlock
         label="Iteration policy"
         summary={summarizeIterationPolicy(cascade.iterationPolicy.value)}
@@ -859,6 +890,7 @@ type ContextBlock =
   | "contextValidator"
   | "scriptValidator"
   | "humanApprovalGate"
+  | "askUserQuestions"
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability"
@@ -1056,6 +1088,16 @@ function ContextTabBody({
           onSetContextOverride("humanApprovalGate", deepClone(value))
         }
         onReset={() => onClearContextOverride("humanApprovalGate")}
+      />
+
+      <AskUserQuestionsBlock
+        scopeLabel="Context ask user questions"
+        hint="Let this context's implementer and validator agents ask you questions at consequential decision points. The context parks until you answer."
+        cascade={cascade.askUserQuestions}
+        onChange={(value) =>
+          onSetContextOverride("askUserQuestions", deepClone(value))
+        }
+        onReset={() => onClearContextOverride("askUserQuestions")}
       />
 
       <InspectorConfigBlock
@@ -1439,6 +1481,56 @@ function HumanApprovalGateBlock({
             )}
           >
             <div className={cn(enabled && "bg-amber")} />
+          </div>
+          <span>{enabled ? "ON" : "OFF"}</span>
+        </div>
+        <div className={WB_FIELD_HINT}>{hint}</div>
+      </div>
+    </InspectorConfigBlock>
+  );
+}
+
+function AskUserQuestionsBlock({
+  scopeLabel,
+  hint,
+  cascade,
+  onChange,
+  onReset,
+}: {
+  scopeLabel: string;
+  hint: string;
+  cascade:
+    | ResolvedContextCascade["askUserQuestions"]
+    | WorkflowCascade["askUserQuestions"];
+  onChange: (value: GraphWorkflowAskUserQuestionsConfig) => void;
+  onReset: () => void;
+}): React.JSX.Element {
+  const enabled = cascade.value.enabled;
+  return (
+    <InspectorConfigBlock
+      label="Ask user questions"
+      summary={summarizeAskUserQuestions(cascade.value)}
+      source={cascade.source}
+      defaultOpen
+      allowInheritedEditing
+      onReset={cascade.source === "context-override" ? onReset : undefined}
+    >
+      <div className="flex flex-col gap-sm">
+        <div
+          onClick={() => onChange({ enabled: !enabled })}
+          role="switch"
+          aria-label={scopeLabel}
+          aria-checked={enabled}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onChange({ enabled: !enabled });
+            }
+          }}
+        >
+          <div>
+            <div />
           </div>
           <span>{enabled ? "ON" : "OFF"}</span>
         </div>

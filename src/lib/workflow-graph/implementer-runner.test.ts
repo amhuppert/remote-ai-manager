@@ -331,6 +331,86 @@ describe("graph workflow implementer runner", () => {
     );
   });
 
+  it("forwards askUserQuestionsEnabled into executePromptStream options when set (Req 8.1)", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+      askUserQuestionsEnabled: true,
+    });
+
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Inspect the codebase",
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.objectContaining({ askUserQuestionsEnabled: true }),
+    );
+  });
+
+  it("forwards askUserQuestionsEnabled false into executePromptStream options when disabled", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+      askUserQuestionsEnabled: false,
+    });
+
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Inspect the codebase",
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.objectContaining({ askUserQuestionsEnabled: false }),
+    );
+  });
+
   it("surfaces the backgroundWait summary in the return value when a wait occurred", async () => {
     const backgroundWait = {
       waitedTaskIds: ["task-a"],

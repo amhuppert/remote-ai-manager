@@ -79,8 +79,10 @@ function authDenies(): AgentAuth {
 function makeDeps(overrides: Partial<AskRouteDeps> = {}): {
   deps: AskRouteDeps;
   send: ReturnType<typeof vi.fn>;
+  resolveLaneAskPermission: ReturnType<typeof vi.fn>;
 } {
   const send = vi.fn(() => true);
+  const resolveLaneAskPermission = vi.fn(async () => ({ allowed: false }));
   const deps: AskRouteDeps = {
     auth: authAllows(),
     async resolveProjectPath() {
@@ -90,10 +92,17 @@ function makeDeps(overrides: Partial<AskRouteDeps> = {}): {
       return { conversations: [conv()] };
     },
     sendConversationEvent: send,
+    resolveLaneAskPermission,
     generateQuestionBatchId: () => "q_test1234",
     ...overrides,
   };
-  return { deps, send };
+  return {
+    deps,
+    send,
+    resolveLaneAskPermission: deps.resolveLaneAskPermission as ReturnType<
+      typeof vi.fn
+    >,
+  };
 }
 
 const validBody = {
@@ -140,8 +149,8 @@ describe("POST conversation ask", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("mode gate: 403 with the proceed-with-best-judgment text for a lane conversation (role set)", async () => {
-    const { deps, send } = makeDeps({
+  it("mode gate: a disabled lane conversation (gate denies) gets 403 with the proceed-with-best-judgment text and fires no event", async () => {
+    const { deps, send, resolveLaneAskPermission } = makeDeps({
       async getSession() {
         return { conversations: [conv({ role: "validator" })] };
       },
@@ -154,11 +163,93 @@ describe("POST conversation ask", () => {
     await expect(res.json()).resolves.toEqual({
       error: "autonomous conversation — proceed with best judgment",
     });
+    expect(resolveLaneAskPermission).toHaveBeenCalledTimes(1);
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("mode gate: 403 for a workflow-driven turn (activeTurnSource workflow)", async () => {
-    const { deps, send } = makeDeps({
+  it("mode gate: an enabled iteration-lane ask (gate allows) registers the batch and fires ASK_QUESTION", async () => {
+    const { deps, send, resolveLaneAskPermission } = makeDeps({
+      async getSession() {
+        return {
+          conversations: [
+            conv({ role: "iteration", activeTurnSource: "workflow" }),
+          ],
+        };
+      },
+      resolveLaneAskPermission: vi.fn(async () => ({
+        allowed: true,
+        executionId: "exec-1",
+        contextId: "ctx-1",
+        lane: "implementer" as const,
+      })),
+    });
+    const { POST } = createAskQuestionHandlers(deps);
+
+    const res = await POST(makeRequest(validBody), { params });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      questionBatchId: "q_test1234",
+    });
+    expect(resolveLaneAskPermission).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    const [projectPath, sessionName, conversationId, event] =
+      send.mock.calls[0]!;
+    expect(projectPath).toBe("/repos/cc");
+    expect(sessionName).toBe("sess");
+    expect(conversationId).toBe("conv-1");
+    expect(event).toMatchObject({
+      type: "ASK_QUESTION",
+      questionId: "q_test1234",
+    });
+  });
+
+  it("mode gate: an enabled validator-lane ask (gate allows) registers the batch and fires ASK_QUESTION", async () => {
+    const { deps, send, resolveLaneAskPermission } = makeDeps({
+      async getSession() {
+        return {
+          conversations: [
+            conv({ role: "validator", activeTurnSource: "workflow" }),
+          ],
+        };
+      },
+      resolveLaneAskPermission: vi.fn(async () => ({
+        allowed: true,
+        executionId: "exec-1",
+        contextId: "ctx-1",
+        lane: "context_validator" as const,
+      })),
+    });
+    const { POST } = createAskQuestionHandlers(deps);
+
+    const res = await POST(makeRequest(validBody), { params });
+
+    expect(res.status).toBe(200);
+    expect(resolveLaneAskPermission).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("mode gate: a planner conversation stays denied (403) and never consults the gate", async () => {
+    const { deps, send, resolveLaneAskPermission } = makeDeps({
+      async getSession() {
+        return { conversations: [conv({ role: "planner" })] };
+      },
+    });
+    const { POST } = createAskQuestionHandlers(deps);
+
+    const res = await POST(makeRequest(validBody), { params });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "autonomous conversation — proceed with best judgment",
+    });
+    expect(resolveLaneAskPermission).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("mode gate: a non-lane workflow-driven turn (role null, activeTurnSource workflow) stays denied and never consults the gate", async () => {
+    const { deps, send, resolveLaneAskPermission } = makeDeps({
       async getSession() {
         return { conversations: [conv({ activeTurnSource: "workflow" })] };
       },
@@ -171,6 +262,7 @@ describe("POST conversation ask", () => {
     await expect(res.json()).resolves.toEqual({
       error: "autonomous conversation — proceed with best judgment",
     });
+    expect(resolveLaneAskPermission).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
 

@@ -39,6 +39,7 @@ function makeExecution(
           contextValidator: null,
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
+          askUserQuestions: { enabled: false },
         },
         {
           id: "ctx-implement",
@@ -64,6 +65,7 @@ function makeExecution(
           },
           scriptValidator: { enabled: true },
           humanApprovalGate: { enabled: false },
+          askUserQuestions: { enabled: false },
         },
       ],
       tasks: [

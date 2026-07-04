@@ -1,0 +1,68 @@
+{
+  "name": "AskLive Disabled Path",
+  "description": "Disabled-toggle live verification: lane ask is refused with the autonomous refusal and the workflow proceeds autonomously.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {
+      "askUserQuestions": {
+        "enabled": false
+      }
+    },
+    "charter": {
+      "mission": "Record a single branding decision that only the operator can make.",
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "acceptance-criteria",
+          "label": "Per-context acceptance criteria",
+          "type": "spec",
+          "locator": "context.acceptanceCriteria",
+          "description": "The acceptance criteria for the decision context.",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-decide",
+        "title": "Record theme decision",
+        "acceptanceCriteria": "A file DECISION.md exists at the repo root containing exactly one line 'theme: <chosen>' where <chosen> is the option the operator selected via the ask tool.",
+        "implementer": {
+          "backend": "claude",
+          "model": "opus",
+          "reasoningEffort": "medium"
+        },
+        "contextValidator": {
+          "kind": "disabled"
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-decide",
+        "contextId": "context-decide",
+        "order": 1,
+        "title": "Ask which theme, then record it",
+        "instructions": "Your job is to record a branding decision in a file at the repository root named DECISION.md. The decision is which primary theme color the project should adopt: midnight-blue, forest-green, or crimson-red.\n\nFIRST, attempt to ask the operator using EXACTLY this one command (the CC_SERVER_URL prefix is required and correct \u2014 use it verbatim):\n\nCC_SERVER_URL=http://localhost:3071 cctl ask --question \"Primary theme color\" --option \"midnight-blue\" --option \"forest-green\" --option \"crimson-red\"\n\nIf the command fails with an error telling you this is an autonomous conversation and to proceed with best judgment, do NOT retry and do NOT probe the environment: follow that guidance \u2014 choose one option yourself, and write DECISION.md at the repository root containing exactly one line: 'theme: <your-choice>' followed by nothing else. Then your task is complete. If the ask instead succeeds, end your turn and wait for the answer.",
+        "source": "user"
+      }
+    ],
+    "edges": []
+  },
+  "layout": {
+    "workflowId": "asklive-r2",
+    "contextPositions": {
+      "context-decide": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

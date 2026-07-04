@@ -422,6 +422,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -440,6 +441,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -458,6 +460,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -557,6 +560,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-a": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-a",
             status: "running",
             totalTaskCount: 2,
@@ -575,6 +579,7 @@ describe("graph workflow manager", () => {
           },
           "context-b": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-b",
             status: "running",
             totalTaskCount: 1,
@@ -593,6 +598,7 @@ describe("graph workflow manager", () => {
           },
           "context-c": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-c",
             status: "pending",
             totalTaskCount: 1,
@@ -832,6 +838,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -850,6 +857,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -868,6 +876,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -1047,6 +1056,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1065,6 +1075,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -1083,6 +1094,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -1173,6 +1185,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1191,6 +1204,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -1209,6 +1223,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -1306,6 +1321,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1380,6 +1396,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "ready",
             totalTaskCount: 1,
@@ -1455,6 +1472,7 @@ describe("graph workflow manager", () => {
           decidedAt: "2026-03-27T15:02:00.000Z",
         },
       },
+      pendingUserInput: null,
       contextId: "context-plan",
       status: "awaiting_approval" as const,
       totalTaskCount: 1,
@@ -1538,6 +1556,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -2354,6 +2373,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "ready",
             totalTaskCount: 1,
@@ -2472,6 +2492,7 @@ describe("graph workflow manager", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-plan",
           status: "completed",
           totalTaskCount: 1,
@@ -2490,6 +2511,7 @@ describe("graph workflow manager", () => {
         },
         "context-implement": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -2508,6 +2530,7 @@ describe("graph workflow manager", () => {
         },
         "context-verify": {
           pendingApproval: null,
+          pendingUserInput: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -2548,6 +2571,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-plan",
             status: "completed",
             totalTaskCount: 1,
@@ -2566,6 +2590,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-implement",
             status: "ready",
             totalTaskCount: 1,
@@ -2584,6 +2609,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
+            pendingUserInput: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -2747,6 +2773,7 @@ describe("graph workflow manager", () => {
         cleanupStatus: "not-applicable",
         lastMergeError: null,
         pendingApproval: null,
+        pendingUserInput: null,
       });
       expect(execution.taskStates["task-implement-1"]).toEqual({
         taskId: "task-implement-1",
@@ -3147,6 +3174,7 @@ describe("graph workflow manager", () => {
           contextStates: {
             "context-plan": {
               pendingApproval: null,
+              pendingUserInput: null,
               contextId: "context-plan",
               status: "completed",
               totalTaskCount: 1,
@@ -3165,6 +3193,7 @@ describe("graph workflow manager", () => {
             },
             "context-implement": {
               pendingApproval: null,
+              pendingUserInput: null,
               contextId: "context-implement",
               status: "completed",
               totalTaskCount: 1,
@@ -3183,6 +3212,7 @@ describe("graph workflow manager", () => {
             },
             "context-verify": {
               pendingApproval: null,
+              pendingUserInput: null,
               contextId: "context-verify",
               status: "completed",
               totalTaskCount: 1,
@@ -3735,6 +3765,7 @@ describe("graph workflow manager", () => {
             contextValidator: null,
             scriptValidator: { enabled: false },
             humanApprovalGate: { enabled: false },
+            askUserQuestions: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
             iterationPolicy: {
@@ -3754,6 +3785,7 @@ describe("graph workflow manager", () => {
             contextValidator: null,
             scriptValidator: { enabled: false },
             humanApprovalGate: { enabled: false },
+            askUserQuestions: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
             iterationPolicy: {
@@ -3773,6 +3805,7 @@ describe("graph workflow manager", () => {
             contextValidator: null,
             scriptValidator: { enabled: false },
             humanApprovalGate: { enabled: false },
+            askUserQuestions: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
             iterationPolicy: {
@@ -3828,6 +3861,7 @@ describe("graph workflow manager", () => {
           contextStates: {
             "context-plan": {
               pendingApproval: null,
+              pendingUserInput: null,
               contextId: "context-plan",
               status: "completed",
               totalTaskCount: 1,
@@ -3846,6 +3880,7 @@ describe("graph workflow manager", () => {
             },
             "..escape": {
               pendingApproval: null,
+              pendingUserInput: null,
               contextId: "..escape",
               status: "pending",
               totalTaskCount: 1,
@@ -3864,6 +3899,7 @@ describe("graph workflow manager", () => {
             },
             "context-other": {
               pendingApproval: null,
+              pendingUserInput: null,
               contextId: "context-other",
               status: "pending",
               totalTaskCount: 1,
