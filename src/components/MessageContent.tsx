@@ -12,7 +12,9 @@ import {
 } from "@/lib/conversations/format-tool-use";
 import { cn } from "@/lib/ui/cn";
 import ToolUseGroup from "./ToolUseGroup";
-import ThinkingBlock from "./ThinkingBlock";
+import ThinkingBlock, {
+  type ThinkingBlockExpansionCommand,
+} from "./ThinkingBlock";
 import DebugStructuredCard from "./DebugStructuredCard";
 import DocumentFeedbackCard from "./conversation/DocumentFeedbackCard";
 import MarkdownFileCard from "./conversation/MarkdownFileCard";
@@ -27,13 +29,28 @@ const GROUP_THRESHOLD = 2;
 
 type GroupedItem =
   | { kind: "block"; block: MessageContentBlock; index: number }
-  | { kind: "tool_group"; blocks: MessageContentBlock[]; startIndex: number };
+  | { kind: "tool_group"; blocks: MessageContentBlock[]; startIndex: number }
+  | {
+      kind: "thinking_group";
+      block: CombinedThinkingBlock;
+      startIndex: number;
+    };
+
+type ThinkingContentBlock = Extract<MessageContentBlock, { type: "thinking" }>;
+
+interface CombinedThinkingBlock {
+  text: string;
+  redacted: boolean;
+  redactedCount: number;
+}
 
 /** Group consecutive tool_use/tool_result blocks together. */
 function groupContentBlocks(blocks: MessageContentBlock[]): GroupedItem[] {
   const result: GroupedItem[] = [];
   let pending: MessageContentBlock[] = [];
   let pendingStart = 0;
+  let pendingThinking: ThinkingContentBlock[] = [];
+  let pendingThinkingStart = 0;
 
   function flushPending() {
     if (pending.length === 0) return;
@@ -57,17 +74,44 @@ function groupContentBlocks(blocks: MessageContentBlock[]): GroupedItem[] {
     pending = [];
   }
 
+  function flushThinking() {
+    if (pendingThinking.length === 0) return;
+    const visibleText = pendingThinking
+      .filter((block) => !block.redacted && block.text.length > 0)
+      .map((block) => block.text);
+    const redactedCount = pendingThinking.filter(
+      (block) => block.redacted,
+    ).length;
+    result.push({
+      kind: "thinking_group",
+      block: {
+        text: visibleText.join("\n\n"),
+        redacted: visibleText.length === 0 && redactedCount > 0,
+        redactedCount,
+      },
+      startIndex: pendingThinkingStart,
+    });
+    pendingThinking = [];
+  }
+
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]!;
     if (block.type === "tool_use" || block.type === "tool_result") {
+      flushThinking();
       if (pending.length === 0) pendingStart = i;
       pending.push(block);
+    } else if (block.type === "thinking") {
+      flushPending();
+      if (pendingThinking.length === 0) pendingThinkingStart = i;
+      pendingThinking.push(block);
     } else {
       flushPending();
+      flushThinking();
       result.push({ kind: "block", block, index: i });
     }
   }
   flushPending();
+  flushThinking();
   return result;
 }
 
@@ -169,12 +213,14 @@ interface Props {
    * — decides structured rendering (docs/design/cc-cli/03 §3).
    */
   queuedMetadata?: QueuedMessageMetadata | null;
+  thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
 }
 
 export default memo(function MessageContent({
   content,
   worktreePath,
   queuedMetadata,
+  thinkingExpansionCommand,
 }: Props): React.JSX.Element {
   const grouped = useMemo(() => groupContentBlocks(content), [content]);
   const resultLookup = useMemo(() => buildToolResultLookup(content), [content]);
@@ -192,6 +238,17 @@ export default memo(function MessageContent({
               blocks={item.blocks}
               worktreePath={worktreePath}
               resultLookup={resultLookup}
+            />
+          );
+        }
+        if (item.kind === "thinking_group") {
+          return (
+            <ThinkingBlock
+              key={`th-${item.startIndex}`}
+              text={item.block.text}
+              redacted={item.block.redacted}
+              redactedCount={item.block.redacted ? 0 : item.block.redactedCount}
+              expansionCommand={thinkingExpansionCommand}
             />
           );
         }
@@ -232,6 +289,7 @@ export default memo(function MessageContent({
               key={i}
               text={block.text}
               redacted={block.redacted}
+              expansionCommand={thinkingExpansionCommand}
             />
           );
         }

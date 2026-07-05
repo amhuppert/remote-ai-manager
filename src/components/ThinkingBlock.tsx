@@ -23,6 +23,15 @@ interface Props {
   text: string;
   /** Encrypted/opaque reasoning the provider won't reveal — label-only, no body. */
   redacted?: boolean;
+  /** Number of hidden reasoning chunks included alongside visible reasoning. */
+  redactedCount?: number;
+  /** Conversation-level expand/collapse command. Manual per-block toggles remain local. */
+  expansionCommand?: ThinkingBlockExpansionCommand;
+}
+
+export interface ThinkingBlockExpansionCommand {
+  expanded: boolean;
+  revision: number;
 }
 
 function LinesIcon(): React.JSX.Element {
@@ -62,14 +71,26 @@ function LockIcon(): React.JSX.Element {
 /**
  * The agent's reasoning, surfaced as a recessed "inner voice" aside — a
  * hairline left-guide rather than a boxed card, so it never competes with the
- * answer. Collapsed by default; expands to the (dimmer, italic) reasoning text.
+ * answer. Expanded by default to show the (dimmer, italic) reasoning text.
  * A redacted block has no body and no toggle: just a lock-marked label.
  */
 export default memo(function ThinkingBlock({
   text,
   redacted = false,
+  redactedCount = 0,
+  expansionCommand,
 }: Props): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
+  const commandRevision = expansionCommand?.revision ?? null;
+  const [expansionState, setExpansionState] = useState(() => ({
+    expanded: expansionCommand?.expanded ?? true,
+    appliedRevision: commandRevision,
+  }));
+  const commandPending =
+    expansionCommand !== undefined &&
+    expansionState.appliedRevision !== expansionCommand.revision;
+  const expanded = commandPending
+    ? expansionCommand.expanded
+    : expansionState.expanded;
 
   if (redacted) {
     return (
@@ -92,7 +113,12 @@ export default memo(function ThinkingBlock({
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={() =>
+          setExpansionState((prev) => ({
+            expanded: !expanded,
+            appliedRevision: commandRevision ?? prev.appliedRevision,
+          }))
+        }
         className="group flex w-full cursor-pointer items-center gap-[7px] border-none bg-transparent py-[2px] font-mono text-text-tertiary transition-colors duration-150 ease-[ease] hover:text-text-secondary"
       >
         <span className="inline-flex shrink-0 text-text-secondary">
@@ -129,7 +155,20 @@ export default memo(function ThinkingBlock({
             THINKING_MARKDOWN,
           )}
         >
-          <LazyMarkdownContent content={text} />
+          {text && <LazyMarkdownContent content={text} />}
+          {redactedCount > 0 && (
+            <div className="mt-sm flex items-center gap-[7px] font-mono opacity-70">
+              <span className="inline-flex shrink-0 text-text-tertiary">
+                <LockIcon />
+              </span>
+              <span className="shrink-0 text-[0.74rem] font-medium text-text-secondary italic">
+                Internal reasoning
+              </span>
+              <span className="shrink-0 text-[0.72rem] text-text-tertiary">
+                {"— hidden"}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

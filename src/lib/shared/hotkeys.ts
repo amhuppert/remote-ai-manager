@@ -30,7 +30,9 @@ export type HotkeyId =
   | "newSession"
   | "focusCommandConsole"
   | "activateOpenTab"
-  | "exitPanes";
+  | "exitPanes"
+  | "expandThinkingBlocks"
+  | "collapseThinkingBlocks";
 
 export type HotkeyRegistry = Record<HotkeyId, HotkeyDefinition>;
 
@@ -187,6 +189,20 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     keys: "Escape",
     label: "Exit panes layout",
     description: "Leave the panes (split-screen) layout",
+    category: "navigation",
+  },
+  expandThinkingBlocks: {
+    id: "expandThinkingBlocks",
+    keys: "shift+e",
+    label: "Expand thinking blocks",
+    description: "Expand all thinking blocks in the active conversation",
+    category: "navigation",
+  },
+  collapseThinkingBlocks: {
+    id: "collapseThinkingBlocks",
+    keys: "shift+c",
+    label: "Collapse thinking blocks",
+    description: "Collapse all thinking blocks in the active conversation",
     category: "navigation",
   },
 };

@@ -4,6 +4,7 @@ import { memo } from "react";
 import { cn } from "@/lib/ui/cn";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
+import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import { EffortLabel } from "@/components/conversation/EffortLabel";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -43,6 +44,7 @@ export interface MessageRowProps {
   isLast: boolean;
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
+  thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
   /** Fork handler; omit to hide the Fork action where forking isn't supported. */
   onFork?: (messageIndex: number) => void;
   /**
@@ -67,6 +69,7 @@ const MessageRow = memo(function MessageRow({
   isLast,
   selectedBackend,
   worktreePath,
+  thinkingExpansionCommand,
   onFork,
   lastMessageExtras,
 }: MessageRowProps): React.JSX.Element {
@@ -80,7 +83,11 @@ const MessageRow = memo(function MessageRow({
           System
         </div>
         <div className="message-content">
-          <MessageContent content={msg.content} worktreePath={worktreePath} />
+          <MessageContent
+            content={msg.content}
+            worktreePath={worktreePath}
+            thinkingExpansionCommand={thinkingExpansionCommand}
+          />
         </div>
       </div>
     );
@@ -135,6 +142,7 @@ const MessageRow = memo(function MessageRow({
           content={msg.content}
           worktreePath={worktreePath}
           queuedMetadata={queuedMetadata}
+          thinkingExpansionCommand={thinkingExpansionCommand}
         />
       </div>
       {isLast && !isUserMsg && lastMessageExtras && (

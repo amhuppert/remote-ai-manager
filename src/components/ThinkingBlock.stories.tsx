@@ -24,8 +24,8 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Resting state — click "Thinking" to expand the reasoning. */
-export const Collapsed = {
+/** Resting state shows the reasoning and lets "Thinking" collapse it. */
+export const Expanded = {
   args: { text: SAMPLE },
 } satisfies Story;
 

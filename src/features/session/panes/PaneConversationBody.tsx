@@ -9,6 +9,7 @@ import TypingIndicator from "@/components/conversation/TypingIndicator";
 import { buildConversationRows } from "@/features/session/conversation/conversation-rows";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useDisplayMessages } from "@/features/session/hooks/use-display-messages";
+import { useThinkingBlockExpansionHotkeys } from "@/features/session/hooks/use-thinking-block-expansion-hotkeys";
 import { useSending } from "@/stores/session-detail.store";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -65,6 +66,7 @@ export default function PaneConversationBody({
     [displayMessages],
   );
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys(isActive);
 
   // The agent is responding when this conversation is running. The active pane
   // additionally honours the shared composer's `sending` flag to bridge the
@@ -128,6 +130,7 @@ export default function PaneConversationBody({
               isLast={isLast}
               selectedBackend={selectedBackend}
               worktreePath={undefined}
+              thinkingExpansionCommand={thinkingExpansionCommand}
               lastMessageExtras={null}
             />
           )}

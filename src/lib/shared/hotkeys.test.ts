@@ -24,6 +24,8 @@ describe("HOTKEY_REGISTRY", () => {
       "focusCommandConsole",
       "activateOpenTab",
       "exitPanes",
+      "expandThinkingBlocks",
+      "collapseThinkingBlocks",
     ];
     for (const id of expectedIds) {
       expect(HOTKEY_REGISTRY[id]).toBeDefined();
@@ -123,6 +125,27 @@ describe("HOTKEY_REGISTRY", () => {
     // Must NOT be enableOnFormTags so Escape inside the composer falls through to
     // the clearInput hotkey instead of exiting panes.
     expect(def.enableOnFormTags).toBeUndefined();
+  });
+
+  it("binds separate shortcuts for expanding and collapsing thinking blocks", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.expandThinkingBlocks).toMatchObject({
+      id: "expandThinkingBlocks",
+      keys: "shift+e",
+      label: "Expand thinking blocks",
+      category: "navigation",
+    });
+    expect(HOTKEY_REGISTRY.collapseThinkingBlocks).toMatchObject({
+      id: "collapseThinkingBlocks",
+      keys: "shift+c",
+      label: "Collapse thinking blocks",
+      category: "navigation",
+    });
+    expect(HOTKEY_REGISTRY.expandThinkingBlocks.keys).not.toBe(
+      HOTKEY_REGISTRY.collapseThinkingBlocks.keys,
+    );
+    expect(HOTKEY_REGISTRY.expandThinkingBlocks.enableOnFormTags).toBeFalsy();
+    expect(HOTKEY_REGISTRY.collapseThinkingBlocks.enableOnFormTags).toBeFalsy();
   });
 
   it("non-modifier hotkeys do not have enableOnFormTags", async () => {

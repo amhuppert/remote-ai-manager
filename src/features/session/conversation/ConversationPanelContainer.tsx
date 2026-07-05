@@ -7,6 +7,7 @@ import AlignmentGate from "@/features/session/conversation/AlignmentGate";
 import { useOpenMobileSidebar } from "@/stores/session-detail.store";
 import { useSessionPageConversation } from "@/features/session/hooks/use-session-page-conversation";
 import { useConversationPanelProps } from "@/features/session/hooks/use-conversation-panel-props";
+import { useThinkingBlockExpansionHotkeys } from "@/features/session/hooks/use-thinking-block-expansion-hotkeys";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
@@ -71,6 +72,7 @@ export default function ConversationPanelContainer({
   onStop,
 }: ConversationPanelContainerProps): React.JSX.Element {
   const openMobileSidebar = useOpenMobileSidebar();
+  const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
   const conversation = useSessionPageConversation({
     projectName,
     sessionName,
@@ -82,6 +84,7 @@ export default function ConversationPanelContainer({
     selectedBackend,
     handleDebugPrompt,
     handleFork,
+    thinkingExpansionCommand,
     local,
     collab,
   });

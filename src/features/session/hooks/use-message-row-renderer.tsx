@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import MessageRow from "@/components/conversation/MessageRow";
 import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
+import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
@@ -11,6 +12,7 @@ export interface UseMessageRowRendererArgs {
   activeConversation: ConversationState | undefined;
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
+  thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
   handleDebugPrompt: (text: string) => Promise<void>;
   handleFork: (messageIndex: number) => Promise<void>;
   isBusy: boolean;
@@ -23,6 +25,7 @@ export function useMessageRowRenderer({
   activeConversation,
   selectedBackend,
   worktreePath,
+  thinkingExpansionCommand,
   handleDebugPrompt,
   handleFork,
   isBusy,
@@ -51,6 +54,7 @@ export function useMessageRowRenderer({
           isLast={isLast}
           selectedBackend={selectedBackend}
           worktreePath={worktreePath}
+          thinkingExpansionCommand={thinkingExpansionCommand}
           onFork={handleFork}
           lastMessageExtras={extras}
         />
@@ -64,6 +68,7 @@ export function useMessageRowRenderer({
       isBusy,
       projectName,
       selectedBackend,
+      thinkingExpansionCommand,
       worktreePath,
       sessionName,
     ],

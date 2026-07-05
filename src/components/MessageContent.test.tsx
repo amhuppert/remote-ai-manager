@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import MessageContent from "./MessageContent";
+import type { ThinkingBlockExpansionCommand } from "./ThinkingBlock";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 const TINY_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
@@ -67,7 +69,7 @@ describe("MessageContent — image_marker caption", () => {
 });
 
 describe("MessageContent — thinking block", () => {
-  it("renders a collapsed reasoning aside whose body is hidden until expanded", () => {
+  it("renders an expanded reasoning aside by default", () => {
     const content: MessageContentBlock[] = [
       {
         type: "thinking",
@@ -78,15 +80,98 @@ describe("MessageContent — thinking block", () => {
     render(<MessageContent content={content} />);
 
     const toggle = screen.getByRole("button", { name: /thinking/i });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    // The reasoning text is not shown while collapsed; the answer always is.
-    expect(screen.queryByText(/Two candidates/)).not.toBeInTheDocument();
-    expect(screen.getByText("The component is correct.")).toBeInTheDocument();
-
-    fireEvent.click(toggle);
-
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/Two candidates/)).toBeInTheDocument();
+    expect(screen.getByText("The component is correct.")).toBeInTheDocument();
+  });
+
+  it("combines consecutive thinking blocks into one disclosure", () => {
+    const content: MessageContentBlock[] = [
+      { type: "thinking", text: "First thought." },
+      { type: "thinking", text: "Second thought." },
+      { type: "text", text: "Answer." },
+      { type: "thinking", text: "Later thought." },
+    ];
+    render(<MessageContent content={content} />);
+
+    expect(screen.getAllByRole("button", { name: /thinking/i })).toHaveLength(
+      2,
+    );
+    expect(screen.getByText(/First thought/)).toBeInTheDocument();
+    expect(screen.getByText(/Second thought/)).toBeInTheDocument();
+    expect(screen.getByText("Later thought.")).toBeInTheDocument();
+  });
+
+  it("keeps redacted thinking visible when combined with visible thinking", () => {
+    const content: MessageContentBlock[] = [
+      { type: "thinking", text: "Visible thought." },
+      { type: "thinking", text: "", redacted: true },
+      { type: "text", text: "Answer." },
+    ];
+    render(<MessageContent content={content} />);
+
+    expect(screen.getAllByRole("button", { name: /thinking/i })).toHaveLength(
+      1,
+    );
+    expect(screen.getByText("Visible thought.")).toBeInTheDocument();
+    expect(screen.getByText("Internal reasoning")).toBeInTheDocument();
+    expect(screen.getByText("— hidden")).toBeInTheDocument();
+  });
+  it("collapses and expands thinking blocks from conversation-level commands", () => {
+    const content: MessageContentBlock[] = [
+      { type: "thinking", text: "Commanded thought." },
+    ];
+
+    function Harness(): React.JSX.Element {
+      const [command, setCommand] = useState<ThinkingBlockExpansionCommand>({
+        expanded: true,
+        revision: 0,
+      });
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              setCommand((prev) => ({
+                expanded: false,
+                revision: prev.revision + 1,
+              }))
+            }
+          >
+            collapse
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setCommand((prev) => ({
+                expanded: true,
+                revision: prev.revision + 1,
+              }))
+            }
+          >
+            expand
+          </button>
+          <MessageContent
+            content={content}
+            thinkingExpansionCommand={command}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    const toggle = screen.getByRole("button", { name: /thinking/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Commanded thought.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "collapse" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Commanded thought.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "expand" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Commanded thought.")).toBeInTheDocument();
   });
 
   it("renders the reasoning body as markdown once expanded", async () => {
@@ -97,7 +182,6 @@ describe("MessageContent — thinking block", () => {
       },
     ];
     render(<MessageContent content={content} />);
-    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
 
     // Markdown renders to semantic elements (not literal **/`` text). The
     // markdown renderer is lazy-loaded, so allow for the dynamic import under

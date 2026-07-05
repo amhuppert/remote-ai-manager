@@ -39,6 +39,7 @@ export interface UseSessionPageConversationArgs {
   selectedBackend: MessageRowArgs["selectedBackend"];
   handleDebugPrompt: MessageRowArgs["handleDebugPrompt"];
   handleFork: MessageRowArgs["handleFork"];
+  thinkingExpansionCommand?: MessageRowArgs["thinkingExpansionCommand"];
   local: LocalState;
   collab: CollabContext;
 }
@@ -57,6 +58,7 @@ export function useSessionPageConversation(
     selectedBackend,
     handleDebugPrompt,
     handleFork,
+    thinkingExpansionCommand,
     local,
     collab,
   } = args;
@@ -98,6 +100,7 @@ export function useSessionPageConversation(
     activeConversation,
     selectedBackend,
     worktreePath,
+    thinkingExpansionCommand,
     handleDebugPrompt,
     handleFork,
     isBusy,
