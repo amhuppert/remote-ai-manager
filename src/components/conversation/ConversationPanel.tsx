@@ -215,7 +215,7 @@ export default function ConversationPanel({
           <div className="conversation" data-backend={selectedBackend}>
             <div
               ref={setCollabPinnedTopTarget}
-              className="collab-pinned-top-target sticky -top-lg z-[5] -mx-lg -mt-lg mb-0 border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base px-lg py-sm empty:hidden data-[visible=false]:hidden"
+              className="collab-pinned-top-target sticky -top-lg z-[5] -mx-lg -mt-lg mb-0 border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base px-lg py-sm empty:hidden data-[visible=false]:hidden max-768:-top-sm max-768:-mx-sm max-768:-mt-sm max-768:border-b-0 max-768:px-0 max-768:py-0"
               data-visible={isCollabPassageInView ? "true" : "false"}
             />
             {messagesPending ? (

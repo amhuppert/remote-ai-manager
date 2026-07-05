@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useCallback } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import { EFFORT_OPTIONS } from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
@@ -15,6 +15,12 @@ import PromptDesktopToolbar, {
   SEND_BUTTON_CLASS,
 } from "@/features/session/prompt/PromptDesktopToolbar";
 import { useComposerFocus } from "@/features/session/prompt/use-composer-focus";
+import MobileComposerBar from "@/features/session/prompt/MobileComposerBar";
+import {
+  computeComposerCollapsed,
+  computeComposerIdle,
+} from "@/features/session/prompt/composer-collapse";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import CollabConfigRow, {
   type CollabConfigRowConfig,
 } from "@/features/session/conversation/collab/CollabConfigRow";
@@ -35,6 +41,7 @@ import {
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import {
   useCancelOptimisticQueueEntry,
+  useComposerFocused,
   useSetQueueError,
 } from "@/stores/session-detail.store";
 
@@ -228,6 +235,44 @@ export default function PromptComposer({
   const setQueueError = useSetQueueError();
   const { containerRef, onFocus, onBlur, setControlActive } =
     useComposerFocus();
+
+  const isMobile = useIsMobile();
+  const composerFocused = useComposerFocused();
+  // Latch held from the tap on the collapsed bar until the editor takes focus,
+  // so the composer does not flicker back to collapsed in the intervening frame.
+  const [expandLatch, setExpandLatch] = useState(false);
+  const inputInert = isReadOnly || hasActiveCollab;
+  const composerIdle = computeComposerIdle({
+    promptText,
+    pendingImageCount: pendingImages.length,
+    isRecording,
+    hasCollabChip,
+    inputInert,
+  });
+  const composerCollapsed = computeComposerCollapsed({
+    isMobile,
+    idle: composerIdle,
+    composerFocused,
+    expandLatch,
+  });
+  // Once focus lands anywhere in the composer the latch has done its job; drop
+  // it here (event-driven) so a later empty blur re-collapses via composerFocused.
+  const handleComposerFocus = useCallback(() => {
+    onFocus();
+    setExpandLatch(false);
+  }, [onFocus]);
+  useEffect(() => {
+    if (expandLatch) editorRef.current?.focus();
+  }, [expandLatch, editorRef]);
+  const expandComposer = useCallback(() => setExpandLatch(true), []);
+  const backendLabel = selectedBackend === "codex" ? "Codex" : "Claude";
+  const collapsedPlaceholder = hasActiveCollab
+    ? COLLAB_RUNNING_TOOLTIP
+    : isFinished
+      ? "Session is merged and read-only"
+      : isReadOnly
+        ? "Session is read-only"
+        : (promptPlaceholder ?? `Message ${backendLabel}…`);
   // Portaled controls (model/effort dropdowns, capabilities drawer) render
   // outside this region and move focus away from the editor; they report their
   // open-state so the focus hook holds `composerFocused` true while open. Each
@@ -309,209 +354,217 @@ export default function PromptComposer({
     <div
       className="prompt-input-area shrink-0 border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-lg py-md max-768:border-border-default max-768:bg-[var(--cc-bg-base-a60)] max-768:px-sm max-768:py-xs"
       ref={containerRef}
-      onFocus={onFocus}
+      onFocus={handleComposerFocus}
       onBlur={onBlur}
     >
-      <div className="relative flex flex-col gap-sm">
-        {activeConversation && (
-          <DebugStatusStrip
-            projectName={projectName}
-            sessionName={sessionName}
-            conversation={activeConversation}
-          />
-        )}
-        <Suspense fallback={null}>
-          <PromptEditor
-            ref={editorRef}
-            conversationId={conversationId}
-            value={promptText}
-            onChange={onPromptTextChange}
-            onSubmit={() => {
-              if (isRecording) {
-                stopAndSubmit();
-                return;
-              }
-              onSendPrompt();
-            }}
-            pendingImages={pendingImages}
-            onAddImage={async (file) => {
-              const result = await addImage(file);
-              if (result.error) {
-                failPrompt(result.error);
-                return null;
-              }
-              return result.attachment;
-            }}
-            onRemoveImage={removeImage}
-            cumulativeImageCount={cumulativeImageCount}
-            onInlineMarkersChange={onInlineMarkersChange}
-            projectName={projectName}
-            sessionName={sessionName}
-            backend={selectedBackend}
-            onShowPlaceholder={showPlaceholder}
-            disabled={isReadOnly}
-            readOnly={hasActiveCollab}
-            title={hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined}
-            placeholder={
-              isFinished
-                ? "Session is merged and read-only"
-                : (promptPlaceholder ?? "Send a prompt to Claude...")
-            }
-          />
-        </Suspense>
-        {hasCollabChip ? (
-          <CollabConfigRow
-            config={effectiveCollabConfig}
-            originatingAgent={originatingCollabAgent}
-            onChange={onCollabConfigChange}
-            onDismiss={onCollabDismiss}
-          />
-        ) : null}
-        {cancellableEntries.length > 0 ? (
-          <div
-            className="mb-sm flex flex-wrap gap-xs"
-            aria-label="Pending queued messages"
-          >
-            {cancellableEntries.map((entry) => (
-              <div
-                key={entry.id}
-                className="inline-flex max-w-full items-center gap-xs rounded-full border border-border-subtle bg-bg-raised px-sm py-2xs font-mono text-[0.72rem] text-text-secondary"
-              >
-                <span className="max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap">
-                  {entry.preview}
-                </span>
-                <button
-                  type="button"
-                  className="inline-flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-text-tertiary transition-colors duration-150 hover:text-red"
-                  aria-label="Cancel queued message"
-                  data-tooltip="Cancel queued message"
-                  onClick={() => void cancelQueued(entry.id)}
-                >
-                  <CloseIcon size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/gif,image/webp"
-          multiple
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const files = e.target.files;
-            if (!files) return;
-            for (const file of files) {
-              void addImage(file).then((result) => {
-                if (result.error) failPrompt(result.error);
-              });
-            }
-            e.target.value = "";
-          }}
+      {composerCollapsed ? (
+        <MobileComposerBar
+          placeholder={collapsedPlaceholder}
+          disabled={inputInert}
+          onExpand={expandComposer}
         />
-        <ImageAttachmentPreview
-          images={pendingImages.filter(
-            (img) => !inlineMarkerIds.includes(img.id),
-          )}
-          onRemove={removeImage}
-        />
-        <PromptDesktopToolbar
-          projectName={projectName}
-          sessionName={sessionName}
-          conversationId={conversationId}
-          activeConversation={activeConversation}
-          onAttachClick={() => fileInputRef.current?.click()}
-          attachDisabled={isAtLimit || sending || isReadOnly}
-          backendLocked={backendLocked}
-          selectedBackend={selectedBackend}
-          onBackendChange={onBackendChange}
-          selectedModel={selectedModel}
-          onModelChange={onModelChange}
-          selectedEffort={selectedEffort}
-          onEffortChange={onEffortChange}
-          availableEffortLevels={availableEffortLevels}
-          effortSupported={effortSupported}
-          isReadOnly={isReadOnly}
-          sending={sending}
-          isRecording={isRecording}
-          isProcessing={isProcessing}
-          voiceAvailable={voiceAvailable}
-          elapsedTime={elapsedTime}
-          toggleRecording={toggleRecording}
-          sendBusy={sendBusy}
-          sendDisabled={sendDisabled}
-          sendTitle={sendTitle}
-          sendButtonInner={sendButtonInner}
-          onSendPrompt={onSendPrompt}
-          onModelOpenChange={onModelOpenChange}
-          onEffortOpenChange={onEffortOpenChange}
-          onCapabilitiesOpenChange={onCapabilitiesOpenChange}
-        />
-        <MobilePromptToolbar
-          modelOptions={getModelsForBackend(selectedBackend)}
-          effortOptions={EFFORT_OPTIONS.filter((o) =>
-            availableEffortLevels.includes(o.id),
-          )}
-          selectedModel={selectedModel}
-          selectedEffort={selectedEffort}
-          effortSupported={effortSupported}
-          effortDisabledReason={
-            !effortSupported
-              ? "Reasoning level is only available for Opus and Sonnet models"
-              : undefined
-          }
-          onSelectModel={onModelChange}
-          onSelectEffort={onEffortChange}
-          backend={selectedBackend}
-          backendLocked={backendLocked}
-          onSelectBackend={onBackendChange}
-          onAttach={() => fileInputRef.current?.click()}
-          attachDisabled={isAtLimit || sending}
-          debugActive={activeConversation?.debugMode?.active ?? false}
-          debugSupported={!!activeConversation}
-          onToggleDebug={onDebugToggle}
-          debugDisabled={sending || debugTogglePending}
-          debugPending={debugTogglePending}
-          mcpRow={
-            <div className={MOBILE_PROMPT_ROW_CLASS}>
-              <ConversationAgentCapabilitiesConfig
-                projectName={projectName}
-                sessionName={sessionName}
-                conversationId={conversationId}
-                disabled={isReadOnly}
-                disabledTooltip={
-                  isReadOnly ? "Session is read-only" : undefined
-                }
-                onOpenChange={onCapabilitiesMobileOpenChange}
-              />
-            </div>
-          }
-          isReadOnly={isReadOnly}
-          isBusy={sending && !conversationId}
-          voiceButton={
-            <VoiceRecordButton
-              isRecording={isRecording}
-              isProcessing={isProcessing}
-              elapsedTime={elapsedTime}
-              isAvailable={voiceAvailable}
-              toggleRecording={toggleRecording}
-              disabled={sending}
+      ) : (
+        <div className="relative flex flex-col gap-sm">
+          {activeConversation && (
+            <DebugStatusStrip
+              projectName={projectName}
+              sessionName={sessionName}
+              conversation={activeConversation}
             />
-          }
-          sendButton={
-            <button
-              className={SEND_BUTTON_CLASS}
-              data-busy={sendBusy}
-              disabled={sendDisabled}
-              onClick={onSendPrompt}
-              title={sendTitle}
+          )}
+          <Suspense fallback={null}>
+            <PromptEditor
+              ref={editorRef}
+              conversationId={conversationId}
+              value={promptText}
+              onChange={onPromptTextChange}
+              onSubmit={() => {
+                if (isRecording) {
+                  stopAndSubmit();
+                  return;
+                }
+                onSendPrompt();
+              }}
+              pendingImages={pendingImages}
+              onAddImage={async (file) => {
+                const result = await addImage(file);
+                if (result.error) {
+                  failPrompt(result.error);
+                  return null;
+                }
+                return result.attachment;
+              }}
+              onRemoveImage={removeImage}
+              cumulativeImageCount={cumulativeImageCount}
+              onInlineMarkersChange={onInlineMarkersChange}
+              projectName={projectName}
+              sessionName={sessionName}
+              backend={selectedBackend}
+              onShowPlaceholder={showPlaceholder}
+              disabled={isReadOnly}
+              readOnly={hasActiveCollab}
+              title={hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined}
+              placeholder={
+                isFinished
+                  ? "Session is merged and read-only"
+                  : (promptPlaceholder ?? "Send a prompt to Claude...")
+              }
+            />
+          </Suspense>
+          {hasCollabChip ? (
+            <CollabConfigRow
+              config={effectiveCollabConfig}
+              originatingAgent={originatingCollabAgent}
+              onChange={onCollabConfigChange}
+              onDismiss={onCollabDismiss}
+            />
+          ) : null}
+          {cancellableEntries.length > 0 ? (
+            <div
+              className="mb-sm flex flex-wrap gap-xs"
+              aria-label="Pending queued messages"
             >
-              {sendButtonInner}
-            </button>
-          }
-        />
-      </div>
+              {cancellableEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="inline-flex max-w-full items-center gap-xs rounded-full border border-border-subtle bg-bg-raised px-sm py-2xs font-mono text-[0.72rem] text-text-secondary"
+                >
+                  <span className="max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap">
+                    {entry.preview}
+                  </span>
+                  <button
+                    type="button"
+                    className="inline-flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-text-tertiary transition-colors duration-150 hover:text-red"
+                    aria-label="Cancel queued message"
+                    data-tooltip="Cancel queued message"
+                    onClick={() => void cancelQueued(entry.id)}
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const files = e.target.files;
+              if (!files) return;
+              for (const file of files) {
+                void addImage(file).then((result) => {
+                  if (result.error) failPrompt(result.error);
+                });
+              }
+              e.target.value = "";
+            }}
+          />
+          <ImageAttachmentPreview
+            images={pendingImages.filter(
+              (img) => !inlineMarkerIds.includes(img.id),
+            )}
+            onRemove={removeImage}
+          />
+          <PromptDesktopToolbar
+            projectName={projectName}
+            sessionName={sessionName}
+            conversationId={conversationId}
+            activeConversation={activeConversation}
+            onAttachClick={() => fileInputRef.current?.click()}
+            attachDisabled={isAtLimit || sending || isReadOnly}
+            backendLocked={backendLocked}
+            selectedBackend={selectedBackend}
+            onBackendChange={onBackendChange}
+            selectedModel={selectedModel}
+            onModelChange={onModelChange}
+            selectedEffort={selectedEffort}
+            onEffortChange={onEffortChange}
+            availableEffortLevels={availableEffortLevels}
+            effortSupported={effortSupported}
+            isReadOnly={isReadOnly}
+            sending={sending}
+            isRecording={isRecording}
+            isProcessing={isProcessing}
+            voiceAvailable={voiceAvailable}
+            elapsedTime={elapsedTime}
+            toggleRecording={toggleRecording}
+            sendBusy={sendBusy}
+            sendDisabled={sendDisabled}
+            sendTitle={sendTitle}
+            sendButtonInner={sendButtonInner}
+            onSendPrompt={onSendPrompt}
+            onModelOpenChange={onModelOpenChange}
+            onEffortOpenChange={onEffortOpenChange}
+            onCapabilitiesOpenChange={onCapabilitiesOpenChange}
+          />
+          <MobilePromptToolbar
+            modelOptions={getModelsForBackend(selectedBackend)}
+            effortOptions={EFFORT_OPTIONS.filter((o) =>
+              availableEffortLevels.includes(o.id),
+            )}
+            selectedModel={selectedModel}
+            selectedEffort={selectedEffort}
+            effortSupported={effortSupported}
+            effortDisabledReason={
+              !effortSupported
+                ? "Reasoning level is only available for Opus and Sonnet models"
+                : undefined
+            }
+            onSelectModel={onModelChange}
+            onSelectEffort={onEffortChange}
+            backend={selectedBackend}
+            backendLocked={backendLocked}
+            onSelectBackend={onBackendChange}
+            onAttach={() => fileInputRef.current?.click()}
+            attachDisabled={isAtLimit || sending}
+            debugActive={activeConversation?.debugMode?.active ?? false}
+            debugSupported={!!activeConversation}
+            onToggleDebug={onDebugToggle}
+            debugDisabled={sending || debugTogglePending}
+            debugPending={debugTogglePending}
+            mcpRow={
+              <div className={MOBILE_PROMPT_ROW_CLASS}>
+                <ConversationAgentCapabilitiesConfig
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  conversationId={conversationId}
+                  disabled={isReadOnly}
+                  disabledTooltip={
+                    isReadOnly ? "Session is read-only" : undefined
+                  }
+                  onOpenChange={onCapabilitiesMobileOpenChange}
+                />
+              </div>
+            }
+            isReadOnly={isReadOnly}
+            isBusy={sending && !conversationId}
+            voiceButton={
+              <VoiceRecordButton
+                isRecording={isRecording}
+                isProcessing={isProcessing}
+                elapsedTime={elapsedTime}
+                isAvailable={voiceAvailable}
+                toggleRecording={toggleRecording}
+                disabled={sending}
+              />
+            }
+            sendButton={
+              <button
+                className={SEND_BUTTON_CLASS}
+                data-busy={sendBusy}
+                disabled={sendDisabled}
+                onClick={onSendPrompt}
+                title={sendTitle}
+              >
+                {sendButtonInner}
+              </button>
+            }
+          />
+        </div>
+      )}
     </div>
   );
 }

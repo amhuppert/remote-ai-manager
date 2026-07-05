@@ -29,16 +29,21 @@ import CollabCounterProposalCard from "@/features/session/conversation/collab/Co
 import CollabResolutionDecisionCard from "@/features/session/conversation/collab/CollabResolutionDecisionCard";
 import CollabOpenConflictsCard from "@/features/session/conversation/collab/CollabOpenConflictsCard";
 import CollabFinalAnswerMessage from "@/features/session/conversation/collab/CollabFinalAnswerMessage";
-import CollabPhaseStrip, {
+import CollabPhaseStrip from "@/features/session/conversation/collab/CollabPhaseStrip";
+import {
   type CollabPhaseStripPhase,
   type CollabPhaseVerdict,
-} from "@/features/session/conversation/collab/CollabPhaseStrip";
+} from "@/features/session/conversation/collab/collab-phase-display";
 import CollabConnector, {
   type CollabConnectorAnchor,
 } from "@/features/session/conversation/collab/CollabConnector";
 import CollabPassageControls from "@/features/session/conversation/collab/CollabPassageControls";
+import CollabMobileBar from "@/features/session/conversation/collab/CollabMobileBar";
+import CollabControlSheet from "@/features/session/conversation/collab/CollabControlSheet";
+import CollabReaderOverlay from "@/features/session/conversation/collab/CollabReaderOverlay";
 import { CollabCardOrchestrationProvider } from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import type { CollabPassageStatus } from "@/features/session/conversation/collab/envelope-adapter";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/ui/cn";
 
 // Grid placement of a card host within the two-column passage row; collapses to
@@ -679,6 +684,9 @@ export default function CollabPassage({
   const [navIndex, setNavIndex] = useState<number>(0);
   const [forceState, setForceState] = useState<"open" | "closed" | null>(null);
   const [forceTick, setForceTick] = useState<number>(0);
+  const isMobile = useIsMobile();
+  const [readerOpen, setReaderOpen] = useState<boolean>(false);
+  const [controlsOpen, setControlsOpen] = useState<boolean>(false);
 
   const navigateTo = useCallback(
     (idx: number) => {
@@ -773,7 +781,18 @@ export default function CollabPassage({
   };
 
   const showBand = pinnedTopTarget != null || !hideInlinePhaseStrip;
-  const bandElement = showBand ? (
+  const bandElement = !showBand ? null : isMobile ? (
+    <CollabMobileBar
+      phases={phases}
+      verdict={verdict}
+      currentIndex={navIndex}
+      total={timeline.cards.length}
+      onPrev={onPrev}
+      onNext={onNext}
+      onOpenReader={() => setReaderOpen(true)}
+      onOpenControls={() => setControlsOpen(true)}
+    />
+  ) : (
     <div
       className="flex min-w-0 flex-wrap items-center justify-between gap-sm"
       data-band="phase-strip"
@@ -792,9 +811,22 @@ export default function CollabPassage({
         onCollapseAll={onCollapseAll}
       />
     </div>
-  ) : null;
+  );
 
   const showErrorBanner = status === "failed" && errorSummary !== undefined;
+
+  // One timeline element, mounted inline in the passage or hoisted into the
+  // reader overlay — never both, so `data-card-id` stays unique and nav scroll
+  // resolves against whichever scroll container currently holds the cards.
+  const timelineNode = (
+    <div className="flex min-w-0 flex-col gap-0" ref={containerRef}>
+      <CollabCardOrchestrationProvider forceState={forceState} tick={forceTick}>
+        {renderTimelineSections(timeline, renderRow, renderConnectorBefore)}
+      </CollabCardOrchestrationProvider>
+    </div>
+  );
+
+  const readerActive = isMobile && readerOpen;
 
   return (
     <article
@@ -826,14 +858,33 @@ export default function CollabPassage({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-col gap-0" ref={containerRef}>
-        <CollabCardOrchestrationProvider
-          forceState={forceState}
-          tick={forceTick}
+      {readerActive ? (
+        <CollabReaderOverlay
+          phases={phases}
+          verdict={verdict}
+          currentIndex={navIndex}
+          total={timeline.cards.length}
+          onPrev={onPrev}
+          onNext={onNext}
+          onOpenControls={() => setControlsOpen(true)}
+          onClose={() => setReaderOpen(false)}
         >
-          {renderTimelineSections(timeline, renderRow, renderConnectorBefore)}
-        </CollabCardOrchestrationProvider>
-      </div>
+          {timelineNode}
+        </CollabReaderOverlay>
+      ) : (
+        timelineNode
+      )}
+
+      {isMobile && controlsOpen ? (
+        <CollabControlSheet
+          phases={phases}
+          verdict={verdict}
+          onExpandAll={onExpandAll}
+          onCollapseAll={onCollapseAll}
+          onStop={stopHandler}
+          onClose={() => setControlsOpen(false)}
+        />
+      ) : null}
     </article>
   );
 }
