@@ -155,12 +155,12 @@ export function TabsTriggerCount({
   );
 }
 
-// Content — the tab panel (role=tabpanel). Radix mounts only the active panel by
-// default and makes it focusable (tabindex=0) when it has no focusable child, so
-// it gets the canonical cyan `:focus-visible` outline. Appearance/geometry of
+// Content — the tab panel (role=tabpanel). Radix marks inactive panels hidden;
+// mirror that through data-state so consumer display utilities such as `flex`
+// cannot override the browser's hidden-attribute rule. Appearance/geometry of
 // the panel body belongs to the consumer via `layoutClassName`.
 const tabsContentClass =
-  "outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]";
+  "outline-none data-[state=inactive]:hidden focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]";
 
 type TabsContentProps = Omit<
   React.ComponentProps<typeof RadixTabs.Content>,

@@ -155,7 +155,7 @@ export default function DiffPanel({
   let hunkRefIndex = 0;
 
   return (
-    <div className="sidebar-diff-panel">
+    <div className="sidebar-diff-panel flex-1">
       <div className="panel-header">
         <span className="panel-title">Diff vs {targetBranch}</span>
         <span className="font-mono text-[0.68rem] text-text-tertiary">

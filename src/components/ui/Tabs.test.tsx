@@ -146,9 +146,43 @@ describe("Radix Tabs — class contract", () => {
     render(<Fixture defaultValue="active" />);
     const panel = screen.getByRole("tabpanel");
     expect(panel.className).toContain("outline-none");
+    expect(panel.className).toContain("data-[state=inactive]:hidden");
     expect(panel.className).toContain(
       "focus-visible:[outline:2px_solid_var(--color-cyan)]",
     );
+  });
+
+  it("keeps inactive panels hidden when layout classes set display", () => {
+    render(
+      <TabsRoot defaultValue="active">
+        <TabsList aria-label="Sessions">
+          <TabsTrigger value="active">Active</TabsTrigger>
+          <TabsTrigger value="idle">Idle</TabsTrigger>
+        </TabsList>
+        <TabsContent
+          value="active"
+          forceMount
+          layoutClassName="flex min-h-0 flex-1 flex-col"
+        >
+          Active panel
+        </TabsContent>
+        <TabsContent
+          value="idle"
+          forceMount
+          layoutClassName="flex min-h-0 flex-1 flex-col"
+        >
+          Idle panel
+        </TabsContent>
+      </TabsRoot>,
+    );
+
+    const panels = screen.getAllByRole("tabpanel", { hidden: true });
+    const inactivePanel = panels.find((panel) =>
+      panel.textContent?.includes("Idle panel"),
+    );
+    expect(inactivePanel).toHaveAttribute("data-state", "inactive");
+    expect(inactivePanel?.className).toContain("flex");
+    expect(inactivePanel?.className).toContain("data-[state=inactive]:hidden");
   });
 
   it("appends layoutClassName last on every part", () => {
@@ -184,7 +218,7 @@ describe("Radix Tabs — APG semantics & panel linking", () => {
     expect(active.getAttribute("aria-selected")).toBe("true");
     expect(idle.getAttribute("aria-selected")).toBe("false");
 
-    // Only the active panel is mounted; the active trigger controls it and the
+    // Only the active panel is exposed; the active trigger controls it and the
     // panel is labelled back by the trigger.
     const panel = screen.getByRole("tabpanel");
     expect(panel.textContent).toContain("Active panel");

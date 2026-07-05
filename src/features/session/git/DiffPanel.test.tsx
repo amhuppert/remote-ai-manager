@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DiffPanel from "@/features/session/git/DiffPanel";
-import type { SessionDiff } from "@/lib/git/schemas";
+import type { CommitLogEntry, SessionDiff } from "@/lib/git/schemas";
 
 // ===========================================================================
 // 4.3 – DiffPanel rendering (Req 5.1–5.6)
@@ -51,6 +52,25 @@ const sampleDiff: SessionDiff = {
   totalDeletions: 3,
 };
 
+const sampleCommits: CommitLogEntry[] = [
+  {
+    hash: "abc1234",
+    fullHash: "abc1234567890abcdef1234567890abcdef1234",
+    message: "Add validation",
+    date: new Date().toISOString(),
+    filesChanged: 2,
+  },
+];
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 describe("DiffPanel", () => {
   it("renders empty state when no diff files (Req 5.6)", () => {
     render(<DiffPanel diff={emptyDiff} />);
@@ -72,6 +92,27 @@ describe("DiffPanel", () => {
     const header = container.querySelector(".panel-header")!;
     expect(header.textContent).toContain("-3");
     expect(header.textContent).toContain("2 files");
+  });
+
+  it("lets both diff tabs fill the available panel height", () => {
+    const { container } = renderWithQuery(
+      <DiffPanel diff={sampleDiff} commits={sampleCommits} />,
+    );
+
+    expect(container.firstElementChild).toHaveClass(
+      "sidebar-diff-panel",
+      "flex-1",
+    );
+
+    let activePanel = screen.getByRole("tabpanel");
+    expect(activePanel).toHaveClass("flex", "min-h-0", "flex-1", "flex-col");
+    expect(activePanel.querySelector(".overflow-auto")).toHaveClass("flex-1");
+
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Commits/ }));
+
+    activePanel = screen.getByRole("tabpanel");
+    expect(activePanel).toHaveClass("flex", "min-h-0", "flex-1", "flex-col");
+    expect(activePanel.querySelector(".overflow-auto")).toHaveClass("flex-1");
   });
 
   it("renders file paths and per-file stats (Req 5.2)", () => {

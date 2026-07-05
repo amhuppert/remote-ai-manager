@@ -78,21 +78,18 @@ export default function RightPane({
         </div>
 
         {/* Panel body — every tabpanel is force-mounted (forceMount) so its
-            internal state survives tab switches; Radix toggles the `hidden`
-            attribute on the inactive panels, the active one fills the column. */}
+            internal state survives tab switches; data-state drives the active
+            panel's fill geometry and inactive panels stay hidden. */}
         <div className="right-pane-body flex min-h-0 flex-1 flex-col">
-          {/* Diff originally used `display:contents` (boxless, content-sized): its
-              `.sidebar-diff-panel` was a non-growing flex child of `.right-pane-body`.
-              A transparent `flex flex-col min-h-0` panel (NO `flex-1`) wrapping the
-              same `.sidebar-diff-panel` reproduces that geometry — unlike docs/specs,
-              which were `flex:1` grow boxes. */}
+          {/* The diff tabpanel fills the same right-pane body as docs/specs; the
+              nested DiffPanel owns its internal scroll containers. */}
           <TabsContent
             value="diff"
             forceMount
-            layoutClassName="min-h-0 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
           >
             {isLoading ? (
-              <div className="sidebar-diff-panel">
+              <div className="sidebar-diff-panel flex-1">
                 <EmptyState layoutClassName="grow">
                   <EmptyStateTitle>Loading diff…</EmptyStateTitle>
                 </EmptyState>
