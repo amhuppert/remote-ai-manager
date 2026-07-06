@@ -26,6 +26,10 @@ import { computeAlignmentInvalidations } from "@/lib/session-alignment/sse-inval
 import { sessionAlignmentUpdatedEventSchema } from "@/lib/session-alignment/schemas";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import { reconnectReconcile } from "@/lib/events/sse-reconnect";
+import {
+  parseSseEventData,
+  readSseEnvelopeSentAt,
+} from "@/lib/events/sse-envelope";
 import { backgroundJobSchema, jobStatusEventSchema } from "@/lib/jobs/schemas";
 import { z } from "zod";
 import {
@@ -118,8 +122,10 @@ export default function NotificationListener(): null {
     // every event envelope so we can compute transportMs (sentAt→received
     // wall-clock delta — clock-skew sensitive) and handlerMs (cache
     // invalidation / store mutation cost) per message. Wrapped at the
-    // EventSource layer so every listener picks it up without modification;
-    // Zod schemas drop the unknown `_sentAt` field by default.
+    // EventSource layer so every listener picks it up without modification.
+    // Handlers must parse frames via `parseSseEventData`, which strips the
+    // envelope — several event schemas are `.strict()` and would otherwise
+    // reject the frame, silently dropping the event.
     const SSE_LOG_HANDLER_MS_THRESHOLD = 1;
     const SSE_LOG_TRANSPORT_MS_THRESHOLD = 50;
     const originalAdd = es.addEventListener.bind(es);
@@ -128,13 +134,7 @@ export default function NotificationListener(): null {
       listener: (event: MessageEvent) => void,
     ) => {
       const wrapped = (event: MessageEvent) => {
-        let sentAt: number | null = null;
-        try {
-          const peek = JSON.parse(event.data) as { _sentAt?: unknown };
-          if (typeof peek._sentAt === "number") sentAt = peek._sentAt;
-        } catch {
-          // best-effort
-        }
+        const sentAt = readSseEnvelopeSentAt(event.data);
         const start = performance.now();
         try {
           listener(event);
@@ -317,7 +317,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("conversation-status", (event) => {
       try {
-        const parsed = JSON.parse(event.data);
+        const parsed = parseSseEventData(event.data);
         const result = conversationStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
@@ -402,7 +402,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("message-appended", (event) => {
       const parsed = messageAppendedEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -419,7 +419,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("message-updated", (event) => {
       const parsed = messageUpdatedEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -436,7 +436,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("conversation-created", (event) => {
       const parsed = conversationCreatedEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -461,7 +461,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("conversation-renamed", (event) => {
       const parsed = conversationRenamedEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -487,7 +487,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("conversation-archived", (event) => {
       const parsed = conversationArchivedEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -513,7 +513,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("conversation-open", (event) => {
       const parsed = conversationOpenEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -525,7 +525,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("conversation-unread", (event) => {
       const parsed = conversationUnreadEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -537,7 +537,9 @@ export default function NotificationListener(): null {
     });
 
     es.addEventListener("ask-question", (event) => {
-      const parsed = askQuestionEventSchema.safeParse(JSON.parse(event.data));
+      const parsed = askQuestionEventSchema.safeParse(
+        parseSseEventData(event.data),
+      );
       if (!parsed.success) return;
       const d = parsed.data;
       if (d.scope === "project") {
@@ -559,7 +561,9 @@ export default function NotificationListener(): null {
     });
 
     es.addEventListener("message-queued", (event) => {
-      const parsed = messageQueuedEventSchema.safeParse(JSON.parse(event.data));
+      const parsed = messageQueuedEventSchema.safeParse(
+        parseSseEventData(event.data),
+      );
       if (!parsed.success) return;
       const d = parsed.data;
       void queryClient.invalidateQueries({
@@ -577,7 +581,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("message-queue-updated", (event) => {
       const parsed = messageQueueUpdatedEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -596,7 +600,9 @@ export default function NotificationListener(): null {
     // narrow refetch of that list rather than a setQueryData patch.
     es.addEventListener("spawn-result", (event) => {
       try {
-        const parsed = spawnResultEventSchema.safeParse(JSON.parse(event.data));
+        const parsed = spawnResultEventSchema.safeParse(
+          parseSseEventData(event.data),
+        );
         if (!parsed.success) return;
         void queryClient.invalidateQueries({
           queryKey: sessionKeys.list(parsed.data.projectName),
@@ -608,7 +614,7 @@ export default function NotificationListener(): null {
 
     es.addEventListener("job-status", (event) => {
       try {
-        const parsed = JSON.parse(event.data);
+        const parsed = parseSseEventData(event.data);
         const result = jobStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
@@ -637,7 +643,7 @@ export default function NotificationListener(): null {
     // a fetched response.
     es.addEventListener("notification-created", (event) => {
       try {
-        const parsed = JSON.parse(event.data);
+        const parsed = parseSseEventData(event.data);
         const result = notificationCreatedEventSchema.safeParse(parsed);
         if (!result.success) return;
         const notification = result.data.notification;
@@ -664,7 +670,7 @@ export default function NotificationListener(): null {
     // New: notification-updated events → invalidate cache
     es.addEventListener("notification-updated", (event) => {
       try {
-        const parsed = JSON.parse(event.data);
+        const parsed = parseSseEventData(event.data);
         const result = notificationUpdatedEventSchema.safeParse(parsed);
         if (!result.success) return;
 
@@ -679,7 +685,7 @@ export default function NotificationListener(): null {
     // --- Debug Mode SSE events ---
     es.addEventListener("debug-mode-status", (event) => {
       const parsed = debugModeStatusEventSchema.safeParse(
-        JSON.parse(event.data),
+        parseSseEventData(event.data),
       );
       if (!parsed.success) return;
       const d = parsed.data;
@@ -697,7 +703,7 @@ export default function NotificationListener(): null {
       });
       try {
         const parsed = debugLogReceivedEventSchema.parse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         queryClient.setQueryData(
           debugLogKeys.stats(
@@ -745,7 +751,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-status", (event) => {
       try {
         const parsed = graphWorkflowStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -765,7 +771,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-context-status", (event) => {
       try {
         const parsed = graphWorkflowContextStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -785,7 +791,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-task-status", (event) => {
       try {
         const parsed = graphWorkflowTaskStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -805,7 +811,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-validation-result", (event) => {
       try {
         const parsed = graphWorkflowValidationResultEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -820,7 +826,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-circuit-breaker", (event) => {
       try {
         const parsed = graphWorkflowCircuitBreakerEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -835,7 +841,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-shared-documents-updated", (event) => {
       try {
         const parsed = graphWorkflowSharedDocumentsUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -852,7 +858,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-pending-halt-reason", (event) => {
       try {
         const parsed = graphWorkflowPendingHaltReasonEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -867,7 +873,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-batch-scheduled", (event) => {
       try {
         const parsed = graphWorkflowBatchScheduledEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -887,7 +893,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-merge-status", (event) => {
       try {
         const parsed = graphWorkflowMergeStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -907,7 +913,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-lane-status", (event) => {
       try {
         const parsed = graphWorkflowLaneStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -927,7 +933,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-join-status", (event) => {
       try {
         const parsed = graphWorkflowJoinStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -947,7 +953,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-charter-registered", (event) => {
       try {
         const parsed = graphWorkflowCharterRegisteredEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -962,7 +968,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-charter-updated", (event) => {
       try {
         const parsed = graphWorkflowCharterUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
@@ -977,7 +983,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-approval-pending", (event) => {
       try {
         const parsed = graphWorkflowApprovalPendingEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         const d = parsed.data;
@@ -1003,7 +1009,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-approval-resolved", (event) => {
       try {
         const parsed = graphWorkflowApprovalResolvedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateConversationViews(
@@ -1018,7 +1024,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-user-input-pending", (event) => {
       try {
         const parsed = graphWorkflowUserInputPendingEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         const d = parsed.data;
@@ -1044,7 +1050,7 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-user-input-resolved", (event) => {
       try {
         const parsed = graphWorkflowUserInputResolvedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         const d = parsed.data;
@@ -1068,7 +1074,7 @@ export default function NotificationListener(): null {
     es.addEventListener("scoped-status", (event) => {
       try {
         const parsed = scopedStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         const data = parsed.data;
@@ -1128,7 +1134,7 @@ export default function NotificationListener(): null {
     es.addEventListener("mcp-config-updated", (event) => {
       try {
         const parsed = mcpConfigUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         const data = parsed.data;
@@ -1159,7 +1165,7 @@ export default function NotificationListener(): null {
     es.addEventListener("mcp-tools-updated", (event) => {
       try {
         const parsed = mcpToolsUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         const data = parsed.data;
@@ -1184,7 +1190,7 @@ export default function NotificationListener(): null {
     es.addEventListener("agent-capabilities-updated", (event) => {
       try {
         const parsed = agentCapabilitiesUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateAgentCapabilityViews(parsed.data);
@@ -1196,7 +1202,7 @@ export default function NotificationListener(): null {
     es.addEventListener("agent-capabilities-discovery-updated", (event) => {
       try {
         const parsed = agentCapabilitiesDiscoveryUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         invalidateAgentCapabilityViews(parsed.data);
@@ -1208,7 +1214,7 @@ export default function NotificationListener(): null {
     es.addEventListener("session-alignment-updated", (event) => {
       try {
         const parsed = sessionAlignmentUpdatedEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         for (const { queryKey } of computeAlignmentInvalidations(parsed.data)) {
@@ -1226,7 +1232,7 @@ export default function NotificationListener(): null {
     es.addEventListener("context_artifact_status", (event) => {
       try {
         const parsed = contextArtifactStatusEventSchema.safeParse(
-          JSON.parse(event.data),
+          parseSseEventData(event.data),
         );
         if (!parsed.success) return;
         applyContextArtifactStatusEvent(queryClient, parsed.data);

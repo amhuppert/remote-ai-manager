@@ -37,6 +37,13 @@ export interface ProjectTranscriptHostProps {
   worktreePath?: string;
   /** Active turn status — drives the running typing indicator (Req 12.2). */
   status?: ConversationStatus;
+  /**
+   * A send to this conversation is in flight. Covers the gap between the
+   * composer submit and the server broadcasting `status:"running"` (actor
+   * spin-up takes seconds), mirroring the session page's
+   * `store.sending || status === "running"` indicator visibility.
+   */
+  sending?: boolean;
   /** Supplied by chat-session-spawning; empty until spawning lands. */
   spawnCards?: SpawnCardRowData[];
   /** Supplied by chat-session-spawning; defaults to a no-op renderer. */
@@ -60,6 +67,7 @@ export default function ProjectTranscriptHost({
   selectedBackend,
   worktreePath,
   status,
+  sending = false,
   spawnCards,
   renderSpawnCardRow = noopRenderSpawnCardRow,
 }: ProjectTranscriptHostProps): React.JSX.Element {
@@ -93,7 +101,7 @@ export default function ProjectTranscriptHost({
   }, [messages]);
   const lastMessageIndex = messages.length - 1;
 
-  const running = status === "running";
+  const running = status === "running" || sending;
 
   // Reuse the session transcript's working indicator (animated dots) while a
   // turn runs; awaiting is conveyed by the pane-header status badge, not a

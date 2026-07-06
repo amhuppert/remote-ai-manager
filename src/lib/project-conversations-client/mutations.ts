@@ -304,6 +304,13 @@ export interface ProjectPromptError {
 export interface UseSendProjectPromptResult {
   send(input: SendProjectPromptInput): Promise<void>;
   sending: boolean;
+  /**
+   * Conversation targeted by the in-flight send; null when idle or while the
+   * create-and-send entry is creating the first conversation. Lets per-tab UI
+   * (the transcript typing indicator) react only to its own conversation's
+   * send instead of every tab going busy.
+   */
+  sendingConversationId: string | null;
   error: ProjectPromptError | null;
   clearError(): void;
 }
@@ -323,6 +330,9 @@ export function useSendProjectPrompt(
 ): UseSendProjectPromptResult {
   const queryClient = useQueryClient();
   const [sending, setSending] = useState(false);
+  const [sendingConversationId, setSendingConversationId] = useState<
+    string | null
+  >(null);
   const [error, setError] = useState<ProjectPromptError | null>(null);
   const inFlight = useRef(false);
 
@@ -336,6 +346,7 @@ export function useSendProjectPrompt(
       setError(null);
 
       const { conversationId } = input;
+      setSendingConversationId(conversationId);
       const url =
         conversationId === null
           ? `/api/projects/${encodeURIComponent(projectName)}/prompt`
@@ -382,6 +393,7 @@ export function useSendProjectPrompt(
       } finally {
         inFlight.current = false;
         setSending(false);
+        setSendingConversationId(null);
         invalidateProjectLifecycle(queryClient, projectName);
         if (conversationId !== null) {
           void queryClient.invalidateQueries({
@@ -396,7 +408,7 @@ export function useSendProjectPrompt(
     [projectName, queryClient],
   );
 
-  return { send, sending, error, clearError };
+  return { send, sending, sendingConversationId, error, clearError };
 }
 
 interface PromptStreamFrame {

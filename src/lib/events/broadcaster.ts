@@ -1,6 +1,7 @@
 import type { SSEEvent } from "@/lib/api/sse-events";
 import { createLogger } from "../logging";
 import { getGlobalSingleton, setGlobalValue } from "../shared/global-singleton";
+import { stampSseEnvelope } from "./sse-envelope";
 
 /** Function signature for broadcasting SSE events. */
 export type BroadcastFn = (event: SSEEvent) => void;
@@ -68,7 +69,7 @@ export function broadcast(event: SSEEvent): void {
   const seq = counter.value;
 
   const sentAt = Date.now();
-  const envelope = { ...event, _sentAt: sentAt };
+  const envelope = stampSseEnvelope(event, sentAt);
   const frame = encoder.encode(
     `id: ${seq}\nevent: ${event.type}\ndata: ${JSON.stringify(envelope)}\n\n`,
   );

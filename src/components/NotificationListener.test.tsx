@@ -69,7 +69,14 @@ class FakeEventSource {
 
   emit(type: string, data: unknown) {
     const listeners = this.listeners.get(type) ?? [];
-    const event = { data: JSON.stringify(data) } as MessageEvent;
+    // Mirror the broadcaster's wire format: every real frame carries the
+    // transport envelope stamp (`_sentAt`), so handlers must tolerate it —
+    // emitting the bare event here would hide envelope-intolerant schemas.
+    const envelope =
+      data !== null && typeof data === "object"
+        ? { ...data, _sentAt: 1_700_000_000_000 }
+        : data;
+    const event = { data: JSON.stringify(envelope) } as MessageEvent;
     for (const listener of listeners) {
       listener(event);
     }

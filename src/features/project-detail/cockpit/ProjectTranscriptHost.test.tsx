@@ -75,6 +75,20 @@ describe("ProjectTranscriptHost", () => {
     expect(screen.queryByText("No messages yet")).toBeNull();
   });
 
+  it("shows the typing indicator while a send is in flight, before the server reports running", () => {
+    const { container } = renderSeeded(
+      <ProjectTranscriptHost
+        projectName="proj"
+        conversationId="c1"
+        selectedBackend="claude"
+        sending
+      />,
+      [[projectConversationKeys.messages("proj", "c1"), []]],
+    );
+    expect(container.querySelector(".typing-indicator")).not.toBeNull();
+    expect(screen.queryByText("No messages yet")).toBeNull();
+  });
+
   it("does not render an 'Awaiting your input' transcript footer (the pane-header badge conveys awaiting, matching the session page)", () => {
     renderSeeded(
       <ProjectTranscriptHost
