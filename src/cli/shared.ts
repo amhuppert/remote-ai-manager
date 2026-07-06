@@ -54,16 +54,17 @@ export const EXIT_VERSION_MISMATCH = 4;
 export const USAGE = `usage: cctl <command> [flags]
 
 commands:
-  ask        ask the user a question batch, then end your turn
-  notify     send a push notification to the user
-  docs       register, list, and delete reference documents
-  dev        list, ensure, and stop dev servers
-  workflow   list, inspect, start, and delete graph workflows
-  charter    submit the session's Alignment charter
-  decisions  propose decisions for the user's review
-  codex      run, poll, and cancel one-shot Codex jobs
-  doctor     check connectivity, auth, and build parity with the CC server
-  version    print the cctl build stamp
+  ask           ask the user a question batch, then end your turn
+  notify        send a push notification to the user
+  docs          register, list, and delete reference documents
+  dev           list, ensure, and stop dev servers
+  workflow      list, inspect, start, and delete graph workflows
+  charter       submit the session's Alignment charter
+  decisions     propose decisions for the user's review
+  codex         run, poll, and cancel one-shot Codex jobs
+  conversation  read conversation transcripts and manage compaction artifacts
+  doctor        check connectivity, auth, and build parity with the CC server
+  version       print the cctl build stamp
 
 global flags:
   --server <url>         CC server base URL (default: $CC_SERVER_URL)
@@ -103,12 +104,21 @@ function isValueFlag(name: string): name is ValueFlag {
   return (VALUE_FLAGS as readonly string[]).includes(name);
 }
 
+const BOOLEAN_ONLY_FLAGS = new Set([
+  "--wait",
+  "--multi-select",
+  "--outline",
+  "--include-thinking",
+  "--force",
+]);
+
 /**
- * Generalized argv parse: `--json` is the sole boolean; every other `--x`
- * consumes the next token as its value (erroring if absent or `--`-prefixed).
- * Global value flags are surfaced typed in `flags`; ALL value flags land in
- * `values` for command-specific reads. Unknown-flag rejection is deferred to
- * `checkFlags` per command so subcommands can declare their own flags.
+ * Generalized argv parse: `--json` and the `BOOLEAN_ONLY_FLAGS` are booleans;
+ * every other `--x` consumes the next token as its value (erroring if absent
+ * or `--`-prefixed). Global value flags are surfaced typed in `flags`; ALL
+ * value flags land in `values` for command-specific reads. Unknown-flag
+ * rejection is deferred to `checkFlags` per command so subcommands can declare
+ * their own flags.
  */
 export function parseArgv(argv: string[]): ParsedArgv {
   const flags: GlobalFlags = { json: false };
@@ -131,11 +141,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
       flags.json = true;
       continue;
     }
-    // `--wait` and `--multi-select` are booleans (they consume no value). They
-    // land in `values` as markers so per-command `checkFlags` still rejects
-    // them where not allowed; commands that accept them read
-    // `values["wait"] !== undefined`.
-    if (arg === "--wait" || arg === "--multi-select") {
+    // Valueless boolean flags (they consume no value). They land in `values`
+    // as markers so per-command `checkFlags` still rejects them where not
+    // allowed; commands that accept them read `values["wait"] !== undefined`.
+    if (BOOLEAN_ONLY_FLAGS.has(arg)) {
       values[arg.slice(2)] = "true";
       continue;
     }
@@ -519,6 +528,8 @@ export interface CliRequestParams {
   method: string;
   path: string;
   body?: unknown;
+  /** Extra request headers (e.g. the caller-conversation audit header). */
+  headers?: Record<string, string>;
 }
 
 function coerceIssues(value: unknown): RequestIssue[] | undefined {
@@ -537,6 +548,49 @@ function coerceIssues(value: unknown): RequestIssue[] | undefined {
   return issues.length > 0 ? issues : undefined;
 }
 
+function buildRequestInit(params: CliRequestParams): FetchInit {
+  const headers: Record<string, string> = {
+    "x-cc-cli-build": formatBuildStamp(BUILD_INFO),
+    "content-type": "application/json",
+    ...(params.headers ?? {}),
+  };
+  if (params.token !== null)
+    headers["authorization"] = `Bearer ${params.token}`;
+
+  const init: FetchInit = { method: params.method, headers };
+  if (params.body !== undefined) init.body = JSON.stringify(params.body);
+  return init;
+}
+
+function classifyErrorBody(
+  status: number,
+  body: unknown,
+): Extract<CliRequestResult, { kind: "error" }> {
+  const errorMessage =
+    body &&
+    typeof body === "object" &&
+    typeof (body as { error?: unknown }).error === "string"
+      ? (body as { error: string }).error
+      : `server responded with HTTP ${status}`;
+  const issues =
+    body && typeof body === "object"
+      ? coerceIssues((body as { issues?: unknown }).issues)
+      : undefined;
+  const code =
+    body &&
+    typeof body === "object" &&
+    typeof (body as { code?: unknown }).code === "string"
+      ? (body as { code: string }).code
+      : undefined;
+  return {
+    kind: "error",
+    status,
+    error: errorMessage,
+    ...(issues ? { issues } : {}),
+    ...(code ? { code } : {}),
+  };
+}
+
 /**
  * Issue a token-authenticated request to a CC agent endpoint and classify the
  * response into the shared discriminated result. Sends the build header and a
@@ -547,15 +601,7 @@ export async function cliRequest(
   params: CliRequestParams,
 ): Promise<CliRequestResult> {
   const url = new URL(params.path, params.server);
-  const headers: Record<string, string> = {
-    "x-cc-cli-build": formatBuildStamp(BUILD_INFO),
-    "content-type": "application/json",
-  };
-  if (params.token !== null)
-    headers["authorization"] = `Bearer ${params.token}`;
-
-  const init: FetchInit = { method: params.method, headers };
-  if (params.body !== undefined) init.body = JSON.stringify(params.body);
+  const init = buildRequestInit(params);
 
   let response: Response;
   try {
@@ -584,29 +630,53 @@ export async function cliRequest(
 
   if (response.ok) return { kind: "ok", status: response.status, body };
 
-  const errorMessage =
-    body &&
-    typeof body === "object" &&
-    typeof (body as { error?: unknown }).error === "string"
-      ? (body as { error: string }).error
-      : `server responded with HTTP ${response.status}`;
-  const issues =
-    body && typeof body === "object"
-      ? coerceIssues((body as { issues?: unknown }).issues)
-      : undefined;
-  const code =
-    body &&
-    typeof body === "object" &&
-    typeof (body as { code?: unknown }).code === "string"
-      ? (body as { code: string }).code
-      : undefined;
-  return {
-    kind: "error",
-    status: response.status,
-    error: errorMessage,
-    ...(issues ? { issues } : {}),
-    ...(code ? { code } : {}),
-  };
+  return classifyErrorBody(response.status, body);
+}
+
+export type CliTextRequestResult =
+  | { kind: "ok"; status: number; text: string }
+  | Exclude<CliRequestResult, { kind: "ok" }>;
+
+/**
+ * Like {@link cliRequest} for endpoints whose success body is plain text
+ * (e.g. `?format=markdown` transcript reads). Non-2xx bodies are still parsed
+ * as JSON so error classification matches the JSON path.
+ */
+export async function cliRequestText(
+  host: CliHost,
+  params: CliRequestParams,
+): Promise<CliTextRequestResult> {
+  const url = new URL(params.path, params.server);
+  const init = buildRequestInit(params);
+
+  let response: Response;
+  try {
+    response = await host.fetch(url.toString(), init);
+  } catch (error) {
+    return {
+      kind: "connection",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (response.status === 401) {
+    return {
+      kind: "auth",
+      hadToken: params.token !== null,
+      tokenSource: params.tokenSource,
+    };
+  }
+
+  const text = await response.text();
+  if (response.ok) return { kind: "ok", status: response.status, text };
+
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = undefined;
+  }
+  return classifyErrorBody(response.status, body);
 }
 
 /**

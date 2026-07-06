@@ -73,12 +73,30 @@ export interface AgentAuthDeps {
   configDir?: string;
 }
 
+/**
+ * Classification of an optional bearer token. The instance token carries no
+ * per-caller identity (it is one shared secret), so the valid variant has no
+ * payload — caller identity travels in request headers/bodies instead.
+ */
+export type OptionalTokenValidation =
+  | { kind: "absent" }
+  | { kind: "valid" }
+  | { kind: "invalid" };
+
 export interface AgentAuth {
   /**
    * Token gate for agent-facing endpoints: resolves to null when the request
    * carries the expected bearer token, otherwise a ready-to-return 401.
    */
   requireToken(request: Request): Promise<Response | null>;
+  /**
+   * Soft gate for browser-facing endpoints that agents also call: a request
+   * without an Authorization header is `absent` (serve it un-gated), the
+   * expected bearer token is `valid`, and anything else — malformed header,
+   * wrong token, or no token file to validate against — is `invalid` (the
+   * caller should return 401).
+   */
+  validateOptionalToken(request: Request): Promise<OptionalTokenValidation>;
 }
 
 /**
@@ -116,6 +134,32 @@ export function createAgentAuth(deps: AgentAuthDeps = {}): AgentAuth {
         { error: "Invalid or missing Command Center API token" },
         { status: 401 },
       );
+    },
+
+    async validateOptionalToken(
+      request: Request,
+    ): Promise<OptionalTokenValidation> {
+      const header = request.headers.get("authorization");
+      if (header === null) return { kind: "absent" };
+
+      expectedToken ??= readTokenFile(tokenPath);
+      const expected = await expectedToken;
+      const provided = bearerTokenFromHeader(header);
+
+      if (expected !== null && provided === expected) {
+        return { kind: "valid" };
+      }
+
+      log.warn("agent-gateway.optional_auth_rejected", {
+        path: new URL(request.url).pathname,
+        reason:
+          expected === null
+            ? "no_token_file"
+            : provided === null
+              ? "malformed_bearer"
+              : "wrong_token",
+      });
+      return { kind: "invalid" };
     },
   };
 }

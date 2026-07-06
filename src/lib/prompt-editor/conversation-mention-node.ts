@@ -1,7 +1,10 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import ConversationMentionChip from "@/features/session/conversation/ConversationMentionChip";
-import type { ConversationStatus } from "@/lib/conversations/schemas";
+import type {
+  ConversationCompactStatus,
+  ConversationStatus,
+} from "@/lib/conversations/schemas";
 
 export interface ConversationMentionAttrs {
   projectName: string;
@@ -20,6 +23,13 @@ export interface ConversationMentionAttrs {
   debugLogPath: string;
   status: ConversationStatus;
   lastActivityAt: string;
+  /** Empty string when no completed conversation compaction exists. */
+  compactArtifactId: string;
+  compactStatus: ConversationCompactStatus;
+  /** Covered seq range "<start>..<end>"; empty string when no compaction. */
+  compactCoveredSeq: string;
+  /** ISO timestamp; empty string when no compaction. */
+  compactCreatedAt: string;
 }
 
 declare module "@tiptap/core" {
@@ -57,6 +67,26 @@ const ATTR_SPECS: AttrSpec[] = [
   {
     key: "lastActivityAt",
     dataAttr: "data-last-activity-at",
+    defaultValue: "",
+  },
+  {
+    key: "compactArtifactId",
+    dataAttr: "data-compact-artifact-id",
+    defaultValue: "",
+  },
+  {
+    key: "compactStatus",
+    dataAttr: "data-compact-status",
+    defaultValue: "none",
+  },
+  {
+    key: "compactCoveredSeq",
+    dataAttr: "data-compact-covered-seq",
+    defaultValue: "",
+  },
+  {
+    key: "compactCreatedAt",
+    dataAttr: "data-compact-created-at",
     defaultValue: "",
   },
 ];

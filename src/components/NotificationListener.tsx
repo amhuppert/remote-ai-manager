@@ -16,6 +16,11 @@ import { projectConversationKeys } from "@/lib/project-conversations-client/quer
 import { projectConversationFocusHref } from "@/lib/project-conversations-client/routes";
 import { projectKeys } from "@/lib/projects/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import { contextArtifactStatusEventSchema } from "@/lib/context-artifacts/schemas";
+import {
+  applyContextArtifactStatusEvent,
+  createTurnEndArtifactInvalidator,
+} from "@/lib/context-artifacts/sse-cache";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
 import { computeAlignmentInvalidations } from "@/lib/session-alignment/sse-invalidation";
 import { sessionAlignmentUpdatedEventSchema } from "@/lib/session-alignment/schemas";
@@ -306,12 +311,17 @@ export default function NotificationListener(): null {
       }
     };
 
+    // Per-connection status memory: after a reconnect the first event per
+    // conversation only seeds the tracker, so no spurious refetch fires.
+    const invalidateArtifactsOnTurnEnd = createTurnEndArtifactInvalidator();
+
     es.addEventListener("conversation-status", (event) => {
       try {
         const parsed = JSON.parse(event.data);
         const result = conversationStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
+        invalidateArtifactsOnTurnEnd(queryClient, data);
         if (data.scope === "project") {
           invalidateProjectConversationActivity(data.projectName);
           void queryClient.invalidateQueries({
@@ -1204,6 +1214,22 @@ export default function NotificationListener(): null {
         for (const { queryKey } of computeAlignmentInvalidations(parsed.data)) {
           void queryClient.invalidateQueries({ queryKey });
         }
+      } catch {
+        // best-effort
+      }
+    });
+
+    // Compaction run progress → reconcile the context-artifact caches.
+    // NOTE: the event name is underscore-separated ("context_artifact_status",
+    // design docs/design/conversation-compaction/README.md §9.1), unlike the
+    // other hyphenated SSE names — a hyphenated listener would never fire.
+    es.addEventListener("context_artifact_status", (event) => {
+      try {
+        const parsed = contextArtifactStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        applyContextArtifactStatusEvent(queryClient, parsed.data);
       } catch {
         // best-effort
       }

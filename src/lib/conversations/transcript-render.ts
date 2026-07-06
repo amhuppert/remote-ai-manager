@@ -1,0 +1,546 @@
+/**
+ * Deterministic compact-transcript normalizer
+ * (docs/design/conversation-compaction/README.md §4).
+ *
+ * One pure function shared by the conversation read endpoint and the
+ * compaction pre-strip — never two normalizers. No I/O: callers read entries
+ * via `readTranscriptEntriesWithSeq` (the entry-level cached reader) and pass
+ * them in. The renderer groups entries into logical messages with the same
+ * consecutive-same-role merge rule as `readConversationMessagesWithSeq`, so
+ * `messageIndex` matches the UI's merged-message indexes, while every line
+ * keeps its entry's exact raw `seq` for entry-exact citations and slicing.
+ */
+
+import { z } from "zod";
+import {
+  sourceRefSchema,
+  type MessageContentBlock,
+  type ToolResultMetrics,
+} from "@/lib/conversations/schemas";
+import { parseCommandContent } from "@/lib/commands/parsing";
+import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
+
+/**
+ * Stamped on compaction artifacts so consumers can detect when stored
+ * artifacts were produced by an older rendering contract.
+ */
+export const NORMALIZER_VERSION = "1";
+
+export const renderOptionsSchema = z
+  .object({
+    /** TOC mode: user prompts + assistant headlines only. */
+    outline: z.boolean().default(false),
+    /** Single logical message (merged-message index). */
+    message: z.number().int().optional(),
+    messageRange: z.tuple([z.number().int(), z.number().int()]).optional(),
+    /** Raw JSONL line-index window; slices inside merged messages. */
+    seqRange: z.tuple([z.number().int(), z.number().int()]).optional(),
+    includeTools: z.enum(["none", "summary", "full"]).default("summary"),
+    includeThinking: z.boolean().default(false),
+    /** debug_structured blocks are collapsed, not dropped, unless disabled. */
+    includeDebug: z.boolean().default(true),
+    /** Regex over text-block content; returns matching units only. */
+    search: z.string().optional(),
+    /** Hard output bound; sets truncated=true when hit. */
+    maxBytes: z.number().int().default(262_144),
+    format: z.enum(["json", "markdown"]).default("json"),
+  })
+  .superRefine((opts, ctx) => {
+    const windowModes = [opts.message, opts.messageRange, opts.seqRange].filter(
+      (mode) => mode !== undefined,
+    ).length;
+    if (windowModes > 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "message, messageRange, and seqRange are mutually exclusive",
+      });
+    }
+    if (opts.search !== undefined) {
+      try {
+        new RegExp(opts.search);
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          path: ["search"],
+          message: "search must be a valid regular expression",
+        });
+      }
+    }
+  });
+export type RenderOptions = z.infer<typeof renderOptionsSchema>;
+
+export const renderedUnitSchema = z.object({
+  /** Whole-unit span (seqStart..seqEnd of the merged group). */
+  ref: sourceRefSchema,
+  /** Exact seq of each entry whose lines are included in this unit. */
+  entrySeqs: z.array(z.number().int()),
+  role: z.enum(["user", "assistant", "notice"]),
+  timestamp: z.string(),
+  /** Rendered content lines; every line carries its entry's `[s<seq>]` prefix. */
+  lines: z.array(z.string()),
+});
+export type RenderedUnit = z.infer<typeof renderedUnitSchema>;
+
+export const renderedTranscriptSchema = z.object({
+  conversationId: z.string(),
+  totalMessages: z.number().int(),
+  maxSeq: z.number().int(),
+  units: z.array(renderedUnitSchema),
+  truncated: z.boolean(),
+  omissions: z.object({
+    thinkingOmitted: z.number().int(),
+    toolResultBytesElided: z.number().int(),
+    unitsOutsideWindow: z.number().int(),
+  }),
+});
+export type RenderedTranscript = z.infer<typeof renderedTranscriptSchema>;
+
+export interface RenderTranscriptInput {
+  conversationId: string;
+  entries: TranscriptEntryWithSeq[];
+  maxSeq: number;
+}
+
+interface UnitPart {
+  seq: number;
+  entryId: string | null;
+  content: MessageContentBlock[];
+}
+
+/** A logical (merged) message with per-entry coordinates preserved. */
+export interface TranscriptUnit {
+  messageIndex: number;
+  messageId: string | null;
+  role: "user" | "assistant" | "notice";
+  timestamp: string | null;
+  parts: UnitPart[];
+}
+
+/**
+ * Group raw entries into logical messages with the exact merge semantics of
+ * `readConversationMessagesWithSeqImpl` (transcript.ts): consecutive same-role
+ * entries merge into one unit, and a single-text-block user entry that parses
+ * as a slash command always starts a new unit (with the parsed command block
+ * as its content) — subsequent same-role entries then merge into it.
+ *
+ * `kind:"tool_result"` entries are invisible to that merged reader, so they
+ * never start or count as units (messageIndex parity holds); they fold into
+ * the open unit — the assistant turn they interleave with — as parts carrying
+ * their own seq. A tool_result with no open unit is dropped.
+ */
+export function groupTranscriptEntries(
+  entries: TranscriptEntryWithSeq[],
+): TranscriptUnit[] {
+  const units: TranscriptUnit[] = [];
+
+  for (const entry of entries) {
+    if (entry.kind === "tool_result") {
+      const open = units[units.length - 1];
+      if (!open) continue;
+      open.parts.push({
+        seq: entry.seq,
+        entryId: entry.entryId,
+        content: entry.content,
+      });
+      continue;
+    }
+
+    if (entry.role === "user" && entry.content.length === 1) {
+      const block = entry.content[0];
+      if (block && block.type === "text") {
+        const commandBlock = parseCommandContent(block.text);
+        if (commandBlock) {
+          units.push({
+            messageIndex: units.length,
+            messageId: entry.entryId,
+            role: "user",
+            timestamp: entry.timestamp,
+            parts: [
+              {
+                seq: entry.seq,
+                entryId: entry.entryId,
+                content: [commandBlock],
+              },
+            ],
+          });
+          continue;
+        }
+      }
+    }
+
+    const prev = units[units.length - 1];
+    if (prev && prev.role === entry.role) {
+      prev.parts.push({
+        seq: entry.seq,
+        entryId: entry.entryId,
+        content: entry.content,
+      });
+    } else {
+      units.push({
+        messageIndex: units.length,
+        messageId: entry.entryId,
+        role: entry.role,
+        timestamp: entry.timestamp,
+        parts: [
+          { seq: entry.seq, entryId: entry.entryId, content: entry.content },
+        ],
+      });
+    }
+  }
+
+  return units;
+}
+
+const OUTLINE_HEADLINE_MAX_CHARS = 120;
+const THINKING_EXCERPT_MAX_CHARS = 500;
+const TOOL_PRIMARY_ARG_MAX_CHARS = 80;
+const TOOL_INPUT_GIST_MAX_CHARS = 120;
+const TOOL_RESULT_HEAD_CHARS = 400;
+const TOOL_RESULT_TAIL_CHARS = 200;
+const DEBUG_PAYLOAD_MAX_CHARS = 300;
+const FEEDBACK_NOTE_MAX_CHARS = 200;
+
+/** Input keys most likely to identify what a tool call operates on. */
+const PRIMARY_ARG_KEYS = [
+  "file_path",
+  "path",
+  "command",
+  "pattern",
+  "url",
+  "query",
+  "prompt",
+  "description",
+  "name",
+];
+
+const textEncoder = new TextEncoder();
+
+function byteLength(value: string): number {
+  return textEncoder.encode(value).length;
+}
+
+function truncateWithEllipsis(value: string, maxChars: number): string {
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}…`;
+}
+
+function headline(text: string): string {
+  const firstLine =
+    text.split("\n").find((line) => line.trim().length > 0) ?? "";
+  return truncateWithEllipsis(firstLine.trim(), OUTLINE_HEADLINE_MAX_CHARS);
+}
+
+function toolPrimaryArg(input: Record<string, unknown> | undefined): string {
+  if (!input) return "";
+  for (const key of PRIMARY_ARG_KEYS) {
+    const value = input[key];
+    if (typeof value === "string" && value.length > 0) {
+      return truncateWithEllipsis(value, TOOL_PRIMARY_ARG_MAX_CHARS);
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+  }
+  for (const value of Object.values(input)) {
+    if (typeof value === "string" && value.length > 0) {
+      return truncateWithEllipsis(value, TOOL_PRIMARY_ARG_MAX_CHARS);
+    }
+  }
+  return "";
+}
+
+function toolInputGist(input: Record<string, unknown> | undefined): string {
+  if (!input || Object.keys(input).length === 0) return "";
+  return truncateWithEllipsis(JSON.stringify(input), TOOL_INPUT_GIST_MAX_CHARS);
+}
+
+function formatMetrics(metrics: ToolResultMetrics | undefined): string {
+  if (!metrics) return "";
+  const parts: string[] = [];
+  if (metrics.lineCount !== undefined) parts.push(`lines=${metrics.lineCount}`);
+  if (metrics.fileCount !== undefined) parts.push(`files=${metrics.fileCount}`);
+  if (metrics.matchCount !== undefined) {
+    parts.push(`matches=${metrics.matchCount}`);
+  }
+  if (metrics.byteCount !== undefined) parts.push(`bytes=${metrics.byteCount}`);
+  if (metrics.exitCode !== undefined) parts.push(`exit=${metrics.exitCode}`);
+  return parts.join(" ");
+}
+
+interface MutableOmissions {
+  thinkingOmitted: number;
+  toolResultBytesElided: number;
+}
+
+function renderBlockLines(
+  block: MessageContentBlock,
+  options: RenderOptions,
+  omissions: MutableOmissions,
+): string[] {
+  switch (block.type) {
+    case "text": {
+      if (options.outline) return [headline(block.text)];
+      return block.text.split("\n");
+    }
+    case "thinking": {
+      if (options.outline || !options.includeThinking) {
+        omissions.thinkingOmitted += 1;
+        return [];
+      }
+      if (block.redacted) return ["🧠 thinking: [redacted]"];
+      const collapsed = block.text.replace(/\s+/g, " ").trim();
+      return [
+        `🧠 thinking: ${truncateWithEllipsis(collapsed, THINKING_EXCERPT_MAX_CHARS)}`,
+      ];
+    }
+    case "tool_use": {
+      if (options.outline || options.includeTools === "none") return [];
+      const gist = toolInputGist(block.input);
+      const summary = `⚙ ${block.name}(${toolPrimaryArg(block.input)})${gist ? ` — ${gist}` : ""}`;
+      if (
+        options.includeTools === "full" &&
+        block.input &&
+        Object.keys(block.input).length > 0
+      ) {
+        return [summary, `  input: ${JSON.stringify(block.input)}`];
+      }
+      return [summary];
+    }
+    case "tool_result": {
+      if (options.outline || options.includeTools === "none") return [];
+      const status = block.isError ? "error" : "ok";
+      const metricsText = formatMetrics(block.metrics);
+      const header = `→ ${status}${metricsText ? ` (${metricsText})` : ""}`;
+      const content = block.content ?? "";
+      if (content.length === 0) return [header];
+      const excerptBound = TOOL_RESULT_HEAD_CHARS + TOOL_RESULT_TAIL_CHARS;
+      if (options.includeTools === "full" || content.length <= excerptBound) {
+        return [header, ...content.split("\n")];
+      }
+      const head = content.slice(0, TOOL_RESULT_HEAD_CHARS);
+      const tail = content.slice(content.length - TOOL_RESULT_TAIL_CHARS);
+      const elidedBytes = byteLength(
+        content.slice(
+          TOOL_RESULT_HEAD_CHARS,
+          content.length - TOOL_RESULT_TAIL_CHARS,
+        ),
+      );
+      omissions.toolResultBytesElided += elidedBytes;
+      return [
+        header,
+        ...head.split("\n"),
+        `… [${elidedBytes} bytes elided] …`,
+        ...tail.split("\n"),
+      ];
+    }
+    case "command":
+      return [`${block.name}${block.args ? ` ${block.args}` : ""}`];
+    case "image":
+    case "image_ref":
+    case "image_marker":
+      return options.outline ? [] : [`[image ${block.mediaType}]`];
+    case "debug_structured": {
+      if (options.outline || !options.includeDebug) return [];
+      const payloadText = JSON.stringify(block.payload) ?? "";
+      return [
+        `🐞 debug[${block.phase}]: ${truncateWithEllipsis(payloadText, DEBUG_PAYLOAD_MAX_CHARS)}`,
+      ];
+    }
+    case "document_feedback": {
+      if (options.outline) return [];
+      return block.items.map(
+        (item) =>
+          `📝 ${item.docPath}:${item.line} ${item.headingLabel} — ${truncateWithEllipsis(item.note, FEEDBACK_NOTE_MAX_CHARS)}`,
+      );
+    }
+  }
+}
+
+interface SelectedUnit {
+  unit: TranscriptUnit;
+  /** Parts to render — sliced when a seqRange boundary falls inside the unit. */
+  parts: UnitPart[];
+}
+
+function selectWindow(
+  units: TranscriptUnit[],
+  options: RenderOptions,
+): { selected: SelectedUnit[]; excluded: number } {
+  const selected: SelectedUnit[] = [];
+  let excluded = 0;
+
+  for (const unit of units) {
+    if (options.message !== undefined) {
+      if (unit.messageIndex !== options.message) {
+        excluded += 1;
+        continue;
+      }
+      selected.push({ unit, parts: unit.parts });
+    } else if (options.messageRange !== undefined) {
+      const [start, end] = options.messageRange;
+      if (unit.messageIndex < start || unit.messageIndex > end) {
+        excluded += 1;
+        continue;
+      }
+      selected.push({ unit, parts: unit.parts });
+    } else if (options.seqRange !== undefined) {
+      const [start, end] = options.seqRange;
+      const parts = unit.parts.filter(
+        (part) => part.seq >= start && part.seq <= end,
+      );
+      if (parts.length === 0) {
+        excluded += 1;
+        continue;
+      }
+      selected.push({ unit, parts });
+    } else {
+      selected.push({ unit, parts: unit.parts });
+    }
+  }
+
+  return { selected, excluded };
+}
+
+/**
+ * Render entry records into the compact transcript shape. Pure — options must
+ * already be validated via `renderOptionsSchema`. `options.format` is
+ * transport-level: the return value is always the json schema shape; callers
+ * wanting markdown feed it through `renderedTranscriptToMarkdown`.
+ */
+export function renderCompactTranscript(
+  input: RenderTranscriptInput,
+  options: RenderOptions,
+): RenderedTranscript {
+  const allUnits = groupTranscriptEntries(input.entries);
+  const omissions = {
+    thinkingOmitted: 0,
+    toolResultBytesElided: 0,
+    unitsOutsideWindow: 0,
+  };
+
+  const { selected, excluded } = selectWindow(allUnits, options);
+  omissions.unitsOutsideWindow += excluded;
+
+  let visible = selected;
+  if (options.search !== undefined) {
+    const searchRe = new RegExp(options.search);
+    visible = [];
+    for (const candidate of selected) {
+      const matches = candidate.parts.some((part) =>
+        part.content.some(
+          (block) => block.type === "text" && searchRe.test(block.text),
+        ),
+      );
+      if (matches) visible.push(candidate);
+      else omissions.unitsOutsideWindow += 1;
+    }
+  }
+
+  const renderedUnits: RenderedUnit[] = [];
+  let truncated = false;
+  let usedBytes = 0;
+
+  for (const { unit, parts } of visible) {
+    const unitOmissions: MutableOmissions = {
+      thinkingOmitted: 0,
+      toolResultBytesElided: 0,
+    };
+    const lines: string[] = [];
+    const lineSeqs: number[] = [];
+    for (const part of parts) {
+      for (const block of part.content) {
+        for (const line of renderBlockLines(block, options, unitOmissions)) {
+          lines.push(`[s${part.seq}] ${line}`);
+          lineSeqs.push(part.seq);
+        }
+      }
+    }
+
+    const unitBytes = lines.reduce(
+      (sum, line) => sum + byteLength(line) + 1,
+      0,
+    );
+    const firstPart = unit.parts[0];
+    const lastPart = unit.parts[unit.parts.length - 1];
+    const ref = {
+      messageIndex: unit.messageIndex,
+      messageId: unit.messageId,
+      seqStart: firstPart ? firstPart.seq : -1,
+      seqEnd: lastPart ? lastPart.seq : -1,
+    };
+
+    if (usedBytes + unitBytes > options.maxBytes) {
+      truncated = true;
+      // Emit the boundary unit partially when some of its lines fit, or when
+      // dropping it whole would return nothing: a bounded slice of an
+      // oversize message beats an empty result (§1.4 Tier-2 escalation).
+      const budget = options.maxBytes - usedBytes;
+      const includedLines: string[] = [];
+      const includedSeqs: number[] = [];
+      let includedBytes = 0;
+      for (const [index, line] of lines.entries()) {
+        const lineBytes = byteLength(line) + 1;
+        if (includedBytes + lineBytes > budget) break;
+        includedBytes += lineBytes;
+        includedLines.push(line);
+        const seq = lineSeqs[index];
+        if (
+          seq !== undefined &&
+          includedSeqs[includedSeqs.length - 1] !== seq
+        ) {
+          includedSeqs.push(seq);
+        }
+      }
+      if (includedLines.length > 0 || renderedUnits.length === 0) {
+        includedLines.push(
+          `… [unit truncated: ${unitBytes - includedBytes} bytes elided]`,
+        );
+        renderedUnits.push({
+          ref,
+          entrySeqs: includedSeqs,
+          role: unit.role,
+          timestamp: unit.timestamp ?? "",
+          lines: includedLines,
+        });
+      }
+      break;
+    }
+    usedBytes += unitBytes;
+    omissions.thinkingOmitted += unitOmissions.thinkingOmitted;
+    omissions.toolResultBytesElided += unitOmissions.toolResultBytesElided;
+
+    renderedUnits.push({
+      ref,
+      entrySeqs: parts.map((part) => part.seq),
+      role: unit.role,
+      timestamp: unit.timestamp ?? "",
+      lines,
+    });
+  }
+
+  return {
+    conversationId: input.conversationId,
+    totalMessages: allUnits.length,
+    maxSeq: input.maxSeq,
+    units: renderedUnits,
+    truncated,
+    omissions,
+  };
+}
+
+/**
+ * Format a rendered transcript as a compact markdown document with
+ * `#<messageIndex> [seq A–B] <role>` unit headers — for agents that want to
+ * read prose directly instead of JSON.
+ */
+export function renderedTranscriptToMarkdown(
+  rendered: RenderedTranscript,
+): string {
+  const sections = rendered.units.map((unit) => {
+    const { messageIndex, seqStart, seqEnd } = unit.ref;
+    const span =
+      seqStart === seqEnd ? `[seq ${seqStart}]` : `[seq ${seqStart}–${seqEnd}]`;
+    return [`#${messageIndex} ${span} ${unit.role}`, ...unit.lines].join("\n");
+  });
+  const body = sections.join("\n\n");
+  return rendered.truncated ? `${body}\n\n… [output truncated]` : body;
+}

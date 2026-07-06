@@ -102,6 +102,18 @@ function debounceKey(
 // ============================================================
 
 /**
+ * A transient lane (see `ConversationContext.transient`) has no
+ * ConversationState record, so persisting its snapshot would fail with
+ * `snapshot_save_failed` on every write. The flag travels inside the
+ * snapshot's machine context, so both the debounced action path and the
+ * terminal flush hit this one gate.
+ */
+function isTransientSnapshot(snapshot: Snapshot<unknown>): boolean {
+  const context = (snapshot as { context?: { transient?: unknown } }).context;
+  return context?.transient === true;
+}
+
+/**
  * Persist a conversation machine snapshot.
  * Debounced by default; use `immediate: true` for terminal states.
  */
@@ -112,6 +124,12 @@ export function persistConversationSnapshot(
   snapshot: Snapshot<unknown>,
   options?: { debounceMs?: number; immediate?: boolean },
 ): void {
+  if (isTransientSnapshot(snapshot)) {
+    logger.debug("conversation-persistence.snapshot_skipped_transient", {
+      conversationId,
+    });
+    return;
+  }
   const key = debounceKey(projectPath, sessionName, conversationId);
   const debounceMs = options?.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 

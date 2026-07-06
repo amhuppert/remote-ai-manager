@@ -19,6 +19,7 @@ function makeItem(
     status: overrides.status ?? "new",
     isCurrentProject: overrides.isCurrentProject ?? false,
     archived: overrides.archived ?? false,
+    compactFresh: overrides.compactFresh ?? false,
   };
 }
 
@@ -37,6 +38,7 @@ const defaultItems: ConversationAutocompleteListItem[] = [
     isCurrentProject: true,
     status: "waiting_for_input",
     lastActivityRelative: "2h",
+    compactFresh: true,
   }),
   makeItem({
     id: "c",
@@ -181,6 +183,39 @@ export const ManyMatches = {
     loading: false,
     error: null,
     includeArchived: false,
+    onToggleArchived: () => {},
+  },
+} satisfies Story;
+
+export const WithFreshCompaction = {
+  args: {
+    items: [
+      makeItem({
+        id: "fresh-1",
+        displayLabel: "Compacted running conversation",
+        isCurrentProject: true,
+        status: "running",
+        compactFresh: true,
+      }),
+      makeItem({
+        id: "fresh-2",
+        displayLabel: "Compacted archived conversation",
+        archived: true,
+        compactFresh: true,
+        lastActivityRelative: "9d",
+      }),
+      makeItem({
+        id: "plain",
+        displayLabel: "No compaction here",
+      }),
+    ],
+    selectedIndex: 0,
+    onHover: () => {},
+    onSelect: () => {},
+    totalCount: 3,
+    loading: false,
+    error: null,
+    includeArchived: true,
     onToggleArchived: () => {},
   },
 } satisfies Story;

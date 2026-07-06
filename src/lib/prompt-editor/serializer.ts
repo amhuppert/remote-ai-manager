@@ -127,7 +127,19 @@ const CONVERSATION_REF_ATTR_ORDER: ReadonlyArray<[string, string]> = [
   ["debugLogPath", "debug-log-path"],
   ["status", "status"],
   ["lastActivityAt", "last-activity-at"],
+  ["compactArtifactId", "compact-artifact-id"],
+  ["compactStatus", "compact-status"],
+  ["compactCoveredSeq", "compact-covered-seq"],
+  ["compactCreatedAt", "compact-created-at"],
 ];
+
+// Emitted only when a completed conversation compaction exists; refs without
+// one carry compact-status="none" alone to keep the XML lean (design §12.4).
+const COMPACTION_DETAIL_ATTRS = new Set([
+  "compactArtifactId",
+  "compactCoveredSeq",
+  "compactCreatedAt",
+]);
 
 function escapeXmlAttr(value: string): string {
   const flattened = value.replace(/[\r\n\t]+/g, " ").replace(/  +/g, " ");
@@ -140,8 +152,18 @@ function escapeXmlAttr(value: string): string {
 }
 
 function renderConversationRefXml(attrs: Record<string, unknown>): string {
+  const rawStatus = attrs["compactStatus"];
+  const compactStatus =
+    rawStatus === "fresh" || rawStatus === "stale" ? rawStatus : "none";
   const parts: string[] = ["<conversation-ref"];
   for (const [camel, kebab] of CONVERSATION_REF_ATTR_ORDER) {
+    if (camel === "compactStatus") {
+      parts.push(`${kebab}="${compactStatus}"`);
+      continue;
+    }
+    if (COMPACTION_DETAIL_ATTRS.has(camel) && compactStatus === "none") {
+      continue;
+    }
     const raw = attrs[camel];
     const value = typeof raw === "string" ? raw : "";
     parts.push(`${kebab}="${escapeXmlAttr(value)}"`);

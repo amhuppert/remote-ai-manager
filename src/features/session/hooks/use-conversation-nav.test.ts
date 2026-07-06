@@ -178,3 +178,68 @@ describe("useConversationNav", () => {
     );
   });
 });
+
+describe("useConversationNav — store message-nav requests", () => {
+  beforeEach(() => {
+    useSessionDetailStore.getState().resetStore();
+  });
+
+  function setupWithConversation(args: {
+    conversationId?: string;
+    scrollToIndex: ReturnType<typeof vi.fn>;
+  }) {
+    const rows = [messageRow(0), messageRow(1), messageRow(2)];
+    const virtuosoHandle = {
+      scrollToIndex: args.scrollToIndex,
+    } as unknown as VirtuosoHandle;
+    return renderHook(() => {
+      const virtuosoRef = useRef<VirtuosoHandle>(virtuosoHandle);
+      return useConversationNav({
+        rows,
+        totalMessages: 3,
+        virtuosoRef,
+        conversationId: args.conversationId,
+      });
+    });
+  }
+
+  it("scrolls to the requested message and consumes the request", () => {
+    const scrollToIndex = vi.fn();
+    setupWithConversation({ conversationId: "conv-1", scrollToIndex });
+
+    act(() => {
+      useSessionDetailStore.getState().requestMessageNav("conv-1", 2);
+    });
+
+    expect(scrollToIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ index: 2 }),
+    );
+    expect(useSessionDetailStore.getState().messageNavRequest).toBeNull();
+  });
+
+  it("ignores requests targeting another conversation", () => {
+    const scrollToIndex = vi.fn();
+    setupWithConversation({ conversationId: "conv-1", scrollToIndex });
+
+    act(() => {
+      useSessionDetailStore.getState().requestMessageNav("conv-other", 2);
+    });
+
+    expect(scrollToIndex).not.toHaveBeenCalled();
+    expect(useSessionDetailStore.getState().messageNavRequest).toEqual({
+      conversationId: "conv-other",
+      messageIndex: 2,
+    });
+  });
+
+  it("ignores requests when no conversationId was provided", () => {
+    const scrollToIndex = vi.fn();
+    setupWithConversation({ conversationId: undefined, scrollToIndex });
+
+    act(() => {
+      useSessionDetailStore.getState().requestMessageNav("conv-1", 1);
+    });
+
+    expect(scrollToIndex).not.toHaveBeenCalled();
+  });
+});

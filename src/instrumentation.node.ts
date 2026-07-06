@@ -1,6 +1,8 @@
 import { readState } from "./lib/state-store";
+import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";
 import { runMigrations } from "./lib/state-store/migrator";
+import { createContextArtifactsRepo } from "./lib/context-artifacts/repo";
 import { initialize as initNotificationDb } from "./lib/notifications/repo";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
 import { readConfig, getConfigDirPath } from "./lib/config/loader";
@@ -34,6 +36,8 @@ export interface StartupDeps {
   ensureAgentToken(): Promise<string>;
   installCli(): Promise<InstallCctlResult>;
   recordServerBaseUrl(): string;
+  /** Marks orphaned pending compaction rows failed; returns the swept count. */
+  sweepInterruptedCompactions(): number;
   verifyServerBaseUrl(): void;
 }
 
@@ -53,6 +57,11 @@ const defaultStartupDeps: StartupDeps = {
       expectedBuildInfo: BUILD_INFO,
     }),
   recordServerBaseUrl: () => recordServerBaseUrl(),
+  sweepInterruptedCompactions: () =>
+    createContextArtifactsRepo(getStateDb()).failPendingRuns(
+      "interrupted by server restart",
+      new Date().toISOString(),
+    ),
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -77,6 +86,22 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.state_migrations_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // A compaction run lives only in the compaction service's in-memory
+    // single-flight map, so rows still `pending` now were interrupted by the
+    // previous process shutting down. Sweep them to failed before any request
+    // (or the lazily-created route-handler service) reads them, so the UI
+    // offers Retry instead of an eternal "Compacting…".
+    try {
+      const swept = deps.sweepInterruptedCompactions();
+      if (swept > 0) {
+        logger.info("startup.interrupted_compactions_swept", { count: swept });
+      }
+    } catch (err) {
+      logger.error("startup.compaction_sweep_failed", {
         error: getErrorMessage(err),
       });
     }

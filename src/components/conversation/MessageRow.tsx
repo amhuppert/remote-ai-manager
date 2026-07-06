@@ -13,6 +13,7 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-schemas";
+import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 
 // `message`, the role modifier, `message-content`, and `message-iteration-badge`
 // are retained as structural / generated-content / test hooks — external slices
@@ -48,6 +49,12 @@ export interface MessageRowProps {
   /** Fork handler; omit to hide the Fork action where forking isn't supported. */
   onFork?: (messageIndex: number) => void;
   /**
+   * Conversation identity for the per-message Compact action; omit on hosts
+   * without it (the action is hidden). Must be referentially stable — this row
+   * is memoized.
+   */
+  compactionTarget?: ContextArtifactTarget;
+  /**
    * Per-render extras consumed only by the final-message decorations
    * (`DebugActionCard`). Non-last rows receive `null`, which is stable across
    * renders and lets `memo()` skip reconciliation when the only state change
@@ -71,6 +78,7 @@ const MessageRow = memo(function MessageRow({
   worktreePath,
   thinkingExpansionCommand,
   onFork,
+  compactionTarget,
   lastMessageExtras,
 }: MessageRowProps): React.JSX.Element {
   if (msg.role === "notice") {
@@ -157,7 +165,9 @@ const MessageRow = memo(function MessageRow({
       <MessageActions
         messageIndex={messageIndex}
         content={msg.content}
+        role={msg.role}
         onFork={onFork}
+        compactionTarget={compactionTarget}
       />
     </div>
   );

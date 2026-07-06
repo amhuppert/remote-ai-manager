@@ -8,11 +8,14 @@ import {
   TabsContent,
 } from "@/components/ui/Tabs";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
+import { useMemo } from "react";
 import DiffPanel from "@/features/session/git/DiffPanel";
 import SpecBrowser from "@/features/session/conversation/SpecBrowser";
 import DocsPanel from "@/features/session/conversation/DocsPanel";
 import AlignmentPanel from "@/features/session/conversation/AlignmentPanel";
+import ContextArtifactPanel from "@/features/session/conversation/ContextArtifactPanel";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
+import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import {
   useRightPaneTab,
   useSwitchRightPaneTab,
@@ -29,6 +32,10 @@ interface RightPaneProps {
   sessionName: string;
   worktreePath: string;
   targetBranch?: string;
+  /** Active conversation identity for the Artifact tab. */
+  conversationId: string;
+  conversationName?: string | null;
+  archived?: boolean;
 }
 
 export default function RightPane({
@@ -36,6 +43,9 @@ export default function RightPane({
   sessionName,
   worktreePath,
   targetBranch,
+  conversationId,
+  conversationName,
+  archived,
 }: RightPaneProps): React.JSX.Element {
   const rightPaneTab = useRightPaneTab();
   const switchRightPaneTab = useSwitchRightPaneTab();
@@ -52,6 +62,13 @@ export default function RightPane({
   const isLoading = diffQuery.isLoading || commitsQuery.isLoading;
   const diff = diffQuery.data ?? EMPTY_DIFF;
   const commits = commitsQuery.data ?? [];
+
+  // Stable identity for the artifact panel's queries/mutations (the list
+  // query key is shared with the SessionInfoStrip status chip).
+  const artifactTarget = useMemo<ContextArtifactTarget>(
+    () => ({ scope: "session", projectName, sessionName, conversationId }),
+    [projectName, sessionName, conversationId],
+  );
 
   return (
     // `.right-pane`/`.sidebar-diff-panel`/`.right-pane-body` survive as preserved
@@ -74,6 +91,7 @@ export default function RightPane({
             <TabsTrigger value="docs">Docs</TabsTrigger>
             <TabsTrigger value="alignment">Alignment</TabsTrigger>
             <TabsTrigger value="specs">Specs</TabsTrigger>
+            <TabsTrigger value="artifact">Artifact</TabsTrigger>
           </TabsList>
         </div>
 
@@ -132,6 +150,17 @@ export default function RightPane({
             layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
           >
             <SpecBrowser projectName={projectName} sessionName={sessionName} />
+          </TabsContent>
+          <TabsContent
+            value="artifact"
+            forceMount
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            <ContextArtifactPanel
+              target={artifactTarget}
+              conversationName={conversationName}
+              archived={archived}
+            />
           </TabsContent>
         </div>
       </TabsRoot>

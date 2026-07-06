@@ -3,6 +3,7 @@ import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { runAsk } from "./commands/ask";
 import { runCharter } from "./commands/charter";
 import { runCodex } from "./commands/codex";
+import { runConversation } from "./commands/conversation";
 import { runDecisions } from "./commands/decisions";
 import { runDev } from "./commands/dev";
 import { runDocs } from "./commands/docs";
@@ -229,6 +230,10 @@ export async function runCli(
 
   if (command === "codex") {
     return runCodex(positionals.slice(1), flags, values, env, host);
+  }
+
+  if (command === "conversation") {
+    return runConversation(positionals.slice(1), flags, values, env, host);
   }
 
   if (command === undefined) {

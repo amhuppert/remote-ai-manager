@@ -35,6 +35,8 @@ export interface ConversationAutocompleteListItem {
   status: ConversationStatus;
   isCurrentProject: boolean;
   archived: boolean;
+  /** Shows the fresh-compaction badge (design §12.4). */
+  compactFresh?: boolean;
 }
 
 export interface ConversationAutocompleteListProps {
@@ -158,6 +160,14 @@ function ConversationRow({
           indices={item.matchIndices}
           className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
         />
+        {item.compactFresh && (
+          <span
+            title="Fresh compaction available"
+            className="rounded-full bg-green-glow px-[5px] py-px text-[0.7rem] tracking-[0.04em] text-green uppercase"
+          >
+            compacted
+          </span>
+        )}
         {item.archived && (
           <span className="rounded-full bg-[var(--cc-white-a04)] px-[5px] py-px text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
             archived

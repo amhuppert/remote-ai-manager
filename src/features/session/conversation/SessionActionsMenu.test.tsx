@@ -54,3 +54,140 @@ describe("SessionActionsMenu", () => {
     ).toHaveAttribute("data-disabled");
   });
 });
+
+describe("SessionActionsMenu — compaction actions", () => {
+  function renderWithCompaction(
+    state: import("./compaction-chip-state").CompactionChipState,
+    handlers: {
+      onCompactConversation?: () => void;
+      onViewArtifact?: () => void;
+      onRefreshArtifact?: () => void;
+      onCopyReference?: () => void;
+    } = {},
+  ) {
+    return render(
+      <SessionActionsMenu
+        targetBranch="main"
+        onDelete={vi.fn()}
+        compaction={state}
+        onCompactConversation={handlers.onCompactConversation ?? vi.fn()}
+        onViewArtifact={handlers.onViewArtifact ?? vi.fn()}
+        onRefreshArtifact={handlers.onRefreshArtifact ?? vi.fn()}
+        onCopyReference={handlers.onCopyReference ?? vi.fn()}
+      />,
+    );
+  }
+
+  async function openMenu() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /actions/i }));
+    return user;
+  }
+
+  it("hides every compaction item when no compaction state is provided", async () => {
+    render(<SessionActionsMenu targetBranch="main" onDelete={vi.fn()} />);
+    await openMenu();
+    expect(
+      screen.queryByRole("menuitem", { name: /compact conversation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /copy reference/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("none: offers Compact conversation and Copy reference, no view/refresh", async () => {
+    renderWithCompaction({ kind: "none" });
+    await openMenu();
+    expect(
+      screen.getByRole("menuitem", { name: /compact conversation/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /copy reference/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /view context artifact/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /refresh context artifact/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("none: Compact conversation invokes the handler", async () => {
+    const onCompactConversation = vi.fn();
+    renderWithCompaction({ kind: "none" }, { onCompactConversation });
+    const user = await openMenu();
+    await user.click(
+      screen.getByRole("menuitem", { name: /compact conversation/i }),
+    );
+    expect(onCompactConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("pending: shows a disabled Compacting… item instead of Compact", async () => {
+    renderWithCompaction({ kind: "pending" });
+    await openMenu();
+    expect(
+      screen.getByRole("menuitem", { name: /compacting…/i }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.queryByRole("menuitem", { name: /compact conversation/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("fresh: offers View context artifact but not Refresh", async () => {
+    const onViewArtifact = vi.fn();
+    renderWithCompaction({ kind: "fresh" }, { onViewArtifact });
+    const user = await openMenu();
+    expect(
+      screen.queryByRole("menuitem", { name: /refresh context artifact/i }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("menuitem", { name: /view context artifact/i }),
+    );
+    expect(onViewArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("stale: offers View and Refresh with the behind count", async () => {
+    const onRefreshArtifact = vi.fn();
+    renderWithCompaction({ kind: "stale", behind: 5 }, { onRefreshArtifact });
+    const user = await openMenu();
+    expect(
+      screen.getByRole("menuitem", { name: /view context artifact/i }),
+    ).toBeInTheDocument();
+    const refresh = screen.getByRole("menuitem", {
+      name: /refresh context artifact/i,
+    });
+    expect(refresh.textContent).toMatch(/behind 5/i);
+    await user.click(refresh);
+    expect(onRefreshArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("outdated: offers View and Refresh", async () => {
+    renderWithCompaction({ kind: "outdated" });
+    await openMenu();
+    expect(
+      screen.getByRole("menuitem", { name: /view context artifact/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /refresh context artifact/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("failed: offers Compact conversation (retry) and View", async () => {
+    renderWithCompaction({ kind: "failed" });
+    await openMenu();
+    expect(
+      screen.getByRole("menuitem", { name: /compact conversation/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /view context artifact/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("Copy reference invokes the handler", async () => {
+    const onCopyReference = vi.fn();
+    renderWithCompaction({ kind: "fresh" }, { onCopyReference });
+    const user = await openMenu();
+    await user.click(screen.getByRole("menuitem", { name: /copy reference/i }));
+    expect(onCopyReference).toHaveBeenCalledTimes(1);
+  });
+});

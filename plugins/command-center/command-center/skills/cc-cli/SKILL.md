@@ -3,12 +3,14 @@ name: cc-cli
 description: >-
   This skill should be used when an agent running inside Command Center needs
   to perform a CC action through the `cctl` CLI — asking the user questions,
-  sending notifications, registering documents, managing dev servers, or
-  working with workflows — or when a `cctl` command fails and the agent needs
-  to interpret its exit code or recover. Use when the agent asks "how do I use
-  cctl", "what CC CLI commands exist", "cctl exited with code 3", "how do I
-  check the CC server connection", or needs the cctl conventions (flags,
-  identity resolution, --json envelope, hints).
+  sending notifications, registering documents, managing dev servers, working
+  with workflows, or reading other conversations and their compaction
+  artifacts — or when a `cctl` command fails and the agent needs to interpret
+  its exit code or recover. Use when the agent asks "how do I use cctl", "what
+  CC CLI commands exist", "cctl exited with code 3", "how do I check the CC
+  server connection", how to pull context from a referenced conversation, or
+  needs the cctl conventions (flags, identity resolution, --json envelope,
+  hints).
 ---
 
 # Command Center CLI (`cctl`)
@@ -170,6 +172,88 @@ cctl docs delete <id>
 cctl docs register docs/api-contract.md --description "read before touching any /api route"
 cctl docs list
 cctl docs delete 4f1d2797-...
+```
+
+## cctl conversation
+
+Read **conversation transcripts** in bounded windows and work with **compaction
+artifacts** — dense, structured context handoffs generated from a conversation's
+history. This is how an agent pulls context from another conversation (or its
+own earlier history) referenced via a `<conversation-ref>`.
+
+```
+cctl conversation read <conversation-id> [--outline] [--message N] [--message-range A:B]
+                       [--seq-range A:B] [--include-tools none|summary|full]
+                       [--include-thinking] [--search <regex>] [--max-bytes N]
+                       [--format json|markdown] [--json]
+cctl conversation compact <conversation-id> [--message N] [--force] [--wait] [--json]
+cctl conversation compaction get <conversation-id> [--message N] [--json]
+cctl conversation compaction list <conversation-id> [--json]
+```
+
+**Identity:** `<conversation-id>` is positional and defaults to
+`CC_CONVERSATION_ID` when omitted — reading your own history is valid. Scope
+resolves from `--project`/`--session` flags falling back to `CC_PROJECT`/
+`CC_SESSION`. Passing `--project` **without** `--session` targets the
+project-scoped conversation endpoints (for conversations that live at project
+scope); otherwise the session-scoped endpoints are used. Cross-conversation
+targets are always explicit by id (+ `--project`/`--session` when outside your
+own scope).
+
+### Three-tier escalation — read in this order
+
+1. **Compaction first.** `cctl conversation compaction get <id> --json` returns
+   the full structured envelope (agent brief, current state, decisions, files,
+   commands, open questions, blockers) with exact `messageIndex`/`seq` source
+   refs. This is almost always all the context you need, at zero token cost to
+   generate.
+2. **Windowed read second.** When the compaction points you at something (or is
+   stale/absent), pull a *bounded* window: `read --outline` for the table of
+   contents, then `read --message-range A:B` or `--seq-range A:B` for the exact
+   slice. Use `--search <regex>` to find matching units.
+3. **Full transcript read — never.** Do not fetch an entire transcript
+   unwindowed; `--max-bytes` (default 256 KiB) will truncate it anyway, and an
+   unbounded read wastes your context on tool noise the compaction already
+   distilled.
+
+- `read` — render a window of the transcript. `--outline` returns user prompts +
+  assistant headlines only (the TOC); `--message N`, `--message-range A:B`, and
+  `--seq-range A:B` are mutually exclusive windows (`messageIndex` = merged
+  visible message; `seq` = raw JSONL line). `--include-tools` defaults to
+  `summary`; `--include-thinking` defaults off. `--format markdown` prints a
+  compact fenced document instead of JSON-derived text. After `--outline` it
+  hints the next escalation. With `--json`, the rendered transcript is in the
+  `transcript` field. Invalid options exit `2` with one issue per line; an
+  unknown conversation exits `2`.
+- `compact` — create or refresh a compaction artifact (the whole conversation,
+  or one message with `--message N`). Without `--wait` it returns immediately:
+  `{ ok, artifactId, status: "pending", hint }` — the artifact generates in the
+  background. With `--wait` it polls until the artifact completes (exit `0`),
+  fails (exit `1` with the generation error), or a bounded timeout elapses.
+  `--force` regenerates even when the existing artifact is fresh. If the
+  artifact is already fresh it returns it directly with `hint: already fresh`.
+- `compaction get` — fetch the newest matching artifact's **full envelope**
+  (`--message N` selects that message's artifact; otherwise the
+  conversation-level one). When stale it still succeeds (`stale: true`,
+  `staleBehindMessages: N`) with `hint: refresh with: cctl conversation compact
+  <id>`. When absent it exits `1` with `hint: create with: cctl conversation
+  compact <id>` — create it, then re-get.
+- `compaction list` — one line per artifact (id, kind, status, covered seq
+  range, freshness). Ends with a hint pointing at `compaction get`.
+
+Exit-code nuance: an unknown *conversation* is a caller mistake (exit `2`), but
+an existing conversation with **no artifact yet** is exit `1` + the create hint —
+distinguish them by the hint/stderr, not just the code.
+
+```
+cctl conversation compaction get 0197a3c2-... --json
+# → exit 1, hint: create with: cctl conversation compact 0197a3c2-...
+cctl conversation compact 0197a3c2-... --wait --json
+# → { "ok": true, "artifact": { "status": "complete", "payload": { "agentBrief": ... } } }
+cctl conversation read 0197a3c2-... --outline
+# → #0 [seq 0-2] user ...
+#   hint: narrow with --message-range or fetch the compaction: cctl conversation compaction get 0197a3c2-...
+cctl conversation read 0197a3c2-... --message-range 4:6 --include-tools summary
 ```
 
 ## cctl dev

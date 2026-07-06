@@ -183,6 +183,9 @@ function laneRouteHost(
       async requireToken() {
         return null;
       },
+      async validateOptionalToken() {
+        return { kind: "valid" as const };
+      },
     },
     async resolveProjectPath() {
       return "/repos/cc";

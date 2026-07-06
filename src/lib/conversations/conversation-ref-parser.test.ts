@@ -8,6 +8,11 @@ import { conversationRefAttrsSchema } from "./schemas";
 const SAMPLE_REF =
   '<conversation-ref project-name="proj" project-path="/p" session-name="sess" worktree-path="/w" conversation-id="abc" conversation-name="Hello" backend="claude" backend-ref="sid-1" transcript-path="/t.jsonl" debug-log-path="" status="awaiting" last-activity-at="2026-01-01T00:00:00Z" />';
 
+const COMPACT_REF = SAMPLE_REF.replace(
+  " />",
+  ' compact-artifact-id="art-1" compact-status="fresh" compact-covered-seq="0..421" compact-created-at="2026-07-01T00:00:00Z" />',
+);
+
 describe("findConversationRefs", () => {
   it("finds a single ref in plain text", () => {
     const text = `Before ${SAMPLE_REF} after`;
@@ -78,5 +83,42 @@ describe("parseConversationRefAttrs", () => {
     const attrs = parseConversationRefAttrs(SAMPLE_REF);
     const result = conversationRefAttrsSchema.safeParse(attrs);
     expect(result.success).toBe(true);
+  });
+
+  it("parses compact-* attributes when present", () => {
+    const refs = findConversationRefs(`See ${COMPACT_REF} for context`);
+    expect(refs).toHaveLength(1);
+    const attrs = refs[0]!.attrs;
+    expect(attrs["compact-artifact-id"]).toBe("art-1");
+    expect(attrs["compact-status"]).toBe("fresh");
+    expect(attrs["compact-covered-seq"]).toBe("0..421");
+    expect(attrs["compact-created-at"]).toBe("2026-07-01T00:00:00Z");
+  });
+
+  it("still parses refs that carry only compact-status", () => {
+    const raw = SAMPLE_REF.replace(" />", ' compact-status="none" />');
+    const attrs = parseConversationRefAttrs(raw);
+    expect(attrs["compact-status"]).toBe("none");
+    expect(attrs["compact-artifact-id"]).toBeUndefined();
+    expect(attrs["conversation-id"]).toBe("abc");
+  });
+
+  it("satisfies conversationRefAttrsSchema with compact attributes present", () => {
+    const attrs = parseConversationRefAttrs(COMPACT_REF);
+    const result = conversationRefAttrsSchema.safeParse(attrs);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data["compact-status"]).toBe("fresh");
+      expect(result.data["compact-artifact-id"]).toBe("art-1");
+    }
+  });
+
+  it("satisfies conversationRefAttrsSchema for legacy refs without compact attributes", () => {
+    const attrs = parseConversationRefAttrs(SAMPLE_REF);
+    const result = conversationRefAttrsSchema.safeParse(attrs);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data["compact-status"]).toBeUndefined();
+    }
   });
 });

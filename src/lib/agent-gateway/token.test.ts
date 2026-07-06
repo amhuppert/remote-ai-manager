@@ -127,3 +127,63 @@ describe("createAgentAuth", () => {
     expect(denied?.status).toBe(401);
   });
 });
+
+describe("validateOptionalToken", () => {
+  function requestWithAuth(header?: string): Request {
+    return new Request("http://localhost/api/projects/p/conversations/c/read", {
+      headers: header ? { authorization: header } : {},
+    });
+  }
+
+  it("classifies a missing Authorization header as absent", async () => {
+    await writeFile(path.join(dir, "api-token"), "secret-token\n", {
+      mode: 0o600,
+    });
+    const auth = createAgentAuth({ configDir: dir });
+
+    expect(await auth.validateOptionalToken(requestWithAuth())).toEqual({
+      kind: "absent",
+    });
+  });
+
+  it("classifies the expected bearer token as valid", async () => {
+    await writeFile(path.join(dir, "api-token"), "secret-token\n", {
+      mode: 0o600,
+    });
+    const auth = createAgentAuth({ configDir: dir });
+
+    expect(
+      await auth.validateOptionalToken(requestWithAuth("Bearer secret-token")),
+    ).toEqual({ kind: "valid" });
+  });
+
+  it("classifies a wrong token as invalid", async () => {
+    await writeFile(path.join(dir, "api-token"), "secret-token", {
+      mode: 0o600,
+    });
+    const auth = createAgentAuth({ configDir: dir });
+
+    expect(
+      await auth.validateOptionalToken(requestWithAuth("Bearer nope")),
+    ).toEqual({ kind: "invalid" });
+  });
+
+  it("classifies a malformed Authorization header as invalid", async () => {
+    await writeFile(path.join(dir, "api-token"), "secret-token", {
+      mode: 0o600,
+    });
+    const auth = createAgentAuth({ configDir: dir });
+
+    expect(
+      await auth.validateOptionalToken(requestWithAuth("Basic abc123")),
+    ).toEqual({ kind: "invalid" });
+  });
+
+  it("classifies any presented token as invalid when no token file exists", async () => {
+    const auth = createAgentAuth({ configDir: dir });
+
+    expect(
+      await auth.validateOptionalToken(requestWithAuth("Bearer anything")),
+    ).toEqual({ kind: "invalid" });
+  });
+});

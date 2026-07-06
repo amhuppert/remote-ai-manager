@@ -224,6 +224,7 @@ export const conversationMachine = setup({
     backendRef: input.backendRef,
     forkedFrom: input.forkedFrom,
     role: input.role,
+    transient: input.transient === true,
     activeTurn: null,
     pendingQuestion: null,
     debugMode:

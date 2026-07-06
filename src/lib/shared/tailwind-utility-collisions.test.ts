@@ -232,6 +232,11 @@ const UTILITY_FIRST_PATHS = [
   // Async-ask answer card: the transcript renderer for <cc-question-answers>
   // blocks, authored utility-first alongside DocumentFeedbackCard.
   `${path.sep}components${path.sep}conversation${path.sep}QuestionAnswersCard.tsx`,
+  // Conversation-compaction UI (context-artifact envelope viewer + inline
+  // message viewer): authored utility-first against the design system.
+  // Registered in all three mirrored allowlists (here + eslint.config.mjs
+  // MIGRATED_UTILITY_FIRST + .prettierrc).
+  `${path.sep}components${path.sep}context-artifacts${path.sep}`,
 ];
 
 function srcFiles(ext: string): string[] {

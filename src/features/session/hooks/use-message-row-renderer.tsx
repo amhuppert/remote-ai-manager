@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import MessageRow from "@/components/conversation/MessageRow";
 import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
 import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export interface UseMessageRowRendererArgs {
@@ -32,6 +33,16 @@ export function useMessageRowRenderer({
   projectName,
   sessionName,
 }: UseMessageRowRendererArgs): ConversationVirtuosoListProps["renderMessage"] {
+  // Stable identity for the per-message Compact action (MessageRow is
+  // memoized; a fresh object per render would defeat it).
+  const conversationId = activeConversation?.id;
+  const compactionTarget = useMemo<ContextArtifactTarget | undefined>(
+    () =>
+      conversationId !== undefined
+        ? { scope: "session", projectName, sessionName, conversationId }
+        : undefined,
+    [projectName, sessionName, conversationId],
+  );
   return useCallback<ConversationVirtuosoListProps["renderMessage"]>(
     ({ row }) => {
       const { messageIndex, msg } = row;
@@ -56,6 +67,7 @@ export function useMessageRowRenderer({
           worktreePath={worktreePath}
           thinkingExpansionCommand={thinkingExpansionCommand}
           onFork={handleFork}
+          compactionTarget={compactionTarget}
           lastMessageExtras={extras}
         />
       );
@@ -71,6 +83,7 @@ export function useMessageRowRenderer({
       thinkingExpansionCommand,
       worktreePath,
       sessionName,
+      compactionTarget,
     ],
   );
 }

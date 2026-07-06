@@ -48,6 +48,12 @@ function tokenAuth(expected: string): AgentAuth {
         status: 401,
       });
     },
+    async validateOptionalToken(request: Request) {
+      const header = request.headers.get("authorization");
+      if (header === null) return { kind: "absent" as const };
+      if (header === `Bearer ${expected}`) return { kind: "valid" as const };
+      return { kind: "invalid" as const };
+    },
   };
 }
 

@@ -106,6 +106,60 @@ describe("conversation persistence", () => {
       });
     });
 
+    // A transient lane (compaction's synthetic `compaction-<artifactId>`
+    // conversation) has no ConversationState record, so the write path used
+    // to fail with `snapshot_save_failed` on every machine transition. The
+    // guard must skip the state-store write entirely.
+    it("skips the state-store write for snapshots whose context is transient", async () => {
+      const mutatedConversationIds: string[] = [];
+      const mutateConversation: typeof fixture.deps.mutateConversation = (
+        projectPath,
+        sessionName,
+        conversationId,
+        label,
+        mutate,
+      ) => {
+        mutatedConversationIds.push(conversationId);
+        return fixture.deps.mutateConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+          label,
+          mutate,
+        );
+      };
+      setPersistenceDeps({ ...fixture.deps, mutateConversation });
+
+      persistConversationSnapshot(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "compaction-artifact-1",
+        { value: "idle", context: { transient: true } } as never,
+        { immediate: true },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(mutatedConversationIds).toEqual([]);
+    });
+
+    it("still persists snapshots whose context is not transient", async () => {
+      persistConversationSnapshot(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        { value: "idle", context: { transient: false } } as never,
+        { immediate: true },
+      );
+
+      await vi.waitFor(async () => {
+        const reloaded = await reloadConversation();
+        expect(reloaded.machineSnapshot).toEqual({
+          value: "idle",
+          context: { transient: false },
+        });
+      });
+    });
+
     it("debounces writes by default", async () => {
       vi.useFakeTimers();
       try {

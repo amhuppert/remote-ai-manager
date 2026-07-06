@@ -40,6 +40,8 @@ import {
 import { createLaneWorktreeSweep } from "./lane-worktree-sweep";
 import { deleteCollaborationArtifacts } from "../workflows/collaboration/artifacts-store";
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
+import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
+import { getStateDb } from "../state-store";
 
 const logger = createLogger("sessions");
 
@@ -82,6 +84,16 @@ export interface SessionDeps {
   deleteJobRecordsForSession(projectName: string, sessionName: string): number;
   deleteNotificationsForProject(projectName: string): number;
   deleteJobRecordsForProject(projectName: string): number;
+  /**
+   * Purge context_artifacts rows for a session, or — without a sessionName —
+   * every row for the project. Keys by project PATH (the context_artifacts
+   * table stores project_path, unlike the projectName-keyed notification/job
+   * cleanups above).
+   */
+  deleteContextArtifactsForScope(
+    projectPath: string,
+    sessionName?: string,
+  ): number;
   sweepLaneWorktrees(input: {
     projectPath: string;
     sessionWorktreePath: string;
@@ -129,6 +141,11 @@ const defaultSessionDeps: SessionDeps = {
   deleteJobRecordsForSession: defaultDeleteJobRecordsForSession,
   deleteNotificationsForProject: defaultDeleteNotificationsForProject,
   deleteJobRecordsForProject: defaultDeleteJobRecordsForProject,
+  deleteContextArtifactsForScope: (projectPath, sessionName) =>
+    createContextArtifactsRepo(getStateDb()).deleteByScope(
+      projectPath,
+      sessionName,
+    ),
   sweepLaneWorktrees: (input) => createLaneWorktreeSweep().sweep(input),
   copyAlignmentCharterFromParent: async (input) => {
     await getAlignmentService().copyActiveCharter(input);
@@ -163,6 +180,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     deleteJobRecordsForSession,
     deleteNotificationsForProject,
     deleteJobRecordsForProject,
+    deleteContextArtifactsForScope,
     sweepLaneWorktrees,
     copyAlignmentCharterFromParent,
   } = deps;
@@ -738,6 +756,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       projectName,
       sessionName,
     );
+    const contextArtifactsRemoved = deleteContextArtifactsForScope(
+      projectPath,
+      sessionName,
+    );
 
     logger.info("session.delete", {
       sessionName,
@@ -746,6 +768,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       laneWorktreesRemoved,
       notificationsRemoved,
       jobRecordsRemoved,
+      contextArtifactsRemoved,
     });
 
     return { worktreeRemoved };
@@ -913,6 +936,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const projectName = getProjectDisplayName(projectPath);
     const notificationsRemoved = deleteNotificationsForProject(projectName);
     const jobRecordsRemoved = deleteJobRecordsForProject(projectName);
+    // Superset cleanup: project-scope conversations have no per-conversation
+    // delete flow, so their artifacts (session_name NULL) — plus any
+    // stragglers from sessions whose delete partially failed above — are
+    // removed here at project-delete granularity.
+    const contextArtifactsRemoved = deleteContextArtifactsForScope(projectPath);
 
     await mutateState("deleteProject", (state) => {
       delete state.projects[projectPath];
@@ -929,6 +957,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       sessionsRemoved,
       notificationsRemoved,
       jobRecordsRemoved,
+      contextArtifactsRemoved,
     });
 
     return { sessionsRemoved };

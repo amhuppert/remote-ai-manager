@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   createListAllConversations,
   createFindConversationById,
+  type ListAllConversationsDeps,
 } from "./cross-project-list";
 import type { ConversationState } from "./schemas";
+import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 
@@ -79,6 +81,52 @@ function makeState(opts: {
   };
 }
 
+function makeDeps(
+  overrides: Partial<ListAllConversationsDeps> = {},
+): ListAllConversationsDeps {
+  return {
+    readState: overrides.readState ?? (async () => makeState({ projects: {} })),
+    getFirstPromptSnippet:
+      overrides.getFirstPromptSnippet ?? (async () => null),
+    findArtifactsByConversationIds:
+      overrides.findArtifactsByConversationIds ?? (() => []),
+    readTranscriptEntries:
+      overrides.readTranscriptEntries ??
+      (async () => ({ entries: [], maxSeq: -1 })),
+  };
+}
+
+function makeArtifactRow(
+  overrides: Partial<ContextArtifactRow> & { conversationId: string },
+): ContextArtifactRow {
+  return {
+    id: overrides.id ?? `art-${overrides.conversationId}`,
+    kind: overrides.kind ?? "conversation_compaction",
+    scope: overrides.scope ?? "session",
+    projectPath: overrides.projectPath ?? "/projects/a",
+    sessionName: overrides.sessionName ?? "s1",
+    conversationId: overrides.conversationId,
+    messageId: overrides.messageId ?? null,
+    messageIndex: overrides.messageIndex ?? null,
+    coveredStartSeq: overrides.coveredStartSeq ?? 0,
+    coveredEndSeq: overrides.coveredEndSeq ?? 421,
+    sourceHash: overrides.sourceHash ?? "hash",
+    status: overrides.status ?? "complete",
+    error: overrides.error ?? null,
+    modelProvider: overrides.modelProvider ?? "claude",
+    model: overrides.model ?? "claude-sonnet-4-5",
+    effort: overrides.effort ?? null,
+    schemaVersion: overrides.schemaVersion ?? 1,
+    promptVersion: overrides.promptVersion ?? "v1",
+    normalizerVersion: overrides.normalizerVersion ?? "v1",
+    createdBy: overrides.createdBy ?? "user",
+    createdByConversationId: overrides.createdByConversationId ?? null,
+    payload: overrides.payload ?? null,
+    createdAt: overrides.createdAt ?? "2026-07-01T00:00:00Z",
+    updatedAt: overrides.updatedAt ?? "2026-07-01T00:00:00Z",
+  };
+}
+
 describe("listAllConversations", () => {
   it("walks every project / session / conversation and emits a list item per conversation", async () => {
     const state = makeState({
@@ -103,10 +151,9 @@ describe("listAllConversations", () => {
       },
     });
 
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const { items, totalCount } = await listAll({ includeArchived: false });
     expect(items).toHaveLength(3);
@@ -135,10 +182,9 @@ describe("listAllConversations", () => {
       },
     });
 
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const { items } = await listAll({ includeArchived: false });
     expect(items[0]).toMatchObject({
@@ -168,10 +214,9 @@ describe("listAllConversations", () => {
       archivedProjects: ["/projects/archived"],
     });
 
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const { items } = await listAll({ includeArchived: false });
     expect(items.map((i) => i.conversationId)).toEqual(["active"]);
@@ -199,10 +244,9 @@ describe("listAllConversations", () => {
       archivedProjects: ["/projects/archived"],
     });
 
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const { items, totalCount } = await listAll({ includeArchived: true });
     expect(totalCount).toBe(3);
@@ -228,10 +272,9 @@ describe("listAllConversations", () => {
       },
     });
 
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const { items } = await listAll({ includeArchived: false });
     expect(items.map((i) => i.conversationId)).toEqual(["live"]);
@@ -268,13 +311,15 @@ describe("listAllConversations", () => {
     });
 
     const snippetCalls: string[] = [];
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async (path) => {
-        snippetCalls.push(path);
-        return "snippet for " + path;
-      },
-    });
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        getFirstPromptSnippet: async (path) => {
+          snippetCalls.push(path);
+          return "snippet for " + path;
+        },
+      }),
+    );
 
     const { items } = await listAll({ includeArchived: false });
     const byId = new Map(items.map((i) => [i.conversationId, i]));
@@ -307,13 +352,15 @@ describe("listAllConversations", () => {
     });
 
     let called = false;
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => {
-        called = true;
-        return null;
-      },
-    });
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        getFirstPromptSnippet: async () => {
+          called = true;
+          return null;
+        },
+      }),
+    );
 
     const { items } = await listAll({ includeArchived: false });
     expect(called).toBe(false);
@@ -355,10 +402,9 @@ describe("listAllConversations", () => {
       },
     });
 
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const { items } = await listAll({ includeArchived: false });
     expect(items[0]).toMatchObject({
@@ -375,14 +421,194 @@ describe("listAllConversations", () => {
 
   it("returns empty result with totalCount 0 when there are no projects", async () => {
     const state = makeState({ projects: {} });
-    const listAll = createListAllConversations({
-      readState: async () => state,
-      getFirstPromptSnippet: async () => null,
-    });
+    const listAll = createListAllConversations(
+      makeDeps({ readState: async () => state }),
+    );
 
     const result = await listAll({ includeArchived: false });
     expect(result.items).toEqual([]);
     expect(result.totalCount).toBe(0);
+  });
+});
+
+describe("listAllConversations compaction enrichment", () => {
+  function singleProjectState(
+    conversations: ConversationState[],
+  ): ManagerState {
+    return makeState({
+      projects: {
+        "/projects/a": {
+          rootPath: "/projects/a",
+          sessions: { s1: makeSession("s1", conversations) },
+        },
+      },
+    });
+  }
+
+  it("marks a conversation fresh when the transcript has not advanced past the covered range", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A", transcriptPath: "/t/c1.jsonl" }),
+    ]);
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        findArtifactsByConversationIds: () => [
+          makeArtifactRow({
+            conversationId: "c1",
+            id: "art-c1",
+            coveredStartSeq: 0,
+            coveredEndSeq: 421,
+            createdAt: "2026-07-02T10:00:00Z",
+          }),
+        ],
+        readTranscriptEntries: async () => ({ entries: [], maxSeq: 421 }),
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    expect(items[0]).toMatchObject({
+      compactArtifactId: "art-c1",
+      compactStatus: "fresh",
+      compactCoveredSeq: "0..421",
+      compactCreatedAt: "2026-07-02T10:00:00Z",
+    });
+  });
+
+  it("marks a conversation stale when the transcript advanced past coveredEndSeq", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A", transcriptPath: "/t/c1.jsonl" }),
+    ]);
+    const readPaths: string[] = [];
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        findArtifactsByConversationIds: () => [
+          makeArtifactRow({ conversationId: "c1", coveredEndSeq: 421 }),
+        ],
+        readTranscriptEntries: async (path) => {
+          readPaths.push(path);
+          return { entries: [], maxSeq: 500 };
+        },
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    expect(items[0]?.compactStatus).toBe("stale");
+    expect(readPaths).toEqual(["/t/c1.jsonl"]);
+  });
+
+  it("ignores message_compaction and non-complete rows, reads no transcripts for them", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A", transcriptPath: "/t/c1.jsonl" }),
+      makeConversation({ id: "c2", name: "B", transcriptPath: "/t/c2.jsonl" }),
+    ]);
+    let reads = 0;
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        findArtifactsByConversationIds: () => [
+          makeArtifactRow({
+            conversationId: "c1",
+            kind: "message_compaction",
+            messageIndex: 3,
+          }),
+          makeArtifactRow({ conversationId: "c2", status: "pending" }),
+        ],
+        readTranscriptEntries: async () => {
+          reads += 1;
+          return { entries: [], maxSeq: 0 };
+        },
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    expect(reads).toBe(0);
+    for (const item of items) {
+      expect(item.compactArtifactId).toBeUndefined();
+      expect(item.compactStatus).toBeUndefined();
+      expect(item.compactCoveredSeq).toBeUndefined();
+      expect(item.compactCreatedAt).toBeUndefined();
+    }
+  });
+
+  it("batch-fetches artifacts once with every listed conversation id", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A" }),
+      makeConversation({ id: "c2", name: "B" }),
+    ]);
+    const calls: string[][] = [];
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        findArtifactsByConversationIds: (ids) => {
+          calls.push(ids);
+          return [];
+        },
+      }),
+    );
+
+    await listAll({ includeArchived: false });
+    expect(calls).toEqual([["c1", "c2"]]);
+  });
+
+  it("does not fetch artifacts when there are no conversations", async () => {
+    let called = false;
+    const listAll = createListAllConversations(
+      makeDeps({
+        findArtifactsByConversationIds: () => {
+          called = true;
+          return [];
+        },
+      }),
+    );
+
+    await listAll({ includeArchived: false });
+    expect(called).toBe(false);
+  });
+
+  it("treats a compacted conversation with no transcript as fresh without reading", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A", transcriptPath: null }),
+    ]);
+    let reads = 0;
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        findArtifactsByConversationIds: () => [
+          makeArtifactRow({ conversationId: "c1", id: "art-c1" }),
+        ],
+        readTranscriptEntries: async () => {
+          reads += 1;
+          return { entries: [], maxSeq: 0 };
+        },
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    expect(reads).toBe(0);
+    expect(items[0]?.compactStatus).toBe("fresh");
+    expect(items[0]?.compactArtifactId).toBe("art-c1");
+  });
+
+  it("degrades to stale when the transcript read fails", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A", transcriptPath: "/t/c1.jsonl" }),
+    ]);
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        findArtifactsByConversationIds: () => [
+          makeArtifactRow({ conversationId: "c1", id: "art-c1" }),
+        ],
+        readTranscriptEntries: async () => {
+          throw new Error("transcript unreadable");
+        },
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    expect(items[0]?.compactStatus).toBe("stale");
+    expect(items[0]?.compactArtifactId).toBe("art-c1");
   });
 });
 

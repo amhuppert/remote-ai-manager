@@ -1,4 +1,9 @@
-import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
+import {
+  compactionConfigSchema,
+  type CompactionConfig,
+  type GlobalConfig,
+  type PerRepoConfig,
+} from "@/lib/config/schemas";
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -67,4 +72,19 @@ export function resolveBranchPrefix(
   repoConfig?: Pick<PerRepoConfig, "branchPrefix"> | null,
 ): string {
   return repoConfig?.branchPrefix ?? globalConfig.branchPrefix ?? "csm";
+}
+
+/**
+ * Resolve the compaction config from per-project and global config, merging
+ * field-wise. Per-project fields override global; fields missing from both
+ * fall back to the schema defaults.
+ */
+export function resolveCompactionConfig(
+  globalConfig: Pick<GlobalConfig, "compaction">,
+  repoConfig?: Pick<PerRepoConfig, "compaction"> | null,
+): CompactionConfig {
+  return compactionConfigSchema.parse({
+    ...globalConfig.compaction,
+    ...repoConfig?.compaction,
+  });
 }

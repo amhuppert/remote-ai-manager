@@ -68,6 +68,10 @@ const baseAttrs: ConversationMentionAttrs = {
   debugLogPath: "",
   status: "running",
   lastActivityAt: "2024-06-01T12:00:00Z",
+  compactArtifactId: "",
+  compactStatus: "none",
+  compactCoveredSeq: "",
+  compactCreatedAt: "",
 };
 
 const meta = {

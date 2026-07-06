@@ -57,6 +57,22 @@ export type TranscriptMessageOrigin = z.infer<
   typeof transcriptMessageOriginSchema
 >;
 
+/**
+ * Anchor tying an extracted claim or rendered unit to exact transcript
+ * coordinates. Two coordinate systems are carried deliberately (see
+ * docs/design/conversation-compaction/README.md §3): `messageIndex`/`messageId`
+ * address the merged visible-message array (UI navigation), while
+ * `seqStart`/`seqEnd` are raw JSONL line indexes (slicing, staleness, delta).
+ */
+export const sourceRefSchema = z.object({
+  messageIndex: z.number().int(),
+  messageId: z.string().nullable(),
+  seqStart: z.number().int(),
+  seqEnd: z.number().int(),
+  quote: z.string().optional(),
+});
+export type SourceRef = z.infer<typeof sourceRefSchema>;
+
 export const transcriptMessageSchema = z.object({
   id: z.string().optional(),
   role: z.enum(["user", "assistant", "notice"]),
@@ -234,6 +250,19 @@ export type ConversationState = z.infer<typeof conversationStateSchema>;
 // Cross-Project Conversation List (addressable conversations)
 // ============================================================
 
+// Simplified projection of a conversation's compaction state advertised on
+// `#` references (design §12.4): "none" when no completed
+// conversation_compaction artifact exists, otherwise fresh/stale derived from
+// the live transcript position vs the artifact's covered range.
+export const conversationCompactStatusSchema = z.enum([
+  "fresh",
+  "stale",
+  "none",
+]);
+export type ConversationCompactStatus = z.infer<
+  typeof conversationCompactStatusSchema
+>;
+
 export const conversationListItemSchema = z.object({
   projectName: z.string(),
   projectPath: z.string(),
@@ -250,6 +279,13 @@ export const conversationListItemSchema = z.object({
   status: conversationStatusSchema,
   lastActivityAt: z.string(),
   archived: z.boolean(),
+  // Compaction advertisement — present only for conversations with a
+  // completed conversation_compaction artifact (design §12.4).
+  compactArtifactId: z.string().optional(),
+  compactStatus: conversationCompactStatusSchema.optional(),
+  /** Covered seq range formatted "<start>..<end>", e.g. "0..421". */
+  compactCoveredSeq: z.string().optional(),
+  compactCreatedAt: z.string().optional(),
 });
 export type ConversationListItem = z.infer<typeof conversationListItemSchema>;
 
@@ -277,6 +313,13 @@ export const conversationRefAttrsSchema = z.object({
   "debug-log-path": z.string(),
   status: conversationStatusSchema,
   "last-activity-at": z.string(),
+  // Compaction advertisement (design §12.4). Refs emitted without a completed
+  // conversation compaction carry compact-status="none" alone; older refs
+  // predate these attributes entirely.
+  "compact-artifact-id": z.string().optional(),
+  "compact-status": conversationCompactStatusSchema.optional(),
+  "compact-covered-seq": z.string().optional(),
+  "compact-created-at": z.string().optional(),
 });
 export type ConversationRefAttrs = z.infer<typeof conversationRefAttrsSchema>;
 
@@ -333,12 +376,12 @@ export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
 // event's identity payload) and omits `sessionName`: a session-less project
 // conversation has no owning session. Project variants are `.strict()` so a
 // stray `sessionName` is rejected rather than silently stripped.
-const sessionEventIdentity = {
+export const sessionEventIdentity = {
   scope: z.literal("session"),
   projectName: z.string(),
   sessionName: z.string(),
 };
-const projectEventIdentity = {
+export const projectEventIdentity = {
   scope: z.literal("project"),
   projectName: z.string(),
 };

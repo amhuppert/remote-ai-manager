@@ -71,6 +71,10 @@ const schema = new Schema({
         debugLogPath: { default: "" },
         status: { default: "new" },
         lastActivityAt: { default: "" },
+        compactArtifactId: { default: "" },
+        compactStatus: { default: "none" },
+        compactCoveredSeq: { default: "" },
+        compactCreatedAt: { default: "" },
       },
     },
     codeBlock: {
@@ -153,6 +157,10 @@ function convMention(
     debugLogPath: string;
     status: string;
     lastActivityAt: string;
+    compactArtifactId: string;
+    compactStatus: string;
+    compactCoveredSeq: string;
+    compactCreatedAt: string;
   }> = {},
 ): ProseMirrorNode {
   return schema.nodes["conversationMention"]!.create({
@@ -168,6 +176,10 @@ function convMention(
     debugLogPath: overrides.debugLogPath ?? "",
     status: overrides.status ?? "running",
     lastActivityAt: overrides.lastActivityAt ?? "2024-06-01T12:00:00Z",
+    compactArtifactId: overrides.compactArtifactId ?? "",
+    compactStatus: overrides.compactStatus ?? "none",
+    compactCoveredSeq: overrides.compactCoveredSeq ?? "",
+    compactCreatedAt: overrides.compactCreatedAt ?? "",
   });
 }
 
@@ -458,8 +470,79 @@ describe("serializePromptDoc", () => {
     });
 
     expect(result.prompt).toBe(
-      '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" transcript-path="/t/conv-123.jsonl" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" />',
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" transcript-path="/t/conv-123.jsonl" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" />',
     );
+  });
+
+  it("emits the four compaction attributes in order when a fresh compaction exists", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          convMention({
+            compactArtifactId: "art-1",
+            compactStatus: "fresh",
+            compactCoveredSeq: "0..421",
+            compactCreatedAt: "2026-07-01T00:00:00Z",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain(
+      'last-activity-at="2024-06-01T12:00:00Z" compact-artifact-id="art-1" compact-status="fresh" compact-covered-seq="0..421" compact-created-at="2026-07-01T00:00:00Z" />',
+    );
+  });
+
+  it("emits the compaction attributes for a stale compaction", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          convMention({
+            compactArtifactId: "art-2",
+            compactStatus: "stale",
+            compactCoveredSeq: "0..100",
+            compactCreatedAt: "2026-06-30T00:00:00Z",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain('compact-status="stale"');
+    expect(result.prompt).toContain('compact-artifact-id="art-2"');
+    expect(result.prompt).toContain('compact-covered-seq="0..100"');
+  });
+
+  it('emits compact-status="none" alone and omits the other compaction attributes when no compaction exists', () => {
+    const result = serializePromptDoc({
+      doc: doc(p(convMention())),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain('compact-status="none"');
+    expect(result.prompt).not.toContain("compact-artifact-id");
+    expect(result.prompt).not.toContain("compact-covered-seq");
+    expect(result.prompt).not.toContain("compact-created-at");
+  });
+
+  it("treats an unrecognized compactStatus value as none", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          convMention({
+            compactArtifactId: "art-3",
+            compactStatus: "garbage",
+            compactCoveredSeq: "0..5",
+            compactCreatedAt: "2026-07-01T00:00:00Z",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain('compact-status="none"');
+    expect(result.prompt).not.toContain("compact-artifact-id");
   });
 
   it("XML-escapes special characters and flattens whitespace in attribute values", () => {

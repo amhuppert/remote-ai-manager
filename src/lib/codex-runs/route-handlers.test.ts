@@ -39,6 +39,9 @@ const allowAuth: AgentAuth = {
   async requireToken() {
     return null;
   },
+  async validateOptionalToken() {
+    return { kind: "valid" };
+  },
 };
 
 function makeDeps(
@@ -126,6 +129,9 @@ describe("POST /codex-runs", () => {
     const auth: AgentAuth = {
       async requireToken() {
         return NextResponse.json({ error: "no" }, { status: 401 });
+      },
+      async validateOptionalToken() {
+        return { kind: "invalid" };
       },
     };
     const startRun = vi.fn(() => ({ runId: "x" }));

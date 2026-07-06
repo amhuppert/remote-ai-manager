@@ -88,6 +88,7 @@ export function useSessionPageConversation(
     rows,
     totalMessages: displayMessages.length,
     virtuosoRef: local.virtuosoRef,
+    conversationId,
   });
 
   const isCollabPassageInView = useCollabPassageVisibility(

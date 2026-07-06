@@ -166,6 +166,13 @@ function defaultConfig(): GlobalConfig {
         autonomousResolutionThreshold: "minor",
       },
     },
+    compaction: {
+      backend: "claude",
+      conversationModel: "sonnet",
+      messageModel: "sonnet",
+      effort: "medium",
+      timeoutMs: 180_000,
+    },
   };
 }
 

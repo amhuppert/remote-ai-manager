@@ -23,12 +23,22 @@ import type {
   ConversationVirtuosoListProps,
   VirtuosoHandle,
 } from "@/components/conversation/ConversationVirtuosoList";
-import { useSending } from "@/stores/session-detail.store";
+import {
+  useClearMessageNavRequest,
+  useMessageNavRequest,
+  useSending,
+} from "@/stores/session-detail.store";
 
 export interface UseConversationNavArgs {
   rows: ConversationRow[];
   totalMessages: number;
   virtuosoRef: RefObject<VirtuosoHandle | null>;
+  /**
+   * Identity used to consume store-level `messageNavRequest`s (drill-through
+   * from surfaces outside the panel, e.g. the context-artifact panel's
+   * source-ref chips). Omit on hosts that should ignore those requests.
+   */
+  conversationId?: string;
 }
 
 export interface UseConversationNavResult {
@@ -53,6 +63,7 @@ export function useConversationNav({
   rows,
   totalMessages,
   virtuosoRef,
+  conversationId,
 }: UseConversationNavArgs): UseConversationNavResult {
   const programmaticNavTargetRef = useRef<number | null>(null);
   const clearProgrammaticNavTargetRef = useRef<ReturnType<
@@ -145,14 +156,30 @@ export function useConversationNav({
     [navState, totalMessages],
   );
 
-  const scrollToMessage = useCallback(
-    (messageIdx: number) => {
+  // Ref-only scroll (no React setState): safe to call from effects. Returns
+  // the clamped message index, or null when the row isn't rendered.
+  const scrollVirtuosoToMessage = useCallback(
+    (messageIdx: number): number | null => {
       const clamped = Math.max(0, Math.min(messageIdx, totalMessages - 1));
       const rowIndex = rows.findIndex(
         (row) => row.kind === "message" && row.messageIndex === clamped,
       );
-      if (rowIndex === -1) return;
+      if (rowIndex === -1) return null;
       holdProgrammaticNavTarget(clamped);
+      virtuosoRef.current?.scrollToIndex({
+        index: rowIndex,
+        align: "start",
+        behavior: "smooth",
+      });
+      return clamped;
+    },
+    [totalMessages, holdProgrammaticNavTarget, rows, virtuosoRef],
+  );
+
+  const scrollToMessage = useCallback(
+    (messageIdx: number) => {
+      const clamped = scrollVirtuosoToMessage(messageIdx);
+      if (clamped === null) return;
       setNavState((prev) => ({
         ...prev,
         topmostMessageIndex: clamped,
@@ -160,14 +187,28 @@ export function useConversationNav({
         atTop: clamped === 0,
         atBottom: false,
       }));
-      virtuosoRef.current?.scrollToIndex({
-        index: rowIndex,
-        align: "start",
-        behavior: "smooth",
-      });
     },
-    [totalMessages, holdProgrammaticNavTarget, rows, virtuosoRef],
+    [scrollVirtuosoToMessage],
   );
+
+  // Store-level drill-through requests (e.g. context-artifact source refs):
+  // the matching conversation scrolls, then consumes the one-shot request so a
+  // later mount can't replay it.
+  const messageNavRequest = useMessageNavRequest();
+  const clearMessageNavRequest = useClearMessageNavRequest();
+  useEffect(() => {
+    if (messageNavRequest === null || conversationId === undefined) return;
+    if (messageNavRequest.conversationId !== conversationId) return;
+    // Ref-only scroll: the programmatic-hold ref pins the reported message
+    // index until Virtuoso's range callbacks re-derive the nav state.
+    scrollVirtuosoToMessage(messageNavRequest.messageIndex);
+    clearMessageNavRequest();
+  }, [
+    messageNavRequest,
+    conversationId,
+    scrollVirtuosoToMessage,
+    clearMessageNavRequest,
+  ]);
 
   const scrollToTop = useCallback(() => {
     holdProgrammaticNavTarget(0);

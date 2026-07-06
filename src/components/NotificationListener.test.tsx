@@ -20,6 +20,8 @@ import type {
 } from "@/lib/notifications/schemas";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
+import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
 
 const notificationStoreMocks = vi.hoisted(() => ({
   addOrUpdateJob: vi.fn(),
@@ -424,6 +426,99 @@ describe("NotificationListener", () => {
     await waitFor(() =>
       expect(invalidateQueries).toHaveBeenCalledWith({
         queryKey: conversationKeys.messages("proj", "sess", "conv-1"),
+      }),
+    );
+  });
+
+  // Regression: the compaction status chip derives `stale` at fetch time, so
+  // without a turn-end invalidation it reads "Fresh" until an unrelated
+  // refetch (staleTime). A conversation-status transition out of "running"
+  // must refetch that conversation's artifact queries — and only that
+  // conversation's.
+  it("invalidates the conversation's context-artifact queries when its status transitions out of running", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    const running = {
+      type: "conversation-status",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      status: "running",
+    };
+    es.emit("conversation-status", running);
+    invalidateQueries.mockClear();
+
+    // running → running: no turn ended, no artifact refetch.
+    es.emit("conversation-status", running);
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: contextArtifactKeys.conversation({
+        scope: "session",
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv-1",
+      }),
+    });
+
+    es.emit("conversation-status", { ...running, status: "awaiting" });
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: contextArtifactKeys.conversation({
+          scope: "session",
+          projectName: "proj",
+          sessionName: "sess",
+          conversationId: "conv-1",
+        }),
+      }),
+    );
+    // An unrelated conversation's artifact queries stay untouched.
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: contextArtifactKeys.conversation({
+        scope: "session",
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv-other",
+      }),
+    });
+  });
+
+  it("invalidates project-scope context-artifact queries when a project conversation stops running", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      status: "running",
+    });
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      status: "awaiting",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: contextArtifactKeys.conversation({
+          scope: "project",
+          projectName: "proj",
+          conversationId: "pc-1",
+        }),
       }),
     );
   });
@@ -1962,6 +2057,108 @@ describe("NotificationListener", () => {
     expect(cached?.notifications).toHaveLength(1);
     expect(cached?.total).toBe(1);
     expect(cached?.unreadCount).toBe(1);
+  });
+
+  function makeContextArtifactListItem(
+    overrides: Partial<ContextArtifactListItem> & { id: string },
+  ): ContextArtifactListItem {
+    return {
+      kind: "conversation_compaction",
+      scope: "session",
+      projectPath: "/p/proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      messageId: null,
+      messageIndex: null,
+      coveredStartSeq: 0,
+      coveredEndSeq: 42,
+      sourceHash: "hash",
+      status: "pending",
+      error: null,
+      modelProvider: "claude",
+      model: "claude-sonnet-4-5",
+      effort: null,
+      schemaVersion: 1,
+      promptVersion: "v1",
+      normalizerVersion: "v1",
+      createdBy: "user",
+      createdByConversationId: null,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      stale: false,
+      staleBehindMessages: 0,
+      outdated: false,
+      ...overrides,
+    };
+  }
+
+  // The SSE event name is underscore-separated ("context_artifact_status",
+  // design §9.1) unlike every other hyphenated event — these tests pin the
+  // exact registration string, since a hyphenated listener would silently
+  // never fire.
+  it("adopts the server artifact id onto a cached optimistic row on context_artifact_status pending", async () => {
+    const { client, es } = emitAndGetSpies();
+    const artifactTarget = {
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+    } as const;
+    const listKey = contextArtifactKeys.list(artifactTarget);
+    client.setQueryData(listKey, [
+      makeContextArtifactListItem({ id: "optimistic-1", status: "pending" }),
+    ]);
+
+    es.emit("context_artifact_status", {
+      type: "context_artifact_status",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      artifactId: "a-1",
+      kind: "conversation_compaction",
+      status: "pending",
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<ContextArtifactListItem[]>(listKey);
+      expect(cached?.map((row) => row.id)).toEqual(["a-1"]);
+    });
+  });
+
+  it("patches the row status and invalidates list + detail caches on terminal context_artifact_status events", async () => {
+    const { client, invalidateQueries, es } = emitAndGetSpies();
+    const artifactTarget = {
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+    } as const;
+    const listKey = contextArtifactKeys.list(artifactTarget);
+    client.setQueryData(listKey, [
+      makeContextArtifactListItem({ id: "a-1", status: "pending" }),
+    ]);
+    invalidateQueries.mockClear();
+
+    es.emit("context_artifact_status", {
+      type: "context_artifact_status",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      artifactId: "a-1",
+      kind: "conversation_compaction",
+      status: "complete",
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<ContextArtifactListItem[]>(listKey);
+      expect(cached?.[0]?.status).toBe("complete");
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: listKey });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: contextArtifactKeys.detail(artifactTarget, "a-1"),
+    });
   });
 
   it("falls back to invalidation when the notifications list cache is unfetched", async () => {

@@ -175,6 +175,71 @@ describe("conversation manager", () => {
       });
       expect(actor2.getSnapshot().context.status).toBe("awaiting");
     });
+
+    it("stamps transient from input into the machine context", () => {
+      const actor = startConversationActor({
+        ...DEFAULT_INPUT,
+        conversationId: "conv-transient",
+        transient: true,
+      });
+      expect(actor.getSnapshot().context.transient).toBe(true);
+
+      const regular = startConversationActor(DEFAULT_INPUT);
+      expect(regular.getSnapshot().context.transient).toBe(false);
+    });
+  });
+
+  describe("ensureConversationActor with explicit actorInput", () => {
+    it("threads actorInput.transient into the actor context", async () => {
+      const actor = await ensureConversationActor(
+        "/test/project",
+        "test-session",
+        "compaction-a1",
+        {
+          actorInput: {
+            projectName: "test-project",
+            sessionWorktreePath: "/test/project",
+            transient: true,
+            conversation: {
+              createdAt: "2026-01-01T00:00:00.000Z",
+              forkedFrom: null,
+              role: null,
+              transcriptPath: null,
+              agentBackend: "claude",
+              backendRef: null,
+              promptCount: 0,
+              debugMode: null,
+            },
+          },
+        },
+      );
+      expect(actor.getSnapshot().context.transient).toBe(true);
+    });
+
+    it("leaves actors non-transient when actorInput does not set the flag (validator lanes)", async () => {
+      const actor = await ensureConversationActor(
+        "/test/project",
+        "test-session",
+        "validator-lane-1",
+        {
+          actorInput: {
+            projectName: "test-project",
+            sessionWorktreePath: "/test/project",
+            conversation: {
+              createdAt: "2026-01-01T00:00:00.000Z",
+              forkedFrom: null,
+              role: null,
+              transcriptPath: null,
+              agentBackend: "claude",
+              backendRef: null,
+              promptCount: 0,
+              debugMode: null,
+            },
+          },
+        },
+      );
+      expect(actor.getSnapshot().context.transient).toBe(false);
+    });
   });
 
   describe("getConversationActor", () => {
@@ -1200,6 +1265,25 @@ describe("conversation manager", () => {
       content: [{ type: "text", text: "hello" }],
       command: null,
     };
+
+    // Transient lanes (compaction's synthetic `compaction-<artifactId>`
+    // conversations) have no message-queue rows; claiming used to throw and
+    // emit error-level `queue.drain_failed` on every teardown.
+    it("skips claiming entirely for a transient conversation context", async () => {
+      const claimNextTurnBatch = vi.fn(async () => BATCH);
+      const deps = makeQueueDeps({ claimNextTurnBatch });
+      const { self, send } = makeDrainSelf(true);
+
+      await drainConversationQueue(
+        self,
+        { ...DRAIN_CONTEXT, transient: true },
+        deps,
+      );
+
+      expect(claimNextTurnBatch).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(deps.markPending).not.toHaveBeenCalled();
+    });
 
     it("dispatches exactly one SUBMIT_PROMPT carrying the claimed delivery metadata", async () => {
       const claimNextTurnBatch = vi.fn(async () => BATCH);

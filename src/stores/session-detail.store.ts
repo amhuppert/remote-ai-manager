@@ -15,7 +15,18 @@ import type { LayoutMode } from "@/lib/sessions/schemas";
 // ---------------------------------------------------------------------------
 
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
-type RightPaneTab = "diff" | "docs" | "specs" | "alignment";
+type RightPaneTab = "diff" | "docs" | "specs" | "alignment" | "artifact";
+
+/**
+ * A one-shot "scroll the transcript to this message" request, set by surfaces
+ * that live outside the conversation panel (e.g. the context-artifact panel's
+ * source-ref chips) and consumed — then cleared — by the conversation nav hook
+ * whose conversation matches.
+ */
+interface MessageNavRequest {
+  conversationId: string;
+  messageIndex: number;
+}
 
 interface SidebarSessionFilter {
   projectName: string;
@@ -77,6 +88,8 @@ interface SessionDetailState {
   pendingTrayExpanded: boolean;
   /** The chosen feedback send destination, retained across sends (req 9.4). */
   feedbackTarget: DocumentFeedbackTarget | null;
+  /** Pending transcript-scroll request, or null when none is in flight. */
+  messageNavRequest: MessageNavRequest | null;
 }
 
 interface SessionDetailActions {
@@ -132,6 +145,9 @@ interface SessionDetailActions {
   setPendingTrayExpanded: (expanded: boolean) => void;
   togglePendingTray: () => void;
   setFeedbackTarget: (target: DocumentFeedbackTarget) => void;
+  openContextArtifactPanel: () => void;
+  requestMessageNav: (conversationId: string, messageIndex: number) => void;
+  clearMessageNavRequest: () => void;
   clearConversationMessages: () => void;
   resetConversationState: () => void;
   resetStore: () => void;
@@ -182,6 +198,7 @@ const initialState: SessionDetailState = {
   docActivationNonce: 0,
   pendingTrayExpanded: false,
   feedbackTarget: null,
+  messageNavRequest: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -511,6 +528,34 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         state.selectedDocId = docId;
       }),
 
+    // -- Context-artifact panel --
+
+    // Route the right pane to the artifact tab. Mirrors openDocument's reveal
+    // logic: panes and conversation-only give the right pane no column, so
+    // opening switches to a layout that shows it (without persisting over the
+    // user's saved layout preference).
+    openContextArtifactPanel: () =>
+      set((state) => {
+        state.rightPaneTab = "artifact";
+        if (state.layout === "panes") {
+          state.layout = "default";
+        } else if (state.layout === "conversation") {
+          state.layout = "split";
+        }
+      }),
+
+    // -- Transcript message navigation --
+
+    requestMessageNav: (conversationId, messageIndex) =>
+      set((state) => {
+        state.messageNavRequest = { conversationId, messageIndex };
+      }),
+
+    clearMessageNavRequest: () =>
+      set((state) => {
+        state.messageNavRequest = null;
+      }),
+
     // -- Document viewer (multi-doc shell) --
 
     // Open a document by its canonical worktree-relative `docPath`: add a tab if
@@ -658,6 +703,8 @@ export const useActiveDocPath = () =>
   useSessionDetailStore((s) => s.activeDocPath);
 export const useDocActivationNonce = () =>
   useSessionDetailStore((s) => s.docActivationNonce);
+export const useMessageNavRequest = () =>
+  useSessionDetailStore((s) => s.messageNavRequest);
 export const usePendingTrayExpanded = () =>
   useSessionDetailStore((s) => s.pendingTrayExpanded);
 export const useFeedbackTarget = () =>
@@ -675,6 +722,12 @@ export const useSwitchMobilePanel = () =>
   useSessionDetailStore((s) => s.switchMobilePanel);
 export const useSwitchRightPaneTab = () =>
   useSessionDetailStore((s) => s.switchRightPaneTab);
+export const useOpenContextArtifactPanel = () =>
+  useSessionDetailStore((s) => s.openContextArtifactPanel);
+export const useRequestMessageNav = () =>
+  useSessionDetailStore((s) => s.requestMessageNav);
+export const useClearMessageNavRequest = () =>
+  useSessionDetailStore((s) => s.clearMessageNavRequest);
 export const useSubmitPrompt = () =>
   useSessionDetailStore((s) => s.submitPrompt);
 export const useReceiveStreamContent = () =>

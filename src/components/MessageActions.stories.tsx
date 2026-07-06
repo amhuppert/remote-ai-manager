@@ -1,6 +1,17 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MessageActions from "./MessageActions";
+import {
+  contextArtifactKeys,
+  type ContextArtifactTarget,
+} from "@/lib/context-artifacts/query-keys";
+import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import {
+  buildArtifactDetail,
+  buildArtifactListItem,
+} from "./context-artifacts/fixtures";
 
 const meta = {
   title: "Components/MessageActions",
@@ -53,4 +64,78 @@ export const MobileWidth = {
   parameters: {
     viewport: { defaultViewport: "mobile1" },
   },
+} satisfies Story;
+
+const compactionTarget: ContextArtifactTarget = {
+  scope: "session",
+  projectName: "p1",
+  sessionName: "s1",
+  conversationId: "c1",
+};
+
+/** Passes the compaction gate: an assistant message with a tool_use block. */
+const compactableContent: MessageContentBlock[] = [
+  { type: "text", text: "Ran the failing suite and isolated the flake." },
+  { type: "tool_use", name: "Bash" },
+];
+
+/**
+ * Deterministic fixture client: the artifact list (and the detail row for the
+ * Complete story's viewer) is seeded into the cache, so no network is hit.
+ */
+function seededDecorator(rows: ContextArtifactListItem[]) {
+  return function SeededQueryClient(Story: React.ComponentType) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    client.setQueryData(contextArtifactKeys.list(compactionTarget), rows);
+    const detail = buildArtifactDetail();
+    client.setQueryData(
+      contextArtifactKeys.detail(compactionTarget, detail.id),
+      detail,
+    );
+    return (
+      <QueryClientProvider client={client}>
+        <Story />
+      </QueryClientProvider>
+    );
+  };
+}
+
+const compactionArgs = {
+  messageIndex: 3,
+  role: "assistant",
+  content: compactableContent,
+  compactionTarget,
+} satisfies Partial<React.ComponentProps<typeof MessageActions>>;
+
+/** No artifact yet → "Compact message". */
+export const CompactAvailable = {
+  args: compactionArgs,
+  decorators: [seededDecorator([])],
+} satisfies Story;
+
+/** Artifact pending → disabled action with a spinner. */
+export const CompactPending = {
+  args: compactionArgs,
+  decorators: [seededDecorator([buildArtifactListItem({ status: "pending" })])],
+} satisfies Story;
+
+/** Complete artifact → "View compacted message" toggles the inline viewer. */
+export const CompactComplete = {
+  args: compactionArgs,
+  decorators: [seededDecorator([buildArtifactListItem()])],
+} satisfies Story;
+
+/** Failed artifact → "Compaction failed — retry". */
+export const CompactFailed = {
+  args: compactionArgs,
+  decorators: [
+    seededDecorator([
+      buildArtifactListItem({
+        status: "failed",
+        error: "transcript_too_large_for_single_pass",
+      }),
+    ]),
+  ],
 } satisfies Story;

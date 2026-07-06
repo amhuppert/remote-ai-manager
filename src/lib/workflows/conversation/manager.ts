@@ -349,11 +349,24 @@ export async function drainConversationQueue(
   self: DrainSelf,
   context: Pick<
     ConversationContext,
-    "projectPath" | "sessionName" | "conversationId" | "projectName"
+    | "projectPath"
+    | "sessionName"
+    | "conversationId"
+    | "projectName"
+    | "transient"
   >,
   deps: ConversationQueueDeps,
 ): Promise<void> {
   const { projectPath, sessionName, conversationId } = context;
+  // Transient lanes have no message-queue rows; claiming against the absent
+  // conversation record would throw and log `queue.drain_failed`.
+  if (context.transient === true) {
+    logger.debug("queue.drain_skipped_transient", {
+      conversationId,
+      sessionName,
+    });
+    return;
+  }
   let batch: ClaimedQueuedBatch | null = null;
   try {
     batch = await deps.claimNextTurnBatch({
@@ -441,6 +454,13 @@ export interface EnsureActorInputData {
   conversationScope?: "session" | "project";
   projectName: string;
   sessionWorktreePath: string;
+  /**
+   * Marks the actor as a synthetic lane with no persisted ConversationState
+   * record (see `ConversationContext.transient`): snapshot persistence and
+   * queue draining are skipped. Leave unset for lanes whose conversations
+   * exist in the state store.
+   */
+  transient?: boolean;
   conversation: {
     createdAt: string;
     forkedFrom: ForkedFrom;
@@ -1156,6 +1176,7 @@ export async function ensureConversationActor(
     sessionName,
     worktreePath,
     conversationId,
+    transient: data.transient === true,
     createdAt: data.conversation.createdAt,
     forkedFrom: data.conversation.forkedFrom,
     role: data.conversation.role,

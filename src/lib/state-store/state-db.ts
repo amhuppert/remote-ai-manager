@@ -439,6 +439,42 @@ const SCHEMA_DDL = `
     created_at   TEXT NOT NULL,
     PRIMARY KEY (project_path, commit_sha)
   );
+
+  CREATE TABLE IF NOT EXISTS context_artifacts (
+    id                         TEXT PRIMARY KEY,
+    kind                       TEXT NOT NULL,             -- message_compaction | conversation_compaction
+    scope                      TEXT NOT NULL,             -- session | project (mirrors conversation scope)
+    project_path               TEXT NOT NULL,
+    session_name               TEXT,                      -- NULL for project-scope conversations
+    conversation_id            TEXT NOT NULL,
+    message_id                 TEXT,
+    message_index              INTEGER,
+    covered_start_seq          INTEGER NOT NULL,
+    covered_end_seq            INTEGER NOT NULL,
+    source_hash                TEXT NOT NULL,
+    status                     TEXT NOT NULL,             -- pending | complete | failed
+    error                      TEXT,
+    model_provider             TEXT NOT NULL,             -- claude | codex
+    model                      TEXT NOT NULL,
+    effort                     TEXT,
+    schema_version             INTEGER NOT NULL,
+    prompt_version             TEXT NOT NULL,
+    normalizer_version         TEXT NOT NULL,
+    created_by                 TEXT NOT NULL,             -- user | agent
+    created_by_conversation_id TEXT,                      -- set when created_by = agent
+    payload_json               TEXT,                      -- CompactionEnvelope; NULL while pending/failed
+    created_at                 TEXT NOT NULL,
+    updated_at                 TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_context_artifacts_conversation
+    ON context_artifacts (conversation_id, kind);
+  CREATE INDEX IF NOT EXISTS idx_context_artifacts_scope
+    ON context_artifacts (project_path, session_name);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_context_artifacts_conversation_kind
+    ON context_artifacts (conversation_id) WHERE kind = 'conversation_compaction';
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_context_artifacts_message
+    ON context_artifacts (conversation_id, message_index) WHERE kind = 'message_compaction';
 `;
 
 class SchemaVersionConflictError extends Error {

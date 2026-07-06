@@ -134,6 +134,13 @@ export interface ConversationContext {
   backendRef: AgentSessionRef | null;
   forkedFrom: ForkedFrom;
   role: ConversationRole;
+  /**
+   * True for synthetic lanes not backed by a persisted ConversationState
+   * record (e.g. compaction's `compaction-<artifactId>` conversations).
+   * Teardown skips state-store writes (snapshot persistence) and queue
+   * draining for them — there is no row to write and no queue to drain.
+   */
+  transient?: boolean;
 
   // Active turn (set when SUBMIT_PROMPT, cleared on finalize)
   activeTurn: ActiveTurn | null;
@@ -248,6 +255,8 @@ export interface ConversationInput {
   agentBackend: AgentBackendId;
   backendRef: AgentSessionRef | null;
   promptCount: number;
+  /** See {@link ConversationContext.transient}. */
+  transient?: boolean;
   /**
    * Persisted debug-mode state to restore when the actor is recreated for
    * an existing conversation (e.g. after a server restart). When `active`

@@ -14,6 +14,7 @@ import type {
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
 import { getConfigDirPath } from "@/lib/config/loader";
+import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
 import { resolveImageRefs } from "@/lib/images/transcript-images";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
@@ -771,6 +772,273 @@ async function readConversationMessagesWithSeqImpl(
   }
 
   return messages;
+}
+
+// ============================================================
+// Entry-level read (raw JSONL coordinates, no merging)
+// ============================================================
+
+interface TranscriptEntryBaseWithSeq {
+  /** 0-based JSONL line index of this entry. */
+  seq: number;
+  /** `TranscriptEntry.id` when present; null on id-less/legacy entries. */
+  entryId: string | null;
+  timestamp: string | null;
+}
+
+/**
+ * One visible JSONL transcript entry addressed by its raw line coordinate.
+ * Unlike `TranscriptMessage & { seq }`, consecutive same-role entries are NOT
+ * merged, so every contributing line keeps its own `seq` — required by
+ * seq-range windows and delta boundaries that fall inside a merged message
+ * (docs/design/conversation-compaction/README.md §3).
+ */
+export interface TranscriptMessageEntryWithSeq extends TranscriptEntryBaseWithSeq {
+  /** Never stamped by the reader; declared so `kind` narrows the union. */
+  kind?: "message";
+  role: "user" | "assistant" | "notice";
+  content: MessageContentBlock[];
+}
+
+/**
+ * A stored `{type:"tool_result", raw:<SDK user message>}` JSONL line. These
+ * lines are NOT visible messages (no role/content), so the merged reader and
+ * message counting ignore them, but the compact-transcript renderer folds
+ * them into the assistant turn they interleave with (design §4 tool_result
+ * row). `content` holds `tool_result` blocks parsed defensively from `raw`.
+ */
+export interface TranscriptToolResultEntryWithSeq extends TranscriptEntryBaseWithSeq {
+  kind: "tool_result";
+  content: MessageContentBlock[];
+}
+
+export type TranscriptEntryWithSeq =
+  | TranscriptMessageEntryWithSeq
+  | TranscriptToolResultEntryWithSeq;
+
+export interface TranscriptEntriesResult {
+  entries: TranscriptEntryWithSeq[];
+  /** seq of the last visible entry; -1 when the transcript has none. */
+  maxSeq: number;
+}
+
+const EMPTY_ENTRIES_RESULT: TranscriptEntriesResult = {
+  entries: [],
+  maxSeq: -1,
+};
+
+// Separate cache from transcriptReadCache: that one stores the merged
+// (coordinate-lossy) message array, this one stores raw entry records.
+// Same (mtimeMs, size) gating, bound, and return-by-reference contract.
+const TRANSCRIPT_ENTRIES_CACHE_MAX = 200;
+
+interface TranscriptEntriesCacheEntry {
+  mtimeMs: number;
+  size: number;
+  parsed: TranscriptEntriesResult;
+}
+
+const transcriptEntriesCache = new Map<string, TranscriptEntriesCacheEntry>();
+
+export function _resetTranscriptEntriesCacheForTesting(): void {
+  transcriptEntriesCache.clear();
+}
+
+/**
+ * Read every visible transcript entry with its raw JSONL line index, without
+ * same-role merging, plus stored tool_result lines as `kind:"tool_result"`
+ * records (their real line index preserved). Handles null paths and missing
+ * files gracefully. `maxSeq` remains the last VISIBLE entry's seq.
+ *
+ * `image_ref` blocks pass through unresolved: entry-level consumers (the
+ * compact-transcript renderer) only ever emit `[image <mediaType>]`
+ * placeholders, so resolving refs would add per-block disk I/O for nothing.
+ */
+export async function readTranscriptEntriesWithSeq(
+  transcriptPath: string | null,
+): Promise<TranscriptEntriesResult> {
+  if (!transcriptPath) return EMPTY_ENTRIES_RESULT;
+
+  if (!existsSync(transcriptPath)) return EMPTY_ENTRIES_RESULT;
+
+  return timed(
+    transcriptLogger,
+    "transcript.read_entries",
+    {},
+    async () => {
+      let stats;
+      try {
+        stats = await stat(transcriptPath);
+      } catch {
+        return readTranscriptEntriesWithSeqImpl(transcriptPath);
+      }
+
+      const cached = transcriptEntriesCache.get(transcriptPath);
+      if (
+        cached &&
+        cached.mtimeMs === stats.mtimeMs &&
+        cached.size === stats.size
+      ) {
+        return cached.parsed;
+      }
+
+      const parsed = await readTranscriptEntriesWithSeqImpl(transcriptPath);
+
+      if (transcriptEntriesCache.size >= TRANSCRIPT_ENTRIES_CACHE_MAX) {
+        const firstKey = transcriptEntriesCache.keys().next().value;
+        if (firstKey !== undefined) transcriptEntriesCache.delete(firstKey);
+      }
+      transcriptEntriesCache.set(transcriptPath, {
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        parsed,
+      });
+      return parsed;
+    },
+    (result) => ({
+      entryCount: result.entries.length,
+      maxSeq: result.maxSeq,
+    }),
+  );
+}
+
+/**
+ * Defensively parse a stored tool_result line's `raw` payload into
+ * `tool_result` content blocks. The production shape (written by
+ * `processMessage`) is the full SDK user message —
+ * `{ type:"user", message:{ content:[{type:"tool_result", tool_use_id,
+ * content, is_error}] } }` where `content` is a string or an array of
+ * `{type:"text"|"tool_reference", …}` blocks. Legacy/fabricated lines may
+ * store the bare block itself. Anything unrecognizable becomes a single
+ * generic block — this function never throws.
+ *
+ * The raw payload carries no tool name, so metrics are recovered by pairing
+ * `tool_use_id` with the preceding assistant `tool_use` blocks
+ * (`toolNamesById`) and re-running `parseToolResultMetrics`, exactly like the
+ * live Claude turn path (`query-session.ts` `buildToolResultBlock`).
+ */
+function parseStoredToolResultBlocks(
+  raw: unknown,
+  toolNamesById: ReadonlyMap<string, string>,
+): MessageContentBlock[] {
+  const candidates: unknown[] = [];
+  if (raw !== null && typeof raw === "object") {
+    const rawObj = raw as { message?: unknown; content?: unknown };
+    const message = rawObj.message;
+    const messageContent =
+      message !== null && typeof message === "object"
+        ? (message as { content?: unknown }).content
+        : undefined;
+    if (Array.isArray(messageContent)) {
+      candidates.push(...messageContent);
+    } else if (Array.isArray(rawObj.content)) {
+      candidates.push(...rawObj.content);
+    } else {
+      candidates.push(raw);
+    }
+  }
+
+  const blocks: MessageContentBlock[] = [];
+  for (const candidate of candidates) {
+    if (candidate === null || typeof candidate !== "object") continue;
+    const record = candidate as {
+      type?: unknown;
+      tool_use_id?: unknown;
+      is_error?: unknown;
+      content?: unknown;
+    };
+    if (typeof record.tool_use_id !== "string") continue;
+    if (record.type !== undefined && record.type !== "tool_result") continue;
+    const text = extractStoredToolResultText(record.content);
+    const toolName = toolNamesById.get(record.tool_use_id);
+    const metrics = toolName ? parseToolResultMetrics(toolName, text) : {};
+    blocks.push({
+      type: "tool_result",
+      tool_use_id: record.tool_use_id,
+      ...(text !== undefined ? { content: text } : {}),
+      ...(record.is_error === true ? { isError: true } : {}),
+      ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
+    });
+  }
+
+  if (blocks.length === 0) {
+    return [
+      {
+        type: "tool_result",
+        tool_use_id: "",
+        content: "[unrecognized tool_result payload]",
+      },
+    ];
+  }
+  return blocks;
+}
+
+function extractStoredToolResultText(content: unknown): string | undefined {
+  if (typeof content === "string") {
+    return content.length > 0 ? content : undefined;
+  }
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block === null || typeof block !== "object") continue;
+    const record = block as { type?: unknown; text?: unknown };
+    if (record.type === "text" && typeof record.text === "string") {
+      parts.push(record.text);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+async function readTranscriptEntriesWithSeqImpl(
+  transcriptPath: string,
+): Promise<TranscriptEntriesResult> {
+  const raw = await readFile(transcriptPath, "utf-8");
+  const lines = raw.split("\n");
+  const entries: TranscriptEntryWithSeq[] = [];
+  const toolNamesById = new Map<string, string>();
+  let maxSeq = -1;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (!line || line.trim().length === 0) continue;
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(line) as TranscriptEntry;
+    } catch {
+      continue;
+    }
+
+    if (isVisibleEntry(entry)) {
+      for (const block of entry.content) {
+        if (block.type === "tool_use" && block.id !== undefined) {
+          toolNamesById.set(block.id, block.name);
+        }
+      }
+      entries.push({
+        seq: lineIndex,
+        entryId: entry.id ?? null,
+        role: entry.role,
+        timestamp: entry.timestamp ?? null,
+        content: entry.content,
+      });
+      // maxSeq tracks VISIBLE entries only: a trailing tool_result line
+      // belongs to an in-flight turn and must not advance staleness.
+      maxSeq = lineIndex;
+      continue;
+    }
+
+    if (entry.type === "tool_result") {
+      entries.push({
+        kind: "tool_result",
+        seq: lineIndex,
+        entryId: entry.id ?? null,
+        timestamp: entry.timestamp ?? null,
+        content: parseStoredToolResultBlocks(entry.raw, toolNamesById),
+      });
+    }
+  }
+
+  return { entries, maxSeq };
 }
 
 // ============================================================

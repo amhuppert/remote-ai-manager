@@ -26,6 +26,10 @@ function coerceAttrs(value: unknown): ConversationMentionAttrs {
     debugLogPath: str(v["debugLogPath"]),
     status: coerceStatus(v["status"]),
     lastActivityAt: str(v["lastActivityAt"]),
+    compactArtifactId: str(v["compactArtifactId"]),
+    compactStatus: coerceCompactStatus(v["compactStatus"]),
+    compactCoveredSeq: str(v["compactCoveredSeq"]),
+    compactCreatedAt: str(v["compactCreatedAt"]),
   };
 }
 
@@ -45,6 +49,13 @@ function coerceStatus(value: unknown): ConversationMentionAttrs["status"] {
   return "new";
 }
 
+function coerceCompactStatus(
+  value: unknown,
+): ConversationMentionAttrs["compactStatus"] {
+  if (value === "fresh" || value === "stale") return value;
+  return "none";
+}
+
 const EMPTY_ATTRS: ConversationMentionAttrs = {
   projectName: "",
   projectPath: "",
@@ -58,6 +69,10 @@ const EMPTY_ATTRS: ConversationMentionAttrs = {
   debugLogPath: "",
   status: "new",
   lastActivityAt: "",
+  compactArtifactId: "",
+  compactStatus: "none",
+  compactCoveredSeq: "",
+  compactCreatedAt: "",
 };
 
 function truncate(label: string): string {

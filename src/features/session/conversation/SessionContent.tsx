@@ -235,6 +235,9 @@ export default function SessionContent({
                     sessionName={session.sessionName}
                     worktreePath={session.worktreePath}
                     targetBranch={targetBranch}
+                    conversationId={conversationId}
+                    conversationName={activeConversation?.name}
+                    archived={activeConversation?.archived}
                   />
                 )}
 

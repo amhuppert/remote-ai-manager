@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
@@ -135,6 +136,26 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: single pending merge-retry descriptor. In graph_workflow_executions.runtime_json.",
       sharedDocuments:
         "tracked: one entry per workflow-produced shared document with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
+    },
+  },
+  {
+    label: "context_artifacts payload_json",
+    schema: compactionEnvelopeSchema,
+    discharges: {
+      "decisions.**":
+        "bounded: single model-generated envelope, rewritten whole per compaction run (generation output guards, design §7.3); never appended to across runs.",
+      "files.**":
+        "bounded: single model-generated envelope, rewritten whole per compaction run; never appended to across runs.",
+      "commands.**":
+        "bounded: single model-generated envelope, rewritten whole per compaction run; never appended to across runs.",
+      "openQuestions.**":
+        "bounded: single model-generated envelope, rewritten whole per compaction run; never appended to across runs.",
+      "blockers.**":
+        "bounded: single model-generated envelope, rewritten whole per compaction run; never appended to across runs.",
+      "currentState.nextBestActions":
+        "bounded: single model-generated envelope, rewritten whole per compaction run; never appended to across runs.",
+      extras:
+        "bounded: single model-generated envelope, rewritten whole per compaction run; ungraduated fields only, capped by the same output guards.",
     },
   },
 ];

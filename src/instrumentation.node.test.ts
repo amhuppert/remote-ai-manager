@@ -30,6 +30,7 @@ describe("createStartupRegistrar", () => {
         preservedRunning: 0,
         movedToPaused: 0,
       }),
+      sweepInterruptedCompactions: () => 0,
     });
 
     await register();
@@ -72,6 +73,7 @@ describe("createStartupRegistrar", () => {
         preservedRunning: 0,
         movedToPaused: 0,
       }),
+      sweepInterruptedCompactions: () => 0,
     });
 
     await expect(register()).resolves.not.toThrow();
@@ -119,6 +121,10 @@ describe("createStartupRegistrar", () => {
           movedToPaused: 0,
         };
       },
+      sweepInterruptedCompactions: () => {
+        calls.push("compaction-sweep");
+        return 0;
+      },
     });
 
     await register();
@@ -131,6 +137,9 @@ describe("createStartupRegistrar", () => {
     );
     expect(calls).toContain("envelope-recovery");
     expect(calls).toContain("notifications");
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("compaction-sweep"),
+    );
   });
 
   it("runs rehydrate and envelope recovery inside distinct startup traces", async () => {
@@ -161,6 +170,7 @@ describe("createStartupRegistrar", () => {
           movedToPaused: 0,
         };
       },
+      sweepInterruptedCompactions: () => 0,
     });
 
     await register();
@@ -199,10 +209,15 @@ describe("createStartupRegistrar", () => {
         calls.push("envelope-recovery-failed");
         throw new Error("simulated recovery failure");
       },
+      sweepInterruptedCompactions: () => {
+        calls.push("compaction-sweep-failed");
+        throw new Error("simulated sweep failure");
+      },
     });
 
     await expect(register()).resolves.not.toThrow();
     expect(calls).toContain("envelope-recovery-failed");
+    expect(calls).toContain("compaction-sweep-failed");
     expect(calls).toContain("notifications");
   });
 
@@ -242,6 +257,7 @@ describe("createStartupRegistrar", () => {
         preservedRunning: 0,
         movedToPaused: 0,
       }),
+      sweepInterruptedCompactions: () => 0,
     });
 
     await register();
@@ -282,6 +298,7 @@ describe("createStartupRegistrar", () => {
         preservedRunning: 0,
         movedToPaused: 0,
       }),
+      sweepInterruptedCompactions: () => 0,
     });
 
     await expect(register()).resolves.not.toThrow();

@@ -27,6 +27,10 @@ function makeItem(
     status: overrides.status ?? "new",
     lastActivityAt: overrides.lastActivityAt ?? "2024-01-01T00:00:00Z",
     archived: overrides.archived ?? false,
+    compactArtifactId: overrides.compactArtifactId,
+    compactStatus: overrides.compactStatus,
+    compactCoveredSeq: overrides.compactCoveredSeq,
+    compactCreatedAt: overrides.compactCreatedAt,
   };
 }
 
@@ -197,6 +201,137 @@ describe("PromptEditorConversationMentionPopup", () => {
       conversationId: "c2",
       conversationName: "Second",
     });
+  });
+
+  it("maps compaction fields from the enriched item into the selection", () => {
+    const items = [
+      makeItem({
+        conversationId: "c1",
+        conversationName: "Compacted convo",
+        compactArtifactId: "art-1",
+        compactStatus: "fresh",
+        compactCoveredSeq: "0..421",
+        compactCreatedAt: "2026-07-01T00:00:00Z",
+      }),
+    ];
+    const { useFake } = makeFakeHook({
+      data: makeResponse(items),
+      isLoading: false,
+      isError: false,
+      lastCallParams: null,
+    });
+    const Popup = createConversationMentionPopup({
+      useAllConversations: useFake,
+    });
+    const onSelect = vi.fn();
+    const handleRef = {
+      current: null as ConversationMentionPopupHandle | null,
+    };
+
+    render(
+      <PopupHarness
+        Popup={Popup}
+        query=""
+        onSelect={onSelect}
+        handleRef={handleRef}
+      />,
+    );
+
+    act(() => {
+      handleRef.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    });
+
+    expect(onSelect.mock.calls[0]?.[0]).toMatchObject({
+      conversationId: "c1",
+      compactArtifactId: "art-1",
+      compactStatus: "fresh",
+      compactCoveredSeq: "0..421",
+      compactCreatedAt: "2026-07-01T00:00:00Z",
+    });
+  });
+
+  it("defaults compaction fields to none/empty when the item has no compaction", () => {
+    const items = [
+      makeItem({ conversationId: "c1", conversationName: "Plain convo" }),
+    ];
+    const { useFake } = makeFakeHook({
+      data: makeResponse(items),
+      isLoading: false,
+      isError: false,
+      lastCallParams: null,
+    });
+    const Popup = createConversationMentionPopup({
+      useAllConversations: useFake,
+    });
+    const onSelect = vi.fn();
+    const handleRef = {
+      current: null as ConversationMentionPopupHandle | null,
+    };
+
+    render(
+      <PopupHarness
+        Popup={Popup}
+        query=""
+        onSelect={onSelect}
+        handleRef={handleRef}
+      />,
+    );
+
+    act(() => {
+      handleRef.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    });
+
+    expect(onSelect.mock.calls[0]?.[0]).toMatchObject({
+      compactArtifactId: "",
+      compactStatus: "none",
+      compactCoveredSeq: "",
+      compactCreatedAt: "",
+    });
+  });
+
+  it("shows the compacted badge on rows whose item has a fresh compaction", () => {
+    const items = [
+      makeItem({
+        conversationId: "c1",
+        conversationName: "Fresh",
+        compactStatus: "fresh",
+        compactArtifactId: "art-1",
+      }),
+      makeItem({
+        conversationId: "c2",
+        conversationName: "Stale",
+        compactStatus: "stale",
+        compactArtifactId: "art-2",
+      }),
+      makeItem({ conversationId: "c3", conversationName: "Plain" }),
+    ];
+    const { useFake } = makeFakeHook({
+      data: makeResponse(items),
+      isLoading: false,
+      isError: false,
+      lastCallParams: null,
+    });
+    const Popup = createConversationMentionPopup({
+      useAllConversations: useFake,
+    });
+    const handleRef = {
+      current: null as ConversationMentionPopupHandle | null,
+    };
+
+    render(
+      <PopupHarness
+        Popup={Popup}
+        query=""
+        onSelect={() => {}}
+        handleRef={handleRef}
+      />,
+    );
+
+    expect(screen.getAllByText("compacted")).toHaveLength(1);
   });
 
   it("Alt+A toggles includeArchived and refetches with the new value", () => {

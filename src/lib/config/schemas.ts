@@ -54,6 +54,27 @@ const rawWorkflowDefaultsSchema = z.object({
 });
 
 // ============================================================
+// Compaction Config
+// ============================================================
+
+export const compactionConfigSchema = z.object({
+  backend: agentBackendSchema.default("claude"),
+  conversationModel: z.string().default("sonnet"),
+  messageModel: z.string().default("sonnet"),
+  effort: effortLevelSchema.default("medium"),
+  timeoutMs: z.number().int().positive().default(180_000),
+});
+export type CompactionConfig = z.infer<typeof compactionConfigSchema>;
+
+const rawCompactionConfigSchema = z.object({
+  backend: agentBackendSchema.optional(),
+  conversationModel: z.string().optional(),
+  messageModel: z.string().optional(),
+  effort: effortLevelSchema.optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+
+// ============================================================
 // Global Config
 // ============================================================
 
@@ -73,6 +94,7 @@ export const globalConfigSchema = z.object({
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.default("claude"),
+  compaction: compactionConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -100,6 +122,7 @@ export const rawGlobalConfigSchema = z.object({
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.optional(),
+  compaction: rawCompactionConfigSchema.optional(),
 });
 export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 
@@ -114,6 +137,7 @@ export const perRepoConfigSchema = z.object({
   preMergePreparePath: z.enum(["plumbing", "fallback"]).optional(),
   devServers: z.array(devServerConfigSchema).optional(),
   branchPrefix: z.string().optional(),
+  compaction: rawCompactionConfigSchema.optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 

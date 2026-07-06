@@ -21,6 +21,7 @@ function makeItem(
     status: overrides.status ?? "new",
     isCurrentProject: overrides.isCurrentProject ?? false,
     archived: overrides.archived ?? false,
+    compactFresh: overrides.compactFresh ?? false,
   };
 }
 
@@ -281,6 +282,29 @@ describe("ConversationAutocompleteList", () => {
       />,
     );
     expect(container.querySelector("[data-archived='true']")).not.toBeNull();
+  });
+
+  it("renders the compacted badge only for rows with a fresh compaction", () => {
+    const items = [
+      makeItem({ id: "with", compactFresh: true }),
+      makeItem({ id: "without" }),
+    ];
+    render(
+      <ConversationAutocompleteList
+        items={items}
+        selectedIndex={0}
+        onHover={NO_OP}
+        onSelect={NO_OP}
+        totalCount={2}
+        loading={false}
+        error={null}
+        includeArchived={false}
+        onToggleArchived={NO_OP}
+      />,
+    );
+
+    expect(screen.getAllByText("compacted")).toHaveLength(1);
+    expect(screen.getByTitle("Fresh compaction available")).not.toBeNull();
   });
 
   it("renders a status dot only for running or waiting_for_input", () => {

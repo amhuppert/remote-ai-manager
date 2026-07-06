@@ -208,6 +208,9 @@ function makeDeps(
       async requireToken() {
         return null;
       },
+      async validateOptionalToken() {
+        return { kind: "valid" as const };
+      },
     },
     async resolveProjectPath() {
       return "/projects/test";
@@ -628,6 +631,9 @@ describe("lane route handlers — token gate", () => {
               { error: "Invalid or missing Command Center API token" },
               { status: 401 },
             );
+          },
+          async validateOptionalToken() {
+            return { kind: "invalid" as const };
           },
         },
         resolveProjectPath,

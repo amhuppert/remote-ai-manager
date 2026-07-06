@@ -11,9 +11,14 @@ import path from "node:path";
 import {
   readState as defaultReadState,
   getConversationById as defaultGetConversationById,
+  getStateDb,
 } from "@/lib/state-store";
+import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
+import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
 import { getFirstPromptSnippet as defaultGetFirstPromptSnippet } from "./first-prompt-snippet";
 import { createLogger } from "@/lib/logging";
+import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
+import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
 import type { ManagerState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationListItem, ConversationState } from "./schemas";
@@ -34,11 +39,22 @@ export interface ListAllConversationsResult {
 export interface ListAllConversationsDeps {
   readState(): Promise<ManagerState>;
   getFirstPromptSnippet(transcriptPath: string): Promise<string | null>;
+  findArtifactsByConversationIds(
+    conversationIds: string[],
+  ): ContextArtifactRow[];
+  readTranscriptEntries(
+    transcriptPath: string,
+  ): Promise<TranscriptEntriesResult>;
 }
 
 const defaultDeps: ListAllConversationsDeps = {
   readState: defaultReadState,
   getFirstPromptSnippet: defaultGetFirstPromptSnippet,
+  findArtifactsByConversationIds: (conversationIds) =>
+    createContextArtifactsRepo(getStateDb()).findByConversationIds(
+      conversationIds,
+    ),
+  readTranscriptEntries: readTranscriptEntriesWithSeq,
 };
 
 function buildConversationListItem(
@@ -125,7 +141,95 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
       if (target) target.firstPromptSnippet = snippet;
     });
 
+    const enrichStart = Date.now();
+    const compaction = await enrichWithCompactionStatus(items, deps);
+    if (compaction.compactedConversations > 0) {
+      log.info("compaction enrichment", {
+        ...compaction,
+        ms: Date.now() - enrichStart,
+      });
+    }
+
     return { items, totalCount: items.length };
+  };
+}
+
+interface CompactionEnrichmentStats {
+  artifactRows: number;
+  compactedConversations: number;
+  transcriptReads: number;
+}
+
+/**
+ * Advertise completed conversation-compaction artifacts on list items
+ * (design §12.4): one batched artifact query, then fresh/stale derived from
+ * the entry reader's maxSeq vs the artifact's covered range — one (cached)
+ * stat per compacted conversation, zero I/O for the rest.
+ */
+async function enrichWithCompactionStatus(
+  items: ConversationListItem[],
+  deps: Pick<
+    ListAllConversationsDeps,
+    "findArtifactsByConversationIds" | "readTranscriptEntries"
+  >,
+): Promise<CompactionEnrichmentStats> {
+  const none: CompactionEnrichmentStats = {
+    artifactRows: 0,
+    compactedConversations: 0,
+    transcriptReads: 0,
+  };
+  if (items.length === 0) return none;
+
+  const rows = deps.findArtifactsByConversationIds(
+    items.map((i) => i.conversationId),
+  );
+  if (rows.length === 0) return none;
+
+  const byConversation = new Map<string, ContextArtifactRow>();
+  for (const row of rows) {
+    if (row.kind === "conversation_compaction" && row.status === "complete") {
+      byConversation.set(row.conversationId, row);
+    }
+  }
+
+  interface StalenessTask {
+    item: ConversationListItem;
+    row: ContextArtifactRow;
+    transcriptPath: string;
+  }
+  const tasks: StalenessTask[] = [];
+  for (const item of items) {
+    const row = byConversation.get(item.conversationId);
+    if (!row) continue;
+    item.compactArtifactId = row.id;
+    item.compactCoveredSeq = `${row.coveredStartSeq}..${row.coveredEndSeq}`;
+    item.compactCreatedAt = row.createdAt;
+    if (item.transcriptPath === null) {
+      item.compactStatus = "fresh";
+      continue;
+    }
+    tasks.push({ item, row, transcriptPath: item.transcriptPath });
+  }
+
+  await runWithConcurrency(tasks, MAX_SNIPPET_CONCURRENCY, async (task) => {
+    try {
+      const { maxSeq } = await deps.readTranscriptEntries(task.transcriptPath);
+      task.item.compactStatus =
+        maxSeq > task.row.coveredEndSeq ? "stale" : "fresh";
+    } catch (err) {
+      // Unknown transcript position — advertise conservatively as stale.
+      task.item.compactStatus = "stale";
+      log.warn("compaction staleness read failed", {
+        conversationId: task.item.conversationId,
+        err: String(err),
+      });
+    }
+  });
+
+  return {
+    artifactRows: rows.length,
+    compactedConversations: byConversation.size,
+    transcriptReads: tasks.length,
   };
 }
 

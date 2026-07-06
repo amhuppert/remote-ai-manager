@@ -362,3 +362,59 @@ describe("session-detail.store — setQueueError", () => {
     expect(useSessionDetailStore.getState().sending).toBe(true);
   });
 });
+
+describe("session-detail.store — context-artifact panel", () => {
+  beforeEach(resetStore);
+
+  it("openContextArtifactPanel switches the right pane to the artifact tab", () => {
+    useSessionDetailStore.getState().openContextArtifactPanel();
+    expect(useSessionDetailStore.getState().rightPaneTab).toBe("artifact");
+  });
+
+  it("reveals the right pane from the conversation-only layout via split", () => {
+    expect(useSessionDetailStore.getState().layout).toBe("conversation");
+    useSessionDetailStore.getState().openContextArtifactPanel();
+    expect(useSessionDetailStore.getState().layout).toBe("split");
+  });
+
+  it("drops out of panes to the default layout", () => {
+    useSessionDetailStore.setState({ layout: "panes" });
+    useSessionDetailStore.getState().openContextArtifactPanel();
+    expect(useSessionDetailStore.getState().layout).toBe("default");
+  });
+
+  it("leaves a right-pane-showing layout untouched", () => {
+    useSessionDetailStore.setState({ layout: "default" });
+    useSessionDetailStore.getState().openContextArtifactPanel();
+    expect(useSessionDetailStore.getState().layout).toBe("default");
+  });
+});
+
+describe("session-detail.store — message nav request", () => {
+  beforeEach(resetStore);
+
+  it("defaults to no pending request", () => {
+    expect(useSessionDetailStore.getState().messageNavRequest).toBeNull();
+  });
+
+  it("requestMessageNav records the target conversation and message", () => {
+    useSessionDetailStore.getState().requestMessageNav("conv-1", 12);
+    expect(useSessionDetailStore.getState().messageNavRequest).toEqual({
+      conversationId: "conv-1",
+      messageIndex: 12,
+    });
+  });
+
+  it("clearMessageNavRequest consumes the request", () => {
+    const store = useSessionDetailStore.getState();
+    store.requestMessageNav("conv-1", 3);
+    store.clearMessageNavRequest();
+    expect(useSessionDetailStore.getState().messageNavRequest).toBeNull();
+  });
+
+  it("resetStore clears any pending request", () => {
+    useSessionDetailStore.getState().requestMessageNav("conv-1", 3);
+    useSessionDetailStore.getState().resetStore();
+    expect(useSessionDetailStore.getState().messageNavRequest).toBeNull();
+  });
+});

@@ -20,6 +20,7 @@ import { resolveDisplayLabel } from "@/lib/conversations/display-label";
 import { useAllConversationsQuery } from "@/lib/conversations/queries";
 import type {
   AllConversationsResponse,
+  ConversationCompactStatus,
   ConversationListItem,
 } from "@/lib/conversations/schemas";
 
@@ -40,6 +41,13 @@ export interface ConversationMentionSelection {
   debugLogPath: string;
   status: ConversationListItem["status"];
   lastActivityAt: string;
+  /** Empty string when no completed conversation compaction exists. */
+  compactArtifactId: string;
+  compactStatus: ConversationCompactStatus;
+  /** Covered seq range "<start>..<end>"; empty string when no compaction. */
+  compactCoveredSeq: string;
+  /** ISO timestamp; empty string when no compaction. */
+  compactCreatedAt: string;
 }
 
 export interface ConversationMentionPopupProps {
@@ -82,6 +90,10 @@ function toSelection(item: ConversationListItem): ConversationMentionSelection {
     debugLogPath: item.debugLogPath ?? "",
     status: item.status,
     lastActivityAt: item.lastActivityAt,
+    compactArtifactId: item.compactArtifactId ?? "",
+    compactStatus: item.compactStatus ?? "none",
+    compactCoveredSeq: item.compactCoveredSeq ?? "",
+    compactCreatedAt: item.compactCreatedAt ?? "",
   };
 }
 
@@ -143,6 +155,7 @@ export function createConversationMentionPopup(
             status: it.status,
             isCurrentProject: it.projectName === currentProjectName,
             archived: it.archived,
+            compactFresh: it.compactStatus === "fresh",
           };
         }),
       [filterResult.items, currentProjectName],

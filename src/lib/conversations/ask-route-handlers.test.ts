@@ -65,6 +65,9 @@ function authAllows(): AgentAuth {
     async requireToken() {
       return null;
     },
+    async validateOptionalToken() {
+      return { kind: "valid" };
+    },
   };
 }
 
@@ -72,6 +75,9 @@ function authDenies(): AgentAuth {
   return {
     async requireToken() {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+    },
+    async validateOptionalToken() {
+      return { kind: "invalid" };
     },
   };
 }

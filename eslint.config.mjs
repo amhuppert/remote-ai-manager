@@ -147,6 +147,11 @@ const MIGRATED_UTILITY_FIRST = [
   // tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
   "src/components/WorkflowLaunchForm.tsx",
   "src/features/workflow-templates/**/*.{ts,tsx}",
+  // Conversation-compaction UI (context-artifact envelope viewer + inline
+  // message viewer): authored utility-first against the design system. Mirrors
+  // the .prettierrc class-sort override and the tailwind-utility-collisions
+  // UTILITY_FIRST_PATHS allowlist.
+  "src/components/context-artifacts/**/*.{ts,tsx}",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

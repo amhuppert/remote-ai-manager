@@ -131,6 +131,9 @@ function routeHost(
       async requireToken() {
         return null;
       },
+      async validateOptionalToken() {
+        return { kind: "valid" as const };
+      },
     },
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: async () => ({ sessionName: "sess" }),

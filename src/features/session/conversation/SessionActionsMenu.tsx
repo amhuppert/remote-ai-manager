@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/DropdownMenu";
 import { cn } from "@/lib/ui/cn";
+import type { CompactionChipState } from "./compaction-chip-state";
 
 // Rich item content (colored glyph square + label + description) rendered inside
 // the canonical DropdownMenu items; the menu behaviour/appearance is the
@@ -32,6 +33,15 @@ export interface SessionActionsMenuProps {
   onPush?: () => void;
   onRebase?: () => void;
   onDelete: () => void;
+  /**
+   * Conversation-compaction state (design §12.2). When omitted the compaction
+   * section is hidden entirely (hosts without a conversation in scope).
+   */
+  compaction?: CompactionChipState;
+  onCompactConversation?: () => void;
+  onViewArtifact?: () => void;
+  onRefreshArtifact?: () => void;
+  onCopyReference?: () => void;
 }
 
 export default function SessionActionsMenu({
@@ -39,7 +49,17 @@ export default function SessionActionsMenu({
   onPush,
   onRebase,
   onDelete,
+  compaction,
+  onCompactConversation,
+  onViewArtifact,
+  onRefreshArtifact,
+  onCopyReference,
 }: SessionActionsMenuProps): React.JSX.Element {
+  const showCompact =
+    compaction?.kind === "none" || compaction?.kind === "failed";
+  const showView = compaction !== undefined && compaction.kind !== "none";
+  const showRefresh =
+    compaction?.kind === "stale" || compaction?.kind === "outdated";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -86,6 +106,103 @@ export default function SessionActionsMenu({
             <span className={DESC_CLASS}>Replay commits onto target</span>
           </span>
         </DropdownMenuItem>
+        {compaction !== undefined && (
+          <>
+            <DropdownMenuSeparator />
+            {showCompact && (
+              <DropdownMenuItem
+                onSelect={onCompactConversation}
+                disabled={!onCompactConversation}
+              >
+                <span
+                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
+                  aria-hidden="true"
+                >
+                  {"⇊"}
+                </span>
+                <span className={BODY_CLASS}>
+                  <span className={LABEL_CLASS}>Compact conversation</span>
+                  <span className={DESC_CLASS}>
+                    {compaction.kind === "failed"
+                      ? "Previous run failed — run again"
+                      : "Generate a context artifact"}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            )}
+            {compaction.kind === "pending" && (
+              <DropdownMenuItem disabled>
+                <span
+                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
+                  aria-hidden="true"
+                >
+                  {"⇊"}
+                </span>
+                <span className={BODY_CLASS}>
+                  <span className={LABEL_CLASS}>Compacting…</span>
+                  <span className={DESC_CLASS}>
+                    Context artifact is generating
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            )}
+            {showView && (
+              <DropdownMenuItem
+                onSelect={onViewArtifact}
+                disabled={!onViewArtifact}
+              >
+                <span
+                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
+                  aria-hidden="true"
+                >
+                  {"▤"}
+                </span>
+                <span className={BODY_CLASS}>
+                  <span className={LABEL_CLASS}>View context artifact</span>
+                  <span className={DESC_CLASS}>Open the artifact panel</span>
+                </span>
+              </DropdownMenuItem>
+            )}
+            {showRefresh && (
+              <DropdownMenuItem
+                onSelect={onRefreshArtifact}
+                disabled={!onRefreshArtifact}
+              >
+                <span
+                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
+                  aria-hidden="true"
+                >
+                  {"↻"}
+                </span>
+                <span className={BODY_CLASS}>
+                  <span className={LABEL_CLASS}>Refresh context artifact</span>
+                  <span className={DESC_CLASS}>
+                    {compaction.kind === "stale"
+                      ? `Behind ${compaction.behind} messages`
+                      : "Format outdated — full regeneration"}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
+              onSelect={onCopyReference}
+              disabled={!onCopyReference}
+            >
+              <span
+                className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
+                aria-hidden="true"
+              >
+                {"#"}
+              </span>
+              <span className={BODY_CLASS}>
+                <span className={LABEL_CLASS}>Copy reference</span>
+                <span className={DESC_CLASS}>
+                  Copy the # mention for this conversation
+                </span>
+              </span>
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem danger onSelect={onDelete}>
           <span

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
@@ -12,7 +12,13 @@ import SessionActionsMenu from "@/features/session/conversation/SessionActionsMe
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
 import AlignmentChip from "@/features/session/conversation/AlignmentChip";
 import { deriveAlignmentChipState } from "@/features/session/conversation/alignment-chip-state";
+import CompactionStatusChip from "@/features/session/conversation/CompactionStatusChip";
+import { deriveCompactionChipState } from "@/features/session/conversation/compaction-chip-state";
 import { useAlignmentStateQuery } from "@/lib/session-alignment/queries";
+import { useContextArtifacts } from "@/lib/context-artifacts/queries";
+import { useCompactMutation } from "@/lib/context-artifacts/mutations";
+import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
+import { useOpenContextArtifactPanel } from "@/stores/session-detail.store";
 import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
@@ -23,6 +29,9 @@ import type { UnmanagedConflictInfo } from "@/components/DevServerDrawer";
 
 /** Status-dot appearance keyed by the session status colour token (cyan/green/
  *  amber). Any other value falls back to the neutral idle dot. */
+/** List cache tolerance; SSE `context_artifact_status` patches keep it fresh. */
+const ARTIFACT_LIST_STALE_MS = 30_000;
+
 const SESSION_STATUS_DOT: Record<string, string> = {
   cyan: "bg-cyan shadow-[0_0_6px_var(--cyan-glow)] animate-[session-status-pulse_1.5s_ease-in-out_infinite]",
   green: "bg-green shadow-[0_0_6px_var(--green-glow)]",
@@ -120,6 +129,39 @@ function SessionInfoStrip({
     return true;
   }, [buildContext]);
 
+  // Per-conversation compaction (design §12.2): the list query drives the
+  // status chip and the actions-menu compaction items; the SSE
+  // `context_artifact_status` handler keeps the cache live.
+  const compactionTarget = useMemo<ContextArtifactTarget>(
+    () => ({ scope: "session", projectName, sessionName, conversationId }),
+    [projectName, sessionName, conversationId],
+  );
+  const { data: artifacts } = useContextArtifacts(compactionTarget, {
+    staleTime: ARTIFACT_LIST_STALE_MS,
+  });
+  const compactionState = deriveCompactionChipState(artifacts);
+  const { mutate: compactMutate } = useCompactMutation(compactionTarget);
+  const openContextArtifactPanel = useOpenContextArtifactPanel();
+
+  const handleCompactConversation = useCallback(() => {
+    compactMutate({ kind: "conversation_compaction" });
+  }, [compactMutate]);
+
+  const artifactOutdated = compactionState.kind === "outdated";
+  const handleRefreshArtifact = useCallback(() => {
+    compactMutate({
+      kind: "conversation_compaction",
+      force: artifactOutdated || undefined,
+    });
+  }, [compactMutate, artifactOutdated]);
+
+  const conversationName = activeConversation?.name ?? null;
+  const handleCopyReference = useCallback(() => {
+    void navigator.clipboard.writeText(
+      `#${conversationName ?? conversationId}`,
+    );
+  }, [conversationName, conversationId]);
+
   return (
     <div className="relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem] max-768:hidden">
       <div className="hidden">
@@ -177,7 +219,19 @@ function SessionInfoStrip({
             onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
             isStoppingUnmanaged={dsIsStoppingUnmanaged}
           />
-          <SessionActionsMenu targetBranch={targetBranch} onDelete={onDelete} />
+          <CompactionStatusChip
+            state={compactionState}
+            onOpen={openContextArtifactPanel}
+          />
+          <SessionActionsMenu
+            targetBranch={targetBranch}
+            onDelete={onDelete}
+            compaction={compactionState}
+            onCompactConversation={handleCompactConversation}
+            onViewArtifact={openContextArtifactPanel}
+            onRefreshArtifact={handleRefreshArtifact}
+            onCopyReference={handleCopyReference}
+          />
           <InfoDetailsPopover
             conversationId={conversationId}
             backendRef={activeConversation?.backendRef ?? null}

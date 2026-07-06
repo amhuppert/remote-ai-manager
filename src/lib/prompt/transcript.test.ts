@@ -4,10 +4,12 @@ import path from "node:path";
 import {
   readConversationMessages,
   readConversationMessagesWithSeq,
+  readTranscriptEntriesWithSeq,
   readLastAssistantContent,
   _resetLastAssistantCacheForTesting,
   _resetLastSeqCacheForTesting,
   _resetTranscriptReadCacheForTesting,
+  _resetTranscriptEntriesCacheForTesting,
   appendTranscriptEntry,
   appendNotice,
   getTranscriptPath,
@@ -2155,5 +2157,481 @@ describe("system notices", () => {
       .split("\n")
       .map((l) => JSON.parse(l) as TranscriptEntry);
     expect(copied.map((e) => e.role)).toEqual(["user", "notice"]);
+  });
+});
+
+// ==========================================================================
+// readTranscriptEntriesWithSeq
+// ==========================================================================
+
+describe("readTranscriptEntriesWithSeq", () => {
+  beforeEach(() => {
+    _resetTranscriptEntriesCacheForTesting();
+  });
+
+  async function writeTranscript(
+    name: string,
+    lines: string[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", name);
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+    return filePath;
+  }
+
+  it("returns empty result for null path", async () => {
+    expect(await readTranscriptEntriesWithSeq(null)).toEqual({
+      entries: [],
+      maxSeq: -1,
+    });
+  });
+
+  it("returns empty result for non-existent file", async () => {
+    expect(
+      await readTranscriptEntriesWithSeq("/tmp/missing-entries-xyz.jsonl"),
+    ).toEqual({ entries: [], maxSeq: -1 });
+  });
+
+  it("returns one record per visible entry without same-role merging", async () => {
+    const filePath = await writeTranscript("entries-no-merge.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "ask" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "first" }],
+      }),
+      JSON.stringify({
+        id: "msg-2",
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "second" }],
+      }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.maxSeq).toBe(2);
+    expect(result.entries).toEqual([
+      {
+        seq: 0,
+        entryId: null,
+        role: "user",
+        timestamp: "2024-01-01T00:00:00Z",
+        content: [{ type: "text", text: "ask" }],
+      },
+      {
+        seq: 1,
+        entryId: null,
+        role: "assistant",
+        timestamp: "2024-01-01T00:00:01Z",
+        content: [{ type: "text", text: "first" }],
+      },
+      {
+        seq: 2,
+        entryId: "msg-2",
+        role: "assistant",
+        timestamp: "2024-01-01T00:00:02Z",
+        content: [{ type: "text", text: "second" }],
+      },
+    ]);
+  });
+
+  it("keeps raw line indexes across non-visible and malformed lines; maxSeq is the last visible seq", async () => {
+    const filePath = await writeTranscript("entries-gaps.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "a" }],
+      }),
+      "{not json",
+      JSON.stringify({ type: "system", timestamp: "t", raw: { x: 1 } }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:03Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "b" }],
+      }),
+      JSON.stringify({ type: "result", timestamp: "t", raw: { done: true } }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.entries.map((e) => e.seq)).toEqual([0, 3]);
+    // Trailing non-visible line does not extend maxSeq.
+    expect(result.maxSeq).toBe(3);
+  });
+
+  it("normalizes missing timestamp to null and does not carry model/effort", async () => {
+    const filePath = await writeTranscript("entries-nulls.jsonl", [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        model: "opus",
+        effort: "high",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.entries).toEqual([
+      {
+        seq: 0,
+        entryId: null,
+        role: "user",
+        timestamp: null,
+        content: [{ type: "text", text: "hello" }],
+      },
+    ]);
+  });
+
+  it("passes image_ref blocks through unresolved", async () => {
+    const filePath = await writeTranscript("entries-image-ref.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [
+          {
+            type: "image_ref",
+            mediaType: "image/png",
+            imagePath: "/nowhere/img.png",
+          },
+        ],
+      }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.entries[0]!.content).toEqual([
+      {
+        type: "image_ref",
+        mediaType: "image/png",
+        imagePath: "/nowhere/img.png",
+      },
+    ]);
+  });
+
+  it("returns the same result reference while the file is unchanged", async () => {
+    const filePath = await writeTranscript("entries-cache-stable.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    ]);
+
+    const first = await readTranscriptEntriesWithSeq(filePath);
+    const second = await readTranscriptEntriesWithSeq(filePath);
+    expect(second).toBe(first);
+  });
+
+  it("returns a fresh result after the file changes", async () => {
+    const filePath = await writeTranscript("entries-cache-invalidate.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "first" }],
+      }),
+    ]);
+
+    const first = await readTranscriptEntriesWithSeq(filePath);
+    expect(first.entries).toHaveLength(1);
+
+    // Wait a few ms so mtime changes detectably across filesystems.
+    await new Promise((r) => setTimeout(r, 20));
+
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          timestamp: "2024-01-01T00:00:00Z",
+          type: "user",
+          role: "user",
+          content: [{ type: "text", text: "first" }],
+        }),
+        JSON.stringify({
+          timestamp: "2024-01-01T00:00:01Z",
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "second" }],
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const second = await readTranscriptEntriesWithSeq(filePath);
+    expect(second).not.toBe(first);
+    expect(second.entries).toHaveLength(2);
+    expect(second.maxSeq).toBe(1);
+  });
+
+  it("does not disturb the merged-message reader or its cache", async () => {
+    const filePath = await writeTranscript("entries-vs-merged.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "ask" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "first" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "second" }],
+      }),
+    ]);
+
+    const entries = await readTranscriptEntriesWithSeq(filePath);
+    const merged = await readConversationMessagesWithSeq(filePath);
+
+    expect(entries.entries).toHaveLength(3);
+    expect(merged).toHaveLength(2);
+    expect(merged[1]!.seq).toBe(2);
+    expect(merged[1]!.content).toEqual([
+      { type: "text", text: "first" },
+      { type: "text", text: "second" },
+    ]);
+  });
+});
+
+// ==========================================================================
+// readTranscriptEntriesWithSeq — stored tool_result lines
+// ==========================================================================
+
+describe("readTranscriptEntriesWithSeq tool_result entries", () => {
+  beforeEach(() => {
+    _resetTranscriptEntriesCacheForTesting();
+  });
+
+  async function writeTranscript(
+    name: string,
+    lines: string[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", name);
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+    return filePath;
+  }
+
+  /** The exact JSONL shape processMessage persists for SDK tool results. */
+  function storedToolResultLine(
+    toolUseId: string,
+    content: unknown,
+    isError?: boolean,
+  ): string {
+    return JSON.stringify({
+      timestamp: "2024-01-01T00:00:02Z",
+      type: "tool_result",
+      raw: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              tool_use_id: toolUseId,
+              type: "tool_result",
+              content,
+              ...(isError !== undefined ? { is_error: isError } : {}),
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "sess-1",
+        uuid: "uuid-1",
+      },
+    });
+  }
+
+  it("surfaces stored tool_result lines as kind-discriminated entries with real seqs and parsed blocks", async () => {
+    const filePath = await writeTranscript("tool-results-basic.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "read the file" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "Read",
+            input: { file_path: "a.ts" },
+          },
+        ],
+      }),
+      storedToolResultLine("t1", "     1\tconst a = 1;\n     2\tconst b = 2;"),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:03Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.entries).toHaveLength(4);
+    expect(result.entries[2]).toEqual({
+      kind: "tool_result",
+      seq: 2,
+      entryId: null,
+      timestamp: "2024-01-01T00:00:02Z",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "t1",
+          content: "     1\tconst a = 1;\n     2\tconst b = 2;",
+          // Tool name recovered from the paired tool_use → Read metrics.
+          metrics: { lineCount: 2 },
+        },
+      ],
+    });
+    // Message entries keep their existing shape (no kind stamp).
+    expect(result.entries[1]).not.toHaveProperty("kind");
+  });
+
+  it("maps is_error and array-form content (text blocks joined, tool_reference ignored)", async () => {
+    const filePath = await writeTranscript("tool-results-error.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t9", name: "Bash", input: {} }],
+      }),
+      storedToolResultLine(
+        "t9",
+        [
+          { type: "text", text: "command failed" },
+          { type: "tool_reference", id: "ref-1" },
+          { type: "text", text: "exit status 1" },
+        ],
+        true,
+      ),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    const toolEntry = result.entries[1];
+    if (toolEntry?.kind !== "tool_result")
+      throw new Error("expected tool_result entry");
+    expect(toolEntry.content).toEqual([
+      {
+        type: "tool_result",
+        tool_use_id: "t9",
+        content: "command failed\nexit status 1",
+        isError: true,
+      },
+    ]);
+  });
+
+  it("does not advance maxSeq for a trailing tool_result line (staleness unchanged)", async () => {
+    const filePath = await writeTranscript("tool-results-trailing.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "go" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+      }),
+      storedToolResultLine("t1", "output"),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.entries).toHaveLength(3);
+    expect(result.entries[2]?.seq).toBe(2);
+    expect(result.maxSeq).toBe(1);
+  });
+
+  it("parses the legacy bare-block raw shape defensively", async () => {
+    const filePath = await writeTranscript("tool-results-legacy.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "tool_result",
+        raw: { tool_use_id: "abc" },
+      }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    const toolEntry = result.entries[0];
+    if (toolEntry?.kind !== "tool_result")
+      throw new Error("expected tool_result entry");
+    expect(toolEntry.content).toEqual([
+      { type: "tool_result", tool_use_id: "abc" },
+    ]);
+  });
+
+  it("renders a generic block for unrecognizable raw payloads instead of throwing", async () => {
+    const filePath = await writeTranscript("tool-results-unknown.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "tool_result",
+        raw: "not an object",
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "tool_result",
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "tool_result",
+        raw: { message: { content: [{ type: "unrelated" }] } },
+      }),
+    ]);
+
+    const result = await readTranscriptEntriesWithSeq(filePath);
+    expect(result.entries).toHaveLength(3);
+    for (const toolEntry of result.entries) {
+      if (toolEntry.kind !== "tool_result")
+        throw new Error("expected tool_result entry");
+      expect(toolEntry.content).toEqual([
+        {
+          type: "tool_result",
+          tool_use_id: "",
+          content: "[unrecognized tool_result payload]",
+        },
+      ]);
+    }
+    expect(result.maxSeq).toBe(-1);
+  });
+
+  it("leaves the merged-message reader blind to tool_result lines (unchanged)", async () => {
+    const filePath = await writeTranscript("tool-results-merged-reader.jsonl", [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+      }),
+      storedToolResultLine("t1", "output"),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      }),
+    ]);
+
+    const merged = await readConversationMessagesWithSeq(filePath);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.seq).toBe(2);
+    expect(merged[0]?.content).toHaveLength(2);
   });
 });

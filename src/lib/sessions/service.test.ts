@@ -62,6 +62,7 @@ function createTestDeps() {
     deleteJobRecordsForSession: vi.fn().mockReturnValue(0),
     deleteNotificationsForProject: vi.fn().mockReturnValue(0),
     deleteJobRecordsForProject: vi.fn().mockReturnValue(0),
+    deleteContextArtifactsForScope: vi.fn().mockReturnValue(0),
     sweepLaneWorktrees: sweepLaneWorktreesMock,
     copyAlignmentCharterFromParent: copyAlignmentCharterFromParentMock,
   };
@@ -1101,6 +1102,11 @@ describe("deleteSession", () => {
       "repo",
       "to-delete",
     );
+    // Context artifacts key by project PATH, not display name.
+    expect(deps.deleteContextArtifactsForScope).toHaveBeenCalledWith(
+      "/projects/repo",
+      "to-delete",
+    );
   });
 
   it("does not fail when transcript file removal throws", async () => {
@@ -1202,6 +1208,9 @@ describe("deleteProject", () => {
     // Project-level bulk purge
     expect(deps.deleteNotificationsForProject).toHaveBeenCalledWith("repo");
     expect(deps.deleteJobRecordsForProject).toHaveBeenCalledWith("repo");
+    expect(deps.deleteContextArtifactsForScope).toHaveBeenCalledWith(
+      "/projects/repo",
+    );
 
     // Final mutateState call removes the project entry
     const lastWriteState =
