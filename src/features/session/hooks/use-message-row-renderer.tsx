@@ -68,6 +68,7 @@ export function useMessageRowRenderer({
           thinkingExpansionCommand={thinkingExpansionCommand}
           onFork={handleFork}
           compactionTarget={compactionTarget}
+          conversationName={activeConversation?.name ?? undefined}
           lastMessageExtras={extras}
         />
       );

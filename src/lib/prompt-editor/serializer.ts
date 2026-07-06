@@ -1,6 +1,8 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { ImagePayload, ImageMediaType } from "@/lib/images/schemas";
+import { escapeXmlAttr } from "@/lib/shared/xml";
+import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 export interface SerializePromptDocArgs {
   doc: ProseMirrorNode;
   attachments: ImageAttachment[];
@@ -103,6 +105,10 @@ function serializeInline(
       out += renderConversationRefXml(child.attrs);
       return;
     }
+    if (child.type.name === "messageMention") {
+      out += renderMessageRefXml(child.attrs);
+      return;
+    }
     out += serializeInline(child, markerByAttachmentId);
   });
   return out;
@@ -140,16 +146,6 @@ const COMPACTION_DETAIL_ATTRS = new Set([
   "compactCreatedAt",
 ]);
 
-function escapeXmlAttr(value: string): string {
-  const flattened = value.replace(/[\r\n\t]+/g, " ").replace(/  +/g, " ");
-  return flattened
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function renderConversationRefXml(attrs: Record<string, unknown>): string {
   const rawStatus = attrs["compactStatus"];
   const compactStatus =
@@ -176,6 +172,37 @@ function renderConversationRefXml(attrs: Record<string, unknown>): string {
     parts.push(`${kebab}="${escapeXmlAttr(command)}"`);
   }
   return `${parts.join(" ")} />`;
+}
+
+/**
+ * Convert a `messageMention` node's string attributes into the shared
+ * `<message-ref />` builder input. Empty strings mean "absent" — the node
+ * stores every attribute as a string so it round-trips through the DOM.
+ */
+function renderMessageRefXml(attrs: Record<string, unknown>): string {
+  const str = (key: string): string => {
+    const raw = attrs[key];
+    return typeof raw === "string" ? raw : "";
+  };
+  const parsedIndex = Number.parseInt(str("messageIndex"), 10);
+  const rawRole = str("role");
+  return buildMessageRefXml({
+    projectName: str("projectName"),
+    sessionName: str("sessionName") || null,
+    conversationId: str("conversationId"),
+    conversationName: str("conversationName") || null,
+    messageIndex: Number.isNaN(parsedIndex) ? 0 : parsedIndex,
+    role: rawRole === "user" || rawRole === "notice" ? rawRole : "assistant",
+    timestamp: str("timestamp") || null,
+    model: str("model") || null,
+    compaction:
+      str("compacted") === "true"
+        ? {
+            artifactId: str("compactArtifactId"),
+            createdAt: str("compactCreatedAt"),
+          }
+        : null,
+  });
 }
 
 /**

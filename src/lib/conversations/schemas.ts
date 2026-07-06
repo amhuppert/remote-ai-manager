@@ -328,6 +328,33 @@ export const conversationRefAttrsSchema = z.object({
 });
 export type ConversationRefAttrs = z.infer<typeof conversationRefAttrsSchema>;
 
+// Attributes of an inline `<message-ref ... />` XML tag — a reference to one
+// message of a conversation, copied from the message's action bar and emitted
+// by the prompt-editor serializer. Hyphenated keys match the wire format.
+export const messageRefAttrsSchema = z.object({
+  "project-name": z.string().min(1),
+  // Absent for project-scoped conversations that have no owning session.
+  "session-name": z.string().min(1).optional(),
+  "conversation-id": z.string().min(1),
+  "conversation-name": z.string().optional(),
+  // 0-based index into the conversation's visible-message array — the
+  // coordinate `cctl conversation read --message N` addresses.
+  "message-index": z.string().regex(/^\d+$/),
+  role: z.enum(["user", "assistant", "notice"]),
+  timestamp: z.string().optional(),
+  model: z.string().optional(),
+  // Whether a completed message_compaction artifact covers this message; the
+  // compact-* details and compaction-command are present only when "true".
+  compacted: z.enum(["true", "false"]).optional(),
+  "compact-artifact-id": z.string().optional(),
+  "compact-created-at": z.string().optional(),
+  // Ready-to-run cctl commands for the reading agent — cctl resolves the
+  // owning project/session from the conversation id, so these carry no flags.
+  "read-command": z.string().optional(),
+  "compaction-command": z.string().optional(),
+});
+export type MessageRefAttrs = z.infer<typeof messageRefAttrsSchema>;
+
 // ============================================================
 // API Request Schemas
 // ============================================================

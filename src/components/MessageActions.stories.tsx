@@ -107,6 +107,11 @@ const compactionArgs = {
   role: "assistant",
   content: compactableContent,
   compactionTarget,
+  messageRef: {
+    conversationName: "Refactor parser",
+    timestamp: "2026-07-06T12:00:00Z",
+    model: "opus",
+  },
 } satisfies Partial<React.ComponentProps<typeof MessageActions>>;
 
 /** No artifact yet → "Compact message". */

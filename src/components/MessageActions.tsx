@@ -8,11 +8,17 @@ import type {
 } from "@/lib/conversations/schemas";
 import { Spinner } from "@/components/ui/Spinner";
 import { shouldOfferMessageCompaction } from "@/lib/context-artifacts/message-gating";
-import { useContextArtifacts } from "@/lib/context-artifacts/queries";
+import {
+  ARTIFACT_LIST_STALE_MS,
+  useContextArtifacts,
+} from "@/lib/context-artifacts/queries";
 import { useCompactMutation } from "@/lib/context-artifacts/mutations";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import MessageCompactionViewer from "@/components/context-artifacts/MessageCompactionViewer";
 import CopyMessageButton, { msgActionBtnClass } from "./CopyMessageButton";
+import CopyMessageRefButton, {
+  type MessageRefMeta,
+} from "./CopyMessageRefButton";
 
 interface MessageActionsProps {
   /** The 0-based index of this message in the conversation */
@@ -36,6 +42,13 @@ interface MessageActionsProps {
    * Compact action (hosts without project/session/conversation identity).
    */
   compactionTarget?: ContextArtifactTarget;
+  /**
+   * Message metadata for the Copy-reference action, which also requires
+   * `compactionTarget` (the conversation identity) and `role`. Omit to hide
+   * the action — e.g. for queued rows, whose display index is not their
+   * final transcript position.
+   */
+  messageRef?: MessageRefMeta;
 }
 
 /**
@@ -59,14 +72,13 @@ function MessageActions(props: MessageActionsProps) {
   return <ActionBar {...props} />;
 }
 
-/** List cache tolerance; SSE `context_artifact_status` patches keep it fresh. */
-const ARTIFACT_LIST_STALE_MS = 30_000;
-
 function CompactableMessageActions({
   messageIndex,
   content,
+  role,
   onFork,
   compactionTarget,
+  messageRef,
 }: MessageActionsProps & { compactionTarget: ContextArtifactTarget }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const { data: artifacts } = useContextArtifacts(compactionTarget, {
@@ -113,7 +125,14 @@ function CompactableMessageActions({
 
   return (
     <>
-      <ActionBar messageIndex={messageIndex} content={content} onFork={onFork}>
+      <ActionBar
+        messageIndex={messageIndex}
+        content={content}
+        role={role}
+        onFork={onFork}
+        compactionTarget={compactionTarget}
+        messageRef={messageRef}
+      >
         <button
           type="button"
           className={cn(
@@ -146,9 +165,20 @@ function CompactableMessageActions({
 function ActionBar({
   messageIndex,
   content,
+  role,
   onFork,
+  compactionTarget,
+  messageRef,
   children,
-}: Pick<MessageActionsProps, "messageIndex" | "content" | "onFork"> & {
+}: Pick<
+  MessageActionsProps,
+  | "messageIndex"
+  | "content"
+  | "role"
+  | "onFork"
+  | "compactionTarget"
+  | "messageRef"
+> & {
   children?: React.ReactNode;
 }) {
   const [forking, setForking] = useState(false);
@@ -168,6 +198,14 @@ function ActionBar({
   return (
     <div className="mt-xs ml-auto flex w-fit items-center gap-[2px]">
       <CopyMessageButton content={content} />
+      {compactionTarget && messageRef && role && (
+        <CopyMessageRefButton
+          target={compactionTarget}
+          messageIndex={messageIndex}
+          role={role}
+          meta={messageRef}
+        />
+      )}
       {onFork && (
         <button
           className={msgActionBtnClass}

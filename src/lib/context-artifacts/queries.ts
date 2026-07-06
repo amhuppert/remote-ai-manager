@@ -42,6 +42,9 @@ export function contextArtifactsBaseUrl(target: ContextArtifactTarget): string {
   return `/api/projects/${project}/conversations/${conversation}/context-artifacts`;
 }
 
+/** List cache tolerance; SSE `context_artifact_status` patches keep it fresh. */
+export const ARTIFACT_LIST_STALE_MS = 30_000;
+
 export function useContextArtifacts(
   target: ContextArtifactTarget,
   options?: { enabled?: boolean; staleTime?: number },

@@ -185,7 +185,10 @@ own earlier history) referenced via a `<conversation-ref>`.
 
 A `<conversation-ref>` carries ready-to-run commands for exactly this — a
 `read-command` (always) and a `compaction-command` (when a compaction exists):
-copy either verbatim, no flags needed.
+copy either verbatim, no flags needed. A `<message-ref>` is the same idea
+scoped to one message (its `message-index` attribute): its `read-command`
+reads just that message and its `compaction-command` (present when
+`compacted="true"`) fetches that message's compaction.
 
 ```
 cctl conversation read <conversation-id> [--outline] [--message N] [--message-range A:B]

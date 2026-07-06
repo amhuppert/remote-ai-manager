@@ -171,6 +171,61 @@ describe("MessageRow", () => {
     ).toBeNull();
   });
 
+  it("offers Copy-reference only for transcript rows with conversation identity", () => {
+    const compactionTarget = {
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+    } as const;
+
+    const transcriptRow = renderWithQuery(
+      <MessageRow
+        msg={makeMessage({ role: "user" })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        compactionTarget={compactionTarget}
+        lastMessageExtras={null}
+      />,
+    );
+    expect(
+      transcriptRow.container.querySelector('[title="Copy message reference"]'),
+    ).not.toBeNull();
+
+    // Queued rows render at a provisional index → no reference to copy.
+    const queuedRow = renderWithQuery(
+      <MessageRow
+        msg={makeMessage({ role: "user" })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        compactionTarget={compactionTarget}
+        queuedMetadata={null}
+        lastMessageExtras={null}
+      />,
+    );
+    expect(
+      queuedRow.container.querySelector('[title="Copy message reference"]'),
+    ).toBeNull();
+
+    const noIdentity = renderWithQuery(
+      <MessageRow
+        msg={makeMessage({ role: "user" })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        lastMessageExtras={null}
+      />,
+    );
+    expect(
+      noIdentity.container.querySelector('[title="Copy message reference"]'),
+    ).toBeNull();
+  });
+
   it("renders DebugActionCard for the last assistant message when lastMessageExtras is supplied", () => {
     const { container } = renderWithQuery(
       <MessageRow

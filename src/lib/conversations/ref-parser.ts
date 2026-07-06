@@ -1,27 +1,36 @@
 /**
- * Detect and parse inline `<conversation-ref ... />` tags emitted by the
- * prompt-editor serializer.
+ * Detect and parse the inline self-closing reference tags emitted by the
+ * prompt-editor serializer (`<conversation-ref ... />`, `<message-ref ... />`).
  *
  * Refs inside triple-backtick or triple-tilde fenced code blocks are skipped
  * — those represent literal code shown to the reader, not link targets.
  */
 
-export interface FoundConversationRef {
+import { decodeXmlEntities } from "@/lib/shared/xml";
+
+export interface FoundRef {
   start: number;
   end: number;
   raw: string;
   attrs: Record<string, string>;
 }
 
-const TAG_REGEX = /<conversation-ref(?:\s+[a-z-]+="[^"]*")+\s*\/>/g;
 const ATTR_REGEX = /([a-z][a-z-]*)="([^"]*)"/g;
 
-export function findConversationRefs(text: string): FoundConversationRef[] {
+export function findConversationRefs(text: string): FoundRef[] {
+  return findRefTags(text, "conversation-ref");
+}
+
+export function findMessageRefs(text: string): FoundRef[] {
+  return findRefTags(text, "message-ref");
+}
+
+export function findRefTags(text: string, tagName: string): FoundRef[] {
+  const tagRegex = new RegExp(`<${tagName}(?:\\s+[a-z-]+="[^"]*")+\\s*/>`, "g");
   const fencedRanges = findFencedCodeRanges(text);
-  const result: FoundConversationRef[] = [];
-  const re = new RegExp(TAG_REGEX.source, "g");
+  const result: FoundRef[] = [];
   let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
+  while ((match = tagRegex.exec(text)) !== null) {
     const start = match.index;
     const end = start + match[0].length;
     if (isInsideAnyRange(start, fencedRanges)) continue;
@@ -29,13 +38,13 @@ export function findConversationRefs(text: string): FoundConversationRef[] {
       start,
       end,
       raw: match[0],
-      attrs: parseConversationRefAttrs(match[0]),
+      attrs: parseRefAttrs(match[0]),
     });
   }
   return result;
 }
 
-export function parseConversationRefAttrs(raw: string): Record<string, string> {
+export function parseRefAttrs(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
   const re = new RegExp(ATTR_REGEX.source, "g");
   let m: RegExpExecArray | null;
@@ -45,15 +54,6 @@ export function parseConversationRefAttrs(raw: string): Record<string, string> {
     out[name] = decodeXmlEntities(value);
   }
   return out;
-}
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
 }
 
 interface Range {

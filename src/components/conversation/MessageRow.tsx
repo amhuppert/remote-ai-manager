@@ -55,6 +55,11 @@ export interface MessageRowProps {
    */
   compactionTarget?: ContextArtifactTarget;
   /**
+   * Conversation display name carried on copied message references; omit for
+   * unnamed conversations or hosts without one.
+   */
+  conversationName?: string;
+  /**
    * Per-render extras consumed only by the final-message decorations
    * (`DebugActionCard`). Non-last rows receive `null`, which is stable across
    * renders and lets `memo()` skip reconciliation when the only state change
@@ -79,6 +84,7 @@ const MessageRow = memo(function MessageRow({
   thinkingExpansionCommand,
   onFork,
   compactionTarget,
+  conversationName,
   lastMessageExtras,
 }: MessageRowProps): React.JSX.Element {
   if (msg.role === "notice") {
@@ -168,6 +174,17 @@ const MessageRow = memo(function MessageRow({
         role={msg.role}
         onFork={onFork}
         compactionTarget={compactionTarget}
+        messageRef={
+          // Queued rows render at a provisional index that may not be their
+          // final transcript position, so they get no Copy-reference action.
+          queuedMetadata === undefined
+            ? {
+                conversationName: conversationName ?? null,
+                timestamp: msg.timestamp,
+                model: msg.model ?? null,
+              }
+            : undefined
+        }
       />
     </div>
   );

@@ -8,8 +8,17 @@ export type {
 } from "./slash-command-marker-node";
 export { FileMentionNode } from "./file-mention-node";
 export type { FileMentionAttrs } from "./file-mention-node";
-export { ConversationMentionNode } from "./conversation-mention-node";
+export {
+  ConversationMentionNode,
+  conversationRefAttrsToMentionAttrs,
+} from "./conversation-mention-node";
 export type { ConversationMentionAttrs } from "./conversation-mention-node";
+export {
+  MessageMentionNode,
+  messageRefAttrsToMentionAttrs,
+} from "./message-mention-node";
+export type { MessageMentionAttrs } from "./message-mention-node";
+export { RefPasteHandler } from "./ref-paste-extension";
 export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
 export type { SerializedPromptDoc } from "./serializer";

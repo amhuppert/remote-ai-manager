@@ -19,6 +19,8 @@ import {
   FileMentionNode,
   ImageMarker,
   ImagePasteHandler,
+  MessageMentionNode,
+  RefPasteHandler,
   serializePromptDoc,
   SlashCommand,
   SlashCommandMarker,
@@ -301,6 +303,8 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         SlashCommandMarker,
         FileMentionNode,
         ConversationMentionNode,
+        MessageMentionNode,
+        RefPasteHandler,
         ArgumentHint,
         ImagePasteHandler.configure({
           onAddImage: (file) =>

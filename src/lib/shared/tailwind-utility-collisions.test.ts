@@ -91,6 +91,8 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionActionsMenu.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}InfoDetailsPopover.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationLinkChip.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageRefLinkChip.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageRefLinkChip.stories.tsx`,
   `${path.sep}components${path.sep}CollapsibleText.tsx`,
   // ConversationsPage is NOT utility-first; the sidebar wave migrated only its
   // sidebar-expand-float button to utilities (the `.convo-sidebar-expand-float`
@@ -106,6 +108,7 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}BackendToggle.tsx`,
   `${path.sep}components${path.sep}ConversationNav.tsx`,
   `${path.sep}components${path.sep}CopyMessageButton.tsx`,
+  `${path.sep}components${path.sep}CopyMessageRefButton.tsx`,
   `${path.sep}components${path.sep}ImageAttachmentPreview.tsx`,
   `${path.sep}components${path.sep}MessageActions.tsx`,
   `${path.sep}components${path.sep}VoiceRecordButton.tsx`,
@@ -123,6 +126,8 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationList.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationMentionChip.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationMentionChip.stories.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageMentionChip.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageMentionChip.stories.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}DocsPanel.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}FileMentionChip.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}GraphWorkflowCard.tsx`,

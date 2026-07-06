@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  findConversationRefs,
-  parseConversationRefAttrs,
-} from "./conversation-ref-parser";
+import { findConversationRefs, parseRefAttrs } from "./ref-parser";
 import { conversationRefAttrsSchema } from "./schemas";
 
 const SAMPLE_REF =
@@ -64,9 +61,9 @@ describe("findConversationRefs", () => {
   });
 });
 
-describe("parseConversationRefAttrs", () => {
+describe("parseRefAttrs", () => {
   it("returns the full attribute map for a well-formed ref", () => {
-    const attrs = parseConversationRefAttrs(SAMPLE_REF);
+    const attrs = parseRefAttrs(SAMPLE_REF);
     expect(attrs["project-name"]).toBe("proj");
     expect(attrs["backend"]).toBe("claude");
     expect(attrs["debug-log-path"]).toBe("");
@@ -74,13 +71,13 @@ describe("parseConversationRefAttrs", () => {
 
   it("decodes XML entities in attribute values", () => {
     const raw = `<conversation-ref project-name="P&amp;Q" project-path="/p" session-name="s" worktree-path="/w" conversation-id="abc" conversation-name="&lt;tag&gt;" backend="claude" backend-ref="" transcript-path="" debug-log-path="" status="new" last-activity-at="2026-01-01T00:00:00Z" />`;
-    const attrs = parseConversationRefAttrs(raw);
+    const attrs = parseRefAttrs(raw);
     expect(attrs["project-name"]).toBe("P&Q");
     expect(attrs["conversation-name"]).toBe("<tag>");
   });
 
   it("produces an object that satisfies conversationRefAttrsSchema", () => {
-    const attrs = parseConversationRefAttrs(SAMPLE_REF);
+    const attrs = parseRefAttrs(SAMPLE_REF);
     const result = conversationRefAttrsSchema.safeParse(attrs);
     expect(result.success).toBe(true);
   });
@@ -97,14 +94,14 @@ describe("parseConversationRefAttrs", () => {
 
   it("still parses refs that carry only compact-status", () => {
     const raw = SAMPLE_REF.replace(" />", ' compact-status="none" />');
-    const attrs = parseConversationRefAttrs(raw);
+    const attrs = parseRefAttrs(raw);
     expect(attrs["compact-status"]).toBe("none");
     expect(attrs["compact-artifact-id"]).toBeUndefined();
     expect(attrs["conversation-id"]).toBe("abc");
   });
 
   it("satisfies conversationRefAttrsSchema with compact attributes present", () => {
-    const attrs = parseConversationRefAttrs(COMPACT_REF);
+    const attrs = parseRefAttrs(COMPACT_REF);
     const result = conversationRefAttrsSchema.safeParse(attrs);
     expect(result.success).toBe(true);
     if (result.success) {
@@ -114,7 +111,7 @@ describe("parseConversationRefAttrs", () => {
   });
 
   it("satisfies conversationRefAttrsSchema for legacy refs without compact attributes", () => {
-    const attrs = parseConversationRefAttrs(SAMPLE_REF);
+    const attrs = parseRefAttrs(SAMPLE_REF);
     const result = conversationRefAttrsSchema.safeParse(attrs);
     expect(result.success).toBe(true);
     if (result.success) {

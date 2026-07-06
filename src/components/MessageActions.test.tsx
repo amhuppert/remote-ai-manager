@@ -11,6 +11,8 @@ import {
 } from "./context-artifacts/fixtures";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
+import { findMessageRefs } from "@/lib/conversations/ref-parser";
+import { messageRefAttrsSchema } from "@/lib/conversations/schemas";
 import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
 
 const target: ContextArtifactTarget = {
@@ -70,6 +72,12 @@ function postCalls(): unknown[][] {
     (call) => (call[1] as RequestInit | undefined)?.method === "POST",
   );
 }
+
+const messageRefMeta = {
+  conversationName: "Refactor parser",
+  timestamp: "2026-07-06T12:00:00Z",
+  model: "opus",
+};
 
 function renderActions(
   props: Partial<React.ComponentProps<typeof MessageActions>> = {},
@@ -196,5 +204,108 @@ describe("MessageActions compaction action", () => {
       mode: "create_or_refresh",
       force: true,
     });
+  });
+});
+
+describe("MessageActions copy-reference action", () => {
+  const writeText = vi.fn<(text: string) => Promise<void>>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    writeText.mockReset().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("hides the action without a compactionTarget or messageRef", () => {
+    routeFetch([]);
+    renderActions({ compactionTarget: undefined, messageRef: messageRefMeta });
+    expect(
+      screen.queryByRole("button", { name: "Copy message reference" }),
+    ).not.toBeInTheDocument();
+
+    renderActions({ messageRef: undefined });
+    expect(
+      screen.queryByRole("button", { name: "Copy message reference" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("copies a message-ref XML tag with compacted=false when no artifact exists", async () => {
+    routeFetch([]);
+    renderActions({ messageRef: messageRefMeta });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy message reference" }),
+    );
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const xml = writeText.mock.calls[0]![0];
+    const refs = findMessageRefs(xml);
+    expect(refs).toHaveLength(1);
+    const attrs = messageRefAttrsSchema.parse(refs[0]!.attrs);
+    expect(attrs["project-name"]).toBe("p1");
+    expect(attrs["session-name"]).toBe("s1");
+    expect(attrs["conversation-id"]).toBe("c1");
+    expect(attrs["conversation-name"]).toBe("Refactor parser");
+    expect(attrs["message-index"]).toBe("3");
+    expect(attrs.role).toBe("assistant");
+    expect(attrs.timestamp).toBe("2026-07-06T12:00:00Z");
+    expect(attrs.model).toBe("opus");
+    expect(attrs.compacted).toBe("false");
+    expect(attrs["compaction-command"]).toBeUndefined();
+    expect(attrs["read-command"]).toBe("cctl conversation read c1 --message 3");
+  });
+
+  it("advertises a complete message compaction with its cctl command", async () => {
+    routeFetch([buildArtifactListItem()]);
+    renderActions({ messageRef: messageRefMeta });
+    // The artifact list has loaded once the Compact action flips to viewer mode.
+    await screen.findByRole("button", { name: "View compacted message" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy message reference" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const attrs = messageRefAttrsSchema.parse(
+      findMessageRefs(writeText.mock.calls[0]![0])[0]!.attrs,
+    );
+    expect(attrs.compacted).toBe("true");
+    expect(attrs["compact-artifact-id"]).toBe("art-1");
+    expect(attrs["compact-created-at"]).toBe("2026-07-05T10:30:00.000Z");
+    expect(attrs["compaction-command"]).toBe(
+      "cctl conversation compaction get c1 --message 3 --json",
+    );
+  });
+
+  it("ignores pending or failed artifacts when advertising compaction", async () => {
+    routeFetch([buildArtifactListItem({ status: "failed", error: "boom" })]);
+    renderActions({ messageRef: messageRefMeta });
+    await screen.findByRole("button", { name: "Compaction failed — retry" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy message reference" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const attrs = messageRefAttrsSchema.parse(
+      findMessageRefs(writeText.mock.calls[0]![0])[0]!.attrs,
+    );
+    expect(attrs.compacted).toBe("false");
+    expect(attrs["compact-artifact-id"]).toBeUndefined();
+  });
+
+  it("shows the action for user messages that offer no Compact action", async () => {
+    routeFetch([]);
+    renderActions({ role: "user", messageRef: messageRefMeta });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy message reference" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const attrs = messageRefAttrsSchema.parse(
+      findMessageRefs(writeText.mock.calls[0]![0])[0]!.attrs,
+    );
+    expect(attrs.role).toBe("user");
   });
 });

@@ -625,3 +625,159 @@ describe("PromptEditor — backend-dependent slash/skill triggers", () => {
     expect(container.textContent).not.toContain("Skills");
   });
 });
+
+describe("message-ref paste handling", () => {
+  const MESSAGE_REF =
+    '<message-ref project-name="my-app" session-name="main" ' +
+    'conversation-id="conv-123" conversation-name="Refactor parser" ' +
+    'message-index="5" role="assistant" timestamp="2026-07-06T12:00:00Z" ' +
+    'model="opus" compacted="false" ' +
+    'read-command="cctl conversation read conv-123 --message 5" />';
+
+  function renderEditor() {
+    const ref = createRef<PromptEditorHandle>();
+    const rendered = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    return { ref, ...rendered };
+  }
+
+  function pasteText(pm: HTMLElement, text: string) {
+    fireEvent.paste(pm, {
+      clipboardData: {
+        items: [],
+        files: [],
+        types: ["text/plain"],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  }
+
+  it("converts a pasted <message-ref /> into a mention chip, preserving surrounding text", () => {
+    const { ref, container } = renderEditor();
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    pasteText(pm, `see ${MESSAGE_REF} here`);
+
+    const chip = container.querySelector("[data-message-mention-chip]");
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toContain("Refactor parser · msg 5");
+
+    const serialized = ref.current!.serialize([]);
+    expect(serialized.prompt.startsWith("see <message-ref ")).toBe(true);
+    expect(serialized.prompt).toContain('conversation-id="conv-123"');
+    expect(serialized.prompt).toContain('message-index="5"');
+    expect(serialized.prompt).toContain(
+      'read-command="cctl conversation read conv-123 --message 5"',
+    );
+    expect(serialized.prompt.endsWith("/> here")).toBe(true);
+  });
+
+  it("does not create a chip for malformed message-ref tags", () => {
+    const { container } = renderEditor();
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    pasteText(pm, '<message-ref role="assistant" compacted="false" />');
+
+    expect(container.querySelector("[data-message-mention-chip]")).toBeNull();
+  });
+});
+
+describe("conversation-ref paste handling", () => {
+  const CONVERSATION_REF =
+    '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+    'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
+    'conversation-id="conv-1" conversation-name="Refactor parser" ' +
+    'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +
+    'status="running" last-activity-at="2026-06-01T12:00:00Z" ' +
+    'compact-status="none" read-command="cctl conversation read conv-1 --outline" />';
+
+  function renderEditor() {
+    const ref = createRef<PromptEditorHandle>();
+    const rendered = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-x"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    return { ref, ...rendered };
+  }
+
+  function pasteText(pm: HTMLElement, text: string) {
+    fireEvent.paste(pm, {
+      clipboardData: {
+        items: [],
+        files: [],
+        types: ["text/plain"],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  }
+
+  it("converts a pasted <conversation-ref /> into a mention chip, preserving surrounding text", () => {
+    const { ref, container } = renderEditor();
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    pasteText(pm, `see ${CONVERSATION_REF} here`);
+
+    // The chip NodeView mounts a remove button unique to the conversation chip.
+    expect(
+      container.querySelector('button[aria-label="Remove #Refactor parser"]'),
+    ).not.toBeNull();
+
+    const serialized = ref.current!.serialize([]);
+    expect(serialized.prompt.startsWith("see <conversation-ref ")).toBe(true);
+    expect(serialized.prompt).toContain('conversation-id="conv-1"');
+    expect(serialized.prompt).toContain(
+      'read-command="cctl conversation read conv-1 --outline"',
+    );
+    expect(serialized.prompt.endsWith("/> here")).toBe(true);
+  });
+
+  it("does not create a chip for malformed conversation-ref tags", () => {
+    const { container } = renderEditor();
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    pasteText(pm, '<conversation-ref project-name="x" conversation-id="y" />');
+
+    expect(
+      container.querySelector('button[aria-label^="Remove #"]'),
+    ).toBeNull();
+  });
+
+  it("converts a mixed conversation-ref + message-ref paste into both chips", () => {
+    const { container } = renderEditor();
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    const messageRef =
+      '<message-ref project-name="my-app" session-name="main" ' +
+      'conversation-id="conv-2" conversation-name="Fix flake" ' +
+      'message-index="7" role="assistant" compacted="false" ' +
+      'read-command="cctl conversation read conv-2 --message 7" />';
+    pasteText(pm, `${CONVERSATION_REF} and ${messageRef}`);
+
+    expect(
+      container.querySelector('button[aria-label="Remove #Refactor parser"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[data-message-mention-chip]"),
+    ).not.toBeNull();
+  });
+});

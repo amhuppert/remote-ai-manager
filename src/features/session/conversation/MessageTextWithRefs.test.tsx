@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
-import type { ConversationRefAttrs } from "@/lib/conversations/schemas";
+import type {
+  ConversationRefAttrs,
+  MessageRefAttrs,
+} from "@/lib/conversations/schemas";
 import { createMessageTextWithRefs } from "./MessageTextWithRefs";
 
 function MarkdownStub({ content }: { content: string }): React.JSX.Element {
@@ -20,9 +23,20 @@ function ChipStub({
   );
 }
 
+function MsgChipStub({ attrs }: { attrs: MessageRefAttrs }): React.JSX.Element {
+  return (
+    <span
+      data-testid="msg-chip"
+      data-conv-id={attrs["conversation-id"]}
+      data-msg-index={attrs["message-index"]}
+    />
+  );
+}
+
 const Component = createMessageTextWithRefs({
   MarkdownContent: MarkdownStub,
   ConversationLinkChip: ChipStub,
+  MessageRefChip: MsgChipStub,
 });
 
 const REF_ATTRS_BASE = {
@@ -112,6 +126,55 @@ describe("MessageTextWithRefs", () => {
     expect(joined).toContain(ref);
     expect(joined).toContain("text before");
     expect(joined).toContain("text after");
+  });
+
+  it("renders a message-ref as a chip between text segments", () => {
+    const msgRef =
+      '<message-ref project-name="my-app" session-name="main" ' +
+      'conversation-id="conv-9" conversation-name="Refactor" ' +
+      'message-index="4" role="assistant" compacted="false" ' +
+      'read-command="cctl conversation read conv-9 --message 4" />';
+    const { getAllByTestId } = render(
+      <Component text={`see ${msgRef} here`} />,
+    );
+
+    const chips = getAllByTestId("msg-chip");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]?.getAttribute("data-conv-id")).toBe("conv-9");
+    expect(chips[0]?.getAttribute("data-msg-index")).toBe("4");
+    expect(getAllByTestId("md").map((n) => n.textContent)).toEqual([
+      "see ",
+      " here",
+    ]);
+  });
+
+  it("interleaves conversation-refs and message-refs in document order", () => {
+    const convRef = makeRef({ "conversation-id": "c1" });
+    const msgRef =
+      '<message-ref project-name="my-app" conversation-id="c2" ' +
+      'message-index="7" role="user" compacted="false" />';
+    const { getAllByTestId, container } = render(
+      <Component text={`a ${msgRef} b ${convRef} c`} />,
+    );
+
+    expect(getAllByTestId("msg-chip")).toHaveLength(1);
+    expect(getAllByTestId("chip")).toHaveLength(1);
+    const order = Array.from(container.querySelectorAll("[data-testid]")).map(
+      (node) => node.getAttribute("data-testid"),
+    );
+    expect(order).toEqual(["md", "msg-chip", "md", "chip", "md"]);
+  });
+
+  it("renders an unparseable message-ref tag as plain text", () => {
+    const badRef = '<message-ref role="assistant" compacted="false" />';
+    const { container, getAllByTestId } = render(
+      <Component text={`x ${badRef} y`} />,
+    );
+    expect(container.querySelector('[data-testid="msg-chip"]')).toBeNull();
+    const joined = getAllByTestId("md")
+      .map((n) => n.textContent)
+      .join("");
+    expect(joined).toContain(badRef);
   });
 
   it("renders an unparseable conversation-ref tag as plain text", () => {

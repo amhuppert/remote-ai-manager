@@ -3,17 +3,19 @@
 // A ref splits the surrounding markdown — block-level markdown spanning the
 // ref boundary is broken on render. Acceptable v1 limitation.
 
-import {
-  conversationRefAttrsSchema,
-  type ConversationRefAttrs,
+import type {
+  ConversationRefAttrs,
+  MessageRefAttrs,
 } from "@/lib/conversations/schemas";
-import { findConversationRefs } from "@/lib/conversations/conversation-ref-parser";
+import { segmentTextByRefs } from "@/lib/conversations/ref-segments";
 import DefaultMarkdownContent from "@/components/LazyMarkdownContent";
 import DefaultConversationLinkChip from "./ConversationLinkChip";
+import DefaultMessageRefLinkChip from "./MessageRefLinkChip";
 
 export interface MessageTextWithRefsDeps {
   MarkdownContent: React.ComponentType<{ content: string }>;
   ConversationLinkChip: React.ComponentType<{ attrs: ConversationRefAttrs }>;
+  MessageRefChip: React.ComponentType<{ attrs: MessageRefAttrs }>;
 }
 
 interface MessageTextWithRefsProps {
@@ -26,54 +28,33 @@ export function createMessageTextWithRefs(
   return function MessageTextWithRefs({
     text,
   }: MessageTextWithRefsProps): React.JSX.Element {
-    const refs = findConversationRefs(text);
-    if (refs.length === 0) {
+    const segments = segmentTextByRefs(text);
+    if (!segments.some((segment) => segment.type !== "text")) {
       return <deps.MarkdownContent content={text} />;
     }
 
-    const children: React.ReactNode[] = [];
-    let cursor = 0;
-    let key = 0;
-
-    for (const ref of refs) {
-      if (ref.start > cursor) {
-        const segment = text.slice(cursor, ref.start);
-        children.push(
-          <deps.MarkdownContent key={`md-${key++}`} content={segment} />,
-        );
-      }
-
-      const parsed = conversationRefAttrsSchema.safeParse(ref.attrs);
-      if (parsed.success) {
-        children.push(
-          <deps.ConversationLinkChip
-            key={`chip-${key++}`}
-            attrs={parsed.data}
-          />,
-        );
-      } else {
-        children.push(
-          <deps.MarkdownContent key={`md-${key++}`} content={ref.raw} />,
-        );
-      }
-
-      cursor = ref.end;
-    }
-
-    if (cursor < text.length) {
-      const tail = text.slice(cursor);
-      children.push(
-        <deps.MarkdownContent key={`md-${key++}`} content={tail} />,
-      );
-    }
-
-    return <>{children}</>;
+    return (
+      <>
+        {segments.map((segment, index) => {
+          if (segment.type === "conversation-ref") {
+            return (
+              <deps.ConversationLinkChip key={index} attrs={segment.attrs} />
+            );
+          }
+          if (segment.type === "message-ref") {
+            return <deps.MessageRefChip key={index} attrs={segment.attrs} />;
+          }
+          return <deps.MarkdownContent key={index} content={segment.text} />;
+        })}
+      </>
+    );
   };
 }
 
 export const MessageTextWithRefs = createMessageTextWithRefs({
   MarkdownContent: DefaultMarkdownContent,
   ConversationLinkChip: DefaultConversationLinkChip,
+  MessageRefChip: DefaultMessageRefLinkChip,
 });
 
 export default MessageTextWithRefs;

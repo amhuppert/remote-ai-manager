@@ -3,6 +3,7 @@ import { ReactNodeViewRenderer } from "@tiptap/react";
 import ConversationMentionChip from "@/features/session/conversation/ConversationMentionChip";
 import type {
   ConversationCompactStatus,
+  ConversationRefAttrs,
   ConversationStatus,
 } from "@/lib/conversations/schemas";
 
@@ -30,6 +31,35 @@ export interface ConversationMentionAttrs {
   compactCoveredSeq: string;
   /** ISO timestamp; empty string when no compaction. */
   compactCreatedAt: string;
+}
+
+/**
+ * Map validated `<conversation-ref />` wire attributes onto node attributes.
+ * `transcript-path` is not carried on the wire (the serializer omits it), so
+ * it defaults to empty — it round-trips losslessly since re-serialization
+ * omits it too.
+ */
+export function conversationRefAttrsToMentionAttrs(
+  attrs: ConversationRefAttrs,
+): ConversationMentionAttrs {
+  return {
+    projectName: attrs["project-name"],
+    projectPath: attrs["project-path"],
+    sessionName: attrs["session-name"],
+    worktreePath: attrs["worktree-path"],
+    conversationId: attrs["conversation-id"],
+    conversationName: attrs["conversation-name"],
+    backend: attrs.backend,
+    backendRef: attrs["backend-ref"],
+    transcriptPath: "",
+    debugLogPath: attrs["debug-log-path"],
+    status: attrs.status,
+    lastActivityAt: attrs["last-activity-at"],
+    compactArtifactId: attrs["compact-artifact-id"] ?? "",
+    compactStatus: attrs["compact-status"] ?? "none",
+    compactCoveredSeq: attrs["compact-covered-seq"] ?? "",
+    compactCreatedAt: attrs["compact-created-at"] ?? "",
+  };
 }
 
 declare module "@tiptap/core" {

@@ -77,6 +77,25 @@ const schema = new Schema({
         compactCreatedAt: { default: "" },
       },
     },
+    messageMention: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        projectName: { default: "" },
+        sessionName: { default: "" },
+        conversationId: { default: "" },
+        conversationName: { default: "" },
+        messageIndex: { default: "0" },
+        role: { default: "assistant" },
+        timestamp: { default: "" },
+        model: { default: "" },
+        compacted: { default: "false" },
+        compactArtifactId: { default: "" },
+        compactCreatedAt: { default: "" },
+      },
+    },
     codeBlock: {
       group: "block",
       content: "text*",
@@ -180,6 +199,37 @@ function convMention(
     compactStatus: overrides.compactStatus ?? "none",
     compactCoveredSeq: overrides.compactCoveredSeq ?? "",
     compactCreatedAt: overrides.compactCreatedAt ?? "",
+  });
+}
+
+function msgMention(
+  overrides: Partial<{
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    conversationName: string;
+    messageIndex: string;
+    role: string;
+    timestamp: string;
+    model: string;
+    compacted: string;
+    compactArtifactId: string;
+    compactCreatedAt: string;
+  }> = {},
+): ProseMirrorNode {
+  return schema.nodes["messageMention"]!.create({
+    projectName: "my-app",
+    sessionName: "main",
+    conversationId: "conv-123",
+    conversationName: "Refactor parser",
+    messageIndex: "5",
+    role: "assistant",
+    timestamp: "2026-07-06T12:00:00Z",
+    model: "opus",
+    compacted: "false",
+    compactArtifactId: "",
+    compactCreatedAt: "",
+    ...overrides,
   });
 }
 
@@ -625,5 +675,78 @@ describe("serializePromptDoc", () => {
     expect(result.prompt).toBe(
       "/spec-init with @README.md using `bun run dev`\n```ts\nexport {};\n```",
     );
+  });
+});
+
+describe("messageMention serialization", () => {
+  it("emits a full <message-ref /> tag with both cctl commands when compacted", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          msgMention({
+            compacted: "true",
+            compactArtifactId: "art-1",
+            compactCreatedAt: "2026-07-05T10:30:00Z",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe(
+      '<message-ref project-name="my-app" session-name="main" ' +
+        'conversation-id="conv-123" conversation-name="Refactor parser" ' +
+        'message-index="5" role="assistant" timestamp="2026-07-06T12:00:00Z" ' +
+        'model="opus" compacted="true" compact-artifact-id="art-1" ' +
+        'compact-created-at="2026-07-05T10:30:00Z" ' +
+        'compaction-command="cctl conversation compaction get conv-123 --message 5 --json" ' +
+        'read-command="cctl conversation read conv-123 --message 5" />',
+    );
+  });
+
+  it("omits compaction detail and command when not compacted", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(msgMention())),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain('compacted="false"');
+    expect(result.prompt).not.toContain("compact-artifact-id");
+    expect(result.prompt).not.toContain("compaction-command");
+    expect(result.prompt).toContain(
+      'read-command="cctl conversation read conv-123 --message 5"',
+    );
+  });
+
+  it("omits empty optional attributes", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          msgMention({
+            sessionName: "",
+            conversationName: "",
+            timestamp: "",
+            model: "",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).not.toContain("session-name");
+    expect(result.prompt).not.toContain("conversation-name");
+    expect(result.prompt).not.toContain("timestamp");
+    expect(result.prompt).not.toContain("model");
+    expect(result.prompt).toContain('message-index="5"');
+  });
+
+  it("embeds a message-ref between surrounding text in a paragraph", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("see "), msgMention(), t(" here"))),
+      attachments: [],
+    });
+
+    expect(result.prompt.startsWith("see <message-ref ")).toBe(true);
+    expect(result.prompt.endsWith("/> here")).toBe(true);
   });
 });
