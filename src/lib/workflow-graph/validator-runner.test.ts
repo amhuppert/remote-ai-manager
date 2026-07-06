@@ -1461,6 +1461,70 @@ describe("context validator continuity runtime integration", () => {
     });
   });
 
+  it("carries codex validator token usage and estimated costUsd into the review artifact", async () => {
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+    };
+    const execution = buildExecutionWithContextValidation(codexValidator);
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation: vi.fn(),
+      getConversation: vi.fn(),
+      startCodexThread: vi.fn(async () => ({ threadId: "thread-usage-1" })),
+      resumeCodexThread: vi.fn(async (id: string) => ({ threadId: id })),
+      now: () => NOW,
+    });
+
+    const executeWorkflowTaskRun = vi.fn(
+      async (): Promise<TaskRunResult> => ({
+        kind: "text",
+        text: passResponseJson,
+        usage: {
+          ...emptyUsage,
+          inputTokens: 1000,
+          cachedInputTokens: 400,
+          outputTokens: 50,
+          costUsd: 0.0042,
+        },
+        backendRef: { backend: "codex", threadId: "thread-usage-1" },
+      }),
+    );
+
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: codexValidator,
+    });
+
+    expect(result.metadata.reviewArtifact).toMatchObject({
+      engine: "codex",
+      usage: {
+        inputTokens: 1000,
+        cachedInputTokens: 400,
+        outputTokens: 50,
+        costUsd: 0.0042,
+      },
+    });
+  });
+
   it("persists the Codex validator transcript on the continuity path", async () => {
     const TEST_DIR = path.join(
       __dirname,

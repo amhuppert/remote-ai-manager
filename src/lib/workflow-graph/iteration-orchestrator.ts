@@ -18,6 +18,7 @@ import type {
   WorkflowValidatorIssue,
 } from "@/lib/workflows/schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
+import type { ConversationTelemetrySummary } from "./conversation-telemetry";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type {
   ResolveImplementerCallInput,
@@ -249,6 +250,15 @@ export interface GraphWorkflowIterationOrchestratorDeps {
     execution: GraphWorkflowExecution;
     worktreePath: string;
   }): Promise<void>;
+  /**
+   * Summarize the lane conversation's transcript (true lineage cost, SDK turn
+   * count, file re-read stats) for the `conversation.telemetry` iteration
+   * event. Best-effort: absent dep, null return, or a throw skips the event
+   * without affecting the iteration.
+   */
+  readConversationTelemetry?(
+    conversationId: string,
+  ): Promise<ConversationTelemetrySummary | null>;
 }
 
 export interface GraphWorkflowIterationInput {
@@ -573,6 +583,12 @@ const logger = createLogger("graph-workflow-iteration");
  * agent turn that performed a bounded background-task wait. No-op when the
  * turn did not wait (`backgroundWait` absent). Logging only — never changes
  * iteration control flow.
+ *
+ * Both the started entry and its outcome entry are written retrospectively,
+ * back-to-back, AFTER the turn returns — their log timestamps are ~1ms apart
+ * regardless of how long the wait ran. The started payload carries
+ * `startedAt` (back-dated by `durationMs`) so it self-describes the wait's
+ * true begin time.
  */
 function logBackgroundWaitLifecycle(params: {
   execLogger: ReturnType<typeof getExecutionLogger>;
@@ -594,6 +610,8 @@ function logBackgroundWaitLifecycle(params: {
   execLogger?.iteration(contextId, "iteration.background_wait_started", {
     turnNumber,
     waitedTaskIds,
+    startedAt: new Date(Date.now() - durationMs).toISOString(),
+    durationMs,
   });
   logger.info("graph-workflow.iteration.background_wait_started", {
     executionId,
@@ -1561,6 +1579,36 @@ export function createGraphWorkflowIterationOrchestrator(
       shouldContinueInContext,
       consecutiveFailureCount,
     });
+    if (deps.readConversationTelemetry && execLogger) {
+      try {
+        const telemetry = await deps.readConversationTelemetry(conversationId);
+        if (telemetry) {
+          const implementerLane =
+            persistedExecution.laneStates[input.contextId]?.["implementer"];
+          execLogger.iteration(input.contextId, "conversation.telemetry", {
+            conversationId,
+            iterationNumber,
+            shouldContinueInContext,
+            contextTokens:
+              implementerLane?.engine === "claude"
+                ? implementerLane.lastContextTokens
+                : null,
+            contextWindowMax:
+              implementerLane?.engine === "claude"
+                ? implementerLane.lastContextWindowMax
+                : null,
+            ...telemetry,
+          });
+        }
+      } catch (error) {
+        logger.warn("graph-workflow.conversation_telemetry.failed", {
+          executionId: persistedExecution.id,
+          contextId: input.contextId,
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     logger.info("graph-workflow.iteration.completed", {
       executionId: persistedExecution.id,
       contextId: input.contextId,
@@ -1781,6 +1829,9 @@ export function createGraphWorkflowIterationOrchestrator(
       | GraphWorkflowExecution["laneStates"][string][string]
       | null = null;
     let promptMode: "iteration_seed" | "follow_up" = "iteration_seed";
+    let previousConversationHandoff:
+      | { conversationId: string; note: string }
+      | undefined;
     if (deps.continuityService) {
       const resolved = await deps.continuityService.resolveImplementerCall({
         execution: initialExecution,
@@ -1794,6 +1845,7 @@ export function createGraphWorkflowIterationOrchestrator(
       resolvedImplementerLaneState =
         resolved.execution.laneStates[input.contextId]?.["implementer"] ?? null;
       promptMode = resolved.promptMode;
+      previousConversationHandoff = resolved.previousConversationHandoff;
     } else {
       const conversation = await deps.createConversation(
         input.projectPath,
@@ -2145,6 +2197,7 @@ export function createGraphWorkflowIterationOrchestrator(
               latestContextValidationFailure,
               collaborationContinuations,
               resumeUserInput: resumeUserInputPrompt,
+              previousConversationHandoff,
             });
 
       // Log the prompt sent to the agent

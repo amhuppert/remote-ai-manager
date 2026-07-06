@@ -7,7 +7,10 @@ import {
   getConversation,
 } from "@/lib/conversations/service";
 import { abortConversation as abortConversationRegistry } from "@/lib/conversations/abort-registry";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import {
+  sendConversationEvent,
+  stopConversationActor,
+} from "@/lib/workflows/conversation/manager";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -35,6 +38,8 @@ import type {
 } from "@/lib/workflows/schemas";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import { loadRotationHandoffNote } from "./rotation-handoff";
+import { readConversationTelemetry } from "./conversation-telemetry";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowValidationService } from "./execution-validation";
 import { GraphWorkflowValidationError } from "./validation";
@@ -178,6 +183,15 @@ const continuityService = createWorkflowContinuityService({
   getConversation,
   startCodexThread: async () => ({ threadId: crypto.randomUUID() }),
   resumeCodexThread: async (threadId) => ({ threadId }),
+  loadRotationHandoff: (conversationId) =>
+    loadRotationHandoffNote(conversationId),
+  retireLaneConversation: ({ projectPath, sessionName, conversationId }) =>
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "workflow_lane_rotated",
+    ),
 });
 
 const validatorRunner = createValidatorRunner({
@@ -326,6 +340,8 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   },
   validationService,
   scriptValidatorService,
+  readConversationTelemetry: (conversationId) =>
+    readConversationTelemetry(conversationId),
 });
 const mergeMutex = createPerSessionMergeMutex();
 const sessionGitLock = createSessionGitLock();

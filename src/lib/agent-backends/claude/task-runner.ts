@@ -8,6 +8,7 @@ import type {
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import { neutralizeAmbientCcEnv } from "@/lib/agent-gateway/session-env";
 import { createLogger } from "@/lib/logging";
 import { registerTaskRunner } from "../registry-core";
 import type {
@@ -182,7 +183,12 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           ...(outputFormat ? { outputFormat } : {}),
           mcpServers: mcpServers as Record<string, never>,
           abortController,
-          env: buildChildEnv() as Record<string, string>,
+          // Task subprocesses get no session-env contract, so ambient CC_*
+          // (an outer instance's server URL/token) must be blanked here.
+          env: neutralizeAmbientCcEnv(buildChildEnv()) as Record<
+            string,
+            string
+          >,
         },
       });
 

@@ -60,6 +60,27 @@ describe("createConfigReader", () => {
 
     await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
   });
+
+  it("reads codex.pricing rate overrides from disk", async () => {
+    const configDir = await createTempConfigDir();
+    const pricing = {
+      "gpt-5.5": {
+        inputPerMillion: 6,
+        cachedInputPerMillion: 0.6,
+        outputPerMillion: 36,
+      },
+    };
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ codex: { enabled: true, pricing } }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+
+    expect(config.codex?.pricing).toEqual(pricing);
+  });
 });
 
 describe("createConfigReader readConfig caching", () => {
@@ -91,7 +112,11 @@ describe("createConfigReader readConfig caching", () => {
 
     // Different-length content so the (mtime, size) token changes regardless of
     // filesystem mtime resolution.
-    await writeFile(file, JSON.stringify({ baseDir: "/second-longer-path" }), "utf-8");
+    await writeFile(
+      file,
+      JSON.stringify({ baseDir: "/second-longer-path" }),
+      "utf-8",
+    );
 
     const second = await reader.readConfig();
     expect(second.baseDir).toBe("/second-longer-path");

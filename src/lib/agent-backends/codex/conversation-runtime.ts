@@ -35,7 +35,9 @@ import {
   codexReasoningEffortSchema,
   getCodexReasoningLevelsForModel,
   getDefaultCodexModel,
+  type CodexPricingTable,
 } from "@/lib/agent-backends/schemas";
+import { estimateCodexCostUsd } from "./pricing";
 import { createLogger } from "@/lib/logging";
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 
@@ -45,7 +47,7 @@ import { buildChildEnv } from "@/lib/shared/child-env";
 import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
-import { getConfigDirPath } from "@/lib/config/loader";
+import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { toStringEnv } from "./shared";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
@@ -90,6 +92,8 @@ export interface CodexConversationRuntimeDeps {
     cwd: string;
     env: Record<string, string>;
   }): Promise<NativeCodexMcpServer[]>;
+  /** Per-model rate overrides from `codex.pricing` in config.json; null when unset. */
+  getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
   now(): number;
 }
 
@@ -102,6 +106,8 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   getConfigDir: getConfigDirPath,
   translatePortableMcpToCodex,
   listNativeCodexMcpServers,
+  getCodexPricingOverrides: async () =>
+    (await readConfig()).codex?.pricing ?? null,
   now: () => Date.now(),
 };
 
@@ -325,7 +331,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
 
     const result: ConversationBackendTurnResult = {
       backendRef,
-      costUsd: null,
+      costUsd: await this.estimateTurnCost(acc.usage),
       durationMs: this.deps.now() - startedAt,
       numTurns: 1,
       contextTokens: acc.usage?.input_tokens ?? null,
@@ -344,9 +350,35 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       aborted: acc.aborted,
       hasError: !!acc.errorMessage,
       contentBlockCount: contentBlocks.length,
+      costUsd: result.costUsd,
     });
 
     return result;
+  }
+
+  /**
+   * Estimated USD for the turn's token usage (Codex reports tokens, never
+   * USD). Best-effort: an unreadable config falls back to default rates
+   * rather than dropping the estimate.
+   */
+  private async estimateTurnCost(usage: Usage | null): Promise<number | null> {
+    if (usage === null) return null;
+
+    let pricingOverrides: CodexPricingTable | null = null;
+    try {
+      pricingOverrides = await this.deps.getCodexPricingOverrides();
+    } catch (err) {
+      logger.warn("codex-runtime.pricing_overrides_unavailable", {
+        conversationId: this.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    return estimateCodexCostUsd(
+      usage,
+      this.modelId ?? getDefaultCodexModel(),
+      pricingOverrides,
+    );
   }
 
   /**

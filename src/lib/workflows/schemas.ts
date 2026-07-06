@@ -1183,6 +1183,9 @@ const graphWorkflowValidationReviewArtifactSchema = z.discriminatedUnion(
           inputTokens: z.number().int().min(0),
           cachedInputTokens: z.number().int().min(0),
           outputTokens: z.number().int().min(0),
+          /** Estimated — Codex reports tokens, never USD. Absent on events
+           *  recorded before cost estimation existed. */
+          costUsd: z.number().nullable().default(null),
         })
         .nullable()
         .default(null),

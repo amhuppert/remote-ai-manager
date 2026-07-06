@@ -20,8 +20,40 @@ describe("buildContextLimitStopInstruction", () => {
     });
 
     expect(instruction).toBe(
-      "CONTEXT LIMIT REACHED: this conversation is at ~210000 context tokens, over the configured limit of 150000. Do not start another task or begin new work. End your turn now with a brief handoff note (what you completed, anything left in flight). The workflow will continue the remaining tasks automatically in a fresh conversation.",
+      "CONTEXT LIMIT REACHED: this conversation is at ~210000 context tokens, over the configured limit of 150000. Do not start another task or begin new work. End your turn now with a handoff note for the next conversation: what you completed, anything left in flight, and any lessons it needs (environment gotchas, workarounds, decisions made and why). Your final message is delivered verbatim into the fresh conversation's first prompt.",
     );
+  });
+
+  it("asks for lessons and promises verbatim delivery in every clause variant", () => {
+    for (const stop of [
+      {
+        contextTokens: 210_000,
+        contextLimitTokens: 150_000,
+        compactedThisTurn: false,
+        alreadyScheduled: false,
+        source: "live" as const,
+      },
+      {
+        contextTokens: 50_000,
+        contextLimitTokens: 150_000,
+        compactedThisTurn: true,
+        alreadyScheduled: false,
+        source: "live" as const,
+      },
+      {
+        contextTokens: 210_000,
+        contextLimitTokens: 150_000,
+        compactedThisTurn: true,
+        alreadyScheduled: true,
+        source: "live" as const,
+      },
+    ]) {
+      const instruction = buildContextLimitStopInstruction(stop);
+      expect(instruction).toContain("any lessons it needs");
+      expect(instruction).toContain(
+        "delivered verbatim into the fresh conversation's first prompt",
+      );
+    }
   });
 
   it("renders the compaction clause when the turn auto-compacted mid-turn", () => {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   claudeModelSchema,
   codexConfigSchema,
+  codexPricingTableSchema,
   codexReasoningEffortSchema,
   effortLevelSchema,
 } from "@/lib/agent-backends/schemas";
@@ -80,6 +81,7 @@ const rawCodexConfigSchema = z.object({
   model: z.string().optional(),
   reasoningEffort: codexReasoningEffortSchema.optional(),
   timeout: z.number().positive().nullable().optional(),
+  pricing: codexPricingTableSchema.optional(),
 });
 
 export const rawGlobalConfigSchema = z.object({

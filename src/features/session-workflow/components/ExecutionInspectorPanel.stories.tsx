@@ -71,6 +71,7 @@ const overviewEvents: GraphWorkflowExecutionEvent[] = [
           inputTokens: 1240,
           cachedInputTokens: 800,
           outputTokens: 312,
+          costUsd: null,
         },
       },
     },

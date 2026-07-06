@@ -1,0 +1,1944 @@
+/**
+ * Pure aggregation core for the graph-workflow execution audit CLI
+ * (`scripts/workflow-audit/run.ts`, exposed as `bun run workflow:audit`).
+ *
+ * Everything here is deterministic and IO-free: the loader hands us raw JSON
+ * pulled from `command-center.db` and the per-execution `workflow-logs/`
+ * directory, and we compute a bounded report of friction points, positives,
+ * cost, and timing for an agent (or human) to interpret.
+ *
+ * The projection schemas below intentionally re-declare a *tolerant subset*
+ * of the canonical execution schemas in `src/lib/workflows/schemas.ts`
+ * rather than importing them: an audit must be able to read executions
+ * persisted by older or newer builds, so every field the strict schema would
+ * reject or require is defaulted here. They are read-only projections, not a
+ * second source of truth for writes.
+ */
+import { z } from "zod";
+
+// ============================================================
+// Raw record parsing (JSONL lines, event rows)
+// ============================================================
+
+export interface JsonlRecord {
+  timestamp: string;
+  event: string;
+  fields: Record<string, unknown>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function parseJsonlLine(line: string): JsonlRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const record = asRecord(parsed);
+  if (record === null) return null;
+  const { timestamp, event, ...rest } = record;
+  if (typeof timestamp !== "string" || typeof event !== "string") return null;
+  return { timestamp, event, fields: rest };
+}
+
+export interface AuditEvent {
+  occurredAt: string;
+  preReset: boolean;
+  type: string;
+  fields: Record<string, unknown>;
+}
+
+export function parseAuditEvent(input: {
+  occurredAt: string;
+  preReset: boolean;
+  payload: unknown;
+}): AuditEvent | null {
+  const record = asRecord(input.payload);
+  if (record === null) return null;
+  const type = record.type;
+  if (typeof type !== "string" || type.length === 0) return null;
+  return {
+    occurredAt: input.occurredAt,
+    preReset: input.preReset,
+    type,
+    fields: record,
+  };
+}
+
+// ============================================================
+// Execution projection (tolerant subset of the canonical schema)
+// ============================================================
+
+const auditHaltReasonSchema = z.object({
+  type: z.string().default("unknown"),
+  contextId: z.string().nullish().default(null),
+  message: z.string().nullish().default(null),
+  summary: z.string().nullish().default(null),
+});
+export type AuditHaltReason = z.infer<typeof auditHaltReasonSchema>;
+
+const auditContextStateSchema = z.object({
+  status: z.string().default("unknown"),
+  totalTaskCount: z.number().default(0),
+  completedTaskCount: z.number().default(0),
+  iterationCount: z.number().default(0),
+  consecutiveFailureCount: z.number().default(0),
+  isolation: z.string().default("session"),
+  worktreePath: z.string().nullish().default(null),
+  branchName: z.string().nullish().default(null),
+  laneId: z.string().nullish().default(null),
+  mergeStatus: z.string().default("not-applicable"),
+  lastMergeError: z.string().nullish().default(null),
+});
+
+const auditTaskStateSchema = z.object({
+  taskId: z.string().nullish().default(null),
+  contextId: z.string().default(""),
+  status: z.string().default("unknown"),
+  startedAt: z.string().nullish().default(null),
+  completedAt: z.string().nullish().default(null),
+  lastConversationId: z.string().nullish().default(null),
+  failureMessage: z.string().nullish().default(null),
+  failureHistory: z
+    .array(
+      z.object({
+        message: z.string().default(""),
+        timestamp: z.string().default(""),
+      }),
+    )
+    .default([]),
+});
+
+const auditLaneStateSchema = z.object({
+  lane: z.string().default("unknown"),
+  engine: z.string().default("unknown"),
+  sessionRef: z
+    .object({ conversationId: z.string().optional() })
+    .nullish()
+    .default(null),
+  workflowConversationId: z.string().nullish().default(null),
+  lastContextTokens: z.number().nullish().default(null),
+  lastContextWindowMax: z.number().nullish().default(null),
+  lastTurnUsage: z
+    .object({
+      inputTokens: z.number().default(0),
+      cachedInputTokens: z.number().default(0),
+      outputTokens: z.number().default(0),
+    })
+    .nullish()
+    .default(null),
+});
+
+const auditJoinStateSchema = z.object({
+  kind: z.string().default(""),
+  status: z.string().default(""),
+  contextId: z.string().nullish().default(null),
+  errorMessage: z.string().nullish().default(null),
+  conflicts: z
+    .object({
+      files: z.array(z.string()).default([]),
+      message: z.string().nullish().default(null),
+    })
+    .nullish()
+    .default(null),
+  sourceLaneIds: z.array(z.string()).default([]),
+  completedAt: z.string().nullish().default(null),
+});
+
+const auditDefinitionContextSchema = z.object({
+  id: z.string(),
+  title: z.string().default(""),
+  iterationPolicy: z
+    .object({
+      continuity: z
+        .object({ contextLimitTokens: z.number().nullish().default(null) })
+        .nullish()
+        .default(null),
+    })
+    .nullish()
+    .default(null),
+});
+
+const auditExecutionProjectionSchema = z.object({
+  id: z.string(),
+  seedDefinitionId: z.string().default("unknown"),
+  seedDefinitionRevision: z.number().default(0),
+  boundInputs: z.record(z.string(), z.string()).default({}),
+  launchedTier: z.string().default("project"),
+  status: z.string().default("unknown"),
+  startedAt: z.string(),
+  completedAt: z.string().nullish().default(null),
+  haltReason: auditHaltReasonSchema.nullish().default(null),
+  pendingHaltReason: auditHaltReasonSchema.nullish().default(null),
+  secondaryHaltReasons: z.array(auditHaltReasonSchema).default([]),
+  charter: z.unknown().optional(),
+  sharedDocuments: z.array(z.unknown()).default([]),
+  workingDefinition: z
+    .object({
+      executionContexts: z.array(auditDefinitionContextSchema).default([]),
+    })
+    .default({ executionContexts: [] }),
+  contextStates: z.record(z.string(), auditContextStateSchema).default({}),
+  taskStates: z.record(z.string(), auditTaskStateSchema).default({}),
+  laneStates: z
+    .record(z.string(), z.record(z.string(), auditLaneStateSchema))
+    .default({}),
+  joins: z.record(z.string(), auditJoinStateSchema).default({}),
+});
+export type AuditExecution = z.infer<typeof auditExecutionProjectionSchema>;
+
+export function parseExecutionProjection(
+  raw: unknown,
+): { ok: true; execution: AuditExecution } | { ok: false; error: string } {
+  const result = auditExecutionProjectionSchema.safeParse(raw);
+  if (!result.success) {
+    return { ok: false, error: result.error.message };
+  }
+  return { ok: true, execution: result.data };
+}
+
+// ============================================================
+// Audit input (assembled by the loader)
+// ============================================================
+
+export interface AuditConversationRow {
+  id: string;
+  role: string | null;
+  totalCostUsd: number | null;
+  totalDurationMs: number | null;
+  totalTurns: number | null;
+  contextTokens: number | null;
+  contextWindowMax: number | null;
+  transcriptPath: string | null;
+  /** Loader-supplied transcript tallies; absent when the file is unreadable. */
+  transcriptScan?: TranscriptScan | null;
+}
+
+export interface ContextLogs {
+  iterations: JsonlRecord[];
+  tasks: JsonlRecord[];
+  validation: JsonlRecord[];
+  validatorResponses: Array<{ file: string; parsePath: string | null }>;
+}
+
+export interface AuditInput {
+  source: "active" | "archived";
+  execution: AuditExecution;
+  events: AuditEvent[];
+  conversations: AuditConversationRow[];
+  contextLogs: Record<string, ContextLogs>;
+  paths: { workflowLogsDir: string | null; transcriptsDir: string | null };
+  /** Diffstat of the final_publish join commit; loader-supplied, best-effort. */
+  finalPublish?: { commitSha: string; files: PublishFileStat[] } | null;
+}
+
+// ============================================================
+// Report types
+// ============================================================
+
+export type Severity = "high" | "medium" | "info";
+export type HaltClass = "infrastructure" | "agent" | "user" | "unknown";
+export type GapClassification = "agent_work" | "human_wait" | "unexplained";
+
+export interface IterationReport {
+  iterationNumber: number;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  agentTurns: number;
+  seedPromptLength: number | null;
+  maxContextTokens: number | null;
+  conversationId: string | null;
+  model: string | null;
+}
+
+export interface ValidationIssue {
+  taskId: string;
+  title: string;
+  description: string;
+}
+
+export interface ValidationReport {
+  occurredAt: string;
+  pass: boolean;
+  summary: string;
+  issueCount: number;
+  reopenTaskIds: string[];
+  issues: ValidationIssue[];
+}
+
+export interface WaitReport {
+  requestedAt: string;
+  resolvedAt: string | null;
+  decision: string | null;
+  waitMs: number | null;
+}
+
+export interface ConversationReport {
+  conversationId: string;
+  lane: string | null;
+  contextId: string | null;
+  costUsd: number | null;
+  durationMs: number | null;
+  turns: number | null;
+  transcriptPath: string | null;
+  transcript: TranscriptScan | null;
+}
+
+export interface TaskFailureReport {
+  taskId: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface ContextReport {
+  contextId: string;
+  title: string;
+  status: string;
+  totalTaskCount: number;
+  completedTaskCount: number;
+  iterationCount: number;
+  consecutiveFailureCount: number;
+  mergeStatus: string;
+  branchName: string | null;
+  laneId: string | null;
+  worktreePath: string | null;
+  firstActivityAt: string | null;
+  lastActivityAt: string | null;
+  agentTurnMs: number;
+  iterations: IterationReport[];
+  validations: ValidationReport[];
+  approvalWaits: WaitReport[];
+  userInputWaits: WaitReport[];
+  peakContextTokens: number | null;
+  contextWindowMax: number | null;
+  peakOccupancyPct: number | null;
+  /** Configured continuity rotation limit from the working definition. */
+  rotationLimitTokens: number | null;
+  taskFailures: TaskFailureReport[];
+  parseFallbacks: Array<{ file: string; parsePath: string | null }>;
+  conversations: ConversationReport[];
+}
+
+export interface GapReport {
+  startedAt: string;
+  endedAt: string;
+  gapMs: number;
+  classification: GapClassification;
+  fromEvent: string;
+  toEvent: string;
+}
+
+export interface Finding {
+  kind: string;
+  severity: Severity;
+  contextId: string | null;
+  summary: string;
+}
+
+export interface AuditReport {
+  overview: {
+    executionId: string;
+    seedDefinitionId: string;
+    seedDefinitionRevision: number;
+    launchedTier: string;
+    boundInputs: Record<string, string>;
+    status: string;
+    source: "active" | "archived";
+    startedAt: string;
+    completedAt: string | null;
+    wallClockMs: number | null;
+    contextsTotal: number;
+    contextsCompleted: number;
+    haltReason: AuditHaltReason | null;
+    pendingHaltReason: AuditHaltReason | null;
+    secondaryHaltReasons: AuditHaltReason[];
+    charterPresent: boolean;
+    sharedDocumentCount: number;
+  };
+  contexts: ContextReport[];
+  cost: {
+    totalUsd: number;
+    /**
+     * Recorded totals with each scanned conversation's cost replaced by its
+     * transcript lineage total. Null when no transcript scans were available.
+     * Diverges from `totalUsd` for rows written before the accrual fix
+     * (cumulative-consumed-as-delta inflation).
+     */
+    correctedTotalUsd: number | null;
+    byLane: Record<string, number>;
+    byContext: Record<string, number>;
+    knownConversationCount: number;
+    missingCostCount: number;
+    /**
+     * Codex context-validator spend from validation-result review artifacts —
+     * these runs have no conversation cost row. `estimatedUsd` sums only
+     * events that recorded a costUsd (older events carry tokens only); null
+     * when no event carried a usage artifact.
+     */
+    validators: {
+      estimatedUsd: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      usageEventCount: number;
+      unpricedEventCount: number;
+    } | null;
+  };
+  time: {
+    wallClockMs: number | null;
+    agentTurnMsTotal: number;
+    humanWaitMsTotal: number;
+    gaps: GapReport[];
+  };
+  publish: {
+    commitSha: string;
+    fileCount: number;
+    totalAdditions: number;
+    totalDeletions: number;
+    scratchFiles: Array<{ path: string; additions: number }>;
+  } | null;
+  friction: Finding[];
+  positives: Finding[];
+  pointers: {
+    workflowLogsDir: string | null;
+    transcripts: Array<{
+      conversationId: string;
+      transcriptPath: string | null;
+      lane: string | null;
+      contextId: string | null;
+    }>;
+  };
+}
+
+// ============================================================
+// Halt classification
+// ============================================================
+
+const INFRA_HALT_TYPES = new Set([
+  "recovery_error",
+  "script_validator_missing_command",
+  "validator_infra_error",
+  "merge_failure",
+  "join_failure",
+  "merge_precondition_failed",
+  "worktree_creation_dirty",
+  "execution_loop_failed",
+  "agent_turn_failed",
+]);
+const AGENT_HALT_TYPES = new Set([
+  "circuit_breaker",
+  "max_iterations",
+  "collaboration_failure",
+]);
+
+export function classifyHaltReason(type: string): HaltClass {
+  if (INFRA_HALT_TYPES.has(type)) return "infrastructure";
+  if (AGENT_HALT_TYPES.has(type)) return "agent";
+  if (type === "aborted") return "user";
+  return "unknown";
+}
+
+// ============================================================
+// Field access helpers
+// ============================================================
+
+function fieldStr(fields: Record<string, unknown>, key: string): string | null {
+  const value = fields[key];
+  return typeof value === "string" ? value : null;
+}
+
+function fieldNum(fields: Record<string, unknown>, key: string): number | null {
+  const value = fields[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseIso(value: string | null): number | null {
+  if (value === null) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+// ============================================================
+// Transcript scanning (pure)
+// ============================================================
+
+/**
+ * Cheap single-pass tallies over one conversation transcript, used to rank
+ * hotspot conversations and cross-check DB cost rows without reading the
+ * transcript qualitatively.
+ *
+ * The cost rule mirrors `summarizeTranscriptTelemetry`
+ * (src/lib/workflow-graph/conversation-telemetry.ts): the SDK's
+ * `result.total_cost_usd` is CUMULATIVE per session lineage, so the true
+ * conversation cost is the sum of each lineage's FINAL value. Historical DB
+ * rows written before the accrual fix consumed cumulatives as deltas and are
+ * inflated — the `cost_mismatch` detector exists to surface exactly that.
+ * Standalone rather than imported per this module's header: the audit CLI
+ * must stay dependency-free and tolerant of transcripts from other builds.
+ */
+export interface TranscriptScan {
+  /** Σ of each SDK session lineage's final cumulative cost; null if no results. */
+  costUsd: number | null;
+  lineageCount: number;
+  /** Σ `num_turns` across all SDK result entries; null if no results. */
+  apiTurns: number | null;
+  toolUseCount: number;
+  /** Tool-call counts, most-used first (capped). */
+  toolCounts: Array<{ name: string; count: number }>;
+  toolErrorCount: number;
+  /** Background tasks reported `killed` (typically at a turn boundary). */
+  backgroundTasksKilled: number;
+  modelFallbacks: number;
+  compactions: number;
+  reads: { uniqueFiles: number; totalReads: number; repeatReads: number };
+  /** Files Read more than once, most-repeated first (capped). */
+  topReReads: Array<{ path: string; count: number }>;
+}
+
+const TOP_TOOL_COUNTS_LIMIT = 5;
+const TOP_RE_READS_LIMIT = 3;
+
+export function scanTranscriptText(jsonlText: string): TranscriptScan {
+  const lineageFinalCost = new Map<string, number>();
+  let committedLineageCost = 0;
+  let lineageRestarts = 0;
+  let apiTurns: number | null = null;
+  const toolCounts = new Map<string, number>();
+  const readCounts = new Map<string, number>();
+  let toolErrorCount = 0;
+  let backgroundTasksKilled = 0;
+  let modelFallbacks = 0;
+  let compactions = 0;
+
+  for (const line of jsonlText.split(/\r?\n/)) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const entry = asRecord(parsed);
+    if (entry === null) continue;
+    const raw = asRecord(entry.raw);
+
+    if (raw !== null && typeof raw.total_cost_usd === "number") {
+      const lineageId = String(raw.session_id ?? "unknown");
+      // Cumulative per lineage — the last result in file order is the final.
+      // A restarted subprocess can resume the SAME session id with its
+      // cumulative reset; the drop is the lineage boundary, so bank the
+      // finished lineage's final before tracking the new one.
+      const previous = lineageFinalCost.get(lineageId);
+      if (previous !== undefined && raw.total_cost_usd < previous) {
+        committedLineageCost += previous;
+        lineageRestarts += 1;
+      }
+      lineageFinalCost.set(lineageId, raw.total_cost_usd);
+      if (typeof raw.num_turns === "number") {
+        apiTurns = (apiTurns ?? 0) + raw.num_turns;
+      }
+    }
+
+    if (raw !== null && typeof raw.subtype === "string") {
+      if (raw.subtype === "task_updated") {
+        const patch = asRecord(raw.patch);
+        if (patch !== null && patch.status === "killed") {
+          backgroundTasksKilled += 1;
+        }
+      } else if (raw.subtype === "model_refusal_fallback") {
+        modelFallbacks += 1;
+      } else if (raw.subtype === "compact_boundary") {
+        compactions += 1;
+      }
+    }
+
+    if (entry.type === "tool_result" && raw !== null) {
+      const message = asRecord(raw.message);
+      const content = message?.content;
+      if (Array.isArray(content)) {
+        for (const rawBlock of content) {
+          const block = asRecord(rawBlock);
+          if (
+            block !== null &&
+            block.type === "tool_result" &&
+            block.is_error === true
+          ) {
+            toolErrorCount += 1;
+          }
+        }
+      }
+    }
+
+    if (entry.role === "assistant" && Array.isArray(entry.content)) {
+      for (const rawBlock of entry.content) {
+        const block = asRecord(rawBlock);
+        if (block === null || block.type !== "tool_use") continue;
+        const name = typeof block.name === "string" ? block.name : "unknown";
+        toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
+        if (name === "Read") {
+          const input = asRecord(block.input);
+          const filePath = input?.file_path;
+          if (typeof filePath === "string" && filePath.length > 0) {
+            readCounts.set(filePath, (readCounts.get(filePath) ?? 0) + 1);
+          }
+        }
+      }
+    }
+  }
+
+  let toolUseCount = 0;
+  for (const count of toolCounts.values()) toolUseCount += count;
+  let totalReads = 0;
+  for (const count of readCounts.values()) totalReads += count;
+
+  return {
+    costUsd:
+      lineageFinalCost.size === 0
+        ? null
+        : committedLineageCost +
+          [...lineageFinalCost.values()].reduce((sum, cost) => sum + cost, 0),
+    lineageCount: lineageFinalCost.size + lineageRestarts,
+    apiTurns,
+    toolUseCount,
+    toolCounts: [...toolCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, TOP_TOOL_COUNTS_LIMIT)
+      .map(([name, count]) => ({ name, count })),
+    toolErrorCount,
+    backgroundTasksKilled,
+    modelFallbacks,
+    compactions,
+    reads: {
+      uniqueFiles: readCounts.size,
+      totalReads,
+      repeatReads: totalReads - readCounts.size,
+    },
+    topReReads: [...readCounts.entries()]
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, TOP_RE_READS_LIMIT)
+      .map(([path, count]) => ({ path, count })),
+  };
+}
+
+// ============================================================
+// Final-publish composition (git numstat)
+// ============================================================
+
+export interface PublishFileStat {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+/** Parses `git show --numstat --format=` output; `-` (binary) counts as 0. */
+export function parseGitNumstat(output: string): PublishFileStat[] {
+  const files: PublishFileStat[] = [];
+  for (const line of output.split("\n")) {
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    const [rawAdd, rawDel, ...pathParts] = parts;
+    const filePath = pathParts.join("\t").trim();
+    if (filePath.length === 0) continue;
+    const additions = Number.parseInt(rawAdd ?? "", 10);
+    const deletions = Number.parseInt(rawDel ?? "", 10);
+    files.push({
+      path: filePath,
+      additions: Number.isNaN(additions) ? 0 : additions,
+      deletions: Number.isNaN(deletions) ? 0 : deletions,
+    });
+  }
+  return files;
+}
+
+/**
+ * Lane auto-commits sweep untracked files, so live-run debris (dev-server
+ * logs, poll captures) can ride a final publish into the session branch.
+ * `.cc/graph-workflow-docs/` is exempt: the engine materializes the charter
+ * and shared documents there on purpose.
+ */
+function isScratchPath(filePath: string): boolean {
+  if (filePath.startsWith(".cc/graph-workflow-docs/")) return false;
+  return filePath.startsWith(".cc/") || filePath.endsWith(".log");
+}
+
+// ============================================================
+// Interval math (for gap classification)
+// ============================================================
+
+interface Interval {
+  start: number;
+  end: number;
+}
+
+function mergeIntervals(intervals: Interval[]): Interval[] {
+  const sorted = [...intervals]
+    .filter((i) => i.end > i.start)
+    .sort((a, b) => a.start - b.start);
+  const merged: Interval[] = [];
+  for (const interval of sorted) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && interval.start <= last.end) {
+      last.end = Math.max(last.end, interval.end);
+    } else {
+      merged.push({ ...interval });
+    }
+  }
+  return merged;
+}
+
+function overlapMs(gap: Interval, intervals: Interval[]): number {
+  let total = 0;
+  for (const interval of intervals) {
+    const start = Math.max(gap.start, interval.start);
+    const end = Math.min(gap.end, interval.end);
+    if (end > start) total += end - start;
+  }
+  return total;
+}
+
+// ============================================================
+// Aggregation
+// ============================================================
+
+const GAP_THRESHOLD_MS = 5 * 60 * 1000;
+const LONG_HUMAN_WAIT_MS = 10 * 60 * 1000;
+const LONG_STALL_MS = 30 * 60 * 1000;
+const WINDOW_PRESSURE_PCT = 70;
+const PROMPT_GROWTH_FACTOR = 2;
+const PROMPT_GROWTH_MIN_DELTA = 4000;
+const MAX_GAPS_REPORTED = 10;
+const COST_MISMATCH_MIN_ABS_USD = 0.5;
+const COST_MISMATCH_MIN_REL = 0.1;
+const ROTATION_OVERRUN_FACTOR = 1.5;
+const BACKGROUND_KILL_THRESHOLD = 3;
+const SCRATCH_FILES_RENDER_CAP = 3;
+const COST_MISMATCH_RENDER_CAP = 3;
+
+const AGENT_TURN_START_EVENTS = new Set([
+  "iteration.prompt_sent",
+  "iteration.follow_up_sent",
+]);
+const VALIDATOR_WORK_START_EVENTS = new Set([
+  "context_validator.started",
+  "task_validator.started",
+  "validator.invoked",
+]);
+
+interface TimelinePoint {
+  at: number;
+  label: string;
+}
+
+function buildIterations(records: JsonlRecord[]): IterationReport[] {
+  const iterations: IterationReport[] = [];
+  let current: IterationReport | null = null;
+  for (const record of records) {
+    if (record.event === "iteration.started") {
+      current = {
+        iterationNumber:
+          fieldNum(record.fields, "iterationNumber") ?? iterations.length + 1,
+        startedAt: record.timestamp,
+        completedAt: null,
+        durationMs: null,
+        agentTurns: 0,
+        seedPromptLength: null,
+        maxContextTokens: null,
+        conversationId: null,
+        model: fieldStr(record.fields, "model"),
+      };
+      iterations.push(current);
+      continue;
+    }
+    if (current === null) continue;
+    if (record.event === "iteration.conversation_resolved") {
+      current.conversationId ??= fieldStr(record.fields, "conversationId");
+    } else if (record.event === "iteration.prompt_sent") {
+      current.seedPromptLength ??= fieldNum(record.fields, "promptLength");
+    } else if (record.event === "iteration.agent_turn_completed") {
+      current.agentTurns += 1;
+      const tokens = fieldNum(record.fields, "contextTokens");
+      if (tokens !== null) {
+        current.maxContextTokens = Math.max(
+          current.maxContextTokens ?? 0,
+          tokens,
+        );
+      }
+    } else if (record.event === "iteration.completed") {
+      current.completedAt = record.timestamp;
+      const start = parseIso(current.startedAt);
+      const end = parseIso(record.timestamp);
+      current.durationMs = start !== null && end !== null ? end - start : null;
+    }
+  }
+  return iterations;
+}
+
+/** Intervals during which an agent (implementer or validator) was working. */
+function buildWorkIntervals(logs: ContextLogs): Interval[] {
+  const intervals: Interval[] = [];
+  const collect = (records: JsonlRecord[], startEvents: Set<string>) => {
+    for (let i = 0; i < records.length - 1; i++) {
+      const record = records[i];
+      const next = records[i + 1];
+      if (record === undefined || next === undefined) continue;
+      if (!startEvents.has(record.event)) continue;
+      const start = parseIso(record.timestamp);
+      const end = parseIso(next.timestamp);
+      if (start !== null && end !== null && end > start) {
+        intervals.push({ start, end });
+      }
+    }
+  };
+  collect(logs.iterations, AGENT_TURN_START_EVENTS);
+  collect(logs.validation, VALIDATOR_WORK_START_EVENTS);
+  return intervals;
+}
+
+function pairWaits(
+  events: AuditEvent[],
+  pendingType: string,
+  resolvedType: string,
+  requestedAtKey: string,
+  resolvedAtKey: string,
+  decisionKey: string,
+  contextId: string,
+): WaitReport[] {
+  const waits: WaitReport[] = [];
+  const pendingQueue: AuditEvent[] = [];
+  for (const event of events) {
+    if (fieldStr(event.fields, "contextId") !== contextId) continue;
+    if (event.type === pendingType) {
+      pendingQueue.push(event);
+    } else if (event.type === resolvedType) {
+      const pending = pendingQueue.shift();
+      if (pending === undefined) continue;
+      const requestedAt =
+        fieldStr(pending.fields, requestedAtKey) ?? pending.occurredAt;
+      const resolvedAt =
+        fieldStr(event.fields, resolvedAtKey) ?? event.occurredAt;
+      const start = parseIso(requestedAt);
+      const end = parseIso(resolvedAt);
+      waits.push({
+        requestedAt,
+        resolvedAt,
+        decision: fieldStr(event.fields, decisionKey),
+        waitMs: start !== null && end !== null ? end - start : null,
+      });
+    }
+  }
+  for (const pending of pendingQueue) {
+    waits.push({
+      requestedAt:
+        fieldStr(pending.fields, requestedAtKey) ?? pending.occurredAt,
+      resolvedAt: null,
+      decision: null,
+      waitMs: null,
+    });
+  }
+  return waits;
+}
+
+function buildValidations(
+  events: AuditEvent[],
+  contextId: string,
+): ValidationReport[] {
+  const validations: ValidationReport[] = [];
+  for (const event of events) {
+    if (event.type !== "graph-workflow-validation-result") continue;
+    if (fieldStr(event.fields, "contextId") !== contextId) continue;
+    const rawIssues = event.fields.issues;
+    const issues: ValidationIssue[] = [];
+    if (Array.isArray(rawIssues)) {
+      for (const raw of rawIssues) {
+        const record = asRecord(raw);
+        if (record === null) continue;
+        issues.push({
+          taskId: fieldStr(record, "taskId") ?? "",
+          title: fieldStr(record, "title") ?? "",
+          description: fieldStr(record, "description") ?? "",
+        });
+      }
+    }
+    const rawReopen = event.fields.reopenTaskIds;
+    const reopenTaskIds = Array.isArray(rawReopen)
+      ? rawReopen.filter((id): id is string => typeof id === "string")
+      : [];
+    validations.push({
+      occurredAt: event.occurredAt,
+      pass: event.fields.pass === true,
+      summary: fieldStr(event.fields, "summary") ?? "",
+      issueCount: issues.length,
+      reopenTaskIds,
+      issues,
+    });
+  }
+  return validations.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+}
+
+const EMPTY_CONTEXT_STATE = auditContextStateSchema.parse({});
+const EMPTY_LOGS: ContextLogs = {
+  iterations: [],
+  tasks: [],
+  validation: [],
+  validatorResponses: [],
+};
+
+export function buildAuditReport(input: AuditInput): AuditReport {
+  const { execution, events, conversations, contextLogs } = input;
+
+  // ---- conversation attribution --------------------------------------
+  const laneByConversation = new Map<
+    string,
+    { lane: string; contextId: string }
+  >();
+  for (const [contextId, lanes] of Object.entries(execution.laneStates)) {
+    for (const [laneKey, laneState] of Object.entries(lanes)) {
+      const conversationId =
+        laneState.sessionRef?.conversationId ??
+        laneState.workflowConversationId;
+      if (typeof conversationId === "string" && conversationId.length > 0) {
+        laneByConversation.set(conversationId, {
+          lane: laneState.lane === "unknown" ? laneKey : laneState.lane,
+          contextId,
+        });
+      }
+    }
+  }
+  // laneStates only retain the most recent conversation per lane, so rotated
+  // implementer conversations are recovered from iteration.conversation_resolved
+  // records and validator conversations from validation-result sessionRefs.
+  for (const [contextId, logs] of Object.entries(contextLogs)) {
+    for (const record of logs.iterations) {
+      if (record.event !== "iteration.conversation_resolved") continue;
+      const conversationId = fieldStr(record.fields, "conversationId");
+      if (conversationId !== null && !laneByConversation.has(conversationId)) {
+        laneByConversation.set(conversationId, {
+          lane: "implementer",
+          contextId,
+        });
+      }
+    }
+  }
+  for (const event of events) {
+    if (event.type !== "graph-workflow-validation-result") continue;
+    const contextId = fieldStr(event.fields, "contextId");
+    const sessionRef = asRecord(event.fields.sessionRef);
+    if (sessionRef === null || contextId === null) continue;
+    const conversationId = fieldStr(sessionRef, "conversationId");
+    if (conversationId !== null && !laneByConversation.has(conversationId)) {
+      laneByConversation.set(conversationId, {
+        lane: fieldStr(sessionRef, "lane") ?? "context_validator",
+        contextId,
+      });
+    }
+  }
+  const contextByConversation = new Map<string, string>();
+  for (const [conversationId, ref] of laneByConversation) {
+    contextByConversation.set(conversationId, ref.contextId);
+  }
+  for (const task of Object.values(execution.taskStates)) {
+    if (task.lastConversationId !== null && task.contextId.length > 0) {
+      if (!contextByConversation.has(task.lastConversationId)) {
+        contextByConversation.set(task.lastConversationId, task.contextId);
+      }
+    }
+  }
+
+  const conversationReports: ConversationReport[] = conversations.map(
+    (row) => ({
+      conversationId: row.id,
+      lane: laneByConversation.get(row.id)?.lane ?? null,
+      contextId: contextByConversation.get(row.id) ?? null,
+      costUsd: row.totalCostUsd,
+      durationMs: row.totalDurationMs,
+      turns: row.totalTurns,
+      transcriptPath: row.transcriptPath,
+      transcript: row.transcriptScan ?? null,
+    }),
+  );
+
+  // ---- per-context reports --------------------------------------------
+  const definitionOrder = new Map<string, number>();
+  const titles = new Map<string, string>();
+  const rotationLimits = new Map<string, number>();
+  execution.workingDefinition.executionContexts.forEach((context, index) => {
+    definitionOrder.set(context.id, index);
+    titles.set(context.id, context.title);
+    const limit = context.iterationPolicy?.continuity?.contextLimitTokens;
+    if (typeof limit === "number" && limit > 0) {
+      rotationLimits.set(context.id, limit);
+    }
+  });
+  const contextIds = new Set<string>([
+    ...Object.keys(execution.contextStates),
+    ...definitionOrder.keys(),
+    ...Object.keys(contextLogs),
+  ]);
+
+  const workIntervals: Interval[] = [];
+  const humanIntervals: Interval[] = [];
+  const contexts: ContextReport[] = [];
+
+  for (const contextId of contextIds) {
+    const state = execution.contextStates[contextId] ?? EMPTY_CONTEXT_STATE;
+    const logs = contextLogs[contextId] ?? EMPTY_LOGS;
+    const iterations = buildIterations(logs.iterations);
+    const contextWork = buildWorkIntervals(logs);
+    workIntervals.push(...contextWork);
+
+    let agentTurnMs = 0;
+    for (let i = 0; i < logs.iterations.length - 1; i++) {
+      const record = logs.iterations[i];
+      const next = logs.iterations[i + 1];
+      if (record === undefined || next === undefined) continue;
+      if (!AGENT_TURN_START_EVENTS.has(record.event)) continue;
+      const start = parseIso(record.timestamp);
+      const end = parseIso(next.timestamp);
+      if (start !== null && end !== null && end > start) {
+        agentTurnMs += end - start;
+      }
+    }
+
+    const allRecords = [...logs.iterations, ...logs.tasks, ...logs.validation];
+    const timestamps = allRecords
+      .map((r) => parseIso(r.timestamp))
+      .filter((t): t is number => t !== null);
+    const firstActivity =
+      timestamps.length > 0 ? Math.min(...timestamps) : null;
+    const lastActivity = timestamps.length > 0 ? Math.max(...timestamps) : null;
+
+    const approvalWaits = pairWaits(
+      events,
+      "graph-workflow-approval-pending",
+      "graph-workflow-approval-resolved",
+      "requestedAt",
+      "decidedAt",
+      "decision",
+      contextId,
+    );
+    const userInputWaits = pairWaits(
+      events,
+      "graph-workflow-user-input-pending",
+      "graph-workflow-user-input-resolved",
+      "requestedAt",
+      "resolvedAt",
+      "resolution",
+      contextId,
+    );
+    for (const wait of [...approvalWaits, ...userInputWaits]) {
+      const start = parseIso(wait.requestedAt);
+      const end = parseIso(wait.resolvedAt);
+      if (start !== null && end !== null && end > start) {
+        humanIntervals.push({ start, end });
+      }
+    }
+
+    const laneStates = Object.values(execution.laneStates[contextId] ?? {});
+    let peakContextTokens: number | null = null;
+    let contextWindowMax: number | null = null;
+    for (const iteration of iterations) {
+      if (iteration.maxContextTokens !== null) {
+        peakContextTokens = Math.max(
+          peakContextTokens ?? 0,
+          iteration.maxContextTokens,
+        );
+      }
+    }
+    for (const record of logs.iterations) {
+      if (record.event !== "iteration.agent_turn_completed") continue;
+      contextWindowMax ??= fieldNum(record.fields, "contextWindowMax");
+    }
+    for (const laneState of laneStates) {
+      if (laneState.lastContextTokens !== null) {
+        peakContextTokens = Math.max(
+          peakContextTokens ?? 0,
+          laneState.lastContextTokens,
+        );
+      }
+      contextWindowMax ??= laneState.lastContextWindowMax;
+    }
+    const peakOccupancyPct =
+      peakContextTokens !== null &&
+      contextWindowMax !== null &&
+      contextWindowMax > 0
+        ? Math.round((peakContextTokens / contextWindowMax) * 100)
+        : null;
+
+    const taskFailures: TaskFailureReport[] = [];
+    for (const [taskKey, task] of Object.entries(execution.taskStates)) {
+      if (task.contextId !== contextId) continue;
+      const taskId = task.taskId ?? taskKey;
+      for (const failure of task.failureHistory) {
+        taskFailures.push({
+          taskId,
+          message: failure.message,
+          timestamp: failure.timestamp,
+        });
+      }
+      if (task.failureHistory.length === 0 && task.failureMessage !== null) {
+        taskFailures.push({
+          taskId,
+          message: task.failureMessage,
+          timestamp: "",
+        });
+      }
+    }
+
+    contexts.push({
+      contextId,
+      title: titles.get(contextId) ?? contextId,
+      status: state.status,
+      totalTaskCount: state.totalTaskCount,
+      completedTaskCount: state.completedTaskCount,
+      iterationCount: state.iterationCount,
+      consecutiveFailureCount: state.consecutiveFailureCount,
+      mergeStatus: state.mergeStatus,
+      branchName: state.branchName,
+      laneId: state.laneId,
+      worktreePath: state.worktreePath,
+      firstActivityAt:
+        firstActivity !== null ? new Date(firstActivity).toISOString() : null,
+      lastActivityAt:
+        lastActivity !== null ? new Date(lastActivity).toISOString() : null,
+      agentTurnMs,
+      iterations,
+      validations: buildValidations(events, contextId),
+      approvalWaits,
+      userInputWaits,
+      peakContextTokens,
+      contextWindowMax,
+      peakOccupancyPct,
+      rotationLimitTokens: rotationLimits.get(contextId) ?? null,
+      taskFailures,
+      parseFallbacks: logs.validatorResponses.filter(
+        (r) => r.parsePath !== "structured_output",
+      ),
+      conversations: conversationReports.filter(
+        (c) => c.contextId === contextId,
+      ),
+    });
+  }
+
+  contexts.sort((a, b) => {
+    const aFirst = parseIso(a.firstActivityAt) ?? Number.POSITIVE_INFINITY;
+    const bFirst = parseIso(b.firstActivityAt) ?? Number.POSITIVE_INFINITY;
+    if (aFirst !== bFirst) return aFirst - bFirst;
+    const aOrder = definitionOrder.get(a.contextId) ?? Number.MAX_SAFE_INTEGER;
+    const bOrder = definitionOrder.get(b.contextId) ?? Number.MAX_SAFE_INTEGER;
+    return aOrder - bOrder;
+  });
+
+  // ---- cost rollup ------------------------------------------------------
+  let totalUsd = 0;
+  let missingCostCount = 0;
+  let anyTranscriptCost = false;
+  let correctedSum = 0;
+  const costMismatches: Array<{
+    conversationId: string;
+    recordedUsd: number;
+    transcriptUsd: number;
+  }> = [];
+  const byLane: Record<string, number> = {};
+  const byContext: Record<string, number> = {};
+  for (const conversation of conversationReports) {
+    const cost = conversation.costUsd;
+    if (cost === null) {
+      missingCostCount += 1;
+    } else {
+      totalUsd += cost;
+    }
+    const transcriptCost = conversation.transcript?.costUsd ?? null;
+    if (transcriptCost !== null) {
+      anyTranscriptCost = true;
+      correctedSum += transcriptCost;
+      if (
+        cost !== null &&
+        Math.abs(cost - transcriptCost) >=
+          Math.max(
+            COST_MISMATCH_MIN_ABS_USD,
+            transcriptCost * COST_MISMATCH_MIN_REL,
+          )
+      ) {
+        costMismatches.push({
+          conversationId: conversation.conversationId,
+          recordedUsd: cost,
+          transcriptUsd: transcriptCost,
+        });
+      }
+    } else {
+      correctedSum += cost ?? 0;
+    }
+    const lane = conversation.lane ?? "unattributed";
+    byLane[lane] = (byLane[lane] ?? 0) + (cost ?? 0);
+    if (conversation.contextId !== null) {
+      byContext[conversation.contextId] =
+        (byContext[conversation.contextId] ?? 0) + (cost ?? 0);
+    }
+  }
+  const correctedTotalUsd = anyTranscriptCost ? correctedSum : null;
+
+  let validators: AuditReport["cost"]["validators"] = null;
+  for (const event of events) {
+    if (event.type !== "graph-workflow-validation-result") continue;
+    const artifact = asRecord(event.fields.reviewArtifact);
+    if (artifact === null || artifact.engine !== "codex") continue;
+    const usage = asRecord(artifact.usage);
+    if (usage === null) continue;
+    validators ??= {
+      estimatedUsd: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      usageEventCount: 0,
+      unpricedEventCount: 0,
+    };
+    validators.usageEventCount += 1;
+    validators.inputTokens += fieldNum(usage, "inputTokens") ?? 0;
+    validators.cachedInputTokens += fieldNum(usage, "cachedInputTokens") ?? 0;
+    validators.outputTokens += fieldNum(usage, "outputTokens") ?? 0;
+    const costUsd = fieldNum(usage, "costUsd");
+    if (costUsd === null) {
+      validators.unpricedEventCount += 1;
+    } else {
+      validators.estimatedUsd += costUsd;
+    }
+  }
+
+  // ---- final publish composition ----------------------------------------
+  const finalPublish = input.finalPublish ?? null;
+  const publish =
+    finalPublish === null
+      ? null
+      : {
+          commitSha: finalPublish.commitSha,
+          fileCount: finalPublish.files.length,
+          totalAdditions: finalPublish.files.reduce(
+            (sum, f) => sum + f.additions,
+            0,
+          ),
+          totalDeletions: finalPublish.files.reduce(
+            (sum, f) => sum + f.deletions,
+            0,
+          ),
+          scratchFiles: finalPublish.files
+            .filter((f) => isScratchPath(f.path))
+            .map((f) => ({ path: f.path, additions: f.additions })),
+        };
+
+  // ---- timing: wall clock, waits, gaps ---------------------------------
+  const startedMs = parseIso(execution.startedAt);
+  const completedMs = parseIso(execution.completedAt);
+  const wallClockMs =
+    startedMs !== null && completedMs !== null ? completedMs - startedMs : null;
+
+  const humanWaitMsTotal = contexts.reduce(
+    (sum, context) =>
+      sum +
+      [...context.approvalWaits, ...context.userInputWaits].reduce(
+        (inner, wait) => inner + (wait.waitMs ?? 0),
+        0,
+      ),
+    0,
+  );
+  const agentTurnMsTotal = contexts.reduce(
+    (sum, context) => sum + context.agentTurnMs,
+    0,
+  );
+
+  const points: TimelinePoint[] = [];
+  if (startedMs !== null)
+    points.push({ at: startedMs, label: "execution.started" });
+  if (completedMs !== null) {
+    points.push({ at: completedMs, label: "execution.completed" });
+  }
+  for (const event of events) {
+    const at = parseIso(event.occurredAt);
+    if (at !== null) points.push({ at, label: event.type });
+  }
+  for (const logs of Object.values(contextLogs)) {
+    for (const record of [
+      ...logs.iterations,
+      ...logs.tasks,
+      ...logs.validation,
+    ]) {
+      const at = parseIso(record.timestamp);
+      if (at !== null) points.push({ at, label: record.event });
+    }
+  }
+  points.sort((a, b) => a.at - b.at);
+
+  const mergedWork = mergeIntervals(workIntervals);
+  const mergedHuman = mergeIntervals(humanIntervals);
+  const gaps: GapReport[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const from = points[i];
+    const to = points[i + 1];
+    if (from === undefined || to === undefined) continue;
+    const gapMs = to.at - from.at;
+    if (gapMs <= GAP_THRESHOLD_MS) continue;
+    const gap: Interval = { start: from.at, end: to.at };
+    const humanOverlap = overlapMs(gap, mergedHuman);
+    const workOverlap = overlapMs(gap, mergedWork);
+    let classification: GapClassification;
+    if (humanOverlap / gapMs > 0.5) {
+      classification = "human_wait";
+    } else if (workOverlap / gapMs > 0.5) {
+      classification = "agent_work";
+    } else {
+      classification = "unexplained";
+    }
+    gaps.push({
+      startedAt: new Date(from.at).toISOString(),
+      endedAt: new Date(to.at).toISOString(),
+      gapMs,
+      classification,
+      fromEvent: from.label,
+      toEvent: to.label,
+    });
+  }
+  gaps.sort((a, b) => b.gapMs - a.gapMs);
+  const reportedGaps = gaps.slice(0, MAX_GAPS_REPORTED);
+
+  // ---- friction ----------------------------------------------------------
+  const friction: Finding[] = [];
+
+  const haltFindings: Array<{ reason: AuditHaltReason; pending: boolean }> = [];
+  if (execution.haltReason !== null) {
+    haltFindings.push({ reason: execution.haltReason, pending: false });
+  }
+  for (const reason of execution.secondaryHaltReasons) {
+    haltFindings.push({ reason, pending: false });
+  }
+  if (execution.pendingHaltReason !== null) {
+    haltFindings.push({ reason: execution.pendingHaltReason, pending: true });
+  }
+  for (const { reason, pending } of haltFindings) {
+    const haltClass = classifyHaltReason(reason.type);
+    const detail = reason.message ?? reason.summary ?? "";
+    friction.push({
+      kind: "halt",
+      severity: pending ? "medium" : "high",
+      contextId: reason.contextId,
+      summary: `${pending ? "pending halt" : "halted"}: ${reason.type} (${haltClass} failure)${detail.length > 0 ? ` — ${detail}` : ""}`,
+    });
+  }
+
+  for (const event of events) {
+    if (event.type !== "graph-workflow-circuit-breaker") continue;
+    friction.push({
+      kind: "circuit_breaker",
+      severity: "high",
+      contextId: fieldStr(event.fields, "contextId"),
+      summary: `circuit breaker event at ${event.occurredAt}`,
+    });
+  }
+
+  for (const context of contexts) {
+    const noGos = context.validations.filter((v) => !v.pass);
+    if (noGos.length > 0) {
+      const first = noGos[0];
+      friction.push({
+        kind: "validation_no_go",
+        severity: noGos.length > 1 ? "high" : "medium",
+        contextId: context.contextId,
+        summary: `${noGos.length} NO-GO validation verdict(s); first: ${first?.summary ?? ""}`,
+      });
+    }
+    for (const failure of context.taskFailures) {
+      friction.push({
+        kind: "task_failure",
+        severity: "medium",
+        contextId: context.contextId,
+        summary: `task "${failure.taskId}": ${failure.message}`,
+      });
+    }
+    if (
+      context.peakOccupancyPct !== null &&
+      context.peakOccupancyPct >= WINDOW_PRESSURE_PCT
+    ) {
+      friction.push({
+        kind: "context_window_pressure",
+        severity: "high",
+        contextId: context.contextId,
+        summary: `peak context occupancy ${context.peakOccupancyPct}% (${context.peakContextTokens ?? 0} of ${context.contextWindowMax ?? 0} tokens) — output quality degrades near the window limit`,
+      });
+    }
+    if (context.parseFallbacks.length > 0) {
+      friction.push({
+        kind: "parse_fallback",
+        severity: "medium",
+        contextId: context.contextId,
+        summary: `${context.parseFallbacks.length} validator response(s) parsed via fallback (${context.parseFallbacks
+          .map((f) => f.parsePath ?? "unreadable")
+          .join(", ")}) — structured output failed`,
+      });
+    }
+    const seedLengths = context.iterations
+      .map((i) => i.seedPromptLength)
+      .filter((l): l is number => l !== null);
+    const firstSeed = seedLengths[0];
+    const lastSeed = seedLengths[seedLengths.length - 1];
+    if (
+      firstSeed !== undefined &&
+      lastSeed !== undefined &&
+      lastSeed >= firstSeed * PROMPT_GROWTH_FACTOR &&
+      lastSeed - firstSeed >= PROMPT_GROWTH_MIN_DELTA
+    ) {
+      friction.push({
+        kind: "prompt_growth",
+        severity: "medium",
+        contextId: context.contextId,
+        summary: `seed prompt grew ${firstSeed} → ${lastSeed} chars across iterations — feedback is accumulating instead of being resolved`,
+      });
+    }
+    for (const wait of [...context.approvalWaits, ...context.userInputWaits]) {
+      if (wait.waitMs !== null && wait.waitMs >= LONG_HUMAN_WAIT_MS) {
+        friction.push({
+          kind: "human_wait",
+          severity: "info",
+          contextId: context.contextId,
+          summary: `workflow blocked ${formatMs(wait.waitMs)} waiting for the human (requested ${wait.requestedAt})`,
+        });
+      } else if (wait.resolvedAt === null) {
+        friction.push({
+          kind: "human_wait",
+          severity: "info",
+          contextId: context.contextId,
+          summary: `human gate requested ${wait.requestedAt} was never resolved`,
+        });
+      }
+    }
+    if (
+      context.mergeStatus === "conflicts" ||
+      context.mergeStatus === "merged-failed"
+    ) {
+      friction.push({
+        kind: "merge_conflict",
+        severity: "high",
+        contextId: context.contextId,
+        summary: `merge status "${context.mergeStatus}"`,
+      });
+    }
+    if (context.rotationLimitTokens !== null) {
+      let worst: IterationReport | null = null;
+      for (const iteration of context.iterations) {
+        if (iteration.maxContextTokens === null) continue;
+        if (
+          iteration.maxContextTokens >=
+            context.rotationLimitTokens * ROTATION_OVERRUN_FACTOR &&
+          iteration.maxContextTokens > (worst?.maxContextTokens ?? 0)
+        ) {
+          worst = iteration;
+        }
+      }
+      if (worst !== null && worst.maxContextTokens !== null) {
+        const ratio = worst.maxContextTokens / context.rotationLimitTokens;
+        friction.push({
+          kind: "rotation_overrun",
+          severity: "high",
+          contextId: context.contextId,
+          summary: `iteration ${worst.iterationNumber} peaked at ${worst.maxContextTokens} tokens — ${ratio.toFixed(1)}× the configured rotation limit (${context.rotationLimitTokens}); rotation only takes effect at the iteration boundary, so a long turn outruns it and risks a hard mid-task stop`,
+        });
+      }
+    }
+    let contextKills = 0;
+    let contextCompactions = 0;
+    let scannedConversations = 0;
+    for (const conversation of context.conversations) {
+      if (conversation.transcript === null) continue;
+      scannedConversations += 1;
+      contextKills += conversation.transcript.backgroundTasksKilled;
+      contextCompactions += conversation.transcript.compactions;
+    }
+    if (contextKills >= BACKGROUND_KILL_THRESHOLD) {
+      friction.push({
+        kind: "background_task_kills",
+        severity: "medium",
+        contextId: context.contextId,
+        summary: `${contextKills} armed background task(s) killed at turn boundaries across ${scannedConversations} conversation(s) — orphaned watchers/dev servers force cold re-setup; check the transcript(s) for redone work`,
+      });
+    }
+    if (contextCompactions > 0) {
+      friction.push({
+        kind: "compaction_events",
+        severity: "medium",
+        contextId: context.contextId,
+        summary: `${contextCompactions} compaction event(s) — the conversation was silently summarized mid-flight; verify nothing load-bearing was dropped`,
+      });
+    }
+  }
+
+  if (costMismatches.length > 0) {
+    const worst = [...costMismatches].sort(
+      (a, b) =>
+        Math.abs(b.recordedUsd - b.transcriptUsd) -
+        Math.abs(a.recordedUsd - a.transcriptUsd),
+    );
+    const shown = worst
+      .slice(0, COST_MISMATCH_RENDER_CAP)
+      .map(
+        (m) =>
+          `\`${m.conversationId}\` ${formatUsd(m.recordedUsd)} recorded vs ${formatUsd(m.transcriptUsd)} from the transcript`,
+      )
+      .join("; ");
+    friction.push({
+      kind: "cost_mismatch",
+      severity: "medium",
+      contextId: null,
+      summary: `${costMismatches.length} conversation(s) whose recorded cost diverges from the transcript's lineage total (rows written before the accrual fix are inflated): ${shown}${worst.length > COST_MISMATCH_RENDER_CAP ? ` — and ${worst.length - COST_MISMATCH_RENDER_CAP} more` : ""}. Prefer the corrected total.`,
+    });
+  }
+
+  if (publish !== null && publish.scratchFiles.length > 0) {
+    const scratchAdditions = publish.scratchFiles.reduce(
+      (sum, f) => sum + f.additions,
+      0,
+    );
+    const shown = publish.scratchFiles
+      .slice(0, SCRATCH_FILES_RENDER_CAP)
+      .map((f) => f.path)
+      .join(", ");
+    friction.push({
+      kind: "scratch_debris",
+      severity: "medium",
+      contextId: null,
+      summary: `final publish commit ${publish.commitSha.slice(0, 8)} carried ${publish.scratchFiles.length} scratch file(s) (+${scratchAdditions} lines) into the session branch: ${shown}${publish.scratchFiles.length > SCRATCH_FILES_RENDER_CAP ? `, and ${publish.scratchFiles.length - SCRATCH_FILES_RENDER_CAP} more` : ""}`,
+    });
+  }
+
+  for (const [joinId, join] of Object.entries(execution.joins)) {
+    if (
+      join.status === "failed" ||
+      join.status === "conflicts" ||
+      join.conflicts !== null
+    ) {
+      friction.push({
+        kind: "merge_conflict",
+        severity: "high",
+        contextId: join.contextId,
+        summary: `join "${joinId}" (${join.kind}) status "${join.status}"${join.errorMessage !== null ? ` — ${join.errorMessage}` : ""}`,
+      });
+    }
+  }
+
+  for (const gap of reportedGaps) {
+    if (gap.classification !== "unexplained") continue;
+    friction.push({
+      kind: "stall_gap",
+      severity: gap.gapMs >= LONG_STALL_MS ? "high" : "medium",
+      contextId: null,
+      summary: `no recorded activity for ${formatMs(gap.gapMs)} between ${gap.startedAt} (${gap.fromEvent}) and ${gap.endedAt} (${gap.toEvent})`,
+    });
+  }
+
+  const severityRank: Record<Severity, number> = {
+    high: 0,
+    medium: 1,
+    info: 2,
+  };
+  friction.sort((a, b) => severityRank[a.severity] - severityRank[b.severity]);
+
+  // ---- positives ---------------------------------------------------------
+  const positives: Finding[] = [];
+  if (
+    execution.status === "completed" &&
+    execution.haltReason === null &&
+    execution.secondaryHaltReasons.length === 0
+  ) {
+    positives.push({
+      kind: "completed_clean",
+      severity: "info",
+      contextId: null,
+      summary: "execution ran to completion with no halts",
+    });
+  }
+  const firstTryContexts = contexts.filter(
+    (context) =>
+      context.status === "completed" &&
+      context.iterationCount <= 1 &&
+      context.validations.every((v) => v.pass),
+  );
+  if (firstTryContexts.length > 0) {
+    positives.push({
+      kind: "first_try_go",
+      severity: "info",
+      contextId: null,
+      summary: `${firstTryContexts.length} of ${contexts.length} contexts passed first try: ${firstTryContexts
+        .map((c) => c.contextId)
+        .join(", ")}`,
+    });
+  }
+  const joinEntries = Object.values(execution.joins);
+  const anyMergeTrouble =
+    joinEntries.some(
+      (join) =>
+        join.status === "failed" ||
+        join.status === "conflicts" ||
+        join.conflicts !== null,
+    ) ||
+    contexts.some(
+      (context) =>
+        context.mergeStatus === "conflicts" ||
+        context.mergeStatus === "merged-failed",
+    );
+  if (joinEntries.length > 0 && !anyMergeTrouble) {
+    positives.push({
+      kind: "clean_merges",
+      severity: "info",
+      contextId: null,
+      summary: `all ${joinEntries.length} join(s) merged without conflicts`,
+    });
+  }
+  const occupancies = contexts
+    .map((c) => c.peakOccupancyPct)
+    .filter((p): p is number => p !== null);
+  if (occupancies.length > 0 && occupancies.every((p) => p < 50)) {
+    positives.push({
+      kind: "low_context_pressure",
+      severity: "info",
+      contextId: null,
+      summary: "no context exceeded 50% window occupancy",
+    });
+  }
+  // The engine auto-registers the charter as a shared document at launch, so
+  // only documents beyond it are evidence agents actually used the mechanism.
+  const nonCharterDocumentCount = execution.sharedDocuments.filter((raw) => {
+    const doc = asRecord(raw);
+    if (doc === null) return true;
+    const kind = typeof doc.kind === "string" ? doc.kind : null;
+    const id = typeof doc.id === "string" ? doc.id : "";
+    return kind !== "charter" && !id.startsWith("doc-charter-");
+  }).length;
+  if (nonCharterDocumentCount > 0) {
+    positives.push({
+      kind: "shared_documents_used",
+      severity: "info",
+      contextId: null,
+      summary: `${nonCharterDocumentCount} shared document(s) registered beyond the charter for cross-context alignment`,
+    });
+  }
+  const resolvedWaits = contexts.flatMap((context) =>
+    [...context.approvalWaits, ...context.userInputWaits].filter(
+      (w) => w.waitMs !== null,
+    ),
+  );
+  if (
+    resolvedWaits.length > 0 &&
+    resolvedWaits.every((w) => (w.waitMs ?? 0) < LONG_HUMAN_WAIT_MS)
+  ) {
+    positives.push({
+      kind: "fast_human_turnaround",
+      severity: "info",
+      contextId: null,
+      summary: `all ${resolvedWaits.length} human gate(s) resolved in under 10 minutes`,
+    });
+  }
+
+  const contextStatesList = Object.values(execution.contextStates);
+  return {
+    overview: {
+      executionId: execution.id,
+      seedDefinitionId: execution.seedDefinitionId,
+      seedDefinitionRevision: execution.seedDefinitionRevision,
+      launchedTier: execution.launchedTier,
+      boundInputs: execution.boundInputs,
+      status: execution.status,
+      source: input.source,
+      startedAt: execution.startedAt,
+      completedAt: execution.completedAt,
+      wallClockMs,
+      contextsTotal: contextStatesList.length,
+      contextsCompleted: contextStatesList.filter(
+        (state) => state.status === "completed",
+      ).length,
+      haltReason: execution.haltReason,
+      pendingHaltReason: execution.pendingHaltReason,
+      secondaryHaltReasons: execution.secondaryHaltReasons,
+      charterPresent:
+        execution.charter !== undefined && execution.charter !== null,
+      sharedDocumentCount: nonCharterDocumentCount,
+    },
+    contexts,
+    cost: {
+      totalUsd,
+      correctedTotalUsd,
+      byLane,
+      byContext,
+      knownConversationCount: conversations.length,
+      missingCostCount,
+      validators,
+    },
+    time: {
+      wallClockMs,
+      agentTurnMsTotal,
+      humanWaitMsTotal,
+      gaps: reportedGaps,
+    },
+    publish,
+    friction,
+    positives,
+    pointers: {
+      workflowLogsDir: input.paths.workflowLogsDir,
+      transcripts: conversationReports.map((c) => ({
+        conversationId: c.conversationId,
+        transcriptPath: c.transcriptPath,
+        lane: c.lane,
+        contextId: c.contextId,
+      })),
+    },
+  };
+}
+
+// ============================================================
+// Markdown rendering (bounded)
+// ============================================================
+
+const ISSUES_RENDER_CAP = 3;
+
+export function formatMs(msValue: number): string {
+  const totalSeconds = Math.round(msValue / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function formatUsd(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+function formatTokens(value: number): string {
+  return value >= 10_000 ? `${(value / 1000).toFixed(1)}k` : String(value);
+}
+
+function formatMaybeMs(value: number | null): string {
+  return value === null ? "—" : formatMs(value);
+}
+
+export function renderMarkdown(report: AuditReport): string {
+  const lines: string[] = [];
+  const o = report.overview;
+  lines.push(`# Graph workflow audit — ${o.executionId}`);
+  lines.push("");
+  lines.push(
+    `- Status: **${o.status}** (source: ${o.source}) · definition ${o.seedDefinitionId} rev ${o.seedDefinitionRevision} · tier ${o.launchedTier}`,
+  );
+  lines.push(
+    `- Ran ${o.startedAt} → ${o.completedAt ?? "(not completed)"} · wall clock ${formatMaybeMs(o.wallClockMs)}`,
+  );
+  lines.push(
+    `- Contexts: ${o.contextsCompleted}/${o.contextsTotal} completed · charter: ${o.charterPresent ? "present" : "absent"} · shared documents: ${o.sharedDocumentCount}`,
+  );
+  if (Object.keys(o.boundInputs).length > 0) {
+    lines.push(
+      `- Bound inputs: ${Object.entries(o.boundInputs)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ")}`,
+    );
+  }
+  if (o.haltReason !== null) {
+    lines.push(`- Halt reason: \`${o.haltReason.type}\``);
+  }
+  if (report.publish !== null) {
+    const p = report.publish;
+    lines.push(
+      `- Final publish: \`${p.commitSha.slice(0, 8)}\` · ${p.fileCount} file(s) (+${p.totalAdditions}/−${p.totalDeletions})` +
+        (p.scratchFiles.length > 0
+          ? ` · ⚠ ${p.scratchFiles.length} scratch file(s)`
+          : ""),
+    );
+  }
+  lines.push("");
+
+  lines.push("## Friction");
+  lines.push("");
+  if (report.friction.length === 0) {
+    lines.push("None detected by the extractor.");
+  }
+  for (const finding of report.friction) {
+    const scope = finding.contextId !== null ? ` [${finding.contextId}]` : "";
+    lines.push(
+      `- **${finding.severity}** ${finding.kind}${scope}: ${finding.summary}`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## What worked");
+  lines.push("");
+  if (report.positives.length === 0) {
+    lines.push("Nothing notable detected.");
+  }
+  for (const positive of report.positives) {
+    lines.push(`- ${positive.kind}: ${positive.summary}`);
+  }
+  lines.push("");
+
+  lines.push("## Cost");
+  lines.push("");
+  lines.push(
+    `Total recorded cost: **${formatUsd(report.cost.totalUsd)}** across ${report.cost.knownConversationCount} conversation(s)` +
+      (report.cost.missingCostCount > 0
+        ? ` (${report.cost.missingCostCount} with no recorded cost)`
+        : ""),
+  );
+  if (
+    report.cost.correctedTotalUsd !== null &&
+    Math.abs(report.cost.correctedTotalUsd - report.cost.totalUsd) > 0.01
+  ) {
+    lines.push(
+      `- transcript-corrected total: **${formatUsd(report.cost.correctedTotalUsd)}** (recorded rows written before the accrual fix are inflated — prefer this figure)`,
+    );
+  }
+  for (const [lane, cost] of Object.entries(report.cost.byLane)) {
+    lines.push(`- by lane · ${lane}: ${formatUsd(cost)}`);
+  }
+  for (const [contextId, cost] of Object.entries(report.cost.byContext)) {
+    lines.push(`- by context · ${contextId}: ${formatUsd(cost)}`);
+  }
+  if (report.cost.validators !== null) {
+    const v = report.cost.validators;
+    lines.push(
+      `- context validators (codex, not in the total above): est. ${formatUsd(v.estimatedUsd)} · ` +
+        `${formatTokens(v.inputTokens)} in (${formatTokens(v.cachedInputTokens)} cached) / ${formatTokens(v.outputTokens)} out` +
+        (v.unpricedEventCount > 0
+          ? ` — ${v.unpricedEventCount}/${v.usageEventCount} validation(s) recorded tokens only, so the estimate undercounts`
+          : ""),
+    );
+  }
+  lines.push("");
+
+  lines.push("## Time");
+  lines.push("");
+  lines.push(
+    `Wall clock ${formatMaybeMs(report.time.wallClockMs)} · agent turns ${formatMs(report.time.agentTurnMsTotal)} · human waits ${formatMs(report.time.humanWaitMsTotal)}`,
+  );
+  if (report.time.gaps.length > 0) {
+    lines.push("");
+    lines.push("Largest gaps between recorded activity:");
+    lines.push("");
+    lines.push("| start | duration | classification | from → to |");
+    lines.push("|---|---|---|---|");
+    for (const gap of report.time.gaps) {
+      lines.push(
+        `| ${gap.startedAt} | ${formatMs(gap.gapMs)} | ${gap.classification} | ${gap.fromEvent} → ${gap.toEvent} |`,
+      );
+    }
+  }
+  lines.push("");
+
+  lines.push("## Contexts");
+  for (const context of report.contexts) {
+    lines.push("");
+    lines.push(`### ${context.title} (\`${context.contextId}\`)`);
+    lines.push("");
+    lines.push(
+      `- ${context.status} · tasks ${context.completedTaskCount}/${context.totalTaskCount} · iterations ${context.iterationCount} · merge ${context.mergeStatus}`,
+    );
+    if (context.peakContextTokens !== null) {
+      lines.push(
+        `- Peak context: ${context.peakContextTokens} tokens${context.peakOccupancyPct !== null ? ` (${context.peakOccupancyPct}% of window)` : ""}${context.rotationLimitTokens !== null ? ` · rotation limit ${context.rotationLimitTokens}` : ""}`,
+      );
+    }
+    if (context.iterations.length > 0) {
+      lines.push("");
+      lines.push(
+        "| iter | started | duration | prompt cycles | seed prompt | peak tokens | model |",
+      );
+      lines.push("|---|---|---|---|---|---|---|");
+      for (const iteration of context.iterations) {
+        lines.push(
+          `| ${iteration.iterationNumber} | ${iteration.startedAt} | ${formatMaybeMs(iteration.durationMs)} | ${iteration.agentTurns} | ${iteration.seedPromptLength ?? "—"} | ${iteration.maxContextTokens ?? "—"} | ${iteration.model ?? "—"} |`,
+        );
+      }
+    }
+    for (const validation of context.validations) {
+      lines.push("");
+      lines.push(
+        `- ${validation.pass ? "GO" : "NO-GO"} at ${validation.occurredAt}: ${validation.summary}`,
+      );
+      const shown = validation.issues.slice(0, ISSUES_RENDER_CAP);
+      for (const issue of shown) {
+        lines.push(
+          `  - ${issue.title}${issue.description.length > 0 ? ` — ${issue.description}` : ""}`,
+        );
+      }
+      if (validation.issues.length > shown.length) {
+        lines.push(`  - …and ${validation.issues.length - shown.length} more`);
+      }
+    }
+    for (const wait of context.approvalWaits) {
+      lines.push(
+        `- Approval gate: requested ${wait.requestedAt}, ${wait.resolvedAt !== null ? `${wait.decision ?? "resolved"} after ${formatMaybeMs(wait.waitMs)}` : "unresolved"}`,
+      );
+    }
+    for (const wait of context.userInputWaits) {
+      lines.push(
+        `- User question: requested ${wait.requestedAt}, ${wait.resolvedAt !== null ? `${wait.decision ?? "resolved"} after ${formatMaybeMs(wait.waitMs)}` : "unresolved"}`,
+      );
+    }
+    for (const failure of context.taskFailures) {
+      lines.push(`- Task failure \`${failure.taskId}\`: ${failure.message}`);
+    }
+    for (const conversation of context.conversations) {
+      const scan = conversation.transcript;
+      let costPart =
+        conversation.costUsd !== null
+          ? formatUsd(conversation.costUsd)
+          : "cost unknown";
+      if (
+        scan?.costUsd != null &&
+        conversation.costUsd !== null &&
+        Math.abs(conversation.costUsd - scan.costUsd) > 0.01
+      ) {
+        costPart = `${formatUsd(conversation.costUsd)} recorded → ${formatUsd(scan.costUsd)} transcript-corrected`;
+      }
+      const parts = [`${costPart}, ${conversation.turns ?? "?"} sdk turns`];
+      if (scan !== null) {
+        parts.push(
+          `${scan.toolUseCount} tool call(s)${scan.toolErrorCount > 0 ? ` (${scan.toolErrorCount} errored)` : ""}`,
+        );
+        if (scan.backgroundTasksKilled > 0) {
+          parts.push(`${scan.backgroundTasksKilled} bg task(s) killed`);
+        }
+        if (scan.compactions > 0) {
+          parts.push(`${scan.compactions} compaction(s)`);
+        }
+        const topReRead = scan.topReReads[0];
+        if (topReRead !== undefined && topReRead.count >= 3) {
+          const shortPath = topReRead.path.split("/").slice(-1)[0] ?? "";
+          parts.push(`top re-read ${shortPath} ×${topReRead.count}`);
+        }
+      }
+      lines.push(
+        `- Conversation \`${conversation.conversationId}\`${conversation.lane !== null ? ` (${conversation.lane})` : ""}: ${parts.join(" · ")}`,
+      );
+    }
+  }
+  lines.push("");
+
+  lines.push("## Where to dig deeper");
+  lines.push("");
+  if (report.pointers.workflowLogsDir !== null) {
+    lines.push(`- Execution logs: \`${report.pointers.workflowLogsDir}\``);
+    lines.push(
+      `  - per-context: \`contexts/<id>/{iterations,tasks,validation,validation-transcript}.jsonl\` and full prompts under \`contexts/<id>/prompts/\``,
+    );
+  }
+  for (const transcript of report.pointers.transcripts) {
+    lines.push(
+      `- Transcript \`${transcript.conversationId}\`${transcript.lane !== null ? ` (${transcript.lane})` : ""}: ${transcript.transcriptPath !== null ? `\`${transcript.transcriptPath}\`` : "path unknown"}`,
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
+}

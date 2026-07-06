@@ -9,7 +9,10 @@ import {
   installCctl,
   type InstallCctlResult,
 } from "./lib/agent-gateway/install-cli";
-import { recordServerBaseUrl } from "./lib/agent-gateway/server-url";
+import {
+  recordServerBaseUrl,
+  verifyRecordedServerBaseUrl,
+} from "./lib/agent-gateway/server-url";
 import { BUILD_INFO } from "./lib/build-info";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -31,6 +34,7 @@ export interface StartupDeps {
   ensureAgentToken(): Promise<string>;
   installCli(): Promise<InstallCctlResult>;
   recordServerBaseUrl(): string;
+  verifyServerBaseUrl(): void;
 }
 
 const defaultStartupDeps: StartupDeps = {
@@ -49,6 +53,9 @@ const defaultStartupDeps: StartupDeps = {
       expectedBuildInfo: BUILD_INFO,
     }),
   recordServerBaseUrl: () => recordServerBaseUrl(),
+  verifyServerBaseUrl: () => {
+    void verifyRecordedServerBaseUrl();
+  },
 };
 
 export function createStartupRegistrar(
@@ -85,9 +92,13 @@ export function createStartupRegistrar(
     }
 
     // The base URL feeds CC_SERVER_URL in every spawned session's env; record
-    // it before conversations rehydrate so no session sees it unset.
+    // it before conversations rehydrate so no session sees it unset. The
+    // verification self-probe is fire-and-forget: register() completes before
+    // the HTTP server listens, so awaiting it here would deadlock — its retry
+    // loop absorbs the pre-listen window.
     try {
       deps.recordServerBaseUrl();
+      deps.verifyServerBaseUrl();
     } catch (err) {
       logger.error("startup.server_url_failed", {
         error: getErrorMessage(err),

@@ -11,6 +11,12 @@
  * waitable. Anything whose originating tool is unknown/unavailable defaults to
  * `waitable`; the caller relies on a bounded wait to prevent an indefinite stall.
  *
+ * A second path into `excluded` exists after classification: a waitable task
+ * that survives a full settlement-wait timeout has empirically proven it is
+ * not going to settle on its own (a dev server, a watcher), so the caller
+ * demotes it via `demoteTasksToExcluded` and it stops holding future
+ * settlement barriers open.
+ *
  * No I/O, no timers, no logging side effects. The input state is never mutated.
  */
 
@@ -105,6 +111,27 @@ export function getWaitableInFlightTaskIds(
     }
   }
   return ids;
+}
+
+/**
+ * Reclassify the given running tasks as `excluded` so they leave the waitable
+ * set. Used when a task survives a full settlement-wait timeout: it will not
+ * settle on its own, so it must not hold later barriers open. Unknown or
+ * already-settled ids are no-ops; the input state is never mutated.
+ */
+export function demoteTasksToExcluded(
+  state: BackgroundTaskState,
+  taskIds: string[],
+): BackgroundTaskState {
+  let tasks: Map<string, BackgroundTaskRecord> | null = null;
+  for (const taskId of taskIds) {
+    const existing = state.tasks.get(taskId);
+    if (existing === undefined || existing.status !== "running") continue;
+    if (existing.classification === "excluded") continue;
+    tasks ??= new Map(state.tasks);
+    tasks.set(taskId, { ...existing, classification: "excluded" });
+  }
+  return tasks === null ? state : { tasks };
 }
 
 /**

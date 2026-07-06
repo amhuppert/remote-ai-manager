@@ -10,6 +10,7 @@ import {
   emptyBackgroundTaskState,
   applyTaskMessage,
   getWaitableInFlightTaskIds,
+  demoteTasksToExcluded,
   WATCH_TOOL_NAMES,
   type BackgroundTaskState,
 } from "./background-task-tracker";
@@ -360,6 +361,81 @@ describe("background-task-tracker", () => {
       );
       expect(state.tasks.get("t1")?.status).toBe("completed");
       expect(state.tasks.get("t1")?.classification).toBe("waitable");
+    });
+  });
+
+  describe("demoteTasksToExcluded (wait-timeout survivors)", () => {
+    it("demotes a running waitable task to excluded so it leaves the waitable set", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      expect(getWaitableInFlightTaskIds(state)).toEqual(["t1"]);
+
+      const next = demoteTasksToExcluded(state, ["t1"]);
+
+      expect(getWaitableInFlightTaskIds(next)).toEqual([]);
+      expect(next.tasks.get("t1")).toMatchObject({
+        classification: "excluded",
+        status: "running",
+      });
+    });
+
+    it("leaves a settled task untouched", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      state = applyTaskMessage(state, taskNotification("t1", "completed"));
+
+      const next = demoteTasksToExcluded(state, ["t1"]);
+
+      expect(next.tasks.get("t1")).toMatchObject({
+        classification: "waitable",
+        status: "completed",
+      });
+    });
+
+    it("is a no-op for unknown task ids", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+
+      const next = demoteTasksToExcluded(state, ["unknown-task"]);
+
+      expect(next).toBe(state);
+      expect(getWaitableInFlightTaskIds(next)).toEqual(["t1"]);
+    });
+
+    it("never mutates the input state", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+
+      demoteTasksToExcluded(state, ["t1"]);
+
+      expect(state.tasks.get("t1")).toMatchObject({
+        classification: "waitable",
+        status: "running",
+      });
+      expect(getWaitableInFlightTaskIds(state)).toEqual(["t1"]);
+    });
+
+    it("demotes only the running tasks among a mixed id list", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      state = applyTaskMessage(state, taskStarted({ task_id: "t2" }));
+      state = applyTaskMessage(state, taskNotification("t2", "completed"));
+
+      const next = demoteTasksToExcluded(state, ["t1", "t2", "ghost"]);
+
+      expect(getWaitableInFlightTaskIds(next)).toEqual([]);
+      expect(next.tasks.get("t1")?.classification).toBe("excluded");
+      expect(next.tasks.get("t2")?.classification).toBe("waitable");
     });
   });
 

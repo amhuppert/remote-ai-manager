@@ -65,6 +65,7 @@ describe("CodexTaskRunner", () => {
         >,
       buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
       listNativeCodexMcpServers,
+      getCodexPricingOverrides: async () => null,
     });
 
     startThreadMock.mockReturnValue({
@@ -91,6 +92,39 @@ describe("CodexTaskRunner", () => {
     expect(startThreadMock).toHaveBeenCalledWith(
       expect.objectContaining({ modelReasoningEffort: "high" }),
     );
+  });
+
+  it("neutralizes ambient CC_* env before spawning the codex subprocess", async () => {
+    const createCodex = vi.fn(
+      (options) =>
+        new Codex(options) as unknown as ReturnType<
+          CodexTaskRunnerDeps["createCodex"]
+        >,
+    );
+    const contaminatedRunner = new CodexTaskRunner({
+      createCodex,
+      buildChildEnv: () =>
+        ({
+          NODE_ENV: "development",
+          CC_SERVER_URL: "http://ambient-prod:3000",
+          CC_API_TOKEN: "ambient-token",
+          PATH: "/usr/bin",
+        }) as NodeJS.ProcessEnv,
+      listNativeCodexMcpServers,
+      getCodexPricingOverrides: async () => null,
+    });
+
+    await contaminatedRunner.run(makeRequest());
+
+    const options = createCodex.mock.calls[0]?.[0] as
+      | { env?: Record<string, string> }
+      | undefined;
+    expect(options?.env).toMatchObject({
+      CC_SERVER_URL: "",
+      CC_API_TOKEN: "",
+      PATH: "/usr/bin",
+      CLAUDECODE: "",
+    });
   });
 
   it("defaults to the global default codex model when no modelId is provided", async () => {
@@ -365,5 +399,67 @@ describe("CodexTaskRunner", () => {
     expect(result.timedOut).toBe(false);
     expect(result.text).toBe("done");
     expect(result.error).toBeNull();
+  });
+
+  describe("cost estimation", () => {
+    // beforeEach runMock usage: 12 input (3 cached), 7 output.
+
+    it("estimates usage.costUsd at the requested model's default rates", async () => {
+      const result = await runner.run(makeRequest({ modelId: "gpt-5.5" }));
+
+      // gpt-5.5: $5/$0.50/$30 per 1M
+      expect(result.usage?.costUsd).toBeCloseTo(
+        (9 * 5 + 3 * 0.5 + 7 * 30) / 1_000_000,
+        10,
+      );
+    });
+
+    it("prices at the default codex model when no modelId is provided", async () => {
+      const result = await runner.run(makeRequest());
+
+      // gpt-5.4: $2.50/$0.25/$15 per 1M
+      expect(result.usage?.costUsd).toBeCloseTo(
+        (9 * 2.5 + 3 * 0.25 + 7 * 15) / 1_000_000,
+        10,
+      );
+    });
+
+    it("keeps token usage but null costUsd for a model with no known rates", async () => {
+      const result = await runner.run(makeRequest({ modelId: "o3-pro" }));
+
+      expect(result.usage).toMatchObject({
+        inputTokens: 12,
+        cachedInputTokens: 3,
+        outputTokens: 7,
+        costUsd: null,
+      });
+    });
+
+    it("prices with config pricing overrides from the injected dep", async () => {
+      const overriddenRunner = new CodexTaskRunner({
+        createCodex: (options) =>
+          new Codex(options) as unknown as ReturnType<
+            CodexTaskRunnerDeps["createCodex"]
+          >,
+        buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
+        listNativeCodexMcpServers,
+        getCodexPricingOverrides: async () => ({
+          "gpt-5.5": {
+            inputPerMillion: 10,
+            cachedInputPerMillion: 1,
+            outputPerMillion: 100,
+          },
+        }),
+      });
+
+      const result = await overriddenRunner.run(
+        makeRequest({ modelId: "gpt-5.5" }),
+      );
+
+      expect(result.usage?.costUsd).toBeCloseTo(
+        (9 * 10 + 3 * 1 + 7 * 100) / 1_000_000,
+        10,
+      );
+    });
   });
 });

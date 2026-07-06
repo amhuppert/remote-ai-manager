@@ -6,6 +6,7 @@ import { createAgentGatewayHandlers } from "./route-handlers";
 
 const SERVER_BUILD = "abc1234-2026-07-02T10:00:00.000Z";
 const TOKEN = "test-instance-token";
+const BOOT_NONCE = "nonce-1234";
 
 let dir: string;
 let handlers: ReturnType<typeof createAgentGatewayHandlers>;
@@ -16,6 +17,7 @@ beforeEach(async () => {
   handlers = createAgentGatewayHandlers({
     configDir: dir,
     getServerBuildStamp: () => SERVER_BUILD,
+    getBootNonce: () => BOOT_NONCE,
   });
 });
 
@@ -97,5 +99,33 @@ describe("GET /api/agent/handshake", () => {
       handshakeRequest({ cliBuild: SERVER_BUILD }),
     );
     expect(res.headers.get("x-cc-build-mismatch")).toBeNull();
+  });
+});
+
+describe("GET /api/agent/identity", () => {
+  it("returns the boot nonce and build stamp without any token", async () => {
+    const res = await handlers.identityGET();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      instanceNonce: BOOT_NONCE,
+      serverBuild: SERVER_BUILD,
+    });
+  });
+
+  it("responds with a null nonce (not an error) before boot records one", async () => {
+    const unbooted = createAgentGatewayHandlers({
+      configDir: dir,
+      getServerBuildStamp: () => SERVER_BUILD,
+      getBootNonce: () => null,
+    });
+
+    const res = await unbooted.identityGET();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      instanceNonce: null,
+      serverBuild: SERVER_BUILD,
+    });
   });
 });

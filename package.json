@@ -22,6 +22,7 @@
     "css:progress": "bun scripts/css-migration-progress.ts --check",
     "logs:analyze": "bun scripts/analyze-logs.ts",
     "logs:duckdb": "scripts/duckdb-logs/run.sh",
+    "workflow:audit": "bun scripts/workflow-audit/run.ts",
     "trace:speedscope": "bun scripts/speedscope-export.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

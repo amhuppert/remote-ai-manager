@@ -335,6 +335,7 @@ describe("CodexConversationRuntime", () => {
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
       listNativeCodexMcpServers: vi.fn().mockResolvedValue([]),
+      getCodexPricingOverrides: vi.fn().mockResolvedValue(null),
       now: vi.fn().mockReturnValue(1000),
     };
   });
@@ -1312,20 +1313,77 @@ describe("CodexConversationRuntime", () => {
       expect(result.durationMs).toBe(1500);
     });
 
-    it("returns costUsd as null", async () => {
-      setupThread(minimalSuccessEvents());
-      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
-      const result = await runtime.sendTurn(makeTurnInput());
-
-      expect(result.costUsd).toBeNull();
-    });
-
     it("returns contextWindowMax as null", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
       expect(result.contextWindowMax).toBeNull();
+    });
+  });
+
+  describe("sendTurn — cost estimation", () => {
+    it("estimates costUsd from turn usage at the effective model's default rates", async () => {
+      // No modelId → default model (gpt-5.4: $2.50/$0.25/$15 per 1M);
+      // fixture usage: 100 input (10 cached), 50 output.
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.costUsd).toBeCloseTo(0.0009775, 10);
+    });
+
+    it("returns null costUsd for a model with no known rates", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ modelId: "o3-pro" }),
+        deps,
+      );
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.costUsd).toBeNull();
+    });
+
+    it("prices with config pricing overrides when the dep provides them", async () => {
+      deps.getCodexPricingOverrides = vi.fn().mockResolvedValue({
+        "gpt-5.4": {
+          inputPerMillion: 10,
+          cachedInputPerMillion: 1,
+          outputPerMillion: 100,
+        },
+      });
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.costUsd).toBeCloseTo(
+        (90 * 10 + 10 * 1 + 50 * 100) / 1_000_000,
+        10,
+      );
+    });
+
+    it("returns null costUsd when the turn produced no usage", async () => {
+      setupThread([threadStarted(), turnFailed()]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.costUsd).toBeNull();
+    });
+
+    it("falls back to default rates when the pricing-overrides dep rejects", async () => {
+      deps.getCodexPricingOverrides = vi
+        .fn()
+        .mockRejectedValue(new Error("config unreadable"));
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.costUsd).toBeCloseTo(0.0009775, 10);
     });
   });
 

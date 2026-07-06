@@ -176,6 +176,42 @@ describe("buildIterationPrompt", () => {
     expect(prompt).not.toContain("complete_task");
   });
 
+  it("renders the previous conversation's handoff verbatim when rotation carried one", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      previousConversationHandoff: {
+        conversationId: "conv-prev-1",
+        note: "Completed task-plan-1. Left in flight: nothing. Lesson: the dev server on :3071 needs an explicit CC_SERVER_URL.",
+      },
+    });
+
+    expect(prompt).toContain("## Handoff from the previous conversation");
+    expect(prompt).toContain("reached its context limit and was rotated out");
+    expect(prompt).toContain(
+      "Lesson: the dev server on :3071 needs an explicit CC_SERVER_URL.",
+    );
+    // The handoff must precede the task list so orientation happens before work.
+    expect(
+      prompt.indexOf("## Handoff from the previous conversation"),
+    ).toBeLessThan(prompt.indexOf("## Tasks (work through them in order)"));
+  });
+
+  it("omits the handoff section when no previous-conversation handoff exists", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).not.toContain("## Handoff from the previous conversation");
+  });
+
   it("primes the Required Protocol to end the turn on a CONTEXT LIMIT REACHED stop instruction", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

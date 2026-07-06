@@ -3,6 +3,82 @@ import { createStartupRegistrar } from "./instrumentation.node";
 import { getTraceContext, type TraceContext } from "./lib/logging";
 
 describe("createStartupRegistrar", () => {
+  it("verifies the recorded server base URL exactly once, after recording it", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationManager: async () => ({
+        rehydrateConversationActors: async () => 0,
+      }),
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      recordServerBaseUrl: () => {
+        calls.push("record-url");
+        return "http://127.0.0.1:3000";
+      },
+      verifyServerBaseUrl: () => {
+        calls.push("verify-url");
+      },
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+    });
+
+    await register();
+
+    expect(calls.filter((c) => c === "verify-url")).toHaveLength(1);
+    expect(calls.indexOf("record-url")).toBeLessThan(
+      calls.indexOf("verify-url"),
+    );
+  });
+
+  it("resolves without awaiting verification and survives a throwing verify step", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationManager: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {
+        calls.push("notifications");
+      },
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {
+        // A production verification is a fire-and-forget promise that may
+        // never settle (server not yet listening); register must not await it.
+        void new Promise(() => {});
+        throw new Error("verify exploded");
+      },
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+    });
+
+    await expect(register()).resolves.not.toThrow();
+    expect(calls).toContain("rehydrate");
+    expect(calls).toContain("notifications");
+  });
+
   it("rehydrates conversation actors before envelope recovery and notifications init", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
@@ -32,6 +108,7 @@ describe("createStartupRegistrar", () => {
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => {
         calls.push("envelope-recovery");
         return {
@@ -73,6 +150,7 @@ describe("createStartupRegistrar", () => {
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => {
         traces["recover"] = getTraceContext();
         return {
@@ -116,6 +194,7 @@ describe("createStartupRegistrar", () => {
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => {
         calls.push("envelope-recovery-failed");
         throw new Error("simulated recovery failure");
@@ -155,6 +234,7 @@ describe("createStartupRegistrar", () => {
         calls.push("record-url");
         return "http://127.0.0.1:3000";
       },
+      verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => ({
         scanned: 0,
         failed: 0,
@@ -194,6 +274,7 @@ describe("createStartupRegistrar", () => {
         throw new Error("install exploded");
       },
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => ({
         scanned: 0,
         failed: 0,

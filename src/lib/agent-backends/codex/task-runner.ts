@@ -1,6 +1,7 @@
 import { Codex } from "@openai/codex-sdk";
 import type { CodexOptions, ThreadOptions } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import { neutralizeAmbientCcEnv } from "@/lib/agent-gateway/session-env";
 import { createLogger } from "@/lib/logging";
 import { registerTaskRunner } from "../registry-core";
 import type {
@@ -22,8 +23,11 @@ import {
 import {
   codexReasoningEffortSchema,
   getDefaultCodexModel,
+  type CodexPricingTable,
   type CodexReasoningEffort,
 } from "@/lib/agent-backends/schemas";
+import { readConfig } from "@/lib/config/loader";
+import { estimateCodexCostUsd } from "./pricing";
 import { toStringEnv } from "./shared";
 
 const logger = createLogger("codex:task-runner");
@@ -65,6 +69,8 @@ export interface CodexTaskRunnerDeps {
     cwd: string;
     env: Record<string, string>;
   }): Promise<NativeCodexMcpServer[]>;
+  /** Per-model rate overrides from `codex.pricing` in config.json; null when unset. */
+  getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
 }
 
 const defaultDeps: CodexTaskRunnerDeps = {
@@ -72,6 +78,8 @@ const defaultDeps: CodexTaskRunnerDeps = {
     new Codex(options) as unknown as CodexTaskRunnerClient,
   buildChildEnv,
   listNativeCodexMcpServers,
+  getCodexPricingOverrides: async () =>
+    (await readConfig()).codex?.pricing ?? null,
 };
 
 function buildPrompt(input: AgentTaskRequest): string {
@@ -228,7 +236,14 @@ export class CodexTaskRunner implements AgentTaskRunner {
       };
     }
 
-    const env = toStringEnv({ ...this.deps.buildChildEnv(), CLAUDECODE: "" });
+    // Task subprocesses get no session-env contract, so ambient CC_* (an
+    // outer instance's server URL/token) must be blanked here. Copy before
+    // neutralizing — the helper mutates, and an injected dep may hand out a
+    // shared object.
+    const env = toStringEnv({
+      ...neutralizeAmbientCcEnv({ ...this.deps.buildChildEnv() }),
+      CLAUDECODE: "",
+    });
     let mcpServersConfig: Record<string, unknown> | undefined;
     if (input.tooling?.portableMcp) {
       const { mcpServers, droppedFields } = translatePortableMcpToCodex(
@@ -342,10 +357,24 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
 
       if (turn.usage) {
+        let pricingOverrides: CodexPricingTable | null = null;
+        try {
+          pricingOverrides = await this.deps.getCodexPricingOverrides();
+        } catch (err) {
+          logger.warn("codex-task-runner.pricing_overrides_unavailable", {
+            workingDirectory: input.workingDirectory,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         usageResult = {
           inputTokens: turn.usage.input_tokens,
           cachedInputTokens: turn.usage.cached_input_tokens,
           outputTokens: turn.usage.output_tokens,
+          costUsd: estimateCodexCostUsd(
+            turn.usage,
+            input.modelId ?? getDefaultCodexModel(),
+            pricingOverrides,
+          ),
         };
       }
     } catch (err) {

@@ -82,11 +82,26 @@ export const codexReasoningEffortSchema = z.enum([
 ]);
 export type CodexReasoningEffort = z.infer<typeof codexReasoningEffortSchema>;
 
+/** USD per 1M tokens for one Codex model. */
+export const codexModelPricingSchema = z.object({
+  inputPerMillion: z.number().nonnegative(),
+  cachedInputPerMillion: z.number().nonnegative(),
+  outputPerMillion: z.number().nonnegative(),
+});
+export type CodexModelPricing = z.infer<typeof codexModelPricingSchema>;
+
+export const codexPricingTableSchema = z.record(
+  z.string(),
+  codexModelPricingSchema,
+);
+export type CodexPricingTable = z.infer<typeof codexPricingTableSchema>;
+
 export const codexConfigSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().optional().default("gpt-5.4"),
   reasoningEffort: codexReasoningEffortSchema.optional(),
   timeoutMs: z.number().positive().nullable().optional(),
+  pricing: codexPricingTableSchema.optional(),
 });
 export type CodexConfig = z.infer<typeof codexConfigSchema>;
 

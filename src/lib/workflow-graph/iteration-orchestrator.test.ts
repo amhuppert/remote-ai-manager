@@ -2063,6 +2063,96 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     expect(laneState?.rotateBeforeNextTurn).toBe(false);
   });
 
+  it("injects the retiring conversation's handoff note into the rotation seed prompt", async () => {
+    const baseExecution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const execution: GraphWorkflowExecution = {
+      ...baseExecution,
+      workingDefinition: {
+        ...baseExecution.workingDefinition,
+        executionContexts:
+          baseExecution.workingDefinition.executionContexts.map((ctx) =>
+            ctx.id === "context-plan"
+              ? {
+                  ...ctx,
+                  iterationPolicy: {
+                    ...ctx.iterationPolicy,
+                    continuity: { enabled: true, contextLimitTokens: 100_000 },
+                  },
+                }
+              : ctx,
+          ),
+      },
+    };
+    const repository = createRepository(execution);
+
+    let convCounter = 0;
+    const createConversation = vi.fn(async () => {
+      convCounter++;
+      return { id: `conv-${convCounter}` };
+    });
+    const getConversation = vi.fn(
+      async (_p: string, _s: string, id: string) => ({ id }),
+    );
+
+    const prompts: string[] = [];
+    let callCount = 0;
+    const runAgentIteration = vi.fn(async (input: { prompt: string }) => {
+      prompts.push(input.prompt);
+      callCount++;
+      return {
+        conversationId: "conv-mock",
+        contextTokens: callCount === 1 ? 120_000 : 50_000,
+        contextWindowMax: 200_000,
+        compacted: false,
+      };
+    });
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation,
+      getConversation,
+      startCodexThread: vi.fn(),
+      resumeCodexThread: vi.fn(),
+      loadRotationHandoff: vi
+        .fn()
+        .mockResolvedValue(
+          "Finished task-plan-1. Lesson: the fixture DB needs WAL mode.",
+        ),
+      now: () => NOW,
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      continuityService,
+      now: () => NOW,
+    });
+
+    const input = {
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    };
+    await orchestrator.runIteration(input);
+    await orchestrator.runIteration(input);
+
+    // First seed has no predecessor; the rotation seed carries the handoff.
+    expect(prompts[0]).not.toContain(
+      "## Handoff from the previous conversation",
+    );
+    expect(prompts[1]).toContain("## Handoff from the previous conversation");
+    expect(prompts[1]).toContain(
+      "Finished task-plan-1. Lesson: the fixture DB needs WAL mode.",
+    );
+  });
+
   it("reuses the same implementer session after execution state is deserialized through the schema (restart recovery)", async () => {
     const execution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",
@@ -4952,12 +5042,14 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       },
     });
 
+    const beforeRun = Date.now();
     await orchestrator.runIteration({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-1",
       contextId: "context-plan",
     });
+    const afterRun = Date.now();
 
     const started = iterationCalls.find(
       (call) => call.event === "iteration.background_wait_started",
@@ -4965,7 +5057,14 @@ describe("background-task wait lifecycle (task 4.2)", () => {
     expect(started).toBeDefined();
     expect(started?.data).toMatchObject({
       waitedTaskIds: ["bg-task-1", "bg-task-2"],
+      durationMs: 4242,
     });
+    // Both wait-lifecycle lines are written retrospectively after the turn;
+    // startedAt back-dates the started line to the wait's true begin time.
+    const startedAt = (started?.data as { startedAt?: string }).startedAt;
+    expect(startedAt).toBeDefined();
+    expect(Date.parse(startedAt!)).toBeGreaterThanOrEqual(beforeRun - 4242);
+    expect(Date.parse(startedAt!)).toBeLessThanOrEqual(afterRun - 4242);
 
     const resolved = iterationCalls.find(
       (call) => call.event === "iteration.background_wait_resolved",
@@ -5046,7 +5145,9 @@ describe("background-task wait lifecycle (task 4.2)", () => {
     expect(started).toBeDefined();
     expect(started?.data).toMatchObject({
       waitedTaskIds: ["bg-task-1", "bg-task-2"],
+      durationMs: 60000,
     });
+    expect((started?.data as { startedAt?: string }).startedAt).toBeDefined();
 
     const timedOut = iterationCalls.find(
       (call) => call.event === "iteration.background_wait_timed_out",
@@ -6372,5 +6473,159 @@ describe("appendFailureHistory (cap)", () => {
       "failure 13",
       "failure 14",
     ]);
+  });
+});
+
+// -- per-conversation occupancy-vs-outcome telemetry ---------------------------
+
+describe("conversation telemetry emission", () => {
+  afterEach(() => {
+    _resetRegistryForTesting();
+  });
+
+  function createCapturingExecutionLogger(executionId: string): {
+    logger: ExecutionLogger;
+    iterationCalls: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }>;
+  } {
+    const iterationCalls: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }> = [];
+    const logger: ExecutionLogger = {
+      executionId,
+      logDir: "/tmp/test-conversation-telemetry",
+      writeManifest() {},
+      lifecycle() {},
+      iteration(_contextId, event, data) {
+        iterationCalls.push({ event, data });
+      },
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision() {},
+    };
+    return { logger, iterationCalls };
+  }
+
+  function makeCompletingHarness() {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "completed",
+      }),
+    );
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: 123_456,
+        contextWindowMax: 1_000_000,
+        compacted: false,
+      };
+    });
+    return { repository, runAgentIteration };
+  }
+
+  it("emits a conversation.telemetry event with the transcript summary after the iteration completes", async () => {
+    const { repository, runAgentIteration } = makeCompletingHarness();
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const readConversationTelemetry = vi.fn(async () => ({
+      costUsd: 23.5,
+      apiTurns: 137,
+      lineageCount: 1,
+      reads: { uniqueFiles: 3, totalReads: 6, repeatReads: 3 },
+      topReReads: [{ path: "/repo/a.ts", count: 3 }],
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      readConversationTelemetry,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(readConversationTelemetry).toHaveBeenCalledWith("conversation-1");
+    const telemetry = iterationCalls.find(
+      (call) => call.event === "conversation.telemetry",
+    );
+    expect(telemetry).toBeDefined();
+    expect(telemetry?.data).toMatchObject({
+      conversationId: "conversation-1",
+      costUsd: 23.5,
+      apiTurns: 137,
+      lineageCount: 1,
+      reads: { uniqueFiles: 3, totalReads: 6, repeatReads: 3 },
+      topReReads: [{ path: "/repo/a.ts", count: 3 }],
+    });
+  });
+
+  it("completes the iteration and emits no event when the telemetry reader fails", async () => {
+    const { repository, runAgentIteration } = makeCompletingHarness();
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      readConversationTelemetry: vi
+        .fn()
+        .mockRejectedValue(new Error("transcript missing")),
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(
+      iterationCalls.some((call) => call.event === "conversation.telemetry"),
+    ).toBe(false);
+    const completed = iterationCalls.find(
+      (call) => call.event === "iteration.completed",
+    );
+    expect(completed).toBeDefined();
+    expect(completed?.data).toMatchObject({ completedTaskCount: 2 });
   });
 });

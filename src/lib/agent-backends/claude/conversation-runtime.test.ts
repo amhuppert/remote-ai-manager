@@ -9,7 +9,10 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
-import { claudeConversationBackendFactory } from "./conversation-runtime";
+import {
+  claudeConversationBackendFactory,
+  resolveIdleTtlMs,
+} from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
 import { backendCapabilities } from "../capabilities-descriptor";
 import type { ConversationBackendEvent } from "../conversation";
@@ -90,6 +93,16 @@ function createControllableMockQuery() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("resolveIdleTtlMs", () => {
+  it("returns undefined for interactive conversations so QuerySession keeps its default", () => {
+    expect(resolveIdleTtlMs(undefined)).toBeUndefined();
+  });
+
+  it("returns the 60-minute workflow-lane TTL when a workflow execution id is present", () => {
+    expect(resolveIdleTtlMs("exec-1")).toBe(60 * 60 * 1000);
+  });
 });
 
 describe("ClaudeConversationRuntime — SDK options", () => {

@@ -1,10 +1,23 @@
 import path from "node:path";
+import { createLogger } from "@/lib/logging";
+
+const logger = createLogger("session-env");
 
 /**
  * The env contract injected into every spawned agent session
  * (docs/design/cc-cli/01 §2): identity + server coordinates for cctl, a PATH
  * prepend that makes the installed binary resolvable, and a raised Bash
  * ceiling so `cctl --wait` flows are not killed by the harness default.
+ *
+ * The contract OWNS the CC_ namespace: every CC_* key inherited from the base
+ * env is neutralized to "" before the contract vars are set, so an ambient
+ * value (e.g. a prod CC_SERVER_URL/CC_API_TOKEN leaking into a nested dev
+ * instance, or an outer lane's CC_WORKFLOW_* ids) can never reach a spawned
+ * agent's cctl resolution. Neutralization is an empty-string override, NOT a
+ * delete: the Claude Agent SDK merges this env over process.env (see
+ * shared/child-env.ts), so a deleted key resurrects the parent's ambient
+ * value — "" wins under both merge and replace semantics, and every cctl env
+ * read is a falsy check, so "" behaves exactly like unset.
  */
 
 /** 30 min — long `cctl --wait` flows (codex runs) exceed the 10-min default. */
@@ -32,10 +45,29 @@ export interface SessionEnvContractInput {
   workflowContextId?: string;
 }
 
+/** Override every inherited CC_* key with "" (in place). */
+export function neutralizeAmbientCcEnv(env: SessionEnv): SessionEnv {
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("CC_")) env[key] = "";
+  }
+  return env;
+}
+
 export function buildSessionEnvContract(
   input: SessionEnvContractInput,
 ): SessionEnv {
-  const env: SessionEnv = { ...input.baseEnv };
+  // Key names only — an ambient CC_API_TOKEN value must never reach the logs.
+  const contaminatedKeys = Object.keys(input.baseEnv).filter(
+    (key) => key.startsWith("CC_") && input.baseEnv[key],
+  );
+  if (contaminatedKeys.length > 0) {
+    logger.info("session-env.ambient_cc_env_neutralized", {
+      conversationId: input.conversationId,
+      keys: contaminatedKeys,
+    });
+  }
+
+  const env: SessionEnv = neutralizeAmbientCcEnv({ ...input.baseEnv });
 
   if (input.serverUrl !== null) env["CC_SERVER_URL"] = input.serverUrl;
   if (input.apiToken !== null) env["CC_API_TOKEN"] = input.apiToken;

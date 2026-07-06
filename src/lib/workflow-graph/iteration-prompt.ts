@@ -114,6 +114,16 @@ export interface BuildIterationPromptInput {
    * When true a short ask-protocol reminder section is added; otherwise none.
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * Final handoff message of the conversation this seed replaces after a
+   * context-window rotation. Injected verbatim so environment gotchas,
+   * workarounds, and in-flight state survive the rotation boundary instead of
+   * depending on the agent re-deriving them from the worktree.
+   */
+  previousConversationHandoff?: {
+    conversationId: string;
+    note: string;
+  };
 }
 
 function buildTaskLines(
@@ -266,6 +276,17 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     sections.push(buildResumeUserInputSection(input.resumeUserInput));
   }
 
+  if (input.previousConversationHandoff) {
+    sections.push(
+      [
+        "## Handoff from the previous conversation",
+        "This context's previous conversation reached its context limit and was rotated out. Its final handoff (verbatim):",
+        "",
+        input.previousConversationHandoff.note,
+      ].join("\n"),
+    );
+  }
+
   const latestContextValidationFailureSection =
     buildLatestContextValidationFailureSection(
       input.latestContextValidationFailure,
@@ -329,7 +350,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     COMPLETE_TASK_COMMAND,
     "```",
     "Run this after finishing each task — it is the only way to advance the workflow. `<taskId>` is the task's id from the list above (e.g. `task-plan-1`); the summary should cover files modified, tests added or run, and notable decisions.",
-    'On success it reports how many tasks remain in this context. If it instead prints a stop instruction ("CONTEXT LIMIT REACHED … End your turn now …"), that is mandatory: stop and end your turn with a brief handoff note — the workflow resumes the remaining tasks in a fresh conversation automatically. If the run has been halted the command exits non-zero and prints the reason; stop and end your turn.',
+    'On success it reports how many tasks remain in this context. If it instead prints a stop instruction ("CONTEXT LIMIT REACHED … End your turn now …"), that is mandatory: stop and end your turn with the handoff note it requests — your final message is delivered verbatim to the fresh conversation that resumes the remaining tasks automatically. If the run has been halted the command exits non-zero and prints the reason; stop and end your turn.',
     "",
     "### Register a shared document",
     "```",

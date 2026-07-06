@@ -1429,7 +1429,9 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
     expect(externalOnComplete).toHaveBeenCalledTimes(1);
     const result = externalOnComplete.mock.calls[0]![0];
     expect(result.sessionId).toBe("sess-1");
-    expect(result.costUsd).toBe(0.07);
+    // 0.07 is the lineage's cumulative; the continuation itself cost the
+    // delta over turn 1's 0.01.
+    expect(result.costUsd).toBeCloseTo(0.06, 10);
     expect(result.durationMs).toBe(450);
     expect(result.numTurns).toBe(2);
     expect(result.aborted).toBe(false);
@@ -2038,6 +2040,72 @@ describe("QuerySession.awaitBackgroundTaskSettlement", () => {
     expect(outcome.settledTaskIds).toEqual([]);
   });
 
+  it("resolves when the waiter's own waited tasks settle even while an unrelated task is still in flight (per-waiter settlement)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    const waitPromise = session.awaitBackgroundTaskSettlement(600_000);
+
+    // A run-forever task (e.g. dev server) starts between turns, then the
+    // waited task settles. The waiter must resolve on its OWN set draining,
+    // not wait for the unrelated task.
+    pushTaskStarted(mock, "task-b", "tool-2");
+    pushTaskNotification(mock, "task-a", "completed");
+
+    const raced = await Promise.race([
+      waitPromise.then((outcome) => ({ resolved: true as const, outcome })),
+      new Promise<{ resolved: false }>((resolve) =>
+        setTimeout(() => resolve({ resolved: false }), 100),
+      ),
+    ]);
+
+    expect(raced.resolved).toBe(true);
+    if (raced.resolved) {
+      expect(raced.outcome.timedOut).toBe(false);
+      expect(raced.outcome.waitedTaskIds).toEqual(["task-a"]);
+      expect(raced.outcome.settledTaskIds).toEqual(["task-a"]);
+    }
+
+    session.close();
+  });
+
+  it("demotes tasks that survive a full wait timeout so later waits skip them", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt(
+      "Run the dev server in the background",
+      emit,
+    );
+    pushTaskStarted(mock, "task-c", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    const outcome = await session.awaitBackgroundTaskSettlement(20);
+    expect(outcome.timedOut).toBe(true);
+    expect(outcome.settledTaskIds).toEqual([]);
+
+    // The survivor stops holding future barriers open.
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+
+    const second = await session.awaitBackgroundTaskSettlement(10_000);
+    expect(second.timedOut).toBe(false);
+    expect(second.waitedTaskIds).toEqual([]);
+
+    session.close();
+  });
+
   it("resolves a pending waiter promptly with timedOut: false on a pump-internal death (2.2 fold-in)", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -2137,6 +2205,48 @@ describe("QuerySession idle-TTL suppression during waitable tasks", () => {
 
     vi.useRealTimers();
     session.close();
+  });
+
+  it("arms the idle close timer when a wait timeout demotes the last waitable task", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions({ idleTtlMs: 100 }));
+    const emit = vi.fn();
+
+    // Final turn of a conversation starts a run-forever task: its `result`
+    // skips arming (task waitable/in-flight), so without arming on demotion
+    // the subprocess would leak until session deletion.
+    const turn = session.sendPrompt(
+      "Run the dev server in the background",
+      emit,
+    );
+    pushTaskStarted(mock, "task-a", "tool-1");
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    const waitPromise = session.awaitBackgroundTaskSettlement(50);
+    await vi.advanceTimersByTimeAsync(50);
+    const outcome = await waitPromise;
+    expect(outcome.timedOut).toBe(true);
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+    expect(session.status).toBe("alive");
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(session.status).toBe("dead");
+
+    vi.useRealTimers();
   });
 
   it("arms the idle close timer normally once the last waitable task settles", async () => {
@@ -2356,6 +2466,119 @@ describe("QuerySession live-occupancy publishing and compaction", () => {
     const result = await turnPromise;
 
     expect(result.compacted).toBe(false);
+    session.close();
+  });
+});
+
+// -- per-turn cost attribution (SDK total_cost_usd is cumulative) --------------
+
+describe("QuerySession cost attribution", () => {
+  function resultMessage(
+    sessionId: string,
+    totalCostUsd: number,
+    uuid: string,
+  ): SDKMessage {
+    return {
+      type: "result",
+      subtype: "success",
+      session_id: sessionId,
+      uuid,
+      total_cost_usd: totalCostUsd,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage;
+  }
+
+  it("attributes only the delta of the cumulative session cost to each turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage(resultMessage("sess-1", 10, "u1"));
+    const result1 = await turn1;
+
+    const turn2 = session.sendPrompt("Second", emit);
+    mock.pushMessage(resultMessage("sess-1", 25.5, "u2"));
+    const result2 = await turn2;
+
+    expect(result1.costUsd).toBe(10);
+    // The SDK reports 25.5 as the session's cumulative cost; the turn itself
+    // cost 15.5. Attributing the cumulative would double-count turn 1's spend
+    // in every consumer that sums per-turn costs (conversation totals).
+    expect(result2.costUsd).toBe(15.5);
+
+    session.close();
+  });
+
+  it("restarts the baseline when the session lineage changes", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage(resultMessage("sess-a", 10, "u1"));
+    await turn1;
+
+    // A restarted lineage reports cost from zero again — its first result is
+    // entirely this turn's spend, not a delta against the old lineage.
+    const turn2 = session.sendPrompt("Second", emit);
+    mock.pushMessage(resultMessage("sess-b", 7.5, "u2"));
+    const result2 = await turn2;
+
+    expect(result2.costUsd).toBe(7.5);
+
+    session.close();
+  });
+
+  it("treats a same-session-id cumulative drop as a lineage restart", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage(resultMessage("sess-1", 64.85, "u1"));
+    await turn1;
+
+    // A restarted subprocess can resume the SAME session id with its
+    // cumulative reset. The drop is the lineage boundary: the new result is
+    // entirely this turn's spend, not Math.max(0, 43.73 - 64.85) = 0.
+    const turn2 = session.sendPrompt("Second", emit);
+    mock.pushMessage(resultMessage("sess-1", 43.73, "u2"));
+    const result2 = await turn2;
+
+    expect(result2.costUsd).toBe(43.73);
+
+    session.close();
+  });
+
+  it("carries a discarded between-turns segment's cost into the next turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage(resultMessage("sess-1", 10, "u1"));
+    await turn1;
+
+    // No pending turn and no external handler: this result is discarded, but
+    // its spend is real — it must surface in the next attributed turn so the
+    // conversation total still sums to the lineage's final cumulative.
+    mock.pushMessage(resultMessage("sess-1", 12, "u2"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const turn2 = session.sendPrompt("Second", emit);
+    mock.pushMessage(resultMessage("sess-1", 20, "u3"));
+    const result2 = await turn2;
+
+    expect(result2.costUsd).toBe(10);
+
     session.close();
   });
 });

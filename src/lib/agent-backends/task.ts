@@ -38,6 +38,8 @@ export interface AgentTaskResult {
     inputTokens?: number | null;
     cachedInputTokens?: number | null;
     outputTokens?: number | null;
+    /** Estimated from token usage — backends that report tokens but not USD. */
+    costUsd?: number | null;
   } | null;
   error: string | null;
   timedOut: boolean;

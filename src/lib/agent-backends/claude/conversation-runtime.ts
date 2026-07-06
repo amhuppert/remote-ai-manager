@@ -69,6 +69,30 @@ const logger = createLogger("claude:conversation-runtime");
  */
 const DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 
+/**
+ * Idle TTL for workflow-lane sessions. Graph-workflow inter-iteration gaps
+ * (validation, scheduling) routinely exceed QuerySession's 5-minute default,
+ * which killed lane subprocesses (and their children, e.g. dev servers)
+ * between iterations. 60 minutes covers real gaps while still bounding the
+ * subprocess leak for completed/halted lanes, which have no deterministic
+ * close today (`idleTtlMs: 0` would disable the timer entirely and leak a
+ * live subprocess per lane until session deletion).
+ */
+const WORKFLOW_LANE_IDLE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Workflow-lane conversations (identified by a workflow execution id on the
+ * create input) get the lane TTL; interactive conversations return undefined
+ * and fall through to QuerySession's 5-minute default.
+ */
+export function resolveIdleTtlMs(
+  workflowExecutionId: string | undefined,
+): number | undefined {
+  return workflowExecutionId !== undefined
+    ? WORKFLOW_LANE_IDLE_TTL_MS
+    : undefined;
+}
+
 const KNOWN_CLAUDE_MODELS = claudeModelSchema.options;
 const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
 
@@ -671,6 +695,8 @@ const claudeConversationBackendFactory = {
       ? buildExternalTurnHandler(input.onExternalTurnEvent)
       : undefined;
 
+    const idleTtlMs = resolveIdleTtlMs(input.workflowExecutionId);
+
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
       cwd: input.worktreePath,
@@ -709,6 +735,7 @@ const claudeConversationBackendFactory = {
       disallowedTools: ["AskUserQuestion"],
       outputFormat: input.outputFormat,
       externalTurnHandler,
+      ...(idleTtlMs !== undefined ? { idleTtlMs } : {}),
       ...(initialSettings ? { settings: initialSettings } : {}),
     };
 

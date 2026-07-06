@@ -134,4 +134,81 @@ describe("buildSessionEnvContract", () => {
     expect("CC_WORKFLOW_EXECUTION_ID" in env).toBe(false);
     expect("CC_WORKFLOW_CONTEXT_ID" in env).toBe(false);
   });
+
+  it("neutralizes every inherited CC_* var with an empty-string override when the contract omits it", () => {
+    // Presence (not deletion) matters: the Claude Agent SDK merges this env
+    // over process.env, so a deleted key resurrects the parent's ambient
+    // value — only "" wins under both merge and replace semantics.
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {
+        CC_SERVER_URL: "http://127.0.0.1:3000",
+        CC_API_TOKEN: "prod-tok",
+        CC_WORKFLOW_EXECUTION_ID: "outer-exec",
+        CC_WORKFLOW_CONTEXT_ID: "outer-ctx",
+        CC_CONFIG_DIR: "/prod/cfg",
+      },
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    for (const key of [
+      "CC_SERVER_URL",
+      "CC_API_TOKEN",
+      "CC_WORKFLOW_EXECUTION_ID",
+      "CC_WORKFLOW_CONTEXT_ID",
+      "CC_CONFIG_DIR",
+    ]) {
+      expect(key in env, `${key} must be present`).toBe(true);
+      expect(env[key], `${key} must be neutralized`).toBe("");
+    }
+  });
+
+  it("lets intended contract values win over ambient CC_* vars", () => {
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {
+        CC_SERVER_URL: "http://127.0.0.1:3000",
+        CC_API_TOKEN: "prod-tok",
+        CC_PROJECT: "other-project",
+        CC_SESSION: "other-session",
+        CC_CONVERSATION_ID: "other-conv",
+        CC_WORKFLOW_EXECUTION_ID: "outer-exec",
+        CC_WORKFLOW_CONTEXT_ID: "outer-ctx",
+      },
+      serverUrl: "http://127.0.0.1:3071",
+      apiToken: "dev-tok",
+      workflowExecutionId: "exec-9",
+      workflowContextId: "context-plan",
+    });
+
+    expect(env["CC_SERVER_URL"]).toBe("http://127.0.0.1:3071");
+    expect(env["CC_API_TOKEN"]).toBe("dev-tok");
+    expect(env["CC_PROJECT"]).toBe("command-center");
+    expect(env["CC_SESSION"]).toBe("my-session");
+    expect(env["CC_CONVERSATION_ID"]).toBe("conv-123");
+    expect(env["CC_WORKFLOW_EXECUTION_ID"]).toBe("exec-9");
+    expect(env["CC_WORKFLOW_CONTEXT_ID"]).toBe("context-plan");
+  });
+
+  it("leaves non-CC keys untouched while neutralizing the CC_ namespace", () => {
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {
+        PATH: "/usr/bin",
+        HOME: "/Users/alex",
+        NODE_ENV: "development",
+        BASH_MAX_TIMEOUT_MS: "3600000",
+        CC_ENV: "production",
+      },
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect(env["HOME"]).toBe("/Users/alex");
+    expect(env["NODE_ENV"]).toBe("development");
+    expect(env["BASH_MAX_TIMEOUT_MS"]).toBe("3600000");
+    expect(env["PATH"]).toContain("/usr/bin");
+    expect(env["CC_ENV"]).toBe("");
+  });
 });

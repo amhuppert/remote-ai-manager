@@ -39,6 +39,26 @@ export interface WorkflowContinuityServiceDeps {
     sessionName: string,
     conversationId: string,
   ): Promise<{ id: string } | null>;
+  /**
+   * Read the retiring conversation's final handoff message when a
+   * context-window rotation replaces it. The note is injected verbatim into
+   * the fresh conversation's seed prompt so environment gotchas and in-flight
+   * state cross the rotation boundary. Best-effort: absent dep, null return,
+   * or a throw all resolve to "no handoff".
+   */
+  loadRotationHandoff?(conversationId: string): Promise<string | null>;
+  /**
+   * Stop the replaced claude lane conversation's actor (and with it the SDK
+   * subprocess) when a same-context rotation creates its successor. Without
+   * this, a retired lane's subprocess lives on until the workflow-lane idle
+   * TTL fires — up to an hour of leaked subprocess per rotation. Best-effort:
+   * a throw is logged and never fails the rotation.
+   */
+  retireLaneConversation?(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): void;
   startCodexThread(): Promise<{ threadId: string }>;
   resumeCodexThread(threadId: string): Promise<{ threadId: string }>;
   now?(): string;
@@ -64,6 +84,14 @@ export interface ResolvedImplementerCall {
   conversationId: string;
   sessionAction: "reuse" | "create";
   promptMode: "iteration_seed" | "follow_up";
+  /**
+   * Present only on a context-limit rotation: the retiring conversation's
+   * final handoff message, for verbatim injection into the seed prompt.
+   */
+  previousConversationHandoff?: {
+    conversationId: string;
+    note: string;
+  };
 }
 
 export type ResolvedValidatorCall =
@@ -364,6 +392,87 @@ export function createWorkflowContinuityService(
     return { laneState, conversationId: conversation.id };
   }
 
+  /**
+   * Best-effort read of the retiring conversation's final handoff. Only a
+   * same-context `rotation_scheduled` replacement qualifies — a first lane has
+   * nothing to hand off, and a lane inherited from another context or engine
+   * would hand off foreign state.
+   */
+  async function loadHandoffForRotation(
+    laneState: GraphWorkflowAgentSessionState | null | undefined,
+    reason: string,
+  ): Promise<{ conversationId: string; note: string } | undefined> {
+    if (
+      reason !== "rotation_scheduled" ||
+      !laneState ||
+      !deps.loadRotationHandoff
+    ) {
+      return undefined;
+    }
+    const previousConversationId =
+      laneState.workflowConversationId ??
+      (laneState.engine === "claude" && laneState.sessionRef.engine === "claude"
+        ? laneState.sessionRef.conversationId
+        : null);
+    if (!previousConversationId) {
+      return undefined;
+    }
+    try {
+      const note = await deps.loadRotationHandoff(previousConversationId);
+      if (!note || note.trim().length === 0) {
+        return undefined;
+      }
+      logger.info("workflow-continuity.rotation_handoff.loaded", {
+        conversationId: previousConversationId,
+        noteLength: note.length,
+      });
+      return { conversationId: previousConversationId, note };
+    } catch (error) {
+      logger.warn("workflow-continuity.rotation_handoff.load_failed", {
+        conversationId: previousConversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  /**
+   * Stop the conversation a same-context rotation just replaced. Claude lanes
+   * only — the leaked resource is the QuerySession subprocess, which codex
+   * lanes do not hold. Called after the fresh lane exists so a failed
+   * replacement never strands the context laneless, and after the rotation
+   * handoff has been read from the retiring transcript.
+   */
+  function retireReplacedLaneConversation(
+    laneState: GraphWorkflowAgentSessionState | null | undefined,
+    contextId: string,
+    projectPath: string,
+    sessionName: string,
+  ): void {
+    if (!deps.retireLaneConversation || !laneState) return;
+    if (laneState.contextId !== contextId) return;
+    if (laneState.engine !== "claude") return;
+    const conversationId =
+      laneState.workflowConversationId ??
+      (laneState.sessionRef.engine === "claude"
+        ? laneState.sessionRef.conversationId
+        : null);
+    if (!conversationId) return;
+    try {
+      deps.retireLaneConversation({ projectPath, sessionName, conversationId });
+      logger.info("workflow-continuity.lane.retired", {
+        contextId,
+        conversationId,
+      });
+    } catch (error) {
+      logger.warn("workflow-continuity.lane.retire_failed", {
+        contextId,
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function resolveImplementerCall(
     input: ResolveImplementerCallInput,
   ): Promise<ResolvedImplementerCall> {
@@ -415,8 +524,13 @@ export function createWorkflowContinuityService(
         });
       }
 
+      const previousConversationHandoff = await loadHandoffForRotation(
+        laneState,
+        reason,
+      );
+
       if (engine === "codex") {
-        return createFreshCodexImplementerLane(
+        const resolved = await createFreshCodexImplementerLane(
           execution,
           projectPath,
           sessionName,
@@ -424,6 +538,15 @@ export function createWorkflowContinuityService(
           reason,
           now,
         );
+        retireReplacedLaneConversation(
+          laneState,
+          contextId,
+          projectPath,
+          sessionName,
+        );
+        return previousConversationHandoff
+          ? { ...resolved, previousConversationHandoff }
+          : resolved;
       }
 
       const { laneState: newLaneState, conversationId } =
@@ -438,11 +561,19 @@ export function createWorkflowContinuityService(
           execution,
         );
 
+      retireReplacedLaneConversation(
+        laneState,
+        contextId,
+        projectPath,
+        sessionName,
+      );
+
       return {
         execution: withLaneState(execution, contextId, lane, newLaneState),
         conversationId,
         sessionAction: "create",
         promptMode: "iteration_seed",
+        ...(previousConversationHandoff ? { previousConversationHandoff } : {}),
       };
     }
 
@@ -664,6 +795,13 @@ export function createWorkflowContinuityService(
             now,
             execution,
           );
+
+        retireReplacedLaneConversation(
+          laneState,
+          contextId,
+          projectPath,
+          sessionName,
+        );
 
         return {
           execution: withLaneState(execution, contextId, lane, newLaneState),

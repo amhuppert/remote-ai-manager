@@ -20,8 +20,11 @@ vi.mock("../registry-core", () => ({
   registerTaskRunner: vi.fn(),
 }));
 
+const childEnvState = vi.hoisted(() => ({
+  env: {} as Record<string, string>,
+}));
 vi.mock("@/lib/shared/child-env", () => ({
-  buildChildEnv: () => ({}),
+  buildChildEnv: () => ({ ...childEnvState.env }),
 }));
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -80,7 +83,29 @@ describe("ClaudeTaskRunner", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    childEnvState.env = {};
     runner = new ClaudeTaskRunner();
+  });
+
+  it("neutralizes ambient CC_* env before spawning the task subprocess", async () => {
+    childEnvState.env = {
+      NODE_ENV: "development",
+      CC_SERVER_URL: "http://ambient-prod:3000",
+      CC_API_TOKEN: "ambient-token",
+      PATH: "/usr/bin",
+    };
+    mockQuery.mockReturnValue(
+      makeStream([successResultMessage()]) as ReturnType<typeof query>,
+    );
+
+    await runner.run(makeRequest());
+
+    const options = mockQuery.mock.calls[0]?.[0]?.options;
+    expect(options?.env).toMatchObject({
+      CC_SERVER_URL: "",
+      CC_API_TOKEN: "",
+      PATH: "/usr/bin",
+    });
   });
 
   it("returns result from basic execution with text and usage", async () => {

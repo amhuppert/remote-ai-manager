@@ -29,6 +29,7 @@ import {
   graphWorkflowSharedDocumentEntrySchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
+  graphWorkflowValidationResultEventSchema,
   resetExecutionContextRequestSchema,
   workflowAgentValidatorResultSchema,
   workflowConfigOverrideSchema,
@@ -473,6 +474,58 @@ describe("workflow graph validator and request schemas", () => {
       ],
     });
     expect(missingTaskId.success).toBe(false);
+  });
+
+  it("parses a codex review artifact recorded before cost estimation with costUsd null, and preserves a recorded costUsd", () => {
+    const baseEvent = {
+      type: "graph-workflow-validation-result" as const,
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "context-1",
+      validatorType: "context" as const,
+      pass: true,
+      summary: "GO",
+    };
+    const legacy = graphWorkflowValidationResultEventSchema.parse({
+      ...baseEvent,
+      reviewArtifact: {
+        engine: "codex",
+        threadId: "thread-1",
+        response: "{}",
+        usage: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 5 },
+      },
+    });
+    expect(
+      legacy.reviewArtifact?.engine === "codex"
+        ? legacy.reviewArtifact.usage
+        : null,
+    ).toEqual({
+      inputTokens: 100,
+      cachedInputTokens: 40,
+      outputTokens: 5,
+      costUsd: null,
+    });
+
+    const priced = graphWorkflowValidationResultEventSchema.parse({
+      ...baseEvent,
+      reviewArtifact: {
+        engine: "codex",
+        threadId: "thread-1",
+        response: "{}",
+        usage: {
+          inputTokens: 100,
+          cachedInputTokens: 40,
+          outputTokens: 5,
+          costUsd: 0.0021,
+        },
+      },
+    });
+    expect(
+      priced.reviewArtifact?.engine === "codex"
+        ? priced.reviewArtifact.usage?.costUsd
+        : null,
+    ).toBe(0.0021);
   });
 
   it("parses runtime edit operations for add and move workflows", () => {

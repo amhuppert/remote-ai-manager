@@ -49,6 +49,7 @@ import {
   emptyBackgroundTaskState,
   applyTaskMessage,
   getWaitableInFlightTaskIds,
+  demoteTasksToExcluded,
   type BackgroundTaskState,
 } from "./background-task-tracker";
 
@@ -135,14 +136,17 @@ export interface QuerySession {
   readonly backgroundTaskState: BackgroundTaskState;
 
   /**
-   * Resolve when the waitable in-flight background-task set has drained AND no
-   * turn is active, or when `timeoutMs` elapses (whichever comes first).
+   * Resolve when every waitable in-flight task captured at the moment the wait
+   * began has left the waitable set AND no turn is active, or when `timeoutMs`
+   * elapses (whichever comes first). Per-waiter: tasks that start AFTER the
+   * wait began (including run-forever watches) do not hold this waiter open.
    *
    * Bounded and non-rejecting: a timeout resolves with `timedOut: true`; it
    * never rejects and never waits indefinitely. Failed/stopped tasks settle in
-   * the tracker, so a failing background task also ends the wait. If the
-   * subprocess dies while waiting, the wait resolves (`timedOut: false`) so a
-   * dead session never hangs a waiter.
+   * the tracker, so a failing background task also ends the wait. Tasks still
+   * running at the timeout are demoted to `excluded` so they never stall a
+   * later wait. If the subprocess dies while waiting, the wait resolves
+   * (`timedOut: false`) so a dead session never hangs a waiter.
    */
   awaitBackgroundTaskSettlement(
     timeoutMs: number,
@@ -281,6 +285,14 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let awaitingSubsequentPromptDelivery = false;
   let backgroundTaskState = emptyBackgroundTaskState();
   const backgroundWaiters = new Set<BackgroundWaiter>();
+  // The SDK's `result.total_cost_usd` is CUMULATIVE for the session lineage,
+  // while every consumer of `TurnResult.costUsd` (conversation totals, usage
+  // accounting) sums per-turn values. Track the last attributed cumulative so
+  // each turn carries only its delta. Advanced only when a result is
+  // attributed to a turn, so a discarded between-turns segment's cost rides
+  // into the next attributed turn instead of vanishing.
+  let attributedCostBaseline = 0;
+  let attributedCostSessionId: string | null = null;
 
   // The hanging generator: yields the first user message, then hangs forever.
   // This keeps the SDK subprocess alive indefinitely.
@@ -472,18 +484,23 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   /**
-   * Resolve every pending waiter whose condition is now satisfied: the waitable
-   * in-flight set is empty AND no turn is active. Invoked at the end of
-   * `processMessage` so both "task settled" (tracker update) and "turn finished"
-   * (pendingTurn cleared on `result`) wake the waiters through the same pump.
+   * Resolve every pending waiter whose condition is now satisfied: all tasks
+   * captured at ITS wait begin have left the waitable in-flight set AND no
+   * turn is active. Per-waiter, so a task started after the wait began (e.g. a
+   * run-forever dev server) never holds an unrelated waiter open. Invoked at
+   * the end of `processMessage` so both "task settled" (tracker update) and
+   * "turn finished" (pendingTurn cleared on `result`) wake the waiters through
+   * the same pump.
    */
   function checkBackgroundTaskWaiters(): void {
     if (backgroundWaiters.size === 0) return;
-    const settled =
-      getWaitableInFlightTaskIds(backgroundTaskState).length === 0;
-    if (!settled || pendingTurn !== null) return;
+    if (pendingTurn !== null) return;
     for (const waiter of [...backgroundWaiters]) {
-      resolveWaiter(waiter, false);
+      if (
+        settledFrom(waiter.waitedTaskIds).length === waiter.waitedTaskIds.length
+      ) {
+        resolveWaiter(waiter, false);
+      }
     }
   }
 
@@ -539,9 +556,63 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           waitedTaskIds,
           timeoutMs,
         });
+        // Snapshot the survivors before resolving so the outcome's
+        // settledTaskIds reflects what actually settled, then demote them:
+        // a task that survived a full wait timeout will not settle on its
+        // own and must not hold later barriers open.
+        const inFlight = new Set(
+          getWaitableInFlightTaskIds(backgroundTaskState),
+        );
+        const stillInFlight = waiter.waitedTaskIds.filter((id) =>
+          inFlight.has(id),
+        );
         resolveWaiter(waiter, true);
+        if (stillInFlight.length > 0) {
+          backgroundTaskState = demoteTasksToExcluded(
+            backgroundTaskState,
+            stillInFlight,
+          );
+          logger.info("query-session.background_tasks_demoted", {
+            conversationId: options.conversationId,
+            taskIds: stillInFlight,
+          });
+          armIdleTimerIfEligible();
+        }
       }, timeoutMs);
     });
+  }
+
+  // ------------------------------------------------------------------
+  // idle TTL
+  // ------------------------------------------------------------------
+
+  /**
+   * Start the idle TTL timer — close the session if no new prompt arrives.
+   * Never armed while waitable background tasks are in flight, so a task's
+   * auto-continuation can still arrive past the default idle window. Called
+   * from each turn's `result` and from the wait-timeout demotion path: a
+   * final turn whose `result` skipped arming (task in flight) would otherwise
+   * never arm after demotion empties the waitable set, leaking the subprocess
+   * until session deletion.
+   */
+  function armIdleTimerIfEligible(): void {
+    if (
+      idleTtlMs <= 0 ||
+      status !== "alive" ||
+      getWaitableInFlightTaskIds(backgroundTaskState).length > 0
+    ) {
+      return;
+    }
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (status === "alive" && !pendingTurn) {
+        logger.info("query-session.idle_timeout", {
+          conversationId: options.conversationId,
+          idleTtlMs,
+        });
+        close();
+      }
+    }, idleTtlMs);
   }
 
   // ------------------------------------------------------------------
@@ -871,7 +942,22 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         awaitingSubsequentPromptDelivery = false;
         const resultMsg = message as SDKResultSuccess | SDKResultError;
         turn.sessionId = resultMsg.session_id;
-        turn.costUsd = resultMsg.total_cost_usd;
+        if (
+          attributedCostSessionId !== resultMsg.session_id ||
+          resultMsg.total_cost_usd < attributedCostBaseline
+        ) {
+          // New lineage: fresh/forked session, or a restarted subprocess that
+          // resumed the SAME session id with its cumulative reset — the
+          // cumulative can only decrease on such a restart, so a drop below
+          // the baseline is the lineage boundary.
+          attributedCostBaseline = 0;
+          attributedCostSessionId = resultMsg.session_id;
+        }
+        turn.costUsd = Math.max(
+          0,
+          resultMsg.total_cost_usd - attributedCostBaseline,
+        );
+        attributedCostBaseline = resultMsg.total_cost_usd;
         turn.durationMs = resultMsg.duration_ms;
         turn.numTurns = resultMsg.num_turns;
 
@@ -908,26 +994,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
         resolve(result);
 
-        // Start idle TTL timer — close session if no new prompt arrives. Do not
-        // arm it while waitable background tasks are in flight, so a background
-        // task's auto-continuation can still arrive past the default idle
-        // window. The timer arms normally once the last waitable task settles
-        // (its final virtual turn's `result`).
-        if (
-          idleTtlMs > 0 &&
-          status === "alive" &&
-          getWaitableInFlightTaskIds(backgroundTaskState).length === 0
-        ) {
-          idleTimer = setTimeout(() => {
-            if (status === "alive" && !pendingTurn) {
-              logger.info("query-session.idle_timeout", {
-                conversationId: options.conversationId,
-                idleTtlMs,
-              });
-              close();
-            }
-          }, idleTtlMs);
-        }
+        armIdleTimerIfEligible();
 
         break;
       }

@@ -162,7 +162,7 @@ function buildContextLimitStopClause(
 export function buildContextLimitStopInstruction(
   stop: CompleteTaskContextLimitStop,
 ): string {
-  return `CONTEXT LIMIT REACHED: ${buildContextLimitStopClause(stop)}. Do not start another task or begin new work. End your turn now with a brief handoff note (what you completed, anything left in flight). The workflow will continue the remaining tasks automatically in a fresh conversation.`;
+  return `CONTEXT LIMIT REACHED: ${buildContextLimitStopClause(stop)}. Do not start another task or begin new work. End your turn now with a handoff note for the next conversation: what you completed, anything left in flight, and any lessons it needs (environment gotchas, workarounds, decisions made and why). Your final message is delivered verbatim into the fresh conversation's first prompt.`;
 }
 
 export interface RequestCollaborationHandlerContext {

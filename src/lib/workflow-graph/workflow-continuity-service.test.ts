@@ -358,6 +358,334 @@ describe("resolveImplementerCall", () => {
 });
 
 // ---------------------------------------------------------------------------
+// resolveImplementerCall — rotation handoff capture
+// ---------------------------------------------------------------------------
+
+describe("resolveImplementerCall rotation handoff", () => {
+  function makeRotatedLane(): GraphWorkflowAgentSessionState {
+    return {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-old",
+      },
+      lastContextTokens: 180000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: true,
+      limitEvaluation: "supported",
+      lastUsedAt: NOW,
+    };
+  }
+
+  it("carries the retiring conversation's handoff note into the resolved call", async () => {
+    const loadRotationHandoff = vi
+      .fn()
+      .mockResolvedValue("Done task-1. Lesson: use explicit CC_SERVER_URL.");
+    const deps = makeDeps({ loadRotationHandoff });
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(makeRotatedLane()),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(loadRotationHandoff).toHaveBeenCalledWith("conv-old");
+    expect(result.previousConversationHandoff).toEqual({
+      conversationId: "conv-old",
+      note: "Done task-1. Lesson: use explicit CC_SERVER_URL.",
+    });
+  });
+
+  it("resolves without a handoff when the loader dep is absent", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(makeRotatedLane()),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(result.previousConversationHandoff).toBeUndefined();
+    expect(result.sessionAction).toBe("create");
+  });
+
+  it("resolves without a handoff when the loader returns null or throws", async () => {
+    for (const loadRotationHandoff of [
+      vi.fn().mockResolvedValue(null),
+      vi.fn().mockRejectedValue(new Error("transcript unreadable")),
+    ]) {
+      const deps = makeDeps({ loadRotationHandoff });
+      const svc = createWorkflowContinuityService(deps);
+      const execution = makeExecution({
+        laneStates: laneStatesByContext(makeRotatedLane()),
+      });
+
+      const result = await svc.resolveImplementerCall({
+        execution,
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+      });
+
+      expect(result.previousConversationHandoff).toBeUndefined();
+      expect(result.sessionAction).toBe("create");
+    }
+  });
+
+  it("does not load a handoff for a first lane or a lane inherited from another context", async () => {
+    const loadRotationHandoff = vi.fn().mockResolvedValue("stale note");
+
+    // No prior lane at all.
+    let deps = makeDeps({ loadRotationHandoff });
+    let svc = createWorkflowContinuityService(deps);
+    let result = await svc.resolveImplementerCall({
+      execution: makeExecution(),
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+    expect(result.previousConversationHandoff).toBeUndefined();
+
+    // Lane belonged to a different context — its handoff is not ours.
+    deps = makeDeps({ loadRotationHandoff });
+    svc = createWorkflowContinuityService(deps);
+    result = await svc.resolveImplementerCall({
+      execution: makeExecution({
+        laneStates: laneStatesByContext({
+          ...makeRotatedLane(),
+          contextId: "ctx-other",
+          rotateBeforeNextTurn: false,
+        }),
+      }),
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+    expect(result.previousConversationHandoff).toBeUndefined();
+
+    expect(loadRotationHandoff).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lane retirement on rotation
+// ---------------------------------------------------------------------------
+
+describe("lane retirement on rotation", () => {
+  function makeRotatedClaudeLane(): GraphWorkflowAgentSessionState {
+    return {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-old",
+      },
+      lastContextTokens: 180000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: true,
+      limitEvaluation: "supported",
+      lastUsedAt: NOW,
+    };
+  }
+
+  it("retires the replaced claude implementer conversation on a same-context rotation", async () => {
+    const retireLaneConversation = vi.fn();
+    const createConversation = vi.fn().mockResolvedValue({ id: "conv-new" });
+    const deps = makeDeps({ retireLaneConversation, createConversation });
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(makeRotatedClaudeLane()),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(result.sessionAction).toBe("create");
+    expect(retireLaneConversation).toHaveBeenCalledExactlyOnceWith({
+      projectPath: "/proj",
+      sessionName: "sess",
+      conversationId: "conv-old",
+    });
+    // The retiring conversation is stopped only after its replacement exists,
+    // so a failed lane creation never strands the context without any lane.
+    const retireOrder =
+      retireLaneConversation.mock.invocationCallOrder[0] ?? Infinity;
+    const createOrder = createConversation.mock.invocationCallOrder[0] ?? 0;
+    expect(retireOrder).toBeGreaterThan(createOrder);
+  });
+
+  it("retires after the rotation handoff has been read from the retiring transcript", async () => {
+    const calls: string[] = [];
+    const deps = makeDeps({
+      loadRotationHandoff: vi.fn().mockImplementation(async () => {
+        calls.push("handoff");
+        return "note";
+      }),
+      retireLaneConversation: vi.fn().mockImplementation(() => {
+        calls.push("retire");
+      }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(makeRotatedClaudeLane()),
+    });
+
+    await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(calls).toEqual(["handoff", "retire"]);
+  });
+
+  it("retires the replaced conversation on a same-context continuity-disabled rotation", async () => {
+    const retireLaneConversation = vi.fn();
+    const deps = makeDeps({ retireLaneConversation });
+    const svc = createWorkflowContinuityService(deps);
+    const definition = makeDefinition();
+    (
+      definition.executionContexts[0] as unknown as {
+        iterationPolicy: { continuity: { enabled: boolean } };
+      }
+    ).iterationPolicy.continuity.enabled = false;
+    const execution = makeExecution({
+      workingDefinition:
+        definition as unknown as ResolvedWorkflowSemanticDefinition,
+      laneStates: laneStatesByContext({
+        ...makeRotatedClaudeLane(),
+        rotateBeforeNextTurn: false,
+      }),
+    });
+
+    await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(retireLaneConversation).toHaveBeenCalledExactlyOnceWith({
+      projectPath: "/proj",
+      sessionName: "sess",
+      conversationId: "conv-old",
+    });
+  });
+
+  it("does not retire when there is no prior lane or the retiring lane is codex", async () => {
+    const retireLaneConversation = vi.fn();
+
+    // No prior lane.
+    let svc = createWorkflowContinuityService(
+      makeDeps({ retireLaneConversation }),
+    );
+    await svc.resolveImplementerCall({
+      execution: makeExecution(),
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    // Codex retiring lane — no claude subprocess to stop.
+    svc = createWorkflowContinuityService(makeDeps({ retireLaneConversation }));
+    await svc.resolveImplementerCall({
+      execution: makeExecution({
+        laneStates: laneStatesByContext({
+          engine: "codex",
+          lane: "implementer",
+          contextId: "ctx-1",
+          workflowConversationId: "conv-codex-old",
+          lastTurnUsage: null,
+          rotateBeforeNextTurn: true,
+          limitEvaluation: "disabled",
+          lastUsedAt: NOW,
+        }),
+      }),
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(retireLaneConversation).not.toHaveBeenCalled();
+  });
+
+  it("still resolves the rotation when the retire dep throws", async () => {
+    const deps = makeDeps({
+      retireLaneConversation: vi.fn().mockImplementation(() => {
+        throw new Error("actor registry unavailable");
+      }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(makeRotatedClaudeLane()),
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(result.sessionAction).toBe("create");
+    expect(result.conversationId).toBe("conv-new");
+  });
+
+  it("retires the replaced claude validator conversation on a same-context rotation", async () => {
+    const retireLaneConversation = vi.fn();
+    const deps = makeDeps({ retireLaneConversation });
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext({
+        ...makeRotatedClaudeLane(),
+        lane: "context_validator",
+        sessionRef: {
+          engine: "claude",
+          lane: "context_validator",
+          conversationId: "conv-validator-old",
+        },
+      }),
+    });
+
+    await svc.resolveValidatorCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      lane: "context_validator",
+      engine: "claude",
+    });
+
+    expect(retireLaneConversation).toHaveBeenCalledExactlyOnceWith({
+      projectPath: "/proj",
+      sessionName: "sess",
+      conversationId: "conv-validator-old",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // resolveImplementerCall — Codex backend
 // ---------------------------------------------------------------------------
 

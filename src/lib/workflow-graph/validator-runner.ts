@@ -547,6 +547,7 @@ interface ValidatorTaskResult {
     inputTokens: number | null;
     outputTokens: number | null;
     cachedInputTokens: number | null;
+    costUsd: number | null;
   } | null;
 }
 
@@ -596,7 +597,8 @@ function buildValidatorActorInput(
 function extractValidatorUsage(
   result: TaskRunResult,
 ): ValidatorTaskResult["usage"] {
-  const { inputTokens, outputTokens, cachedInputTokens } = result.usage;
+  const { inputTokens, outputTokens, cachedInputTokens, costUsd } =
+    result.usage;
   if (
     inputTokens === null &&
     outputTokens === null &&
@@ -604,7 +606,7 @@ function extractValidatorUsage(
   ) {
     return null;
   }
-  return { inputTokens, outputTokens, cachedInputTokens };
+  return { inputTokens, outputTokens, cachedInputTokens, costUsd };
 }
 
 function taskRunResultToValidatorTaskResult(
@@ -1092,7 +1094,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           : (newThreadId ?? null);
       const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
         codexThreadId
-          ? { engine: "codex", threadId: codexThreadId, response: text, usage }
+          ? {
+              engine: "codex",
+              threadId: codexThreadId,
+              response: text,
+              usage: usage
+                ? { ...usage, costUsd: taskResult.usage?.costUsd ?? null }
+                : null,
+            }
           : null;
 
       execLogger?.validation(contextId, "validator.result_parsed", {
