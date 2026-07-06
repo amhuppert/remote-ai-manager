@@ -412,7 +412,7 @@ export default function CompactionEnvelopeView({
               className="flex flex-col gap-[10px]"
             >
               <SectionHeading label="Agent brief" />
-              <div className="flex max-w-[76ch] flex-col gap-md font-body text-[14px] leading-[1.72] text-text-primary">
+              <div className="flex flex-col gap-md font-body text-[14px] leading-[1.72] text-text-primary">
                 {briefParagraphs.map((paragraph, i) => (
                   <p key={i} className="m-0">
                     {paragraph}
@@ -426,12 +426,12 @@ export default function CompactionEnvelopeView({
               className="flex flex-col gap-[10px]"
             >
               <SectionHeading label="Current state" />
-              <p className="m-0 max-w-[76ch] font-body text-[14px] leading-[1.6] text-text-primary">
+              <p className="m-0 font-body text-[14px] leading-[1.6] text-text-primary">
                 <span className="text-text-tertiary">Goal — </span>
                 {currentState.latestUserGoal}
               </p>
               {currentState.nextBestActions.length > 0 && (
-                <ol className="m-0 flex max-w-[76ch] list-none flex-col gap-[7px] p-0">
+                <ol className="m-0 flex list-none flex-col gap-[7px] p-0">
                   {currentState.nextBestActions.map((action, i) => (
                     <li key={i} className="flex gap-[10px]">
                       <span className="min-w-[14px] text-right font-mono text-[11.5px] text-cyan">

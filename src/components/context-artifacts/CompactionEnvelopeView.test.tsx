@@ -28,6 +28,28 @@ describe("CompactionEnvelopeView", () => {
     expect(first).not.toBe(second);
   });
 
+  it("lets the agent brief fill the container width without a prose cap", () => {
+    const envelope = {
+      ...buildMaximalEnvelope(),
+      agentBrief: "First paragraph of the brief.\n\nSecond paragraph.",
+    };
+    render(<CompactionEnvelopeView envelope={envelope} />);
+    const briefContainer = screen.getByText(
+      "First paragraph of the brief.",
+    ).parentElement!;
+    expect(briefContainer.className).not.toMatch(/max-w-\[\d+ch\]/);
+  });
+
+  it("lets the current state prose fill the container width without a prose cap", () => {
+    render(<CompactionEnvelopeView envelope={buildMaximalEnvelope()} />);
+    const goalParagraph = screen.getByText(/Goal —/).parentElement!;
+    expect(goalParagraph.className).not.toMatch(/max-w-\[\d+ch\]/);
+    const actionsList = screen
+      .getByText("Wire the MessageActions compact button to useCompactMutation")
+      .closest("ol")!;
+    expect(actionsList.className).not.toMatch(/max-w-\[\d+ch\]/);
+  });
+
   it("renders the current state goal and numbered next actions", () => {
     render(<CompactionEnvelopeView envelope={buildMaximalEnvelope()} />);
     expect(
