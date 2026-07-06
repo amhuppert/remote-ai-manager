@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
+import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -451,17 +453,16 @@ async function readBody(
     ...(callerHeaders(target) ? { headers: callerHeaders(target) } : {}),
   };
 
-  const outlineHint =
-    values["outline"] !== undefined
-      ? `narrow with --message-range or fetch the compaction: cctl conversation compaction get ${target.conversationId}`
-      : undefined;
-
   if (format === "markdown") {
     const result = await cliRequestText(host, requestParams);
     if (result.kind !== "ok") {
       const failed = failureFromRequestNotFoundAsUsage(result, json);
       return isWrongScope404(result) ? scopeMiss(failed) : failed;
     }
+    const outlineHint =
+      values["outline"] !== undefined
+        ? await outlineEscalationHint(target, host)
+        : undefined;
     return {
       exitCode: EXIT_OK,
       stdout: render(
@@ -482,6 +483,10 @@ async function readBody(
     const failed = failureFromRequestNotFoundAsUsage(result, json);
     return isWrongScope404(result) ? scopeMiss(failed) : failed;
   }
+  const outlineHint =
+    values["outline"] !== undefined
+      ? await outlineEscalationHint(target, host)
+      : undefined;
 
   const parsed = readResponseSchema.safeParse(result.body);
   const humanBody = parsed.success
@@ -499,13 +504,56 @@ async function readBody(
   };
 }
 
+const OUTLINE_WINDOW_SYNTAX =
+  "narrow with --message-range A:B / --seq-range A:B";
+
+/**
+ * The escalation hint after `--outline` steers by what actually exists: a
+ * complete compaction is worth fetching, a pending one is worth checking,
+ * and an absent one must be created first (a background LLM generation the
+ * caller may not want) — advertising `compaction get` unconditionally sends
+ * agents into a guaranteed exit-1.
+ */
+async function outlineEscalationHint(
+  target: ConversationTarget,
+  host: CliHost,
+): Promise<string> {
+  const fetchHint = `${OUTLINE_WINDOW_SYNTAX}, or fetch the compaction: cctl conversation compaction get ${target.conversationId}`;
+
+  const result = await cliRequest(host, {
+    server: target.server,
+    token: target.token,
+    tokenSource: target.tokenSource,
+    method: "GET",
+    path: artifactsPath(target),
+    ...(callerHeaders(target) ? { headers: callerHeaders(target) } : {}),
+  });
+  // The listing is advisory — never let it degrade a successful read.
+  if (result.kind !== "ok") return fetchHint;
+  const listed = artifactListSchema.safeParse(result.body);
+  if (!listed.success) return fetchHint;
+
+  const compactions = listed.data.filter(
+    (row) => row.kind === "conversation_compaction",
+  );
+  if (compactions.some((row) => row.status === "complete")) return fetchHint;
+  if (compactions.some((row) => row.status === "pending")) {
+    return `${OUTLINE_WINDOW_SYNTAX}; a compaction is generating — check it with: cctl conversation compaction get ${target.conversationId}`;
+  }
+  return `${OUTLINE_WINDOW_SYNTAX}; no compaction exists — create one (background LLM generation) with: ${compactCommand(target)}`;
+}
+
 function renderTranscriptHuman(
   transcript: z.infer<typeof readResponseSchema>,
 ): string {
   if (transcript.units.length === 0) {
-    return transcript.truncated
-      ? "no transcript units fit within --max-bytes (truncated — raise --max-bytes or narrow the window)\n"
-      : "no matching transcript units\n";
+    if (transcript.truncated) {
+      return "no transcript units fit within --max-bytes (truncated — raise --max-bytes or narrow the window)\n";
+    }
+    // Teach the conversation's coordinate space: the observed failure mode is
+    // windowing on [sN] seq markers with --message-range (or vice versa).
+    const lastMessage = Math.max(0, transcript.totalMessages - 1);
+    return `no matching transcript units — the conversation has ${transcript.totalMessages} messages (#0..#${lastMessage}) and seqs 0..${transcript.maxSeq}; [sN] markers are seq coordinates (--seq-range), #N headers are message indexes (--message-range)\n`;
   }
   const blocks = transcript.units.map((unit) => {
     const header = `#${unit.ref.messageIndex} [seq ${unit.ref.seqStart}-${unit.ref.seqEnd}] ${unit.role} ${unit.timestamp}`;
@@ -727,7 +775,7 @@ async function runCompactionGet(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, ["message"], json);
+  const denied = checkFlags(values, ["message", "format"], json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -745,17 +793,23 @@ async function runCompactionGet(
   const messageIndex =
     rawMessage === undefined ? undefined : Number(rawMessage);
 
+  const format = values["format"] ?? "json";
+  if (format !== "json" && format !== "markdown") {
+    return usageFailure("--format must be json or markdown", json);
+  }
+
   const resolved = await resolveConversationTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
 
   return withScopeResolution(host, resolved.target, flags, json, (target) =>
-    compactionGetBody(target, messageIndex, host, json),
+    compactionGetBody(target, messageIndex, format, host, json),
   );
 }
 
 async function compactionGetBody(
   target: ConversationTarget,
   messageIndex: number | undefined,
+  format: "json" | "markdown",
   host: CliHost,
   json: boolean,
 ): Promise<CliResult | ScopeMiss> {
@@ -826,6 +880,28 @@ async function compactionGetBody(
     result.body && typeof result.body === "object" && "payload" in result.body
       ? (result.body as { payload: unknown }).payload
       : null;
+
+  if (format === "markdown" && parsed.success) {
+    const envelope = compactionEnvelopeSchema.safeParse(payload);
+    const markdown = envelope.success
+      ? compactionEnvelopeToMarkdown(envelope.data, {
+          stale: parsed.data.stale,
+          staleBehindMessages: parsed.data.staleBehindMessages,
+          outdated: parsed.data.outdated,
+          updatedAt: parsed.data.updatedAt,
+        })
+      : `${artifactSummaryLine(parsed.data, target)}no renderable payload (status=${parsed.data.status})\n`;
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, markdown, {
+        ok: true,
+        markdown,
+        ...(hint ? { hint } : {}),
+      }),
+      stderr: "",
+    };
+  }
+
   const humanBody = parsed.success
     ? `${artifactSummaryLine(parsed.data, target)}${payload === null ? "" : `${JSON.stringify(payload, null, 2)}\n`}`
     : `${JSON.stringify(result.body, null, 2)}\n`;

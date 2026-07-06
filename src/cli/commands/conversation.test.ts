@@ -218,8 +218,12 @@ describe("cctl conversation read", () => {
     );
   });
 
-  it("sends boolean flags as query params and hints escalation after --outline", async () => {
-    const host = makeHost(() => jsonResponse(sampleTranscript));
+  it("sends boolean flags as query params and hints the fetch escalation after --outline when a compaction exists", async () => {
+    const host = makeHost((req) =>
+      req.url.includes("/context-artifacts")
+        ? jsonResponse([conversationArtifact])
+        : jsonResponse(sampleTranscript),
+    );
     const result = await runCli(
       ["conversation", "read", "conv-1", "--outline", "--include-thinking"],
       baseEnv,
@@ -229,9 +233,74 @@ describe("cctl conversation read", () => {
     const url = new URL(host.requests[0]?.url ?? "");
     expect(url.searchParams.get("outline")).toBe("true");
     expect(url.searchParams.get("includeThinking")).toBe("true");
-    expect(result.stdout).toContain(
-      "hint: narrow with --message-range or fetch the compaction: cctl conversation compaction get conv-1",
+    expect(new URL(host.requests[1]?.url ?? "").pathname).toBe(
+      "/api/projects/cc/sessions/my-session/conversations/conv-1/context-artifacts",
     );
+    expect(result.stdout).toContain(
+      "hint: narrow with --message-range A:B / --seq-range A:B, or fetch the compaction: cctl conversation compaction get conv-1",
+    );
+  });
+
+  it("hints creating a compaction after --outline when none exists", async () => {
+    const host = makeHost((req) =>
+      req.url.includes("/context-artifacts")
+        ? jsonResponse([])
+        : jsonResponse(sampleTranscript),
+    );
+    const result = await runCli(
+      ["conversation", "read", "conv-1", "--outline"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "hint: narrow with --message-range A:B / --seq-range A:B; no compaction exists — create one (background LLM generation) with: cctl conversation compact conv-1",
+    );
+    expect(result.stdout).not.toContain("compaction get");
+  });
+
+  it("hints that a compaction is generating after --outline when only a pending artifact exists", async () => {
+    const host = makeHost((req) =>
+      req.url.includes("/context-artifacts")
+        ? jsonResponse([{ ...conversationArtifact, status: "pending" }])
+        : jsonResponse(sampleTranscript),
+    );
+    const result = await runCli(
+      ["conversation", "read", "conv-1", "--outline"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("a compaction is generating");
+    expect(result.stdout).toContain("cctl conversation compaction get conv-1");
+  });
+
+  it("falls back to the fetch hint when the artifact listing fails, without failing the read", async () => {
+    const host = makeHost((req) =>
+      req.url.includes("/context-artifacts")
+        ? jsonResponse({ error: "boom" }, 500)
+        : jsonResponse(sampleTranscript),
+    );
+    const result = await runCli(
+      ["conversation", "read", "conv-1", "--outline"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "or fetch the compaction: cctl conversation compaction get conv-1",
+    );
+  });
+
+  it("does not touch the artifacts endpoint on a non-outline read", async () => {
+    const host = makeHost(() => jsonResponse(sampleTranscript));
+    const result = await runCli(
+      ["conversation", "read", "conv-1"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(host.requests).toHaveLength(1);
   });
 
   it("prints raw text for --format markdown", async () => {
@@ -300,17 +369,20 @@ describe("cctl conversation read", () => {
     expect(result.stdout).toContain("--max-bytes");
   });
 
-  it("still reports 'no matching transcript units' for an empty, untruncated window", async () => {
+  it("teaches the conversation's coordinates on an empty, untruncated window", async () => {
     const host = makeHost(() =>
       jsonResponse({ ...sampleTranscript, units: [], truncated: false }),
     );
     const result = await runCli(
-      ["conversation", "read", "conv-1"],
+      ["conversation", "read", "conv-1", "--message-range", "760:788"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("no matching transcript units");
+    expect(result.stdout).toContain("4 messages (#0..#3)");
+    expect(result.stdout).toContain("seqs 0..21");
+    expect(result.stdout).toContain("--seq-range");
   });
 
   it("exits 2 on an unknown conversation (404 conversation_not_found)", async () => {
@@ -527,6 +599,118 @@ describe("cctl conversation compaction get", () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.artifact.payload.agentBrief).toBe("the brief");
     expect(envelope.hint).toBeUndefined();
+  });
+
+  const samplePayload = {
+    schemaVersion: 1,
+    kind: "conversation_compaction",
+    source: {
+      projectName: "cc",
+      sessionName: "my-session",
+      conversationId: "conv-1",
+      coveredStartSeq: 0,
+      coveredEndSeq: 21,
+      messageCount: 4,
+      sourceHash: "abc",
+    },
+    agentBrief: "the brief",
+    currentState: {
+      status: "complete",
+      latestUserGoal: "ship it",
+      nextBestActions: ["verify live"],
+    },
+    decisions: [
+      {
+        statement: "delta accrual",
+        status: "accepted",
+        sourceRefs: [
+          { messageIndex: 1, messageId: null, seqStart: 3, seqEnd: 9 },
+        ],
+      },
+    ],
+    files: [],
+    commands: [],
+    openQuestions: [],
+    blockers: [],
+    omissions: { reasoningOmitted: true, largeToolOutputsElided: 2 },
+    extras: {},
+  };
+
+  it("renders the envelope as prose with --format markdown", async () => {
+    const host = makeHost((req) => {
+      const pathname = new URL(req.url).pathname;
+      if (pathname.endsWith("/context-artifacts"))
+        return jsonResponse([conversationArtifact]);
+      return jsonResponse({ ...conversationArtifact, payload: samplePayload });
+    });
+    const result = await runCli(
+      ["conversation", "compaction", "get", "conv-1", "--format", "markdown"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("# Compaction — cc / my-session / conv-1");
+    expect(result.stdout).toContain("## Agent brief\nthe brief");
+    expect(result.stdout).toContain("1. verify live");
+    expect(result.stdout).toContain("#1 s3–9");
+  });
+
+  it("carries the markdown in the --json envelope under --format markdown", async () => {
+    const host = makeHost((req) => {
+      const pathname = new URL(req.url).pathname;
+      if (pathname.endsWith("/context-artifacts"))
+        return jsonResponse([conversationArtifact]);
+      return jsonResponse({ ...conversationArtifact, payload: samplePayload });
+    });
+    const result = await runCli(
+      [
+        "conversation",
+        "compaction",
+        "get",
+        "conv-1",
+        "--format",
+        "markdown",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.markdown).toContain(
+      "# Compaction — cc / my-session / conv-1",
+    );
+  });
+
+  it("reports an unrenderable payload plainly under --format markdown", async () => {
+    const pendingArtifact = { ...conversationArtifact, status: "pending" };
+    const host = makeHost((req) => {
+      const pathname = new URL(req.url).pathname;
+      if (pathname.endsWith("/context-artifacts"))
+        return jsonResponse([pendingArtifact]);
+      return jsonResponse({ ...pendingArtifact, payload: null });
+    });
+    const result = await runCli(
+      ["conversation", "compaction", "get", "conv-1", "--format", "markdown"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("no renderable payload");
+    expect(result.stdout).toContain("status=pending");
+  });
+
+  it("exits 2 on an invalid --format", async () => {
+    const host = makeHost(() => jsonResponse([]));
+    const result = await runCli(
+      ["conversation", "compaction", "get", "conv-1", "--format", "yaml"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--format must be json or markdown");
+    expect(host.requests).toHaveLength(0);
   });
 
   it("selects the message artifact for --message N", async () => {

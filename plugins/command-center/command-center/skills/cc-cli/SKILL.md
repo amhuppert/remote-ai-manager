@@ -193,9 +193,22 @@ cctl conversation read <conversation-id> [--outline] [--message N] [--message-ra
                        [--include-thinking] [--search <regex>] [--max-bytes N]
                        [--format json|markdown] [--json]
 cctl conversation compact <conversation-id> [--message N] [--force] [--wait] [--json]
-cctl conversation compaction get <conversation-id> [--message N] [--json]
+cctl conversation compaction get <conversation-id> [--message N] [--format json|markdown] [--json]
 cctl conversation compaction list <conversation-id> [--json]
 ```
+
+**Windows & coordinates.** Ranges are `A:B` (e.g. `--message-range 2:3`;
+`A-B`, `A,B`, and a bare `N` for `N:N` are also accepted). Two coordinate
+systems, don't mix them: the `#N` unit headers in read output are **message
+indexes** (`--message` / `--message-range`), while the `[sN]` line markers are
+**seq coordinates** — raw JSONL lines, windowed with `--seq-range`. Compaction
+source refs carry both (`messageIndex` + `seqStart`/`seqEnd`).
+
+**Output sizes — read whole, don't pre-truncate.** An outline is typically
+1–3 KB, a compaction envelope 10–20 KB, and windowed reads are bounded by
+`--max-bytes` (default 256 KiB) server-side. Every output is already bounded,
+so do **not** wrap `cctl` in `2>&1 | head -c N` — the pipe hides the exit
+code, and errors already lead with their one actionable line.
 
 **Identity:** `<conversation-id>` is positional and defaults to
 `CC_CONVERSATION_ID` when omitted — reading your own history is valid. **You
@@ -210,11 +223,13 @@ in scope) and whenever you pass those flags; a truly unknown id exits `2`.
 
 ### Three-tier escalation — read in this order
 
-1. **Compaction first.** `cctl conversation compaction get <id> --json` returns
-   the full structured envelope (agent brief, current state, decisions, files,
-   commands, open questions, blockers) with exact `messageIndex`/`seq` source
-   refs. This is almost always all the context you need, at zero token cost to
-   generate.
+1. **Compaction first.** `cctl conversation compaction get <id> --format
+   markdown` renders the full envelope (agent brief, current state, decisions,
+   files, commands, open questions, blockers) as prose with exact
+   `messageIndex`/`seq` source refs — typically 10–20 KB, read it whole. This
+   is almost always all the context you need, at zero token cost to generate.
+   Use `--json` instead when you need the refs' verbatim quotes or
+   machine-readable fields.
 2. **Windowed read second.** When the compaction points you at something (or is
    stale/absent), pull a *bounded* window: `read --outline` for the table of
    contents, then `read --message-range A:B` or `--seq-range A:B` for the exact
@@ -230,10 +245,13 @@ in scope) and whenever you pass those flags; a truly unknown id exits `2`.
   visible message; `seq` = raw JSONL line). `--include-tools` defaults to
   `summary`; `--include-thinking` defaults off. `--format markdown` prints a
   compact fenced document instead of JSON-derived text. After `--outline` it
-  hints the next escalation. With `--json`, the rendered output is in the
-  `transcript` field for the default format, and in the `markdown` field when
-  `--format markdown` is set. Invalid options exit `2` with one issue per line;
-  an unknown conversation exits `2`.
+  hints the next escalation — and tells you whether a compaction exists to
+  fetch, is still generating, or must be created first. With `--json`, the
+  rendered output is in the `transcript` field for the default format, and in
+  the `markdown` field when `--format markdown` is set. Invalid options exit
+  `2` with one issue per line; an unknown conversation exits `2`. An empty
+  window (e.g. message indexes that don't exist) reports the conversation's
+  real coordinate bounds so you can re-aim.
 - `compact` — create or refresh a compaction artifact (the whole conversation,
   or one message with `--message N`). Without `--wait` it returns immediately:
   `{ ok, artifactId, status: "pending", hint }` — the artifact generates in the
@@ -243,10 +261,14 @@ in scope) and whenever you pass those flags; a truly unknown id exits `2`.
   artifact is already fresh it returns it directly with `hint: already fresh`.
 - `compaction get` — fetch the newest matching artifact's **full envelope**
   (`--message N` selects that message's artifact; otherwise the
-  conversation-level one). When stale it still succeeds (`stale: true`,
-  `staleBehindMessages: N`) with `hint: refresh with: cctl conversation compact
-  <id>`. When absent it exits `1` with `hint: create with: cctl conversation
-  compact <id>` — create it, then re-get.
+  conversation-level one). `--format markdown` renders the envelope as prose
+  (brief, current state, decisions, files, commands, blockers — with their
+  `#N sA–B` source refs) instead of raw JSON — usually the right form to read;
+  the JSON envelope additionally carries the refs' verbatim quotes. With
+  `--json` the markdown is in the `markdown` field. When stale it still
+  succeeds (`stale: true`, `staleBehindMessages: N`) with `hint: refresh with:
+  cctl conversation compact <id>`. When absent it exits `1` with `hint: create
+  with: cctl conversation compact <id>` — create it, then re-get.
 - `compaction list` — one line per artifact (id, kind, status, covered seq
   range, freshness). Ends with a hint pointing at `compaction get`.
 
@@ -261,8 +283,10 @@ cctl conversation compact 0197a3c2-... --wait --json
 # → { "ok": true, "artifact": { "status": "complete", "payload": { "agentBrief": ... } } }
 cctl conversation read 0197a3c2-... --outline
 # → #0 [seq 0-2] user ...
-#   hint: narrow with --message-range or fetch the compaction: cctl conversation compaction get 0197a3c2-...
+#   hint: narrow with --message-range A:B / --seq-range A:B, or fetch the compaction: cctl conversation compaction get 0197a3c2-...
+#   (with no artifact: "…; no compaction exists — create one (background LLM generation) with: cctl conversation compact 0197a3c2-...")
 cctl conversation read 0197a3c2-... --message-range 4:6 --include-tools summary
+cctl conversation compaction get 0197a3c2-... --format markdown
 ```
 
 ## cctl dev

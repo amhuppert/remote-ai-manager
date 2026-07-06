@@ -217,11 +217,41 @@ describe("parseReadQuery", () => {
     expect(result.issues.some((issue) => issue.path === "message")).toBe(true);
   });
 
-  it("rejects a malformed range with a field-scoped issue", () => {
-    const result = parseReadQuery("http://x/read?seqRange=1-2");
+  it("accepts the lenient range forms A-B, A,B, and bare N", () => {
+    const dash = parseReadQuery("http://x/read?messageRange=2-3");
+    expect(dash.ok && dash.options.messageRange).toEqual([2, 3]);
+    const comma = parseReadQuery("http://x/read?seqRange=10,20");
+    expect(comma.ok && comma.options.seqRange).toEqual([10, 20]);
+    const single = parseReadQuery("http://x/read?messageRange=4");
+    expect(single.ok && single.options.messageRange).toEqual([4, 4]);
+    const seqDash = parseReadQuery("http://x/read?seqRange=1-2");
+    expect(seqDash.ok && seqDash.options.seqRange).toEqual([1, 2]);
+  });
+
+  it("rejects a malformed messageRange with a teaching issue", () => {
+    const result = parseReadQuery("http://x/read?messageRange=abc");
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.issues.some((issue) => issue.path === "seqRange")).toBe(true);
+    const issue = result.issues.find((i) => i.path === "messageRange");
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain("A:B");
+    expect(issue?.message).toContain("--message-range 2:3");
+    expect(issue?.message).toContain("--seq-range");
+    expect(issue?.message).toContain("[sN]");
+    expect(result.issues.filter((i) => i.path === "messageRange")).toHaveLength(
+      1,
+    );
+  });
+
+  it("rejects a malformed seqRange with a teaching issue", () => {
+    const result = parseReadQuery("http://x/read?seqRange=1:x");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const issue = result.issues.find((i) => i.path === "seqRange");
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain("A:B");
+    expect(issue?.message).toContain("--seq-range 120:180");
+    expect(result.issues.filter((i) => i.path === "seqRange")).toHaveLength(1);
   });
 
   it("rejects mutually exclusive window options", () => {

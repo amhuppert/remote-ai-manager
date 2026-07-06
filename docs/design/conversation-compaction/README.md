@@ -185,7 +185,8 @@ cctl conversation read <conversation-id> [--outline] [--message N] [--message-ra
 
 - Identity via existing flag/env resolution (`--project/--session` / `CC_PROJECT/CC_SESSION`); `<conversation-id>` positional (defaults to `CC_CONVERSATION_ID` when omitted — reading *your own* conversation history is valid).
 - CLI **never parses transcript files locally**; it calls the endpoint via `cliRequest()` with the standard headers/envelope.
-- `--json` wraps in the `{ ok, …, hint }` envelope; the `hint` line suggests the next escalation (e.g. after `--outline`: `"narrow with --message-range or fetch the compaction: cctl conversation compaction get <id>"`).
+- `--json` wraps in the `{ ok, …, hint }` envelope; the `hint` line suggests the next escalation. After `--outline` the hint teaches the window syntax (`--message-range A:B / --seq-range A:B`) and is compaction-aware: it points at `compaction get` when a complete artifact exists, notes an in-flight generation when one is pending, and otherwise says to create one with `cctl conversation compact <id>` (the CLI consults the artifact listing; on a listing failure it falls back to the fetch wording).
+- Range values accept `A-B`, `A,B`, and bare `N` as lenient aliases of the canonical `A:B`; a malformed value gets a teaching 400 issue that also disambiguates `[sN]` seq markers from message indexes, and an empty window reports the conversation's real coordinate bounds.
 - Exit codes: standard 0/1/2/3.
 
 ---
@@ -436,12 +437,12 @@ Client invalidates/patches the artifact queries on receipt (see §12.3; follow `
 ```
 cctl conversation read            <id> [read flags — §5.2]
 cctl conversation compact         <id> [--message N] [--force] [--wait] [--json]
-cctl conversation compaction get  <id> [--message N] [--json]
+cctl conversation compaction get  <id> [--message N] [--format json|markdown] [--json]
 cctl conversation compaction list <id> [--json]
 ```
 
 - `compact` → POST create_or_refresh. Without `--wait`: returns `{ ok, artifactId, status:"pending", hint }`. With `--wait`: polls until terminal, returns the artifact.
-- `compaction get` → the full envelope (agent Tier-1 pull). When stale: `ok:true` with `stale:true, staleBehindMessages:N` and `hint: "refresh with: cctl conversation compact <id>"`. When absent: exit 1 with `hint: "create with: cctl conversation compact <id>"`.
+- `compaction get` → the full envelope (agent Tier-1 pull). `--format markdown` renders the envelope as prose via the pure `compactionEnvelopeToMarkdown` (`src/lib/context-artifacts/render-markdown.ts`); the JSON envelope stays the lossless view (ref quotes). When stale: `ok:true` with `stale:true, staleBehindMessages:N` and `hint: "refresh with: cctl conversation compact <id>"`. When absent: exit 1 with `hint: "create with: cctl conversation compact <id>"`.
 - All commands resolve identity from flags/env like existing groups; cross-conversation targets are explicit by id (+ `--project/--session` when outside the caller's scope).
 - Update the `command-center:cc-cli` skill docs with the new group and the three-tier escalation guidance (read the compaction first; window the transcript second; full read never).
 

@@ -82,7 +82,12 @@ const RANGE_PARAMS = ["messageRange", "seqRange"] as const;
 const PASSTHROUGH_PARAMS = ["includeTools", "search", "format"] as const;
 
 const INTEGER_PATTERN = /^-?\d+$/;
+// Canonical range form is `A:B`; `A-B` (non-negative only, to stay
+// unambiguous), `A,B`, and a bare `N` (→ N:N) are accepted as lenient
+// aliases because agents reliably guess them before reading any docs.
 const RANGE_PATTERN = /^(-?\d+):(-?\d+)$/;
+const RANGE_DASH_PATTERN = /^(\d+)-(\d+)$/;
+const RANGE_COMMA_PATTERN = /^(-?\d+),(-?\d+)$/;
 
 /**
  * Coerce a raw query-string value toward the type `renderOptionsSchema`
@@ -100,9 +105,29 @@ function coerceInteger(raw: string): number | string {
 }
 
 function coerceRange(raw: string): [number, number] | string {
-  const match = RANGE_PATTERN.exec(raw);
+  if (INTEGER_PATTERN.test(raw)) return [Number(raw), Number(raw)];
+  const match =
+    RANGE_PATTERN.exec(raw) ??
+    RANGE_DASH_PATTERN.exec(raw) ??
+    RANGE_COMMA_PATTERN.exec(raw);
   if (!match || match[1] === undefined || match[2] === undefined) return raw;
   return [Number(match[1]), Number(match[2])];
+}
+
+/**
+ * Teaching text for a range value that failed every accepted form. The
+ * messageRange variant also disambiguates message indexes from the `[sN]`
+ * seq markers agents copy out of `--outline` output — the observed failure
+ * mode is feeding seq coordinates to `--message-range`.
+ */
+function rangeSyntaxIssue(key: (typeof RANGE_PARAMS)[number]): ReadQueryIssue {
+  return {
+    path: key,
+    message:
+      key === "messageRange"
+        ? "expected A:B message indexes (e.g. --message-range 2:3); the [sN] markers in --outline output are seq coordinates — window those with --seq-range"
+        : "expected A:B seq numbers (e.g. --seq-range 120:180)",
+  };
 }
 
 /**
@@ -114,6 +139,7 @@ function coerceRange(raw: string): [number, number] | string {
 export function parseReadQuery(url: string): ParsedReadQuery {
   const searchParams = new URL(url).searchParams;
   const raw: Record<string, unknown> = {};
+  const rangeIssues: ReadQueryIssue[] = [];
 
   for (const key of BOOLEAN_PARAMS) {
     const value = searchParams.get(key);
@@ -125,7 +151,12 @@ export function parseReadQuery(url: string): ParsedReadQuery {
   }
   for (const key of RANGE_PARAMS) {
     const value = searchParams.get(key);
-    if (value !== null) raw[key] = coerceRange(value);
+    if (value === null) continue;
+    const coerced = coerceRange(value);
+    // A failed coercion gets the teaching issue and stays out of `raw`, so
+    // the schema does not stack its raw "expected tuple" issue on top.
+    if (typeof coerced === "string") rangeIssues.push(rangeSyntaxIssue(key));
+    else raw[key] = coerced;
   }
   for (const key of PASSTHROUGH_PARAMS) {
     const value = searchParams.get(key);
@@ -133,13 +164,18 @@ export function parseReadQuery(url: string): ParsedReadQuery {
   }
 
   const parsed = renderOptionsSchema.safeParse(raw);
-  if (!parsed.success) {
+  if (!parsed.success || rangeIssues.length > 0) {
     return {
       ok: false,
-      issues: parsed.error.issues.map((issue) => ({
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
+      issues: [
+        ...rangeIssues,
+        ...(parsed.success
+          ? []
+          : parsed.error.issues.map((issue) => ({
+              path: issue.path.join("."),
+              message: issue.message,
+            }))),
+      ],
     };
   }
   return { ok: true, options: parsed.data };
