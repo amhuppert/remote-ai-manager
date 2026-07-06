@@ -127,6 +127,12 @@ describe("buildGenerationPrompt", () => {
     expect(prompt.toLowerCase()).toContain("conflict");
   });
 
+  it("asks for branch-name-explicit resolutionContext phrasing on a merge", () => {
+    const prompt = buildGenerationPrompt(mergeContext);
+    expect(prompt).toContain("`csm/fix-login`");
+    expect(prompt.toLowerCase()).toContain('not "this branch"');
+  });
+
   it("does not ask for resolutionContext on a standalone commit", () => {
     const prompt = buildGenerationPrompt(commitContext);
     expect(prompt).not.toContain("resolutionContext");

@@ -92,7 +92,7 @@ export async function buildIncomingChangesSection(
     }
 
     const section = truncate(lines.join("\n"), MAX_SECTION_CHARS);
-    logger.debug("incoming-changes.built", {
+    logger.info("incoming-changes.built", {
       worktreePath,
       targetBranch,
       commitCount: commits.length,

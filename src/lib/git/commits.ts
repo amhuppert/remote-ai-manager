@@ -109,6 +109,16 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     }
   }
 
+  /** True when the worktree has an unconcluded merge (MERGE_HEAD exists). */
+  async function isMergeInProgress(worktreePath: string): Promise<boolean> {
+    try {
+      await git(worktreePath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Stage all changes and commit with the given message.
    *  When `skipHooks` is true, passes `--no-verify` to skip pre-commit hooks. */
   async function commitChanges(
@@ -120,8 +130,11 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
       throw new Error("Commit message cannot be empty");
     }
 
+    // A conflict resolution that keeps HEAD's content for every conflicted
+    // file leaves `git status --porcelain` empty while MERGE_HEAD still
+    // exists — `git commit` is still required to conclude the merge.
     const hasChanges = await hasUncommittedChanges(worktreePath);
-    if (!hasChanges) {
+    if (!hasChanges && !(await isMergeInProgress(worktreePath))) {
       throw new Error("No uncommitted changes to commit");
     }
 

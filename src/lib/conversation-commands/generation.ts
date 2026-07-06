@@ -45,7 +45,7 @@ export function buildGenerationPrompt(ctx: GenerationContext): string {
   if (ctx.command === "merge") {
     lines.push(
       "",
-      "Also fill the `resolutionContext` field: notes for an agent that may later resolve merge conflicts between this branch and the target. From the conversation context, summarize what changed and why, the key design decisions, and any invariants a conflict resolver must preserve when reconciling these changes with other work.",
+      `Also fill the \`resolutionContext\` field: notes for an agent that may later resolve merge conflicts between this branch and the target. From the conversation context, summarize what changed and why, the key design decisions, and any invariants a conflict resolver must preserve when reconciling these changes with other work. Refer to the branch by name (\`${ctx.branchName}\`), not "this branch" — the notes are also quoted to future merges as the intent behind an already-merged commit, where "this branch" would misread as the reader's own branch.`,
     );
   }
 

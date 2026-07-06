@@ -134,11 +134,41 @@ describe("commitChanges", () => {
     );
   });
 
-  it("throws when there are no uncommitted changes", async () => {
-    mockGitSuccess("");
+  it("throws when there are no uncommitted changes and no merge in progress", async () => {
+    mockGitSequence([
+      { stdout: "" },
+      { error: new Error("fatal: Needed a single revision") },
+    ]);
     await expect(ops.commitChanges("/worktree", "msg")).rejects.toThrow(
       "No uncommitted changes to commit",
     );
+  });
+
+  it("commits with empty porcelain when a merge is in progress (take-ours resolution)", async () => {
+    mockGitSequence([
+      { stdout: "" },
+      { stdout: "abc1234def5678\n" },
+      { stdout: "" },
+      { stdout: "[csm/my-session abc1234] resolve merge conflicts\n" },
+    ]);
+
+    const result = await ops.commitChanges(
+      "/worktree",
+      "resolve merge conflicts",
+    );
+    expect(result.hash).toBe("abc1234");
+
+    expect(gitMock.mock.calls[1]![0]).toEqual([
+      "rev-parse",
+      "-q",
+      "--verify",
+      "MERGE_HEAD",
+    ]);
+    expect(gitMock.mock.calls[3]![0]).toEqual([
+      "commit",
+      "-m",
+      "resolve merge conflicts",
+    ]);
   });
 
   it("passes --no-verify when skipHooks is true", async () => {
@@ -438,6 +468,72 @@ describe("collectChangeSummary (real git repo)", () => {
   it("returns empty string for a clean worktree", async () => {
     const result = await realOps.collectChangeSummary(repoPath);
     expect(result).toBe("");
+  });
+});
+
+describe("commitChanges concludes an in-progress merge (real git repo)", () => {
+  let repoPath: string;
+
+  async function gitIn(args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    repoPath = await mkdtemp(join(tmpdir(), "cc-conclude-merge-"));
+    await gitIn(["init", "-b", "main"]);
+    await gitIn(["config", "user.email", "test@example.com"]);
+    await gitIn(["config", "user.name", "Test"]);
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "base", "--no-verify"]);
+    // Divergent edits to the same line on main and feature.
+    await gitIn(["checkout", "-b", "feature"]);
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
+    await gitIn(["checkout", "main"]);
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'theirs';\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "main edit", "--no-verify"]);
+    await gitIn(["checkout", "feature"]);
+  });
+
+  afterEach(async () => {
+    await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("commits a take-ours resolution whose tree equals HEAD", async () => {
+    // `git merge main` conflicts; resolving take-ours leaves the staged tree
+    // identical to HEAD, so porcelain is empty while MERGE_HEAD still exists.
+    await expect(
+      execFileAsync("git", ["merge", "main"], {
+        cwd: repoPath,
+        env: buildChildEnv(),
+      }),
+    ).rejects.toThrow();
+    await gitIn(["checkout", "--ours", "file.ts"]);
+    await gitIn(["add", "file.ts"]);
+    expect((await gitIn(["status", "--porcelain"])).trim()).toBe("");
+
+    const { hash } = await realOps.commitChanges(
+      repoPath,
+      "resolve merge conflicts",
+      { skipHooks: true },
+    );
+    expect(hash).not.toBe("");
+
+    // The merge is concluded: MERGE_HEAD is gone and HEAD is a merge commit.
+    await expect(
+      gitIn(["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+    ).rejects.toThrow();
+    const parents = (await gitIn(["rev-list", "--parents", "-n", "1", "HEAD"]))
+      .trim()
+      .split(" ");
+    expect(parents).toHaveLength(3);
   });
 });
 
