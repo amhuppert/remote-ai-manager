@@ -28,6 +28,23 @@ describe("CompactionEnvelopeView", () => {
     expect(first).not.toBe(second);
   });
 
+  it("renders markdown in the agent brief (headings, inline code, lists)", () => {
+    const envelope = {
+      ...buildMaximalEnvelope(),
+      agentBrief:
+        "Lead sentence.\n\n### What shipped\n\n" +
+        "Persisted through `repo.ts`.\n\n- one\n- two",
+    };
+    render(<CompactionEnvelopeView envelope={envelope} />);
+    expect(screen.getByRole("heading", { name: "What shipped" }).tagName).toBe(
+      "H3",
+    );
+    expect(screen.getByText("repo.ts").tagName).toBe("CODE");
+    expect(screen.getByText("one").closest("li")).not.toBeNull();
+    // Raw markdown markers must not leak into the rendered output.
+    expect(screen.queryByText(/### What shipped/)).not.toBeInTheDocument();
+  });
+
   it("lets the agent brief fill the container width without a prose cap", () => {
     const envelope = {
       ...buildMaximalEnvelope(),

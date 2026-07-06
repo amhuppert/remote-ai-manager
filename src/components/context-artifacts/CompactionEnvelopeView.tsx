@@ -10,6 +10,7 @@ import {
 import { disclosureChevron } from "@/components/ui/disclosure-recipe";
 import { Button } from "@/components/ui/Button";
 import { ChevronDownIcon } from "@/components/icons";
+import ArtifactMarkdown from "./ArtifactMarkdown";
 import type {
   AnchoredNote,
   CommandEntry,
@@ -339,11 +340,6 @@ export default function CompactionEnvelopeView({
     sectionRefs.current.get(key)?.scrollIntoView({ block: "start" });
   };
 
-  const briefParagraphs = envelope.agentBrief
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter((paragraph) => paragraph.length > 0);
-
   const anchoredSections: SectionEntry[] = [
     { key: "decisions", label: "Decisions", count: envelope.decisions.length },
     { key: "files", label: "Files", count: envelope.files.length },
@@ -412,13 +408,7 @@ export default function CompactionEnvelopeView({
               className="flex flex-col gap-[10px]"
             >
               <SectionHeading label="Agent brief" />
-              <div className="flex flex-col gap-md font-body text-[14px] leading-[1.72] text-text-primary">
-                {briefParagraphs.map((paragraph, i) => (
-                  <p key={i} className="m-0">
-                    {paragraph}
-                  </p>
-                ))}
-              </div>
+              <ArtifactMarkdown content={envelope.agentBrief} />
             </section>
 
             <section

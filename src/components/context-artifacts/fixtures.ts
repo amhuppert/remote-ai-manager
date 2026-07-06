@@ -40,18 +40,24 @@ export function buildMaximalEnvelope(): CompactionEnvelope {
       sourceHash: "sha256:0f5d1a9c",
     },
     agentBrief:
+      // Opening paragraph is intentionally free of inline markdown so it renders
+      // as one contiguous <p> — a consumer test matches this phrase by substring.
       "Implemented the context_artifacts storage layer end-to-end: entry-level " +
       "transcript reader with exact seq coordinates, the deterministic " +
       "renderCompactTranscript normalizer shared by the read endpoint and the " +
       "compaction pre-strip, and the SQLite-backed repo behind two partial " +
-      "unique indexes (one rolling conversation envelope, one artifact per " +
-      "message index). The generation service runs the full pipeline — render, " +
-      "redact, prompt, structured task run, schema parse with one retry, " +
-      "deterministic guards with a single-shot full-run fallback — on a " +
-      "synthetic transient actor lane so the target conversation's actor is " +
-      "never touched. All 136 repo tests plus the 44 service/route tests pass; " +
-      "the remaining risk is live verification of the SSE reconciliation path " +
-      "under concurrent triggers from cctl and the UI.",
+      "unique indexes.\n\n" +
+      "### What shipped\n\n" +
+      "The generation service runs the full pipeline — render, redact, prompt, " +
+      "structured task run, schema parse with one retry — on a **synthetic " +
+      "transient actor lane** so the target conversation's actor is never " +
+      "touched. Envelopes persist through `repo.ts` behind the partial unique " +
+      "indexes.\n\n" +
+      "### Verification\n\n" +
+      "- All `136` repo tests plus the `44` service/route tests pass\n" +
+      "- `bun run typecheck` and `bun run lint` are clean\n" +
+      "- Remaining risk: live verification of the SSE reconciliation path under " +
+      "concurrent triggers from `cctl` and the UI",
     currentState: {
       status: "implementation_in_progress",
       latestUserGoal:
