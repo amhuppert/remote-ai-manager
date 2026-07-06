@@ -6,7 +6,10 @@ import {
   contextArtifactKeys,
   type ContextArtifactTarget,
 } from "@/lib/context-artifacts/query-keys";
-import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
+import {
+  contextArtifactsBaseUrl,
+  type ContextArtifactListItem,
+} from "@/lib/context-artifacts/queries";
 import {
   buildArtifactDetail,
   buildArtifactListItem,
@@ -54,11 +57,49 @@ function seededClient(rows: ContextArtifactListItem[]): QueryClient {
   return client;
 }
 
-function paneDecorator(rows: ContextArtifactListItem[]) {
+/**
+ * The list query always refetches on mount (its per-hook staleTime overrides
+ * the seeded client's Infinity default), so the seeded cache alone is not
+ * enough — answer the panel's API calls from the fixtures too.
+ */
+function stubFetch(rows: ContextArtifactListItem[]) {
+  const listUrl = contextArtifactsBaseUrl(target);
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (method === "POST") {
+      return Promise.resolve(
+        json({ artifactId: "art-1", status: "pending" }, 202),
+      );
+    }
+    if (method === "DELETE") return Promise.resolve(json({ deleted: true }));
+    if (String(input) === listUrl) return Promise.resolve(json(rows));
+    return Promise.resolve(
+      json(
+        buildArtifactDetail({
+          ...conversationRow(),
+          payload: buildMaximalEnvelope(),
+        }),
+      ),
+    );
+  };
+}
+
+function paneDecorator(
+  rows: ContextArtifactListItem[],
+  widthClass = "w-[420px]",
+) {
   return function PaneDecorator(Story: React.ComponentType) {
+    stubFetch(rows);
     return (
       <QueryClientProvider client={seededClient(rows)}>
-        <div className="flex h-[640px] w-[420px] flex-col bg-bg-base p-md">
+        <div
+          className={`flex h-[640px] flex-col bg-bg-base p-md ${widthClass}`}
+        >
           <Story />
         </div>
       </QueryClientProvider>
@@ -76,9 +117,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Complete artifact with every envelope section populated. */
+/** Complete artifact with every envelope section populated (narrow pane). */
 export const Complete = {
   decorators: [paneDecorator([conversationRow()])],
+} satisfies Story;
+
+/** The same artifact at the designed width: two-column grid + sticky rail. */
+export const CompleteWide = {
+  decorators: [paneDecorator([conversationRow()], "w-[1240px]")],
 } satisfies Story;
 
 /** A compaction run in flight. */

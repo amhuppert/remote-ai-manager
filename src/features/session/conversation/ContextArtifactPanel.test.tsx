@@ -159,21 +159,24 @@ describe("ContextArtifactPanel", () => {
         /Implemented the context_artifacts storage layer/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Agent brief")).toBeInTheDocument();
-    expect(screen.getByText("Decisions")).toBeInTheDocument();
-    expect(screen.getByText("Files")).toBeInTheDocument();
-    expect(screen.getByText("Commands")).toBeInTheDocument();
-    expect(screen.getByText("Open questions")).toBeInTheDocument();
-    expect(screen.getByText("Blockers")).toBeInTheDocument();
-    // Coverage footer + provenance line from the fetched row.
-    expect(screen.getByText(/coverage seq 0–421/)).toBeInTheDocument();
-    expect(screen.getByText(/claude · sonnet · medium/)).toBeInTheDocument();
+    // Section labels appear on the card trigger and again in the TOC rail.
+    expect(screen.getAllByText("Agent brief").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Decisions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Files").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Commands").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Open questions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Blockers").length).toBeGreaterThan(0);
+    // Coverage + provenance from the fetched row feed the meta rail.
+    expect(screen.getAllByText(/seq 0–421/).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/claude · sonnet · medium/).length,
+    ).toBeGreaterThan(0);
   });
 
   it("complete: a source-ref chip files a transcript nav request for this conversation", async () => {
     stubApi([conversationRow()]);
     renderPanel();
-    await screen.findByText("Agent brief");
+    await screen.findAllByText("Agent brief");
 
     fireEvent.click(
       screen.getAllByRole("button", { name: /go to message 5/i })[0]!,
@@ -189,15 +192,18 @@ describe("ContextArtifactPanel", () => {
     stubApi([conversationRow({ stale: true, staleBehindMessages: 6 })]);
     renderPanel();
     expect(await screen.findByText(/behind 6 messages/i)).toBeInTheDocument();
+    // Header action + the banner's inline refresh.
     expect(
-      screen.getByRole("button", { name: /refresh/i }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("button", { name: /refresh/i }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("complete + outdated: refresh POSTs with force", async () => {
     stubApi([conversationRow({ outdated: true })]);
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /refresh/i }));
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /refresh/i }))[0]!,
+    );
     await waitFor(() =>
       expect(
         fetchSpy.mock.calls.some((call) => call[1]?.method === "POST"),

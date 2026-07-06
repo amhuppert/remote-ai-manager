@@ -61,8 +61,10 @@ describe("MessageCompactionViewer", () => {
     expect(
       await screen.findByText(/Single tool-heavy assistant turn/),
     ).toBeInTheDocument();
-    // Provenance from the row feeds the envelope footer.
-    expect(screen.getByText(/claude · sonnet · medium/)).toBeInTheDocument();
+    // Provenance from the row feeds the envelope meta rail.
+    expect(
+      screen.getAllByText(/claude · sonnet · medium/).length,
+    ).toBeGreaterThan(0);
     expect(
       fetchSpy.mock.calls.some((call) => String(call[0]) === DETAIL_URL),
     ).toBe(true);

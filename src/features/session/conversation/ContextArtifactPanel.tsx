@@ -29,10 +29,10 @@ export interface ContextArtifactPanelProps {
 }
 
 const surfaceClass =
-  "flex min-h-0 flex-1 flex-col gap-md overflow-y-auto rounded-b-lg border border-solid border-border-subtle bg-bg-surface p-md";
+  "flex min-h-0 flex-1 flex-col gap-[20px] overflow-y-auto rounded-b-lg border border-solid border-border-subtle bg-bg-surface px-[28px] py-xl max-768:px-md max-768:py-md";
 
 const headerLabelClass =
-  "font-mono text-[0.7rem] font-bold tracking-[0.1em] text-text-tertiary uppercase";
+  "font-mono text-[10px] font-bold tracking-[0.16em] text-text-tertiary uppercase";
 
 const errorBoxClass =
   "rounded-sm border border-solid border-red-dim bg-red-glow px-sm py-xs font-mono text-[0.75rem] text-red";
@@ -100,17 +100,19 @@ export default function ContextArtifactPanel({
 
   return (
     <section aria-label="Context artifact" className={surfaceClass}>
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-sm">
-        <div className="flex min-w-0 items-baseline gap-sm">
+      <header className="flex shrink-0 items-start justify-between gap-lg">
+        <div className="flex min-w-0 flex-col gap-[6px]">
           <span className={headerLabelClass}>Context artifact</span>
-          <span className="truncate font-mono text-[0.72rem] text-text-secondary">
-            {conversationName ?? target.conversationId}
-          </span>
-          {archived && (
-            <span className="inline-flex shrink-0 items-center rounded-full bg-bg-raised px-[6px] py-px font-mono text-[0.66rem] tracking-[0.05em] text-text-tertiary uppercase">
-              archived
+          <span className="flex min-w-0 items-center gap-sm">
+            <span className="truncate font-display text-[20px] font-semibold tracking-[0.01em] text-text-primary">
+              {conversationName ?? target.conversationId}
             </span>
-          )}
+            {archived && (
+              <span className="inline-flex shrink-0 items-center rounded-full bg-bg-raised px-[6px] py-px font-mono text-[0.66rem] tracking-[0.05em] text-text-tertiary uppercase">
+                archived
+              </span>
+            )}
+          </span>
         </div>
         {artifact?.status === "complete" && (
           <div className="flex shrink-0 items-center gap-xs">
@@ -166,10 +168,21 @@ export default function ContextArtifactPanel({
       ) : (
         <>
           {(artifact.stale || artifact.outdated) && (
-            <div className="rounded-sm border border-solid border-border-subtle bg-bg-base px-sm py-xs font-mono text-[0.72rem] text-amber">
-              {artifact.outdated
-                ? "Outdated — the artifact format changed; Refresh regenerates in full."
-                : `Stale — behind ${artifact.staleBehindMessages} messages.`}
+            <div className="flex items-center gap-[10px] rounded-md border border-solid border-amber-dim bg-amber-glow px-md py-sm">
+              <span className="font-mono text-[11.5px] text-amber">
+                {artifact.outdated
+                  ? "Outdated — the artifact format changed; Refresh regenerates in full."
+                  : `Stale — behind ${artifact.staleBehindMessages} messages.`}
+              </span>
+              <span className="flex-1" />
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={compact.isPending}
+                onClick={handleRefresh}
+              >
+                Refresh
+              </Button>
             </div>
           )}
           {detail.isPending && (
