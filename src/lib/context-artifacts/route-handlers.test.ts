@@ -16,6 +16,7 @@ vi.mock("@/lib/logging", () => ({
 
 import {
   createContextArtifactRouteHandlers,
+  raceCompletion,
   type ContextArtifactRouteDeps,
 } from "./route-handlers";
 import { createCompactionService } from "./service";
@@ -801,5 +802,26 @@ describe("project-scope handlers", () => {
     );
     expect(response.status).toBe(404);
     expect((await response.json()).code).toBe("conversation_not_found");
+  });
+});
+
+describe("raceCompletion", () => {
+  it("waits for completion (never times out) when timeoutMs is 0 — no timeout", async () => {
+    const row = makeRow({ id: "done" });
+    // A 0 timeout means "no timeout": the wait must resolve to the completed
+    // row after a real delay, not immediately resolve to null on a 0ms timer.
+    const completion = new Promise<ContextArtifactRow>((resolve) => {
+      setTimeout(() => resolve(row), 10);
+    });
+
+    expect(await raceCompletion(completion, 0)).toBe(row);
+  });
+
+  it("resolves to null once a positive timeout elapses before completion", async () => {
+    const completion = new Promise<ContextArtifactRow>(() => {
+      // never resolves
+    });
+
+    expect(await raceCompletion(completion, 5)).toBeNull();
   });
 });

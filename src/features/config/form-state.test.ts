@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { deepGet, deepSet, deepEqual, stripUndefinedDeep } from "./form-state";
+import {
+  ALL_FIELD_PATHS,
+  deepGet,
+  deepSet,
+  deepEqual,
+  stripUndefinedDeep,
+} from "./form-state";
 
 describe("deepGet", () => {
   it("returns nested value by dot path", () => {
@@ -37,6 +43,22 @@ describe("deepEqual", () => {
     expect(deepEqual(null, null)).toBe(true);
     expect(deepEqual(undefined, null)).toBe(true);
     expect(deepEqual(null, {})).toBe(false);
+  });
+});
+
+describe("ALL_FIELD_PATHS", () => {
+  it("tracks the editable compaction fields so they are dirty-tracked and saved", () => {
+    // Without these paths, changes in CompactionSection would never be detected
+    // as dirty nor written by buildSavePayload.
+    for (const path of [
+      "compaction.backend",
+      "compaction.conversationModel",
+      "compaction.messageModel",
+      "compaction.effort",
+      "compaction.timeoutMs",
+    ]) {
+      expect(ALL_FIELD_PATHS).toContain(path);
+    }
   });
 });
 

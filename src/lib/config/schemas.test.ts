@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compactionConfigSchema } from "./schemas";
 
 describe("compactionConfigSchema", () => {
-  it("materializes every field default from an empty object", () => {
+  it("materializes backend/model/effort defaults but leaves timeout unset", () => {
     const result = compactionConfigSchema.parse({});
 
     expect(result).toEqual({
@@ -10,8 +10,18 @@ describe("compactionConfigSchema", () => {
       conversationModel: "sonnet",
       messageModel: "sonnet",
       effort: "medium",
-      timeoutMs: 180_000,
     });
+    // No default timeout: an unset timeout means "no timeout applied".
+    expect(result.timeoutMs).toBeUndefined();
+  });
+
+  it("accepts an explicit numeric timeout and a null (no-timeout) sentinel", () => {
+    expect(compactionConfigSchema.parse({ timeoutMs: 60_000 }).timeoutMs).toBe(
+      60_000,
+    );
+    expect(
+      compactionConfigSchema.parse({ timeoutMs: null }).timeoutMs,
+    ).toBeNull();
   });
 
   it("keeps explicit fields while defaulting the rest", () => {

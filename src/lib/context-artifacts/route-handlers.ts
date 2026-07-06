@@ -549,10 +549,14 @@ export function createContextArtifactRouteHandlers(
 }
 
 /** Resolve to the completed row, or null once `timeoutMs` elapses (§9 wait). */
-async function raceCompletion(
+export async function raceCompletion(
   completion: Promise<ContextArtifactRow>,
   timeoutMs: number,
 ): Promise<ContextArtifactRow | null> {
+  // A non-positive timeout means "no timeout" (the task-run convention): wait
+  // for completion rather than racing a 0ms timer that would resolve to null
+  // immediately and defeat `wait=true`.
+  if (timeoutMs <= 0) return completion;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

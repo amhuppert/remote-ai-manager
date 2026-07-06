@@ -62,7 +62,10 @@ export const compactionConfigSchema = z.object({
   conversationModel: z.string().default("sonnet"),
   messageModel: z.string().default("sonnet"),
   effort: effortLevelSchema.default("medium"),
-  timeoutMs: z.number().int().positive().default(180_000),
+  // No default: an unset (or null) timeout means "no timeout applied", matching
+  // codex.timeoutMs. Resolved through resolveConfiguredTimeoutMs (→ 0) at the
+  // task-run boundary, where the runner treats 0 as unbounded.
+  timeoutMs: z.number().int().positive().nullable().optional(),
 });
 export type CompactionConfig = z.infer<typeof compactionConfigSchema>;
 
@@ -71,7 +74,7 @@ const rawCompactionConfigSchema = z.object({
   conversationModel: z.string().optional(),
   messageModel: z.string().optional(),
   effort: effortLevelSchema.optional(),
-  timeoutMs: z.number().int().positive().optional(),
+  timeoutMs: z.number().int().positive().nullable().optional(),
 });
 
 // ============================================================

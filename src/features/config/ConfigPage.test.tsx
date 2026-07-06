@@ -397,6 +397,28 @@ describe("ConfigPage — Workflow Defaults", () => {
     });
   });
 
+  it("saves only the changed compaction field after editing the Compaction section", () => {
+    const { container } = renderWithQuery(<ConfigPage />);
+    selectSettingsTab(/Compaction/i);
+
+    const effortField = container.querySelector(
+      '[data-field="compaction.effort"]',
+    ) as HTMLElement;
+    const highBtn = [...effortField.querySelectorAll("button")].find(
+      (b) => b.textContent === "high",
+    ) as HTMLButtonElement;
+    fireEvent.click(highBtn);
+
+    const saveBtn = screen.getByRole("button", {
+      name: /Save Changes/i,
+    }) as HTMLButtonElement;
+    fireEvent.click(saveBtn);
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    const [payload] = mutateMock.mock.calls[0]!;
+    expect((payload as GlobalConfig).compaction).toEqual({ effort: "high" });
+  });
+
   it("marks the Script validator sub-section modified and saves only that block after enabling it", () => {
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();

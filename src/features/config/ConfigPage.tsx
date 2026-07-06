@@ -20,6 +20,7 @@ import { ConfigSaveBar } from "./components/ConfigSaveBar";
 import { SEEDED_WORKFLOW_DEFAULTS } from "./form-state";
 import { BackendsSection } from "./sections/BackendsSection";
 import { CapabilitiesSection } from "./sections/CapabilitiesSection";
+import { CompactionSection } from "./sections/CompactionSection";
 import { DefaultsSection } from "./sections/DefaultsSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { LimitsSection } from "./sections/LimitsSection";
@@ -35,6 +36,7 @@ type ConfigNavSection =
   | "capabilities"
   | "backends"
   | "workflow"
+  | "compaction"
   | "limits"
   | "notifications";
 
@@ -44,6 +46,7 @@ const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
   { id: "capabilities", label: "Capabilities" },
   { id: "backends", label: "Backends" },
   { id: "workflow", label: "Workflow defaults" },
+  { id: "compaction", label: "Compaction" },
   { id: "limits", label: "Limits & timeouts" },
   { id: "notifications", label: "Notifications" },
 ];
@@ -189,6 +192,14 @@ export default function ConfigPage(): React.JSX.Element {
               >
                 <div className="p-2xl">
                   <WorkflowSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="compaction"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <CompactionSection controller={controller} />
                 </div>
               </TabsContent>
               <TabsContent

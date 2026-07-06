@@ -29,7 +29,10 @@ import {
 import { PROMPT_VERSION } from "./generation";
 import { deriveFreshness } from "./freshness";
 import { NORMALIZER_VERSION } from "@/lib/conversations/transcript-render";
-import { compactionConfigSchema } from "@/lib/config/schemas";
+import {
+  compactionConfigSchema,
+  type CompactionConfig,
+} from "@/lib/config/schemas";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -233,6 +236,7 @@ function makeService(
     input: ExecuteWorkflowTaskRunInput,
   ) => Promise<TaskRunResult>,
   entries: TranscriptEntriesResult = ENTRIES,
+  config: CompactionConfig = compactionConfigSchema.parse({}),
 ): CompactionService {
   return createCompactionService({
     executeTaskRun: async (input) => {
@@ -241,7 +245,7 @@ function makeService(
     },
     readEntries: async () => entries,
     repo,
-    resolveConfig: async () => compactionConfigSchema.parse({}),
+    resolveConfig: async () => config,
     broadcast: (event) => {
       events.push(event);
     },
@@ -310,7 +314,46 @@ describe("createCompactionService — full run", () => {
     expect(call?.outputFormat?.type).toBe("json_schema");
     expect(call?.modelId).toBe("sonnet");
     expect(call?.effort).toBe("medium");
-    expect(call?.timeoutMs).toBe(180_000);
+    // Unset compaction timeout resolves to 0 — the task runner's "no timeout".
+    expect(call?.timeoutMs).toBe(0);
+  });
+
+  it("passes a configured compaction timeout through to the task run", async () => {
+    const captured: ExecuteWorkflowTaskRunInput[] = [];
+    const service = makeService(
+      async (input) => {
+        captured.push(input);
+        return structuredResult(envelopeFromPrompt(input.prompt));
+      },
+      ENTRIES,
+      { ...compactionConfigSchema.parse({}), timeoutMs: 120_000 },
+    );
+
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    expect(result.timeoutMs).toBe(120_000);
+    await result.completion;
+
+    expect(captured[0]?.timeoutMs).toBe(120_000);
+  });
+
+  it("resolves an explicit null compaction timeout to the no-timeout sentinel", async () => {
+    const captured: ExecuteWorkflowTaskRunInput[] = [];
+    const service = makeService(
+      async (input) => {
+        captured.push(input);
+        return structuredResult(envelopeFromPrompt(input.prompt));
+      },
+      ENTRIES,
+      { ...compactionConfigSchema.parse({}), timeoutMs: null },
+    );
+
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    expect(result.timeoutMs).toBe(0);
+    await result.completion;
+
+    expect(captured[0]?.timeoutMs).toBe(0);
   });
 
   it("broadcasts dual-scope pending and complete SSE events", async () => {

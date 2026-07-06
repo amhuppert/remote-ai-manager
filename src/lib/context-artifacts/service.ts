@@ -21,6 +21,7 @@ import {
   type RenderOptions,
 } from "@/lib/conversations/transcript-render";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { CompactionConfig } from "@/lib/config/schemas";
 import type {
@@ -439,7 +440,7 @@ export function createCompactionService(
           kind: "task_run",
           prompt,
           outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
-          timeoutMs: config.timeoutMs,
+          timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
           modelId: model,
           effort: config.effort,
           actorInput: {
@@ -724,12 +725,13 @@ export function createCompactionService(
         inFlight.delete(key);
       }
     });
-    inFlight.set(key, { artifactId, timeoutMs: config.timeoutMs, completion });
+    const resolvedTimeoutMs = resolveConfiguredTimeoutMs(config.timeoutMs);
+    inFlight.set(key, { artifactId, timeoutMs: resolvedTimeoutMs, completion });
 
     return {
       outcome: "started",
       artifactId,
-      timeoutMs: config.timeoutMs,
+      timeoutMs: resolvedTimeoutMs,
       completion,
     };
   }
