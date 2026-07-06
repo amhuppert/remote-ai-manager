@@ -16,7 +16,6 @@ function makeAttrs(
     "conversation-name": "Refactor parser",
     backend: "claude",
     "backend-ref": "claude-sess-abc",
-    "transcript-path": "/t/conv-123.jsonl",
     "debug-log-path": "",
     status: "running",
     "last-activity-at": "2024-06-01T12:00:00Z",

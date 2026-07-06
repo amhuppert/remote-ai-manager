@@ -27,8 +27,10 @@ npm-debug.log*
 
 # local dev state (CC_CONFIG_DIR)
 .config/
-.cc/workflow/
-.cc/graph-workflow-docs/
+
+# CC's per-worktree artifact namespace (charter, shared docs, validation and
+# dev-server logs, agent scratch) — ephemeral, never published
+.cc/
 
 # voice/prompt (local dev)
 .voice-last.json
@@ -61,8 +63,6 @@ ROADMAP.md
 /*.jpeg
 /*.webp
 /*.gif
-.cc/dev-server-logs/
-.cc/tmp/
 
 # /design-sync (claude.ai/design) — transient build/verification state.
 # The durable set (config.json, NOTES.md, conventions.md, previews/, overrides/,
@@ -74,4 +74,3 @@ ROADMAP.md
 .ds-sync/
 ds-bundle/
 .design-sync/full-styles.css
-.cc/session-alignment/

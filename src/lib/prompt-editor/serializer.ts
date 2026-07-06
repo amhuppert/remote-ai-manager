@@ -123,7 +123,6 @@ const CONVERSATION_REF_ATTR_ORDER: ReadonlyArray<[string, string]> = [
   ["conversationName", "conversation-name"],
   ["backend", "backend"],
   ["backendRef", "backend-ref"],
-  ["transcriptPath", "transcript-path"],
   ["debugLogPath", "debug-log-path"],
   ["status", "status"],
   ["lastActivityAt", "last-activity-at"],
@@ -168,5 +167,36 @@ function renderConversationRefXml(attrs: Record<string, unknown>): string {
     const value = typeof raw === "string" ? raw : "";
     parts.push(`${kebab}="${escapeXmlAttr(value)}"`);
   }
+  const conversationId =
+    typeof attrs["conversationId"] === "string" ? attrs["conversationId"] : "";
+  for (const [kebab, command] of conversationReadCommands(
+    conversationId,
+    compactStatus,
+  )) {
+    parts.push(`${kebab}="${escapeXmlAttr(command)}"`);
+  }
   return `${parts.join(" ")} />`;
+}
+
+/**
+ * Ready-to-run `cctl` commands a reading agent can copy verbatim. cctl resolves
+ * the owning project/session from the id, so these need no flags. Compaction
+ * first (the dense structured summary) when one exists, then the windowed read.
+ */
+function conversationReadCommands(
+  conversationId: string,
+  compactStatus: "none" | "fresh" | "stale",
+): Array<[string, string]> {
+  const commands: Array<[string, string]> = [];
+  if (compactStatus !== "none") {
+    commands.push([
+      "compaction-command",
+      `cctl conversation compaction get ${conversationId} --json`,
+    ]);
+  }
+  commands.push([
+    "read-command",
+    `cctl conversation read ${conversationId} --outline`,
+  ]);
+  return commands;
 }

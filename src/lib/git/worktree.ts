@@ -9,13 +9,15 @@ const logger = createLogger("git-worktree");
 const MAX_BUFFER = 10 * 1024 * 1024;
 
 /**
- * Worktree-relative directory CC uses for graph-workflow alignment documents
- * (charter + materialized shared docs). It must stay git-ignored: the files are
- * ephemeral (the charter renders from the DB, shared docs flow through the
- * central store), so committing them only churns the session worktree — which
+ * Worktree-relative namespace CC and its agents use for ephemeral artifacts:
+ * alignment documents (the charter renders from the DB, shared docs flow
+ * through the central store), validation and dev-server logs, and agent
+ * scratch such as live-run evidence. None of it belongs in published history —
+ * lane auto-commits stage with `git add -A`, so without this rule scratch is
+ * swept into session branches and merged to main, and uncommitted scratch
  * trips the dirty-start gate and halts the final join.
  */
-export const GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN = ".cc/graph-workflow-docs/";
+export const CC_ARTIFACTS_IGNORE_PATTERN = ".cc/";
 
 /**
  * Parse output of `git status --porcelain` into structured dirty-path entries.
@@ -57,14 +59,14 @@ export async function readWorktreeDirtyPaths(
 }
 
 /**
- * Ensure {@link GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN} is git-ignored for the repo
+ * Ensure {@link CC_ARTIFACTS_IGNORE_PATTERN} is git-ignored for the repo
  * owning `worktreePath` by appending it to the repo's local `info/exclude`. We
  * use `info/exclude` rather than a tracked `.gitignore` so the rule never
  * itself appears as an uncommitted change, and because it lives in the shared
  * common git dir it covers the session worktree and every forked lane worktree
  * at once. Idempotent.
  */
-export async function ensureGraphWorkflowDocsExcluded(
+export async function ensureCcArtifactsExcluded(
   worktreePath: string,
   client: GitClient = defaultGitClient,
 ): Promise<void> {
@@ -87,7 +89,7 @@ export async function ensureGraphWorkflowDocsExcluded(
 
   const alreadyExcluded = current
     .split("\n")
-    .some((line) => line.trim() === GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN);
+    .some((line) => line.trim() === CC_ARTIFACTS_IGNORE_PATTERN);
   if (alreadyExcluded) {
     return;
   }
@@ -96,7 +98,7 @@ export async function ensureGraphWorkflowDocsExcluded(
   await mkdir(path.dirname(excludePath), { recursive: true });
   await appendFile(
     excludePath,
-    `${needsLeadingNewline ? "\n" : ""}${GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN}\n`,
+    `${needsLeadingNewline ? "\n" : ""}${CC_ARTIFACTS_IGNORE_PATTERN}\n`,
   );
 }
 

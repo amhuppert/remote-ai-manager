@@ -1,6 +1,6 @@
 import { readConfig } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
-import { ensureGraphWorkflowDocsExcluded } from "@/lib/git/worktree";
+import { ensureCcArtifactsExcluded } from "@/lib/git/worktree";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import {
   createWorkflowCharterService,
@@ -239,15 +239,16 @@ export function createGraphWorkflowExecutionRepository(
       );
     }
 
-    // Keep CC's managed docs dir git-ignored before any file lands in it, so the
-    // charter and materialized shared docs are never committed by a lane and
+    // Keep CC's .cc artifact namespace git-ignored before any file lands in
+    // it, so the charter, materialized shared docs, and agent scratch (logs,
+    // live-run evidence) are never committed by a lane's `add -A` sweep and
     // never churn the session worktree (which would trip the dirty-start gate
     // and the final-join precondition). Best-effort: a failure here must not
     // block starting the workflow.
     try {
-      await ensureGraphWorkflowDocsExcluded(session.worktreePath);
+      await ensureCcArtifactsExcluded(session.worktreePath);
     } catch (err) {
-      logger.warn("graph-workflow.docs_exclude_failed", {
+      logger.warn("graph-workflow.cc_artifacts_exclude_failed", {
         projectPath,
         sessionName,
         worktreePath: session.worktreePath,

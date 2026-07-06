@@ -651,6 +651,132 @@ describe("cctl conversation compaction list", () => {
   });
 });
 
+describe("cctl conversation auto-resolve (cross-session by id)", () => {
+  it("resolves the owning project/session by id after a scope miss, then reads that scope", async () => {
+    const host = makeHost((req) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/api/conversations/conv-x")
+        return jsonResponse({
+          projectName: "other-proj",
+          sessionName: "other-sess",
+          conversationId: "conv-x",
+        });
+      if (
+        pathname ===
+        "/api/projects/other-proj/sessions/other-sess/conversations/conv-x/read"
+      )
+        return jsonResponse(sampleTranscript);
+      // Caller-scope first attempt: the conversation is not in my-session.
+      return jsonResponse(
+        { error: "Conversation not found", code: "conversation_not_found" },
+        404,
+      );
+    });
+    const result = await runCli(
+      ["conversation", "read", "conv-x"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/projects/cc/sessions/my-session/conversations/conv-x/read",
+    );
+    expect(new URL(host.requests[1]?.url ?? "").pathname).toBe(
+      "/api/conversations/conv-x",
+    );
+    expect(new URL(host.requests[2]?.url ?? "").pathname).toBe(
+      "/api/projects/other-proj/sessions/other-sess/conversations/conv-x/read",
+    );
+    expect(result.stdout).toContain("[s0] fix the bug");
+  });
+
+  it("auto-resolves scope for compaction get and fetches from the resolved scope", async () => {
+    const host = makeHost((req) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/api/conversations/conv-x")
+        return jsonResponse({
+          projectName: "other-proj",
+          sessionName: "other-sess",
+        });
+      if (
+        pathname ===
+        "/api/projects/other-proj/sessions/other-sess/conversations/conv-x/context-artifacts"
+      )
+        return jsonResponse([conversationArtifact]);
+      if (
+        pathname ===
+        "/api/projects/other-proj/sessions/other-sess/conversations/conv-x/context-artifacts/art-conv"
+      )
+        return jsonResponse({
+          ...conversationArtifact,
+          payload: { agentBrief: "resolved brief" },
+        });
+      return jsonResponse(
+        { error: "Conversation not found", code: "conversation_not_found" },
+        404,
+      );
+    });
+    const result = await runCli(
+      ["conversation", "compaction", "get", "conv-x", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.artifact.payload.agentBrief).toBe("resolved brief");
+  });
+
+  it("does not auto-resolve when --session is explicit (a 404 stays exit 2)", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        { error: "Conversation not found", code: "conversation_not_found" },
+        404,
+      ),
+    );
+    const result = await runCli(
+      ["conversation", "read", "conv-x", "--session", "explicit"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(1);
+  });
+
+  it("does not auto-resolve the caller's own conversation id", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        { error: "Conversation not found", code: "conversation_not_found" },
+        404,
+      ),
+    );
+    const result = await runCli(
+      ["conversation", "read", "self-conv"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(1);
+  });
+
+  it("falls back to the original not-found when the id is unknown everywhere", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        { error: "Conversation not found", code: "conversation_not_found" },
+        404,
+      ),
+    );
+    const result = await runCli(
+      ["conversation", "read", "ghost"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Conversation not found");
+    // Caller-scope attempt + the lookup, both 404.
+    expect(host.requests).toHaveLength(2);
+  });
+});
+
 describe("cctl conversation (dispatch)", () => {
   it("exits 2 without a subcommand", async () => {
     const host = makeHost(() => jsonResponse({}));

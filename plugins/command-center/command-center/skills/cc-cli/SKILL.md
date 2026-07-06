@@ -46,9 +46,11 @@ the env. Resolution order when both are present:
 A command that needs identity and cannot resolve it exits `2` naming the
 missing variable. Outside CC (a plain terminal), pass the flags explicitly.
 
-Cross-session operations always require explicit `--project`/`--session`
-flags — `cctl` never silently acts on a different session than its env
-identity.
+Cross-session **mutations** always require explicit `--project`/`--session`
+flags — `cctl` never silently *acts on* a different session than its env
+identity. The exception is the read-only `cctl conversation` group, which
+auto-resolves a conversation's owning project/session from its **id** alone
+(see that section), so reading a `<conversation-ref>` needs no flags.
 
 ## Exit codes
 
@@ -181,6 +183,10 @@ artifacts** — dense, structured context handoffs generated from a conversation
 history. This is how an agent pulls context from another conversation (or its
 own earlier history) referenced via a `<conversation-ref>`.
 
+A `<conversation-ref>` carries ready-to-run commands for exactly this — a
+`read-command` (always) and a `compaction-command` (when a compaction exists):
+copy either verbatim, no flags needed.
+
 ```
 cctl conversation read <conversation-id> [--outline] [--message N] [--message-range A:B]
                        [--seq-range A:B] [--include-tools none|summary|full]
@@ -192,13 +198,15 @@ cctl conversation compaction list <conversation-id> [--json]
 ```
 
 **Identity:** `<conversation-id>` is positional and defaults to
-`CC_CONVERSATION_ID` when omitted — reading your own history is valid. Scope
-resolves from `--project`/`--session` flags falling back to `CC_PROJECT`/
-`CC_SESSION`. Passing `--project` **without** `--session` targets the
-project-scoped conversation endpoints (for conversations that live at project
-scope); otherwise the session-scoped endpoints are used. Cross-conversation
-targets are always explicit by id (+ `--project`/`--session` when outside your
-own scope).
+`CC_CONVERSATION_ID` when omitted — reading your own history is valid. **You
+normally pass only the id: for a conversation that isn't in your own session,
+cctl auto-resolves its owning project + session from the id** (via the global
+conversation lookup) and reads that scope — so reading any `<conversation-ref>`
+needs no `--project`/`--session`. Flags stay an override: an explicit
+`--project`/`--session` is honored as given (and `--project` **without**
+`--session` targets the project-scoped endpoints, for conversations that live at
+project scope). Auto-resolution is skipped for your own conversation id (already
+in scope) and whenever you pass those flags; a truly unknown id exits `2`.
 
 ### Three-tier escalation — read in this order
 
@@ -222,9 +230,10 @@ own scope).
   visible message; `seq` = raw JSONL line). `--include-tools` defaults to
   `summary`; `--include-thinking` defaults off. `--format markdown` prints a
   compact fenced document instead of JSON-derived text. After `--outline` it
-  hints the next escalation. With `--json`, the rendered transcript is in the
-  `transcript` field. Invalid options exit `2` with one issue per line; an
-  unknown conversation exits `2`.
+  hints the next escalation. With `--json`, the rendered output is in the
+  `transcript` field for the default format, and in the `markdown` field when
+  `--format markdown` is set. Invalid options exit `2` with one issue per line;
+  an unknown conversation exits `2`.
 - `compact` — create or refresh a compaction artifact (the whole conversation,
   or one message with `--message N`). Without `--wait` it returns immediately:
   `{ ok, artifactId, status: "pending", hint }` — the artifact generates in the

@@ -5,6 +5,7 @@ import net from "node:net";
 import path from "node:path";
 import {
   createDevServerRegistry,
+  buildDevServerEnv,
   isPortListening,
   type DevServerRegistryDeps,
   type DevServerStartMode,
@@ -49,6 +50,52 @@ function startMode(
     ...overrides,
   };
 }
+
+describe("buildDevServerEnv", () => {
+  it("blanks every inherited CC_* key so a dev instance cannot adopt the parent's identity", () => {
+    // A dev server is an identity-creating boundary: the child records its OWN
+    // server URL at boot, so the parent's ambient CC_SERVER_URL (which
+    // resolveServerBaseUrl treats as authoritative) must not leak in — else the
+    // instance mis-identifies as the parent and its self-probe mismatches.
+    const base = {
+      CC_SERVER_URL: "http://127.0.0.1:3000",
+      CC_API_TOKEN: "parent-token",
+      CC_WORKFLOW_EXECUTION_ID: "exec-parent",
+      CC_CONFIG_DIR: "/parent/.config",
+      PATH: "/usr/bin",
+      HOME: "/home/dev",
+    };
+
+    const env = buildDevServerEnv(base, startMode(3071));
+
+    expect(env.CC_SERVER_URL).toBe("");
+    expect(env.CC_API_TOKEN).toBe("");
+    expect(env.CC_WORKFLOW_EXECUTION_ID).toBe("");
+    expect(env.CC_CONFIG_DIR).toBe("");
+    // Non-CC hygiene passthrough is preserved.
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/home/dev");
+  });
+
+  it("sets PORT / CC_ASSIGNED_PORT / aliases to the assigned port after neutralization", () => {
+    // CC_ASSIGNED_PORT is CC_-prefixed, so neutralization blanks it first; the
+    // assigned-port write must run AFTER, or the child gets an empty port.
+    const env = buildDevServerEnv(
+      { CC_ASSIGNED_PORT: "9999" },
+      startMode(3071, { envAliases: ["STORYBOOK_PORT"] }),
+    );
+
+    expect(env.PORT).toBe("3071");
+    expect(env.CC_ASSIGNED_PORT).toBe("3071");
+    expect(env.STORYBOOK_PORT).toBe("3071");
+  });
+
+  it("does not mutate the caller's base env", () => {
+    const base = { CC_SERVER_URL: "http://127.0.0.1:3000" };
+    buildDevServerEnv(base, startMode(3071));
+    expect(base.CC_SERVER_URL).toBe("http://127.0.0.1:3000");
+  });
+});
 
 describe("DevServerRegistry", () => {
   let registry: ReturnType<typeof createDevServerRegistry>;

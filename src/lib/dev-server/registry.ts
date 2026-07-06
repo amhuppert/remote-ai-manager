@@ -4,6 +4,10 @@ import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { buildChildEnv } from "../shared/child-env";
+import {
+  neutralizeAmbientCcEnv,
+  type SessionEnv,
+} from "@/lib/agent-gateway/session-env";
 import { createLogger } from "../logging";
 import type { BroadcastFn } from "../events/broadcaster";
 import { publishSessionStatus } from "../workflows/primitives/default-session-status-bus";
@@ -46,6 +50,33 @@ export interface DevServerStartMode {
   envAliases?: ReadonlyArray<string>;
   cwd?: string;
   readinessTimeoutMs: number;
+}
+
+/**
+ * Build the child env for a dev-server spawn. A dev server is an
+ * identity-creating boundary — it boots as its own CC instance and records its
+ * OWN server URL — so the parent server's ambient CC_* (server URL, API token,
+ * workflow ids) is blanked first: `resolveServerBaseUrl` treats an inherited
+ * `CC_SERVER_URL` as authoritative, so leaking it makes the instance
+ * mis-identify as the parent and its startup self-probe mismatch. The assigned
+ * port is written AFTER neutralization because `CC_ASSIGNED_PORT` is itself
+ * CC_-prefixed and would otherwise be blanked. Pure over its inputs (copies
+ * `baseEnv`) so it is unit-testable without spawning.
+ */
+export function buildDevServerEnv(
+  baseEnv: SessionEnv,
+  startMode: Pick<DevServerStartMode, "port" | "envAliases">,
+): NodeJS.ProcessEnv {
+  const env = neutralizeAmbientCcEnv({ ...baseEnv });
+  const portStr = String(startMode.port);
+  env.CC_ASSIGNED_PORT = portStr;
+  env.PORT = portStr;
+  for (const alias of startMode.envAliases ?? []) {
+    env[alias] = portStr;
+  }
+  // Structurally a valid process env; the cast only satisfies Next's
+  // readonly-NODE_ENV augmentation of ProcessEnv (SessionEnv omits it).
+  return env as NodeJS.ProcessEnv;
 }
 
 /** In-memory state for a single dev server */
@@ -457,13 +488,7 @@ export function createDevServerRegistry(
       throw new Error(`Server "${serverName}" is already ${existing.status}`);
     }
 
-    const env = buildChildEnv();
-    const portStr = String(startMode.port);
-    env.CC_ASSIGNED_PORT = portStr;
-    env.PORT = portStr;
-    for (const alias of startMode.envAliases ?? []) {
-      env[alias] = portStr;
-    }
+    const env = buildDevServerEnv(buildChildEnv(), startMode);
 
     const spawnCwd = startMode.cwd ?? worktreePath;
 

@@ -470,7 +470,35 @@ describe("serializePromptDoc", () => {
     });
 
     expect(result.prompt).toBe(
-      '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" transcript-path="/t/conv-123.jsonl" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" />',
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" read-command="cctl conversation read conv-123 --outline" />',
+    );
+  });
+
+  it("emits read-command always and compaction-command only when a compaction exists", () => {
+    const withoutCompaction = serializePromptDoc({
+      doc: doc(p(convMention())),
+      attachments: [],
+    });
+    expect(withoutCompaction.prompt).toContain(
+      'read-command="cctl conversation read conv-123 --outline"',
+    );
+    expect(withoutCompaction.prompt).not.toContain("compaction-command");
+
+    const withCompaction = serializePromptDoc({
+      doc: doc(
+        p(
+          convMention({
+            compactArtifactId: "art-1",
+            compactStatus: "fresh",
+            compactCoveredSeq: "0..421",
+            compactCreatedAt: "2026-07-01T00:00:00Z",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+    expect(withCompaction.prompt).toContain(
+      'compaction-command="cctl conversation compaction get conv-123 --json" read-command="cctl conversation read conv-123 --outline"',
     );
   });
 
@@ -490,7 +518,7 @@ describe("serializePromptDoc", () => {
     });
 
     expect(result.prompt).toContain(
-      'last-activity-at="2024-06-01T12:00:00Z" compact-artifact-id="art-1" compact-status="fresh" compact-covered-seq="0..421" compact-created-at="2026-07-01T00:00:00Z" />',
+      'last-activity-at="2024-06-01T12:00:00Z" compact-artifact-id="art-1" compact-status="fresh" compact-covered-seq="0..421" compact-created-at="2026-07-01T00:00:00Z" compaction-command=',
     );
   });
 
@@ -524,6 +552,7 @@ describe("serializePromptDoc", () => {
     expect(result.prompt).not.toContain("compact-artifact-id");
     expect(result.prompt).not.toContain("compact-covered-seq");
     expect(result.prompt).not.toContain("compact-created-at");
+    expect(result.prompt).not.toContain("compaction-command");
   });
 
   it("treats an unrecognized compactStatus value as none", () => {

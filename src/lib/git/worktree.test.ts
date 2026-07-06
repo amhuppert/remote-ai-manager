@@ -6,8 +6,8 @@ import { defaultGitClient, type GitClient } from "./client";
 import {
   createWorktreeOperations,
   parseDirtyPaths,
-  ensureGraphWorkflowDocsExcluded,
-  GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN,
+  ensureCcArtifactsExcluded,
+  CC_ARTIFACTS_IGNORE_PATTERN,
 } from "./worktree";
 
 const gitMock = vi.fn();
@@ -741,11 +741,11 @@ describe("parseDirtyPaths", () => {
   });
 });
 
-describe("ensureGraphWorkflowDocsExcluded (real git)", () => {
+describe("ensureCcArtifactsExcluded (real git)", () => {
   let repo: string;
 
   beforeEach(async () => {
-    repo = await mkdtemp(path.join(tmpdir(), "cc-docs-exclude-"));
+    repo = await mkdtemp(path.join(tmpdir(), "cc-artifacts-exclude-"));
     await defaultGitClient.git(["init"], repo);
   });
 
@@ -753,32 +753,49 @@ describe("ensureGraphWorkflowDocsExcluded (real git)", () => {
     await rm(repo, { recursive: true, force: true });
   });
 
-  it("makes the graph-workflow-docs dir git-ignored and is idempotent", async () => {
+  it("makes the whole .cc namespace git-ignored and is idempotent", async () => {
     const docPath = path.join(repo, ".cc", "graph-workflow-docs", "charter.md");
+    const scratchPath = path.join(repo, ".cc", "private-dev", "poll.log");
     await mkdir(path.dirname(docPath), { recursive: true });
+    await mkdir(path.dirname(scratchPath), { recursive: true });
     await writeFile(docPath, "charter", "utf-8");
+    await writeFile(scratchPath, "polling…", "utf-8");
 
     const before = await defaultGitClient.git(["status", "--porcelain"], repo);
     expect(before.stdout).toContain(".cc/");
 
-    await ensureGraphWorkflowDocsExcluded(repo);
+    await ensureCcArtifactsExcluded(repo);
 
     const excludePath = path.join(repo, ".git", "info", "exclude");
     expect(await readFile(excludePath, "utf-8")).toContain(
-      GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN,
+      CC_ARTIFACTS_IGNORE_PATTERN,
     );
 
-    // git now genuinely ignores the docs dir.
+    // git now genuinely ignores everything under .cc/, so `add -A` sweeps
+    // (lane auto-commits) and the dirty-start gate no longer see scratch.
     const after = await defaultGitClient.git(["status", "--porcelain"], repo);
     expect(after.stdout).not.toContain(".cc/");
 
     // A second call does not duplicate the rule.
-    await ensureGraphWorkflowDocsExcluded(repo);
+    await ensureCcArtifactsExcluded(repo);
     const lineCount = (await readFile(excludePath, "utf-8"))
       .split("\n")
-      .filter(
-        (line) => line.trim() === GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN,
-      ).length;
+      .filter((line) => line.trim() === CC_ARTIFACTS_IGNORE_PATTERN).length;
+    expect(lineCount).toBe(1);
+  });
+
+  it("appends the rule even when the legacy docs-only rule is present", async () => {
+    const excludePath = path.join(repo, ".git", "info", "exclude");
+    await mkdir(path.dirname(excludePath), { recursive: true });
+    await writeFile(excludePath, ".cc/graph-workflow-docs/\n", "utf-8");
+
+    await ensureCcArtifactsExcluded(repo);
+
+    const content = await readFile(excludePath, "utf-8");
+    expect(content).toContain(".cc/graph-workflow-docs/");
+    const lineCount = content
+      .split("\n")
+      .filter((line) => line.trim() === CC_ARTIFACTS_IGNORE_PATTERN).length;
     expect(lineCount).toBe(1);
   });
 });

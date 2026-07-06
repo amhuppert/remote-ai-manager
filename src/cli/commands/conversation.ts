@@ -8,6 +8,7 @@ import {
   cliRequestText,
   encodePathSegment,
   failure,
+  failureFromRequest,
   failureFromRequestNotFoundAsUsage,
   render,
   resolveProjectContext,
@@ -188,6 +189,139 @@ function artifactRequestFailure(
   return failureFromRequestNotFoundAsUsage(result, json);
 }
 
+/**
+ * A verb body that reached a scope miss: its first scoped request 404'd because
+ * the conversation does not live in the target's project/session. `fallback` is
+ * the CliResult to surface if scope resolution can't find a better home (so the
+ * caller still sees the server's original "not found").
+ */
+interface ScopeMiss {
+  readonly scopeMiss: true;
+  readonly fallback: CliResult;
+}
+
+function scopeMiss(fallback: CliResult): ScopeMiss {
+  return { scopeMiss: true, fallback };
+}
+
+function isScopeMiss(value: CliResult | ScopeMiss): value is ScopeMiss {
+  return "scopeMiss" in value && value.scopeMiss === true;
+}
+
+/**
+ * A 404 that means "this conversation isn't in *this* scope" (as opposed to an
+ * absent artifact or a bad request) — the signal to resolve the conversation's
+ * real owning project/session by id and retry there.
+ */
+function isWrongScope404(
+  result: Exclude<CliRequestResult, { kind: "ok" }>,
+): boolean {
+  return (
+    result.kind === "error" &&
+    result.status === 404 &&
+    (result.code === "conversation_not_found" ||
+      result.error === "Session not found" ||
+      result.error === "Project not found")
+  );
+}
+
+/**
+ * Auto-resolution applies only when the caller left scope implicit: an explicit
+ * `--project`/`--session` is an override to respect, and the caller's own
+ * conversation was already tried in its own scope (re-resolving yields the same
+ * scope).
+ */
+function shouldAutoResolveScope(
+  target: ConversationTarget,
+  flags: GlobalFlags,
+): boolean {
+  if (flags.session !== undefined || flags.project !== undefined) return false;
+  return target.conversationId !== target.callerConversationId;
+}
+
+/** Subset of the global-lookup ConversationListItem the CLI needs to re-scope. */
+const conversationScopeSchema = z.object({
+  projectName: z.string().min(1),
+  sessionName: z.string().min(1),
+});
+
+type ScopeResolution =
+  | { kind: "resolved"; projectName: string; sessionName: string }
+  | { kind: "not-found" }
+  | { kind: "error"; result: CliResult };
+
+/**
+ * Resolve a conversation's owning project + session by id alone via the global
+ * lookup endpoint (`GET /api/conversations/<id>`), so a cross-session/-project
+ * reference can be read without the caller knowing where it lives.
+ */
+async function resolveOwningScope(
+  host: CliHost,
+  target: ConversationTarget,
+  json: boolean,
+): Promise<ScopeResolution> {
+  const result = await cliRequest(host, {
+    server: target.server,
+    token: target.token,
+    tokenSource: target.tokenSource,
+    method: "GET",
+    path: `/api/conversations/${encodePathSegment(target.conversationId)}`,
+  });
+  if (result.kind === "ok") {
+    const parsed = conversationScopeSchema.safeParse(result.body);
+    if (!parsed.success) {
+      return {
+        kind: "error",
+        result: failure({
+          exitCode: EXIT_OPERATION_FAILED,
+          message:
+            "could not resolve the conversation's project/session from the server",
+          json,
+        }),
+      };
+    }
+    return {
+      kind: "resolved",
+      projectName: parsed.data.projectName,
+      sessionName: parsed.data.sessionName,
+    };
+  }
+  if (result.kind === "error" && result.status === 404) {
+    return { kind: "not-found" };
+  }
+  return { kind: "error", result: failureFromRequest(result, json) };
+}
+
+/**
+ * Run a conversation verb's request body against the caller's own scope; on a
+ * scope miss, resolve the conversation's real project/session by id and retry
+ * once there. Own-history and explicitly-scoped calls skip resolution and keep
+ * the original "not found". This is how `cctl conversation <verb> <id>` works on
+ * any conversation-ref without `--project`/`--session`.
+ */
+async function withScopeResolution(
+  host: CliHost,
+  target: ConversationTarget,
+  flags: GlobalFlags,
+  json: boolean,
+  body: (t: ConversationTarget) => Promise<CliResult | ScopeMiss>,
+): Promise<CliResult> {
+  const first = await body(target);
+  if (!isScopeMiss(first)) return first;
+  if (!shouldAutoResolveScope(target, flags)) return first.fallback;
+
+  const scope = await resolveOwningScope(host, target, json);
+  if (scope.kind === "not-found") return first.fallback;
+  if (scope.kind === "error") return scope.result;
+
+  const retried = await body({
+    ...target,
+    project: scope.projectName,
+    session: scope.sessionName,
+  });
+  return isScopeMiss(retried) ? retried.fallback : retried;
+}
+
 export async function runConversation(
   rest: string[],
   flags: GlobalFlags,
@@ -275,8 +409,19 @@ async function runConversationRead(
 
   const resolved = await resolveConversationTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const target = resolved.target;
 
+  return withScopeResolution(host, resolved.target, flags, json, (target) =>
+    readBody(target, values, format, host, json),
+  );
+}
+
+async function readBody(
+  target: ConversationTarget,
+  values: Record<string, string>,
+  format: "json" | "markdown",
+  host: CliHost,
+  json: boolean,
+): Promise<CliResult | ScopeMiss> {
   // Kebab-case CLI flags map to the endpoint's camelCase query params; the
   // server owns validation (400 → exit 2 with per-issue lines).
   const query = new URLSearchParams();
@@ -314,7 +459,8 @@ async function runConversationRead(
   if (format === "markdown") {
     const result = await cliRequestText(host, requestParams);
     if (result.kind !== "ok") {
-      return failureFromRequestNotFoundAsUsage(result, json);
+      const failed = failureFromRequestNotFoundAsUsage(result, json);
+      return isWrongScope404(result) ? scopeMiss(failed) : failed;
     }
     return {
       exitCode: EXIT_OK,
@@ -333,7 +479,8 @@ async function runConversationRead(
 
   const result = await cliRequest(host, requestParams);
   if (result.kind !== "ok") {
-    return failureFromRequestNotFoundAsUsage(result, json);
+    const failed = failureFromRequestNotFoundAsUsage(result, json);
+    return isWrongScope404(result) ? scopeMiss(failed) : failed;
   }
 
   const parsed = readResponseSchema.safeParse(result.body);
@@ -399,8 +546,19 @@ async function runConversationCompact(
 
   const resolved = await resolveConversationTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const target = resolved.target;
 
+  return withScopeResolution(host, resolved.target, flags, json, (target) =>
+    compactBody(target, values, messageIndex, host, json),
+  );
+}
+
+async function compactBody(
+  target: ConversationTarget,
+  values: Record<string, string>,
+  messageIndex: number | undefined,
+  host: CliHost,
+  json: boolean,
+): Promise<CliResult | ScopeMiss> {
   const result = await cliRequest(host, {
     server: target.server,
     token: target.token,
@@ -422,7 +580,8 @@ async function runConversationCompact(
   });
 
   if (result.kind !== "ok") {
-    return failureFromRequestNotFoundAsUsage(result, json);
+    const failed = failureFromRequestNotFoundAsUsage(result, json);
+    return isWrongScope404(result) ? scopeMiss(failed) : failed;
   }
 
   const fresh = artifactEnvelopeResponseSchema.safeParse(result.body);
@@ -588,7 +747,18 @@ async function runCompactionGet(
 
   const resolved = await resolveConversationTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const target = resolved.target;
+
+  return withScopeResolution(host, resolved.target, flags, json, (target) =>
+    compactionGetBody(target, messageIndex, host, json),
+  );
+}
+
+async function compactionGetBody(
+  target: ConversationTarget,
+  messageIndex: number | undefined,
+  host: CliHost,
+  json: boolean,
+): Promise<CliResult | ScopeMiss> {
   const absentHint = `create with: ${compactCommand(target, messageIndex)}`;
 
   const listResult = await cliRequest(host, {
@@ -600,7 +770,8 @@ async function runCompactionGet(
     ...(callerHeaders(target) ? { headers: callerHeaders(target) } : {}),
   });
   if (listResult.kind !== "ok") {
-    return artifactRequestFailure(listResult, json, absentHint);
+    const failed = artifactRequestFailure(listResult, json, absentHint);
+    return isWrongScope404(listResult) ? scopeMiss(failed) : failed;
   }
 
   const listed = artifactListSchema.safeParse(listResult.body);
@@ -692,8 +863,17 @@ async function runCompactionList(
 
   const resolved = await resolveConversationTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const target = resolved.target;
 
+  return withScopeResolution(host, resolved.target, flags, json, (target) =>
+    compactionListBody(target, host, json),
+  );
+}
+
+async function compactionListBody(
+  target: ConversationTarget,
+  host: CliHost,
+  json: boolean,
+): Promise<CliResult | ScopeMiss> {
   const result = await cliRequest(host, {
     server: target.server,
     token: target.token,
@@ -703,7 +883,8 @@ async function runCompactionList(
     ...(callerHeaders(target) ? { headers: callerHeaders(target) } : {}),
   });
   if (result.kind !== "ok") {
-    return failureFromRequestNotFoundAsUsage(result, json);
+    const failed = failureFromRequestNotFoundAsUsage(result, json);
+    return isWrongScope404(result) ? scopeMiss(failed) : failed;
   }
 
   const parsed = artifactListSchema.safeParse(result.body);

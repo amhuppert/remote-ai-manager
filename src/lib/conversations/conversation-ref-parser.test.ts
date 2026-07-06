@@ -121,4 +121,23 @@ describe("parseConversationRefAttrs", () => {
       expect(result.data["compact-status"]).toBeUndefined();
     }
   });
+
+  it("parses read-command / compaction-command whose values carry spaces and flags", () => {
+    const raw = SAMPLE_REF.replace(
+      " />",
+      ' compact-status="fresh" compaction-command="cctl conversation compaction get abc --json" read-command="cctl conversation read abc --outline" />',
+    );
+    const refs = findConversationRefs(`Context: ${raw}`);
+    expect(refs).toHaveLength(1);
+    const result = conversationRefAttrsSchema.safeParse(refs[0]!.attrs);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data["compaction-command"]).toBe(
+        "cctl conversation compaction get abc --json",
+      );
+      expect(result.data["read-command"]).toBe(
+        "cctl conversation read abc --outline",
+      );
+    }
+  });
 });

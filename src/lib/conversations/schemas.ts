@@ -309,7 +309,6 @@ export const conversationRefAttrsSchema = z.object({
   "conversation-name": z.string(),
   backend: agentBackendSchema,
   "backend-ref": z.string(),
-  "transcript-path": z.string(),
   "debug-log-path": z.string(),
   status: conversationStatusSchema,
   "last-activity-at": z.string(),
@@ -320,6 +319,12 @@ export const conversationRefAttrsSchema = z.object({
   "compact-status": conversationCompactStatusSchema.optional(),
   "compact-covered-seq": z.string().optional(),
   "compact-created-at": z.string().optional(),
+  // Ready-to-run cctl commands for the reading agent — cctl resolves the owning
+  // project/session from the id, so these carry no flags. read-command is
+  // always emitted; compaction-command only when a compaction exists. Older
+  // refs predate both.
+  "read-command": z.string().optional(),
+  "compaction-command": z.string().optional(),
 });
 export type ConversationRefAttrs = z.infer<typeof conversationRefAttrsSchema>;
 
