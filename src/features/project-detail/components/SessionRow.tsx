@@ -142,6 +142,7 @@ export default function SessionRow({
         session.archived &&
           "[&>*:not(.session-row-actions)]:opacity-50 hover:[&>*:not(.session-row-actions)]:opacity-[0.92]",
       )}
+      data-testid="session-card"
       data-status={status}
     >
       <span className={cn(railBase, railColor[status])} />

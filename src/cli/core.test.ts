@@ -78,12 +78,112 @@ describe("cctl version", () => {
   });
 });
 
+describe("cctl help", () => {
+  it("prints global usage on stdout and exits 0 for --help", async () => {
+    const result = await runCli(["--help"], {}, makeHost());
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("usage: cctl");
+    expect(result.stdout).toContain("commands:");
+    expect(result.stderr).toBe("");
+  });
+
+  it("treats -h and the help command as aliases for --help", async () => {
+    for (const argv of [["-h"], ["help"]]) {
+      const result = await runCli(argv, {}, makeHost());
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("usage: cctl");
+    }
+  });
+
+  it("prints command-scoped help for <command> --help", async () => {
+    const result = await runCli(["dev", "--help"], {}, makeHost());
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("cctl dev ensure");
+    expect(result.stdout).not.toContain("codex");
+    expect(result.stderr).toBe("");
+  });
+
+  it("scopes help to the command even when a subcommand is present", async () => {
+    const result = await runCli(["dev", "ensure", "--help"], {}, makeHost());
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("cctl dev ensure");
+  });
+
+  it("supports `cctl help <command>`", async () => {
+    const result = await runCli(["help", "codex"], {}, makeHost());
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("cctl codex run");
+  });
+
+  it("still exits 2 for --help on an unknown command", async () => {
+    const result = await runCli(["frobnicate", "--help"], {}, makeHost());
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("frobnicate");
+  });
+
+  it("emits the help text in the --json envelope", async () => {
+    const result = await runCli(["dev", "--help", "--json"], {}, makeHost());
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.usage).toContain("cctl dev ensure");
+  });
+
+  it("has scoped help for every dispatched command", async () => {
+    const commands = [
+      "ask",
+      "notify",
+      "docs",
+      "dev",
+      "fixture",
+      "workflow",
+      "charter",
+      "decisions",
+      "codex",
+      "conversation",
+      "doctor",
+      "version",
+    ];
+    for (const command of commands) {
+      const result = await runCli([command, "--help"], {}, makeHost());
+      expect(result.exitCode, `${command} --help should exit 0`).toBe(0);
+      expect(result.stdout).toContain(`cctl ${command}`);
+    }
+  });
+});
+
 describe("usage errors", () => {
   it("exits 2 with usage on stderr for an unknown command", async () => {
     const result = await runCli(["frobnicate"], {}, makeHost());
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("frobnicate");
     expect(result.stdout).toBe("");
+  });
+
+  it("emits a scoped one-line error, not the full usage dump", async () => {
+    const result = await runCli(["frobnicate"], {}, makeHost());
+    // The full dump's marker is the `commands:` section — it must be gone.
+    expect(result.stderr).not.toContain("commands:");
+    const lines = result.stderr.trimEnd().split("\n");
+    expect(lines.length).toBeLessThanOrEqual(2);
+    expect(lines[0]).toContain("frobnicate");
+    expect(lines[lines.length - 1]).toMatch(/^hint: /);
+  });
+
+  it("keeps command arg errors to a scoped one-liner with a help hint", async () => {
+    const result = await runCli(["dev", "stop"], baseEnv, makeHost());
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).not.toContain("commands:");
+    expect(result.stderr).toContain("dev stop requires");
+    expect(result.stderr).toContain("--help");
+  });
+
+  it("includes the help hint in the --json usage-error envelope", async () => {
+    const result = await runCli(["frobnicate", "--json"], {}, makeHost());
+    expect(result.exitCode).toBe(2);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.hint).toContain("--help");
   });
 
   it("exits 2 with usage when invoked with no arguments", async () => {

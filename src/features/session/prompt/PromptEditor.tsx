@@ -382,6 +382,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       editorProps: {
         attributes: {
           class: "prompt-editor__content-inner",
+          "data-testid": "prompt-input",
           ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
         },
       },

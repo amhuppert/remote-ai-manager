@@ -7,8 +7,10 @@ import { runConversation } from "./commands/conversation";
 import { runDecisions } from "./commands/decisions";
 import { runDev } from "./commands/dev";
 import { runDocs } from "./commands/docs";
+import { runFixture } from "./commands/fixture";
 import { runNotify } from "./commands/notify";
 import { runWorkflow } from "./commands/workflow";
+import { helpFor } from "./help";
 import {
   EXIT_CONNECTION,
   EXIT_OK,
@@ -51,6 +53,14 @@ const handshakeResponseSchema = z.object({
   }),
   tokenValid: z.boolean(),
 });
+
+function helpResult(text: string, json: boolean): CliResult {
+  return {
+    exitCode: EXIT_OK,
+    stdout: json ? `${JSON.stringify({ ok: true, usage: text })}\n` : text,
+    stderr: "",
+  };
+}
 
 function runVersion(flags: GlobalFlags): CliResult {
   const cliBuild = formatBuildStamp(BUILD_INFO);
@@ -193,6 +203,21 @@ export async function runCli(
   const { positionals, flags, values, lists } = parsed;
   const command = positionals[0];
 
+  // Help is intercepted before dispatch so every command gets it without
+  // declaring it, and so `--help` never trips per-command checkFlags.
+  const helpTarget =
+    command === "help" ? (positionals[1] ?? null) : (command ?? null);
+  if (values["help"] === "true" || command === "help") {
+    if (helpTarget === null || helpTarget === "help") {
+      return helpResult(USAGE, flags.json);
+    }
+    const text = helpFor(helpTarget);
+    if (text === null) {
+      return usageFailure(`unknown command "${helpTarget}"`, flags.json);
+    }
+    return helpResult(text, flags.json);
+  }
+
   if (command === "version") return runVersion(flags);
   if (command === "doctor") {
     const denied = checkFlags(values, [], flags.json);
@@ -214,6 +239,10 @@ export async function runCli(
 
   if (command === "dev") {
     return runDev(positionals.slice(1), flags, values, env, host);
+  }
+
+  if (command === "fixture") {
+    return runFixture(positionals.slice(1), flags, values, env, host);
   }
 
   if (command === "workflow") {

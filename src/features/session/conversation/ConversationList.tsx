@@ -423,11 +423,15 @@ export default function ConversationList({
 
             {/* Conversation cards */}
             {filteredConversations.length > 0 ? (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-md">
+              <div
+                className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-md"
+                data-testid="conversation-list"
+              >
                 {filteredConversations.map((convo) => (
                   <Link
                     key={convo.id}
                     href={conversationsPageHref({ conversationId: convo.id })}
+                    data-testid="conversation-row"
                     data-recent={convo.id === mostRecentId}
                     data-archived={convo.archived}
                     className="flex flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md text-inherit no-underline [contain-intrinsic-size:0_96px] [content-visibility:auto] [transition:border-color_0.15s_ease,background_0.15s_ease] hover:bg-bg-elevated data-[archived=true]:border-dashed data-[archived=true]:opacity-55 data-[archived=true]:hover:opacity-75 data-[recent=false]:hover:border-border-strong data-[recent=true]:border-[var(--cc-cyan-a35)] data-[archived=true]:data-[recent=true]:border-border-subtle"

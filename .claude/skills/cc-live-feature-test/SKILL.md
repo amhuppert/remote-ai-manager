@@ -7,6 +7,22 @@ description: This skill should be used when verifying a Command Center (CC) feat
 
 Unit and integration tests in CC frequently pass against **fakes** (in-memory stores, mocked runtimes) while the real wired-up path is broken. The whole point of this skill is to prove a feature works in the **running system** with **real LLM calls**, and to confirm every claim against **durable backend state**, not the screen.
 
+Two references carry the mechanics — read them before driving anything:
+
+- `references/routes-and-api.md` — deep-link URL table, REST fixture contracts, and durable-state file locations. Eliminates URL/endpoint guessing.
+- `references/playwright-recipes.md` — verified playwright-cli idioms (wait, snapshot, eval) and their gotchas, plus dev-mode timing expectations.
+
+## The default verification shape
+
+This is the known-good loop — an efficient round is ~7 browser calls:
+
+1. `cctl dev ensure <server>` → the session-scoped `localUrl`.
+2. **Seed over the API, not by click-driving**: `cctl fixture session create <scratch-project> --json` returns a ready `conversationId`, deep-link `urls`, and the dev `dbPath`/`transcriptPath` — and pre-warms the routes so the first navigation is fast. Run turns with `cctl fixture prompt … --wait`. (Full verbs: the cc-cli skill.)
+3. **Deep-link** the browser straight to the target URL from the fixture output.
+4. Assert with **one-line `eval` probes returning tiny strings**; scope snapshots to elements; wait with the `run-code` waitFor idiom (never `networkidle` — SSE keeps the network busy forever).
+5. **Verify against durable state** — transcript JSONL, SQLite, API — never the optimistic UI alone.
+6. Clean up: `cctl fixture session delete`, `playwright-cli -s=<name> close`.
+
 ## Core principles (read first)
 
 1. **Live + real LLM, every time.** Drive the actual running app with Playwright and let real agent turns execute. No stubbed backends.
@@ -75,7 +91,7 @@ A feature can pass its whole test suite and still lose data, because the tests u
 
 ## Step 5 — Clean up
 
-- Delete the throwaway test session/conversations (via the UI or the appropriate API), or clearly flag what you left behind and why.
+- Delete the throwaway test session/conversations (`cctl fixture session delete <project> <session>`), or clearly flag what you left behind and why.
 - If you added a repro test or any temporary file, say so explicitly and ask whether to keep or revert it.
 - Close the Playwright session when done (`playwright-cli -s=<name> close`), unless leaving it open helps the user inspect.
 - Stay within the worktree. Do not modify the production config dir or anything outside the worktree without explicit permission; if the feature needs a global config change to test, ask first.

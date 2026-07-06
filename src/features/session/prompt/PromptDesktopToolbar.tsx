@@ -168,6 +168,7 @@ export default function PromptDesktopToolbar({
         />
         <button
           className={SEND_BUTTON_CLASS}
+          data-testid="prompt-send"
           data-busy={sendBusy}
           disabled={sendDisabled}
           onClick={onSendPrompt}

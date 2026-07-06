@@ -58,6 +58,7 @@ commands:
   notify        send a push notification to the user
   docs          register, list, and delete reference documents
   dev           list, ensure, and stop dev servers
+  fixture       scaffold test sessions and run prompts against a dev server
   workflow      list, inspect, start, and delete graph workflows
   charter       submit the session's Alignment charter
   decisions     propose decisions for the user's review
@@ -110,6 +111,8 @@ const BOOLEAN_ONLY_FLAGS = new Set([
   "--outline",
   "--include-thinking",
   "--force",
+  "--help",
+  "--skip-warm",
 ]);
 
 /**
@@ -131,6 +134,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
     if (arg === undefined) continue;
     if (arg === "--version") {
       positionals.push("version");
+      continue;
+    }
+    if (arg === "-h") {
+      values["help"] = "true";
       continue;
     }
     if (!arg.startsWith("--")) {
@@ -238,10 +245,13 @@ export function failure(input: FailureInput): CliResult {
 }
 
 export function usageFailure(message: string, json: boolean): CliResult {
+  const hint = "run 'cctl --help' or 'cctl <command> --help' for usage";
   return {
     exitCode: EXIT_USAGE,
-    stdout: json ? `${JSON.stringify({ ok: false, error: message })}\n` : "",
-    stderr: `cctl: ${message}\n\n${USAGE}`,
+    stdout: json
+      ? `${JSON.stringify({ ok: false, error: message, hint })}\n`
+      : "",
+    stderr: `cctl: ${message}\nhint: ${hint}\n`,
   };
 }
 

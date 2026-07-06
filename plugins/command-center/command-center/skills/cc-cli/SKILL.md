@@ -329,6 +329,52 @@ cctl dev ensure
 #   hint: drive the app at http://localhost:5010; re-check liveness with 'cctl dev list'
 ```
 
+## cctl fixture
+
+Scaffold **live-test state** — throwaway sessions and real LLM turns — for
+verifying features in the running app. Every verb targets the session's
+**worktree dev server** (auto-resolved through `cctl dev`'s registry), never
+the managing CC instance: fixtures create and delete real sessions, and an
+explicit `--target` equal to the managing server is refused.
+
+```
+cctl fixture session create <project> [--name <n>] [--dev <serverName>] [--target <url>] [--skip-warm]
+cctl fixture session delete <project> <sessionName>
+cctl fixture prompt <project> <sessionName> --text "<prompt>" [--conversation <id>] [--wait [--timeout <sec>]]
+cctl fixture status <project> <sessionName>
+```
+
+- `<project>` is the project **on the dev server** (use a scratch project set
+  aside for testing). An unknown name exits `2` listing the projects the dev
+  server actually has.
+- `session create` — creates the session and returns everything a live test
+  needs in one envelope: `sessionName`, a ready `conversationId`, deep-link
+  `urls` (session page + `/conversations?c=<id>`), and the dev instance's
+  `dbPath`/`transcriptPath` for backend verification. It also **pre-warms**
+  the returned routes (dev mode compiles each route on first hit, ~5–10s), so
+  the first browser navigation lands warm; `--skip-warm` opts out.
+- `session delete` — tears the session down (encodes the
+  `DELETE …/sessions?sessionName=` query-param contract so you never have to).
+- `prompt` — runs a **real LLM turn** in the conversation (defaults to the
+  session's only conversation; pass `--conversation` when there are several).
+  With `--wait` it blocks by reading the prompt SSE stream until the server's
+  `done`/`error` event — no hand-rolled status polling; `--timeout <sec>` caps
+  the wait (the turn keeps running server-side on timeout). Without `--wait`
+  it returns immediately with `turn: "started"`.
+- `status` — one-shot list of the session's conversations with their `status`
+  (`new | awaiting | running | waiting_for_input`; a finished turn settles at
+  `awaiting`).
+- `--dev <serverName>` disambiguates when several dev servers are running.
+
+```
+cctl dev ensure
+cctl fixture session create scratch-project --json
+# → {"ok":true,"sessionName":"fx-...","conversationId":"...","urls":{...},"transcriptPath":"..."}
+cctl fixture prompt scratch-project fx-... --text "reply with exactly: marker-7" --wait --json
+grep "marker-7" <transcriptPath>   # verify against durable state, not the UI
+cctl fixture session delete scratch-project fx-...
+```
+
 ## cctl workflow
 
 Author, read, launch, and inspect **graph workflows** — the saved multi-context

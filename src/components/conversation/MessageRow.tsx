@@ -91,6 +91,7 @@ const MessageRow = memo(function MessageRow({
     return (
       <div
         className="message notice relative border-y-0 border-r-0 border-l-2 border-solid border-border-subtle pl-md"
+        data-testid="message-row"
         data-msg-index={messageIndex}
       >
         <div className={cn(messageRoleClass, "text-[var(--text-muted)]")}>
@@ -126,6 +127,7 @@ const MessageRow = memo(function MessageRow({
   return (
     <div
       className={cn("message", msg.role, "relative")}
+      data-testid="message-row"
       data-msg-index={messageIndex}
     >
       <div className={cn(messageRoleClass, roleColor)}>
