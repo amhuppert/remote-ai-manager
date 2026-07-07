@@ -345,6 +345,8 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     "## Command Center CLI (`cctl`)",
     "Advance and interact with the workflow by running these `cctl` commands in your shell. They resolve this execution and context automatically from the environment — you never pass identity flags.",
     "",
+    "Write scratch and payload files — including the `--file` JSON the commands below read — under `.cc/temp/`, which is git-ignored. Any other file you leave in the worktree IS committed when this execution context lands and is reviewed by the context validator against this context's scope, so keep throwaway files out of the worktree root.",
+    "",
     "### Complete a task",
     "```",
     COMPLETE_TASK_COMMAND,
@@ -354,9 +356,9 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     "",
     "### Register a shared document",
     "```",
-    "cctl workflow shared-doc upsert <relativePath> --file <doc.json>",
+    "cctl workflow shared-doc upsert <relativePath> --file <.cc/temp/doc.json>",
     "```",
-    'Register or update a shared document for agents in later workflow iterations. `<relativePath>` is the document\'s path relative to the worktree root; `<doc.json>` is a JSON object `{ "description": "<what it contains>", "readWhen": "<when a future agent should read it>" }` you author with the Write tool.',
+    'Register or update a shared document for agents in later workflow iterations. `<relativePath>` is the document\'s path relative to the worktree root; `<.cc/temp/doc.json>` is a JSON object `{ "description": "<what it contains>", "readWhen": "<when a future agent should read it>" }` you author with the Write tool under `.cc/temp/` (git-ignored scratch, per above).',
   ];
 
   if (input.allowAgentTaskAdd) {

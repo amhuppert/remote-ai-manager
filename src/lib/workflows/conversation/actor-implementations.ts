@@ -1706,9 +1706,24 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
       backend: input.agentBackend,
       conversationId: input.conversationId,
+      hasResumeRef: input.backendRef !== null,
+      promptCount: input.promptCount,
       claudeCapabilityConfigSeeded: claudeCapabilityConfig !== undefined,
       codexCapabilityConfigSeeded: codexCapabilityConfig !== undefined,
     });
+
+    // A conversation with completed turns but no resume handle cannot restore
+    // the agent's context — the new backend session starts with no memory of
+    // the transcript. Reachable after a mid-turn server death that outran
+    // BACKEND_INIT persistence, or a Codex thread cleared by a failed turn.
+    if (input.promptCount > 0 && input.backendRef === null) {
+      logger.warn("prompt.resume_ref_missing", {
+        sessionName: input.sessionName,
+        backend: input.agentBackend,
+        conversationId: input.conversationId,
+        promptCount: input.promptCount,
+      });
+    }
 
     const externalTurnHandler = createExternalTurnHandler(
       {

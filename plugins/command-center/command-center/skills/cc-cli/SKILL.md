@@ -79,9 +79,11 @@ Default output is human-terse one-liners. Every command also supports
 - Remaining fields are command-specific.
 
 Structured input beyond a couple of scalars goes through `--file <path>`
-(JSON; `-` for stdin): author the payload with the Write tool, run the
-command, and iterate on the validation errors it returns (one issue per
-line).
+(JSON; `-` for stdin): author the payload with the Write tool **under
+`.cc/temp/`** — CC git-ignores that namespace, so a graph-workflow lane's
+land-time `git add -A` never sweeps the throwaway payload into the branch (a
+payload left at the worktree root derails the context validator). Then run the
+command and iterate on the validation errors it returns (one issue per line).
 
 ## `cctl doctor`
 
@@ -384,13 +386,13 @@ task graphs and their live executions. Replaces the `list_graph_workflows`,
 `replace_graph_workflow` MCP tools.
 
 ```
-cctl workflow validate --file plan.json [--json]
-cctl workflow create --file plan.json [--json]
-cctl workflow replace <id> --file plan.json [--json]
+cctl workflow validate --file .cc/temp/plan.json [--json]
+cctl workflow create --file .cc/temp/plan.json [--json]
+cctl workflow replace <id> --file .cc/temp/plan.json [--json]
 cctl workflow status [--json]
 cctl workflow list [--json]
 cctl workflow get <id> [--json]
-cctl workflow start <id> [--file inputs.json] [--json]
+cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]
 cctl workflow delete <id>
 cctl workflow templates [--tier global|project] [--json]
 ```
@@ -435,10 +437,10 @@ the planning method), then walk the canonical chain: validate → create → sta
   (`<tier>  <id>  <name>`). `--tier global|project` filters to one tier. No hint.
 
 ```
-cctl workflow validate --file plan.json
+cctl workflow validate --file .cc/temp/plan.json
 # → plan is valid
-#   hint: valid — create it with 'cctl workflow create --file plan.json'
-cctl workflow create --file plan.json
+#   hint: valid — create it with 'cctl workflow create --file .cc/temp/plan.json'
+cctl workflow create --file .cc/temp/plan.json
 # → created Add OAuth2 Support (id: wf-1)
 #   hint: start it with 'cctl workflow start wf-1'
 cctl workflow status
@@ -446,7 +448,7 @@ cctl workflow status
 #     plan       completed  2/2
 #     implement  running    1/4
 #     verify     pending    0/1
-cctl workflow start wf-1 --file inputs.json
+cctl workflow start wf-1 --file .cc/temp/inputs.json
 # → started wf-1 (run exec-9c2a...)
 #   hint: track progress with 'cctl workflow status'
 ```
@@ -469,7 +471,7 @@ the halt reason verbatim — stop and end your turn.
 ```
 cctl workflow task complete <taskId> --summary "<what changed, how verified>"
 cctl workflow task add --title "<name>" --instructions "<self-contained steps>" [--slug <slug>]
-cctl workflow shared-doc upsert <relativePath> --file doc.json
+cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json
 cctl workflow collab request --brief "<the question/decision, with context>"
 ```
 
@@ -487,9 +489,9 @@ cctl workflow collab request --brief "<the question/decision, with context>"
   reason. No hint.
 - `shared-doc upsert` — register (or update) a shared document other lanes will
   read. `<relativePath>` is the doc's path in the worktree (e.g.
-  `.cc/graph-workflow-docs/api-contract.md`); `--file doc.json` is a JSON object
-  `{ "description": "…", "readWhen": "…" }` (author it with the Write tool —
-  both fields are prose). No hint.
+  `.cc/graph-workflow-docs/api-contract.md`); `--file .cc/temp/doc.json` is a JSON object
+  `{ "description": "…", "readWhen": "…" }` (author it under `.cc/temp/` with the
+  Write tool — both fields are prose). No hint.
 - `collab request` — request a structured second opinion from another agent on a
   genuinely ambiguous, high-impact decision. `--brief` states the problem and the
   context (do **not** include your preferred solution). The collaboration runs in
@@ -502,7 +504,7 @@ cctl workflow task complete implement-auth --summary "Added OAuth2 route + tests
 # → completed implement-auth
 #   hint: 3 tasks remain in this context
 cctl workflow task add --title "Handle token refresh" --instructions "Add refresh-token rotation to /api/auth; cover expiry in tests."
-cctl workflow shared-doc upsert .cc/graph-workflow-docs/api-contract.md --file doc.json
+cctl workflow shared-doc upsert .cc/graph-workflow-docs/api-contract.md --file .cc/temp/doc.json
 cctl workflow collab request --brief "Store sessions in SQLite or Redis? Constraints: single-node, <10k sessions, must survive restart."
 ```
 
@@ -512,12 +514,12 @@ Submit the session's **Alignment charter** — the free-text markdown document
 that governs the whole session. Replaces the `write_session_charter` MCP tool.
 
 ```
-cctl charter write --file charter.json
+cctl charter write --file .cc/temp/charter.json
 ```
 
 - The charter is structured, multi-paragraph markdown, so it is **file-only**:
-  author `charter.json` as a JSON object `{ "content": "<full markdown>" }` with
-  the Write tool, then submit. There is no inline text flag.
+  author `.cc/temp/charter.json` as a JSON object `{ "content": "<full markdown>" }`
+  with the Write tool, then submit. There is no inline text flag.
 - The submission fills the session's open Alignment draft (the one `/align`
   creates); if none is open it defensively opens a gated one. The result is a
   **draft pending the user's approval** — the active charter is unchanged until
@@ -530,7 +532,7 @@ cctl charter write --file charter.json
   turn to author against, the server refuses and the command exits `1`.
 
 ```
-cctl charter write --file charter.json
+cctl charter write --file .cc/temp/charter.json
 # → charter draft submitted; pending the user's approval
 ```
 
@@ -541,11 +543,11 @@ approved decisions fold into the Alignment charter. Replaces the
 `propose_decisions` MCP tool.
 
 ```
-cctl decisions propose --file decisions.json
+cctl decisions propose --file .cc/temp/decisions.json
 ```
 
-- **File-only**: author `decisions.json` as a JSON object with a non-empty
-  `decisions` array — each `{ "statement": "...", "rationale"?: "...",
+- **File-only**: author `.cc/temp/decisions.json` as a JSON object with a
+  non-empty `decisions` array — each `{ "statement": "...", "rationale"?: "...",
   "context"?: "..." }` — with the Write tool.
 - Non-blocking: the batch is persisted for review and your turn continues — do
   **not** wait for a response. The batch lands in the existing decision-review
@@ -555,7 +557,7 @@ cctl decisions propose --file decisions.json
   the same refusals (exit `1`) as `charter`.
 
 ```
-cctl decisions propose --file decisions.json
+cctl decisions propose --file .cc/temp/decisions.json
 # → proposed 2 decisions for the user's review
 ```
 
@@ -567,13 +569,13 @@ the `run_codex` MCP tool. Because a run can take tens of minutes, it is
 **job-shaped**: the server runs it and the CLI observes it.
 
 ```
-cctl codex run --file prompt.json [--wait [--timeout <dur>]] [--json]
+cctl codex run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]
 cctl codex status <runId> [--json]
 cctl codex cancel <runId>
 ```
 
-- `run` — start a codex run. **File-only input**: author `prompt.json` as a JSON
-  object `{ "prompt": "<task>" }` with the Write tool. The body mirrors the old
+- `run` — start a codex run. **File-only input**: author `.cc/temp/prompt.json`
+  as a JSON object `{ "prompt": "<task>" }` with the Write tool. The body mirrors the old
   `run_codex` tool input, so optional fields are `model` and `reasoning_effort`
   (`minimal|low|medium|high|xhigh`) plus the job extras `timeoutMs` (server-side
   execution cap) and `workingDirectory` (defaults to the session worktree; must
@@ -602,14 +604,14 @@ Codex must be enabled in the CC config; if it is not, `run` exits `1` with a
 one-line reason.
 
 ```
-cctl codex run --file prompt.json --wait
+cctl codex run --file .cc/temp/prompt.json --wait
 # → found two bugs
 #
 #   reference documents:
 #     memory-bank/codex/bugs.md  —  the bugs
 #   hint: codex registered 1 reference documents — read them before building on the summary
 
-cctl codex run --file prompt.json
+cctl codex run --file .cc/temp/prompt.json
 # → started codex run run-4f1d2797
 #   hint: poll with 'cctl codex status run-4f1d2797'; cancel with 'cctl codex cancel run-4f1d2797'
 cctl codex status run-4f1d2797
@@ -623,13 +625,14 @@ Ask the user one or more multiple-choice questions. Replaces the
 as your **next user message**, delivered through the normal prompt queue.
 
 ```
-cctl ask --file questions.json
+cctl ask --file .cc/temp/questions.json
 cctl ask --question "<text>" --option <label> --option <label> [--multi-select] [--header "<h>"] [--context "<c>"]
 ```
 
 - `--file` — a JSON object `{ "questions": [ … ] }`, each question
   `{ "id"?, "question", "header"?, "context"?, "options": [{ "label", "description"? }],
-  "multiSelect"?, "required"?, "allowNote"? }`. Author it with the Write tool.
+  "multiSelect"?, "required"?, "allowNote"? }`. Author it under `.cc/temp/` with
+  the Write tool.
 - The `--question` form is sugar for a single question: repeat `--option` per
   choice (at least one); `--multi-select` allows picking several; `--header`
   and `--context` fill the panel's header and implications note.

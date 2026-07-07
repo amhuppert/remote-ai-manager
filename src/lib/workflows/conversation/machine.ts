@@ -427,10 +427,18 @@ export const conversationMachine = setup({
       // Parent-level events apply across both branches so the existing
       // streaming control flow is byte-for-byte unchanged.
       on: {
+        // Persist immediately: the SDK announces its session id seconds into
+        // the turn, but the turn may run for minutes. If the server dies
+        // mid-turn before the ref is durable, the next turn cannot `resume:`
+        // and the agent silently loses all prior context.
         BACKEND_INIT: {
-          actions: assign({
-            backendRef: ({ event }) => event.backendRef,
-          }),
+          actions: [
+            assign({
+              backendRef: ({ event }) => event.backendRef,
+            }),
+            "syncDerivedFields",
+            "persistSnapshot",
+          ],
         },
         PROMPT_COMPLETED: {
           target: "#conversation.finalizingTurn",
@@ -535,6 +543,7 @@ export const conversationMachine = setup({
                 transcriptPath: context.transcriptPath!,
                 agentBackend: context.agentBackend,
                 backendRef: context.backendRef,
+                promptCount: context.promptCount,
                 forkedFrom: context.forkedFrom,
                 role: context.role,
                 promptText: activeTurn.promptText,

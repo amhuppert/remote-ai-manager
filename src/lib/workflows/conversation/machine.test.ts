@@ -519,6 +519,70 @@ describe("conversationMachine", () => {
     });
   });
 
+  describe("BACKEND_INIT durability", () => {
+    // The SDK announces its session id in the init message seconds into the
+    // turn, but the turn may run for many minutes. If the server dies mid-turn
+    // before the ref is durable, the next turn cannot `resume:` and the agent
+    // silently loses all prior context — so BACKEND_INIT must persist
+    // immediately, not wait for turn completion.
+    it("persists backendRef durably the moment BACKEND_INIT arrives mid-turn", async () => {
+      const spies = {
+        persistSnapshot: vi.fn(),
+        syncDerivedFields: vi.fn(),
+      };
+      let resolveTurn: ((result: PromptActorResult) => void) | null = null;
+      const machine = conversationMachine.provide({
+        actors: {
+          prepareTurn: makeMockPrepareTurn(),
+          executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
+            () =>
+              new Promise<PromptActorResult>((resolve) => {
+                resolveTurn = resolve;
+              }),
+          ),
+          verifyCleanup: makeMockVerifyCleanup(),
+        },
+        actions: {
+          persistSnapshot: spies.persistSnapshot,
+          syncDerivedFields: spies.syncDerivedFields,
+          broadcastConversationStatus: () => {},
+          broadcastAskQuestion: () => {},
+          broadcastDebugModeStatus: () => {},
+          releaseResources: () => {},
+          dispatchPushNotification: () => {},
+        },
+      });
+
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "executing");
+      spies.persistSnapshot.mockClear();
+      spies.syncDerivedFields.mockClear();
+
+      actor.send({
+        type: "BACKEND_INIT",
+        backendRef: { backend: "claude", sessionId: "sdk-sess-live" },
+      });
+
+      expect(actor.getSnapshot().context.backendRef).toEqual({
+        backend: "claude",
+        sessionId: "sdk-sess-live",
+      });
+      expect(spies.syncDerivedFields).toHaveBeenCalled();
+      expect(spies.persistSnapshot).toHaveBeenCalled();
+
+      resolveTurn!(successResult());
+      await waitForState(actor, "idle");
+    });
+  });
+
   describe("AskUserQuestion async flow", () => {
     /** Deferred executePrompt so a test can hold a turn open past ASK_QUESTION. */
     function makeDeferredExecutePrompt() {

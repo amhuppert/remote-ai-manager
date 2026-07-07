@@ -327,6 +327,10 @@ export interface ExecutePromptInput {
   transcriptPath: string;
   agentBackend: AgentBackendId;
   backendRef: AgentSessionRef | null;
+  /** Completed prior turns. A fresh runtime with `promptCount > 0` but no
+   *  `backendRef` cannot resume — the agent starts with no memory of the
+   *  transcript, which is worth a loud log signal. */
+  promptCount: number;
   forkedFrom: ForkedFrom;
   role: ConversationRole;
   promptText: string;

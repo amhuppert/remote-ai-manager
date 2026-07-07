@@ -14,6 +14,7 @@ import {
 import { sanitizeBranchName } from "./branch-name";
 import { buildChildEnv } from "../shared/child-env";
 import { defaultGitClient, type GitClient } from "../git/client";
+import { ensureCcArtifactsExcluded as defaultEnsureCcArtifactsExcluded } from "../git/worktree";
 import { fastRemoveWorktree as defaultFastRemoveWorktree } from "../git/worktree-fast-remove";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
@@ -67,6 +68,12 @@ export interface SessionDeps {
   rm: typeof rm;
   execFileAsync: typeof execFileAsync;
   gitClient: GitClient;
+  /**
+   * Git-ignore CC's `.cc/` artifact namespace for the repo owning the worktree
+   * (appends to the repo-local `info/exclude`; idempotent). Called at
+   * provisioning so no auto-commit ever sweeps ephemeral scratch into a branch.
+   */
+  ensureCcArtifactsExcluded(worktreePath: string): Promise<void>;
   fastRemoveWorktree: typeof defaultFastRemoveWorktree;
   readState: typeof readState;
   mutateState: typeof mutateState;
@@ -127,6 +134,8 @@ const defaultSessionDeps: SessionDeps = {
   rm,
   execFileAsync,
   gitClient: defaultGitClient,
+  ensureCcArtifactsExcluded: (worktreePath) =>
+    defaultEnsureCcArtifactsExcluded(worktreePath),
   fastRemoveWorktree: defaultFastRemoveWorktree,
   readState,
   mutateState,
@@ -166,6 +175,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     rm,
     execFileAsync,
     gitClient,
+    ensureCcArtifactsExcluded,
     fastRemoveWorktree,
     readState,
     mutateState,
@@ -371,6 +381,23 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         worktreePath,
         opts.baseBranch ?? "main",
       ]);
+
+      // Git-ignore CC's `.cc/` artifact namespace for this repo before any
+      // artifact (init-script output, charter, dev-server/validation logs,
+      // agent scratch) lands in the worktree, so no auto-commit — merge/commit
+      // machines and pre-merge auto-fix all stage with `git add -A` — ever
+      // sweeps ephemeral scratch into a branch. Best-effort: a failure here
+      // must never fail session creation, and it must not trip the rollback.
+      try {
+        await ensureCcArtifactsExcluded(worktreePath);
+      } catch (err) {
+        logger.warn("session.ensure_cc_excluded_failure", {
+          projectName: projectPath,
+          sessionName,
+          worktreePath,
+          error: getErrorMessage(err),
+        });
+      }
 
       // Run optional init script
       if (repoConfig?.initScriptPath) {

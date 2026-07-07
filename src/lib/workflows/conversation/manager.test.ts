@@ -754,6 +754,12 @@ describe("conversation manager", () => {
       expect(conv.status).toBe("awaiting");
       expect(conv.promptCount).toBe(3);
       expect(conv.activeTurnSource).toBeNull();
+      // The row's backendRef is the resume handle a post-restart actor is
+      // rebuilt from — dropping it here silently severs agent context.
+      expect(conv.backendRef).toEqual({
+        backend: "claude",
+        sessionId: "sdk-1",
+      });
     });
   });
 

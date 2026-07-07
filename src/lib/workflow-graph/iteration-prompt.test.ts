@@ -252,6 +252,24 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("cctl workflow shared-doc upsert");
   });
 
+  it("directs scratch and --file payloads to git-ignored .cc/temp/ so they are not committed at land time", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    // The scratch-file convention is stated and explains the land-time commit.
+    expect(prompt).toContain(".cc/temp/");
+    expect(prompt.toLowerCase()).toContain("committed");
+    // The shared-doc metadata payload example follows it — no bare-root doc.json
+    // that a lane's `git add -A` would sweep into the branch.
+    expect(prompt).toContain(".cc/temp/doc.json");
+    expect(prompt).not.toContain("--file <doc.json>");
+  });
+
   it("includes `cctl workflow task add` when allowAgentTaskAdd is true", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

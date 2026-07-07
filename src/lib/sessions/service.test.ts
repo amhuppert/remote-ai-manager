@@ -28,12 +28,14 @@ function createTestDeps() {
   const copyAlignmentCharterFromParentMock = vi
     .fn()
     .mockResolvedValue(undefined);
+  const ensureCcArtifactsExcludedMock = vi.fn().mockResolvedValue(undefined);
 
   const deps: SessionDeps = {
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
     rm: vi.fn().mockResolvedValue(undefined),
     execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],
     gitClient: { git: gitMock } as unknown as GitClient,
+    ensureCcArtifactsExcluded: ensureCcArtifactsExcludedMock,
     fastRemoveWorktree:
       fastRemoveWorktreeMock as unknown as SessionDeps["fastRemoveWorktree"],
     readState: readStateMock,
@@ -78,6 +80,7 @@ function createTestDeps() {
     sweepLaneWorktreesMock,
     queryMock,
     copyAlignmentCharterFromParentMock,
+    ensureCcArtifactsExcludedMock,
   };
 }
 
@@ -172,6 +175,7 @@ let fastRemoveWorktreeMock: Mock;
 let sweepLaneWorktreesMock: Mock;
 let queryMock: Mock;
 let copyAlignmentCharterFromParentMock: Mock;
+let ensureCcArtifactsExcludedMock: Mock;
 let service: ReturnType<typeof createSessionService>;
 
 /** Make gitMock resolve with { stdout, stderr } */
@@ -215,6 +219,7 @@ beforeEach(() => {
   queryMock = testSetup.queryMock;
   copyAlignmentCharterFromParentMock =
     testSetup.copyAlignmentCharterFromParentMock;
+  ensureCcArtifactsExcludedMock = testSetup.ensureCcArtifactsExcludedMock;
   service = createSessionService(deps);
 });
 
@@ -527,6 +532,32 @@ describe("createSessionNormal", () => {
       ],
       "/projects/repo",
     );
+  });
+
+  it("git-ignores the .cc/ artifact namespace for the new worktree", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "Ignore CC Artifacts",
+    );
+
+    expect(ensureCcArtifactsExcludedMock).toHaveBeenCalledWith(
+      session.worktreePath,
+    );
+  });
+
+  it("does not fail session creation when the .cc/ exclude cannot be written", async () => {
+    mockGitSuccess();
+    ensureCcArtifactsExcludedMock.mockRejectedValueOnce(
+      new Error("info/exclude is read-only"),
+    );
+
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "Exclude Fails",
+    );
+
+    expect(session.sessionName).toBe("Exclude Fails");
   });
 
   it("persists session to state via writeState", async () => {

@@ -232,6 +232,7 @@ function makeExecutePromptInput(
     transcriptPath: "/transcripts/conv-1.jsonl",
     agentBackend: "claude",
     backendRef: null,
+    promptCount: 0,
     forkedFrom: null,
     role: null,
     promptText: "Hello, world!",

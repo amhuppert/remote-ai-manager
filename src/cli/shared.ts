@@ -468,10 +468,35 @@ export function encodePathSegment(value: string): string {
 }
 
 /**
+ * A soft stderr advisory for a `--file` payload path a lane commit could sweep
+ * into the branch. `--file` payloads (plan / questions / doc / charter … JSON)
+ * are throwaway scratch — the CLI reads them once and never needs them again —
+ * but a graph-workflow lane commits its whole worktree with `git add -A` at
+ * land time, so a payload left at the worktree root lands in the diff the
+ * context validator reviews and derails the context. CC's `.cc/` namespace is
+ * git-ignored, so `.cc/temp/` is the safe home for these files.
+ *
+ * We nudge only worktree-relative paths outside `.cc/`: a relative path
+ * resolves against the agent's cwd (always its worktree), so it is exactly a
+ * file at risk. Absolute paths (the worktree root is unknown to the CLI here)
+ * and stdin (`-`) are out of scope — the observed footgun is the documented
+ * bare `--file doc.json`. Returns a newline-terminated advisory line, or
+ * undefined when no nudge is warranted.
+ */
+export function ccTempPayloadAdvisory(filePath: string): string | undefined {
+  if (filePath === "-" || path.isAbsolute(filePath)) return undefined;
+  const segments = path.normalize(filePath).split(path.sep);
+  if (segments.includes(".cc")) return undefined;
+  return `note: "${filePath}" is outside .cc/ — author cctl --file payloads under .cc/temp/ so a lane commit ('git add -A') doesn't sweep them into the branch\n`;
+}
+
+/**
  * Read a JSON-object file for a `--file` command. Every failure — unreadable,
  * malformed JSON, or a non-object root — is a local usage error (exit 2) before
  * any request is made, so the offending file is named without a round-trip.
- * `label` names the file kind in the message (e.g. "plan", "charter").
+ * `label` names the file kind in the message (e.g. "plan", "charter"). The soft
+ * "author it under .cc/temp/" location nudge is applied centrally in `runCli`
+ * (keyed on `--file`), not here — see {@link ccTempPayloadAdvisory}.
  */
 export async function readJsonObjectFile(
   host: CliHost,

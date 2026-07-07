@@ -17,6 +17,7 @@ import {
   EXIT_OPERATION_FAILED,
   EXIT_USAGE,
   USAGE,
+  ccTempPayloadAdvisory,
   checkFlags,
   failure,
   parseArgv,
@@ -200,6 +201,27 @@ export async function runCli(
     // The parse failed, so flags.json is unavailable — honor a literal --json.
     return usageFailure(parsed.message, argv.includes("--json"));
   }
+  const result = await dispatchCli(parsed, env, host);
+
+  // Soft location nudge for `--file` payloads, applied centrally so every
+  // payload command (workflow/charter/decisions/codex/ask) gets it without
+  // threading the advisory through each success return. Only on a successful
+  // run — a failed invocation's payload location is moot.
+  const fileFlag = parsed.values["file"];
+  if (result.exitCode === EXIT_OK && fileFlag !== undefined) {
+    const advisory = ccTempPayloadAdvisory(fileFlag);
+    if (advisory !== undefined) {
+      return { ...result, stderr: `${result.stderr}${advisory}` };
+    }
+  }
+  return result;
+}
+
+async function dispatchCli(
+  parsed: Extract<ReturnType<typeof parseArgv>, { kind: "ok" }>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
   const { positionals, flags, values, lists } = parsed;
   const command = positionals[0];
 

@@ -6,11 +6,12 @@
 
 const COMMAND_HELP: Record<string, string> = {
   ask: `usage:
-  cctl ask --file questions.json
+  cctl ask --file .cc/temp/questions.json
   cctl ask --question "<text>" --option <label> --option <label> [--multi-select] [--header "<h>"] [--context "<c>"]
 
 Register a question batch for the user, then END YOUR TURN — the answers
-arrive as your next user message. --file takes {"questions":[...]}.
+arrive as your next user message. --file takes {"questions":[...]}; author
+every --file payload under .cc/temp/ (git-ignored scratch).
 `,
   notify: `usage:
   cctl notify "<message>" [--title "<title>"]
@@ -47,36 +48,41 @@ paths, and pre-warms the routes so the first browser navigation is fast.
 \`prompt --wait\` runs a real turn and blocks until it completes.
 `,
   workflow: `usage:
-  cctl workflow validate --file plan.json [--json]
-  cctl workflow create --file plan.json [--json]
-  cctl workflow replace <id> --file plan.json [--json]
-  cctl workflow list|get <id>|status|start <id> [--file inputs.json]|delete <id>
+  cctl workflow validate --file .cc/temp/plan.json [--json]
+  cctl workflow create --file .cc/temp/plan.json [--json]
+  cctl workflow replace <id> --file .cc/temp/plan.json [--json]
+  cctl workflow list|get <id>|status|start <id> [--file .cc/temp/inputs.json]|delete <id>
   cctl workflow templates [--tier global|project] [--json]
 
 Lane-only verbs (inside graph-workflow lane conversations):
   cctl workflow task complete <taskId> --summary "<what changed, how verified>"
   cctl workflow task add --title "<name>" --instructions "<steps>" [--slug <slug>]
-  cctl workflow shared-doc upsert <relativePath> --file doc.json
+  cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json
   cctl workflow collab request --brief "<question with context>"
+
+Author every --file payload under .cc/temp/ — it is git-ignored, so a lane's
+land-time commit never sweeps it into the branch.
 `,
   charter: `usage:
-  cctl charter write --file charter.json
+  cctl charter write --file .cc/temp/charter.json
 
-Submit the session's Alignment charter for the user's approval.
+Submit the session's Alignment charter for the user's approval. Author the
+--file payload under .cc/temp/ (git-ignored scratch).
 `,
   decisions: `usage:
-  cctl decisions propose --file decisions.json
+  cctl decisions propose --file .cc/temp/decisions.json
 
-Propose decisions for the user's review. decisions.json is
-{"decisions":[{"statement":"...","rationale"?,"context"?}]}.
+Propose decisions for the user's review. The .cc/temp/decisions.json payload is
+{"decisions":[{"statement":"...","rationale"?,"context"?}]} (git-ignored scratch).
 `,
   codex: `usage:
-  cctl codex run --file prompt.json [--wait [--timeout <dur>]] [--json]
+  cctl codex run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]
   cctl codex status <runId> [--json]
   cctl codex cancel <runId>
 
-Run OpenAI Codex as a one-shot sub-agent in this worktree. prompt.json is
-{"prompt":"<task>"}. Job-shaped: without --wait, poll with \`status\`.
+Run OpenAI Codex as a one-shot sub-agent in this worktree. The .cc/temp/prompt.json
+payload is {"prompt":"<task>"} (git-ignored scratch). Job-shaped: without --wait,
+poll with \`status\`.
 `,
   conversation: `usage:
   cctl conversation read <conversation-id> [--outline] [--message N] [--message-range A:B] [--include-tools none|summary|full] [--include-thinking]

@@ -166,7 +166,7 @@ The final context should:
 
 ## Authoring and Submitting the Plan
 
-Author the workflow as a `plan.json` file with the Write tool, then submit it with the `cctl` CLI. Never paste a whole workflow graph as inline tool arguments — a file you can iterate on is the interface.
+Author the workflow as a `.cc/temp/plan.json` file with the Write tool — keep it under `.cc/temp/`, which CC git-ignores, so the throwaway plan is never committed — then submit it with the `cctl` CLI. Never paste a whole workflow graph as inline tool arguments — a file you can iterate on is the interface.
 
 ### plan.json shape
 
@@ -203,11 +203,11 @@ A plan is a JSON object the validate, create, and replace endpoints all accept:
 
 Run these from the session (the CLI reads its project/session identity from the environment):
 
-1. `cctl workflow validate --file plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Fix the file and re-run until it prints the create hint.
-2. `cctl workflow create --file plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
+1. `cctl workflow validate --file .cc/temp/plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Fix the file and re-run until it prints the create hint.
+2. `cctl workflow create --file .cc/temp/plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
 3. `cctl workflow start <id>` — starts execution.
 
-To revise a definition after user feedback, edit `plan.json` and run `cctl workflow replace <id> --file plan.json` (submit the complete graph; the previous definition is fully overwritten). Re-validate first. If a running execution already exists, replacing the saved definition may not mutate that active execution — tell the user when a fresh execution or reset is needed.
+To revise a definition after user feedback, edit `.cc/temp/plan.json` and run `cctl workflow replace <id> --file .cc/temp/plan.json` (submit the complete graph; the previous definition is fully overwritten). Re-validate first. If a running execution already exists, replacing the saved definition may not mutate that active execution — tell the user when a fresh execution or reset is needed.
 
 ### Before submitting, confirm
 
@@ -218,4 +218,4 @@ To revise a definition after user feedback, edit `plan.json` and run `cctl workf
 - Any enabled `scriptValidator` runs only after contexts expected to leave the codebase valid.
 - Essential context is included in task instructions or produced as an upstream shared artifact.
 - Parallel branches are truly independent or have an explicit foundation edge.
-- `cctl workflow validate` passes on the final `plan.json`.
+- `cctl workflow validate` passes on the final `.cc/temp/plan.json`.
