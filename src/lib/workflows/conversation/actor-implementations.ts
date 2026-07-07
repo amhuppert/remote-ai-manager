@@ -36,7 +36,9 @@ import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
 import type {
   MessageContentBlock,
   ConversationState,
+  TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
@@ -294,10 +296,12 @@ export interface ActorImplementationDeps {
   ): Promise<Array<{ filePath: string; description: string }>>;
   fileExists(filePath: string): boolean;
 
-  // Transcript reading (for synthetic fork seed)
+  // Transcript reading (for synthetic fork seed and last-used model/effort
+  // resolution). Returns the full TranscriptMessage so per-turn model/effort
+  // metadata is available, not just role/content.
   readConversationMessages(
     transcriptPath: string | null,
-  ): Promise<Array<{ role: string; content: MessageContentBlock[] }>>;
+  ): Promise<TranscriptMessage[]>;
 
   // Lifecycle registries
   registerAbortController(
@@ -770,6 +774,40 @@ export function resolveBackendTurnSettings(
 }
 
 /**
+ * Resolve the model + effort a turn should run with, using a three-tier
+ * fallback: an explicit per-turn override, else the conversation's last-used
+ * model/effort (from its prior user turns), else the backend's configured
+ * defaults.
+ *
+ * The last-used tier is what keeps follow-up turns that carry no explicit
+ * model/effort — drained queued messages, document feedback, alignment turns —
+ * on the model the conversation was already using instead of snapping to the
+ * global default. The client resolves this same last-used value for the
+ * composer (`selectLastUserTurnAgentSettings`); paths that bypass the composer
+ * rely on this server-side tier so the model/effort stays consistent. Backend
+ * is resolved separately (from the conversation's stored `agentBackend`), so it
+ * is never inferred from the transcript here.
+ */
+export function resolveTurnModelEffort(input: {
+  backend: AgentBackendId;
+  config: ActorConfig;
+  explicitModel: string | null;
+  explicitEffort: string | null;
+  priorMessages: readonly TranscriptMessage[];
+}): {
+  effectiveModel: string | undefined;
+  effectiveEffort: string | undefined;
+} {
+  const lastUsed = selectLastUserTurnAgentSettings(input.priorMessages);
+  return resolveBackendTurnSettings(
+    input.backend,
+    input.config,
+    input.explicitModel ?? lastUsed.modelId ?? null,
+    input.explicitEffort ?? lastUsed.effort ?? null,
+  );
+}
+
+/**
  * Resolve the safety-net timeout for a turn based on the backend.
  * Returns 0 when the backend has no timeout.
  */
@@ -1196,13 +1234,24 @@ export async function executePromptForMachine(
   ): Promise<void> =>
     deps.safeAppendTranscriptEntry(conversationId, entry, broadcastMeta);
 
-  // Resolve backend-specific model and effort defaults
-  const { effectiveModel, effectiveEffort } = resolveBackendTurnSettings(
-    input.agentBackend,
+  // Resolve model/effort with a three-tier fallback (explicit → conversation's
+  // last-used → backend config default). A follow-up turn that carries no
+  // explicit model/effort — a drained queued message, document feedback, an
+  // alignment turn — continues on the model the conversation was already using
+  // rather than snapping to the global default. Reading the transcript is only
+  // needed when a tier below "explicit" could apply, so the common composer
+  // path (both supplied) skips it.
+  const priorMessages =
+    input.modelId == null || input.effort == null
+      ? await deps.readConversationMessages(input.transcriptPath ?? null)
+      : [];
+  const { effectiveModel, effectiveEffort } = resolveTurnModelEffort({
+    backend: input.agentBackend,
     config,
-    input.modelId,
-    input.effort,
-  );
+    explicitModel: input.modelId,
+    explicitEffort: input.effort,
+    priorMessages,
+  });
   const factory = deps.getConversationBackendFactory(input.agentBackend);
 
   if (factory.validateModelAndEffort) {

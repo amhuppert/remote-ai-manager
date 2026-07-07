@@ -51,10 +51,12 @@ import {
   processMessage,
   mapErrorSubtype,
   resolveBackendTurnSettings,
+  resolveTurnModelEffort,
   resolveBackendTimeoutMs,
   shouldBuildRuntimeSyntheticSeed,
 } from "./actor-implementations";
 import type { ActorConfig } from "./actor-implementations";
+import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { RunTaskRunInput } from "./types";
 import type {
@@ -789,6 +791,138 @@ describe("resolveBackendTurnSettings", () => {
 });
 
 // ===========================================================================
+// Unit tests: resolveTurnModelEffort
+// ===========================================================================
+
+describe("resolveTurnModelEffort", () => {
+  const baseConfig: ActorConfig = {
+    claudeTimeoutMs: 300_000,
+    maxTurns: 50,
+    idleQuerySessionTtlMs: 300_000,
+  };
+
+  const userTurn = (model?: string, effort?: string): TranscriptMessage => ({
+    role: "user",
+    content: [{ type: "text", text: "hi" }],
+    timestamp: null,
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  });
+
+  const assistantTurn = (): TranscriptMessage => ({
+    role: "assistant",
+    content: [{ type: "text", text: "ok" }],
+    timestamp: null,
+  });
+
+  it("continues with the conversation's last-used model/effort when the turn carries none", () => {
+    const config = {
+      ...baseConfig,
+      defaultModel: "opus",
+      defaultEffort: "high",
+    };
+    expect(
+      resolveTurnModelEffort({
+        backend: "claude",
+        config,
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [userTurn("claude-haiku-4-5", "low")],
+      }),
+    ).toEqual({ effectiveModel: "claude-haiku-4-5", effectiveEffort: "low" });
+  });
+
+  it("prefers an explicit per-turn model/effort over the last-used values", () => {
+    const config = {
+      ...baseConfig,
+      defaultModel: "opus",
+      defaultEffort: "high",
+    };
+    expect(
+      resolveTurnModelEffort({
+        backend: "claude",
+        config,
+        explicitModel: "sonnet",
+        explicitEffort: "medium",
+        priorMessages: [userTurn("claude-haiku-4-5", "low")],
+      }),
+    ).toEqual({ effectiveModel: "sonnet", effectiveEffort: "medium" });
+  });
+
+  it("falls back to config defaults when there is no prior user turn", () => {
+    const config = {
+      ...baseConfig,
+      defaultModel: "opus",
+      defaultEffort: "high",
+    };
+    expect(
+      resolveTurnModelEffort({
+        backend: "claude",
+        config,
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [assistantTurn()],
+      }),
+    ).toEqual({ effectiveModel: "opus", effectiveEffort: "high" });
+  });
+
+  it("reads the most recent user turn, skipping later assistant rows", () => {
+    const config = {
+      ...baseConfig,
+      defaultModel: "opus",
+      defaultEffort: "high",
+    };
+    expect(
+      resolveTurnModelEffort({
+        backend: "claude",
+        config,
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [
+          userTurn("opus", "high"),
+          assistantTurn(),
+          userTurn("claude-haiku-4-5", "low"),
+          assistantTurn(),
+        ],
+      }),
+    ).toEqual({ effectiveModel: "claude-haiku-4-5", effectiveEffort: "low" });
+  });
+
+  it("continues with the last-used Codex model/effort rather than the codex config defaults", () => {
+    const config = {
+      ...baseConfig,
+      codex: { model: "gpt-5-codex", reasoningEffort: "high" },
+    };
+    expect(
+      resolveTurnModelEffort({
+        backend: "codex",
+        config,
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [userTurn("gpt-5-codex-mini", "low")],
+      }),
+    ).toEqual({ effectiveModel: "gpt-5-codex-mini", effectiveEffort: "low" });
+  });
+
+  it("falls back to config default effort when the last user turn recorded a model but no effort", () => {
+    const config = {
+      ...baseConfig,
+      defaultModel: "opus",
+      defaultEffort: "high",
+    };
+    expect(
+      resolveTurnModelEffort({
+        backend: "claude",
+        config,
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [userTurn("claude-haiku-4-5", undefined)],
+      }),
+    ).toEqual({ effectiveModel: "claude-haiku-4-5", effectiveEffort: "high" });
+  });
+});
+
+// ===========================================================================
 // Unit tests: resolveBackendTimeoutMs
 // ===========================================================================
 
@@ -1372,6 +1506,74 @@ describe("executePromptForMachine", () => {
 
     expect(existingRuntime.close).toHaveBeenCalled();
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues an existing conversation on its last-used model/effort when the turn carries none", async () => {
+    // The turn arrives with no explicit model/effort — the shape produced by
+    // document feedback, a drained queued message, or an alignment turn. Prior
+    // transcript shows the conversation last ran on Haiku/low, so the turn must
+    // continue there rather than snapping to the config default (opus, no
+    // effort).
+    vi.mocked(mockDeps.readConversationMessages).mockResolvedValue([
+      {
+        role: "user",
+        content: [{ type: "text", text: "earlier" }],
+        timestamp: null,
+        model: "claude-haiku-4-5",
+        effort: "low",
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "reply" }],
+        timestamp: null,
+      },
+    ]);
+
+    const input = makeExecutePromptInput({ modelId: null, effort: null });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+      modelId: "claude-haiku-4-5",
+      reasoningEffort: "low",
+    });
+    // The persisted user turn records the resolved values so the next turn —
+    // and the client composer — continues from the same model/effort.
+    const userAppend = vi
+      .mocked(mockDeps.safeAppendTranscriptEntry)
+      .mock.calls.find(([, entry]) => entry.role === "user");
+    expect(userAppend?.[1]).toMatchObject({
+      model: "claude-haiku-4-5",
+      effort: "low",
+    });
+  });
+
+  it("does not read the transcript when the turn carries explicit model and effort", async () => {
+    const input = makeExecutePromptInput({ modelId: "opus", effort: "high" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockDeps.readConversationMessages).not.toHaveBeenCalled();
+    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+      modelId: "opus",
+      reasoningEffort: "high",
+    });
   });
 
   describe("pre-turn readiness gate", () => {
