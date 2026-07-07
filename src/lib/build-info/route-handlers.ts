@@ -1,6 +1,7 @@
 /**
- * Version route handler — exposes the commit SHA + build time captured for this
- * production build (see scripts/generate-build-info.ts) as JSON.
+ * Version route handler — exposes the commit SHA, build time, and latest commit
+ * message captured for this production build (see
+ * scripts/generate-build-info.ts) as JSON.
  *
  * The route file delegates here; tests inject a fixed BuildInfo via
  * `createVersionRouteHandlers(deps)` so assertions never chase the live SHA.
@@ -37,5 +38,5 @@ export function createVersionRouteHandlers(
 
 const defaultHandlers = createVersionRouteHandlers();
 
-/** GET /api/version — commit SHA + build time of this production build. */
+/** GET /api/version — commit SHA, build time, and message of this production build. */
 export const GET = withTracing(defaultHandlers.GET);

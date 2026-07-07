@@ -3,11 +3,12 @@ import { z } from "zod";
 export const buildInfoSchema = z.object({
   sha: z.string().min(1),
   buildTime: z.string().min(1),
+  message: z.string().min(1),
 });
 
 export type BuildInfo = z.infer<typeof buildInfoSchema>;
 
-/** Shape returned by GET /api/version — the build's commit SHA + build time. */
+/** Shape returned by GET /api/version — the build's commit SHA, build time, and commit message. */
 export const versionResponseSchema = buildInfoSchema.extend({
   stamp: z.string().min(1),
 });
@@ -28,6 +29,7 @@ export function toVersionResponse(info: BuildInfo): VersionResponse {
   return {
     sha: info.sha,
     buildTime: info.buildTime,
+    message: info.message,
     stamp: formatBuildStamp(info),
   };
 }
@@ -45,6 +47,7 @@ import type { BuildInfo } from "./stamp";
 export const BUILD_INFO: BuildInfo = {
   sha: ${JSON.stringify(info.sha)},
   buildTime: ${JSON.stringify(info.buildTime)},
+  message: ${JSON.stringify(info.message)},
 };
 `;
 }

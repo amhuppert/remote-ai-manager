@@ -15,6 +15,7 @@ import { installCctl } from "./install-cli";
 const BUILD: BuildInfo = {
   sha: "abc1234",
   buildTime: "2026-07-02T10:00:00.000Z",
+  message: "feat: stamp the cli bundle",
 };
 
 /** A bundle stamped like the real one — BUILD_INFO serialized into the source. */
@@ -85,6 +86,7 @@ describe("installCctl", () => {
     const stale: BuildInfo = {
       sha: "old0000",
       buildTime: "2026-01-01T00:00:00.000Z",
+      message: "chore: previous build",
     };
     await writeFile(bundlePath, stampedBundle(stale));
 
@@ -105,6 +107,7 @@ describe("installCctl", () => {
     const stale: BuildInfo = {
       sha: "old0000",
       buildTime: "2026-01-01T00:00:00.000Z",
+      message: "chore: previous build",
     };
     await writeFile(bundlePath, stampedBundle(stale, "stale"));
     const result = await installCctl({

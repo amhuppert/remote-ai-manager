@@ -17,11 +17,24 @@ function resolveGitSha(): string {
   }
 }
 
+function resolveGitMessage(): string {
+  try {
+    const message = execSync("git log -1 --pretty=%B", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return message.length > 0 ? message : "nogit";
+  } catch {
+    return "nogit";
+  }
+}
+
 const outDir = path.join(__dirname, "..", "src", "lib", "build-info");
 const outFile = path.join(outDir, "build-info.generated.ts");
 const info = {
   sha: resolveGitSha(),
   buildTime: new Date().toISOString(),
+  message: resolveGitMessage(),
 };
 
 mkdirSync(outDir, { recursive: true });

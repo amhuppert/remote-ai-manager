@@ -10,12 +10,13 @@ function createTestDeps(): VersionRouteDeps {
     getBuildInfo: () => ({
       sha: "abc1234",
       buildTime: "2026-07-02T10:00:00.000Z",
+      message: "feat: add version endpoint",
     }),
   };
 }
 
 describe("GET /api/version", () => {
-  it("returns 200 with the build's commit SHA, build time, and stamp", async () => {
+  it("returns 200 with the build's commit SHA, build time, message, and stamp", async () => {
     const handlers = createVersionRouteHandlers(createTestDeps());
 
     const response = await handlers.GET();
@@ -25,6 +26,7 @@ describe("GET /api/version", () => {
     expect(body).toEqual({
       sha: "abc1234",
       buildTime: "2026-07-02T10:00:00.000Z",
+      message: "feat: add version endpoint",
       stamp: "abc1234-2026-07-02T10:00:00.000Z",
     });
   });
