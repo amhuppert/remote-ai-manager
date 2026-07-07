@@ -3,6 +3,8 @@ import {
   buildInfoSchema,
   formatBuildStamp,
   renderBuildInfoModule,
+  toVersionResponse,
+  versionResponseSchema,
 } from "./stamp";
 
 describe("formatBuildStamp", () => {
@@ -33,6 +35,30 @@ describe("renderBuildInfoModule", () => {
       buildTime: "t",
     });
     expect(source).toContain(String.raw`"x\"; process.exit(1); //"`);
+  });
+});
+
+describe("toVersionResponse", () => {
+  it("projects build info onto the wire shape with a joined stamp", () => {
+    const response = toVersionResponse({
+      sha: "abc1234",
+      buildTime: "2026-07-02T10:00:00.000Z",
+    });
+
+    expect(response).toEqual({
+      sha: "abc1234",
+      buildTime: "2026-07-02T10:00:00.000Z",
+      stamp: "abc1234-2026-07-02T10:00:00.000Z",
+    });
+  });
+
+  it("produces output that satisfies versionResponseSchema", () => {
+    const response = toVersionResponse({
+      sha: "deadbee",
+      buildTime: "2026-07-02T10:00:00.000Z",
+    });
+
+    expect(versionResponseSchema.safeParse(response).success).toBe(true);
   });
 });
 

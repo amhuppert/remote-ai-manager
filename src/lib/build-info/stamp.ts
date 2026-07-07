@@ -7,6 +7,13 @@ export const buildInfoSchema = z.object({
 
 export type BuildInfo = z.infer<typeof buildInfoSchema>;
 
+/** Shape returned by GET /api/version — the build's commit SHA + build time. */
+export const versionResponseSchema = buildInfoSchema.extend({
+  stamp: z.string().min(1),
+});
+
+export type VersionResponse = z.infer<typeof versionResponseSchema>;
+
 /**
  * The stamp identifies one build of the server/CLI pair. It travels in the
  * X-CC-CLI-Build header and `cctl --version` output, so it must stay a
@@ -14,6 +21,15 @@ export type BuildInfo = z.infer<typeof buildInfoSchema>;
  */
 export function formatBuildStamp(info: BuildInfo): string {
   return `${info.sha}-${info.buildTime}`;
+}
+
+/** Project build info onto the wire shape served by GET /api/version. */
+export function toVersionResponse(info: BuildInfo): VersionResponse {
+  return {
+    sha: info.sha,
+    buildTime: info.buildTime,
+    stamp: formatBuildStamp(info),
+  };
 }
 
 /**
