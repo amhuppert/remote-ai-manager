@@ -93,7 +93,7 @@ describe("createChatSpawnService.createFromProposal", () => {
     expect(result.created.map((c) => c.name)).toEqual(["alpha"]);
     expect(result.failed.map((f) => f.name)).toEqual(["beta"]);
     expect(result.failed[0]!.error).toContain("duplicate name");
-    expect(result.created[0]!.initialPromptDispatched).toBe(true);
+    expect(result.created[0]!.initialPromptQueued).toBe(true);
 
     // A's prompt dispatched; B's dropped (dispatcher never called for B).
     expect(deps.dispatchFirstTurn).toHaveBeenCalledTimes(1);
@@ -184,7 +184,7 @@ describe("createChatSpawnService.createFromProposal", () => {
       proposal: { sessions: [proposed({ name: "alpha" })] },
     });
     expect(deps.dispatchFirstTurn).not.toHaveBeenCalled();
-    expect(result.created[0]!.initialPromptDispatched).toBe(false);
+    expect(result.created[0]!.initialPromptQueued).toBe(false);
   });
 
   it("broadcasts a spawn-result event scoped to the project + conversation", async () => {
@@ -196,13 +196,105 @@ describe("createChatSpawnService.createFromProposal", () => {
       conversationId: "plc-1",
       proposal: { sessions: [proposed({ name: "alpha" })] },
     });
-    expect(deps.broadcast).toHaveBeenCalledTimes(1);
-    const event = (deps.broadcast as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0];
+    const events = (deps.broadcast as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0],
+    );
+    const event = events.at(-1);
     expect(event.type).toBe("spawn-result");
     expect(event.scope).toBe("project");
     expect(event.conversationId).toBe("plc-1");
     expect(event.result.created).toHaveLength(1);
+  });
+
+  it("broadcasts a conversation-created event per created session, before the spawn-result", async () => {
+    const deps = makeDeps();
+    const service = createChatSpawnService(deps);
+    await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: {
+        sessions: [
+          proposed({ name: "alpha", initialPrompt: "go alpha" }),
+          proposed({ name: "beta" }),
+        ],
+      },
+    });
+    const events = (deps.broadcast as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0],
+    );
+    expect(events.map((e) => e.type)).toEqual([
+      "conversation-created",
+      "conversation-created",
+      "spawn-result",
+    ]);
+    const [alphaCreated, betaCreated] = events;
+    expect(alphaCreated.scope).toBe("session");
+    expect(alphaCreated.projectName).toBe("repo");
+    expect(alphaCreated.sessionName).toBe("alpha");
+    expect(alphaCreated.conversation.id).toBe("alpha-conv");
+    expect(betaCreated.sessionName).toBe("beta");
+  });
+
+  it("does not block the batch on first-turn completion — a hung dispatch still lets every session provision", async () => {
+    // A first turn can run for minutes; the batch must not wait for it. A
+    // dispatch promise that never settles pins the old sequential behavior:
+    // session beta would never be created and createFromProposal would hang.
+    const dispatchFirstTurn = vi.fn().mockReturnValue(new Promise(() => {}));
+    const deps = makeDeps({ dispatchFirstTurn });
+    const service = createChatSpawnService(deps);
+
+    const result = await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: {
+        sessions: [
+          proposed({ name: "alpha", initialPrompt: "go alpha" }),
+          proposed({ name: "beta", initialPrompt: "go beta" }),
+        ],
+      },
+    });
+
+    expect(result.created.map((c) => c.name)).toEqual(["alpha", "beta"]);
+    expect(result.created.map((c) => c.initialPromptQueued)).toEqual([
+      true,
+      true,
+    ]);
+    expect(dispatchFirstTurn).toHaveBeenCalledTimes(2);
+    // Visibility is not gated on the turns either: both conversation-created
+    // events and the spawn-result went out while the dispatches still hang.
+    const events = (deps.broadcast as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0],
+    );
+    expect(events.map((e) => e.type)).toEqual([
+      "conversation-created",
+      "conversation-created",
+      "spawn-result",
+    ]);
+  });
+
+  it("logs and survives a dispatcher that rejects instead of resolving", async () => {
+    const dispatchFirstTurn = vi
+      .fn()
+      .mockRejectedValue(new Error("dispatcher blew up"));
+    const deps = makeDeps({ dispatchFirstTurn });
+    const service = createChatSpawnService(deps);
+
+    const result = await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: {
+        sessions: [proposed({ name: "alpha", initialPrompt: "go" })],
+      },
+    });
+
+    expect(result.created.map((c) => c.name)).toEqual(["alpha"]);
+    expect(result.created[0]!.initialPromptQueued).toBe(true);
+    // Let the rejected dispatch settle; an unhandled rejection here would
+    // fail the test run.
+    await new Promise((resolve) => setImmediate(resolve));
   });
 
   it("does not write a back-link when every session fails", async () => {
@@ -240,7 +332,7 @@ describe("createChatSpawnService.createFromProposal", () => {
       .calls[0]![0];
     expect(call.initialPrompt).toBe("run");
     expect(call.agent).toBe("claude");
-    expect(result.created[0]!.initialPromptDispatched).toBe(true);
+    expect(result.created[0]!.initialPromptQueued).toBe(true);
   });
 
   it("routes a codex optimistic session through the dispatcher (backend honored, no auto-run)", async () => {
@@ -278,7 +370,7 @@ describe("createChatSpawnService.createFromProposal", () => {
       },
     });
     expect(deps.dispatchFirstTurn).not.toHaveBeenCalled();
-    expect(result.created[0]!.initialPromptDispatched).toBe(false);
+    expect(result.created[0]!.initialPromptQueued).toBe(false);
   });
 });
 

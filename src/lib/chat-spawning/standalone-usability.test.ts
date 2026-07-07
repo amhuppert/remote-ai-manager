@@ -91,7 +91,7 @@ describe("chat-spawning usable without the cockpit UI", () => {
     });
 
     expect(result.created).toHaveLength(1);
-    expect(result.created[0]!.initialPromptDispatched).toBe(true);
+    expect(result.created[0]!.initialPromptQueued).toBe(true);
     // The real dispatcher routed the first turn through executePromptStream.
     expect(executePromptStream).toHaveBeenCalledTimes(1);
     // The PLC back-link is written through the injected foundation write path.

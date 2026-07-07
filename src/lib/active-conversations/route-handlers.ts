@@ -442,9 +442,13 @@ export function createActiveConversationsRouteHandlers(
 ) {
   async function GET(): Promise<Response> {
     try {
-      const state = await deps.readState();
-      const projectConversations = await deps.listProjectConversations();
-      const activeExecutions = await deps.listActiveGraphWorkflowExecutions();
+      const [state, projectConversations, activeExecutions] = await Promise.all(
+        [
+          deps.readState(),
+          deps.listProjectConversations(),
+          deps.listActiveGraphWorkflowExecutions(),
+        ],
+      );
       const conversations: ActiveConversation[] = [];
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
       const activeCollaborationExecutions: ActiveCollaborationExecution[] = [];

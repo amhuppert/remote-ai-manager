@@ -103,7 +103,7 @@ export function resolveSchedulingHint(
   const writeCapability = request.writeCapability ?? DEFAULT_WRITE_CAPABILITY;
   return {
     writeCapability,
-    allowParallel: writeCapability === "read_only",
+    allowParallel: writeCapability !== "write_capable",
   };
 }
 

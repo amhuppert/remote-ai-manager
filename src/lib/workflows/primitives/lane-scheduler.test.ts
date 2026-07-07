@@ -173,6 +173,67 @@ describe("createLaneScheduler — read-only concurrency", () => {
   });
 });
 
+describe("createLaneScheduler — artifact-only concurrency", () => {
+  it("runs artifact-only executions on the same session in parallel with each other", async () => {
+    const scheduler = createLaneScheduler();
+    const order: string[] = [];
+    const aGate = deferred<string>();
+    const bGate = deferred<string>();
+
+    const aRun = scheduler.schedule(
+      { sessionKey: "s", writeCapability: "artifact_only" },
+      async () => {
+        order.push("a:start");
+        return aGate.promise;
+      },
+    );
+
+    const bRun = scheduler.schedule(
+      { sessionKey: "s", writeCapability: "artifact_only" },
+      async () => {
+        order.push("b:start");
+        return bGate.promise;
+      },
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order.sort()).toEqual(["a:start", "b:start"]);
+
+    bGate.resolve("b");
+    aGate.resolve("a");
+    expect(await aRun).toBe("a");
+    expect(await bRun).toBe("b");
+  });
+
+  it("does not delay an artifact-only execution behind a queued write", async () => {
+    const scheduler = createLaneScheduler();
+    const writeGate = deferred<string>();
+    let artifactRan = false;
+
+    const writeRun = scheduler.schedule(
+      { sessionKey: "s", writeCapability: "write_capable" },
+      async () => writeGate.promise,
+    );
+
+    const artifactRun = scheduler.schedule(
+      { sessionKey: "s", writeCapability: "artifact_only" },
+      async () => {
+        artifactRan = true;
+        return "artifact-result";
+      },
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(artifactRan).toBe(true);
+
+    writeGate.resolve("write-result");
+    expect(await writeRun).toBe("write-result");
+    expect(await artifactRun).toBe("artifact-result");
+  });
+});
+
 describe("createLaneScheduler — default safety", () => {
   it("treats unspecified write intent as write-capable so executions on the same session serialize", async () => {
     const scheduler = createLaneScheduler();

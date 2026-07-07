@@ -165,7 +165,7 @@ describe("spawnResultSchema", () => {
           name: "a",
           sessionName: "a",
           branchName: "feat/a",
-          initialPromptDispatched: true,
+          initialPromptQueued: true,
         },
       ],
       failed: [{ name: "b", error: "duplicate name" }],

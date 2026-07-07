@@ -161,6 +161,39 @@ async function listRows(
   return body.conversations;
 }
 
+describe("GET — top-level read concurrency", () => {
+  it("does not serialize the project-conversation and workflow reads behind readState", async () => {
+    let releaseState!: (state: ReturnType<typeof makeState>) => void;
+    const stateGate = new Promise<ReturnType<typeof makeState>>((resolve) => {
+      releaseState = resolve;
+    });
+    const listProjectConversations = vi.fn().mockResolvedValue([]);
+    const listActiveGraphWorkflowExecutions = vi
+      .fn()
+      .mockResolvedValue(activeExecutionsMap(null));
+    const deps: ActiveConversationsRouteDeps = {
+      readState: vi.fn().mockImplementation(() => stateGate),
+      getProjectDisplayName: vi.fn().mockReturnValue("project"),
+      readLastAssistantContent: vi.fn().mockResolvedValue(null),
+      listProjectConversations,
+      listActiveGraphWorkflowExecutions,
+    };
+    const handlers = createActiveConversationsRouteHandlers(deps);
+
+    const pending = handlers.GET();
+    await Promise.resolve();
+    await Promise.resolve();
+    // All three reads are independent; the two list reads must be in flight
+    // while readState is still unresolved.
+    expect(listProjectConversations).toHaveBeenCalledTimes(1);
+    expect(listActiveGraphWorkflowExecutions).toHaveBeenCalledTimes(1);
+
+    releaseState(makeState([]));
+    const response = await pending;
+    expect(response.status).toBe(200);
+  });
+});
+
 describe("deriveLastActivitySummary", () => {
   it("returns null for status 'new'", () => {
     expect(deriveLastActivitySummary(convo("new"), null)).toBeNull();

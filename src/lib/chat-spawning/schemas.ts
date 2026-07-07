@@ -53,8 +53,9 @@ export type SpawnProposal = z.infer<typeof spawnProposalSchema>;
 /**
  * The outcome Command Center returns after acting on a (possibly edited)
  * proposal: which proposed sessions were created (with whether their initial
- * prompt was dispatched) and which failed. Produced by Command Center — never
- * authored by the agent.
+ * prompt was queued for background dispatch — the turn itself runs after the
+ * response) and which failed. Produced by Command Center — never authored by
+ * the agent.
  */
 export const spawnResultSchema = z.object({
   created: z.array(
@@ -62,7 +63,7 @@ export const spawnResultSchema = z.object({
       name: z.string(),
       sessionName: z.string(),
       branchName: z.string(),
-      initialPromptDispatched: z.boolean(),
+      initialPromptQueued: z.boolean(),
     }),
   ),
   failed: z.array(

@@ -34,7 +34,10 @@ export function createDiscoveryService(
      * Returns discovered projects with session metadata from manager state.
      */
     async discoverProjects(): Promise<DiscoveredProject[]> {
-      const config = await deps.readConfig();
+      const [config, state] = await Promise.all([
+        deps.readConfig(),
+        deps.readState(),
+      ]);
       const baseDir = config.baseDir;
 
       if (!existsSync(baseDir)) {
@@ -42,44 +45,46 @@ export function createDiscoveryService(
       }
 
       const entries = await readdir(baseDir, { withFileTypes: true });
-      const state = await deps.readState();
 
-      const projects: DiscoveredProject[] = [];
+      const candidates = await Promise.all(
+        entries.map(async (entry): Promise<DiscoveredProject | null> => {
+          if (!entry.isDirectory()) return null;
 
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+          // Skip ignored patterns
+          if (config.ignorePatterns.includes(entry.name)) return null;
 
-        // Skip ignored patterns
-        if (config.ignorePatterns.includes(entry.name)) continue;
+          const repoPath = path.join(baseDir, entry.name);
+          const gitPath = path.join(repoPath, ".git");
 
-        const repoPath = path.join(baseDir, entry.name);
-        const gitPath = path.join(repoPath, ".git");
+          // Check if .git exists (directory or file for worktrees)
+          try {
+            await stat(gitPath);
+          } catch {
+            return null; // No .git — skip
+          }
 
-        // Check if .git exists (directory or file for worktrees)
-        try {
-          await stat(gitPath);
-        } catch {
-          continue; // No .git — skip
-        }
+          // Gather session stats from manager state
+          const projectState = state.projects[repoPath];
+          const sessions = projectState
+            ? Object.values(projectState.sessions)
+            : [];
+          const nonArchivedSessions = sessions.filter((s) => !s.archived);
+          const activeSessions = nonArchivedSessions.length;
+          const hasRunningSession = nonArchivedSessions.some(
+            (s) => deriveSessionStatus(s) === "running",
+          );
 
-        // Gather session stats from manager state
-        const projectState = state.projects[repoPath];
-        const sessions = projectState
-          ? Object.values(projectState.sessions)
-          : [];
-        const nonArchivedSessions = sessions.filter((s) => !s.archived);
-        const activeSessions = nonArchivedSessions.length;
-        const hasRunningSession = nonArchivedSessions.some(
-          (s) => deriveSessionStatus(s) === "running",
-        );
-
-        projects.push({
-          name: entry.name,
-          path: repoPath,
-          activeSessions,
-          hasRunningSession,
-        });
-      }
+          return {
+            name: entry.name,
+            path: repoPath,
+            activeSessions,
+            hasRunningSession,
+          };
+        }),
+      );
+      const projects: DiscoveredProject[] = candidates.filter(
+        (p): p is DiscoveredProject => p !== null,
+      );
 
       // Surface state-only (orphan) projects so they can be deleted from the UI.
       const discoveredPaths = new Set(projects.map((p) => p.path));

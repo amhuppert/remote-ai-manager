@@ -314,6 +314,7 @@ export function buildAgentOneInitialDraftPrompt(
     input.userPrompt,
     ``,
     `Produce your initial draft of an answer to the user prompt. You are drafting in parallel with agent_two; you have not seen agent_two's draft yet.`,
+    `agent_two is working in this same worktree right now: do not modify any other repository files during this phase — write only the artifact file(s) listed below.`,
     ``,
     artifactProtocolSection({
       workflowId: input.workflowId,
@@ -345,6 +346,7 @@ export function buildAgentTwoInitialDraftPrompt(
     input.userPrompt,
     ``,
     `Produce your initial draft of an answer to the user prompt. You are drafting in parallel with agent_one; you have not seen agent_one's draft yet.`,
+    `agent_one is working in this same worktree right now: do not modify any other repository files during this phase — write only the artifact file(s) listed below.`,
     ``,
     artifactProtocolSection({
       workflowId: input.workflowId,

@@ -1975,7 +1975,7 @@ describe("NotificationListener", () => {
             name: "api",
             sessionName: "api",
             branchName: "csm/api",
-            initialPromptDispatched: true,
+            initialPromptQueued: true,
           },
         ],
         failed: [{ name: "web", error: "branch exists" }],

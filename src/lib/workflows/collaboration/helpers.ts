@@ -14,6 +14,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   AgentCallRequest,
   AgentCallResult,
+  LaneWriteCapability,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type {
   AsymmetricCollaborationSliceDeps,
@@ -185,11 +186,13 @@ export interface CallPrimitiveContext {
   prompt: BuiltCollaborationPrompt;
   /**
    * Defaults to `write_capable`. Use `read_only` for planning calls that
-   * emit structured output without modifying the worktree — `read_only`
-   * lets the lane scheduler bypass the per-session write lock so multiple
-   * agents can run in parallel.
+   * emit structured output without modifying the worktree, and
+   * `artifact_only` for calls whose only writes are their lane-scoped
+   * generated-artifact files (disjoint per agent/phase) — both let the lane
+   * scheduler bypass the per-session write lock so multiple agents can run
+   * in parallel.
    */
-  writeCapability?: "read_only" | "write_capable";
+  writeCapability?: LaneWriteCapability;
 }
 
 export type CallPrimitiveOutcome =

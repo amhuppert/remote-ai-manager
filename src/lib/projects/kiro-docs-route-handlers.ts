@@ -118,12 +118,18 @@ export const getProjectKiroDocs = withTracing(async (request, { params }) => {
   const steeringDir = path.join(kiroRoot, "steering");
   const specsDir = path.join(kiroRoot, "specs");
 
-  const steering = await listMarkdownFiles(steeringDir);
-
-  const featureDirs = await listSubdirs(specsDir);
+  const [steering, featureDirs] = await Promise.all([
+    listMarkdownFiles(steeringDir),
+    listSubdirs(specsDir),
+  ]);
+  const featureFiles = await Promise.all(
+    featureDirs.map(async (feature) => ({
+      feature,
+      files: await listMarkdownFiles(path.join(specsDir, feature)),
+    })),
+  );
   const specs: Record<string, string[]> = {};
-  for (const feature of featureDirs) {
-    const files = await listMarkdownFiles(path.join(specsDir, feature));
+  for (const { feature, files } of featureFiles) {
     if (files.length > 0) {
       specs[feature] = files;
     }

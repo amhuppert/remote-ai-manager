@@ -15,6 +15,10 @@ import {
 import { getDefaultCollaborationManager } from "@/lib/workflows/collaboration/manager";
 import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
 import {
+  conversationCreatedEventSchema,
+  type ConversationCreatedEvent,
+} from "@/lib/conversations/schemas";
+import {
   spawnProposalSchema,
   spawnResultEventSchema,
   type ProposedSession,
@@ -46,7 +50,7 @@ export interface ChatSpawnDeps {
   dispatchFirstTurn(
     input: DispatchFirstTurnInput,
   ): Promise<{ dispatched: boolean }>;
-  broadcast(event: SpawnResultEvent): void;
+  broadcast(event: SpawnResultEvent | ConversationCreatedEvent): void;
 }
 
 export interface CreateFromProposalInput {
@@ -60,8 +64,9 @@ export interface CreateFromProposalInput {
  * Deterministic spawn orchestrator: validate a (possibly edited) proposal, then
  * create each proposed session via the existing session-creation primitives
  * (committed-HEAD base), tag it `from chat`, back-link it to the spawning PLC,
- * and dispatch its optional first turn. Best-effort across the batch: a failed
- * session is recorded and its prompt dropped without rolling back successes.
+ * and queue its optional first turn for background dispatch. Best-effort across
+ * the batch: a failed session is recorded and its prompt dropped without
+ * rolling back successes.
  * The agent never reaches this path with creation authority — only a validated
  * proposal does.
  */
@@ -84,6 +89,9 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
 
     // Sequential, not Promise.all: concurrent `git worktree add` against the
     // same parent repo races on `.git/config.lock` (see bulkDeleteSessions).
+    // Only provisioning is serialized — first turns run for minutes, so each
+    // one is dispatched in the background and never blocks the next session's
+    // creation or the batch response.
     for (const proposed of proposal.sessions) {
       try {
         const session = await deps.createSession({
@@ -99,29 +107,66 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
         });
         createdSessionNames.push(session.sessionName);
 
+        // Surface the session's conversation immediately (active list, tabs)
+        // instead of only after the whole batch lands.
+        const conversation = session.conversations[0];
+        if (conversation) {
+          deps.broadcast(
+            conversationCreatedEventSchema.parse({
+              type: "conversation-created",
+              scope: "session",
+              projectName,
+              sessionName: session.sessionName,
+              conversation,
+            }),
+          );
+        } else {
+          logger.warn("chat-spawning.conversation_created_broadcast_skipped", {
+            projectName,
+            sessionName: session.sessionName,
+          });
+        }
+
         // Mode-independent: every created session's first turn — for any
         // creation mode and any agent (claude / codex / dual race) — goes
         // through the shared readiness-gated dispatcher. A session with no
         // initialPrompt stays idle.
-        let initialPromptDispatched = false;
+        let initialPromptQueued = false;
         if (proposed.initialPrompt !== undefined) {
-          const result = await deps.dispatchFirstTurn({
-            projectPath,
+          initialPromptQueued = true;
+          logger.info("chat-spawning.first_turn_queued", {
             projectName,
-            session,
-            initialPrompt: proposed.initialPrompt,
+            sessionName: session.sessionName,
             agent: proposed.agent,
-            model: proposed.model,
-            reasoningEffort: proposed.reasoningEffort,
           });
-          initialPromptDispatched = result.dispatched;
+          // The dispatcher resolves only when the turn completes; the
+          // dispatcher logs its own dispatched/failed outcome. The catch is a
+          // backstop so an injected dispatcher that rejects cannot surface an
+          // unhandled rejection after the batch has already responded.
+          void deps
+            .dispatchFirstTurn({
+              projectPath,
+              projectName,
+              session,
+              initialPrompt: proposed.initialPrompt,
+              agent: proposed.agent,
+              model: proposed.model,
+              reasoningEffort: proposed.reasoningEffort,
+            })
+            .catch((err: unknown) => {
+              logger.error("chat-spawning.first_turn_dispatch_failed", {
+                projectName,
+                sessionName: session.sessionName,
+                error: getErrorMessage(err),
+              });
+            });
         }
 
         created.push({
           name: proposed.name,
           sessionName: session.sessionName,
           branchName: session.branchName,
-          initialPromptDispatched,
+          initialPromptQueued,
         });
       } catch (err) {
         logger.error("chat-spawning.create_failed", {

@@ -24,7 +24,21 @@ export const laneRefSchema = z.object({
 });
 export type LaneRef = z.infer<typeof laneRefSchema>;
 
-export const laneWriteCapabilitySchema = z.enum(["read_only", "write_capable"]);
+/**
+ * How an execution may touch the session worktree, which drives lane
+ * scheduling:
+ * - `read_only` — proven not to write; schedules without the write lock.
+ * - `artifact_only` — writes confined to lane-scoped generated-artifact paths
+ *   that are disjoint per (workflow, agent, phase), so concurrent
+ *   artifact-only executions cannot collide; schedules without the write lock.
+ * - `write_capable` — may write anywhere in the worktree; serialized per
+ *   session.
+ */
+export const laneWriteCapabilitySchema = z.enum([
+  "read_only",
+  "artifact_only",
+  "write_capable",
+]);
 export type LaneWriteCapability = z.infer<typeof laneWriteCapabilitySchema>;
 
 const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(

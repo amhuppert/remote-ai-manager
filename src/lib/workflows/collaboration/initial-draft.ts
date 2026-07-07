@@ -69,6 +69,9 @@ export async function runInitialDraftsPhase(
     workflowId: input.workflowId,
   });
 
+  // Both drafts run concurrently: each agent's writes are confined to its
+  // own artifact paths (the prompts forbid touching anything else), so the
+  // per-session write lock is deliberately bypassed via `artifact_only`.
   const [agentOneDraftCall, agentTwoDraftCall] = await Promise.all([
     callPrimitive({
       input,
@@ -76,6 +79,7 @@ export async function runInitialDraftsPhase(
       flowAgent: "agent_one",
       backend: backendForAgent("agent_one"),
       prompt: agentOneInitialPrompt,
+      writeCapability: "artifact_only",
     }),
     callPrimitive({
       input,
@@ -83,6 +87,7 @@ export async function runInitialDraftsPhase(
       flowAgent: "agent_two",
       backend: backendForAgent("agent_two"),
       prompt: agentTwoInitialPrompt,
+      writeCapability: "artifact_only",
     }),
   ]);
 

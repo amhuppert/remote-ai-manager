@@ -60,6 +60,42 @@ async function createFile(name: string) {
   await writeFile(path.join(BASE_DIR, name), "dummy", "utf-8");
 }
 
+describe("discoverProjects — read concurrency", () => {
+  it("reads config and manager state concurrently", async () => {
+    await createGitRepo("alpha");
+
+    let releaseConfig!: () => void;
+    const configGate = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let stateRead = false;
+    const configReader = createConfigReader(CONFIG_DIR);
+    const deps: DiscoveryDeps = {
+      readConfig: async () => {
+        await configGate;
+        const config = await configReader.readConfig();
+        return { ...config, baseDir: BASE_DIR };
+      },
+      readState: async () => {
+        stateRead = true;
+        return EMPTY_STATE;
+      },
+    };
+    const service = createDiscoveryService(deps);
+
+    const pending = service.discoverProjects();
+    await Promise.resolve();
+    await Promise.resolve();
+    // The state read is independent of the config read and must not queue
+    // behind it (readdir legitimately waits for config's baseDir).
+    expect(stateRead).toBe(true);
+
+    releaseConfig();
+    const projects = await pending;
+    expect(projects.map((p) => p.name)).toContain("alpha");
+  });
+});
+
 // ============================================================
 // Task 1.1: Directory Scanning and Filtering (Req 1.1–1.5)
 // ============================================================

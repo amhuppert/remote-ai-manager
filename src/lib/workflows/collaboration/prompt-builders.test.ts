@@ -79,6 +79,9 @@ describe("buildAgentOneInitialDraftPrompt", () => {
       "memory-bank/collaboration/wf-fixture/round-0/agent_one/initial_draft/main.md",
     );
     expect(built.prompt).toMatch(/create these markdown file/i);
+    expect(built.prompt).toMatch(
+      /do not modify any other repository files during this phase/i,
+    );
   });
 
   it("does not leak Agent Two context into the initial draft prompt", () => {
@@ -103,6 +106,9 @@ describe("buildAgentTwoInitialDraftPrompt", () => {
     expect(built.prompt).toMatch(/agent_two/i);
     expect(built.prompt).toContain(
       "memory-bank/collaboration/wf-fixture/round-0/agent_two/initial_draft/main.md",
+    );
+    expect(built.prompt).toMatch(
+      /do not modify any other repository files during this phase/i,
     );
   });
 });

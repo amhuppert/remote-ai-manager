@@ -4,7 +4,8 @@
  * Enforces worktree-safe concurrency: any lane execution that can write to a
  * session worktree is serialized against other write-capable executions on
  * the same session, while executions that the workflow has explicitly proven
- * to be read-only run without acquiring the write lock.
+ * to be read-only — or confined to disjoint lane-scoped artifact paths
+ * (`artifact_only`) — run without acquiring the write lock.
  *
  * The default — when the caller does not specify `writeCapability` — is
  * `write_capable`, so the shared primitive layer preserves the current
@@ -44,12 +45,20 @@ export function createLaneScheduler(
       const writeCapability =
         request.writeCapability ?? DEFAULT_WRITE_CAPABILITY;
 
-      if (writeCapability === "read_only") {
-        log.debug("lane.scheduler.read_only", {
-          sessionKey: request.sessionKey,
-          workflowId: request.workflowId,
-          laneId: request.laneId,
-        });
+      if (
+        writeCapability === "read_only" ||
+        writeCapability === "artifact_only"
+      ) {
+        log.debug(
+          writeCapability === "read_only"
+            ? "lane.scheduler.read_only"
+            : "lane.scheduler.artifact_only",
+          {
+            sessionKey: request.sessionKey,
+            workflowId: request.workflowId,
+            laneId: request.laneId,
+          },
+        );
         return fn();
       }
 

@@ -725,6 +725,17 @@ describe("resolveSchedulingHint — write-capable defaults", () => {
     expect(hint.allowParallel).toBe(true);
   });
 
+  it("honors an explicit artifact_only request and allows parallel scheduling", () => {
+    const hint = resolveSchedulingHint({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "go",
+      writeCapability: "artifact_only",
+    });
+    expect(hint.writeCapability).toBe("artifact_only");
+    expect(hint.allowParallel).toBe(true);
+  });
+
   it("treats explicit write_capable identically to the default", () => {
     const hint = resolveSchedulingHint({
       kind: "task_run",

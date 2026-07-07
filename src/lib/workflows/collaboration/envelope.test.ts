@@ -430,7 +430,7 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
     expect(initialBackends).toEqual(["claude", "codex"]);
   });
 
-  it("runs Agent One and Agent Two initial drafts as write-capable calls so both can create generated artifacts", async () => {
+  it("runs Agent One and Agent Two initial drafts as artifact-only calls so both can create generated artifacts concurrently", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
@@ -466,11 +466,11 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
       .sort();
     expect(initialBackends).toEqual(["claude", "codex"]);
     for (const request of initialRequests) {
-      expect(request.writeCapability).toBe("write_capable");
+      expect(request.writeCapability).toBe("artifact_only");
     }
   });
 
-  it("schedules initial draft calls with writeCapability=write_capable", async () => {
+  it("schedules initial draft calls with writeCapability=artifact_only", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
@@ -497,8 +497,8 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
     expect(result.kind).toBe("completed_final");
 
     const [first, second] = programmed.receivedRequests;
-    expect(first?.writeCapability).toBe("write_capable");
-    expect(second?.writeCapability).toBe("write_capable");
+    expect(first?.writeCapability).toBe("artifact_only");
+    expect(second?.writeCapability).toBe("artifact_only");
   });
 });
 

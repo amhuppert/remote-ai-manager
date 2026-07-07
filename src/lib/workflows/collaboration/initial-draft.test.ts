@@ -251,8 +251,62 @@ describe("runInitialDraftsPhase", () => {
     const backends = harness.receivedRequests.map(backendOfRequest).sort();
     expect(backends).toEqual(["claude", "codex"]);
     for (const req of harness.receivedRequests) {
-      expect(req.writeCapability).toBe("write_capable");
+      expect(req.writeCapability).toBe("artifact_only");
     }
+  });
+
+  it("issues both drafts concurrently — the shared-session write lock must not chain them", async () => {
+    const agentOneFixture = withWorkflowId(
+      makeAgentOneInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    const agentTwoFixture = withWorkflowId(
+      makeAgentTwoInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    await writeGeneratedFiles(workingDir, agentOneFixture);
+    await writeGeneratedFiles(workingDir, agentTwoFixture);
+    const harness = await buildTestHarness(
+      {
+        claude: [makeBackendResult("claude", agentOneFixture)],
+        codex: [makeBackendResult("codex", agentTwoFixture)],
+      },
+      workingDir,
+    );
+
+    // Gate every callAgent response behind a promise that only resolves once
+    // BOTH requests are in flight. If the lane scheduler serializes the two
+    // draft calls, the second request never arrives and the phase deadlocks —
+    // caught by the bothInFlight timeout below.
+    const innerCallAgent = harness.deps.callAgent;
+    let inFlight = 0;
+    let releaseBoth!: () => void;
+    const bothInFlightGate = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    harness.deps.callAgent = async (request) => {
+      inFlight += 1;
+      if (inFlight === 2) releaseBoth();
+      await bothInFlightGate;
+      return innerCallAgent(request);
+    };
+
+    const phase = runInitialDraftsPhase({
+      input: harness.input,
+      deps: harness.deps,
+      now: harness.deps.now!,
+      tracker: harness.tracker,
+      backendForAgent: harness.backendForAgent,
+    });
+
+    const bothInFlight = await Promise.race([
+      bothInFlightGate.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
+    ]);
+    expect(bothInFlight).toBe(true);
+
+    const outcome = await phase;
+    expect(outcome.kind).toBe("ok");
   });
 
   it("returns a failed outcome with the agent_one backend error message when Agent One's call fails", async () => {
