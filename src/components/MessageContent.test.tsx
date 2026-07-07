@@ -235,3 +235,35 @@ describe("MessageContent — document_feedback block", () => {
     expect(screen.getByText("please revise")).toBeInTheDocument();
   });
 });
+
+describe("MessageContent — tool use disclosures", () => {
+  it("collapses a standalone Bash tool use by default", () => {
+    const command = [
+      "bun test src/components/MessageContent.test.tsx",
+      "bun test src/components/conversation/MessageRow.test.tsx",
+      "bun run typecheck",
+    ].join("\n");
+    const content: MessageContentBlock[] = [
+      {
+        type: "tool_use",
+        id: "tool_1",
+        name: "Bash",
+        input: { command, description: "Run verification" },
+      },
+      { type: "tool_result", tool_use_id: "tool_1", metrics: { exitCode: 0 } },
+    ];
+    const commandMatcher = (_text: string, element: Element | null) =>
+      element?.tagName === "PRE" && element.textContent === command;
+
+    render(<MessageContent content={content} />);
+
+    const toggle = screen.getByRole("button", { name: /1 tool use/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(commandMatcher)).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(commandMatcher)).toBeInTheDocument();
+  });
+});

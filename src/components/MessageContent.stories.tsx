@@ -206,8 +206,8 @@ export const SeparateGroupsByText = {
   },
 } satisfies Story;
 
-/** A single tool use should NOT be grouped (rendered inline) */
-export const SingleToolUseNoGroup = {
+/** A single tool use renders as a collapsed disclosure */
+export const SingleToolUseCollapsed = {
   args: {
     content: [
       { type: "text", text: "Let me check that file." },

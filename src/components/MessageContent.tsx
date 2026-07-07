@@ -24,9 +24,6 @@ import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
 import { splitQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { MessageTextWithRefs } from "@/features/session/conversation/MessageTextWithRefs";
 
-/** Minimum consecutive tool_use blocks required to form a collapsed group */
-const GROUP_THRESHOLD = 2;
-
 type GroupedItem =
   | { kind: "block"; block: MessageContentBlock; index: number }
   | { kind: "tool_group"; blocks: MessageContentBlock[]; startIndex: number }
@@ -55,14 +52,13 @@ function groupContentBlocks(blocks: MessageContentBlock[]): GroupedItem[] {
   function flushPending() {
     if (pending.length === 0) return;
     const toolUseCount = pending.filter((b) => b.type === "tool_use").length;
-    if (toolUseCount >= GROUP_THRESHOLD) {
+    if (toolUseCount > 0) {
       result.push({
         kind: "tool_group",
         blocks: pending,
         startIndex: pendingStart,
       });
     } else {
-      // Not enough to group — emit individually
       for (let j = 0; j < pending.length; j++) {
         result.push({
           kind: "block",

@@ -4,6 +4,7 @@ import { useState, memo } from "react";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import { formatToolUse } from "@/lib/conversations/format-tool-use";
 import { cn } from "@/lib/ui/cn";
+import { ChevronDownIcon } from "@/components/icons";
 import { ToolUseIndicator, type ToolResultLookup } from "./MessageContent";
 
 interface Props {
@@ -56,6 +57,7 @@ export default memo(function ToolUseGroup({
       )}
     >
       <button
+        aria-expanded={expanded}
         className="group flex min-h-[30px] w-full cursor-pointer items-center gap-[6px] border-none bg-transparent px-sm py-[6px] font-mono text-[0.75rem] text-text-secondary transition-[background,color] duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary"
         onClick={() => setExpanded((prev) => !prev)}
         type="button"
@@ -79,8 +81,13 @@ export default memo(function ToolUseGroup({
             {"\u2715"}
           </span>
         )}
-        <span className="ml-auto shrink-0 text-[0.7rem] text-text-tertiary transition-[color] duration-150 ease-[ease] group-hover:text-text-secondary">
-          {expanded ? "\u25B2" : "\u25BC"}
+        <span
+          className={cn(
+            "ml-auto inline-flex shrink-0 text-text-tertiary transition-[color,transform] duration-150 ease-[ease] group-hover:text-text-secondary",
+            expanded && "rotate-180",
+          )}
+        >
+          <ChevronDownIcon size={13} />
         </span>
       </button>
       {expanded && (

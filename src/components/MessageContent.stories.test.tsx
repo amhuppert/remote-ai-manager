@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { composeStories } from "@storybook/react";
 import { storybookAnnotations } from "@/test/storybook-setup";
 import * as stories from "./MessageContent.stories";
@@ -21,7 +21,14 @@ describe("MessageContent stories", () => {
 
   it("WithToolUse renders tool-use indicator", async () => {
     await WithToolUse.run();
+    const toggle = screen.getByRole("button", { name: /1 tool use/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("Read")).toBeInTheDocument();
+    expect(screen.queryByText("/src/lib/auth.ts")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("/src/lib/auth.ts")).toBeInTheDocument();
   });
 
