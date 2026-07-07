@@ -103,7 +103,7 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     );
   });
 
-  it("renders Context tab label from selected context title and enables it", () => {
+  it("enables the Context tab and shows the selected context title in the header", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
 
@@ -111,7 +111,10 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     const tabs = getTabs(container);
     const contextTab = tabs[1]!;
     expect(contextTab.disabled).toBe(false);
-    expect(contextTab.textContent).toBe("Context: Plan");
+    expect(contextTab.textContent).toBe("Context");
+    // The selected context's title renders next to the tab strip.
+    const header = container.querySelector("header");
+    expect(header?.textContent).toContain("Plan");
   });
 
   it("context selection switches the active tab to Context", () => {
@@ -186,10 +189,12 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
       "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
-      "Mutability",
+      "Agent task add",
     ]);
 
-    expect(container.querySelector("#context-acceptance-criteria")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Edit acceptance criteria" }),
+    ).toBeNull();
     expect(container.querySelector('[data-section="tasks"]')).toBeNull();
     expect(
       container.querySelector('[data-section="delete-context"]'),
@@ -424,14 +429,14 @@ describe("WorkflowInspectorPanel — launch parameters editor", () => {
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC header, nine blocks, tasks editor, and delete button", () => {
+  it("renders AC read view, nine blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     expect(
-      container.querySelector("#context-acceptance-criteria"),
-    ).not.toBeNull();
+      screen.getByRole("button", { name: "Edit acceptance criteria" }),
+    ).toBeInTheDocument();
     const blocks = container.querySelectorAll("[data-source]");
     expect(blocks).toHaveLength(9);
 
@@ -441,14 +446,21 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     ).not.toBeNull();
   });
 
-  it("editing acceptance criteria updates the context in the store", () => {
+  it("editing acceptance criteria through the focus sheet updates the store", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const textarea = container.querySelector(
-      "#context-acceptance-criteria",
+    // The focus sheet (and its textarea) mounts on demand from the read view.
+    expect(container.querySelector("#context-acceptance-criteria")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: /edit in focus view/i }),
+    );
+
+    const textarea = document.getElementById(
+      "context-acceptance-criteria",
     ) as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
     fireEvent.change(textarea, {
       target: { value: "Updated acceptance criteria." },
     });
@@ -457,6 +469,25 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.acceptanceCriteria).toBe("Updated acceptance criteria.");
+  });
+
+  it("editing the description through the focus sheet updates the store", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit description" }));
+
+    const textarea = document.getElementById(
+      "context-description",
+    ) as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    fireEvent.change(textarea, { target: { value: "A new description." } });
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.description).toBe("A new description.");
   });
 
   it("shows FieldError for empty-context-acceptance-criteria", () => {

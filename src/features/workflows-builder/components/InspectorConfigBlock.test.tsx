@@ -24,24 +24,24 @@ function getBody(container: HTMLElement): HTMLElement | null {
 
 describe("InspectorConfigBlock", () => {
   describe("source badges", () => {
-    it('renders "INHERITED · GLOBAL" when source is global', () => {
+    it('renders "Global" when source is global', () => {
       render(<InspectorConfigBlock {...baseProps} source="global" />);
-      expect(screen.getByText("INHERITED · GLOBAL")).toBeInTheDocument();
+      expect(screen.getByText("Global")).toBeInTheDocument();
     });
 
-    it('renders "INHERITED · WORKFLOW" when source is workflow', () => {
+    it('renders "Workflow" when source is workflow', () => {
       render(<InspectorConfigBlock {...baseProps} source="workflow" />);
-      expect(screen.getByText("INHERITED · WORKFLOW")).toBeInTheDocument();
+      expect(screen.getByText("Workflow")).toBeInTheDocument();
     });
 
-    it('renders "OVERRIDDEN" when source is context-override', () => {
+    it('renders "Overridden" when source is context-override', () => {
       render(<InspectorConfigBlock {...baseProps} source="context-override" />);
-      expect(screen.getByText("OVERRIDDEN")).toBeInTheDocument();
+      expect(screen.getByText("Overridden")).toBeInTheDocument();
     });
 
-    it('renders "DISABLED" when source is disabled', () => {
+    it('renders "Disabled" when source is disabled', () => {
       render(<InspectorConfigBlock {...baseProps} source="disabled" />);
-      expect(screen.getByText("DISABLED")).toBeInTheDocument();
+      expect(screen.getByText("Disabled")).toBeInTheDocument();
     });
   });
 
@@ -242,6 +242,68 @@ describe("InspectorConfigBlock", () => {
       expect(
         screen.queryByRole("button", { name: "Reset to inherit" }),
       ).toBeNull();
+    });
+  });
+
+  describe("non-collapsible gate variant", () => {
+    const gateProps = {
+      label: "Script validator",
+      source: "global" as const,
+      collapsible: false,
+      description: "Runs the project's preMergeCommand.",
+    };
+
+    it("hosts a design-system switch in the header and fires onCheckedChange", () => {
+      const onCheckedChange = vi.fn();
+      render(
+        <InspectorConfigBlock
+          {...gateProps}
+          headerSwitch={{
+            checked: false,
+            onCheckedChange,
+            ariaLabel: "Script validator",
+          }}
+        />,
+      );
+      const toggle = screen.getByRole("switch", { name: "Script validator" });
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      fireEvent.click(toggle);
+      expect(onCheckedChange).toHaveBeenCalledWith(true);
+    });
+
+    it("renders no disclosure trigger and shows the description", () => {
+      const { container } = render(
+        <InspectorConfigBlock
+          {...gateProps}
+          headerSwitch={{
+            checked: true,
+            onCheckedChange: vi.fn(),
+            ariaLabel: "Script validator",
+          }}
+        />,
+      );
+      expect(container.querySelector("button[aria-expanded]")).toBeNull();
+      expect(
+        screen.getByText("Runs the project's preMergeCommand."),
+      ).toBeInTheDocument();
+    });
+
+    it("shows an always-visible Reset to inherit when overridden", () => {
+      const onReset = vi.fn();
+      render(
+        <InspectorConfigBlock
+          {...gateProps}
+          source="context-override"
+          onReset={onReset}
+          headerSwitch={{
+            checked: true,
+            onCheckedChange: vi.fn(),
+            ariaLabel: "Script validator",
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Reset to inherit" }));
+      expect(onReset).toHaveBeenCalledTimes(1);
     });
   });
 });

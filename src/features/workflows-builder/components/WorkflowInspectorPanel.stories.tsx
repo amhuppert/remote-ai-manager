@@ -143,3 +143,34 @@ export const ContextTabScriptValidatorEnabled = {
     })(),
   },
 } satisfies Story;
+
+export const ContextTabApprovalAndQuestionsEnabled = {
+  args: {
+    tab: "context",
+    selectedContextId: "context-plan",
+    definition: (() => {
+      const def = createWorkflowDefinition();
+      const plan = def.executionContexts.find((c) => c.id === "context-plan")!;
+      plan.humanApprovalGate = { enabled: true };
+      plan.askUserQuestions = { enabled: true };
+      return def;
+    })(),
+  },
+} satisfies Story;
+
+export const ContextTabCodexImplementerOverride = {
+  args: {
+    tab: "context",
+    selectedContextId: "context-plan",
+    definition: (() => {
+      const def = createWorkflowDefinition();
+      const plan = def.executionContexts.find((c) => c.id === "context-plan")!;
+      plan.implementer = {
+        backend: "codex",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+      };
+      return def;
+    })(),
+  },
+} satisfies Story;

@@ -120,6 +120,40 @@ export const LongSummary = {
   },
 } satisfies Story;
 
+export const GateWithSwitch = {
+  args: {
+    label: "Script validator",
+    summary: undefined,
+    source: "global",
+    collapsible: false,
+    description: "Runs the project's preMergeCommand before agent validation.",
+    headerSwitch: {
+      checked: true,
+      onCheckedChange: fn(),
+      ariaLabel: "Script validator",
+    },
+    children: undefined,
+  },
+} satisfies Story;
+
+export const GateOverriddenAmber = {
+  args: {
+    label: "Human approval gate",
+    summary: undefined,
+    source: "context-override",
+    collapsible: false,
+    tone: "amber",
+    description:
+      "After all validators pass, this context parks for your review before merge.",
+    headerSwitch: {
+      checked: true,
+      onCheckedChange: fn(),
+      ariaLabel: "Human approval gate",
+    },
+    children: undefined,
+  },
+} satisfies Story;
+
 export const MobileViewport = {
   args: {
     source: "context-override",

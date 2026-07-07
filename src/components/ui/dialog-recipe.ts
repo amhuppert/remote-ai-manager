@@ -10,7 +10,7 @@
 // fight a centring transform on the same element; centring via the parent keeps
 // the keyframes byte-faithful to the legacy `.modal` card.
 
-export type DialogSize = "default" | "confirm";
+export type DialogSize = "default" | "confirm" | "wide";
 
 // Scrim overlay (Radix `*.Overlay`). z-dropdown (200) + tokenized scrim + the
 // legacy 8px blur; `fadeIn` held at its legacy 0.15s, gated `motion-safe`.
@@ -32,6 +32,7 @@ export const cardBase =
 export const cardSize: Record<DialogSize, string> = {
   default: "max-w-[480px]",
   confirm: "max-w-[400px]",
+  wide: "max-w-[720px]",
 };
 
 // Mobile bottom-sheet treatment (the legacy `.modal` mobile recipe + the

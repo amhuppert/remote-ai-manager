@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { cn } from "@/lib/ui/cn";
 import BackendToggle from "@/components/BackendToggle";
+import { Switch } from "@/components/ui/Switch";
+import { cn } from "@/lib/ui/cn";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { getEffortLevelsForBackend } from "@/lib/agent-backends/schemas";
@@ -19,7 +20,6 @@ import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
-  GraphWorkflowMutabilityPolicy,
   WorkflowCollaborationConfig,
 } from "@/lib/workflows/schemas";
 interface EditorBaseProps<T> {
@@ -28,6 +28,8 @@ interface EditorBaseProps<T> {
   readOnly?: boolean;
 }
 
+// Label-grid row: label in a fixed left column, control on the right, hint
+// under the control column.
 function FieldRow({
   label,
   hint,
@@ -38,13 +40,15 @@ function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-[4px]">
+    <div className="grid grid-cols-[110px_1fr] items-center gap-x-[10px] gap-y-xs">
       <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
         {label}
       </div>
-      <div className="flex flex-wrap items-center gap-xs">{children}</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-xs">
+        {children}
+      </div>
       {hint ? (
-        <div className="mt-xs font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+        <div className="col-start-2 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
           {hint}
         </div>
       ) : null}
@@ -64,27 +68,12 @@ function ToggleControl({
   ariaLabel: string;
 }) {
   return (
-    <div
-      className={cn(disabled && "cursor-not-allowed")}
-      onClick={() => !disabled && onChange(!value)}
-      role="switch"
+    <Switch
+      checked={value}
+      onCheckedChange={onChange}
+      disabled={disabled}
       aria-label={ariaLabel}
-      aria-checked={value}
-      aria-disabled={disabled}
-      tabIndex={disabled ? -1 : 0}
-      onKeyDown={(event) => {
-        if (disabled) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onChange(!value);
-        }
-      }}
-    >
-      <div>
-        <div />
-      </div>
-      <span>{value ? "ON" : "OFF"}</span>
-    </div>
+    />
   );
 }
 
@@ -114,7 +103,7 @@ function NumericInput({
   return (
     <input
       type="number"
-      className="w-full rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[6px] font-mono text-[0.75rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
+      className="w-[110px] rounded-sm border border-solid border-border-default bg-bg-surface px-[10px] py-[7px] font-mono text-[0.75rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
       disabled={disabled}
       value={local}
       min={min}
@@ -248,15 +237,6 @@ export function ContextValidatorEditor({
           value={value.type}
           onChange={handleTypeChange}
           disabled={readOnly}
-        />
-      </FieldRow>
-
-      <FieldRow label="Enabled">
-        <ToggleControl
-          value={value.enabled}
-          onChange={(next) => onChange({ ...value, enabled: next })}
-          disabled={readOnly}
-          ariaLabel="Validator enabled"
         />
       </FieldRow>
 
@@ -505,28 +485,6 @@ export function CircuitBreakerEditor({
           onChange={(next) => onChange({ consecutiveFailureThreshold: next })}
           disabled={readOnly}
           ariaLabel="Failure threshold"
-        />
-      </FieldRow>
-    </div>
-  );
-}
-
-export function MutabilityEditor({
-  value,
-  onChange,
-  readOnly,
-}: EditorBaseProps<GraphWorkflowMutabilityPolicy>): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-sm">
-      <FieldRow
-        label="Allow agent task add"
-        hint="Let agents add tasks during execution"
-      >
-        <ToggleControl
-          value={value.allowAgentTaskAdd}
-          onChange={(next) => onChange({ allowAgentTaskAdd: next })}
-          disabled={readOnly}
-          ariaLabel="Allow agent task add"
         />
       </FieldRow>
     </div>
