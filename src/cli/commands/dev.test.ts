@@ -268,6 +268,24 @@ describe("cctl dev stop", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("not running");
   });
+
+  it("preserves the server's coded 404 in the --json envelope (exit 2)", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        { error: 'Unknown dev server "web"', code: "UNKNOWN_DEV_SERVER" },
+        404,
+      ),
+    );
+    const result = await runCli(
+      ["dev", "stop", "web", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.code).toBe("UNKNOWN_DEV_SERVER");
+  });
 });
 
 describe("cctl dev (dispatch)", () => {

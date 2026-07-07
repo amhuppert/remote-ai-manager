@@ -99,6 +99,7 @@ function buildRunningExecution(
   options: {
     limit?: number;
     lane?: GraphWorkflowAgentSessionState;
+    iterationCount?: number;
   } = {},
 ): GraphWorkflowExecution {
   const base = createWorkflowExecution();
@@ -113,6 +114,7 @@ function buildRunningExecution(
       "context-plan": {
         ...planState,
         status: "running",
+        iterationCount: options.iterationCount ?? planState.iterationCount,
         worktreePath: null,
         branchName: null,
         isolation: "session",
@@ -199,6 +201,12 @@ function buildContext(options: BuildContextOptions = {}): {
   return { store, context };
 }
 
+const DEFAULT_REMINDER_STATE = {
+  iterationCount: 0,
+  circuitBreakerThreshold: 3,
+  remainingTaskCount: 1,
+} as const;
+
 function makeDeps(
   context: GraphWorkflowToolServerContext,
   loadResult?: LoadLaneToolContextResult,
@@ -216,7 +224,13 @@ function makeDeps(
       return "/projects/test";
     },
     async loadLaneToolContext() {
-      return loadResult ?? { ok: true, context };
+      return (
+        loadResult ?? {
+          ok: true,
+          context,
+          reminderState: { ...DEFAULT_REMINDER_STATE },
+        }
+      );
     },
   };
 }
@@ -274,6 +288,65 @@ describe("lane route handlers — complete task", () => {
       (state?.totalTaskCount ?? 0) - (state?.completedTaskCount ?? 0),
     );
     expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+  });
+
+  it("attaches lane reminders to the success body when the iteration budget is near the threshold", async () => {
+    // iterationCount 2, default threshold 3 → iteration-budget fires (3−2=1≤2)
+    // AND lane-autonomy fires (2≥2); both are computed from the returned
+    // post-completion execution state, capped at 2 in rule-array order.
+    const { context } = buildContext({
+      execution: buildRunningExecution({ iterationCount: 2 }),
+    });
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "done" }),
+      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.reminders).toHaveLength(2);
+    expect(body.reminders[0]).toContain("used 2 of 3 iterations");
+    expect(body.reminders[0]).toContain(
+      "script validators run before agent validators",
+    );
+    expect(body.reminders[1]).toContain("cctl workflow collab request");
+  });
+
+  it("omits the reminders field entirely when no rule fires", async () => {
+    // Default fixture: iterationCount 0, threshold 3 → no rule fires.
+    const { context } = buildContext();
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "done" }),
+      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.reminders).toBeUndefined();
+    expect("reminders" in body).toBe(false);
+  });
+
+  it("attaches the halted-stop reminder to the 409 halt body", async () => {
+    const { context } = buildContext({ pendingHaltReason: HALT_REASON });
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "done" }),
+      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.halt).toBe(true);
+    expect(body.reminders).toHaveLength(1);
+    expect(body.reminders[0]).toContain("iteration halted: circuit_breaker");
+    expect(body.reminders[0]).toContain("end your turn");
   });
 
   it("attaches the rotation-gate stopInstruction verbatim and omits it otherwise", async () => {
@@ -621,6 +694,7 @@ describe("lane route handlers — token gate", () => {
         async (): Promise<LoadLaneToolContextResult> => ({
           ok: true,
           context,
+          reminderState: { ...DEFAULT_REMINDER_STATE },
         }),
       );
       const resolveProjectPath = vi.fn(async () => "/projects/test");

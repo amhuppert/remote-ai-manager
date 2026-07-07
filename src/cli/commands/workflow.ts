@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   checkFlags,
@@ -189,7 +190,7 @@ async function runWorkflowValidate(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file"], json);
+  const denied = checkFlags(values, flagNamesFor("workflow validate"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -241,7 +242,7 @@ async function runWorkflowCreate(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file"], json);
+  const denied = checkFlags(values, flagNamesFor("workflow create"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow create takes no positional arguments", json);
@@ -295,7 +296,7 @@ async function runWorkflowReplace(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file"], json);
+  const denied = checkFlags(values, flagNamesFor("workflow replace"), json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -351,7 +352,7 @@ async function runWorkflowList(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("workflow list"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow list takes no arguments", json);
@@ -397,7 +398,7 @@ async function runWorkflowGet(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("workflow get"), json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -448,7 +449,7 @@ async function runWorkflowStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("workflow status"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow status takes no arguments", json);
@@ -554,7 +555,7 @@ async function runWorkflowDelete(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("workflow delete"), json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -594,7 +595,7 @@ async function runWorkflowStart(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file"], json);
+  const denied = checkFlags(values, flagNamesFor("workflow start"), json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -655,7 +656,7 @@ async function runWorkflowTemplates(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["tier"], json);
+  const denied = checkFlags(values, flagNamesFor("workflow templates"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -717,6 +718,9 @@ const completeResponseSchema = z.object({
   ok: z.literal(true),
   remainingTaskCount: z.number(),
   stopInstruction: z.string().optional(),
+  // Server-authored tier-2 reminders (doc 04 §6). The CLI is a dumb renderer:
+  // it never authors these — it only surfaces what the lane handler computed.
+  reminders: z.array(z.string()).optional(),
 });
 
 const collabResponseSchema = z.object({
@@ -774,7 +778,11 @@ async function runWorkflowTaskComplete(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["summary"], json);
+  const denied = checkFlags(
+    values,
+    flagNamesFor("workflow task complete"),
+    json,
+  );
   if (denied) return denied;
 
   const taskId = rest[0];
@@ -819,6 +827,7 @@ async function runWorkflowTaskComplete(
   const stopInstruction = parsed.success
     ? parsed.data.stopInstruction
     : undefined;
+  const reminders = parsed.success ? parsed.data.reminders : undefined;
 
   const envelope: JsonEnvelope = { ok: true, remainingTaskCount: remaining };
   const humanLines = [`completed ${taskId}`];
@@ -830,6 +839,9 @@ async function runWorkflowTaskComplete(
   } else {
     envelope.hint = remainingTasksHint(remaining);
   }
+  // Tier-2 reminders render after the primary output (and any stop
+  // instruction), before the hint — `render()` places them (doc 04 §5.1).
+  if (reminders && reminders.length > 0) envelope.reminders = reminders;
 
   return {
     exitCode: EXIT_OK,
@@ -846,7 +858,7 @@ async function runWorkflowTaskAdd(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["title", "instructions", "slug"], json);
+  const denied = checkFlags(values, flagNamesFor("workflow task add"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -922,7 +934,11 @@ async function runWorkflowSharedDocUpsert(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file"], json);
+  const denied = checkFlags(
+    values,
+    flagNamesFor("workflow shared-doc upsert"),
+    json,
+  );
   if (denied) return denied;
 
   const relativePath = rest[0];
@@ -1014,7 +1030,11 @@ async function runWorkflowCollabRequest(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["brief"], json);
+  const denied = checkFlags(
+    values,
+    flagNamesFor("workflow collab request"),
+    json,
+  );
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(

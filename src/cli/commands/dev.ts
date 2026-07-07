@@ -1,5 +1,6 @@
 import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -11,6 +12,7 @@ import {
   failureFromRequest,
   render,
   resolveSessionContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -56,7 +58,12 @@ function devFailure(
   json: boolean,
 ): CliResult {
   if (result.kind === "error" && result.status === 404) {
-    return failure({ exitCode: EXIT_USAGE, message: result.error, json });
+    return failure({
+      exitCode: EXIT_USAGE,
+      message: result.error,
+      ...structuredErrorFields(result),
+      json,
+    });
   }
   return failureFromRequest(result, json);
 }
@@ -105,7 +112,7 @@ async function runDevList(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("dev list"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("dev list takes no arguments", json);
@@ -149,7 +156,7 @@ async function runDevEnsure(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("dev ensure"), json);
   if (denied) return denied;
   if (rest.length > 1) {
     return usageFailure(
@@ -267,7 +274,7 @@ async function runDevStop(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("dev stop"), json);
   if (denied) return denied;
 
   const name = rest[0];

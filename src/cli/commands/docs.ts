@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_USAGE,
@@ -9,6 +10,7 @@ import {
   failureFromRequest,
   render,
   resolveSessionContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -74,7 +76,7 @@ async function runDocsRegister(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, ["description"], json);
+  const denied = checkFlags(values, flagNamesFor("docs register"), json);
   if (denied) return denied;
 
   const filePath = rest[0];
@@ -110,7 +112,12 @@ async function runDocsRegister(
 
   if (result.kind !== "ok") {
     if (result.kind === "error" && result.status === 404) {
-      return failure({ exitCode: EXIT_USAGE, message: result.error, json });
+      return failure({
+        exitCode: EXIT_USAGE,
+        message: result.error,
+        ...structuredErrorFields(result),
+        json,
+      });
     }
     return failureFromRequest(result, json);
   }
@@ -139,7 +146,7 @@ async function runDocsList(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("docs list"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("docs list takes no arguments", json);
@@ -159,7 +166,12 @@ async function runDocsList(
 
   if (result.kind !== "ok") {
     if (result.kind === "error" && result.status === 404) {
-      return failure({ exitCode: EXIT_USAGE, message: result.error, json });
+      return failure({
+        exitCode: EXIT_USAGE,
+        message: result.error,
+        ...structuredErrorFields(result),
+        json,
+      });
     }
     return failureFromRequest(result, json);
   }
@@ -193,7 +205,7 @@ async function runDocsDelete(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("docs delete"), json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -219,7 +231,12 @@ async function runDocsDelete(
   if (result.kind !== "ok") {
     if (result.kind === "error" && result.status === 404) {
       // Unknown document (or session) is a caller mistake, not a server outage.
-      return failure({ exitCode: EXIT_USAGE, message: result.error, json });
+      return failure({
+        exitCode: EXIT_USAGE,
+        message: result.error,
+        ...structuredErrorFields(result),
+        json,
+      });
     }
     return failureFromRequest(result, json);
   }

@@ -70,6 +70,7 @@ Project steering files are loaded automatically below. Custom files are supporte
 Additional steering (read on demand, not auto-loaded):
 
 - `.kiro/steering/logs.md` — Logging architecture, transcript format, SSE events, debug log schema
+- `.kiro/steering/cli.md` — CLI (`cctl`) design principles: progressive-disclosure graph, help registry as single source of truth, three-tier output contract (hint/reminders/instruction), reminder admission rule. Read before adding or changing anything under `src/cli/` or an agent-facing endpoint's response contract.
 - `.kiro/steering/data-fetching-and-sse.md` — TanStack Query + SSE architecture; the perceived-responsiveness contract (optimistic updates by default, pending indicators as the floor), cache invalidation, polling rules. Read before writing any mutation, query hook, or SSE handler.
 - `.kiro/steering/notifications.md` — Notifications & background jobs architecture
 - `.kiro/steering/workflows.md` — XState workflow orchestration patterns; graph-workflow config cascade + the template subsystem (tiers, config-dir storage, `{{inputs.X}}` substitution, prerequisites, mutability/`add_task` loops)

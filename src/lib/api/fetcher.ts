@@ -6,7 +6,7 @@
  */
 
 import type { z } from "zod";
-import { ApiCallError } from "@/lib/api/errors";
+import { ApiCallError, type RequestIssue } from "@/lib/api/errors";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 
 /**
@@ -65,12 +65,15 @@ export async function mutationFetch<T>(
       code?: string;
       output?: string;
       details?: Record<string, unknown>;
+      issues?: RequestIssue[];
     };
     throw new ApiCallError(
       apiBody.error ?? `API error ${res.status}`,
       apiBody.code,
       apiBody.output,
       apiBody.details,
+      res.status,
+      apiBody.issues,
     );
   }
   const data: unknown = await res.json();

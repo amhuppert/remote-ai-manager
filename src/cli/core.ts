@@ -10,7 +10,18 @@ import { runDocs } from "./commands/docs";
 import { runFixture } from "./commands/fixture";
 import { runNotify } from "./commands/notify";
 import { runWorkflow } from "./commands/workflow";
-import { helpFor } from "./help";
+import { fetchHelpContext } from "./help-context";
+import {
+  childEntriesOf,
+  flagNamesFor,
+  helpEntryFor,
+  helpJsonFor,
+  isGroup,
+  renderHelpText,
+} from "./help-registry";
+import type { HelpContextBlock } from "./help-render";
+import type { CommandHelpEntry } from "./help-types";
+import { pathKey } from "./help-types";
 import {
   EXIT_CONNECTION,
   EXIT_OK,
@@ -61,6 +72,107 @@ function helpResult(text: string, json: boolean): CliResult {
     stdout: json ? `${JSON.stringify({ ok: true, usage: text })}\n` : text,
     stderr: "",
   };
+}
+
+/** Render a resolved registry entry as help — structured JSON or graph text. */
+function registryHelpResult(
+  entry: CommandHelpEntry,
+  json: boolean,
+  contextBlocks: HelpContextBlock[] = [],
+): CliResult {
+  return {
+    exitCode: EXIT_OK,
+    stdout: json
+      ? `${JSON.stringify(helpJsonFor(entry, contextBlocks))}\n`
+      : renderHelpText(entry, contextBlocks),
+    stderr: "",
+  };
+}
+
+/**
+ * Best-effort dynamic help-context for a resolved entry (doc 04 §4.4). Fetches
+ * only when the entry opts in (`dynamicContext`), a server URL + token resolve
+ * from flags/env, AND the blocks would actually be rendered — a group node's
+ * TEXT help is a pure index (§3.1) with no `context:` section, so fetching for
+ * it would stall a common hub command for nothing. `fetchHelpContext` swallows
+ * every failure to `[]`, so help never fails.
+ */
+async function maybeFetchHelpContext(
+  entry: CommandHelpEntry,
+  willRender: boolean,
+  flags: GlobalFlags,
+  env: CliEnv,
+  host: CliHost,
+): Promise<HelpContextBlock[]> {
+  if (entry.dynamicContext !== true || !willRender) return [];
+  const server = flags.server ?? env["CC_SERVER_URL"];
+  if (!server) return [];
+  const { token } = await resolveToken(flags, env, host);
+  if (token === null) return [];
+
+  return fetchHelpContext(host, {
+    server,
+    token,
+    command: pathKey(entry.path),
+    project: flags.project ?? env["CC_PROJECT"] ?? null,
+    session: flags.session ?? env["CC_SESSION"] ?? null,
+    conversation: flags.conversation ?? env["CC_CONVERSATION_ID"] ?? null,
+    executionId: env["CC_WORKFLOW_EXECUTION_ID"] ?? null,
+    contextId: env["CC_WORKFLOW_CONTEXT_ID"] ?? null,
+  });
+}
+
+/**
+ * Resolve `--help` for a positional path against the help registry by
+ * longest-prefix match (doc 04 §3.1). The registry is the sole source: an
+ * entirely unknown root is the standard `unknown command` usage failure, and a
+ * known group node with an unknown trailing subcommand is an exit-2 usage
+ * failure whose hint lists the parent's children. When the resolved entry opts
+ * into dynamic context, server-rendered blocks are appended best-effort (§4.4).
+ */
+async function resolveHelp(
+  helpPath: string[],
+  flags: GlobalFlags,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const first = helpPath[0];
+  if (first === undefined || first === "help") {
+    return helpResult(USAGE, json);
+  }
+
+  const entry = helpEntryFor(helpPath);
+  if (!entry) {
+    return usageFailure(`unknown command "${first}"`, json);
+  }
+
+  const leftover = helpPath.slice(entry.path.length);
+  const group = isGroup(entry);
+  if (leftover.length > 0 && group) {
+    const parent = pathKey(entry.path);
+    const childVerbs = childEntriesOf(entry.path).map((child) =>
+      child.path.slice(entry.path.length).join(" "),
+    );
+    return failure({
+      exitCode: EXIT_USAGE,
+      message: `unknown ${parent} subcommand "${leftover.join(" ")}"`,
+      hint: `${parent} subcommands: ${childVerbs.join(", ")}`,
+      json,
+    });
+  }
+
+  // Group-node TEXT help renders no `context:` section (§3.1), so only leaf
+  // text and any JSON help can surface dynamic blocks.
+  const willRender = json || !group;
+  const contextBlocks = await maybeFetchHelpContext(
+    entry,
+    willRender,
+    flags,
+    env,
+    host,
+  );
+  return registryHelpResult(entry, json, contextBlocks);
 }
 
 function runVersion(flags: GlobalFlags): CliResult {
@@ -226,23 +338,17 @@ async function dispatchCli(
   const command = positionals[0];
 
   // Help is intercepted before dispatch so every command gets it without
-  // declaring it, and so `--help` never trips per-command checkFlags.
-  const helpTarget =
-    command === "help" ? (positionals[1] ?? null) : (command ?? null);
+  // declaring it, and so `--help` never trips per-command checkFlags. The full
+  // positional path resolves against the registry (doc 04 §3.1); `cctl help x y`
+  // and `cctl x y --help` both resolve the node ["x","y"].
   if (values["help"] === "true" || command === "help") {
-    if (helpTarget === null || helpTarget === "help") {
-      return helpResult(USAGE, flags.json);
-    }
-    const text = helpFor(helpTarget);
-    if (text === null) {
-      return usageFailure(`unknown command "${helpTarget}"`, flags.json);
-    }
-    return helpResult(text, flags.json);
+    const helpPath = command === "help" ? positionals.slice(1) : positionals;
+    return resolveHelp(helpPath, flags, env, host);
   }
 
   if (command === "version") return runVersion(flags);
   if (command === "doctor") {
-    const denied = checkFlags(values, [], flags.json);
+    const denied = checkFlags(values, flagNamesFor("doctor"), flags.json);
     if (denied) return denied;
     return runDoctor(flags, env, host);
   }

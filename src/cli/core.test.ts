@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
-import { runCli, type CliEnv, type CliHost } from "./core";
+import { runCli, type CliEnv, type CliHost, type FetchInit } from "./core";
 
 const CLI_BUILD = formatBuildStamp(BUILD_INFO);
 const SERVER_URL = "http://127.0.0.1:3000";
@@ -16,7 +16,7 @@ const baseEnv: CliEnv = {
 
 interface RecordedRequest {
   url: string;
-  init: { method: string; headers: Record<string, string> };
+  init: FetchInit;
 }
 
 function handshakeBody(overrides: Record<string, unknown> = {}) {
@@ -98,7 +98,9 @@ describe("cctl help", () => {
   it("prints command-scoped help for <command> --help", async () => {
     const result = await runCli(["dev", "--help"], {}, makeHost());
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("cctl dev ensure");
+    // A group node renders an index: its header plus one line per child subcommand.
+    expect(result.stdout).toContain("cctl dev —");
+    expect(result.stdout).toContain("dev ensure");
     expect(result.stdout).not.toContain("codex");
     expect(result.stderr).toBe("");
   });
@@ -112,7 +114,10 @@ describe("cctl help", () => {
   it("supports `cctl help <command>`", async () => {
     const result = await runCli(["help", "codex"], {}, makeHost());
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("cctl codex run");
+    // `codex` is a group node: its help is an index — the header plus one line
+    // per child subcommand.
+    expect(result.stdout).toContain("cctl codex —");
+    expect(result.stdout).toContain("codex run");
   });
 
   it("still exits 2 for --help on an unknown command", async () => {
@@ -121,12 +126,27 @@ describe("cctl help", () => {
     expect(result.stderr).toContain("frobnicate");
   });
 
-  it("emits the help text in the --json envelope", async () => {
+  it("exits 2 for --help on an unknown subpath, listing the parent's children", async () => {
+    const result = await runCli(
+      ["dev", "frobnicate", "--help"],
+      {},
+      makeHost(),
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('unknown dev subcommand "frobnicate"');
+    // the hint steers the agent back to the group's real children
+    expect(result.stderr).toContain("dev subcommands: list, ensure, stop");
+  });
+
+  it("emits the structured help node in the --json envelope", async () => {
     const result = await runCli(["dev", "--help", "--json"], {}, makeHost());
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
-    expect(envelope.usage).toContain("cctl dev ensure");
+    // The JSON help shape is the structured node (doc 04 §3.3), not a text blob.
+    expect(envelope.help.command).toBe("dev");
+    expect(Array.isArray(envelope.help.usage)).toBe(true);
+    expect(envelope.usage).toBeUndefined();
   });
 
   it("has scoped help for every dispatched command", async () => {
@@ -149,6 +169,177 @@ describe("cctl help", () => {
       expect(result.exitCode, `${command} --help should exit 0`).toBe(0);
       expect(result.stdout).toContain(`cctl ${command}`);
     }
+  });
+});
+
+describe("cctl help — dynamic context (doc 04 §4.4)", () => {
+  function contextResponse() {
+    return jsonResponse({
+      blocks: [
+        { title: "dev servers", body: "web — running (http://localhost:5010)" },
+      ],
+    });
+  }
+
+  it("renders server context blocks under context: on success (text)", async () => {
+    const host = makeHost({
+      async fetch() {
+        return contextResponse();
+      },
+    });
+    const result = await runCli(["dev", "ensure", "--help"], baseEnv, host);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("context:");
+    expect(result.stdout).toContain("dev servers");
+    expect(result.stdout).toContain("web — running");
+    expect(result.stderr).toBe("");
+  });
+
+  it("includes context.blocks in the JSON help envelope on success", async () => {
+    const host = makeHost({
+      async fetch() {
+        return contextResponse();
+      },
+    });
+    const result = await runCli(
+      ["dev", "ensure", "--help", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.help.context.blocks[0].title).toBe("dev servers");
+  });
+
+  it("queries help-context with command, identity, forwarded lane params, and a 500ms timeout", async () => {
+    // The default host records requests; its handshake-shaped response fails
+    // the help-context schema and falls open to [] — this test only asserts the
+    // request that was sent, not the (irrelevant) rendered blocks.
+    const host = makeHost();
+    const laneEnv: CliEnv = {
+      ...baseEnv,
+      CC_WORKFLOW_EXECUTION_ID: "exec-1",
+      CC_WORKFLOW_CONTEXT_ID: "ctx-1",
+    };
+    await runCli(["workflow", "task", "complete", "--help"], laneEnv, host);
+
+    const request = host.requests[0];
+    expect(request).toBeDefined();
+    if (!request) return;
+    const url = new URL(request.url);
+    expect(url.pathname).toBe("/api/agent/help-context");
+    expect(url.searchParams.get("command")).toBe("workflow task complete");
+    expect(url.searchParams.get("project")).toBe("cc");
+    expect(url.searchParams.get("executionId")).toBe("exec-1");
+    expect(url.searchParams.get("contextId")).toBe("ctx-1");
+    expect(request.init.headers["authorization"]).toBe("Bearer env-token");
+    expect(request.init.timeoutMs).toBe(500);
+  });
+
+  it("does not fetch for a static (non-dynamicContext) command's help", async () => {
+    const host = makeHost();
+    await runCli(["ask", "--help"], baseEnv, host);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("does not fetch for a group node's text help (a pure index, doc 04 §3.1)", async () => {
+    const host = makeHost();
+    await runCli(["dev", "--help"], baseEnv, host);
+    expect(host.requests).toHaveLength(0);
+  });
+});
+
+describe("cctl help — fail-open (doc 04 §4.4, byte-identical static fallback)", () => {
+  const noServerEnv: CliEnv = (() => {
+    const env = { ...baseEnv };
+    delete env["CC_SERVER_URL"];
+    return env;
+  })();
+
+  // No server URL → no fetch attempted → the pure static rendering.
+  async function staticOutput(argv: string[]) {
+    return runCli(argv, noServerEnv, makeHost());
+  }
+
+  const failureHosts: Array<[string, Partial<CliHost>]> = [
+    [
+      "connection error",
+      {
+        async fetch() {
+          throw new Error("ECONNREFUSED");
+        },
+      },
+    ],
+    [
+      "timeout (aborted fetch)",
+      {
+        async fetch() {
+          throw new Error("The operation was aborted due to timeout");
+        },
+      },
+    ],
+    [
+      "non-2xx status",
+      {
+        async fetch() {
+          return jsonResponse({ error: "boom" }, 500);
+        },
+      },
+    ],
+    [
+      "schema-mismatched body",
+      {
+        async fetch() {
+          return jsonResponse({ not: "blocks" });
+        },
+      },
+    ],
+    [
+      "unparseable body",
+      {
+        async fetch() {
+          return new Response("<<<not json", { status: 200 });
+        },
+      },
+    ],
+  ];
+
+  for (const mode of ["text", "json"] as const) {
+    const argv =
+      mode === "json"
+        ? ["dev", "ensure", "--help", "--json"]
+        : ["dev", "ensure", "--help"];
+
+    it(`static baseline exits 0 with empty stderr (${mode})`, async () => {
+      const result = await staticOutput(argv);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+    });
+
+    for (const [label, override] of failureHosts) {
+      it(`renders byte-identical static help on ${label} (${mode})`, async () => {
+        const staticResult = await staticOutput(argv);
+        const result = await runCli(argv, baseEnv, makeHost(override));
+        expect(result.stdout).toBe(staticResult.stdout);
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+      });
+    }
+  }
+
+  it("renders static help (no fetch) when no token resolves", async () => {
+    const noTokenEnv: CliEnv = (() => {
+      const env = { ...baseEnv };
+      delete env["CC_API_TOKEN"];
+      return env;
+    })();
+    const staticResult = await staticOutput(["dev", "ensure", "--help"]);
+    const host = makeHost();
+    const result = await runCli(["dev", "ensure", "--help"], noTokenEnv, host);
+    expect(result.stdout).toBe(staticResult.stdout);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(host.requests).toHaveLength(0);
   });
 });
 

@@ -116,6 +116,19 @@ machine-checkable.
   response facts ("2 tasks remain in this context"). Server responses carry facts and protocol
   instructions, never CLI verb names — and since the server owns the binary (§3), hint text cannot
   skew from the actual command surface.
+- **The three output tiers.** Command output (not just help) carries up to three tiers with distinct
+  agent obligations. Tier misuse is a review-blocking defect: nothing load-bearing in `hint`,
+  nothing actionable-now in `reminders`.
+
+  | Tier | Field | Semantics | Agent obligation |
+  |---|---|---|---|
+  | Hint | `hint?: string` | Advisory next step | Ignorable by contract |
+  | Reminders | `reminders?: string[]` | Invariants binding while work continues | Keep true; not an action |
+  | Instruction | `instruction?: string` (legacy `stopInstruction` retained) | Do this now | Obey first |
+
+  Text rendering order after the primary body: each reminder as a `reminder:` line, then the `hint:`
+  line. The `--json` envelope carries `error`/`code`/`issues`/`reminders`/`hint` — structured detail
+  is never text-mode-only. Full contract: `04-progressive-disclosure.md` §1.2/§5.
 - **Structured input via files:** any payload beyond a couple of scalars is `--file <path>` (JSON),
   with `-` for stdin. Agents author payloads with the Write tool and iterate on validation errors —
   this is the planner-tool win and the pattern for `ask`, `charter`, `decisions` too.
@@ -124,7 +137,8 @@ machine-checkable.
   observation. No fire-and-forget flags that hide failures.
 - **Server-side validation is the source of truth.** The CLI does minimal local checking (flags,
   file readability, JSON well-formedness); Zod schemas at the route boundary produce the real
-  errors, returned as `{ error, issues[] }` and rendered as one issue per line.
+  errors, returned as `{ error, code?, issues? }` and rendered as one issue per line. The CLI
+  forwards `code`/`issues` onto its `--json` failure envelope rather than flattening them into prose.
 
 ## 7. Skill and discovery
 

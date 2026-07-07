@@ -3,6 +3,7 @@ import {
   codexRunStatusResponseSchema,
   type CodexRunStatusResponse,
 } from "@/lib/codex-runs/schemas";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -15,6 +16,7 @@ import {
   readJsonObjectFile,
   render,
   resolveSessionContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -69,7 +71,12 @@ function codexFailure(
   json: boolean,
 ): CliResult {
   if (result.kind === "error" && result.status === 404) {
-    return failure({ exitCode: EXIT_USAGE, message: result.error, json });
+    return failure({
+      exitCode: EXIT_USAGE,
+      message: result.error,
+      ...structuredErrorFields(result),
+      json,
+    });
   }
   return failureFromRequest(result, json);
 }
@@ -109,7 +116,7 @@ async function runCodexRun(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file", "wait", "timeout"], json);
+  const denied = checkFlags(values, flagNamesFor("codex run"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("codex run takes no positional arguments", json);
@@ -271,7 +278,7 @@ async function runCodexStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("codex status"), json);
   if (denied) return denied;
 
   const runId = rest[0];
@@ -334,7 +341,7 @@ async function runCodexCancel(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(values, flagNamesFor("codex cancel"), json);
   if (denied) return denied;
 
   const runId = rest[0];

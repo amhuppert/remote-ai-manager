@@ -71,12 +71,43 @@ Default output is human-terse one-liners. Every command also supports
 
 - `ok` (boolean) — success/failure.
 - `error` (string) — present when `ok` is false.
-- `hint` (string, reserved) — an optional, purely advisory one-line pointer at
-  a likely next command. **Hints are ignorable by design**: protocol-critical
-  instructions never travel in `hint` (they are primary output or dedicated
-  response fields). In text mode the same hint appears as a final line
-  prefixed `hint:`.
+- `code` (string) — a machine-readable error code, when the server supplies one
+  (e.g. `NO_DEV_SERVERS_CONFIGURED`).
+- `issues` (array of `{ path, message }`) — structured validation issues on a
+  usage/validation failure (exit `2`). Text mode renders the same issues one per
+  line; the `--json` envelope keeps them structured — read them, don't parse the
+  prose.
+- `hint` (string) — see the three tiers below.
+- `reminders` (array of strings) — see the three tiers below.
 - Remaining fields are command-specific.
+
+### The three output tiers
+
+Command output carries up to three tiers with **distinct** obligations. Do not
+collapse them — the whole point is that each means something different:
+
+| Tier | Field | Semantics | Your obligation |
+|---|---|---|---|
+| Hint | `hint` (string) | Advisory next step | **Ignorable by contract** — never load-bearing |
+| Reminders | `reminders` (string[]) | Invariants that stay binding while you keep working | **Keep them true** — not an action to do now |
+| Instruction | `instruction` / `stopInstruction` (string) | Do this specific thing now | **Obey first**, before anything else |
+
+- **Hints** are a purely advisory pointer at a likely next command. Protocol-
+  critical instructions never travel in `hint`. In text mode a hint is the final
+  line, prefixed `hint:`.
+- **Reminders** are server-authored, state-conditional invariants (they fire from
+  runtime state, not on every call) — the graph-workflow **lane verbs** are the
+  commands that emit them (see that section). In text mode each renders as a `reminder:` line,
+  after the primary body and before the `hint:` line; in `--json` they are the
+  `reminders[]` array. A reminder is not a step to perform — it is something to
+  keep true as you continue.
+- **Instructions** are load-bearing do-now text: `ask`'s end-turn `instruction`
+  and a lane `task complete`'s `stopInstruction` (a mid-turn context rotation).
+  They arrive as primary output and/or a dedicated field — obey them before the
+  hint or your own next step.
+
+Text rendering order on any command: primary body → detail/`issues` lines →
+`reminder:` lines → `hint:` line.
 
 Structured input beyond a couple of scalars goes through `--file <path>`
 (JSON; `-` for stdin): author the payload with the Write tool **under
@@ -121,6 +152,78 @@ and resolves itself.
 - **`no API token`** — nothing resolved from flag, env, or the token file.
   Inside CC this should never happen (the env contract injects it); outside
   CC, pass `--token` or export `CC_API_TOKEN`.
+
+## cctl version
+
+Print the `cctl` build stamp (git sha + build time) — compare it against the
+server build `cctl doctor` reports. Reading only; always exits `0`, needs no
+server, and is **terminal (no hint)**. `doctor` is the fuller check.
+
+```
+cctl version          # → cctl <sha>-<build-time>
+cctl --version        # the same, as a global flag
+cctl version --json   # → { "ok": true, "cliBuild": "<sha>-<build-time>" }
+```
+
+## Discovering commands with `--help`
+
+`cctl` is a progressive-disclosure graph: every subcommand is a node with its own
+`--help`. Navigate node by node instead of front-loading — `--help` resolves the
+**full** positional path, so it is subcommand-granular:
+
+```
+cctl --help                              # top-level usage: the command list + global flags
+cctl workflow --help                     # the 'workflow' group index: one line per subcommand
+cctl workflow create --help              # the leaf: description, usage, flags, examples, related, skills
+cctl conversation compaction get --help  # 3-level paths resolve too
+```
+
+A leaf node's help is a mini-skill: `description`, `usage`, `flags`, `examples`
+(which teach failure-prone shapes, e.g. `--message-range A:B`), a `related:` block
+(sibling commands), and a `skills:` block ("load X when Y"). A group node renders
+an index of its children. Help always exits `0`, works offline, and never prompts —
+it is the recovery path, so reach for it whenever a command surprises you.
+
+### `--help --json` — the structured help node
+
+`cctl <command> --help --json` returns the node as structured data instead of
+prose (no rendered-text duplicate):
+
+```json
+{ "ok": true, "help": {
+    "command": "workflow create",
+    "summary": "…", "description": "…",
+    "usage": ["cctl workflow create --file plan.json [--json]"],
+    "flags": [{ "name": "file", "kind": "value", "valuePlaceholder": "<path>", "description": "…" }],
+    "examples": [{ "invocation": "…", "explanation": "…" }],
+    "related": [{ "command": "workflow start", "oneLiner": "…" }],
+    "skills": [{ "name": "graph-workflow-planning", "loadWhen": "…", "path": "…" }]
+} }
+```
+
+The bare top-level `cctl --help --json` is the one exception: it returns the usage
+text blob as `{ "ok": true, "usage": "…" }`, because the top-level usage is not a
+single command node.
+
+### `context:` — dynamic, live-state blocks
+
+Some **leaf** commands' `--help` appends a `context:` section (a `context.blocks[]`
+array in `--json`) with **live application state** — e.g. `cctl dev ensure --help`
+surfaces this session's dev servers and their URLs; inside a workflow lane,
+`cctl workflow task complete --help` surfaces the lane's current task, remaining
+count, and iteration budget.
+
+This context is **best-effort garnish**, not contract:
+
+- It is fetched from the server with a short timeout and **silently omitted** on
+  any failure — no server, no token, offline, or a slow response. Help still
+  renders the static sections and still exits `0`.
+- **Never infer anything from its absence.** A missing `context:` block means it
+  was not fetched, not that the underlying state is empty. Read it when present;
+  do not treat it as a source of truth.
+- **Group-node text help is a pure index** and never carries `context:` — a bare
+  `cctl <group> --help` (e.g. `cctl dev --help`) just lists its subcommands. Ask a
+  leaf's `--help` for live blocks (a group's `--help --json` may still include them).
 
 ## Command groups
 
@@ -467,6 +570,13 @@ run the verbs outside a lane and they exit `2` naming the missing variable.
 Every lane verb runs the execution's **halt check first**: if the run has been
 halted or is blocked on a pending collaboration, the command exits `1` printing
 the halt reason verbatim — stop and end your turn.
+
+Lane-verb output may also carry tier-2 **reminders** (`reminder:` lines, or a
+`reminders[]` array in `--json`) — server-authored, state-conditional invariants
+such as "you are near the iteration budget; fix root causes before re-completing"
+or, on the halt path, "the workflow is halted — end your turn." They fire only
+from runtime state, they are capped, and they are **not steps to perform**: keep
+them true as you keep working (see the three output tiers above).
 
 ```
 cctl workflow task complete <taskId> --summary "<what changed, how verified>"

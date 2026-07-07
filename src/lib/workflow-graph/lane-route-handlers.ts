@@ -29,6 +29,8 @@ import {
   type LoadLaneToolContextResult,
 } from "./lane-tool-context-loader";
 import { resolveLaneHaltReason } from "./tool-dispatcher";
+import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
+import { evaluateLaneReminders, type LaneVerb } from "./lane-reminders";
 import {
   addTaskSchema,
   buildContextLimitStopInstruction,
@@ -118,6 +120,7 @@ type PreparedContext =
  */
 async function prepareContext(
   deps: LaneRouteDeps,
+  verb: LaneVerb,
   projectName: string,
   sessionName: string,
   executionId: string,
@@ -145,10 +148,33 @@ async function prepareContext(
   );
   if (haltReason !== null) {
     log.info("graph-workflow-lane.halted", { contextId, reason: haltReason });
+    // The halt path has no post-mutation execution to read; the loader snapshot
+    // (`reminderState`) supplies the same iteration/threshold pair the engine
+    // compares, so a near-budget halt surfaces iteration-budget alongside
+    // halted-stop (doc 04 §6.4).
+    const { reminders, ruleIds } = evaluateLaneReminders({
+      verb,
+      halted: haltReason,
+      iterationCount: result.reminderState.iterationCount,
+      circuitBreakerThreshold: result.reminderState.circuitBreakerThreshold,
+      remainingTaskCount: result.reminderState.remainingTaskCount,
+    });
+    if (reminders.length > 0) {
+      log.info("graph-workflow-lane.reminders_emitted", {
+        contextId,
+        verb,
+        ruleIds,
+      });
+    }
     return {
       ok: false,
       response: NextResponse.json(
-        { error: haltReason, halt: true, reason: haltReason },
+        {
+          error: haltReason,
+          halt: true,
+          reason: haltReason,
+          ...(reminders.length > 0 ? { reminders } : {}),
+        },
         { status: 409 },
       ),
     };
@@ -171,6 +197,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
 
     const prepared = await prepareContext(
       deps,
+      "task-complete",
       name ?? "",
       session ?? "",
       parsed.data.executionId,
@@ -181,7 +208,8 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
     try {
       const { execution, contextLimitStop } =
         await prepared.context.completeTask(taskId ?? "", parsed.data.summary);
-      const state = execution.contextStates[contextId ?? ""];
+      const cid = contextId ?? "";
+      const state = execution.contextStates[cid];
       const remainingTaskCount = state
         ? Math.max(0, state.totalTaskCount - state.completedTaskCount)
         : 0;
@@ -190,11 +218,37 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         ok: true;
         remainingTaskCount: number;
         stopInstruction?: string;
+        reminders?: string[];
       } = { ok: true, remainingTaskCount };
       if (contextLimitStop) {
         body.stopInstruction =
           buildContextLimitStopInstruction(contextLimitStop);
       }
+
+      // Reminders derive from the freshest post-completion state — the same
+      // iteration/threshold pair the circuit-breaker gate compares
+      // (execution-loop.ts). Attach only when a rule fires (doc 04 §6.4).
+      const contextDef = execution.workingDefinition.executionContexts.find(
+        (definition) => definition.id === cid,
+      );
+      const { reminders, ruleIds } = evaluateLaneReminders({
+        verb: "task-complete",
+        halted: null,
+        iterationCount: state?.iterationCount ?? 0,
+        circuitBreakerThreshold:
+          contextDef?.circuitBreaker.consecutiveFailureThreshold ??
+          DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
+        remainingTaskCount,
+      });
+      if (reminders.length > 0) {
+        body.reminders = reminders;
+        log.info("graph-workflow-lane.reminders_emitted", {
+          contextId,
+          verb: "task-complete",
+          ruleIds,
+        });
+      }
+
       log.info("graph-workflow-lane.task_completed", {
         contextId,
         taskId,
@@ -223,6 +277,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
 
     const prepared = await prepareContext(
       deps,
+      "task-add",
       name ?? "",
       session ?? "",
       parsed.data.executionId,
@@ -278,6 +333,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
 
     const prepared = await prepareContext(
       deps,
+      "shared-doc-upsert",
       name,
       session,
       parsed.data.executionId,
@@ -320,6 +376,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
 
     const prepared = await prepareContext(
       deps,
+      "collab-request",
       name ?? "",
       session ?? "",
       parsed.data.executionId,

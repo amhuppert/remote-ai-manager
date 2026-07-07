@@ -172,7 +172,7 @@ describe("workflow definition route handlers", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns 400 for invalid create payloads", async () => {
+  it("returns 400 with the normalized {error, issues} shape for invalid create payloads", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
 
     const response = await handlers.CREATE(
@@ -183,6 +183,43 @@ describe("workflow definition route handlers", () => {
     );
 
     expect(response.status).toBe(400);
+    // Byte-compatible with the validate route (validate-route-handlers.ts:80):
+    // a stable error string + structured issues, never a flattened prose blob.
+    const body = (await response.json()) as {
+      error: string;
+      issues: Array<{ path: string; message: string }>;
+      code?: string;
+    };
+    expect(body.error).toBe("Workflow plan is invalid");
+    expect(Array.isArray(body.issues)).toBe(true);
+    expect(body.issues.length).toBeGreaterThan(0);
+    for (const issue of body.issues) {
+      expect(typeof issue.path).toBe("string");
+      expect(typeof issue.message).toBe("string");
+    }
+    // No legacy flattened "Invalid request:" prose leaked into the error string.
+    expect(body.error).not.toMatch(/Invalid request:/);
+  });
+
+  it("returns the same normalized {error, issues} shape for invalid replace (UPDATE) payloads", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+
+    const response = await handlers.UPDATE(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+        name: "",
+      }),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(body.error).toBe("Workflow plan is invalid");
+    expect(Array.isArray(body.issues)).toBe(true);
+    expect(body.issues.length).toBeGreaterThan(0);
+    expect(updateDefinition).not.toHaveBeenCalled();
   });
 
   it("accepts a POST with workflowConfig: {} and minimal contexts", async () => {
@@ -237,8 +274,19 @@ describe("workflow definition route handlers", () => {
     );
 
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { error: string };
-    expect(body.error).toMatch(/acceptanceCriteria/);
+    const body = (await response.json()) as {
+      error: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(body.error).toBe("Workflow plan is invalid");
+    // The field-level detail now lives in the structured issues, not the string.
+    expect(
+      body.issues.some(
+        (issue) =>
+          issue.path.includes("acceptanceCriteria") ||
+          issue.message.includes("acceptanceCriteria"),
+      ),
+    ).toBe(true);
     expect(createDefinition).not.toHaveBeenCalled();
   });
 });

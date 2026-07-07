@@ -1,6 +1,7 @@
 import path from "node:path";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { resolveConfigDirFrom } from "@/lib/config/config-dir";
+import { booleanFlagNames, renderTopUsage } from "./help-registry";
 
 export interface CliResult {
   exitCode: number;
@@ -20,6 +21,13 @@ export interface FetchInit {
   method: string;
   headers: Record<string, string>;
   body?: string;
+  /**
+   * Optional per-request timeout in ms. The real host (`index.ts`) maps it to
+   * `AbortSignal.timeout`; injected test hosts ignore it. Used by the
+   * best-effort help-context fetch (doc 04 §4.4), which must fail open on
+   * timeout so `--help` never stalls.
+   */
+  timeoutMs?: number;
 }
 
 export type FetchLike = (url: string, init: FetchInit) => Promise<Response>;
@@ -51,30 +59,13 @@ export const EXIT_CONNECTION = 3;
 /** Reserved for a hard version-mismatch policy; mismatches today warn on stderr only. */
 export const EXIT_VERSION_MISMATCH = 4;
 
-export const USAGE = `usage: cctl <command> [flags]
-
-commands:
-  ask           ask the user a question batch, then end your turn
-  notify        send a push notification to the user
-  docs          register, list, and delete reference documents
-  dev           list, ensure, and stop dev servers
-  fixture       scaffold test sessions and run prompts against a dev server
-  workflow      list, inspect, start, and delete graph workflows
-  charter       submit the session's Alignment charter
-  decisions     propose decisions for the user's review
-  codex         run, poll, and cancel one-shot Codex jobs
-  conversation  read conversation transcripts and manage compaction artifacts
-  doctor        check connectivity, auth, and build parity with the CC server
-  version       print the cctl build stamp
-
-global flags:
-  --server <url>         CC server base URL (default: $CC_SERVER_URL)
-  --token <token>        API token (default: $CC_API_TOKEN, then <configDir>/api-token)
-  --project <name>       project identity (default: $CC_PROJECT)
-  --session <name>       session identity (default: $CC_SESSION)
-  --conversation <id>    conversation identity (default: $CC_CONVERSATION_ID)
-  --json                 structured output envelope
-`;
+/**
+ * Top-level usage — generated from the help registry's level-1 entries plus the
+ * hand-written global-flags block (docs/design/cc-cli/04 §2.3). Computed once at
+ * module init; the registry is the single source of the command list, so a new
+ * command's summary appears here the moment its entry lands.
+ */
+export const USAGE = renderTopUsage();
 
 const VALUE_FLAGS = [
   "server",
@@ -105,23 +96,25 @@ function isValueFlag(name: string): name is ValueFlag {
   return (VALUE_FLAGS as readonly string[]).includes(name);
 }
 
-const BOOLEAN_ONLY_FLAGS = new Set([
-  "--wait",
-  "--multi-select",
-  "--outline",
-  "--include-thinking",
-  "--force",
-  "--help",
-  "--skip-warm",
-]);
+/**
+ * The parse-time boolean-flag set, derived from the help registry: every flag
+ * declared `kind: "boolean"` across all entries, as its `--name` arg form
+ * (docs/design/cc-cli/04 §2.3). Computed once at module init. `--help` is NOT a
+ * registry flag — it is a parser-intrinsic pseudo-flag handled explicitly in
+ * `parseArgv` (like `-h`/`--version`), so help interception works before any
+ * command dispatch.
+ */
+const BOOLEAN_FLAG_ARGS = new Set(
+  booleanFlagNames().map((name) => `--${name}`),
+);
 
 /**
- * Generalized argv parse: `--json` and the `BOOLEAN_ONLY_FLAGS` are booleans;
- * every other `--x` consumes the next token as its value (erroring if absent
- * or `--`-prefixed). Global value flags are surfaced typed in `flags`; ALL
- * value flags land in `values` for command-specific reads. Unknown-flag
- * rejection is deferred to `checkFlags` per command so subcommands can declare
- * their own flags.
+ * Generalized argv parse: `--json`, `--help`, and every registry-declared
+ * boolean flag are booleans; every other `--x` consumes the next token as its
+ * value (erroring if absent or `--`-prefixed). Global value flags are surfaced
+ * typed in `flags`; ALL value flags land in `values` for command-specific
+ * reads. Unknown-flag rejection is deferred to `checkFlags` per command so
+ * subcommands can declare their own flags.
  */
 export function parseArgv(argv: string[]): ParsedArgv {
   const flags: GlobalFlags = { json: false };
@@ -136,7 +129,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
       positionals.push("version");
       continue;
     }
-    if (arg === "-h") {
+    if (arg === "-h" || arg === "--help") {
       values["help"] = "true";
       continue;
     }
@@ -151,7 +144,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
     // Valueless boolean flags (they consume no value). They land in `values`
     // as markers so per-command `checkFlags` still rejects them where not
     // allowed; commands that accept them read `values["wait"] !== undefined`.
-    if (BOOLEAN_ONLY_FLAGS.has(arg)) {
+    if (BOOLEAN_FLAG_ARGS.has(arg)) {
       values[arg.slice(2)] = "true";
       continue;
     }
@@ -207,6 +200,11 @@ export interface JsonEnvelope {
   ok: boolean;
   error?: string;
   hint?: string;
+  reminders?: string[];
+  /** Structured validation issues, when the server supplies them (doc 04 §5.1). */
+  issues?: RequestIssue[];
+  /** Machine-readable error code, when the server supplies one. */
+  code?: string;
   [key: string]: unknown;
 }
 
@@ -216,10 +214,14 @@ export function render(
   envelope: JsonEnvelope,
 ): string {
   if (json) return `${JSON.stringify(envelope)}\n`;
-  // Text format: the hint is the final output line, prefixed `hint:` (§6).
-  return envelope.hint === undefined
-    ? humanStdout
-    : `${humanStdout}hint: ${envelope.hint}\n`;
+  // Text tier order (doc 04 §1.2/§5.1): primary body, then each reminder as a
+  // `reminder:` line, then the advisory `hint:` line last.
+  let out = humanStdout;
+  if (envelope.reminders) {
+    for (const reminder of envelope.reminders) out += `reminder: ${reminder}\n`;
+  }
+  if (envelope.hint !== undefined) out += `hint: ${envelope.hint}\n`;
+  return out;
 }
 
 export interface FailureInput {
@@ -228,14 +230,30 @@ export interface FailureInput {
   message: string;
   detail?: string;
   hint?: string;
+  reminders?: string[];
+  /**
+   * Structured validation issues + machine-readable code. JSON-envelope only —
+   * text mode still renders the human `detail`, so callers pass BOTH (doc 04 §5.1).
+   */
+  issues?: RequestIssue[];
+  code?: string;
   json: boolean;
 }
 
 export function failure(input: FailureInput): CliResult {
   const stderrLines = [input.message];
   if (input.detail) stderrLines.push(input.detail);
+  // Text tier order (doc 04 §5.1): message -> detail/issues -> reminders -> hint.
+  if (!input.json && input.reminders) {
+    for (const reminder of input.reminders)
+      stderrLines.push(`reminder: ${reminder}`);
+  }
   if (!input.json && input.hint) stderrLines.push(`hint: ${input.hint}`);
   const envelope: JsonEnvelope = { ok: false, error: input.message };
+  if (input.issues && input.issues.length > 0) envelope.issues = input.issues;
+  if (input.code) envelope.code = input.code;
+  if (input.reminders && input.reminders.length > 0)
+    envelope.reminders = input.reminders;
   if (input.hint) envelope.hint = input.hint;
   return {
     exitCode: input.exitCode,
@@ -326,22 +344,20 @@ export async function resolveProjectContext(
   if (!server) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message: "no server URL — pass --server or set CC_SERVER_URL",
+      result: usageFailure(
+        "no server URL — pass --server or set CC_SERVER_URL",
         json,
-      }),
+      ),
     };
   }
   const project = flags.project ?? env["CC_PROJECT"];
   if (!project) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message: "no project — pass --project or set CC_PROJECT",
+      result: usageFailure(
+        "no project — pass --project or set CC_PROJECT",
         json,
-      }),
+      ),
     };
   }
 
@@ -372,11 +388,10 @@ export async function resolveSessionContext(
   if (!session) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message: "no session — pass --session or set CC_SESSION",
-        json: flags.json,
-      }),
+      result: usageFailure(
+        "no session — pass --session or set CC_SESSION",
+        flags.json,
+      ),
     };
   }
 
@@ -404,12 +419,10 @@ export async function resolveConversationContext(
   if (!conversation) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message:
-          "no conversation — pass --conversation or set CC_CONVERSATION_ID",
-        json: flags.json,
-      }),
+      result: usageFailure(
+        "no conversation — pass --conversation or set CC_CONVERSATION_ID",
+        flags.json,
+      ),
     };
   }
 
@@ -439,24 +452,20 @@ export async function resolveLaneContext(
   if (!executionId) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message:
-          "no workflow execution — set CC_WORKFLOW_EXECUTION_ID (lane conversations only)",
-        json: flags.json,
-      }),
+      result: usageFailure(
+        "no workflow execution — set CC_WORKFLOW_EXECUTION_ID (lane conversations only)",
+        flags.json,
+      ),
     };
   }
   const contextId = env["CC_WORKFLOW_CONTEXT_ID"];
   if (!contextId) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message:
-          "no workflow context — set CC_WORKFLOW_CONTEXT_ID (lane conversations only)",
-        json: flags.json,
-      }),
+      result: usageFailure(
+        "no workflow context — set CC_WORKFLOW_CONTEXT_ID (lane conversations only)",
+        flags.json,
+      ),
     };
   }
 
@@ -554,6 +563,8 @@ export type CliRequestResult =
       issues?: RequestIssue[];
       /** Machine-readable error code when the endpoint supplies one (e.g. `NO_DEV_SERVERS_CONFIGURED`). */
       code?: string;
+      /** Tier-2 invariants the server attaches to an error (e.g. lane halt 409s). */
+      reminders?: string[];
     };
 
 export interface CliRequestParams {
@@ -581,6 +592,14 @@ function coerceIssues(value: unknown): RequestIssue[] | undefined {
     }
   }
   return issues.length > 0 ? issues : undefined;
+}
+
+function coerceReminders(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reminders = value.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  return reminders.length > 0 ? reminders : undefined;
 }
 
 function buildRequestInit(params: CliRequestParams): FetchInit {
@@ -617,12 +636,17 @@ function classifyErrorBody(
     typeof (body as { code?: unknown }).code === "string"
       ? (body as { code: string }).code
       : undefined;
+  const reminders =
+    body && typeof body === "object"
+      ? coerceReminders((body as { reminders?: unknown }).reminders)
+      : undefined;
   return {
     kind: "error",
     status,
     error: errorMessage,
     ...(issues ? { issues } : {}),
     ...(code ? { code } : {}),
+    ...(reminders ? { reminders } : {}),
   };
 }
 
@@ -715,6 +739,23 @@ export async function cliRequestText(
 }
 
 /**
+ * The server-supplied structured fields (issues/code/reminders) forwarded onto
+ * every JSON failure envelope. JSON-only for issues/code (text mode renders the
+ * human `detail` instead); reminders are tier-2 and render in both modes. Shared
+ * so every failure seam — validation, generic non-2xx, and the 404-as-usage /
+ * artifact helpers — threads the same fields (doc 04 §5.1).
+ */
+export function structuredErrorFields(
+  result: Extract<CliRequestResult, { kind: "error" }>,
+): Pick<FailureInput, "issues" | "code" | "reminders"> {
+  return {
+    ...(result.issues ? { issues: result.issues } : {}),
+    ...(result.code ? { code: result.code } : {}),
+    ...(result.reminders ? { reminders: result.reminders } : {}),
+  };
+}
+
+/**
  * Map a non-ok request result to a CliResult per the shared exit-code contract
  * (doc 01 §6): connection → 3, 401 → 3, 400/422 validation → 2 (one issue per
  * line), any other non-2xx → 1 ("server said no").
@@ -752,12 +793,14 @@ export function failureFromRequest(
       exitCode: EXIT_USAGE,
       message: result.error,
       ...(detail ? { detail } : {}),
+      ...structuredErrorFields(result),
       json,
     });
   }
   return failure({
     exitCode: EXIT_OPERATION_FAILED,
     message: result.error,
+    ...structuredErrorFields(result),
     json,
   });
 }
@@ -772,7 +815,12 @@ export function failureFromRequestNotFoundAsUsage(
   json: boolean,
 ): CliResult {
   if (result.kind === "error" && result.status === 404) {
-    return failure({ exitCode: EXIT_USAGE, message: result.error, json });
+    return failure({
+      exitCode: EXIT_USAGE,
+      message: result.error,
+      ...structuredErrorFields(result),
+      json,
+    });
   }
   return failureFromRequest(result, json);
 }

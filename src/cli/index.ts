@@ -5,7 +5,15 @@ import os from "node:os";
 import { runCli } from "./core";
 
 const result = await runCli(process.argv.slice(2), process.env, {
-  fetch: (url, init) => fetch(url, init),
+  fetch: (url, init) => {
+    const { timeoutMs, ...requestInit } = init;
+    return fetch(
+      url,
+      timeoutMs === undefined
+        ? requestInit
+        : { ...requestInit, signal: AbortSignal.timeout(timeoutMs) },
+    );
+  },
   async readTextFile(filePath) {
     try {
       return await readFile(filePath, "utf-8");

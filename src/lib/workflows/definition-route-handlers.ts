@@ -10,10 +10,7 @@ import {
   type WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-import {
-  validateWorkflowPlan,
-  type WorkflowPlanIssue,
-} from "./plan-validation";
+import { validateWorkflowPlan } from "./plan-validation";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -55,12 +52,6 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
   deleteDefinition: (projectPath, workflowId) =>
     defaultStorage.delete({ kind: "project", projectPath }, workflowId),
 };
-
-/** Preserve the legacy `Invalid request: <path>: <message>; …` 400 body. */
-function invalidRequestBody(issues: WorkflowPlanIssue[]): ApiError {
-  const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
-  return { error: `Invalid request: ${detail}` };
-}
 
 async function resolveProjectOr404(
   deps: WorkflowDefinitionRouteDeps,
@@ -117,9 +108,10 @@ export function createWorkflowDefinitionRouteHandlers(
 
     const validation = validateWorkflowPlan(rawBody);
     if (!validation.ok) {
-      return NextResponse.json(invalidRequestBody(validation.issues), {
-        status: 400,
-      });
+      return NextResponse.json(
+        { error: "Workflow plan is invalid", issues: validation.issues },
+        { status: 400 },
+      );
     }
 
     try {
@@ -182,9 +174,10 @@ export function createWorkflowDefinitionRouteHandlers(
 
     const validation = validateWorkflowPlan(rawBody);
     if (!validation.ok) {
-      return NextResponse.json(invalidRequestBody(validation.issues), {
-        status: 400,
-      });
+      return NextResponse.json(
+        { error: "Workflow plan is invalid", issues: validation.issues },
+        { status: 400 },
+      );
     }
 
     try {

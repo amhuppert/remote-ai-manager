@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import Topbar from "@/components/Topbar";
-import { ApiCallError } from "@/lib/api/errors";
+import { formatWorkflowSaveError } from "@/features/workflows-builder/format-save-error";
 import {
   useScopedCreateWorkflowDefinitionMutation,
   useScopedDeleteWorkflowDefinitionMutation,
@@ -187,11 +187,7 @@ export default function ConnectedWorkflowBuilderPage({
       });
       setSaveError(null);
     } catch (error) {
-      setSaveError(
-        error instanceof ApiCallError
-          ? error.message
-          : "Failed to save workflow draft",
-      );
+      setSaveError(formatWorkflowSaveError(error));
       throw error;
     }
   }

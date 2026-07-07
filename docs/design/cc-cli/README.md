@@ -11,6 +11,7 @@ Documents in this set:
 | [`01-cli-foundation.md`](./01-cli-foundation.md) | Binary build & distribution, env contract, auth, versioning, CLI conventions, testing strategy |
 | [`02-tool-migrations.md`](./02-tool-migrations.md) | Per-tool endpoint + CLI command design, new API endpoints, lane tools, decommissioning checklist |
 | [`03-ask-user-question-async.md`](./03-ask-user-question-async.md) | The AskUserQuestion async redesign (state machine changes, answer-as-message, edge cases) |
+| [`04-progressive-disclosure.md`](./04-progressive-disclosure.md) | Help registry as single source of truth, graph-shaped progressive disclosure, dynamic help context, three-tier output contract (hint/reminders/instruction), lane reminders |
 
 ---
 

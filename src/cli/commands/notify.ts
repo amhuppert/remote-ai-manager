@@ -1,3 +1,4 @@
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_USAGE,
@@ -8,6 +9,7 @@ import {
   failureFromRequest,
   render,
   resolveSessionContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -31,7 +33,7 @@ export async function runNotify(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, ["title"], json);
+  const denied = checkFlags(values, flagNamesFor("notify"), json);
   if (denied) return denied;
 
   const message = rest[0];
@@ -68,6 +70,7 @@ export async function runNotify(
       return failure({
         exitCode: EXIT_USAGE,
         message: result.error,
+        ...structuredErrorFields(result),
         json,
       });
     }

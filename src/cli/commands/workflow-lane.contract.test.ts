@@ -63,7 +63,7 @@ function makeClaudeLane(): GraphWorkflowAgentSessionState {
 }
 
 function buildRunningExecution(
-  options: { limit?: number } = {},
+  options: { limit?: number; iterationCount?: number } = {},
 ): GraphWorkflowExecution {
   // Id matches CC_WORKFLOW_EXECUTION_ID so the tool context's bound-execution
   // guard (`ensureBoundContextActive`) accepts the lane.
@@ -79,6 +79,7 @@ function buildRunningExecution(
       "context-plan": {
         ...planState,
         status: "running",
+        iterationCount: options.iterationCount ?? planState.iterationCount,
         worktreePath: null,
         branchName: null,
         isolation: "session",
@@ -191,7 +192,15 @@ function laneRouteHost(
       return "/repos/cc";
     },
     async loadLaneToolContext() {
-      return { ok: true, context };
+      return {
+        ok: true,
+        context,
+        reminderState: {
+          iterationCount: 0,
+          circuitBreakerThreshold: 3,
+          remainingTaskCount: 1,
+        },
+      };
     },
   };
   const handlers = createLaneRouteHandlers(deps);
@@ -312,6 +321,58 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("iteration halted: circuit_breaker");
+  });
+
+  it("renders server-computed lane reminders on a near-threshold success", async () => {
+    // iterationCount 2, default threshold 3 → the real completeTask handler
+    // computes iteration-budget + lane-autonomy; the CLI renders them verbatim.
+    const result = await runCli(
+      ["workflow", "task", "complete", "task-plan-1", "--summary", "done"],
+      laneEnv,
+      laneRouteHost(
+        buildRealContext({
+          execution: buildRunningExecution({ iterationCount: 2 }),
+        }),
+      ),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("completed task-plan-1");
+    expect(result.stdout).toContain(
+      "reminder: This context has used 2 of 3 iterations",
+    );
+    expect(result.stdout).toContain("reminder: This lane is autonomous");
+  });
+
+  it("surfaces the server-computed halted-stop reminder on the real 409 halt", async () => {
+    const haltReason: GraphWorkflowHaltReason = {
+      type: "circuit_breaker",
+      contextId: "context-plan",
+      condition: "retry_exhaustion",
+      failureCount: 3,
+      summary: null,
+    };
+    const result = await runCli(
+      [
+        "workflow",
+        "task",
+        "complete",
+        "task-plan-1",
+        "--summary",
+        "done",
+        "--json",
+      ],
+      laneEnv,
+      laneRouteHost(buildRealContext({ pendingHaltReason: haltReason })),
+    );
+
+    expect(result.exitCode).toBe(1);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.reminders).toHaveLength(1);
+    expect(envelope.reminders[0]).toContain(
+      "This workflow is halted: iteration halted: circuit_breaker",
+    );
+    expect(envelope.reminders[0]).toContain("end your turn");
   });
 
   it("task add is rejected by the real capability gate (403) → exit 1", async () => {

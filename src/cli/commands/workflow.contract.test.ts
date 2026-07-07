@@ -429,7 +429,10 @@ describe("cctl workflow author flow against the real create-path validation", ()
       routeHost(null, { [PLAN]: cyclicPlan() }),
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Invalid request");
+    // Normalized {error, issues}: the create route now matches validate's shape,
+    // so the CLI renders the structural cycle at its issue path (doc 04 §5.3).
+    expect(result.stderr).toContain("Workflow plan is invalid");
+    expect(result.stderr).toContain("definition.edges");
   });
 
   it("replace maps to the real PUT route and reports the new revision", async () => {

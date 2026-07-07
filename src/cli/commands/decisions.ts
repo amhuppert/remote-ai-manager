@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   checkFlags,
@@ -55,7 +56,7 @@ async function runDecisionsPropose(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["file"], json);
+  const denied = checkFlags(values, flagNamesFor("decisions propose"), json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(

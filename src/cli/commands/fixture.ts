@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_CONNECTION,
   EXIT_OK,
@@ -262,7 +263,7 @@ async function runSessionCreate(
   const json = flags.json;
   const denied = checkFlags(
     values,
-    ["name", "dev", "target", "skip-warm"],
+    flagNamesFor("fixture session create"),
     json,
   );
   if (denied) return denied;
@@ -359,7 +360,11 @@ async function runSessionDelete(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["dev", "target"], json);
+  const denied = checkFlags(
+    values,
+    flagNamesFor("fixture session delete"),
+    json,
+  );
   if (denied) return denied;
   const [project, sessionName] = rest;
   if (project === undefined || sessionName === undefined || rest.length > 2) {
@@ -441,11 +446,7 @@ async function runPrompt(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    ["text", "dev", "target", "wait", "timeout"],
-    json,
-  );
+  const denied = checkFlags(values, flagNamesFor("fixture prompt"), json);
   if (denied) return denied;
   const [project, sessionName] = rest;
   if (project === undefined || sessionName === undefined || rest.length > 2) {
@@ -602,7 +603,7 @@ async function runStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, ["dev", "target"], json);
+  const denied = checkFlags(values, flagNamesFor("fixture status"), json);
   if (denied) return denied;
   const [project, sessionName] = rest;
   if (project === undefined || sessionName === undefined || rest.length > 2) {

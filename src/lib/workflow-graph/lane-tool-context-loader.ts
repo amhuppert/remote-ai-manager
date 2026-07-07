@@ -17,6 +17,7 @@ import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-ta
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
 import { buildImplementerCollaborationContext } from "@/lib/workflow-graph/implementer-collaboration-context";
 import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
+import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "@/lib/workflow-graph/constants";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
 import { createSharedDocumentStore } from "@/lib/workflow-graph/shared-document-store";
@@ -82,8 +83,25 @@ export function resolveBoundConversationId(
   return null;
 }
 
+/**
+ * The runtime state a halted lane needs to compute reminders (doc 04 §6): the
+ * halt-path handler has no post-mutation execution to read from, so the loader
+ * snapshots the pre-halt iteration/threshold/remaining figures alongside the
+ * context. The success path reads the freshest values off the returned
+ * execution instead (`lane-route-handlers.ts` completeTask).
+ */
+export interface LaneReminderState {
+  iterationCount: number;
+  circuitBreakerThreshold: number;
+  remainingTaskCount: number;
+}
+
 export type LoadLaneToolContextResult =
-  | { ok: true; context: GraphWorkflowToolServerContext }
+  | {
+      ok: true;
+      context: GraphWorkflowToolServerContext;
+      reminderState: LaneReminderState;
+    }
   | { ok: false; status: number; error: string };
 
 const eventPublisher = createGraphWorkflowExecutionEventPublisher({
@@ -207,8 +225,14 @@ export async function loadGraphWorkflowLaneToolContext(
     };
   const rawWorkflowConfig = definitionRecord?.definition.workflowConfig ?? {};
 
-  const iterationCount =
-    execution.contextStates[contextId]?.iterationCount ?? 0;
+  const contextState = execution.contextStates[contextId];
+  const iterationCount = contextState?.iterationCount ?? 0;
+  const circuitBreakerThreshold =
+    executionContext.circuitBreaker.consecutiveFailureThreshold ??
+    DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD;
+  const remainingTaskCount = contextState
+    ? Math.max(0, contextState.totalTaskCount - contextState.completedTaskCount)
+    : 0;
 
   const collaboration = buildImplementerCollaborationContext(
     {
@@ -336,6 +360,11 @@ export async function loadGraphWorkflowLaneToolContext(
 
   return {
     ok: true,
+    reminderState: {
+      iterationCount,
+      circuitBreakerThreshold,
+      remainingTaskCount,
+    },
     context: {
       ...baseContext,
       getPendingHaltReason: async () => {

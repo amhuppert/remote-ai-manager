@@ -521,7 +521,10 @@ describe("cctl workflow create", () => {
     const host = makeHost(
       () =>
         jsonResponse(
-          { error: "Invalid request: definition.charter: Required" },
+          {
+            error: "Workflow plan is invalid",
+            issues: [{ path: "definition.charter", message: "Required" }],
+          },
           400,
         ),
       files,
@@ -532,7 +535,9 @@ describe("cctl workflow create", () => {
       host,
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Invalid request");
+    expect(result.stderr).toContain("Workflow plan is invalid");
+    // The normalized envelope's issues render one-per-line at their JSON path.
+    expect(result.stderr).toContain("definition.charter");
   });
 
   it("exits 2 when --file is missing", async () => {
@@ -752,6 +757,128 @@ describe("cctl workflow task complete", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("iteration halted: circuit_breaker");
+  });
+
+  it("renders reminder lines between the primary output and the hint on success", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ok: true,
+        remainingTaskCount: 2,
+        reminders: [
+          "This context has used 2 of 3 iterations.",
+          "This lane is autonomous — use `cctl workflow collab request`.",
+        ],
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done"],
+      laneEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+    expect(out).toContain("completed task-1");
+    expect(out).toContain("reminder: This context has used 2 of 3 iterations.");
+    expect(out).toContain(
+      "reminder: This lane is autonomous — use `cctl workflow collab request`.",
+    );
+    expect(out).toContain("hint: 2 tasks remain in this context");
+    // Tier order (doc 04 §5.1): primary output → reminders → hint.
+    const primaryIdx = out.indexOf("completed task-1");
+    const reminderIdx = out.indexOf("reminder:");
+    const hintIdx = out.indexOf("hint:");
+    expect(primaryIdx).toBeLessThan(reminderIdx);
+    expect(reminderIdx).toBeLessThan(hintIdx);
+  });
+
+  it("carries reminders in the --json envelope on success", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ok: true,
+        remainingTaskCount: 2,
+        reminders: ["r1", "r2"],
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done", "--json"],
+      laneEnv,
+      host,
+    );
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.reminders).toEqual(["r1", "r2"]);
+  });
+
+  it("emits no reminder lines and no reminders field when the server sends none", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ ok: true, remainingTaskCount: 3 }),
+    );
+    const textResult = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done"],
+      laneEnv,
+      host,
+    );
+    expect(textResult.stdout).not.toContain("reminder:");
+
+    const jsonHost = makeHost(() =>
+      jsonResponse({ ok: true, remainingTaskCount: 3 }),
+    );
+    const jsonResult = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done", "--json"],
+      laneEnv,
+      jsonHost,
+    );
+    expect(JSON.parse(jsonResult.stdout).reminders).toBeUndefined();
+  });
+
+  it("renders reminders in addition to a stop instruction, still omitting the hint", async () => {
+    const stop = "CONTEXT LIMIT REACHED. End your turn now.";
+    const host = makeHost(() =>
+      jsonResponse({
+        ok: true,
+        remainingTaskCount: 2,
+        stopInstruction: stop,
+        reminders: ["This context has used 2 of 3 iterations."],
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done"],
+      laneEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(stop);
+    expect(result.stdout).toContain(
+      "reminder: This context has used 2 of 3 iterations.",
+    );
+    expect(result.stdout).not.toContain("hint:");
+  });
+
+  it("surfaces reminders on the 409 halt in both stderr and the json envelope", async () => {
+    const haltReminder =
+      "This workflow is halted: iteration halted: circuit_breaker. Do not continue task work; end your turn.";
+    const body = {
+      error: "iteration halted: circuit_breaker",
+      halt: true,
+      reason: "iteration halted: circuit_breaker",
+      reminders: [haltReminder],
+    };
+    const textResult = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done"],
+      laneEnv,
+      makeHost(() => jsonResponse(body, 409)),
+    );
+    expect(textResult.exitCode).toBe(1);
+    expect(textResult.stderr).toContain(`reminder: ${haltReminder}`);
+
+    const jsonResult = await runCli(
+      ["workflow", "task", "complete", "task-1", "--summary", "done", "--json"],
+      laneEnv,
+      makeHost(() => jsonResponse(body, 409)),
+    );
+    expect(jsonResult.exitCode).toBe(1);
+    expect(JSON.parse(jsonResult.stdout).reminders).toEqual([haltReminder]);
   });
 
   it("exits 2 naming CC_WORKFLOW_EXECUTION_ID when the lane env is absent", async () => {

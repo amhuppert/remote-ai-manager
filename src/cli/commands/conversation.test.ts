@@ -784,6 +784,28 @@ describe("cctl conversation compaction get", () => {
     expect(result.stderr).toContain("create with: cctl conversation compact");
   });
 
+  it("carries the artifact_not_found code in the --json failure envelope", async () => {
+    const host = makeHost((req) => {
+      const pathname = new URL(req.url).pathname;
+      if (pathname.endsWith("/context-artifacts"))
+        return jsonResponse([conversationArtifact]);
+      return jsonResponse(
+        { error: "Artifact not found", code: "artifact_not_found" },
+        404,
+      );
+    });
+    const result = await runCli(
+      ["conversation", "compaction", "get", "conv-1", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(1);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.code).toBe("artifact_not_found");
+    expect(envelope.hint).toContain("cctl conversation compact");
+  });
+
   it("exits 2 on an unknown conversation (404 conversation_not_found)", async () => {
     const host = makeHost(() =>
       jsonResponse(

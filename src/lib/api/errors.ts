@@ -1,3 +1,9 @@
+/** A structured validation issue: a JSON-path location and its message. */
+export interface RequestIssue {
+  path: string;
+  message: string;
+}
+
 /** Error thrown when an API call fails. Carries optional structured fields. */
 export class ApiCallError extends Error {
   readonly code?: string;
@@ -5,6 +11,8 @@ export class ApiCallError extends Error {
   readonly details?: Record<string, unknown>;
   /** HTTP status of the failed response, when known. */
   readonly status?: number;
+  /** Structured validation issues, when the server supplies an `issues` array. */
+  readonly issues?: RequestIssue[];
 
   constructor(
     message: string,
@@ -12,6 +20,7 @@ export class ApiCallError extends Error {
     output?: string,
     details?: Record<string, unknown>,
     status?: number,
+    issues?: RequestIssue[],
   ) {
     super(message);
     this.name = "ApiCallError";
@@ -19,6 +28,7 @@ export class ApiCallError extends Error {
     this.output = output;
     this.details = details;
     this.status = status;
+    this.issues = issues;
   }
 }
 

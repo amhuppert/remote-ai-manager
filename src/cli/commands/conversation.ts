@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
+import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -14,6 +15,7 @@ import {
   failureFromRequestNotFoundAsUsage,
   render,
   resolveProjectContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -185,6 +187,7 @@ function artifactRequestFailure(
       exitCode: EXIT_OPERATION_FAILED,
       message: result.error,
       hint: absentHint,
+      ...structuredErrorFields(result),
       json,
     });
   }
@@ -379,21 +382,7 @@ async function runConversationRead(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(
-    values,
-    [
-      "outline",
-      "message",
-      "message-range",
-      "seq-range",
-      "include-tools",
-      "include-thinking",
-      "search",
-      "max-bytes",
-      "format",
-    ],
-    json,
-  );
+  const denied = checkFlags(values, flagNamesFor("conversation read"), json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -574,7 +563,7 @@ async function runConversationCompact(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, ["message", "force", "wait"], json);
+  const denied = checkFlags(values, flagNamesFor("conversation compact"), json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -775,7 +764,11 @@ async function runCompactionGet(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, ["message", "format"], json);
+  const denied = checkFlags(
+    values,
+    flagNamesFor("conversation compaction get"),
+    json,
+  );
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -926,7 +919,11 @@ async function runCompactionList(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, [], json);
+  const denied = checkFlags(
+    values,
+    flagNamesFor("conversation compaction list"),
+    json,
+  );
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);

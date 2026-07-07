@@ -210,7 +210,7 @@ function WorkflowBuilderEditorInner({
         isMobile={isMobile}
       />
       {saveError && (
-        <div className="border-b border-solid border-b-[var(--cc-red-a15)] bg-[var(--cc-red-a06)] px-md py-sm font-mono text-[0.72rem] leading-[1.4] text-red">
+        <div className="border-b border-solid border-b-[var(--cc-red-a15)] bg-[var(--cc-red-a06)] px-md py-sm font-mono text-[0.72rem] leading-[1.4] whitespace-pre-line text-red">
           {saveError}
         </div>
       )}
