@@ -14,7 +14,7 @@ import {
   conflictEntrySchema,
 } from "@/lib/jobs/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
-import { workflowCharterSchema } from "./charter-schemas";
+import { sourceOfTruthSchema, workflowCharterSchema } from "./charter-schemas";
 
 // ============================================================
 // Graph Workflow Agent Configuration Schemas
@@ -1589,6 +1589,219 @@ export const workflowRuntimeEditRequestSchema = z.object({
 });
 export type WorkflowRuntimeEditRequest = z.infer<
   typeof workflowRuntimeEditRequestSchema
+>;
+
+// ============================================================
+// Workflow Definition Edits (targeted saved-definition edits)
+// ============================================================
+// Ordered, atomic domain operations that mutate a SAVED
+// `WorkflowDefinitionRecord` (docs/design/cc-cli/05). The verbs and field names
+// deliberately mirror the runtime-edit schema above, but the surfaces stay
+// separate: runtime edits mutate a running execution's `workingDefinition`,
+// these mutate the saved definition. Operations are addressed by stable ids
+// (never array indices) so a batch can reference intra-batch additions (add a
+// context, then its tasks, then its edges). They are applied sequentially by
+// `applyDefinitionEdits` (src/lib/workflow-graph/definition-edits.ts); the final
+// mutated definition runs the same accept-time gate as create/replace before
+// persisting.
+
+// Relative task placement. Agents never write the numeric `order` field — the
+// server renumbers each touched context to a dense 1..n after every task op, so
+// the `duplicate-task-order` invariant is unviolable.
+const definitionEditTaskPositionSchema = z.union([
+  z.object({ at: z.enum(["start", "end"]) }),
+  z.object({ after: z.string().trim().min(1) }),
+  z.object({ before: z.string().trim().min(1) }),
+]);
+export type DefinitionEditTaskPosition = z.infer<
+  typeof definitionEditTaskPositionSchema
+>;
+
+// Per-context config override blocks on `add-context` — additive, so plain
+// optional (the same shape a plan.json context carries).
+const definitionEditAddContextConfigShape = {
+  implementer: graphWorkflowAgentConfigSchema.optional(),
+  contextValidator: contextValidatorOverrideSchema.optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  collaboration: workflowCollaborationConfigOverrideSchema.optional(),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
+};
+
+// Per-context config override blocks on `update-context` — `null` CLEARS the
+// override (restores cascade inheritance); an absent field is untouched.
+const definitionEditUpdateContextConfigShape = {
+  implementer: graphWorkflowAgentConfigSchema.nullable().optional(),
+  contextValidator: contextValidatorOverrideSchema.nullable().optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema
+    .nullable()
+    .optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.nullable().optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.nullable().optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.nullable().optional(),
+  collaboration: workflowCollaborationConfigOverrideSchema
+    .nullable()
+    .optional(),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema
+    .nullable()
+    .optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema
+    .nullable()
+    .optional(),
+};
+
+// Workflow-level cascade blocks on `update-workflow-config` — `null` CLEARS the
+// override. The workflow-level `contextValidator` is the concrete validator
+// config, not the per-context use/disabled override.
+const definitionEditWorkflowConfigShape = {
+  implementer: graphWorkflowAgentConfigSchema.nullable().optional(),
+  contextValidator: graphWorkflowAgentValidatorConfigSchema
+    .nullable()
+    .optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema
+    .nullable()
+    .optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.nullable().optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.nullable().optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.nullable().optional(),
+  collaboration: workflowCollaborationConfigOverrideSchema
+    .nullable()
+    .optional(),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema
+    .nullable()
+    .optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema
+    .nullable()
+    .optional(),
+};
+
+export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
+  "type",
+  [
+    z.object({
+      type: z.literal("update-workflow"),
+      name: z.string().trim().min(1).optional(),
+      description: z.string().trim().min(1).nullable().optional(),
+    }),
+    z.object({
+      type: z.literal("update-charter"),
+      mission: z.string().trim().min(1).optional(),
+      conventions: z.array(z.string()).nullable().optional(),
+      nonGoals: z.array(z.string()).nullable().optional(),
+      vocabulary: z.array(z.string()).nullable().optional(),
+      testStrategy: z.string().nullable().optional(),
+      knownAmbiguities: z.array(z.string()).nullable().optional(),
+      sourcesOfTruth: z.array(sourceOfTruthSchema).optional(),
+    }),
+    z.object({
+      type: z.literal("update-workflow-config"),
+      ...definitionEditWorkflowConfigShape,
+    }),
+    z.object({
+      type: z.literal("add-context"),
+      id: z.string().trim().min(1),
+      title: z.string().trim().min(1),
+      acceptanceCriteria: z.string().trim().min(1),
+      description: z.string().trim().min(1).optional(),
+      ...definitionEditAddContextConfigShape,
+    }),
+    z.object({
+      type: z.literal("update-context"),
+      contextId: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
+      description: z.string().trim().min(1).nullable().optional(),
+      acceptanceCriteria: z.string().trim().min(1).optional(),
+      ...definitionEditUpdateContextConfigShape,
+    }),
+    z.object({
+      type: z.literal("remove-context"),
+      contextId: z.string().trim().min(1),
+      deleteTasks: z.boolean().optional(),
+    }),
+    z.object({
+      type: z.literal("add-task"),
+      id: z.string().trim().min(1),
+      contextId: z.string().trim().min(1),
+      title: z.string().trim().min(1),
+      instructions: z.string().trim().min(1),
+      metadata: z.record(z.string(), z.string()).optional(),
+      position: definitionEditTaskPositionSchema.optional(),
+    }),
+    z.object({
+      type: z.literal("update-task"),
+      taskId: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
+      instructions: z.string().trim().min(1).optional(),
+      metadata: z.record(z.string(), z.string()).nullable().optional(),
+    }),
+    z.object({
+      type: z.literal("remove-task"),
+      taskId: z.string().trim().min(1),
+    }),
+    z.object({
+      type: z.literal("move-task"),
+      taskId: z.string().trim().min(1),
+      contextId: z.string().trim().min(1).optional(),
+      position: definitionEditTaskPositionSchema.optional(),
+    }),
+    z.object({
+      type: z.literal("reorder-tasks"),
+      contextId: z.string().trim().min(1),
+      orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
+    }),
+    z.object({
+      type: z.literal("add-edge"),
+      sourceContextId: z.string().trim().min(1),
+      targetContextId: z.string().trim().min(1),
+    }),
+    z.object({
+      type: z.literal("remove-edge"),
+      sourceContextId: z.string().trim().min(1),
+      targetContextId: z.string().trim().min(1),
+    }),
+    z.object({
+      type: z.literal("add-parameter"),
+      declaration: parameterDeclarationSchema,
+    }),
+    z.object({
+      type: z.literal("update-parameter"),
+      name: z.string().trim().min(1),
+      declaration: parameterDeclarationSchema,
+    }),
+    z.object({
+      type: z.literal("remove-parameter"),
+      name: z.string().trim().min(1),
+    }),
+    z.object({
+      type: z.literal("add-prerequisite"),
+      prerequisite: prerequisiteSchema,
+    }),
+    // Matched by identity (kind + path/skill); prerequisites carry no ids.
+    z.object({
+      type: z.literal("remove-prerequisite"),
+      kind: z.enum(["path", "skill"]),
+      path: z.string().trim().min(1).optional(),
+      skill: z.string().trim().min(1).optional(),
+    }),
+  ],
+);
+export type DefinitionEditOperation = z.infer<
+  typeof workflowDefinitionEditOperationSchema
+>;
+
+export const workflowDefinitionEditRequestSchema = z.object({
+  // Optimistic-concurrency guard: the revision the edits were authored against.
+  // The server rejects with `revision_conflict` if the stored revision differs.
+  baseRevision: z.number().int().min(1),
+  // Full apply + validate, report the outcome, persist nothing.
+  dryRun: z.boolean().optional(),
+  operations: z.array(workflowDefinitionEditOperationSchema).min(1),
+});
+export type WorkflowDefinitionEditRequest = z.infer<
+  typeof workflowDefinitionEditRequestSchema
 >;
 
 // ============================================================

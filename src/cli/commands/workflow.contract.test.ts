@@ -17,6 +17,7 @@ import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import {
   createWorkflowDefinition,
+  createWorkflowDefinitionRecord,
   createWorkflowExecution,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
@@ -117,7 +118,11 @@ function routeHost(
     resolveProjectPath: async () => PROJECT_PATH,
     readConfig: notUsed,
     listDefinitions: async () => [summary()],
-    getDefinition: notUsed,
+    // A real record backs `get`/`edit`: revision 3, the fixture graph.
+    getDefinition: async (_projectPath, workflowId) =>
+      workflowId === "wf-1"
+        ? createWorkflowDefinitionRecord({ id: "wf-1", revision: 3 })
+        : null,
     // Echo a summary so the CLI parses the real 201 `{ item }` shape (id/name
     // for the start hint); the create-path Zod + structural validation the
     // handler runs before this is exercised for real by the invalid-plan case.
@@ -190,6 +195,36 @@ function routeHost(
           return definitionHandlers.UPDATE(request, {
             params: Promise.resolve({ name, workflowId }),
           });
+        }
+        if (init.method === "PATCH") {
+          return definitionHandlers.EDIT(request, {
+            params: Promise.resolve({ name, workflowId }),
+          });
+        }
+        // The pre-existing GET-by-id handler needs a full GlobalConfig to compute
+        // `resolved`; the CLI's outline/selectors are a projection over `item`, so
+        // this returns the real GET response shape directly.
+        if (init.method === "GET" && workflowId) {
+          const record =
+            workflowId === "wf-1"
+              ? createWorkflowDefinitionRecord({ id: "wf-1", revision: 3 })
+              : null;
+          if (!record) {
+            return new Response(
+              JSON.stringify({ error: "Workflow not found" }),
+              {
+                status: 404,
+                headers: { "content-type": "application/json" },
+              },
+            );
+          }
+          return new Response(
+            JSON.stringify({ item: record, resolved: null }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
         }
         return definitionHandlers.LIST(request, {
           params: Promise.resolve({ name }),
@@ -344,6 +379,124 @@ describe("cctl workflow against the real workflow route handlers", () => {
         .trimEnd()
         .endsWith("track progress with 'cctl workflow status'"),
     ).toBe(true);
+  });
+
+  it("get prints the compact outline by default (sizes, not bodies)", async () => {
+    const result = await runCli(
+      ["workflow", "get", "wf-1"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      'workflow wf-1 "Workflow Graph Builder" rev 3',
+    );
+    expect(result.stdout).toContain("contexts (3):");
+    expect(result.stdout).toContain("tasks:");
+    // The full instruction prose never appears in the outline.
+    expect(result.stdout).not.toContain("Read the relevant files.");
+  });
+
+  it("get --task slices one task's full instructions", async () => {
+    const result = await runCli(
+      ["workflow", "get", "wf-1", "--task", "task-plan-1", "--json"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.section).toBe("task");
+    expect(envelope.value.instructions).toBe("Read the relevant files.");
+  });
+
+  it("get rejects more than one section selector (exit 2)", async () => {
+    const result = await runCli(
+      ["workflow", "get", "wf-1", "--charter", "--config"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("at most one");
+  });
+
+  it("edit applies a valid batch via the real PATCH handler", async () => {
+    const ops = "/tmp/ops.json";
+    const result = await runCli(
+      ["workflow", "edit", "wf-1", "--file", ops],
+      env,
+      routeHost(null, {
+        [ops]: JSON.stringify({
+          baseRevision: 3,
+          operations: [
+            {
+              type: "update-task",
+              taskId: "task-plan-1",
+              instructions: "Read the new files.",
+            },
+          ],
+        }),
+      }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("1 operation applied");
+    expect(result.stdout).toContain("revision 4");
+  });
+
+  it("edit exits 1 with revision_conflict on a stale baseRevision", async () => {
+    const ops = "/tmp/ops.json";
+    const result = await runCli(
+      ["workflow", "edit", "wf-1", "--file", ops, "--json"],
+      env,
+      routeHost(null, {
+        [ops]: JSON.stringify({
+          baseRevision: 2,
+          operations: [{ type: "update-workflow", name: "x" }],
+        }),
+      }),
+    );
+    expect(result.exitCode).toBe(1);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.code).toBe("revision_conflict");
+  });
+
+  it("edit exits 1 with a locator issue for a semantic rejection", async () => {
+    const ops = "/tmp/ops.json";
+    const result = await runCli(
+      ["workflow", "edit", "wf-1", "--file", ops, "--json"],
+      env,
+      routeHost(null, {
+        [ops]: JSON.stringify({
+          baseRevision: 3,
+          operations: [{ type: "update-task", taskId: "missing", title: "x" }],
+        }),
+      }),
+    );
+    expect(result.exitCode).toBe(1);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.code).toBe("invalid_edit");
+    expect(envelope.issues[0].path).toBe("operations[0]");
+  });
+
+  it("edit --dry-run reports the outcome without persisting", async () => {
+    const ops = "/tmp/ops.json";
+    const result = await runCli(
+      ["workflow", "edit", "wf-1", "--file", ops, "--dry-run"],
+      env,
+      routeHost(null, {
+        [ops]: JSON.stringify({
+          baseRevision: 3,
+          operations: [
+            {
+              type: "update-task",
+              taskId: "task-plan-1",
+              title: "Renamed",
+            },
+          ],
+        }),
+      }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("dry-run OK");
   });
 });
 

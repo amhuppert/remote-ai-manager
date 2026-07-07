@@ -68,6 +68,7 @@ const COVERAGE: string[] = [
   "workflow validate",
   "workflow create",
   "workflow replace",
+  "workflow edit",
   "workflow list",
   "workflow get",
   "workflow status",

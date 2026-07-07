@@ -2,9 +2,12 @@ import { z } from "zod";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
+  EXIT_OPERATION_FAILED,
+  EXIT_USAGE,
   checkFlags,
   cliRequest,
   encodePathSegment,
+  failure,
   failureFromRequest,
   failureFromRequestNotFoundAsUsage,
   readJsonObjectFile,
@@ -12,6 +15,7 @@ import {
   resolveLaneContext,
   resolveProjectContext,
   resolveSessionContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -23,6 +27,18 @@ import {
   type ProjectContext,
   type SessionContext,
 } from "../shared";
+import {
+  buildOutlineData,
+  parseOutlineRecord,
+  renderOutline,
+  sliceCharter,
+  sliceConfig,
+  sliceContext,
+  sliceParams,
+  sliceTask,
+  type OutlineRecord,
+  type SliceResult,
+} from "./workflow-outline";
 
 /**
  * `cctl workflow validate|create|replace|list|get|status|delete|start|templates`
@@ -57,6 +73,31 @@ const mutationResponseSchema = z.object({ item: definitionItemSchema });
 
 const TEMPLATE_TIERS = ["global", "project"] as const;
 type TemplateTier = (typeof TEMPLATE_TIERS)[number];
+
+/** `workflow get`/`edit` `--tier` (default project). One selector per invocation. */
+function resolveTierFlag(
+  values: Record<string, string>,
+  json: boolean,
+): { ok: true; tier: TemplateTier } | { ok: false; result: CliResult } {
+  const tierValue = values["tier"];
+  if (tierValue === undefined) return { ok: true, tier: "project" };
+  if (!(TEMPLATE_TIERS as readonly string[]).includes(tierValue)) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `--tier must be one of: ${TEMPLATE_TIERS.join(", ")}`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, tier: tierValue as TemplateTier };
+}
+
+const editResponseSchema = z.object({
+  item: z.object({ id: z.string(), name: z.string(), revision: z.number() }),
+  applied: z.number(),
+  dryRun: z.boolean().optional(),
+});
 
 const definitionSummarySchema = z.object({
   id: z.string(),
@@ -128,6 +169,55 @@ function workflowFailure(
   return failureFromRequestNotFoundAsUsage(result, json);
 }
 
+/** The read/edit resource path for one definition, tier-aware. */
+function definitionResourcePath(
+  context: ProjectContext,
+  tier: TemplateTier,
+  id: string,
+): string {
+  return tier === "global"
+    ? `/api/workflow-templates/${encodePathSegment(id)}`
+    : `${definitionsPath(context)}/${encodePathSegment(id)}`;
+}
+
+/**
+ * `workflow edit` failure mapping (docs/design/cc-cli/05 §Error contract): a 404
+ * (unknown id) is a caller mistake → exit 2; a SEMANTIC rejection (server code
+ * `invalid_edit`) and a `revision_conflict` are "server said no about valid-shaped
+ * ops" → exit 1; a malformed-shape 400 (no code) is a usage error → exit 2. All
+ * carry the structured issues/code onto the JSON envelope.
+ */
+function workflowEditFailure(
+  result: Exclude<CliRequestResult, { kind: "ok" }>,
+  json: boolean,
+): CliResult {
+  if (result.kind === "error" && result.status === 404) {
+    return failure({
+      exitCode: EXIT_USAGE,
+      message: result.error,
+      ...structuredErrorFields(result),
+      json,
+    });
+  }
+  if (result.kind === "error" && result.status === 400) {
+    const semantic = result.code !== undefined;
+    const detail =
+      result.issues && result.issues.length > 0
+        ? result.issues
+            .map((issue) => `  ${issue.path}: ${issue.message}`)
+            .join("\n")
+        : undefined;
+    return failure({
+      exitCode: semantic ? EXIT_OPERATION_FAILED : EXIT_USAGE,
+      message: result.error,
+      ...(detail ? { detail } : {}),
+      ...structuredErrorFields(result),
+      json,
+    });
+  }
+  return failureFromRequest(result, json);
+}
+
 export async function runWorkflow(
   rest: string[],
   flags: GlobalFlags,
@@ -139,7 +229,7 @@ export async function runWorkflow(
   const sub = rest[0];
   if (sub === undefined) {
     return usageFailure(
-      "workflow requires a subcommand: validate, create, replace, list, get, status, delete, start, templates, task, shared-doc, or collab",
+      "workflow requires a subcommand: validate, create, replace, edit, list, get, status, delete, start, templates, task, shared-doc, or collab",
       json,
     );
   }
@@ -160,6 +250,9 @@ export async function runWorkflow(
   }
   if (sub === "replace") {
     return runWorkflowReplace(rest.slice(1), flags, values, env, host);
+  }
+  if (sub === "edit") {
+    return runWorkflowEdit(rest.slice(1), flags, values, env, host);
   }
   if (sub === "list") {
     return runWorkflowList(rest.slice(1), flags, values, env, host);
@@ -390,6 +483,37 @@ async function runWorkflowList(
   };
 }
 
+/** The mutually-exclusive `workflow get` section selectors, in help order. */
+const GET_SELECTOR_FLAGS = [
+  "full",
+  "context",
+  "task",
+  "charter",
+  "config",
+  "params",
+] as const;
+
+function applyGetSelector(
+  record: OutlineRecord,
+  selector: string,
+  values: Record<string, string>,
+): SliceResult {
+  switch (selector) {
+    case "context":
+      return sliceContext(record, values["context"] ?? "");
+    case "task":
+      return sliceTask(record, values["task"] ?? "");
+    case "charter":
+      return sliceCharter(record);
+    case "config":
+      return sliceConfig(record);
+    case "params":
+      return sliceParams(record);
+    default:
+      return { ok: false, error: `unknown selector "${selector}"` };
+  }
+}
+
 async function runWorkflowGet(
   rest: string[],
   flags: GlobalFlags,
@@ -409,6 +533,20 @@ async function runWorkflowGet(
     return usageFailure("workflow get takes a single <id> argument", json);
   }
 
+  const tierResult = resolveTierFlag(values, json);
+  if (!tierResult.ok) return tierResult.result;
+
+  const selectors = GET_SELECTOR_FLAGS.filter(
+    (name) => values[name] !== undefined,
+  );
+  if (selectors.length > 1) {
+    return usageFailure(
+      `choose at most one section selector (--${selectors.join(", --")})`,
+      json,
+    );
+  }
+  const selector = selectors[0];
+
   const resolved = await resolveProjectContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
@@ -418,25 +556,140 @@ async function runWorkflowGet(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "GET",
-    path: `${definitionsPath(context)}/${encodePathSegment(id)}`,
+    path: definitionResourcePath(context, tierResult.tier, id),
   });
   if (result.kind !== "ok") return workflowFailure(result, json);
 
   const parsed = getResponseSchema.safeParse(result.body);
   const item = parsed.success ? parsed.data.item : result.body;
-  const envelope = parsed.success
-    ? {
-        ok: true as const,
-        item: parsed.data.item,
-        ...(parsed.data.resolved !== undefined
+
+  // --full: the entire record (the pre-outline behavior), for wholesale edits.
+  if (selector === "full") {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, `${JSON.stringify(item, null, 2)}\n`, {
+        ok: true,
+        item,
+        ...(parsed.success && parsed.data.resolved !== undefined
           ? { resolved: parsed.data.resolved }
           : {}),
-      }
-    : { ok: true as const, item };
+      }),
+      stderr: "",
+    };
+  }
+
+  const record = parseOutlineRecord(item);
+  if (!record) {
+    // Unrecognizable shape — fall back to the full item so nothing is hidden.
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, `${JSON.stringify(item, null, 2)}\n`, {
+        ok: true,
+        item,
+      }),
+      stderr: "",
+    };
+  }
+
+  // Default: the compact outline (structure + identifiers + prose sizes).
+  if (selector === undefined) {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, renderOutline(record), {
+        ok: true,
+        outline: buildOutlineData(record),
+      }),
+      stderr: "",
+    };
+  }
+
+  // A section selector: one full-prose slice.
+  const slice = applyGetSelector(record, selector, values);
+  if (!slice.ok) return usageFailure(slice.error, json);
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, `${JSON.stringify(slice.value, null, 2)}\n`, {
+      ok: true,
+      section: selector,
+      value: slice.value,
+    }),
+    stderr: "",
+  };
+}
+
+async function runWorkflowEdit(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow edit"), json);
+  if (denied) return denied;
+
+  const id = rest[0];
+  if (id === undefined) {
+    return usageFailure("workflow edit requires an <id> argument", json);
+  }
+  if (rest.length > 1) {
+    return usageFailure("workflow edit takes a single <id> argument", json);
+  }
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      "workflow edit requires --file <ops.json> (or --file - for stdin)",
+      json,
+    );
+  }
+
+  const tierResult = resolveTierFlag(values, json);
+  if (!tierResult.ok) return tierResult.result;
+
+  const ops = await readJsonObjectFile(host, filePath, "ops", json);
+  if (!ops.ok) return ops.result;
+  const body =
+    values["dry-run"] !== undefined
+      ? { ...ops.value, dryRun: true }
+      : ops.value;
+
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "PATCH",
+    path: definitionResourcePath(context, tierResult.tier, id),
+    body,
+  });
+  if (result.kind !== "ok") return workflowEditFailure(result, json);
+
+  const parsed = editResponseSchema.safeParse(result.body);
+  const applied = parsed.success ? parsed.data.applied : undefined;
+  const dryRun = parsed.success ? parsed.data.dryRun === true : false;
+  const revision = parsed.success ? parsed.data.item.revision : undefined;
+  const name = parsed.success ? parsed.data.item.name : undefined;
+  const opCount =
+    applied === undefined
+      ? ""
+      : `${applied} operation${applied === 1 ? "" : "s"}`;
+
+  const humanLine = dryRun
+    ? `dry-run OK${opCount ? `: ${opCount} would apply` : ""}\n`
+    : `edited ${name ? `"${name}"` : id}${opCount ? `: ${opCount} applied` : ""}${revision !== undefined ? `, revision ${revision}` : ""}\n`;
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${JSON.stringify(item, null, 2)}\n`, envelope),
+    stdout: render(json, humanLine, {
+      ok: true,
+      workflowId: id,
+      ...(applied !== undefined ? { applied } : {}),
+      ...(revision !== undefined ? { revision } : {}),
+      ...(dryRun ? { dryRun: true } : {}),
+    }),
     stderr: "",
   };
 }

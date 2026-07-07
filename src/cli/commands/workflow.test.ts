@@ -93,12 +93,52 @@ describe("cctl workflow list", () => {
 });
 
 describe("cctl workflow get", () => {
-  it("prints the full definition and includes resolved in the json envelope", async () => {
+  it("prints the compact outline by default (structure + sizes)", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        item: {
+          id: "wf-1",
+          name: "T",
+          revision: 3,
+          definition: {
+            executionContexts: [
+              { id: "plan", title: "Plan", acceptanceCriteria: "ok" },
+            ],
+            tasks: [
+              {
+                id: "plan-1",
+                contextId: "plan",
+                order: 1,
+                title: "Do it",
+                instructions: "x".repeat(120),
+              },
+            ],
+            edges: [],
+            charter: { mission: "m", sourcesOfTruth: [{ rank: 1 }] },
+            parameters: [],
+            prerequisites: [],
+          },
+        },
+        resolved: { ok: 1 },
+      }),
+    );
+    const result = await runCli(["workflow", "get", "wf-1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/projects/cc/workflows/wf-1",
+    );
+    expect(result.stdout).toContain('workflow wf-1 "T" rev 3');
+    expect(result.stdout).toContain("contexts (1):");
+    expect(result.stdout).toContain("(120 chars)");
+  });
+
+  it("--full prints the entire record incl. resolved in the json envelope", async () => {
     const host = makeHost(() =>
       jsonResponse({ item: { id: "wf-1", name: "T" }, resolved: { ok: 1 } }),
     );
     const result = await runCli(
-      ["workflow", "get", "wf-1", "--json"],
+      ["workflow", "get", "wf-1", "--full", "--json"],
       baseEnv,
       host,
     );

@@ -15,6 +15,15 @@ const result = await runCli(process.argv.slice(2), process.env, {
     );
   },
   async readTextFile(filePath) {
+    // `--file -` reads the payload from stdin, so an agent can pipe a small
+    // ops/plan JSON in a single Bash heredoc without a scratch file.
+    if (filePath === "-") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk as Buffer);
+      }
+      return Buffer.concat(chunks).toString("utf-8");
+    }
     try {
       return await readFile(filePath, "utf-8");
     } catch {

@@ -11,6 +11,7 @@ import {
 } from "@/lib/workflow-graph/storage";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import { validateWorkflowPlan } from "./plan-validation";
+import { runDefinitionEditRequest } from "./definition-edit-handler";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -196,6 +197,25 @@ export function createWorkflowDefinitionRouteHandlers(
     }
   }
 
+  async function EDIT(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const { name = "", workflowId = "" } = await context.params;
+    const projectPath = await resolveProjectOr404(deps, name);
+    if (projectPath instanceof Response) {
+      return projectPath;
+    }
+
+    const rawBody = await request.json().catch(() => undefined);
+    return runDefinitionEditRequest({
+      rawBody,
+      notFoundError: "Workflow not found",
+      loadRecord: () => deps.getDefinition(projectPath, workflowId),
+      persist: (draft) => deps.updateDefinition(projectPath, workflowId, draft),
+    });
+  }
+
   async function DELETE(
     _request: Request,
     context: RouteContext,
@@ -217,5 +237,5 @@ export function createWorkflowDefinitionRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
-  return { LIST, CREATE, GET, UPDATE, DELETE };
+  return { LIST, CREATE, GET, UPDATE, EDIT, DELETE };
 }

@@ -196,10 +196,15 @@ describe("booleanFlagNames() over the real registry", () => {
   // parser-intrinsic (not a registry flag), so it is deliberately absent.
   it("is exactly the union of every boolean flag across all commands", () => {
     expect(booleanFlagNames().sort()).toEqual([
+      "charter",
+      "config",
+      "dry-run",
       "force",
+      "full",
       "include-thinking",
       "multi-select",
       "outline",
+      "params",
       "skip-warm",
       "wait",
     ]);

@@ -32,7 +32,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     description:
       "Author, read, launch, and inspect graph workflows — saved multi-context task graphs and their live executions. Authoring walks the canonical chain validate → create → start. The lane verbs (task complete/add, shared-doc upsert, collab request) are a SEPARATE family for the implementer agent inside a running execution.",
     usage: [
-      "cctl workflow <validate|create|replace|list|get|status|start|delete|templates>",
+      "cctl workflow <validate|create|replace|edit|list|get|status|start|delete|templates>",
       "cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)",
     ],
     flags: [],
@@ -68,6 +68,11 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         command: "workflow create",
         oneLiner: "save the validated plan as a new definition",
+      },
+      {
+        command: "workflow edit",
+        oneLiner:
+          "for a targeted change, edit in place instead of re-validating a whole plan",
       },
     ],
     skills: [GRAPH_PLANNING_SKILL],
@@ -111,7 +116,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "overwrite an existing definition from a plan file",
     description:
-      "Overwrite an existing definition (<id>) with a plan.json — submit the COMPLETE graph, not a diff (the previous definition is fully overwritten). Re-validate first. No hint — a revision is not a step in the author-then-start chain.",
+      "Overwrite an existing definition (<id>) with a plan.json — submit the COMPLETE graph, not a diff (the previous definition is fully overwritten). For a targeted change (one task, add a context, clear an override) prefer `cctl workflow edit` — far cheaper. Re-validate first. No hint — a revision is not a step in the author-then-start chain.",
     usage: ["cctl workflow replace <id> --file .cc/temp/plan.json [--json]"],
     flags: [
       {
@@ -125,10 +130,15 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl workflow replace wf-1 --file .cc/temp/plan.json",
         explanation:
-          "fully overwrites wf-1 — `cctl workflow get wf-1` first, edit the whole graph, re-validate, then replace",
+          "fully overwrites wf-1 — `cctl workflow get wf-1 --full` first, edit the whole graph, re-validate, then replace",
       },
     ],
     related: [
+      {
+        command: "workflow edit",
+        oneLiner:
+          "apply a targeted, atomic edit instead of resubmitting the whole graph",
+      },
       {
         command: "workflow get",
         oneLiner: "print the current definition to edit before replacing",
@@ -163,25 +173,139 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
   {
     path: ["workflow", "get"],
     dynamicContext: true,
-    summary: "print a saved definition's full JSON",
+    summary: "print a definition's outline (or one section, or the full JSON)",
     description:
-      "Print a saved definition's full JSON, for inspection before a `cctl workflow replace`. An unknown id exits 2. No hint.",
-    usage: ["cctl workflow get <id> [--json]"],
-    flags: [],
+      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace`. At most one selector per invocation. An unknown id exits 2. No hint.",
+    usage: [
+      "cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]",
+    ],
+    flags: [
+      {
+        name: "full",
+        kind: "boolean",
+        description:
+          "print the entire WorkflowDefinitionRecord (the pre-outline behavior)",
+      },
+      {
+        name: "context",
+        kind: "value",
+        valuePlaceholder: "<ctx>",
+        description: "one context (full prose + config) and its tasks",
+      },
+      {
+        name: "task",
+        kind: "value",
+        valuePlaceholder: "<task>",
+        description: "one task, full instructions + metadata",
+      },
+      {
+        name: "charter",
+        kind: "boolean",
+        description: "the charter only",
+      },
+      {
+        name: "config",
+        kind: "boolean",
+        description: "workflowConfig + per-context override blocks only",
+      },
+      {
+        name: "params",
+        kind: "boolean",
+        description: "parameters + prerequisites",
+      },
+      {
+        name: "tier",
+        kind: "value",
+        valuePlaceholder: "global|project",
+        description:
+          "read a global-library template instead of this project's definition",
+      },
+    ],
     examples: [
       {
         invocation: "cctl workflow get wf-1",
         explanation:
-          "the id comes from `cctl workflow list`; pipe this into a file to edit for a `replace`",
+          "the outline IS the edit map — read it first, note the revision, then fetch only the piece you'll change",
+      },
+      {
+        invocation: "cctl workflow get wf-1 --task impl-tokens",
+        explanation:
+          "pulls one task's full instructions (the outline shows sizes, not bodies) — a cheap targeted read before `cctl workflow edit`",
       },
     ],
     related: [
+      {
+        command: "workflow edit",
+        oneLiner: "apply targeted edits addressed by the ids the outline shows",
+      },
       { command: "workflow list", oneLiner: "find the id to inspect" },
       {
         command: "workflow replace",
-        oneLiner: "overwrite the definition after editing it",
+        oneLiner: "overwrite the whole definition (get it with --full first)",
       },
     ],
+  },
+  {
+    path: ["workflow", "edit"],
+    dynamicContext: true,
+    summary: "apply targeted, atomic edits to a saved definition",
+    description:
+      'Apply an ordered batch of domain operations to a saved definition, addressed by STABLE IDS (never array indices) — cost proportional to the change, not the whole plan. --file is a JSON object { baseRevision, operations[] }; baseRevision is the revision `cctl workflow get` shows (a stale value exits 1 revision_conflict — re-read and retry). Operations apply SEQUENTIALLY (later ops see earlier ones — add a context, then its tasks, then its edges in one batch) and ATOMICALLY (any per-op or post-batch validation error rejects the whole batch; nothing persists). Ops (verbs mirror the runtime task-edit vocabulary): update-workflow, update-charter, update-workflow-config, add/update/remove-context, add/update/remove/move-task, reorder-tasks, add/remove-edge, add/update/remove-parameter, add/remove-prerequisite. Task order is never written by hand — place with position {"at":"start|end"} | {"after":"<id>"} | {"before":"<id>"}. A config/override field set to null CLEARS it (restores cascade inheritance). Malformed ops exit 2; a rejected batch exits 1 with locator-first issues (operations[i]: <code> — <detail>).',
+    usage: [
+      "cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<ops.json>",
+        description:
+          'JSON object { "baseRevision": N, "operations": [ … ] } (or - to read from stdin)',
+      },
+      {
+        name: "dry-run",
+        kind: "boolean",
+        description: "apply + validate + report the outcome, persist nothing",
+      },
+      {
+        name: "tier",
+        kind: "value",
+        valuePlaceholder: "global|project",
+        description:
+          "edit a global-library template instead of this project's definition",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow edit wf-1 --file .cc/temp/ops.json",
+        explanation:
+          'ops.json: { "baseRevision": 7, "operations": [ { "type": "update-task", "taskId": "impl-tokens", "instructions": "…" } ] } — take baseRevision from `cctl workflow get`',
+      },
+      {
+        invocation:
+          "cctl workflow edit wf-1 --file .cc/temp/ops.json --dry-run",
+        explanation:
+          'pre-flight a risky batch — e.g. add a task with "position": {"after":"impl-tokens"} and clear an override with "contextValidator": null; --dry-run persists nothing',
+      },
+    ],
+    related: [
+      {
+        command: "workflow get",
+        oneLiner: "read the outline for the ids + baseRevision to edit against",
+      },
+      {
+        command: "workflow replace",
+        oneLiner:
+          "recompose the WHOLE graph when a targeted edit is not enough",
+      },
+      {
+        command: "workflow validate",
+        oneLiner: "pre-flight a full plan before a replace",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+    domainContext:
+      "A running execution uses its own working copy — editing the saved definition does not affect it; start a fresh execution to pick up the change.",
   },
   {
     path: ["workflow", "status"],

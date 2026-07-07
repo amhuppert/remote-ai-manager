@@ -207,7 +207,13 @@ Run these from the session (the CLI reads its project/session identity from the 
 2. `cctl workflow create --file .cc/temp/plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
 3. `cctl workflow start <id>` — starts execution.
 
-To revise a definition after user feedback, edit `.cc/temp/plan.json` and run `cctl workflow replace <id> --file .cc/temp/plan.json` (submit the complete graph; the previous definition is fully overwritten). Re-validate first. If a running execution already exists, replacing the saved definition may not mutate that active execution — tell the user when a fresh execution or reset is needed.
+To revise a saved definition after user feedback, prefer **targeted edits** — cost proportional to the change, not the whole plan:
+
+1. `cctl workflow get <id>` — read the compact **outline** (context/task ids, deps, prose sizes, and the current `revision`). Pull only the piece you will change with `--task <id>` / `--context <id>` / `--charter` / `--config` / `--params`.
+2. Author `.cc/temp/ops.json` — `{ "baseRevision": <the revision the outline showed>, "operations": [ … ] }` — using the domain ops (`update-task`, `add-context`, `add-task` with a relative `position`, `add-edge`, `update-workflow-config`, a config field set to `null` clears an override, …). The batch is ordered, atomic, and lands behind the **same** accept-time validation as `create`.
+3. `cctl workflow edit <id> --file .cc/temp/ops.json` (add `--dry-run` to pre-flight a risky batch). A stale `baseRevision` exits with `revision_conflict` — re-read and retry.
+
+Use `cctl workflow replace <id> --file .cc/temp/plan.json` only for a **wholesale recomposition** — get it first with `cctl workflow get <id> --full`, submit the complete graph, re-validate first. Editing (or replacing) a saved definition does NOT mutate a running execution — it uses its own working copy; tell the user when a fresh execution or reset is needed.
 
 ### Before submitting, confirm
 

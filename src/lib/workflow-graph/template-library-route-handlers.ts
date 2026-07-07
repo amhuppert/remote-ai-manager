@@ -19,6 +19,7 @@ import {
   createTemplateLibraryService,
   type TemplateLibraryItem,
 } from "./template-library-service";
+import { runDefinitionEditRequest } from "@/lib/workflows/definition-edit-handler";
 
 const workflowDefinitionMutationSchema = z.object({
   name: z.string().trim().min(1),
@@ -207,6 +208,20 @@ export function createTemplateLibraryRouteHandlers(
     }
   }
 
+  async function EDIT(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const { workflowId = "" } = await context.params;
+    const rawBody = await request.json().catch(() => undefined);
+    return runDefinitionEditRequest({
+      rawBody,
+      notFoundError: "Template not found",
+      loadRecord: () => deps.getGlobal(workflowId),
+      persist: (draft) => deps.updateGlobal(workflowId, draft),
+    });
+  }
+
   async function DELETE(
     _request: Request,
     context: RouteContext,
@@ -223,5 +238,5 @@ export function createTemplateLibraryRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
-  return { LIST_TEMPLATES, LIST_GLOBAL, CREATE, GET, UPDATE, DELETE };
+  return { LIST_TEMPLATES, LIST_GLOBAL, CREATE, GET, UPDATE, EDIT, DELETE };
 }

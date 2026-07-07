@@ -33,6 +33,10 @@ export const updateWorkflowDefinition = withTracing(async (request, context) =>
   definitionHandlers.UPDATE(request, context),
 );
 
+export const editWorkflowDefinition = withTracing(async (request, context) =>
+  definitionHandlers.EDIT(request, context),
+);
+
 export const deleteWorkflowDefinition = withTracing(async (request, context) =>
   definitionHandlers.DELETE(request, context),
 );
@@ -59,6 +63,10 @@ export const getGlobalTemplate = withTracing(async (request, context) =>
 
 export const updateGlobalTemplate = withTracing(async (request, context) =>
   templateLibraryHandlers.UPDATE(request, context),
+);
+
+export const editGlobalTemplate = withTracing(async (request, context) =>
+  templateLibraryHandlers.EDIT(request, context),
 );
 
 export const deleteGlobalTemplate = withTracing(async (request, context) =>

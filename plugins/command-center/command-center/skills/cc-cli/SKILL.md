@@ -492,9 +492,10 @@ task graphs and their live executions. Replaces the `list_graph_workflows`,
 cctl workflow validate --file .cc/temp/plan.json [--json]
 cctl workflow create --file .cc/temp/plan.json [--json]
 cctl workflow replace <id> --file .cc/temp/plan.json [--json]
+cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]
 cctl workflow status [--json]
 cctl workflow list [--json]
-cctl workflow get <id> [--json]
+cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]
 cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]
 cctl workflow delete <id>
 cctl workflow templates [--tier global|project] [--json]
@@ -516,8 +517,26 @@ the planning method), then walk the canonical chain: validate → create → sta
   reviews and edits it in the visual builder before starting.
 - `replace` — overwrite an existing definition (`<id>`) with a `plan.json`;
   submit the **complete** graph, not a diff (the previous definition is fully
-  overwritten). Re-validate first. No hint — a revision is not a step in the
-  author-then-start chain.
+  overwritten). Re-validate first. For a targeted change, prefer `edit`. No hint
+  — a revision is not a step in the author-then-start chain.
+- `edit` — apply an ordered, **atomic** batch of domain operations to a saved
+  definition, addressed by **stable ids** (never array indices) — cost
+  proportional to the change, not the whole plan. `--file` is a JSON object
+  `{ baseRevision, operations[] }` (or `--file -` to read from stdin); take
+  `baseRevision` from what `cctl workflow get` shows (a stale value exits `1`
+  `revision_conflict` — re-read and retry). Ops apply sequentially (later ops see
+  earlier ones — add a context, then its tasks, then its edges in one batch) and
+  reject the whole batch on any per-op or post-batch validation error. Op verbs
+  mirror the runtime task-edit vocabulary: `update-workflow`, `update-charter`,
+  `update-workflow-config`, `add`/`update`/`remove-context`,
+  `add`/`update`/`remove`/`move-task`, `reorder-tasks`, `add`/`remove-edge`,
+  `add`/`update`/`remove-parameter`, `add`/`remove-prerequisite`. Task order is
+  never written by hand — place a task with `position` `{"at":"start|end"}` /
+  `{"after":"<id>"}` / `{"before":"<id>"}`. A config/override field set to `null`
+  **clears** it (restores cascade inheritance). `--dry-run` applies + validates +
+  reports and persists nothing. A malformed ops file exits `2`; a rejected batch
+  exits `1` with locator-first issues (`operations[i]: <code> — <detail>`).
+  `--tier global` edits a global-library template.
 - `status` — the workflow call you reach for most. Prints a compact per-context
   table for this session's active execution (`<context id>  <state>
   <completed>/<total>`), with the execution id and any halt reason on the header
@@ -525,8 +544,14 @@ the planning method), then walk the canonical chain: validate → create → sta
   running it says so plainly. No hint.
 - `list` — this project's saved workflow definitions (`id  name (rev N)  —
   description`). Project-scoped; needs no session. No hint.
-- `get` — print a saved definition's full JSON, for inspection before a
-  `cctl workflow replace`. An unknown id exits `2`. No hint.
+- `get` — print a saved definition's compact **outline** by default (structure,
+  ids, per-context task counts + deps, and prose **sizes**, not bodies) — the
+  navigation map for a targeted `cctl workflow edit`, including the current
+  `revision`. Section selectors fetch **one** full-prose slice
+  (`--context <ctx>` / `--task <task>` / `--charter` / `--config` / `--params`);
+  `--full` prints the entire record (for a wholesale `replace`). At most one
+  selector per invocation; `--tier global` reads a global-library template. An
+  unknown id exits `2`. No hint.
 - `start` — launch an execution from a saved definition id. `--file` supplies a
   JSON **object** of launch parameter values (the `{{inputs.<name>}}` a template
   declares); a missing/invalid/non-object file exits `2`. A guard rejection
@@ -554,6 +579,24 @@ cctl workflow status
 cctl workflow start wf-1 --file .cc/temp/inputs.json
 # → started wf-1 (run exec-9c2a...)
 #   hint: track progress with 'cctl workflow status'
+```
+
+Targeted revision — read the outline, edit one piece (never resubmit the whole graph):
+
+```
+cctl workflow get wf-1
+# → workflow wf-1 "Add OAuth2 Support" rev 7
+#   contexts (3):
+#     plan       "Plan the approach"  deps=-      tasks=2
+#     implement  "Implement"          deps=plan   tasks=4
+#     verify     "Verify"             deps=implement  tasks=1
+#   tasks:
+#     implement  1 impl-tokens  "Migrate tokens"  (1.4k chars)
+#   …
+cctl workflow get wf-1 --task impl-tokens        # pull just that task's full instructions
+# author .cc/temp/ops.json: { "baseRevision": 7, "operations": [ { "type": "update-task", "taskId": "impl-tokens", "instructions": "…" } ] }
+cctl workflow edit wf-1 --file .cc/temp/ops.json
+# → edited "Add OAuth2 Support": 1 operation applied, revision 8
 ```
 
 ### Lane verbs — inside a running graph workflow
