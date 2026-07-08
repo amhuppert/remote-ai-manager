@@ -59,7 +59,12 @@ import {
   publishActor,
   discardParkedRefActor,
 } from "./actors";
-import { extractErrorMessage, errorAssign } from "../utils";
+import {
+  extractErrorMessage,
+  errorAssign,
+  isTimeoutError,
+  timeoutHaltMessage,
+} from "../utils";
 
 const SCHEMA_VERSION = 1;
 
@@ -141,6 +146,10 @@ export const mergeMachine = setup({
     },
     hasFixRetriesRemaining: ({ context }) =>
       context.fixAttempt < context.maxFixAttempts,
+    validationTimedOut: ({ event }) => {
+      const e = event as unknown as { error?: unknown };
+      return isTimeoutError(e.error);
+    },
     prepareProducedConflicts: ({ event }) => {
       const e = event as unknown as { output: PrepareActorOutput };
       return e.output.status === "conflicts";
@@ -406,6 +415,14 @@ export const mergeMachine = setup({
         onDone: "preparing",
         onError: [
           {
+            guard: "validationTimedOut",
+            target: "failed",
+            actions: assign({
+              error: ({ event }) => timeoutHaltMessage(event.error),
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
             guard: "shouldAutoResolve",
             actions: assign({
               error: ({ event }) => extractErrorMessage(event.error),
@@ -487,6 +504,14 @@ export const mergeMachine = setup({
           actions: assign({ error: null }),
         },
         onError: [
+          {
+            guard: "validationTimedOut",
+            target: "failed",
+            actions: assign({
+              error: ({ event }) => timeoutHaltMessage(event.error),
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
           {
             guard: "hasFixRetriesRemaining",
             actions: assign({

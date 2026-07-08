@@ -547,6 +547,8 @@ const smartMergeMetadata: MachineMetadata = {
     analysisSucceeded: 'analyzeConflicts returned status: "analyzed".',
     fixSucceeded: 'fixValidation returned status: "fixed".',
     hasFixRetriesRemaining: "fixAttempt < maxFixAttempts (default 2).",
+    validationTimedOut:
+      "The validation error carries timedOut: true — pre-merge validation was killed by its timeout, not a fixable check failure, so the fix loop is skipped and the merge fails fast.",
     isMergeEntry: "entryMode === 'merge' (default).",
     isLandEntry: "entryMode === 'land' (re-entry on a parked prepared commit).",
     isDiscardEntry:

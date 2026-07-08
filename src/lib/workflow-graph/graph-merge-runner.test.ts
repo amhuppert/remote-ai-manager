@@ -131,6 +131,45 @@ describe("graph-merge-runner", () => {
     ]);
   });
 
+  it("emits a deduped phase breadcrumb for each merge phase the join walks through", async () => {
+    const phases: string[] = [];
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () => buildCapturingMachine([]),
+      recordMergeIntent: () => {},
+      onPhase: (info) => {
+        phases.push(info.phase);
+      },
+    });
+
+    await runner.run({
+      jobId: "job-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "context-verify",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/lane-a",
+      targetWorktreePath: "/tmp/lane-a",
+      message: "join merge",
+      resolutionContext: "Ours: verification. Theirs: implementation.",
+    });
+
+    // The capturing machine merges (conflicts → resolve) then validates and
+    // publishes. Those phases are exactly the forensic breadcrumbs a stuck
+    // join needs — invisible before this change.
+    expect(phases).toContain("merging-main");
+    expect(phases).toContain("resolving-conflicts");
+    expect(phases).toContain("validating");
+    expect(phases).toContain("preparing");
+    expect(phases).toContain("publishing");
+    // No adjacent duplicates: the runner only emits on an actual phase change,
+    // not on every machine snapshot.
+    for (let i = 1; i < phases.length; i++) {
+      expect(phases[i]).not.toBe(phases[i - 1]);
+    }
+  });
+
   it("does not record an intent when no resolutionContext was provided", async () => {
     const recorded: unknown[] = [];
     const runner = createGraphWorkflowMergeRunner({

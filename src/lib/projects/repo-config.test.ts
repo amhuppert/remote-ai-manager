@@ -288,10 +288,13 @@ describe("runPreMergeValidation", () => {
       await runPreMergeValidation(BASE_PARAMS);
       expect.unreachable("should have thrown");
     } catch (err) {
-      const e = err as Error & { gitOutput?: string };
+      const e = err as Error & { gitOutput?: string; timedOut?: boolean };
       expect(e.message).toContain("timed out");
       expect(e.message).toContain("300");
       expect(e.gitOutput).toContain("All checks passed!");
+      // The timeout-ness must survive on the thrown error so the merge machine
+      // can distinguish an unfixable timeout from a fixable validation failure.
+      expect(e.timedOut).toBe(true);
     }
   });
 

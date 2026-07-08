@@ -436,6 +436,75 @@ describe("mergeMachine", () => {
     });
   });
 
+  describe("validation timeout short-circuits the fix loop", () => {
+    it("skips fixingValidation and fails with actionable guidance when initial validation times out", async () => {
+      const states: string[] = [];
+      let fixCallCount = 0;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw Object.assign(
+            new Error("Pre-merge validation timed out after 300s"),
+            { timedOut: true },
+          );
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      // A timeout is an environment/scope limit, not a code defect: the fix
+      // agent can never resolve it, so it must not be dispatched.
+      expect(states).not.toContain("fixingValidation");
+      expect(fixCallCount).toBe(0);
+      expect(output.error).toContain("timed out");
+      expect(output.error).toContain("preMergeTimeoutMs");
+    });
+
+    it("stops retrying when a timeout occurs during revalidation", async () => {
+      const states: string[] = [];
+      let validationCallCount = 0;
+      let fixCallCount = 0;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          // First validation fails normally (fixable), revalidation times out.
+          if (validationCallCount === 1) {
+            throw new Error("typecheck failed: TS2345");
+          }
+          throw Object.assign(
+            new Error("Pre-merge validation timed out after 300s"),
+            { timedOut: true },
+          );
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, maxFixAttempts: 3 },
+      });
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      // The first (fixable) failure dispatches exactly one fix; the timeout on
+      // revalidation must not trigger a second fix even though retries remain.
+      expect(fixCallCount).toBe(1);
+      expect(states.filter((s) => s === "fixingValidation")).toHaveLength(1);
+      expect(output.error).toContain("preMergeTimeoutMs");
+    });
+  });
+
   describe("fix validation failure propagates to failed", () => {
     it("fails when fix returns failed status", async () => {
       const machine = createTestMachine({

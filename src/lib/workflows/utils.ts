@@ -28,6 +28,37 @@ export function extractErrorMessage(error: unknown): string {
 }
 
 /**
+ * Whether a thrown value carries the `timedOut` marker set by pre-merge
+ * validation when its script was killed by the timeout (as opposed to failing
+ * on a real check). Lets the merge machine distinguish an unfixable
+ * environment/scope limit from a fixable validation failure.
+ */
+export function isTimeoutError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "timedOut" in error &&
+    (error as { timedOut?: unknown }).timedOut === true
+  );
+}
+
+/**
+ * Build the halt message for a pre-merge validation timeout, appending the
+ * actionable guidance to the underlying error. A timeout is not something the
+ * validation-fix agent can resolve, so the message tells the operator the
+ * concrete next step instead.
+ */
+export function timeoutHaltMessage(error: unknown): string {
+  return (
+    `${extractErrorMessage(error)}\n\n` +
+    "Skipped the validation-fix agent: a pre-merge validation timeout is an " +
+    "environment/scope limit, not a fixable code error. Increase " +
+    "preMergeTimeoutMs in CommandCenter.json (or narrow the changed-file test " +
+    "scope) and retry the merge."
+  );
+}
+
+/**
  * Create a standard XState assign action for onError handlers.
  *
  * Sets `error` (via extractErrorMessage) and `completedAt` (current timestamp).

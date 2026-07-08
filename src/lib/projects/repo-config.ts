@@ -224,9 +224,20 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     }
 
     if (!result.pass) {
-      const newErr = new Error(result.message ?? "Pre-merge validation failed");
-      (newErr as Error & { gitOutput?: string }).gitOutput =
-        result.output || undefined;
+      const newErr = new Error(
+        result.message ?? "Pre-merge validation failed",
+      ) as Error & { gitOutput?: string; timedOut?: boolean };
+      newErr.gitOutput = result.output || undefined;
+      // Preserve timeout-ness on the thrown error so the merge machine can
+      // short-circuit the fix loop — an agent can't fix a timeout.
+      newErr.timedOut = result.timedOut;
+      if (result.timedOut) {
+        logger.warn("pre-merge.timeout", {
+          sessionName: params.sessionName,
+          worktreePath: params.worktreePath,
+          timeoutMs: params.timeoutMs,
+        });
+      }
       throw newErr;
     }
 

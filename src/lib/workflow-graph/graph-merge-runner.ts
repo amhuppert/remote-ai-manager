@@ -7,7 +7,7 @@ import {
   mergeMachine,
   type MergeMachineType,
 } from "@/lib/workflows/merge/machine";
-import type { MergeOutput } from "@/lib/workflows/merge/types";
+import type { MergeOutput, MergePhase } from "@/lib/workflows/merge/types";
 
 const logger = createLogger("graph-workflow-merge-runner");
 
@@ -34,6 +34,20 @@ export interface GraphMergeRunner {
   run(input: GraphMergeRunnerInput): Promise<MergeOutput>;
 }
 
+/**
+ * Forensic breadcrumb emitted each time the merge machine enters a new phase
+ * during a join. A join can spend minutes inside a single phase (a slow
+ * pre-merge validation, an auto-fix agent turn) with no other signal, so these
+ * mark where the wall-clock is going without a schema/SSE/UI change.
+ */
+export interface GraphMergePhaseInfo {
+  jobId: string;
+  contextId: string;
+  branchName: string;
+  targetBranch: string;
+  phase: MergePhase;
+}
+
 export interface GraphMergeRunnerDeps {
   /**
    * For tests: build a merge machine variant. Production omits this; the
@@ -45,6 +59,8 @@ export interface GraphMergeRunnerDeps {
   buildMachine?: () => MergeMachineType;
   /** Persists the intent brief against the landed squash commit. */
   recordMergeIntent?(input: RecordMergeIntentInput): void;
+  /** Invoked once per distinct merge phase. Defaults to a structured log. */
+  onPhase?(info: GraphMergePhaseInfo): void;
 }
 
 export function createGraphWorkflowMergeRunner(
@@ -52,6 +68,16 @@ export function createGraphWorkflowMergeRunner(
 ): GraphMergeRunner {
   const buildMachine = deps.buildMachine ?? (() => mergeMachine);
   const recordMergeIntent = deps.recordMergeIntent ?? defaultRecordMergeIntent;
+  const onPhase =
+    deps.onPhase ??
+    ((info: GraphMergePhaseInfo) =>
+      logger.info("graph_merge_phase", {
+        jobId: info.jobId,
+        contextId: info.contextId,
+        branchName: info.branchName,
+        targetBranch: info.targetBranch,
+        phase: info.phase,
+      }));
 
   return {
     async run(input: GraphMergeRunnerInput): Promise<MergeOutput> {
@@ -81,6 +107,20 @@ export function createGraphWorkflowMergeRunner(
           targetWorktreePath: input.targetWorktreePath,
           finalizeSessionOnPublish: false,
         },
+      });
+      let lastPhase: MergePhase | null = null;
+      actor.subscribe((snapshot) => {
+        const phase = snapshot.context.phase;
+        if (phase && phase !== lastPhase) {
+          lastPhase = phase;
+          onPhase({
+            jobId: input.jobId,
+            contextId: input.contextId,
+            branchName: input.branchName,
+            targetBranch: input.targetBranch,
+            phase,
+          });
+        }
       });
       actor.start();
       const output = await toPromise(actor);
