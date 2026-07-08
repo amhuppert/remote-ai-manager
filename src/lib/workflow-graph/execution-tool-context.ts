@@ -2,8 +2,13 @@ import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
 import { evaluateContextLimit } from "@/lib/workflows/primitives/context-limit-gate";
 import type { LaneMetrics } from "@/lib/workflows/primitives/lane-vocabulary";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
+} from "@/lib/workflows/schemas";
 import { getExecutionLogger } from "./execution-logger";
+import type { PublishLiveEditAppliedInput } from "./execution-events";
+import type { MutateActiveResult } from "./execution-repository";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { AgentAddedTask } from "./runtime-edits";
 import type { SharedDocumentUpsertInput } from "./shared-documents";
@@ -33,7 +38,10 @@ interface GraphWorkflowExecutionToolContextWorkflowManager {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -41,6 +49,9 @@ export interface GraphWorkflowExecutionToolContextDeps {
   workflowManager: GraphWorkflowExecutionToolContextWorkflowManager;
   runtimeEditService: GraphWorkflowExecutionToolContextRuntimeEditService;
   sharedDocumentRegistry: GraphWorkflowExecutionToolContextSharedDocumentRegistry;
+  publishLiveEditApplied(
+    input: PublishLiveEditAppliedInput,
+  ): GraphWorkflowExecutionEvent[];
   readLiveOccupancy(conversationId: string): LiveOccupancySnapshot | null;
   now?(): string;
 }
@@ -344,11 +355,27 @@ export function createGraphWorkflowExecutionToolContext(
         input.sessionName,
         (execution) => {
           ensureBoundContextActive(execution);
-          return deps.runtimeEditService.applyAgentTaskAdd(
+          const next = deps.runtimeEditService.applyAgentTaskAdd(
             execution,
             input.contextId,
             task,
           );
+          // Lane-agent add_task is an accepted live edit and MUST emit the
+          // mandatory graph-workflow-live-edit-applied event (doc 06 D12/D16)
+          // with the server-derived `source`. The publisher broadcasts on the
+          // wire; its returned rows ride this same mutation so the audit row is
+          // persisted atomically (the repository extra-events path never
+          // broadcasts). A single `add-task` affects exactly its target context.
+          const events = deps.publishLiveEditApplied({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            executionId: next.id,
+            liveRevision: next.liveRevision,
+            operationCount: 1,
+            affectedContextIds: [input.contextId],
+            source: "lane-agent",
+          });
+          return { execution: next, events };
         },
       );
     }

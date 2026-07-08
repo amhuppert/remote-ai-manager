@@ -152,6 +152,11 @@ const MIGRATED_UTILITY_FIRST = [
   // the .prettierrc class-sort override and the tailwind-utility-collisions
   // UTILITY_FIRST_PATHS allowlist.
   "src/components/context-artifacts/**/*.{ts,tsx}",
+  // Live-editing execution-inspector config editors (doc 06 slice 4): shared
+  // field editors reused by the builder and the execution inspector. Mirrors the
+  // .prettierrc class-sort override and the tailwind-utility-collisions
+  // UTILITY_FIRST_PATHS allowlist.
+  "src/components/workflow-config/**/*.{ts,tsx}",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

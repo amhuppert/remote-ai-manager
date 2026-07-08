@@ -6,6 +6,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
 } from "@/lib/workflows/schemas";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionToolContext } from "./execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
@@ -52,19 +53,40 @@ function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
   };
 }
 
+function isMutateActiveResult(
+  value: unknown,
+): value is { execution: GraphWorkflowExecution; events: unknown[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "execution" in value &&
+    "events" in value &&
+    Array.isArray((value as { events: unknown }).events)
+  );
+}
+
 function createFakeMutateActive(store: FakeStore) {
   return async function mutateActive(
     _projectPath: string,
     _sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | GraphWorkflowExecution
+      | { execution: GraphWorkflowExecution; events: unknown[] }
+      | Promise<
+          | GraphWorkflowExecution
+          | { execution: GraphWorkflowExecution; events: unknown[] }
+        >,
   ): Promise<GraphWorkflowExecution> {
     const next = store.serializedQueue.then(async () => {
       store.mutateCount += 1;
       const draft = structuredClone(store.current);
       const result = await fn(draft);
-      store.current = structuredClone(result);
+      const execution = isMutateActiveResult(result)
+        ? result.execution
+        : result;
+      store.current = structuredClone(execution);
       return store.current;
     });
     store.serializedQueue = next.catch(() => undefined);
@@ -166,8 +188,14 @@ interface BuildContextOptions {
 function buildContext(options: BuildContextOptions = {}): {
   store: FakeStore;
   context: GraphWorkflowToolServerContext;
+  broadcast: ReturnType<typeof vi.fn>;
 } {
   const store = createFakeStore(options.execution ?? buildRunningExecution());
+  const broadcast = vi.fn();
+  const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+    broadcast,
+    now: () => "2026-03-27T12:00:00.000Z",
+  });
   const factory = createGraphWorkflowExecutionToolContext({
     workflowManager: { mutateActive: createFakeMutateActive(store) },
     runtimeEditService: createGraphWorkflowRuntimeEditService({
@@ -178,6 +206,7 @@ function buildContext(options: BuildContextOptions = {}): {
       now: () => "2026-03-27T12:00:00.000Z",
       createDocumentId: () => "doc-1",
     }),
+    publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
     readLiveOccupancy: options.readLiveOccupancy ?? (() => null),
     now: () => "2026-03-27T12:00:00.000Z",
   });
@@ -198,7 +227,7 @@ function buildContext(options: BuildContextOptions = {}): {
     getPendingHaltReason: async () => options.pendingHaltReason ?? null,
     getPendingToolBlock: async () => options.pendingToolBlock ?? null,
   };
-  return { store, context };
+  return { store, context, broadcast };
 }
 
 const DEFAULT_REMINDER_STATE = {
@@ -474,7 +503,9 @@ describe("lane route handlers — complete task", () => {
 
 describe("lane route handlers — add task", () => {
   it("appends a task when allowAgentTaskAdd is enabled", async () => {
-    const { store, context } = buildContext({ allowAgentTaskAdd: true });
+    const { store, context, broadcast } = buildContext({
+      allowAgentTaskAdd: true,
+    });
     const handlers = createLaneRouteHandlers(makeDeps(context));
 
     const response = await handlers.addTask(
@@ -491,6 +522,18 @@ describe("lane route handlers — add task", () => {
       .filter((t) => t.contextId === "context-plan")
       .map((t) => t.id);
     expect(planTaskIds).toContain("task-agent-generated");
+
+    // The lane-agent add_task is a live edit: the mandatory event reaches the
+    // wire with the server-derived source (doc 06 D12/D16).
+    const liveEdit = broadcast.mock.calls
+      .map((call) => call[0])
+      .find((event) => event.type === "graph-workflow-live-edit-applied");
+    expect(liveEdit).toMatchObject({
+      type: "graph-workflow-live-edit-applied",
+      source: "lane-agent",
+      operationCount: 1,
+      affectedContextIds: ["context-plan"],
+    });
   });
 
   it("returns 403 with explanatory text when task-add is disabled", async () => {

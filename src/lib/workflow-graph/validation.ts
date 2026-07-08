@@ -1,11 +1,9 @@
 import { getEffortLevelsForBackend } from "@/lib/agent-backends/schemas";
-import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
-  WorkflowRuntimeEditRequest,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 import {
@@ -53,14 +51,6 @@ function resultFromErrors(
 
 function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
-}
-
-function isRuntimeEditTaskLocked(
-  execution: GraphWorkflowExecution,
-  taskId: string,
-): boolean {
-  const status = execution.taskStates[taskId]?.status;
-  return status === "completed" || status === "running";
 }
 
 export function validateWorkflowDefinition(
@@ -325,136 +315,51 @@ export function validateResolvedWorkflow(
         contextId: context.id,
       });
     }
+
+    const validatorError = validateResolvedValidatorEffort(context);
+    if (validatorError) errors.push(validatorError);
   }
 
   return resultFromErrors(errors);
 }
 
-export function validateWorkflowRuntimeEdit(
-  definition: ValidatableDefinition,
-  execution: GraphWorkflowExecution,
-  request: WorkflowRuntimeEditRequest,
-): WorkflowGraphValidationResult {
-  const errors: WorkflowGraphValidationError[] = [];
-  const executionIndex = createExecutionIndex(definition, execution);
+/**
+ * Check that a resolved context validator's reasoning effort is supported by its
+ * model — the validator half of the frontier's resolved-config check (doc 06).
+ * A `claude`-type validator carries a full agent config (whose backend may itself
+ * be Codex); a `codex`-type validator selects effort only when set (an absent
+ * effort inherits the backend default, so there is nothing to reject).
+ */
+function validateResolvedValidatorEffort(
+  context: ResolvedWorkflowSemanticDefinition["executionContexts"][number],
+): WorkflowGraphValidationError | null {
+  const validator = context.contextValidator;
+  if (!validator) return null;
 
-  request.operations.forEach((operation, index) => {
-    if (operation.type === "add") {
-      const contextState = execution.contextStates[operation.contextId];
-      if (!executionIndex.contextById.has(operation.contextId)) {
-        errors.push({
-          code: "runtime-edit-unknown-context",
-          message: `Operation references missing context "${operation.contextId}"`,
-          contextId: operation.contextId,
-          operationIndex: index,
-        });
-        return;
-      }
-      if (contextState?.status === "completed") {
-        errors.push({
-          code: "runtime-edit-context-locked",
-          message: `Context "${operation.contextId}" cannot be edited in status "${contextState.status}"`,
-          contextId: operation.contextId,
-          operationIndex: index,
-        });
-      }
-      return;
-    }
-
-    if (operation.type === "reorder") {
-      const contextState = execution.contextStates[operation.contextId];
-      if (!executionIndex.contextById.has(operation.contextId)) {
-        errors.push({
-          code: "runtime-edit-unknown-context",
-          message: `Operation references missing context "${operation.contextId}"`,
-          contextId: operation.contextId,
-          operationIndex: index,
-        });
-        return;
-      }
-      if (contextState?.status === "completed") {
-        errors.push({
-          code: "runtime-edit-context-locked",
-          message: `Context "${operation.contextId}" cannot be reordered in status "${contextState.status}"`,
-          contextId: operation.contextId,
-          operationIndex: index,
-        });
-      }
-
-      const contextTasks =
-        executionIndex.tasksByContext.get(operation.contextId) ?? [];
-      const editableTaskIds = contextTasks
-        .filter((task) => !isRuntimeEditTaskLocked(execution, task.id))
-        .map((task) => task.id);
-      const orderedSet = new Set(operation.orderedTaskIds);
-
-      if (
-        orderedSet.size !== operation.orderedTaskIds.length ||
-        orderedSet.size !== editableTaskIds.length ||
-        editableTaskIds.some((taskId) => !orderedSet.has(taskId))
-      ) {
-        errors.push({
-          code: "runtime-edit-reorder-mismatch",
-          message: `Reorder for context "${operation.contextId}" must include each editable task exactly once`,
-          contextId: operation.contextId,
-          operationIndex: index,
-        });
-      }
-      return;
-    }
-
-    const task = executionIndex.taskById.get(operation.taskId);
-    if (!task) {
-      errors.push({
-        code: "runtime-edit-unknown-task",
-        message: `Operation references missing task "${operation.taskId}"`,
-        taskId: operation.taskId,
-        operationIndex: index,
-      });
-      return;
-    }
-
-    const taskState = execution.taskStates[task.id];
-    if (isRuntimeEditTaskLocked(execution, task.id)) {
-      errors.push({
-        code: "runtime-edit-task-locked",
-        message: `Task "${task.id}" cannot be changed in status "${taskState?.status ?? "unknown"}"`,
-        taskId: task.id,
-        contextId: task.contextId,
-        operationIndex: index,
-      });
-      return;
-    }
-
-    if (operation.type !== "move") {
-      return;
-    }
-
-    const destinationState = execution.contextStates[operation.targetContextId];
-    if (!executionIndex.contextById.has(operation.targetContextId)) {
-      errors.push({
-        code: "runtime-edit-unknown-target-context",
-        message: `Move target "${operation.targetContextId}" does not exist`,
-        taskId: task.id,
-        contextId: operation.targetContextId,
-        operationIndex: index,
-      });
-      return;
-    }
-
-    if (
-      destinationState?.status === "running" ||
-      destinationState?.status === "completed"
-    ) {
-      errors.push({
-        code: "runtime-edit-target-context-locked",
-        message: `Move target "${operation.targetContextId}" is not editable in status "${destinationState.status}"`,
-        taskId: task.id,
-        contextId: operation.targetContextId,
-        operationIndex: index,
-      });
-    }
+  const unsupported = (
+    backend: "claude" | "codex",
+    model: string,
+    effort: string,
+  ): WorkflowGraphValidationError => ({
+    code: "validator-effort-unsupported",
+    message: `Context "${context.id}" validator uses reasoning effort "${effort}", which is not supported by ${backend} model "${model}"`,
+    contextId: context.id,
   });
 
-  return resultFromErrors(errors);
+  if (validator.type === "claude") {
+    const { backend, model, reasoningEffort } = validator.agent;
+    const supported = getEffortLevelsForBackend(backend, model);
+    if (!supported.includes(reasoningEffort)) {
+      return unsupported(backend, model, reasoningEffort);
+    }
+    return null;
+  }
+
+  const { model, reasoningEffort } = validator.codex;
+  if (reasoningEffort === undefined) return null;
+  const supported = getEffortLevelsForBackend("codex", model);
+  if (!supported.includes(reasoningEffort)) {
+    return unsupported("codex", model ?? "gpt-5.4", reasoningEffort);
+  }
+  return null;
 }

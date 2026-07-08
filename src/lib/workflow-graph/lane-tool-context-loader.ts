@@ -16,6 +16,7 @@ import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/exe
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
 import { buildImplementerCollaborationContext } from "@/lib/workflow-graph/implementer-collaboration-context";
+import { resolveLaneToolCollaborationConfig } from "@/lib/workflow-graph/lane-collaboration-resolver";
 import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "@/lib/workflow-graph/constants";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
@@ -143,6 +144,7 @@ const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
   workflowManager,
   runtimeEditService,
   sharedDocumentRegistry,
+  publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
   readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
 });
 
@@ -206,25 +208,6 @@ export async function loadGraphWorkflowLaneToolContext(
     session,
   });
 
-  // Per-context collaboration overrides live on the raw workflow definition;
-  // the resolved working definition used at execution time drops the
-  // `collaboration` field. Load the raw definition to feed the provenance
-  // cascade with the original per-node + workflow-level overrides.
-  const globalConfig = await readConfig();
-  const definitionRecord = await workflowStorage.get(
-    scopeForTier(execution.launchedTier, projectPath),
-    execution.seedDefinitionId,
-  );
-  const rawExecutionContext =
-    definitionRecord?.definition.executionContexts.find(
-      (context) => context.id === contextId,
-    ) ?? {
-      id: executionContext.id,
-      title: executionContext.title,
-      acceptanceCriteria: executionContext.acceptanceCriteria,
-    };
-  const rawWorkflowConfig = definitionRecord?.definition.workflowConfig ?? {};
-
   const contextState = execution.contextStates[contextId];
   const iterationCount = contextState?.iterationCount ?? 0;
   const circuitBreakerThreshold =
@@ -234,6 +217,37 @@ export async function loadGraphWorkflowLaneToolContext(
     ? Math.max(0, contextState.totalTaskCount - contextState.completedTaskCount)
     : 0;
 
+  // Prefer the collaboration config frozen on the execution's working copy at
+  // seed time so a saved-definition edit cannot leak into a running execution
+  // (doc 06, D11). Only pre-field executions with no snapshot fall back to
+  // reloading the raw saved definition to feed the provenance cascade with the
+  // original per-node + workflow-level overrides.
+  const resolvedCollaboration = await resolveLaneToolCollaborationConfig(
+    executionContext,
+    {
+      loadFallbackInputs: async () => {
+        const globalConfig = await readConfig();
+        const definitionRecord = await workflowStorage.get(
+          scopeForTier(execution.launchedTier, projectPath),
+          execution.seedDefinitionId,
+        );
+        const contextDefinition =
+          definitionRecord?.definition.executionContexts.find(
+            (context) => context.id === contextId,
+          ) ?? {
+            id: executionContext.id,
+            title: executionContext.title,
+            acceptanceCriteria: executionContext.acceptanceCriteria,
+          };
+        return {
+          globalDefaults: coerceGlobalDefaults(globalConfig.workflowDefaults),
+          workflowConfig: definitionRecord?.definition.workflowConfig ?? {},
+          contextDefinition,
+        };
+      },
+    },
+  );
+
   const collaboration = buildImplementerCollaborationContext(
     {
       projectPath,
@@ -242,9 +256,7 @@ export async function loadGraphWorkflowLaneToolContext(
       contextId,
       conversationId,
       iterationIndex: iterationCount,
-      globalDefaults: coerceGlobalDefaults(globalConfig.workflowDefaults),
-      workflowConfig: rawWorkflowConfig,
-      executionContextDefinition: rawExecutionContext,
+      resolvedCollaboration,
     },
     {
       parentImplementerTurnIdFactory: () =>

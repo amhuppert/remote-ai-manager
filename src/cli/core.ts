@@ -12,6 +12,7 @@ import { runNotify } from "./commands/notify";
 import { runWorkflow } from "./commands/workflow";
 import { fetchHelpContext } from "./help-context";
 import {
+  booleanFlagArgsForCommand,
   childEntriesOf,
   flagNamesFor,
   helpEntryFor,
@@ -130,13 +131,30 @@ async function maybeFetchHelpContext(
  * failure whose hint lists the parent's children. When the resolved entry opts
  * into dynamic context, server-rendered blocks are appended best-effort (§4.4).
  */
+/**
+ * `workflow execution …` / `workflow exec …` are dispatch-rewrite aliases for
+ * `workflow live …` (doc 06, D10). The rewrite must also apply to help lookup so
+ * `cctl workflow execution get --help` resolves the one `workflow live` help node
+ * (the aliases get no separate entries).
+ */
+function rewriteWorkflowLiveAlias(path: string[]): string[] {
+  if (
+    path[0] === "workflow" &&
+    (path[1] === "execution" || path[1] === "exec")
+  ) {
+    return ["workflow", "live", ...path.slice(2)];
+  }
+  return path;
+}
+
 async function resolveHelp(
-  helpPath: string[],
+  rawHelpPath: string[],
   flags: GlobalFlags,
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
+  const helpPath = rewriteWorkflowLiveAlias(rawHelpPath);
   const first = helpPath[0];
   if (first === undefined || first === "help") {
     return helpResult(USAGE, json);
@@ -308,7 +326,24 @@ export async function runCli(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const parsed = parseArgv(argv);
+  // Two-pass parse (doc 06): the boolean-flag set is command-scoped, but the
+  // command is only known after parsing. A first "probe" parse with the global
+  // boolean union yields the command path (leading positionals — command tokens
+  // never follow a flag, so ambiguous flag kinds cannot corrupt them); the
+  // authoritative parse then uses that command's own boolean set so a flag can
+  // be boolean for one command and value for another (e.g. `--config`).
+  const probe = parseArgv(argv);
+  const parsed =
+    probe.kind === "error"
+      ? probe
+      : parseArgv(
+          argv,
+          new Set(
+            booleanFlagArgsForCommand(
+              rewriteWorkflowLiveAlias(probe.positionals),
+            ),
+          ),
+        );
   if (parsed.kind === "error") {
     // The parse failed, so flags.json is unavailable — honor a literal --json.
     return usageFailure(parsed.message, argv.includes("--json"));

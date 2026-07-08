@@ -159,6 +159,12 @@ export function resolveContext(
     workflow.askUserQuestions ??
     defaults.askUserQuestions;
 
+  const collaboration = resolveCollaborationConfigWithProvenance(
+    defaults,
+    workflow,
+    context,
+  );
+
   return {
     id: context.id,
     title: context.title,
@@ -174,6 +180,7 @@ export function resolveContext(
     mutability,
     circuitBreaker,
     iterationPolicy,
+    collaboration,
   };
 }
 

@@ -57,7 +57,7 @@ import {
   ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
-} from "./InspectorFieldEditors";
+} from "@/components/workflow-config/FieldEditors";
 import InspectorFocusSheet from "./InspectorFocusSheet";
 import {
   ApprovalGlyphIcon,

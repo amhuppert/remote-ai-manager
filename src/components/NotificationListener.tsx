@@ -82,6 +82,7 @@ import {
   graphWorkflowJoinStatusEventSchema,
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
+  graphWorkflowLiveEditAppliedEventSchema,
 } from "@/lib/workflows/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
@@ -974,6 +975,26 @@ export default function NotificationListener(): null {
         invalidateGraphWorkflow(
           parsed.data.projectName,
           parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-live-edit-applied", (event) => {
+      try {
+        const parsed = graphWorkflowLiveEditAppliedEventSchema.safeParse(
+          parseSseEventData(event.data),
+        );
+        if (!parsed.success) return;
+        const d = parsed.data;
+        // A live edit may change only config or future structure (no status
+        // diff), so refetch both the execution and its event log directly.
+        invalidateGraphWorkflow(d.projectName, d.sessionName);
+        invalidateGraphWorkflowEvents(
+          d.projectName,
+          d.sessionName,
+          d.executionId,
         );
       } catch {
         // best-effort

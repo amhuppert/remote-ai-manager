@@ -422,6 +422,7 @@ function normalizeEvent(
     case "graph-workflow-user-input-resolved":
     case "graph-workflow-charter-registered":
     case "graph-workflow-charter-updated":
+    case "graph-workflow-live-edit-applied":
       return null;
   }
 }

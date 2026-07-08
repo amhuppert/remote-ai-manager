@@ -3,7 +3,9 @@ import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
 } from "@/lib/workflows/schemas";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,
@@ -18,6 +20,8 @@ interface FakeStore {
   current: GraphWorkflowExecution;
   serializedQueue: Promise<unknown>;
   mutateCount: number;
+  /** Extra events threaded through a `MutateActiveResult` (persisted in prod). */
+  appliedEvents: GraphWorkflowExecutionEvent[];
 }
 
 function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
@@ -25,7 +29,20 @@ function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
     current: structuredClone(initial),
     serializedQueue: Promise.resolve(),
     mutateCount: 0,
+    appliedEvents: [],
   };
+}
+
+function isMutateActiveResult(
+  value: unknown,
+): value is { execution: GraphWorkflowExecution; events: unknown[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "execution" in value &&
+    "events" in value &&
+    Array.isArray((value as { events: unknown }).events)
+  );
 }
 
 function createFakeMutateActive(
@@ -40,11 +57,39 @@ function createFakeMutateActive(
       store.mutateCount += 1;
       const draft = structuredClone(store.current);
       const result = await fn(draft);
-      store.current = structuredClone(result);
+      const execution = isMutateActiveResult(result)
+        ? result.execution
+        : result;
+      if (isMutateActiveResult(result)) {
+        store.appliedEvents.push(
+          ...(result.events as GraphWorkflowExecutionEvent[]),
+        );
+      }
+      store.current = structuredClone(execution);
       return store.current;
     });
     store.serializedQueue = next.catch(() => undefined);
     return next;
+  };
+}
+
+/**
+ * A real live-edit publisher over a spy broadcast so tests exercise the actual
+ * event construction/broadcast (not a fake), and can assert on both the wire
+ * (`broadcast`) and the persisted rows the publisher returns.
+ */
+function createTestLiveEditPublisher(): {
+  broadcast: ReturnType<typeof vi.fn>;
+  publishLiveEditApplied: GraphWorkflowExecutionToolContextDeps["publishLiveEditApplied"];
+} {
+  const broadcast = vi.fn();
+  const publisher = createGraphWorkflowExecutionEventPublisher({
+    broadcast,
+    now: () => "2026-03-27T12:00:00.000Z",
+  });
+  return {
+    broadcast,
+    publishLiveEditApplied: publisher.publishLiveEditApplied,
   };
 }
 
@@ -86,6 +131,7 @@ interface FactoryResult {
     ReturnType<typeof createGraphWorkflowExecutionToolContext>["create"]
   >;
   deps: GraphWorkflowExecutionToolContextDeps;
+  broadcast: ReturnType<typeof vi.fn>;
 }
 
 interface CreateInputOverrides {
@@ -121,12 +167,14 @@ function buildToolContext(
       now: () => "2026-03-27T12:00:00.000Z",
       createDocumentId: () => "doc-1",
     });
+  const { broadcast, publishLiveEditApplied } = createTestLiveEditPublisher();
   const deps: GraphWorkflowExecutionToolContextDeps = {
     workflowManager: {
       mutateActive: createFakeMutateActive(store),
     },
     runtimeEditService,
     sharedDocumentRegistry,
+    publishLiveEditApplied,
     readLiveOccupancy: factoryOptions.readLiveOccupancy ?? (() => null),
     now: () => "2026-03-27T12:00:00.000Z",
   };
@@ -142,7 +190,7 @@ function buildToolContext(
     allowAgentTaskAdd: overrides.allowAgentTaskAdd ?? true,
     allowAgentCollaboration: false,
   });
-  return { store, toolContext, deps };
+  return { store, toolContext, deps, broadcast };
 }
 
 describe("GraphWorkflowExecutionToolContext", () => {
@@ -364,6 +412,46 @@ describe("GraphWorkflowExecutionToolContext", () => {
     expect(planTasks.map((task) => task.id)).toContain("task-agent-generated");
   });
 
+  it("emits the mandatory live-edit event (source lane-agent) for an agent task add", async () => {
+    const { store, toolContext, broadcast } = buildToolContext({});
+
+    await toolContext.addTask({
+      title: "New planning task",
+      instructions: "Capture more questions.",
+    });
+
+    // Broadcast on the wire (doc 06 D12/D16): the lane-agent add_task is a live
+    // edit and must surface the graph-workflow-live-edit-applied event, with the
+    // server-derived `source` and the bumped `liveRevision` (fixture starts at 1).
+    const broadcasted = broadcast.mock.calls
+      .map((call) => call[0])
+      .find((event) => event.type === "graph-workflow-live-edit-applied");
+    expect(broadcasted).toMatchObject({
+      type: "graph-workflow-live-edit-applied",
+      projectName: "test",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      liveRevision: 2,
+      operationCount: 1,
+      affectedContextIds: ["context-plan"],
+      source: "lane-agent",
+    });
+
+    // The same event rides the mutation's events so the audit row is persisted
+    // atomically (not the repository extra-events-only path, which never
+    // broadcasts) — mirrors the runtime-edits route.
+    expect(store.appliedEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "graph-workflow-live-edit-applied",
+          source: "lane-agent",
+          liveRevision: 2,
+        }),
+      }),
+    );
+    expect(store.current.liveRevision).toBe(2);
+  });
+
   it("rejects addTask once the bound contextId leaves the active set", async () => {
     const initial = withRunningContext(createWorkflowExecution(), [
       "context-implement",
@@ -446,6 +534,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
       workflowManager: { mutateActive: createFakeMutateActive(store) },
       runtimeEditService,
       sharedDocumentRegistry,
+      publishLiveEditApplied:
+        createTestLiveEditPublisher().publishLiveEditApplied,
       readLiveOccupancy: () => null,
     };
     const factory = createGraphWorkflowExecutionToolContext(deps);
@@ -520,6 +610,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
       runtimeEditService: createGraphWorkflowRuntimeEditService(),
       sharedDocumentRegistry:
         createGraphWorkflowSharedDocumentRegistryService(),
+      publishLiveEditApplied:
+        createTestLiveEditPublisher().publishLiveEditApplied,
       readLiveOccupancy: () => null,
     });
     const bound = factory.create({
@@ -566,6 +658,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
       workflowManager: { mutateActive: createFakeMutateActive(store) },
       runtimeEditService,
       sharedDocumentRegistry,
+      publishLiveEditApplied:
+        createTestLiveEditPublisher().publishLiveEditApplied,
       readLiveOccupancy: () => null,
     };
     const factory = createGraphWorkflowExecutionToolContext(deps);

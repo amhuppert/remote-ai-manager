@@ -98,8 +98,10 @@ import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowLaneKind,
   GraphWorkflowHaltReason,
+  WorkflowLiveEditOperation,
 } from "@/lib/workflows/schemas";
 import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
+import ContextConfigTab from "./ContextConfigTab";
 
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
@@ -125,6 +127,20 @@ interface ExecutionInspectorPanelProps {
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
+  /**
+   * Config-tab live editing (doc 06, "UI plan" Goal 2). The container owns the
+   * concurrency guard and the dedicated config mutation, so the inspector stays
+   * presentational: it forwards the composed op batch and the mutation's
+   * pending/conflict/success state.
+   */
+  onSaveContextConfig?: (operations: WorkflowLiveEditOperation[]) => void;
+  onPauseExecution?: () => void;
+  onResumeExecution?: () => void;
+  isSavingConfig?: boolean;
+  isPausingExecution?: boolean;
+  isResumingExecution?: boolean;
+  configEditConflict?: boolean;
+  configSaveSucceeded?: boolean;
   onViewConversation?: (
     conversationId: string,
     lane: GraphWorkflowLaneKind,
@@ -161,7 +177,7 @@ function countMerges(execution: GraphWorkflowExecution): {
   return { merged, total };
 }
 
-type DetailTab = "tasks" | "history";
+type DetailTab = "tasks" | "config" | "history";
 
 type Timestamped<T> = T & { occurredAt: string };
 
@@ -579,6 +595,14 @@ function OverviewView({
     <aside className={wbInspector}>
       <header className={wbInspectorHeader}>
         <span className={wbInspectorTitle}>Overview</span>
+        <span className="ml-auto flex items-center gap-sm font-mono text-[0.68rem] whitespace-nowrap text-text-tertiary">
+          <span data-testid="overview-live-revision">
+            liveRev {execution.liveRevision}
+          </span>
+          <span data-testid="overview-seed">
+            {execution.seedDefinitionId}@{execution.seedDefinitionRevision}
+          </span>
+        </span>
       </header>
       <div className={cn(wbInspectorBody, "wb-inspector-body")}>
         {execution.haltReason && (
@@ -720,6 +744,14 @@ function DetailView({
   onViewTask,
   viewingTaskId,
   isMutating,
+  onSaveContextConfig,
+  onPauseExecution,
+  onResumeExecution,
+  isSavingConfig,
+  isPausingExecution,
+  isResumingExecution,
+  configEditConflict,
+  configSaveSucceeded,
   onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
@@ -739,6 +771,14 @@ function DetailView({
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
+  onSaveContextConfig?: ExecutionInspectorPanelProps["onSaveContextConfig"];
+  onPauseExecution?: ExecutionInspectorPanelProps["onPauseExecution"];
+  onResumeExecution?: ExecutionInspectorPanelProps["onResumeExecution"];
+  isSavingConfig?: boolean;
+  isPausingExecution?: boolean;
+  isResumingExecution?: boolean;
+  configEditConflict?: boolean;
+  configSaveSucceeded?: boolean;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>("tasks");
@@ -864,6 +904,18 @@ function DetailView({
           type="button"
         >
           Tasks
+        </button>
+        <button
+          className={cn(
+            "-mb-px flex-1 cursor-pointer appearance-none border-0 border-b-2 bg-transparent px-3 py-[10px] text-center text-[0.72rem] font-semibold tracking-[0.06em] uppercase transition-all duration-150",
+            activeTab === "config"
+              ? "border-b-cyan text-cyan"
+              : "border-b-transparent text-text-tertiary hover:text-text-secondary",
+          )}
+          onClick={() => setActiveTab("config")}
+          type="button"
+        >
+          Config
         </button>
         <button
           className={cn(
@@ -1153,6 +1205,22 @@ function DetailView({
           </>
         )}
 
+        {activeTab === "config" && (
+          <ContextConfigTab
+            key={contextId}
+            execution={execution}
+            contextId={contextId}
+            onSaveContextConfig={onSaveContextConfig}
+            onPauseExecution={onPauseExecution}
+            onResumeExecution={onResumeExecution}
+            isSaving={isSavingConfig}
+            isPausing={isPausingExecution}
+            isResuming={isResumingExecution}
+            editConflict={configEditConflict}
+            saveSucceeded={configSaveSucceeded}
+          />
+        )}
+
         {activeTab === "history" && (
           <>
             <section className={wbOverviewSection}>
@@ -1244,6 +1312,14 @@ export default function ExecutionInspectorPanel({
   onViewTask,
   viewingTaskId,
   isMutating,
+  onSaveContextConfig,
+  onPauseExecution,
+  onResumeExecution,
+  isSavingConfig,
+  isPausingExecution,
+  isResumingExecution,
+  configEditConflict,
+  configSaveSucceeded,
   onViewConversation,
 }: ExecutionInspectorPanelProps) {
   const selectedContext = selectedContextId
@@ -1279,6 +1355,14 @@ export default function ExecutionInspectorPanel({
       onViewTask={onViewTask}
       viewingTaskId={viewingTaskId}
       isMutating={isMutating}
+      onSaveContextConfig={onSaveContextConfig}
+      onPauseExecution={onPauseExecution}
+      onResumeExecution={onResumeExecution}
+      isSavingConfig={isSavingConfig}
+      isPausingExecution={isPausingExecution}
+      isResumingExecution={isResumingExecution}
+      configEditConflict={configEditConflict}
+      configSaveSucceeded={configSaveSucceeded}
       onViewConversation={onViewConversation}
     />
   );

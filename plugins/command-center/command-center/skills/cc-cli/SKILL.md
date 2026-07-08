@@ -599,6 +599,67 @@ cctl workflow edit wf-1 --file .cc/temp/ops.json
 # → edited "Add OAuth2 Support": 1 operation applied, revision 8
 ```
 
+### Live execution editing — the running run
+
+`workflow edit` edits a **saved definition**; `workflow live` edits the
+**session's running (or paused/resumably-halted) execution** in place — its
+working copy, not the definition it launched from. `workflow execution …` and
+`workflow exec …` are aliases rewritten to `live` before dispatch and help
+lookup. Session-scoped (reads your `CC_SESSION`); no execution running exits `2`.
+
+```
+cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --full] [--json]
+cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]
+cctl workflow live pause [--json]
+cctl workflow live resume [--json]
+```
+
+- `get` — print the active execution's **live outline**: a header
+  (`executionId`, `liveRevision`, status, seed `id@revision`, whether it is
+  editable), per-context rows (status, editability tier — **frozen** /
+  **editable** / **pause-to-edit** — from the shared lifecycle classifier, deps,
+  task + iteration progress), per-task rows (id, order, status, title,
+  instruction **size** — prose is never inlined), and a one-line config summary
+  per context. The header's `liveRev` is the value your edit's
+  `baseLiveRevision` must match. Selectors (at most one): `--context <ctx>`
+  (full prose + resolved config for one context), `--task <task>` (full
+  instructions), `--config <ctx>` (one context's **full resolved config** —
+  implementer, validator, gates, iteration policy, circuit breaker, mutability,
+  collaboration), `--full` (every context expanded).
+- `edit` — apply an ordered, **atomic** batch of live edits to the working copy,
+  addressed by **stable ids**. `--file` (or `-` for stdin) is a JSON object
+  `{ "executionId", "baseLiveRevision", "source": "cli", "operations": [ … ] }`
+  stored under `.cc/temp/`; the CLI always sends `source "cli"`. `baseLiveRevision`
+  must equal the header's `liveRev` (a stale value exits `1` `revision_conflict`
+  — re-read and retry). **Completed** contexts are frozen; **not-started**
+  contexts are editable while the run continues; **started** contexts need a
+  `pause` first (pause-to-edit). A code-bearing rejection
+  (`execution_mismatch` / `revision_conflict` / `not_editable` / `frozen` /
+  `requires_pause` / `invalid_edit`) exits `1` with the code on the `--json`
+  envelope and issues one per line; a malformed/unreadable file or missing
+  execution exits `2` (deterministic local checks run before any network call).
+  `--dry-run` validates and reports without persisting.
+- `pause` / `resume` — pause the running execution (so started contexts become
+  editable) and resume it afterward. A server `409` (e.g. nothing to pause/resume)
+  renders as exit `1`.
+
+The canonical loop for a running context that is not editable in place is
+**get → pause → edit → resume**:
+
+```
+cctl workflow live get
+# → exec-7  liveRev 4  running  (seed wf-1@8)
+#     plan       completed  frozen         2/2
+#     implement  running    pause-to-edit  1/4   iter 1/3
+#     verify     pending    editable       0/1
+cctl workflow live pause
+cctl workflow live edit --file .cc/temp/live-ops.json
+# live-ops.json: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli",
+#   "operations": [ { "type": "update-context", "contextId": "verify",
+#     "implementer": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } ] }
+cctl workflow live resume
+```
+
 ### Lane verbs — inside a running graph workflow
 
 These are a **separate** family from the authoring/lifecycle verbs above. They

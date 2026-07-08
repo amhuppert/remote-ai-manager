@@ -10,52 +10,21 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { buildImplementerCollaborationContext } from "./implementer-collaboration-context";
-import type { WorkflowDefaults } from "@/lib/config/schemas";
 import type {
-  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowHaltReason,
   ResolvedCollaborationConfig,
-  WorkflowConfigOverride,
 } from "@/lib/workflows/schemas";
 
-function globalDefaultsFixture(): WorkflowDefaults {
+function resolvedCollaborationFixture(
+  overrides?: Partial<ResolvedCollaborationConfig>,
+): ResolvedCollaborationConfig {
   return {
-    implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+    secondAgent: {
+      value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
+      source: "global",
     },
-    contextValidator: {
-      type: "claude",
-      enabled: true,
-      continuity: { enabled: true },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-    },
-    scriptValidator: { enabled: false },
-    humanApprovalGate: { enabled: false },
-    askUserQuestions: { enabled: false },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
-    circuitBreaker: { consecutiveFailureThreshold: 3 },
-    mutability: { allowAgentTaskAdd: false },
-    collaboration: {
-      secondAgent: {
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-      },
-      negotiationRounds: 4,
-      autonomousResolutionThreshold: "minor",
-    },
-  };
-}
-
-function contextDefinitionFixture(
-  overrides?: Partial<GraphWorkflowExecutionContextDefinition>,
-): GraphWorkflowExecutionContextDefinition {
-  return {
-    id: "ctx-implement",
-    title: "Implement",
-    acceptanceCriteria: "all tasks complete",
+    negotiationRounds: { value: 4, source: "global" },
+    autonomousResolutionThreshold: { value: "minor", source: "global" },
     ...overrides,
   };
 }
@@ -68,9 +37,7 @@ function baseInput() {
     contextId: "ctx-implement",
     conversationId: "conv-1",
     iterationIndex: 0,
-    globalDefaults: globalDefaultsFixture(),
-    workflowConfig: {} as WorkflowConfigOverride,
-    executionContextDefinition: contextDefinitionFixture(),
+    resolvedCollaboration: resolvedCollaborationFixture(),
   };
 }
 
@@ -114,28 +81,17 @@ describe("buildImplementerCollaborationContext", () => {
     expect(block.executionId).toBe("exec-42");
   });
 
-  it("provides a resolveCollaborationConfig that returns provenanced config from the cascade", () => {
-    const input = {
-      ...baseInput(),
-      workflowConfig: {
-        collaboration: { negotiationRounds: 2 },
-      } as WorkflowConfigOverride,
-      executionContextDefinition: contextDefinitionFixture({
-        collaboration: { autonomousResolutionThreshold: "none" },
-      }),
-    };
-    const block = buildImplementerCollaborationContext(input, baseDeps());
+  it("returns the pre-resolved collaboration config verbatim from resolveCollaborationConfig", () => {
+    const resolvedCollaboration = resolvedCollaborationFixture({
+      negotiationRounds: { value: 2, source: "workflow" },
+      autonomousResolutionThreshold: { value: "none", source: "per-node" },
+    });
+    const block = buildImplementerCollaborationContext(
+      { ...baseInput(), resolvedCollaboration },
+      baseDeps(),
+    );
 
-    const resolved = block.resolveCollaborationConfig();
-    expect(resolved.secondAgent.source).toBe("global");
-    expect(resolved.negotiationRounds).toEqual({
-      value: 2,
-      source: "workflow",
-    });
-    expect(resolved.autonomousResolutionThreshold).toEqual({
-      value: "none",
-      source: "per-node",
-    });
+    expect(block.resolveCollaborationConfig()).toEqual(resolvedCollaboration);
   });
 
   it("provides a callable triggerWorkflowCollaboration that delegates to the injected dep", async () => {

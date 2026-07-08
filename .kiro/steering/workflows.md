@@ -226,7 +226,7 @@ Graph workflow config resolves through a **three-tier cascade**:
 2. **Workflow** — `workflowConfig` on definition (overrides global)
 3. **Per-context** — `executionContext` blocks (overrides both)
 
-Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); resolved context snapshotted into execution's `workingDefinition` — later edits don't mutate running executions.
+Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); the resolved context is snapshotted into the execution's `workingDefinition`, so saved-definition or global-config edits never retroactively mutate a running execution. Live edits (`cctl workflow live`, doc 06) do mutate that `workingDefinition` in place — they target the execution's working copy, never the saved definition.
 
 ```jsonc
 // config.json — global tier

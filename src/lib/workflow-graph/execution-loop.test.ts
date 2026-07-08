@@ -91,6 +91,7 @@ function createRunningExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    liveRevision: 1,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition:

@@ -294,6 +294,11 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         oneLiner: "read the outline for the ids + baseRevision to edit against",
       },
       {
+        command: "workflow live edit",
+        oneLiner:
+          "edit the RUNNING execution's working copy instead of the saved definition",
+      },
+      {
         command: "workflow replace",
         oneLiner:
           "recompose the WHOLE graph when a targeted edit is not enough",
@@ -328,6 +333,11 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         oneLiner: "launch an execution to track here",
       },
       { command: "workflow list", oneLiner: "see saved definitions to start" },
+      {
+        command: "workflow live",
+        oneLiner:
+          "read/edit the active execution in place (get/edit/pause/resume)",
+      },
     ],
   },
   {
@@ -413,6 +423,203 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         command: "workflow start",
         oneLiner: "start a definition, supplying its declared inputs",
+      },
+    ],
+  },
+
+  // --- Live execution editing (doc 06) ----------------------------------------
+  {
+    path: ["workflow", "live"],
+    dynamicContext: true,
+    summary: "act on this session's ACTIVE launched execution",
+    description:
+      "Read and edit the session's running (or paused/resumably-halted) graph-workflow execution in place — per-context config, task, and safe structural edits — plus pause/resume. Aliases: `workflow execution …` and `workflow exec …` are rewritten to `live`. This edits the LIVE execution's working copy; `workflow edit` edits a SAVED definition and does not touch a running run. The canonical loop is get → pause → edit → resume.",
+    usage: ["cctl workflow live <get|edit|pause|resume>"],
+    flags: [],
+    examples: [
+      {
+        invocation:
+          "cctl workflow live get && cctl workflow live pause && cctl workflow live edit --file .cc/temp/live-ops.json && cctl workflow live resume",
+        explanation:
+          "the canonical loop: read the outline for ids + liveRev, pause to unlock a started context, apply the edits, resume",
+      },
+    ],
+    related: [
+      {
+        command: "workflow status",
+        oneLiner: "the compact per-context table for the active execution",
+      },
+      {
+        command: "workflow edit",
+        oneLiner: "edit a SAVED definition instead of the running execution",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+  },
+  {
+    path: ["workflow", "live", "get"],
+    dynamicContext: true,
+    summary: "print the live outline of the active execution",
+    description:
+      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress), per-task rows (id, order, status, title, instruction SIZE — never inlined), and a one-line config summary per context. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, collaboration), --full (every context expanded). At most one selector. No active execution exits 2.",
+    usage: [
+      "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --full] [--json]",
+    ],
+    flags: [
+      {
+        name: "full",
+        kind: "boolean",
+        description: "expand every context: full prose + config + full tasks",
+      },
+      {
+        name: "context",
+        kind: "value",
+        valuePlaceholder: "<ctx>",
+        description: "one context: full prose + resolved config + its tasks",
+      },
+      {
+        name: "task",
+        kind: "value",
+        valuePlaceholder: "<task>",
+        description: "one task: full instructions + metadata",
+      },
+      {
+        name: "config",
+        kind: "value",
+        valuePlaceholder: "<ctx>",
+        description:
+          "one context's full resolved config (concrete runtime values, for a targeted `live edit`)",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow live get",
+        explanation:
+          "the outline IS the edit map — note the header's liveRev, then set it as baseLiveRevision in the ops file",
+      },
+      {
+        invocation: "cctl workflow live get --context impl",
+        explanation:
+          "pulls one context's full prose + resolved config before a targeted `cctl workflow live edit`",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live edit",
+        oneLiner:
+          "apply edits addressed by the ids + liveRev the outline shows",
+      },
+      {
+        command: "workflow status",
+        oneLiner: "the shorter per-context progress table",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+  },
+  {
+    path: ["workflow", "live", "edit"],
+    dynamicContext: true,
+    summary: "apply live edits to the running execution's working copy",
+    description:
+      'Apply an ordered, atomic batch of live edits to the ACTIVE execution\'s working copy, addressed by STABLE IDS. --file is a JSON object { "executionId", "baseLiveRevision", "operations": [ … ] }; the CLI always sends source "cli". baseLiveRevision must equal the header\'s liveRev from `cctl workflow live get` (a stale value exits 1 revision_conflict — re-read and retry). Completed contexts are frozen; not-started contexts are fully editable while running; started contexts need a pause first (pause-to-edit). A code-bearing rejection (execution_mismatch/revision_conflict/not_editable/frozen/requires_pause/invalid_edit) exits 1 with issues one per line and the code on the --json envelope; a malformed file or missing execution exits 2 (deterministic local checks fail before any network call). --dry-run validates and reports without persisting.',
+    usage: [
+      "cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<live-ops.json>",
+        description:
+          'JSON object { "executionId", "baseLiveRevision", "operations": [ … ] } (or - for stdin)',
+      },
+      {
+        name: "dry-run",
+        kind: "boolean",
+        description: "validate + report the outcome, persist nothing",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow live edit --file .cc/temp/live-ops.json",
+        explanation:
+          'live-ops.json under .cc/temp/: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli", "operations": [ { "type": "update-context", "contextId": "verify", "implementer": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } ] } — take baseLiveRevision from `cctl workflow live get`',
+      },
+      {
+        invocation:
+          "cctl workflow live pause && cctl workflow live edit --file .cc/temp/live-ops.json && cctl workflow live resume",
+        explanation:
+          "the canonical loop for editing a started (pause-to-edit) context: pause, edit, resume",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live get",
+        oneLiner: "read the outline for the ids + liveRev to edit against",
+      },
+      {
+        command: "workflow edit",
+        oneLiner:
+          "edit the SAVED definition (not the running execution); start a fresh run to pick it up",
+      },
+      {
+        command: "workflow live pause",
+        oneLiner: "pause first to edit a started (pause-to-edit) context",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+    domainContext:
+      "Live edits mutate only the execution's working copy — the saved definition is untouched, and a saved-definition edit never leaks into a running execution.",
+  },
+  {
+    path: ["workflow", "live", "pause"],
+    dynamicContext: true,
+    summary: "pause the active execution to unlock started contexts",
+    description:
+      "Pause the ACTIVE execution — interrupts running tasks and demotes active contexts so a `started` (pause-to-edit) context becomes editable. Pausing an already-paused or terminal execution exits 1 with the server's message; no active execution exits 2. No body flags in v1.",
+    usage: ["cctl workflow live pause [--json]"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl workflow live pause",
+        explanation:
+          "step 1 of the pause → edit → resume loop when the outline shows a context as pause-to-edit",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live edit",
+        oneLiner: "apply the edits once paused",
+      },
+      {
+        command: "workflow live resume",
+        oneLiner: "resume the execution after editing",
+      },
+    ],
+  },
+  {
+    path: ["workflow", "live", "resume"],
+    dynamicContext: true,
+    summary: "resume a paused or resumably-halted execution",
+    description:
+      "Resume the ACTIVE execution after a pause or a resumable halt, re-entering the scheduler loop so accepted edits take effect on the next tick. Resuming a running execution exits 1 with the server's message; no active execution exits 2. No body flags in v1.",
+    usage: ["cctl workflow live resume [--json]"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl workflow live resume",
+        explanation:
+          "final step of the pause → edit → resume loop; the scheduler picks up the edits on the next tick",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live pause",
+        oneLiner: "pause the execution before editing",
+      },
+      {
+        command: "workflow live edit",
+        oneLiner: "the edits applied between pause and resume",
       },
     ],
   },

@@ -98,15 +98,13 @@ describe("reconcileDischarges", () => {
       pendingQueue: "pruned",
       taskStates: "keyed by task graph",
     });
-    expect(paths(result.undischarged)).toEqual([
-      "taskStates.*.failureHistory",
-    ]);
+    expect(paths(result.undischarged)).toEqual(["taskStates.*.failureHistory"]);
   });
 
   it("covers a whole subtree with a `.**` discharge", () => {
     const result = reconcileDischarges(found, {
       pendingQueue: "pruned",
-      "taskStates.**": "immutable subtree",
+      "taskStates.**": "bounded subtree",
     });
     expect(result.undischarged).toEqual([]);
     expect(result.staleDischargeKeys).toEqual([]);
@@ -125,7 +123,7 @@ describe("reconcileDischarges", () => {
   it("reports a stale exact discharge that covers nothing", () => {
     const result = reconcileDischarges(found, {
       "pendingQueue.**": "pruned",
-      "taskStates.**": "immutable subtree",
+      "taskStates.**": "bounded subtree",
       removedField: "no longer exists",
     });
     expect(result.staleDischargeKeys).toEqual(["removedField"]);
@@ -134,7 +132,7 @@ describe("reconcileDischarges", () => {
   it("reports a stale `.**` discharge whose subtree is gone", () => {
     const result = reconcileDischarges(found, {
       "pendingQueue.**": "pruned",
-      "taskStates.**": "immutable subtree",
+      "taskStates.**": "bounded subtree",
       "workingDefinition.**": "no nodes under here",
     });
     expect(result.staleDischargeKeys).toEqual(["workingDefinition.**"]);

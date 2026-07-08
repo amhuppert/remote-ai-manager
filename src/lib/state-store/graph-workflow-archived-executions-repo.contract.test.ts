@@ -214,6 +214,7 @@ function buildMaximalExecution(): unknown {
     id: "wf-maximal",
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
+    liveRevision: 4,
     boundInputs: {
       feature: "search box",
       notes: "first line\nsecond line",
@@ -250,6 +251,18 @@ function buildMaximalExecution(): unknown {
           iterationPolicy: {
             maxIterations: 7,
             continuity: { enabled: false, contextLimitTokens: 90_000 },
+          },
+          collaboration: {
+            secondAgent: {
+              value: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "high",
+              },
+              source: "per-node",
+            },
+            negotiationRounds: { value: 5, source: "workflow" },
+            autonomousResolutionThreshold: { value: "major", source: "global" },
           },
           charter: makeTestCharter(),
         },

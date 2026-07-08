@@ -1961,6 +1961,30 @@ describe("NotificationListener", () => {
     );
   });
 
+  it("invalidates the execution detail and event log on graph-workflow-live-edit-applied (surviving the envelope stamp)", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-live-edit-applied", {
+      type: "graph-workflow-live-edit-applied",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-live-1",
+      liveRevision: 5,
+      operationCount: 2,
+      affectedContextIds: ["verify"],
+      source: "cli",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-live-1"),
+    });
+  });
+
   it("invalidates the project's sessions list on spawn-result", async () => {
     const { invalidateQueries, es } = emitAndGetSpies();
 

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { withTracing } from "@/lib/logging";
-import { workflowRuntimeEditRequestSchema } from "@/lib/workflows/schemas";
+import { createLogger, withTracing } from "@/lib/logging";
+import { readConfig } from "@/lib/config/loader";
+import { readRepoConfig } from "@/lib/projects/repo-config";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
@@ -13,38 +15,94 @@ import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
-  WorkflowRuntimeEditRequest,
+  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowExecutionEvent,
+  WorkflowGraphValidationError,
+  WorkflowLiveEditRequest,
 } from "@/lib/workflows/schemas";
-import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { createWorkflowStorageService } from "./storage";
-import { scopeForTier } from "./template-library-service";
-import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
-import { createParallelWorktrees } from "./parallel-worktrees";
+import { workflowLiveEditRequestSchema } from "@/lib/workflows/schemas";
 import {
-  GraphWorkflowRuntimeEditValidationError,
-  createGraphWorkflowRuntimeEditService,
+  createGraphWorkflowExecutionEventPublisher,
+  type PublishLiveEditAppliedInput,
+} from "./execution-events";
+import {
+  createGraphWorkflowExecutionRepository,
+  type MutateActiveResult,
+} from "./execution-repository";
+import { formatDefinitionEditIssue } from "./definition-edits";
+import { classifyExecutionEditability } from "./lifecycle-classifier";
+import {
+  coerceGlobalDefaults,
+  resolveCollaborationConfigWithProvenance,
+  resolveContext,
+} from "./resolve-config";
+import {
+  applyLiveExecutionEdits,
+  type LiveEditDeps,
+  type LiveEditRejectionCode,
+  type ResolvedContextConfig,
 } from "./runtime-edits";
+
+const logger = createLogger("workflow.live-edit");
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
 };
 
+const eventPublisher = createGraphWorkflowExecutionEventPublisher();
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  eventPublisher,
 });
-const workflowStorage = createWorkflowStorageService();
-const workflowManager = createGraphWorkflowManager({
-  executionRepository,
-  loadDefinition: (projectPath, definitionId, tier) =>
-    workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
-  parallelWorktrees: createParallelWorktrees(),
-  getSession: defaultGetSession,
-});
-const runtimeEditService = createGraphWorkflowRuntimeEditService();
+
+/**
+ * Resolve the concrete config a new `add-context` op seeds from when no
+ * `configFromContextId` is given and the deferred script-validator prerequisite,
+ * both computed once per request (the pure core's deps are sync). Resolves the
+ * global defaults through the same cascade a launch uses, against a synthetic
+ * no-override context, so a live-added context matches what a seeded one carries.
+ */
+async function defaultBuildLiveEditDeps(
+  projectPath: string,
+): Promise<LiveEditDeps> {
+  const repoConfig = await readRepoConfig(projectPath);
+  const hasPreMergeCommand = Boolean(repoConfig?.preMergeCommand);
+
+  const global = await readConfig();
+  const defaults = coerceGlobalDefaults(global.workflowDefaults);
+  const syntheticContext: GraphWorkflowExecutionContextDefinition = {
+    id: "__live_edit_global_defaults__",
+    title: "Live edit defaults",
+    acceptanceCriteria: "Live edit defaults",
+  };
+  const resolved = resolveContext(defaults, {}, syntheticContext);
+  const collaboration = resolveCollaborationConfigWithProvenance(
+    defaults,
+    {},
+    syntheticContext,
+  );
+  const resolvedGlobalDefaults: ResolvedContextConfig = {
+    implementer: resolved.implementer,
+    contextValidator: resolved.contextValidator,
+    scriptValidator: resolved.scriptValidator,
+    humanApprovalGate: resolved.humanApprovalGate,
+    askUserQuestions: resolved.askUserQuestions,
+    mutability: resolved.mutability,
+    circuitBreaker: resolved.circuitBreaker,
+    iterationPolicy: resolved.iterationPolicy,
+    collaboration,
+  };
+
+  return {
+    createTaskId: () => `task-${randomUUID()}`,
+    resolvedGlobalDefaults: () => resolvedGlobalDefaults,
+    hasPreMergeCommand: () => hasPreMergeCommand,
+  };
+}
 
 export interface GraphWorkflowRuntimeEditRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
@@ -52,114 +110,184 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  applyRuntimeEdits(
+  getActiveExecution(
     projectPath: string,
     sessionName: string,
-    request: WorkflowRuntimeEditRequest,
+  ): Promise<GraphWorkflowExecution | null>;
+  mutateActive(
+    projectPath: string,
+    sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution>;
+  buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  publishLiveEditApplied(
+    input: PublishLiveEditAppliedInput,
+  ): GraphWorkflowExecutionEvent[];
 }
 
 const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
-  async applyRuntimeEdits(projectPath, sessionName, request) {
-    return workflowManager.mutateActive(projectPath, sessionName, (execution) =>
-      runtimeEditService.applyUserEdits(execution, request),
-    );
-  },
+  getActiveExecution: getActiveGraphWorkflowExecution,
+  mutateActive: executionRepository.mutateActive,
+  buildLiveEditDeps: defaultBuildLiveEditDeps,
+  publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
 };
+
+// The doc-06 error contract (§"Error contract"): a code-bearing rejection is an
+// operation failure (CLI exit 1); a codeless 400/404 is malformed input (exit 2).
+type LiveEditFailureCode =
+  | "execution_mismatch"
+  | "revision_conflict"
+  | "not_editable"
+  | LiveEditRejectionCode;
+
+interface LiveEditFailure {
+  status: 400 | 409;
+  code: LiveEditFailureCode;
+  error: string;
+  issues?: WorkflowGraphValidationError[];
+  currentLiveRevision?: number;
+}
+
+type LiveEditGateResult =
+  | {
+      ok: true;
+      execution: GraphWorkflowExecution;
+      affectedContextIds: string[];
+    }
+  | { ok: false; failure: LiveEditFailure };
+
+/** Thrown inside the serialized mutation so a rejection persists nothing. */
+class LiveEditRejectionSignal extends Error {
+  constructor(readonly failure: LiveEditFailure) {
+    super(failure.error);
+    this.name = "LiveEditRejectionSignal";
+  }
+}
+
+/**
+ * The shared gate pipeline run against a single execution snapshot (doc 06 route
+ * pipeline gates a–d). Both the dry-run path (against the read accessor's
+ * snapshot) and the apply path (against the write-queue-held current state, for
+ * apply-time re-classification, D7) run these against their own snapshot.
+ */
+function evaluateLiveEditRequest(
+  execution: GraphWorkflowExecution,
+  request: WorkflowLiveEditRequest,
+  liveEditDeps: LiveEditDeps,
+): LiveEditGateResult {
+  if (request.executionId !== execution.id) {
+    return {
+      ok: false,
+      failure: {
+        status: 409,
+        code: "execution_mismatch",
+        error: `executionId "${request.executionId}" does not match the active execution "${execution.id}"`,
+      },
+    };
+  }
+
+  if (request.baseLiveRevision !== execution.liveRevision) {
+    return {
+      ok: false,
+      failure: {
+        status: 409,
+        code: "revision_conflict",
+        error: `execution changed since liveRevision ${request.baseLiveRevision} (current ${execution.liveRevision}) — re-read the live outline`,
+        currentLiveRevision: execution.liveRevision,
+      },
+    };
+  }
+
+  const editability = classifyExecutionEditability(execution);
+  if (editability.kind === "not-editable") {
+    return {
+      ok: false,
+      failure: {
+        status: 409,
+        code: "not_editable",
+        error: `execution is not editable (${editability.reason})`,
+      },
+    };
+  }
+
+  const applied = applyLiveExecutionEdits(
+    execution,
+    { operations: request.operations },
+    liveEditDeps,
+  );
+  if (!applied.ok) {
+    return {
+      ok: false,
+      failure: {
+        status: 400,
+        code: applied.code,
+        error: "live edit was rejected",
+        issues: applied.issues,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    execution: applied.execution,
+    affectedContextIds: applied.affectedContextIds,
+  };
+}
+
+function respondLiveEditFailure(failure: LiveEditFailure): Response {
+  const operationIndex = failure.issues?.find(
+    (issue) => issue.operationIndex !== undefined,
+  )?.operationIndex;
+  logger.warn("live_edit.rejected", {
+    code: failure.code,
+    ...(operationIndex !== undefined ? { operationIndex } : {}),
+    issueCount: failure.issues?.length ?? 0,
+  });
+
+  const body: Record<string, unknown> = {
+    error: failure.error,
+    code: failure.code,
+  };
+  if (failure.currentLiveRevision !== undefined) {
+    body["currentLiveRevision"] = failure.currentLiveRevision;
+  }
+  if (failure.issues) {
+    body["issues"] = failure.issues.map(formatDefinitionEditIssue);
+  }
+  return NextResponse.json(body, { status: failure.status });
+}
+
+function notFound(message: string): Response {
+  return NextResponse.json({ error: message } satisfies ApiError, {
+    status: 404,
+  });
+}
 
 async function resolveSession(
   context: RouteContext,
   deps: GraphWorkflowRuntimeEditRouteDeps,
-): Promise<
-  | { error: Response }
-  | { projectPath: string; sessionName: string; session: SessionState }
-> {
+): Promise<{ error: Response } | { projectPath: string; sessionName: string }> {
   const params = await context.params;
   const projectName = params["name"] ?? "";
   const sessionName = decodeURIComponent(params["session"] ?? "");
   const projectPath = await deps.resolveProjectPath(projectName);
-
   if (!projectPath) {
-    return {
-      error: NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      ),
-    };
+    return { error: notFound("Project not found") };
   }
 
   const session = await deps.getSession(projectPath, sessionName);
   if (!session) {
-    return {
-      error: NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      ),
-    };
+    return { error: notFound("Session not found") };
   }
 
-  return { projectPath, sessionName, session };
-}
-
-function isRuntimeEditValidationError(error: unknown): error is
-  | GraphWorkflowRuntimeEditValidationError
-  | {
-      name: string;
-      message: string;
-      errors: unknown;
-    } {
-  return (
-    error instanceof GraphWorkflowRuntimeEditValidationError ||
-    (typeof error === "object" &&
-      error !== null &&
-      "name" in error &&
-      (error as { name?: string }).name ===
-        "GraphWorkflowRuntimeEditValidationError" &&
-      "errors" in error)
-  );
-}
-
-function respondToRuntimeEditError(error: unknown): Response {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "object" &&
-          error !== null &&
-          "message" in error &&
-          typeof (error as { message?: unknown }).message === "string"
-        ? (error as { message: string }).message
-        : "Graph workflow request failed";
-
-  if (isRuntimeEditValidationError(error)) {
-    return NextResponse.json(
-      {
-        error: message,
-        errors: error.errors,
-      } satisfies ApiError & { errors: unknown },
-      { status: 422 },
-    );
-  }
-
-  if (message === "Session does not have an active graph workflow execution") {
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 404,
-    });
-  }
-
-  if (
-    message ===
-    "User runtime edits are allowed only while execution is running, paused, halted, or aborted"
-  ) {
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 409,
-    });
-  }
-
-  return NextResponse.json({ error: message } satisfies ApiError, {
-    status: 500,
-  });
+  return { projectPath, sessionName };
 }
 
 export function createGraphWorkflowRuntimeEditRouteHandlers(
@@ -169,33 +297,127 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const resolved = await resolveSession(context, deps);
-    if ("error" in resolved) {
-      return resolved.error;
-    }
-
-    const parsed = workflowRuntimeEditRequestSchema.safeParse(
-      await request.json(),
-    );
-    if (!parsed.success) {
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
       return NextResponse.json(
         {
-          error: "Invalid request: operations are required",
-        } satisfies ApiError,
+          error: "Invalid live edit request: body must be JSON",
+          issues: [{ path: "body", message: "invalid JSON" }],
+        },
         { status: 400 },
       );
     }
 
-    try {
-      const execution = await deps.applyRuntimeEdits(
-        resolved.projectPath,
-        resolved.sessionName,
-        parsed.data,
+    const parsed = workflowLiveEditRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid live edit request",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path.join(".") || "operations",
+            message: issue.message,
+          })),
+        },
+        { status: 400 },
       );
-      return NextResponse.json({ execution });
-    } catch (error) {
-      return respondToRuntimeEditError(error);
     }
+    const editRequest = parsed.data;
+
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+    const { projectPath, sessionName } = resolved;
+
+    const liveEditDeps = await deps.buildLiveEditDeps(projectPath);
+
+    // Dry-run — outside the write queue (D14). The state-store mutation primitive
+    // always persists; a dry-run reads the snapshot via the accessor, runs the
+    // same gates, and reports the would-be result with no persist, no bump, and
+    // no events. The verdict is advisory; the apply path re-runs the gates.
+    if (editRequest.dryRun === true) {
+      const execution = await deps.getActiveExecution(projectPath, sessionName);
+      if (!execution) {
+        return notFound(
+          "Session does not have an active graph workflow execution",
+        );
+      }
+      const gate = evaluateLiveEditRequest(
+        execution,
+        editRequest,
+        liveEditDeps,
+      );
+      if (!gate.ok) {
+        return respondLiveEditFailure(gate.failure);
+      }
+      return NextResponse.json({
+        applied: editRequest.operations.length,
+        liveRevision: execution.liveRevision,
+        affectedContextIds: gate.affectedContextIds,
+        dryRun: true,
+      });
+    }
+
+    // Apply — inside the serialized mutation (atomic). Gates re-run against the
+    // write-queue-held current state (apply-time re-classification, D7); a
+    // rejection throws so nothing persists. On success bump `liveRevision` by
+    // exactly one (D4) and emit the mandatory live-edit event (D12/D16).
+    let applied = 0;
+    let liveRevision = 0;
+    let affectedContextIds: string[] = [];
+    try {
+      await deps.mutateActive(projectPath, sessionName, (current) => {
+        const gate = evaluateLiveEditRequest(
+          current,
+          editRequest,
+          liveEditDeps,
+        );
+        if (!gate.ok) {
+          throw new LiveEditRejectionSignal(gate.failure);
+        }
+
+        const bumpedLiveRevision = gate.execution.liveRevision + 1;
+        const bumped: GraphWorkflowExecution = {
+          ...gate.execution,
+          liveRevision: bumpedLiveRevision,
+        };
+        const rows = deps.publishLiveEditApplied({
+          projectPath,
+          sessionName,
+          executionId: bumped.id,
+          liveRevision: bumpedLiveRevision,
+          operationCount: editRequest.operations.length,
+          affectedContextIds: gate.affectedContextIds,
+          source: editRequest.source,
+        });
+
+        applied = editRequest.operations.length;
+        liveRevision = bumpedLiveRevision;
+        affectedContextIds = gate.affectedContextIds;
+        return { execution: bumped, events: rows };
+      });
+    } catch (error) {
+      if (error instanceof LiveEditRejectionSignal) {
+        return respondLiveEditFailure(error.failure);
+      }
+      if (
+        error instanceof Error &&
+        error.message ===
+          "Session does not have an active graph workflow execution"
+      ) {
+        return notFound(error.message);
+      }
+      throw error;
+    }
+
+    return NextResponse.json({
+      applied,
+      liveRevision,
+      affectedContextIds,
+      dryRun: false,
+    });
   }
 
   return { POST };

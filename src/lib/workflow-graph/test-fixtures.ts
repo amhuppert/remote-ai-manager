@@ -195,6 +195,7 @@ export function createWorkflowExecution(
     id: "execution-1",
     seedDefinitionId: "workflow-1",
     seedDefinitionRevision: 1,
+    liveRevision: 1,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition: definition,

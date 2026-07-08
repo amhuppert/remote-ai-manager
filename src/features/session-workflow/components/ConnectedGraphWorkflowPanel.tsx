@@ -14,6 +14,8 @@ import {
   useResumeGraphWorkflowMutation,
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
+import { ApiCallError } from "@/lib/api/errors";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import type { ExecutionControlAction } from "./ExecutionStatusBar";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
@@ -54,33 +56,43 @@ export default function ConnectedGraphWorkflowPanel({
     projectName,
     sessionName,
   );
+  // A dedicated instance for config-tab saves so its pending/conflict/success
+  // state drives the Config tab's affordances without being conflated with
+  // task-edit runs on the same endpoint.
+  const configEditMutation = useRuntimeEditGraphWorkflowMutation(
+    projectName,
+    sessionName,
+  );
   const resetContextMutation = useResetExecutionContextMutation(
     projectName,
     sessionName,
   );
 
+  // Live edits carry the concurrency guard (executionId + the current
+  // liveRevision) read from the fetched execution; the mutation self-identifies
+  // as source "ui" (doc 06, D15). Guard on a present execution — the task-edit
+  // affordances only render once one exists.
   const handleAddTask = useCallback(
     (contextId: string, title: string, instructions: string) => {
+      if (!execution) return;
       runtimeEditMutation.mutate({
-        operations: [
-          {
-            type: "add",
-            contextId,
-            title,
-            instructions,
-          },
-        ],
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
+        operations: [{ type: "add-task", contextId, title, instructions }],
       });
     },
-    [runtimeEditMutation],
+    [execution, runtimeEditMutation],
   );
 
   const handleUpdateTask = useCallback(
     (taskId: string, updates: { title?: string; instructions?: string }) => {
+      if (!execution) return;
       runtimeEditMutation.mutate({
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
         operations: [
           {
-            type: "update",
+            type: "update-task",
             taskId,
             ...(updates.title ? { title: updates.title } : {}),
             ...(updates.instructions
@@ -90,48 +102,69 @@ export default function ConnectedGraphWorkflowPanel({
         ],
       });
     },
-    [runtimeEditMutation],
+    [execution, runtimeEditMutation],
   );
 
   const handleRemoveTask = useCallback(
     (taskId: string) => {
+      if (!execution) return;
       runtimeEditMutation.mutate({
-        operations: [{ type: "remove", taskId }],
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
+        operations: [{ type: "remove-task", taskId }],
       });
     },
-    [runtimeEditMutation],
+    [execution, runtimeEditMutation],
   );
 
   const handleMoveTask = useCallback(
     (taskId: string, targetContextId: string, targetOrder: number) => {
+      if (!execution) return;
       runtimeEditMutation.mutate({
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
         operations: [
           {
-            type: "move",
+            type: "move-task",
             taskId,
             targetContextId,
-            targetOrder,
+            // The server owns the numeric order; a relative position is the
+            // live-edit contract (doc 06). Order 1 → start, else append.
+            position: targetOrder <= 1 ? { at: "start" } : { at: "end" },
           },
         ],
       });
     },
-    [runtimeEditMutation],
+    [execution, runtimeEditMutation],
   );
 
   const handleReorderTask = useCallback(
     (contextId: string, orderedTaskIds: string[]) => {
+      if (!execution) return;
       runtimeEditMutation.mutate({
-        operations: [
-          {
-            type: "reorder",
-            contextId,
-            orderedTaskIds,
-          },
-        ],
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
+        operations: [{ type: "reorder-tasks", contextId, orderedTaskIds }],
       });
     },
-    [runtimeEditMutation],
+    [execution, runtimeEditMutation],
   );
+
+  const handleSaveContextConfig = useCallback(
+    (operations: WorkflowLiveEditOperation[]) => {
+      if (!execution || operations.length === 0) return;
+      configEditMutation.mutate({
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
+        operations,
+      });
+    },
+    [execution, configEditMutation],
+  );
+
+  const configEditConflict =
+    configEditMutation.error instanceof ApiCallError &&
+    configEditMutation.error.code === "revision_conflict";
 
   const executionId = execution?.id ?? null;
   const eventsQuery = useGraphWorkflowEventsQuery(
@@ -181,12 +214,19 @@ export default function ConnectedGraphWorkflowPanel({
       onMoveTask={handleMoveTask}
       onReorderTask={handleReorderTask}
       onResetContext={handleResetContext}
+      onSaveContextConfig={handleSaveContextConfig}
+      isSavingConfig={configEditMutation.isPending}
+      isPausingExecution={pauseMutation.isPending}
+      isResumingExecution={resumeMutation.isPending}
+      configEditConflict={configEditConflict}
+      configSaveSucceeded={configEditMutation.isSuccess}
       isMutating={
         pauseMutation.isPending ||
         resumeMutation.isPending ||
         abortMutation.isPending ||
         clearMutation.isPending ||
         runtimeEditMutation.isPending ||
+        configEditMutation.isPending ||
         resetContextMutation.isPending
       }
       pendingAction={pendingAction}

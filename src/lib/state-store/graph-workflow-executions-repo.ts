@@ -41,6 +41,7 @@ export const DEFINITION_TIER_KEYS = [
  */
 export const RUNTIME_TIER_KEYS = [
   "status",
+  "liveRevision",
   "activeContextIds",
   "contextStates",
   "taskStates",

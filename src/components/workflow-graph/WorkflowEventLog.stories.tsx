@@ -19,6 +19,7 @@ function makeExecution(
     id: EXEC,
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    liveRevision: 1,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition: {

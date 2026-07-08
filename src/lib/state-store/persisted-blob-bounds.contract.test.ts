@@ -18,12 +18,12 @@ import {
  * collection is explicitly discharged below.
  *
  * A discharge key is a path prefix (it covers its own node and every descendant,
- * so an immutable subtree needs only one entry). The value explains why the
+ * so a bounded subtree needs only one entry). The value explains why the
  * collection cannot grow unbounded in a single column:
  *   - "normalized: <table>"  — not a blob; lives in its own child table.
  *   - "not-persisted"         — dropped on write (see the durability contract).
  *   - "pruned: <where>"       — evicted to a bounded working set by named code.
- *   - "bounded: <why>"        — capped by construction (author-fixed graph, one
+ *   - "bounded: <why>"        — capped by construction (author-shaped graph, one
  *                               in-flight set, etc.).
  *
  * Adding an unbounded collection to a persisted blob fails this gate until the
@@ -90,7 +90,7 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
     discharges: {
       // --- definition_json tier (near-static, written only when its hash changes) ---
       "workingDefinition.**":
-        "bounded: immutable resolved workflow definition (contexts, tasks, edges, per-context charters) fixed at resolve time, never mutated at runtime. In graph_workflow_executions.definition_json.",
+        "bounded: resolved workflow definition (contexts, tasks, edges, per-context charters) sized at resolve time and written on accepted live edits (lane-agent add_task and doc-06 live editing); every mutation is author-shaped content bounded by the same limits as the seeded definition. In graph_workflow_executions.definition_json.",
       "charter.**":
         "bounded: author-fixed workflow charter. In graph_workflow_executions.definition_json.",
       boundInputs:

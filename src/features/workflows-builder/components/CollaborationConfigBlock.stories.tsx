@@ -6,7 +6,7 @@ import type { WorkflowCollaborationConfig } from "@/lib/workflows/schemas";
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";
-import { CollaborationEditor } from "./InspectorFieldEditors";
+import { CollaborationEditor } from "@/components/workflow-config/FieldEditors";
 
 const BASE: WorkflowCollaborationConfig = {
   secondAgent: {

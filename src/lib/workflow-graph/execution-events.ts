@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createLogger } from "@/lib/logging";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 import {
   createExecutionIndex,
@@ -18,6 +19,7 @@ import type {
   GraphWorkflowExecutionLaneState,
   GraphWorkflowExecutionSessionRef,
   GraphWorkflowHaltReason,
+  GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowJoinStatusEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowMergeStatusEvent,
@@ -33,6 +35,8 @@ import type {
   WorkflowValidatorIssue,
 } from "@/lib/workflows/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
+
+const logger = createLogger("workflow.live-edit");
 
 function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
   publishSessionStatus(event);
@@ -116,6 +120,16 @@ interface PublishCharterUpdatedInput {
   definitionRevision: number;
   charterHash: string;
   execution?: GraphWorkflowExecution | null;
+}
+
+export interface PublishLiveEditAppliedInput {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+  liveRevision: number;
+  operationCount: number;
+  affectedContextIds: string[];
+  source: GraphWorkflowLiveEditAppliedEvent["source"];
 }
 
 /**
@@ -944,6 +958,39 @@ export function createGraphWorkflowExecutionEventPublisher(
     return buildEvents(getNow(deps), [event]);
   }
 
+  /**
+   * Broadcast the mandatory live-edit event AND return it as an appendable row
+   * (doc 06, D16). A live edit may change only config or future structure and
+   * so produce no status/diff event; broadcasting here is the sole wire signal.
+   * The repository's extra-events path only appends returned rows to
+   * `graph_workflow_events` — it never broadcasts — so the route calls this and
+   * includes the returned rows in the mutation's events (broadcast + persisted).
+   */
+  function publishLiveEditApplied(
+    input: PublishLiveEditAppliedInput,
+  ): GraphWorkflowExecutionEvent[] {
+    const event: GraphWorkflowLiveEditAppliedEvent = {
+      type: "graph-workflow-live-edit-applied",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.executionId,
+      liveRevision: input.liveRevision,
+      operationCount: input.operationCount,
+      affectedContextIds: input.affectedContextIds,
+      source: input.source,
+    };
+
+    publishEvents(deps, [event]);
+    logger.info("live_edit.applied", {
+      executionId: input.executionId,
+      liveRevision: input.liveRevision,
+      source: input.source,
+      operationCount: input.operationCount,
+      affectedContextIds: input.affectedContextIds,
+    });
+    return buildEvents(getNow(deps), [event]);
+  }
+
   return {
     publishExecutionUpdate,
     publishValidationResult,
@@ -953,5 +1000,6 @@ export function createGraphWorkflowExecutionEventPublisher(
     publishUserInputResolved,
     publishCharterRegistered,
     publishCharterUpdated,
+    publishLiveEditApplied,
   };
 }

@@ -504,6 +504,12 @@ export const graphWorkflowResolvedContextSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
+  // Resolved collaboration config (with per-field provenance) snapshotted at
+  // seed time so a later saved-definition edit cannot leak into a running
+  // execution (doc 06, D11). `.optional()` because executions seeded before the
+  // field existed have no snapshot; the lane tool context falls back to a
+  // saved-definition reload only for those legacy rows.
+  collaboration: resolvedCollaborationConfigSchema.optional(),
   charter: workflowCharterSchema.optional(),
 });
 export type GraphWorkflowResolvedContext = z.infer<
@@ -1365,6 +1371,26 @@ export type GraphWorkflowCharterUpdatedEvent = z.infer<
   typeof graphWorkflowCharterUpdatedEventSchema
 >;
 
+// Mandatory live-edit notification (doc 06, D12/D16). Unlike every other
+// graph-workflow event, a live edit may be config-only or future-structure and
+// so produce no status/diff event — this carries the `liveRevision` bump and
+// the affected contexts so the UI invalidates and refetches. `source` records
+// which entry point applied the batch; `lane-agent` is server-derived on the
+// lane route only (never accepted on the runtime-edits endpoint, D15).
+export const graphWorkflowLiveEditAppliedEventSchema = z.object({
+  type: z.literal("graph-workflow-live-edit-applied"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  liveRevision: z.number().int().min(1),
+  operationCount: z.number().int().min(1),
+  affectedContextIds: z.array(z.string()),
+  source: z.enum(["cli", "ui", "lane-agent"]),
+});
+export type GraphWorkflowLiveEditAppliedEvent = z.infer<
+  typeof graphWorkflowLiveEditAppliedEventSchema
+>;
+
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
@@ -1383,6 +1409,7 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowUserInputResolvedEventSchema,
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
+  graphWorkflowLiveEditAppliedEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 
@@ -1469,6 +1496,12 @@ export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
   seedDefinitionRevision: z.number().int().min(1),
+  // Optimistic-concurrency token for live edits (doc 06, D4). A bounded scalar
+  // counter incremented ONLY by accepted live-edit batches (including the
+  // lane-agent `add_task`), never by scheduler ticks, so `baseLiveRevision`
+  // guards catch edit-vs-edit lost updates. Persisted in the runtime tier
+  // (`RUNTIME_TIER_KEYS`); rows written before the field existed parse as `1`.
+  liveRevision: z.number().int().min(1).default(1),
   // Raw bound-input snapshot recording which parameter values produced the run.
   // All supported parameter types (string/text/enum) bind to string values, so
   // the value type is `string`. `.default({})` lets legacy execution rows that
@@ -1527,68 +1560,6 @@ export const graphWorkflowExecutionFullResponseSchema = z.object({
 
 export type GraphWorkflowExecutionFullResponse = z.infer<
   typeof graphWorkflowExecutionFullResponseSchema
->;
-
-// ============================================================
-// Workflow Runtime Edits
-// ============================================================
-
-const workflowRuntimeEditAddOperationSchema = z.object({
-  type: z.literal("add"),
-  contextId: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  instructions: z.string().trim().min(1),
-  metadata: z.record(z.string(), z.string()).optional(),
-});
-
-const workflowRuntimeEditUpdateOperationSchema = z
-  .object({
-    type: z.literal("update"),
-    taskId: z.string().trim().min(1),
-    title: z.string().trim().min(1).optional(),
-    instructions: z.string().trim().min(1).optional(),
-    metadata: z.record(z.string(), z.string()).nullable().optional(),
-  })
-  .refine(
-    (value) =>
-      value.title !== undefined ||
-      value.instructions !== undefined ||
-      value.metadata !== undefined,
-    {
-      message: "At least one of title, instructions, or metadata is required",
-    },
-  );
-
-const workflowRuntimeEditRemoveOperationSchema = z.object({
-  type: z.literal("remove"),
-  taskId: z.string().trim().min(1),
-});
-
-const workflowRuntimeEditReorderOperationSchema = z.object({
-  type: z.literal("reorder"),
-  contextId: z.string().trim().min(1),
-  orderedTaskIds: z.array(z.string()).min(1),
-});
-
-const workflowRuntimeEditMoveOperationSchema = z.object({
-  type: z.literal("move"),
-  taskId: z.string().trim().min(1),
-  targetContextId: z.string().trim().min(1),
-  targetOrder: z.number().int().min(1),
-});
-
-const workflowRuntimeEditOperationSchema = z.discriminatedUnion("type", [
-  workflowRuntimeEditAddOperationSchema,
-  workflowRuntimeEditUpdateOperationSchema,
-  workflowRuntimeEditRemoveOperationSchema,
-  workflowRuntimeEditReorderOperationSchema,
-  workflowRuntimeEditMoveOperationSchema,
-]);
-export const workflowRuntimeEditRequestSchema = z.object({
-  operations: z.array(workflowRuntimeEditOperationSchema).min(1),
-});
-export type WorkflowRuntimeEditRequest = z.infer<
-  typeof workflowRuntimeEditRequestSchema
 >;
 
 // ============================================================
@@ -1802,6 +1773,145 @@ export const workflowDefinitionEditRequestSchema = z.object({
 });
 export type WorkflowDefinitionEditRequest = z.infer<
   typeof workflowDefinitionEditRequestSchema
+>;
+
+// ============================================================
+// Workflow Live Edits (live editing of a launched execution)
+// ============================================================
+// Ordered, atomic domain operations that mutate a RUNNING execution's resolved
+// `workingDefinition` + runtime maps (docs/design/cc-cli/06). These live
+// ALONGSIDE the doc-05 saved-definition edit union and the legacy task-only
+// runtime-edit schema — the route swap is a downstream slice, so all three
+// coexist until then. Names mirror doc 05 where semantics match; addressing is
+// always by stable id.
+//
+// Unlike the doc-05 blocks (which edit AUTHORED overrides where `null` clears an
+// override to restore cascade inheritance), live edits set CONCRETE RESOLVED
+// values — there is no cascade at runtime (doc 06, D1). Only `contextValidator`
+// is nullable (null → disable the validator, matching the resolved context's
+// nullable field); every other block is plain optional (present = set the value).
+const liveEditContextConfigShape = {
+  implementer: graphWorkflowAgentConfigSchema.optional(),
+  contextValidator: graphWorkflowAgentValidatorConfigSchema
+    .nullable()
+    .optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
+  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  collaboration: resolvedCollaborationConfigSchema.optional(),
+};
+
+export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("update-context"),
+      contextId: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
+      description: z.string().trim().min(1).nullable().optional(),
+      acceptanceCriteria: z.string().trim().min(1).optional(),
+      ...liveEditContextConfigShape,
+    })
+    .refine(
+      (value) =>
+        Object.entries(value).some(
+          ([key, fieldValue]) =>
+            key !== "type" && key !== "contextId" && fieldValue !== undefined,
+        ),
+      { message: "update-context requires at least one field to change" },
+    ),
+  z.object({
+    type: z.literal("add-context"),
+    id: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    acceptanceCriteria: z.string().trim().min(1),
+    description: z.string().trim().min(1).optional(),
+    // Seed the new context's resolved config from this context's resolved config
+    // when present, else from resolved global defaults; explicit blocks override.
+    configFromContextId: z.string().trim().min(1).optional(),
+    ...liveEditContextConfigShape,
+  }),
+  z.object({
+    type: z.literal("remove-context"),
+    contextId: z.string().trim().min(1),
+    deleteTasks: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("add-task"),
+    // Optional slug — minted server-side when absent (doc 06). Present ids let a
+    // batch reference the addition (e.g. add a task, then move it).
+    id: z.string().trim().min(1).optional(),
+    contextId: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    instructions: z.string().trim().min(1),
+    metadata: z.record(z.string(), z.string()).optional(),
+    position: definitionEditTaskPositionSchema.optional(),
+  }),
+  z
+    .object({
+      type: z.literal("update-task"),
+      taskId: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
+      instructions: z.string().trim().min(1).optional(),
+      metadata: z.record(z.string(), z.string()).nullable().optional(),
+    })
+    .refine(
+      (value) =>
+        value.title !== undefined ||
+        value.instructions !== undefined ||
+        value.metadata !== undefined,
+      {
+        message:
+          "update-task requires at least one of title, instructions, or metadata",
+      },
+    ),
+  z.object({
+    type: z.literal("remove-task"),
+    taskId: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("move-task"),
+    taskId: z.string().trim().min(1),
+    targetContextId: z.string().trim().min(1),
+    position: definitionEditTaskPositionSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("reorder-tasks"),
+    contextId: z.string().trim().min(1),
+    orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
+  }),
+  z.object({
+    type: z.literal("add-edge"),
+    sourceContextId: z.string().trim().min(1),
+    targetContextId: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("remove-edge"),
+    sourceContextId: z.string().trim().min(1),
+    targetContextId: z.string().trim().min(1),
+  }),
+]);
+export type WorkflowLiveEditOperation = z.infer<
+  typeof workflowLiveEditOperationSchema
+>;
+
+export const workflowLiveEditRequestSchema = z.object({
+  // Must match the active execution's id (route rejects a mismatch, D7).
+  executionId: z.string().min(1),
+  // Optimistic-concurrency guard: the `liveRevision` the edits were authored
+  // against; the route rejects with `revision_conflict` if it differs (D4).
+  baseLiveRevision: z.number().int().min(1),
+  // Trusted client self-identification for audit/SSE attribution (D15).
+  // `lane-agent` is server-derived on the lane route only — never accepted here.
+  source: z.enum(["cli", "ui"]),
+  // Advisory validation without a write (route runs gates against a snapshot).
+  dryRun: z.boolean().optional(),
+  operations: z.array(workflowLiveEditOperationSchema).min(1),
+});
+export type WorkflowLiveEditRequest = z.infer<
+  typeof workflowLiveEditRequestSchema
 >;
 
 // ============================================================

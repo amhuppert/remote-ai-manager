@@ -3,6 +3,7 @@ import {
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowExecutionEventSchema,
+  graphWorkflowLiveEditAppliedEventSchema,
 } from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
@@ -1583,5 +1584,42 @@ describe("graph workflow execution event publisher", () => {
     // does not persist it).
     expect(updatedEvents).toHaveLength(1);
     expect(updatedEvents[0]?.event.type).toBe("graph-workflow-charter-updated");
+  });
+
+  it("broadcasts a live-edit-applied event and returns it as an appendable row", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T09:00:00.000Z",
+    });
+
+    const rows = publisher.publishLiveEditApplied({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      executionId: "execution-7",
+      liveRevision: 5,
+      operationCount: 3,
+      affectedContextIds: ["verify", "docs"],
+      source: "cli",
+    });
+
+    const [broadcastEvent] = broadcast.mock.calls[0] ?? [];
+    expect(
+      graphWorkflowLiveEditAppliedEventSchema.parse(broadcastEvent),
+    ).toEqual({
+      type: "graph-workflow-live-edit-applied",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: "execution-7",
+      liveRevision: 5,
+      operationCount: 3,
+      affectedContextIds: ["verify", "docs"],
+      source: "cli",
+    });
+    // The rows are returned (not persisted here) so the caller can append them
+    // to graph_workflow_events in the same mutation that bumped liveRevision.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.occurredAt).toBe("2026-04-02T09:00:00.000Z");
+    expect(rows[0]?.event.type).toBe("graph-workflow-live-edit-applied");
   });
 });

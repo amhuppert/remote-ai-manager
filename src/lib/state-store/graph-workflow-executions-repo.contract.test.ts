@@ -316,6 +316,40 @@ describe("graph-workflow-executions-repo behavior", () => {
     expect(loaded?.launchedTier).toBe("project");
   });
 
+  it("admits a pre-feature row with no liveRevision via the additive default of 1", () => {
+    // Write a normal execution, then strip `liveRevision` from the stored
+    // runtime tier to simulate a row persisted before the field existed.
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const row = db
+      .prepare(
+        `SELECT runtime_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { runtime_json: string };
+    const runtime = JSON.parse(row.runtime_json) as Record<string, unknown>;
+    expect(
+      runtime.liveRevision,
+      "fixture must persist a non-default liveRevision",
+    ).toBe(4);
+    delete runtime.liveRevision;
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(runtime), PROJECT_PATH, SESSION_NAME);
+
+    // A fresh repo instance bypasses the parsed-row cache, decoding the edited
+    // row; the schema's `.default(1)` admits the legacy shape.
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    const loaded = freshRepo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.liveRevision).toBe(1);
+  });
+
   it("recreates the row via a full upsert when the runtime-only UPDATE matches zero rows", () => {
     const execution = maximalExecution();
     // First write warms the per-instance definition-hash cache.

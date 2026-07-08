@@ -22,6 +22,12 @@ import type {
   GraphWorkflowIterationPolicy,
   WorkflowCollaborationConfig,
 } from "@/lib/workflows/schemas";
+
+// Reusable, feature-agnostic config field editors (docs/design/cc-cli/06 "UI
+// plan"). Each is a controlled value+onChange component with no feature-level
+// state, so it edits authored override blocks (workflow builder) or concrete
+// resolved values (execution inspector) interchangeably.
+
 interface EditorBaseProps<T> {
   value: T;
   onChange: (next: T) => void;
@@ -30,7 +36,7 @@ interface EditorBaseProps<T> {
 
 // Label-grid row: label in a fixed left column, control on the right, hint
 // under the control column.
-function FieldRow({
+export function FieldRow({
   label,
   hint,
   children,
@@ -56,7 +62,7 @@ function FieldRow({
   );
 }
 
-function ToggleControl({
+export function ToggleControl({
   value,
   onChange,
   disabled,
@@ -77,7 +83,7 @@ function ToggleControl({
   );
 }
 
-function NumericInput({
+export function NumericInput({
   value,
   onChange,
   disabled,

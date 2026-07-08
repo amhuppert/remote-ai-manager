@@ -109,14 +109,25 @@ const BOOLEAN_FLAG_ARGS = new Set(
 );
 
 /**
- * Generalized argv parse: `--json`, `--help`, and every registry-declared
- * boolean flag are booleans; every other `--x` consumes the next token as its
+ * Generalized argv parse: `--json`, `--help`, and every boolean flag in
+ * `booleanArgs` are booleans; every other `--x` consumes the next token as its
  * value (erroring if absent or `--`-prefixed). Global value flags are surfaced
  * typed in `flags`; ALL value flags land in `values` for command-specific
  * reads. Unknown-flag rejection is deferred to `checkFlags` per command so
  * subcommands can declare their own flags.
+ *
+ * `booleanArgs` is the set of `--name` arg forms to treat as booleans. It
+ * defaults to the global union of every registry-declared boolean flag — the
+ * right set for a first "probe" parse that only needs the command path. The
+ * authoritative parse passes the COMMAND-SCOPED set
+ * (`booleanFlagArgsForCommand`) so a flag can be boolean for one command and
+ * value for another (e.g. `workflow get --config` vs `workflow live get
+ * --config <id>`, doc 06).
  */
-export function parseArgv(argv: string[]): ParsedArgv {
+export function parseArgv(
+  argv: string[],
+  booleanArgs: Set<string> = BOOLEAN_FLAG_ARGS,
+): ParsedArgv {
   const flags: GlobalFlags = { json: false };
   const values: Record<string, string> = {};
   const lists: Record<string, string[]> = {};
@@ -144,7 +155,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
     // Valueless boolean flags (they consume no value). They land in `values`
     // as markers so per-command `checkFlags` still rejects them where not
     // allowed; commands that accept them read `values["wait"] !== undefined`.
-    if (BOOLEAN_FLAG_ARGS.has(arg)) {
+    if (booleanArgs.has(arg)) {
       values[arg.slice(2)] = "true";
       continue;
     }

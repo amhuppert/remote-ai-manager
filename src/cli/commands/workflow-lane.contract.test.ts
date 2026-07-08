@@ -8,6 +8,7 @@ import {
   createLaneRouteHandlers,
   type LaneRouteDeps,
 } from "@/lib/workflow-graph/lane-route-handlers";
+import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
@@ -130,13 +131,21 @@ function buildRealContext(
 ): GraphWorkflowToolServerContext {
   let current = structuredClone(options.execution ?? buildRunningExecution());
   let queue: Promise<unknown> = Promise.resolve();
+  const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+    broadcast: () => undefined,
+    now: () => "2026-03-27T12:00:00.000Z",
+  });
   const factory = createGraphWorkflowExecutionToolContext({
     workflowManager: {
       async mutateActive(_projectPath, _sessionName, fn) {
         const next = queue.then(async () => {
           const draft = structuredClone(current);
           const result = await fn(draft);
-          current = structuredClone(result);
+          current = structuredClone(
+            "execution" in result && "events" in result
+              ? result.execution
+              : result,
+          );
           return current;
         });
         queue = next.catch(() => undefined);
@@ -151,6 +160,7 @@ function buildRealContext(
       now: () => "2026-03-27T12:00:00.000Z",
       createDocumentId: () => "doc-1",
     }),
+    publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
     readLiveOccupancy: options.readLiveOccupancy ?? (() => null),
     now: () => "2026-03-27T12:00:00.000Z",
   });

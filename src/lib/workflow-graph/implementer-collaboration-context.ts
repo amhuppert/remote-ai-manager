@@ -1,11 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { WorkflowDefaults } from "@/lib/config/schemas";
 import type {
-  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowHaltReason,
-  WorkflowConfigOverride,
+  ResolvedCollaborationConfig,
 } from "@/lib/workflows/schemas";
-import { resolveCollaborationConfigWithProvenance } from "./resolve-config";
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 
 export interface ImplementerCollaborationContextInput {
@@ -22,9 +19,13 @@ export interface ImplementerCollaborationContextInput {
    * implementer turn that requested the collaboration.
    */
   iterationIndex: number;
-  globalDefaults: WorkflowDefaults;
-  workflowConfig: WorkflowConfigOverride;
-  executionContextDefinition: GraphWorkflowExecutionContextDefinition;
+  /**
+   * The collaboration config resolved for this context — the execution's frozen
+   * working-copy value, or the legacy saved-definition cascade for pre-field
+   * executions. Resolved by `resolveLaneToolCollaborationConfig` (doc 06, D11)
+   * so the working-copy-vs-reload decision lives in exactly one place.
+   */
+  resolvedCollaboration: ResolvedCollaborationConfig;
 }
 
 export interface ImplementerCollaborationContextDeps {
@@ -47,12 +48,7 @@ export function buildImplementerCollaborationContext(
     conversationId: input.conversationId,
     executionId: input.executionId,
     iterationIndex: input.iterationIndex,
-    resolveCollaborationConfig: () =>
-      resolveCollaborationConfigWithProvenance(
-        input.globalDefaults,
-        input.workflowConfig,
-        input.executionContextDefinition,
-      ),
+    resolveCollaborationConfig: () => input.resolvedCollaboration,
     triggerWorkflowCollaboration: deps.triggerWorkflowCollaboration,
     setPendingHaltReason: deps.setPendingHaltReason,
   };

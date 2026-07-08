@@ -2,7 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { ApiCallError } from "@/lib/api/errors";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
-import { collaborationKeys } from "@/lib/workflows/query-keys";
+import {
+  collaborationKeys,
+  graphWorkflowExecutionKeys,
+} from "@/lib/workflows/query-keys";
 import {
   workflowDefinitionScopeApi,
   type WorkflowDefinitionScope,
@@ -19,7 +22,8 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type {
   WorkflowDefinitionRecord,
-  WorkflowRuntimeEditRequest,
+  WorkflowLiveEditOperation,
+  WorkflowLiveEditRequest,
 } from "@/lib/workflows/schemas";
 interface WorkflowDefinitionDraftInput {
   name: string;
@@ -355,6 +359,19 @@ export function useResolveApprovalMutation(
   });
 }
 
+/**
+ * Live edits to the active graph-workflow execution (docs/design/cc-cli/06). The
+ * caller supplies the ops plus the concurrency guard (`executionId` +
+ * `baseLiveRevision`) read from the already-fetched execution; the mutation always
+ * self-identifies as `source: "ui"` (D15). On a `revision_conflict` the execution
+ * changed under the operator — refetch it so the retry carries the fresh revision.
+ */
+export interface RuntimeEditGraphWorkflowInput {
+  executionId: string;
+  baseLiveRevision: number;
+  operations: WorkflowLiveEditOperation[];
+}
+
 export function useRuntimeEditGraphWorkflowMutation(
   projectName: string,
   sessionName: string,
@@ -362,20 +379,35 @@ export function useRuntimeEditGraphWorkflowMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: WorkflowRuntimeEditRequest) =>
+    mutationFn: (input: RuntimeEditGraphWorkflowInput) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/runtime-edits`,
         "runtime-edit-graph-workflow",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
+          body: JSON.stringify({
+            executionId: input.executionId,
+            baseLiveRevision: input.baseLiveRevision,
+            source: "ui",
+            operations: input.operations,
+          } satisfies WorkflowLiveEditRequest),
         },
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
+        queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
+    },
+    onError: (error) => {
+      if (error instanceof ApiCallError && error.code === "revision_conflict") {
+        void queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        });
+      }
     },
   });
 }

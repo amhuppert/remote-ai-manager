@@ -83,6 +83,12 @@ const COVERAGE: string[] = [
   "workflow shared-doc upsert",
   "workflow collab",
   "workflow collab request",
+  // workflow — live execution editing
+  "workflow live",
+  "workflow live get",
+  "workflow live edit",
+  "workflow live pause",
+  "workflow live resume",
   // charter
   "charter",
   "charter write",
@@ -164,32 +170,46 @@ describe("help registry contract", () => {
     }
   });
 
-  it("no flag name is declared both boolean and value across the registry", () => {
-    // The parse-time boolean-flag set is GLOBAL (parseArgv, shared.ts:126): a
-    // flag name that is `boolean` in one command and `value` in another would
-    // parse inconsistently across commands. Collect the kinds and owners seen
-    // per flag name and assert each name is singular.
-    const kindsByFlag = new Map<string, Set<FlagSpec["kind"]>>();
-    const ownersByFlag = new Map<string, Set<string>>();
+  it("no single entry declares a flag name as both boolean and value", () => {
+    // The parse-time boolean-flag set is COMMAND-SCOPED (parseArgv +
+    // booleanFlagArgsForCommand, shared.ts / help-registry.ts): the authoritative
+    // parse resolves the command path first, then uses THAT command's own boolean
+    // flags. So a flag name may legitimately be `boolean` for one command and
+    // `value` for another (e.g. `workflow get --config` boolean section selector
+    // vs `workflow live get --config <ctx>` value, doc 06) — the cross-command
+    // difference is intentional and sound because each command resolves to exactly
+    // one entry (longest-prefix). What is NOT sound is a single entry declaring the
+    // same flag name with two kinds, which would parse ambiguously for THAT
+    // command; assert per-entry singularity.
+    const conflicts: string[] = [];
     for (const entry of ENTRIES) {
+      const kindsByFlag = new Map<string, Set<FlagSpec["kind"]>>();
       for (const flag of entry.flags) {
         const kinds = kindsByFlag.get(flag.name) ?? new Set();
         kinds.add(flag.kind);
         kindsByFlag.set(flag.name, kinds);
-        const owners = ownersByFlag.get(flag.name) ?? new Set();
-        owners.add(pathKey(entry.path));
-        ownersByFlag.set(flag.name, owners);
+      }
+      for (const [name, kinds] of kindsByFlag) {
+        if (kinds.size > 1) {
+          conflicts.push(
+            `${pathKey(entry.path)}: --${name} declared as both boolean and value`,
+          );
+        }
       }
     }
-    const conflicts = [...kindsByFlag.entries()]
-      .filter(([, kinds]) => kinds.size > 1)
-      .map(
-        ([name]) =>
-          `--${name} declared as both boolean and value (in ${[
-            ...(ownersByFlag.get(name) ?? []),
-          ].join(", ")})`,
-      );
     expect(conflicts, conflicts.join("; ")).toEqual([]);
+  });
+
+  it("resolves --config command-scoped: boolean for 'workflow get', value for 'workflow live get'", () => {
+    // Pin the doc-06 collision the command-scoped parser exists to handle: the two
+    // commands declare the same flag name with different kinds, and each command's
+    // boolean set reflects its OWN declaration.
+    const get = ENTRIES.find((e) => pathKey(e.path) === "workflow get");
+    const liveGet = ENTRIES.find(
+      (e) => pathKey(e.path) === "workflow live get",
+    );
+    expect(get?.flags.find((f) => f.name === "config")?.kind).toBe("boolean");
+    expect(liveGet?.flags.find((f) => f.name === "config")?.kind).toBe("value");
   });
 
   it("declares --conversation on 'fixture prompt' (read with command-specific meaning)", () => {

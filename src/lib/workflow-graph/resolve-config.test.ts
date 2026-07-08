@@ -300,6 +300,44 @@ describe("resolveContext", () => {
     expect(resolved.humanApprovalGate).toEqual({ enabled: false });
   });
 
+  it("populates resolved collaboration with per-field provenance from the cascade (doc 06, D11)", () => {
+    const contextSecondAgent: GraphWorkflowAgentConfig = {
+      backend: "claude",
+      model: "haiku",
+      reasoningEffort: "low",
+    };
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { collaboration: { negotiationRounds: 5 } },
+      makeContext({ collaboration: { secondAgent: contextSecondAgent } }),
+    );
+
+    expect(resolved.collaboration).toEqual({
+      secondAgent: { value: contextSecondAgent, source: "per-node" },
+      negotiationRounds: { value: 5, source: "workflow" },
+      autonomousResolutionThreshold: { value: "minor", source: "global" },
+    });
+  });
+
+  it("resolves collaboration entirely from global when no override layer supplies it", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect(resolved.collaboration).toEqual({
+      secondAgent: {
+        value: GLOBAL_DEFAULTS.collaboration.secondAgent,
+        source: "global",
+      },
+      negotiationRounds: {
+        value: GLOBAL_DEFAULTS.collaboration.negotiationRounds,
+        source: "global",
+      },
+      autonomousResolutionThreshold: {
+        value: GLOBAL_DEFAULTS.collaboration.autonomousResolutionThreshold,
+        source: "global",
+      },
+    });
+  });
+
   it("inherits humanApprovalGate from global when neither workflow nor context override", () => {
     const resolved = resolveContext(
       { ...GLOBAL_DEFAULTS, humanApprovalGate: { enabled: true } },
@@ -484,6 +522,51 @@ describe("resolveWorkflowDefinition", () => {
     expect(resolved.executionContexts[1]?.askUserQuestions).toEqual({
       enabled: false,
     });
+  });
+
+  it("snapshots the resolved collaboration per context into the working definition (D11)", () => {
+    // Seed-time resolution freezes each context's collaboration onto the
+    // working copy so a later saved-definition edit cannot leak into a running
+    // execution. Context "a" inherits the workflow-level rounds override;
+    // context "b" overrides the second agent at the per-node tier.
+    const contextSecondAgent: GraphWorkflowAgentConfig = {
+      backend: "codex",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    };
+    const definition = makeDefinition({
+      workflowConfig: { collaboration: { negotiationRounds: 9 } },
+      executionContexts: [
+        makeContext({ id: "a", title: "A", acceptanceCriteria: "A-AC" }),
+        makeContext({
+          id: "b",
+          title: "B",
+          acceptanceCriteria: "B-AC",
+          collaboration: { secondAgent: contextSecondAgent },
+        }),
+      ],
+    });
+
+    const resolved = resolveWorkflowDefinition(makeGlobalConfig(), definition);
+
+    expect(resolved.executionContexts[0]?.collaboration).toEqual({
+      secondAgent: {
+        value: GLOBAL_DEFAULTS.collaboration.secondAgent,
+        source: "global",
+      },
+      negotiationRounds: { value: 9, source: "workflow" },
+      autonomousResolutionThreshold: {
+        value: GLOBAL_DEFAULTS.collaboration.autonomousResolutionThreshold,
+        source: "global",
+      },
+    });
+    expect(resolved.executionContexts[1]?.collaboration?.secondAgent).toEqual({
+      value: contextSecondAgent,
+      source: "per-node",
+    });
+    expect(
+      resolved.executionContexts[1]?.collaboration?.negotiationRounds,
+    ).toEqual({ value: 9, source: "workflow" });
   });
 
   it("treats a definition with absent workflowConfig as all-inherited from global", () => {

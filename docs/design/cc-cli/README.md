@@ -12,6 +12,8 @@ Documents in this set:
 | [`02-tool-migrations.md`](./02-tool-migrations.md) | Per-tool endpoint + CLI command design, new API endpoints, lane tools, decommissioning checklist |
 | [`03-ask-user-question-async.md`](./03-ask-user-question-async.md) | The AskUserQuestion async redesign (state machine changes, answer-as-message, edge cases) |
 | [`04-progressive-disclosure.md`](./04-progressive-disclosure.md) | Help registry as single source of truth, graph-shaped progressive disclosure, dynamic help context, three-tier output contract (hint/reminders/instruction), lane reminders |
+| [`05-workflow-definition-editing.md`](./05-workflow-definition-editing.md) | Targeted editing of saved workflow definitions (`cctl workflow edit` + outline/selector reads), operation vocabulary, revision guard, invariant gates |
+| [`06-workflow-live-editing.md`](./06-workflow-live-editing.md) | Live editing of launched executions (`cctl workflow live …`), lifecycle classifier + frontier invariant, `liveRevision`, structural edit boundaries, execution-UI config display/editing |
 
 ---
 

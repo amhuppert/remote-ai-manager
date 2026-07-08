@@ -134,6 +134,26 @@ export function booleanFlagNamesFrom(
   return [...names];
 }
 
+/**
+ * The boolean-flag arg forms (`--name`) for the command `path` resolves to
+ * (longest-prefix). The parse-time boolean set is resolved PER COMMAND, not
+ * globally, so a flag name may be `boolean` for one command and `value` for
+ * another — e.g. `workflow get --config` (boolean section selector, doc 05) vs
+ * `workflow live get --config <id>` (value, doc 06). Falls back to the global
+ * union when `path` resolves no entry (an unknown command — classification is
+ * moot, dispatch fails regardless).
+ */
+export function booleanFlagArgsFrom(
+  registry: Map<string, CommandHelpEntry>,
+  path: string[],
+): string[] {
+  const entry = resolveHelpEntry(registry, path);
+  if (!entry) return booleanFlagNamesFrom(registry).map((name) => `--${name}`);
+  return entry.flags
+    .filter((flag) => flag.kind === "boolean")
+    .map((flag) => `--${flag.name}`);
+}
+
 /** Level-1 (top-level) entries, in registry order. */
 export function level1Entries(entries: CommandHelpEntry[]): CommandHelpEntry[] {
   return entries.filter((entry) => entry.path.length === 1);
@@ -182,6 +202,10 @@ export function flagNamesFor(key: string): string[] {
 
 export function booleanFlagNames(): string[] {
   return booleanFlagNamesFrom(REGISTRY);
+}
+
+export function booleanFlagArgsForCommand(path: string[]): string[] {
+  return booleanFlagArgsFrom(REGISTRY, path);
 }
 
 export function renderTopUsage(): string {

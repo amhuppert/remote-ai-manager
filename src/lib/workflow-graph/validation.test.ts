@@ -13,7 +13,6 @@ import {
   validateAuthoredDefinition,
   validateResolvedWorkflow,
   validateWorkflowDefinition,
-  validateWorkflowRuntimeEdit,
 } from "./validation";
 
 function requiredStringParam(name: string): ParameterDeclaration {
@@ -69,34 +68,6 @@ describe("workflow-graph validation", () => {
         "cycle-detected",
       ]),
     );
-  });
-
-  it("rejects moving a task into a running or completed context", () => {
-    const definition = createWorkflowDefinition();
-    const baseExecution = createWorkflowExecution();
-    const execution = createWorkflowExecution({
-      contextStates: {
-        ...baseExecution.contextStates,
-        "context-verify": {
-          ...baseExecution.contextStates["context-verify"]!,
-          status: "completed",
-        },
-      },
-    });
-
-    const result = validateWorkflowRuntimeEdit(definition, execution, {
-      operations: [
-        {
-          type: "move",
-          taskId: "task-plan-1",
-          targetContextId: "context-verify",
-          targetOrder: 1,
-        },
-      ],
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors[0]?.code).toBe("runtime-edit-target-context-locked");
   });
 
   it("rejects empty task instructions and empty task titles", () => {
@@ -713,5 +684,93 @@ describe("validateResolvedWorkflow", () => {
           e.contextId === resolved.executionContexts[0]?.id,
       ),
     ).toBe(true);
+  });
+
+  it("flags validator-effort-unsupported for a codex-type validator whose effort the model rejects", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                type: "codex",
+                enabled: true,
+                continuity: { enabled: true },
+                codex: { model: "gpt-5.4", reasoningEffort: "minimal" },
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.some(
+        (e) =>
+          e.code === "validator-effort-unsupported" &&
+          e.contextId === resolved.executionContexts[0]?.id,
+      ),
+    ).toBe(true);
+  });
+
+  it("flags validator-effort-unsupported for a claude-type validator backed by a codex agent with a rejected effort", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                type: "claude",
+                enabled: true,
+                continuity: { enabled: true },
+                agent: {
+                  backend: "codex",
+                  model: "gpt-5.4",
+                  reasoningEffort: "minimal",
+                },
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.some(
+        (e) =>
+          e.code === "validator-effort-unsupported" &&
+          e.contextId === resolved.executionContexts[0]?.id,
+      ),
+    ).toBe(true);
+  });
+
+  it("passes a validator whose model supports the configured effort", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                type: "claude",
+                enabled: true,
+                continuity: { enabled: true },
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(result.ok).toBe(true);
   });
 });

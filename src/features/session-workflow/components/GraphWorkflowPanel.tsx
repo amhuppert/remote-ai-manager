@@ -9,6 +9,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
   GraphWorkflowVisualLayout,
+  WorkflowLiveEditOperation,
 } from "@/lib/workflows/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
@@ -45,6 +46,12 @@ interface GraphWorkflowPanelProps {
   ): void;
   onReorderTask(contextId: string, orderedTaskIds: string[]): void;
   onResetContext(contextId: string): void;
+  onSaveContextConfig(operations: WorkflowLiveEditOperation[]): void;
+  isSavingConfig: boolean;
+  isPausingExecution: boolean;
+  isResumingExecution: boolean;
+  configEditConflict: boolean;
+  configSaveSucceeded: boolean;
   isMutating: boolean;
   pendingAction: ExecutionControlAction | null;
   isMobile: boolean;
@@ -67,6 +74,12 @@ export default function GraphWorkflowPanel({
   onRemoveTask,
   onReorderTask,
   onResetContext,
+  onSaveContextConfig,
+  isSavingConfig,
+  isPausingExecution,
+  isResumingExecution,
+  configEditConflict,
+  configSaveSucceeded,
   isMutating,
   pendingAction,
   isMobile,
@@ -197,6 +210,14 @@ export default function GraphWorkflowPanel({
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
+                onSaveContextConfig={onSaveContextConfig}
+                onPauseExecution={onPause}
+                onResumeExecution={() => onResume()}
+                isSavingConfig={isSavingConfig}
+                isPausingExecution={isPausingExecution}
+                isResumingExecution={isResumingExecution}
+                configEditConflict={configEditConflict}
+                configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
               />
               {mobilePanel === "log" && (
@@ -273,6 +294,14 @@ export default function GraphWorkflowPanel({
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
+                onSaveContextConfig={onSaveContextConfig}
+                onPauseExecution={onPause}
+                onResumeExecution={() => onResume()}
+                isSavingConfig={isSavingConfig}
+                isPausingExecution={isPausingExecution}
+                isResumingExecution={isResumingExecution}
+                configEditConflict={configEditConflict}
+                configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
               />
             </>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -1338,5 +1338,148 @@ describe("ExecutionInspectorPanel — parked user-input question", () => {
     );
 
     expect(screen.queryByText(QUESTION_TEXT)).not.toBeInTheDocument();
+  });
+});
+
+describe("ExecutionInspectorPanel — Config tab + overview header", () => {
+  it("shows a Config tab that renders the selected context's resolved config", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    // The config content is not mounted until the tab is selected.
+    expect(screen.queryByTestId("context-config-tab")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+
+    const tab = screen.getByTestId("context-config-tab");
+    // context-plan's resolved implementer is claude opus.
+    const impl = within(tab).getByTestId("config-block-implementer");
+    expect(within(impl).getByText("Opus")).toBeInTheDocument();
+    // Runtime facts render for the selected context.
+    expect(within(tab).getByTestId("runtime-isolation")).toHaveTextContent(
+      "session",
+    );
+  });
+
+  it("keeps the Tasks tab as the default detail view", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    // Tasks content is present by default; config is not.
+    expect(screen.getByText("Inspect code")).toBeInTheDocument();
+    expect(screen.queryByTestId("context-config-tab")).not.toBeInTheDocument();
+  });
+
+  it("shows liveRevision and seed definition id@revision in the overview header", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({
+          liveRevision: 4,
+          seedDefinitionId: "workflow-1",
+          seedDefinitionRevision: 12,
+        })}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByTestId("overview-live-revision")).toHaveTextContent(
+      "liveRev 4",
+    );
+    expect(screen.getByTestId("overview-seed")).toHaveTextContent(
+      "workflow-1@12",
+    );
+  });
+});
+
+describe("ExecutionInspectorPanel — Config tab editing wiring", () => {
+  it("forwards a composed update-context op batch through onSaveContextConfig", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "paused" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    fireEvent.change(screen.getByLabelText("Max iterations"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        iterationPolicy: { maxIterations: 7, continuity: { enabled: true } },
+      },
+    ]);
+  });
+
+  it("shows a pause-to-edit affordance for a started context on a running execution", () => {
+    const onPauseExecution = vi.fn();
+    const base = createWorkflowExecution({ status: "running" });
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "ready",
+          iterationCount: 1,
+        },
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onSaveContextConfig={vi.fn()}
+        onPauseExecution={onPauseExecution}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause to edit" }));
+    expect(onPauseExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the revision-conflict retry notice in the Config tab", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "paused" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onSaveContextConfig={vi.fn()}
+        configEditConflict
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    expect(screen.getByTestId("config-affordance-conflict")).toHaveTextContent(
+      /execution changed/i,
+    );
   });
 });

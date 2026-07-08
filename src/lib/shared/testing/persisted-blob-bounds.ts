@@ -132,8 +132,10 @@ const SUBTREE_SUFFIX = ".**";
  *
  * A plain key matches exactly one node, so a collection added beside a
  * discharged one is still caught. A key ending in `.**` covers its node and
- * every descendant — the deliberate escape for an immutable subtree (e.g. an
- * author-fixed definition that is never mutated at runtime).
+ * every descendant — the deliberate escape for a subtree whose every descendant
+ * is author-shaped, size-bounded content (e.g. a resolved workflow definition,
+ * bounded at seed and on each accepted live edit — not by being unchanging, but
+ * by every write carrying the same author-shaped bounds).
  */
 function dischargeCovers(path: string, key: string): boolean {
   if (key.endsWith(SUBTREE_SUFFIX)) {

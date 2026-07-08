@@ -34,7 +34,8 @@ import {
   workflowAgentValidatorResultSchema,
   workflowConfigOverrideSchema,
   workflowDefinitionRecordSchema,
-  workflowRuntimeEditRequestSchema,
+  workflowLiveEditOperationSchema,
+  workflowLiveEditRequestSchema,
   workflowSemanticDefinitionSchema,
 } from "./schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
@@ -527,29 +528,211 @@ describe("workflow graph validator and request schemas", () => {
         : null,
     ).toBe(0.0021);
   });
+});
 
-  it("parses runtime edit operations for add and move workflows", () => {
-    const result = workflowRuntimeEditRequestSchema.safeParse({
-      operations: [
-        {
-          type: "add",
-          contextId: "context-1",
-          title: "Document the schema",
-          instructions: "Write down the intended contracts.",
-          metadata: {
-            source: "user",
-          },
+describe("workflowLiveEditOperationSchema", () => {
+  const resolvedCollaboration = {
+    secondAgent: {
+      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      source: "global" as const,
+    },
+    negotiationRounds: { value: 3, source: "global" as const },
+    autonomousResolutionThreshold: {
+      value: "minor" as const,
+      source: "global" as const,
+    },
+  };
+
+  it("parses every non-structural op shape with concrete resolved config", () => {
+    const ops = [
+      {
+        type: "update-context",
+        contextId: "impl",
+        title: "Build it",
+        description: null,
+        implementer: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "high",
         },
-        {
-          type: "move",
-          taskId: "task-2",
-          targetContextId: "context-1",
-          targetOrder: 2,
+        contextValidator: null,
+        scriptValidator: { enabled: true },
+        humanApprovalGate: { enabled: true },
+        askUserQuestions: { enabled: false },
+        iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+        circuitBreaker: { consecutiveFailureThreshold: 2 },
+        mutability: { allowAgentTaskAdd: true },
+        collaboration: resolvedCollaboration,
+      },
+      {
+        type: "add-task",
+        contextId: "impl",
+        title: "Add tests",
+        instructions: "Cover the new behavior.",
+        position: { at: "end" },
+      },
+      {
+        type: "update-task",
+        taskId: "impl-1",
+        instructions: "Revised instructions.",
+      },
+      { type: "remove-task", taskId: "impl-2" },
+      {
+        type: "move-task",
+        taskId: "impl-3",
+        targetContextId: "verify",
+        position: { after: "verify-1" },
+      },
+      {
+        type: "reorder-tasks",
+        contextId: "impl",
+        orderedTaskIds: ["impl-1", "impl-3"],
+      },
+    ];
+    for (const op of ops) {
+      const result = workflowLiveEditOperationSchema.safeParse(op);
+      expect(result.success, `${op.type} should parse`).toBe(true);
+    }
+  });
+
+  it("parses every structural op shape", () => {
+    const ops = [
+      {
+        type: "add-context",
+        id: "docs",
+        title: "Document",
+        acceptanceCriteria: "Docs written",
+        configFromContextId: "impl",
+        implementer: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
         },
-      ],
+      },
+      { type: "remove-context", contextId: "docs", deleteTasks: true },
+      { type: "add-edge", sourceContextId: "impl", targetContextId: "docs" },
+      { type: "remove-edge", sourceContextId: "impl", targetContextId: "docs" },
+    ];
+    for (const op of ops) {
+      const result = workflowLiveEditOperationSchema.safeParse(op);
+      expect(result.success, `${op.type} should parse`).toBe(true);
+    }
+  });
+
+  it("accepts an add-task with no id (minted server-side)", () => {
+    const result = workflowLiveEditOperationSchema.safeParse({
+      type: "add-task",
+      contextId: "impl",
+      title: "Extra work",
+      instructions: "Do the thing.",
     });
-
     expect(result.success).toBe(true);
+  });
+
+  it("rejects an update-context with no editable field present", () => {
+    const result = workflowLiveEditOperationSchema.safeParse({
+      type: "update-context",
+      contextId: "impl",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an update-task with no field to change", () => {
+    const result = workflowLiveEditOperationSchema.safeParse({
+      type: "update-task",
+      taskId: "impl-1",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a move-task missing the required targetContextId", () => {
+    const result = workflowLiveEditOperationSchema.safeParse({
+      type: "move-task",
+      taskId: "impl-1",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an add-context missing its id", () => {
+    const result = workflowLiveEditOperationSchema.safeParse({
+      type: "add-context",
+      title: "Document",
+      acceptanceCriteria: "Docs written",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown op type", () => {
+    const result = workflowLiveEditOperationSchema.safeParse({
+      type: "rename-context",
+      contextId: "impl",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("workflowLiveEditRequestSchema", () => {
+  const validOp = { type: "remove-task", taskId: "impl-1" };
+
+  it("parses a well-formed request envelope", () => {
+    const result = workflowLiveEditRequestSchema.safeParse({
+      executionId: "exec-7",
+      baseLiveRevision: 4,
+      source: "cli",
+      dryRun: true,
+      operations: [validOp],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("treats dryRun as optional", () => {
+    const result = workflowLiveEditRequestSchema.safeParse({
+      executionId: "exec-7",
+      baseLiveRevision: 1,
+      source: "ui",
+      operations: [validOp],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects the server-derived lane-agent source (D15)", () => {
+    const result = workflowLiveEditRequestSchema.safeParse({
+      executionId: "exec-7",
+      baseLiveRevision: 1,
+      source: "lane-agent",
+      operations: [validOp],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty operations array", () => {
+    const result = workflowLiveEditRequestSchema.safeParse({
+      executionId: "exec-7",
+      baseLiveRevision: 1,
+      source: "cli",
+      operations: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a baseLiveRevision below 1", () => {
+    const result = workflowLiveEditRequestSchema.safeParse({
+      executionId: "exec-7",
+      baseLiveRevision: 0,
+      source: "cli",
+      operations: [validOp],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty executionId", () => {
+    const result = workflowLiveEditRequestSchema.safeParse({
+      executionId: "",
+      baseLiveRevision: 1,
+      source: "cli",
+      operations: [validOp],
+    });
+    expect(result.success).toBe(false);
   });
 });
 

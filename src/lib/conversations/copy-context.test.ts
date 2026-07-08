@@ -70,6 +70,7 @@ function makeGraphWorkflowExecution(
     id: "exec-1",
     seedDefinitionId: "def-abc",
     seedDefinitionRevision: 3,
+    liveRevision: 1,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition: {

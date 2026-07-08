@@ -39,6 +39,7 @@ import {
   type OutlineRecord,
   type SliceResult,
 } from "./workflow-outline";
+import { liveOutlineSchema, renderLiveOutline } from "./workflow-live-outline";
 
 /**
  * `cctl workflow validate|create|replace|list|get|status|delete|start|templates`
@@ -218,6 +219,48 @@ function workflowEditFailure(
   return failureFromRequest(result, json);
 }
 
+/**
+ * `workflow live edit` failure mapping (docs/design/cc-cli/06 §Error contract): a
+ * `code`-bearing rejection (`execution_mismatch`/`revision_conflict`/
+ * `not_editable`/`frozen`/`requires_pause`/`invalid_edit`) is an operation-level
+ * "server said no about valid-shaped ops" → exit 1, issues one per line, `code`
+ * carried on the JSON envelope. A codeless 400 (malformed body) or 404 (no active
+ * execution) is a caller mistake → exit 2. Connection/auth fall through to the
+ * shared mapping (exit 3).
+ */
+function workflowLiveFailure(
+  result: Exclude<CliRequestResult, { kind: "ok" }>,
+  json: boolean,
+): CliResult {
+  if (result.kind === "error" && result.code !== undefined) {
+    const detail =
+      result.issues && result.issues.length > 0
+        ? result.issues
+            .map((issue) => `  ${issue.path}: ${issue.message}`)
+            .join("\n")
+        : undefined;
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: result.error,
+      ...(detail ? { detail } : {}),
+      ...structuredErrorFields(result),
+      json,
+    });
+  }
+  if (
+    result.kind === "error" &&
+    (result.status === 400 || result.status === 404)
+  ) {
+    return failure({
+      exitCode: EXIT_USAGE,
+      message: result.error,
+      ...structuredErrorFields(result),
+      json,
+    });
+  }
+  return failureFromRequest(result, json);
+}
+
 export async function runWorkflow(
   rest: string[],
   flags: GlobalFlags,
@@ -226,12 +269,17 @@ export async function runWorkflow(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const sub = rest[0];
+  // `workflow execution …` and `workflow exec …` are dispatch-rewrite aliases
+  // for `workflow live …` (doc 06, D10) — one implementation, one help node.
+  const sub = rest[0] === "execution" || rest[0] === "exec" ? "live" : rest[0];
   if (sub === undefined) {
     return usageFailure(
-      "workflow requires a subcommand: validate, create, replace, edit, list, get, status, delete, start, templates, task, shared-doc, or collab",
+      "workflow requires a subcommand: validate, create, replace, edit, list, get, status, delete, start, templates, live, task, shared-doc, or collab",
       json,
     );
+  }
+  if (sub === "live") {
+    return runWorkflowLive(rest.slice(1), flags, values, env, host);
   }
   if (sub === "task") {
     return runWorkflowTask(rest.slice(1), flags, values, env, host);
@@ -997,6 +1045,297 @@ function remainingTasksHint(remaining: number): string {
   return remaining === 1
     ? "1 task remains in this context"
     : `${remaining} tasks remain in this context`;
+}
+
+// --- Live execution editing (docs/design/cc-cli/06) --------------------------
+
+/**
+ * The mutually-exclusive `workflow live get` section selectors, in help order.
+ * `context`/`task`/`config` take a value (one item) and map to the endpoint's
+ * `?context` / `?task` / `?config=<ctx>` (doc 06 §CLI surface: `--config <id>`
+ * returns one context's FULL resolved config); `full` (boolean) maps to
+ * `?full=true`. All four are mutually exclusive; the default (no selector) is the
+ * compact text outline.
+ */
+const LIVE_GET_SELECTOR_FLAGS = ["full", "context", "task", "config"] as const;
+
+const liveEditResponseSchema = z.object({
+  applied: z.number(),
+  liveRevision: z.number(),
+  affectedContextIds: z.array(z.string()).default([]),
+  dryRun: z.boolean().optional(),
+});
+
+/**
+ * `cctl workflow live get|edit|pause|resume` — act on the session's ACTIVE
+ * launched execution (doc 06 §CLI surface). Session-scoped via
+ * `resolveSessionContext`; the `execution`/`exec` aliases are rewritten to `live`
+ * before dispatch (see `runWorkflow`), so all three share this one implementation
+ * and one help node.
+ */
+async function runWorkflowLive(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const sub = rest[0];
+  if (sub === undefined) {
+    return usageFailure(
+      "workflow live requires a subcommand: get, edit, pause, or resume",
+      json,
+    );
+  }
+  if (sub === "get") {
+    return runWorkflowLiveGet(rest.slice(1), flags, values, env, host);
+  }
+  if (sub === "edit") {
+    return runWorkflowLiveEdit(rest.slice(1), flags, values, env, host);
+  }
+  if (sub === "pause") {
+    return runWorkflowLivePause(rest.slice(1), flags, values, env, host);
+  }
+  if (sub === "resume") {
+    return runWorkflowLiveResume(rest.slice(1), flags, values, env, host);
+  }
+  return usageFailure(`unknown workflow live subcommand "${sub}"`, json);
+}
+
+/** The endpoint body's `section` slice value, for pretty-printing a selector. */
+function liveOutlineSectionValue(body: unknown): unknown {
+  if (body === null || typeof body !== "object") return body;
+  const record = body as Record<string, unknown>;
+  const section = record["section"];
+  if (typeof section === "string" && section in record) return record[section];
+  return body;
+}
+
+async function runWorkflowLiveGet(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow live get"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure("workflow live get takes no arguments", json);
+  }
+
+  const selectors = LIVE_GET_SELECTOR_FLAGS.filter(
+    (name) => values[name] !== undefined,
+  );
+  if (selectors.length > 1) {
+    return usageFailure(
+      `choose at most one section selector (--${selectors.join(", --")})`,
+      json,
+    );
+  }
+  const selector = selectors[0];
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  // Each selector maps to its endpoint query param (doc 06); the default (no
+  // selector) fetches the compact outline.
+  const params = new URLSearchParams();
+  if (selector === "full") params.set("full", "true");
+  else if (selector === "context")
+    params.set("context", values["context"] ?? "");
+  else if (selector === "task") params.set("task", values["task"] ?? "");
+  else if (selector === "config") params.set("config", values["config"] ?? "");
+  const query = params.toString();
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "GET",
+    path: `${graphWorkflowPath(context)}/live-outline${query ? `?${query}` : ""}`,
+  });
+  if (result.kind !== "ok") return workflowFailure(result, json);
+
+  const body = result.body;
+  const envelope: JsonEnvelope =
+    body !== null && typeof body === "object"
+      ? { ...(body as Record<string, unknown>), ok: true }
+      : { ok: true };
+
+  // Default (no selector) → the compact text outline; a section selector
+  // (--context/--task/--config/--full) → the full-prose/full-config slice as
+  // JSON (same discipline as `workflow get`, doc 05).
+  let humanText: string;
+  if (selector === undefined) {
+    const outline =
+      body !== null && typeof body === "object"
+        ? (body as { outline?: unknown }).outline
+        : undefined;
+    const parsed = liveOutlineSchema.safeParse(outline);
+    humanText = parsed.success
+      ? `${renderLiveOutline(parsed.data)}\n`
+      : `${JSON.stringify(body, null, 2)}\n`;
+  } else {
+    humanText = `${JSON.stringify(liveOutlineSectionValue(body), null, 2)}\n`;
+  }
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanText, envelope),
+    stderr: "",
+  };
+}
+
+async function runWorkflowLiveEdit(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow live edit"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure(
+      "workflow live edit takes no positional arguments — pass --file",
+      json,
+    );
+  }
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      "workflow live edit requires --file <live-ops.json> (or --file - for stdin)",
+      json,
+    );
+  }
+
+  // Deterministic local checks (flag present, file readable, JSON parses) fail
+  // at exit 2 BEFORE any network round-trip (doc 06 §CLI surface).
+  const ops = await readJsonObjectFile(host, filePath, "ops", json);
+  if (!ops.ok) return ops.result;
+
+  // The CLI always self-identifies as `cli` (D15); `--dry-run` maps to the body.
+  const body: Record<string, unknown> = {
+    ...ops.value,
+    source: "cli",
+    ...(values["dry-run"] !== undefined ? { dryRun: true } : {}),
+  };
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/runtime-edits`,
+    body,
+  });
+  if (result.kind !== "ok") return workflowLiveFailure(result, json);
+
+  const parsed = liveEditResponseSchema.safeParse(result.body);
+  const applied = parsed.success ? parsed.data.applied : undefined;
+  const liveRevision = parsed.success ? parsed.data.liveRevision : undefined;
+  const dryRun = parsed.success ? parsed.data.dryRun === true : false;
+  const affectedContextIds = parsed.success
+    ? parsed.data.affectedContextIds
+    : [];
+
+  const opCount =
+    applied === undefined
+      ? "0 operations"
+      : `${applied} operation${applied === 1 ? "" : "s"}`;
+  const revSuffix =
+    liveRevision !== undefined ? ` · liveRev ${liveRevision}` : "";
+  const humanLine = dryRun
+    ? `dry-run OK: ${opCount} would apply${revSuffix}\n`
+    : `applied ${opCount}${revSuffix}\n`;
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanLine, {
+      ok: true,
+      ...(applied !== undefined ? { applied } : {}),
+      ...(liveRevision !== undefined ? { liveRevision } : {}),
+      affectedContextIds,
+      ...(dryRun ? { dryRun: true } : {}),
+    }),
+    stderr: "",
+  };
+}
+
+async function runWorkflowLivePause(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return runWorkflowLivePauseResume("pause", rest, flags, values, env, host);
+}
+
+async function runWorkflowLiveResume(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return runWorkflowLivePauseResume("resume", rest, flags, values, env, host);
+}
+
+/**
+ * `workflow live pause` / `live resume` POST the existing endpoints (no body
+ * flags in v1). A server 409 (pausing an already-paused / resuming a running
+ * execution) renders as exit 1 with the server's message; a 404 (no active
+ * execution) is a caller mistake → exit 2.
+ */
+async function runWorkflowLivePauseResume(
+  action: "pause" | "resume",
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(
+    values,
+    flagNamesFor(`workflow live ${action}`),
+    json,
+  );
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure(`workflow live ${action} takes no arguments`, json);
+  }
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/${action}`,
+  });
+  if (result.kind !== "ok") return workflowFailure(result, json);
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, `${action === "pause" ? "paused" : "resumed"}\n`, {
+      ok: true,
+    }),
+    stderr: "",
+  };
 }
 
 async function runWorkflowTask(
