@@ -23,8 +23,18 @@ export const COMMIT_MESSAGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     message: { type: "string" },
-    resolutionContext: { type: "string" },
   },
   required: ["message"],
+  additionalProperties: false,
+};
+
+/** Merge message schema includes conflict-resolution intent for later jobs. */
+export const MERGE_MESSAGE_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    message: { type: "string" },
+    resolutionContext: { type: "string" },
+  },
+  required: ["message", "resolutionContext"],
   additionalProperties: false,
 };

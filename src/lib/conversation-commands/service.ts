@@ -19,7 +19,10 @@ import {
   resolveGeneratedMessage,
   type GenerationContext,
 } from "./generation";
-import { COMMIT_MESSAGE_JSON_SCHEMA } from "./schemas";
+import {
+  COMMIT_MESSAGE_JSON_SCHEMA,
+  MERGE_MESSAGE_JSON_SCHEMA,
+} from "./schemas";
 import type { ParsedConversationCommand } from "./schemas";
 
 const logger = createLogger("conversation-commands");
@@ -246,7 +249,10 @@ export function createConversationCommandService(
         prompt: buildGenerationPrompt(ctx),
         outputFormat: {
           type: "json_schema",
-          schema: COMMIT_MESSAGE_JSON_SCHEMA,
+          schema:
+            ctx.command === "merge"
+              ? MERGE_MESSAGE_JSON_SCHEMA
+              : COMMIT_MESSAGE_JSON_SCHEMA,
         },
         timeoutMs: GENERATION_TIMEOUT_MS,
       });

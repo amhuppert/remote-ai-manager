@@ -30,6 +30,10 @@ import {
   type ConversationCommandDeps,
   type RunCommandInput,
 } from "./service";
+import {
+  COMMIT_MESSAGE_JSON_SCHEMA,
+  MERGE_MESSAGE_JSON_SCHEMA,
+} from "./schemas";
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   return sessionStateSchema.parse({
@@ -387,10 +391,27 @@ describe("createConversationCommandService eligible path", () => {
       sessionName: "my-session",
       conversationId: "conv-1",
       kind: "task_run",
-      outputFormat: { type: "json_schema", schema: expect.any(Object) },
+      outputFormat: {
+        type: "json_schema",
+        schema: COMMIT_MESSAGE_JSON_SCHEMA,
+      },
     });
     expect(taskRunInput?.prompt).toContain("focus on API");
     expect(taskRunInput?.prompt).toContain(" M src/api/routes.ts");
+  });
+
+  it("runs merge message generation with the merge structured-output schema", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    await service.run(makeInput({ parsed: { command: "merge", hint: "" } }));
+
+    const taskRunInput = vi.mocked(deps.executeWorkflowTaskRun).mock
+      .calls[0]?.[0];
+    expect(taskRunInput?.outputFormat).toEqual({
+      type: "json_schema",
+      schema: MERGE_MESSAGE_JSON_SCHEMA,
+    });
   });
 
   it("resolves the message before dispatching (generation precedes any git operation)", async () => {

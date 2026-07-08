@@ -6,6 +6,7 @@ import type {
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import {
   COMMIT_MESSAGE_JSON_SCHEMA,
+  MERGE_MESSAGE_JSON_SCHEMA,
   commitMessageOutputSchema,
 } from "./schemas";
 import {
@@ -78,16 +79,49 @@ describe("commitMessageOutputSchema", () => {
 });
 
 describe("COMMIT_MESSAGE_JSON_SCHEMA", () => {
-  it("describes a required message string and an optional resolutionContext", () => {
+  it("describes the commit-only message payload", () => {
     expect(COMMIT_MESSAGE_JSON_SCHEMA).toMatchObject({
+      type: "object",
+      properties: {
+        message: { type: "string" },
+      },
+      required: ["message"],
+      additionalProperties: false,
+    });
+  });
+
+  it("omits merge-only resolution context from commit generation", () => {
+    expect(COMMIT_MESSAGE_JSON_SCHEMA).not.toHaveProperty(
+      "properties.resolutionContext",
+    );
+  });
+});
+
+describe("MERGE_MESSAGE_JSON_SCHEMA", () => {
+  it("describes the merge message payload with required resolution context", () => {
+    expect(MERGE_MESSAGE_JSON_SCHEMA).toMatchObject({
       type: "object",
       properties: {
         message: { type: "string" },
         resolutionContext: { type: "string" },
       },
-      required: ["message"],
+      required: ["message", "resolutionContext"],
       additionalProperties: false,
     });
+  });
+});
+
+describe("message generation JSON schemas", () => {
+  it("list every object property in required for Codex structured output", () => {
+    for (const schema of [
+      COMMIT_MESSAGE_JSON_SCHEMA,
+      MERGE_MESSAGE_JSON_SCHEMA,
+    ]) {
+      const properties = schema.properties as Record<string, unknown>;
+      expect(new Set(schema.required as string[])).toEqual(
+        new Set(Object.keys(properties)),
+      );
+    }
   });
 });
 
