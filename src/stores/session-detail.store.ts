@@ -40,6 +40,25 @@ interface SpecBrowserSelection {
   file: string | null;
 }
 
+/**
+ * The model/effort the in-flight turn runs with, stamped onto the optimistic
+ * user + streaming assistant rows so MessageRow shows the same metadata while
+ * the agent is still working as it does once the transcript rows land.
+ */
+export interface OptimisticAgentSettings {
+  model?: string;
+  effort?: string;
+}
+
+function agentSettingsStamp(
+  settings: OptimisticAgentSettings | undefined,
+): Pick<TranscriptMessage, "model" | "effort"> {
+  return {
+    ...(settings?.model !== undefined ? { model: settings.model } : {}),
+    ...(settings?.effort !== undefined ? { effort: settings.effort } : {}),
+  };
+}
+
 type OptimisticQueueStatus = "pending" | "accepted" | "failed";
 
 interface OptimisticQueueEntry {
@@ -100,10 +119,12 @@ interface SessionDetailActions {
   submitPrompt: (
     userContent: MessageContentBlock[],
     currentMessageCount: number,
+    agentSettings?: OptimisticAgentSettings,
   ) => void;
   receiveStreamContent: (
     userContent: MessageContentBlock[],
     allBlocks: MessageContentBlock[],
+    agentSettings?: OptimisticAgentSettings,
   ) => void;
   completePrompt: () => void;
   failPrompt: (error: string) => void;
@@ -246,7 +267,7 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Prompt streaming --
 
-    submitPrompt: (userContent, currentMessageCount) =>
+    submitPrompt: (userContent, currentMessageCount, agentSettings) =>
       set((state) => {
         state.sending = true;
         state.promptError = null;
@@ -256,11 +277,12 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
             role: "user",
             content: userContent,
             timestamp: new Date().toISOString(),
+            ...agentSettingsStamp(agentSettings),
           },
         ];
       }),
 
-    receiveStreamContent: (userContent, allBlocks) =>
+    receiveStreamContent: (userContent, allBlocks, agentSettings) =>
       set((state) => {
         // Preserve any queued user messages appended after the initial pair
         const queued = state.optimisticMessages.slice(2);
@@ -269,11 +291,13 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
             role: "user",
             content: userContent,
             timestamp: new Date().toISOString(),
+            ...agentSettingsStamp(agentSettings),
           },
           {
             role: "assistant",
             content: [...allBlocks],
             timestamp: new Date().toISOString(),
+            ...agentSettingsStamp(agentSettings),
           },
           ...queued,
         ];

@@ -63,6 +63,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("useSendPrompt — send()", () => {
+  it("stamps the optimistic user and streaming assistant rows with the turn's model/effort", async () => {
+    const sse =
+      'event: content\ndata: {"type":"text","text":"partial answer"}\n\n' +
+      "event: done\ndata: {}\n\n";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(sse, { status: 200 }),
+    );
+
+    const { result } = renderQueueHook();
+
+    await act(async () => {
+      await result.current.send("hi", 0, "fable", undefined, "max", "claude");
+    });
+
+    const messages = useSessionDetailStore.getState().optimisticMessages;
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      model: "fable",
+      effort: "max",
+    });
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      model: "fable",
+      effort: "max",
+    });
+  });
+});
+
 describe("useSendPrompt — queue()", () => {
   it("queue failure removes only the failed item and leaves sending running (THE OBSERVABLE)", async () => {
     startRunningTurn();

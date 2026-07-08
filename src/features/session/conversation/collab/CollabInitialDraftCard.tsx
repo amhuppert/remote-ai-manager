@@ -2,10 +2,14 @@
 
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
   CollaborationArtifactAgreement,
   CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import CollabAgentModelMeta, {
+  AGENT_LABEL,
+} from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
@@ -26,6 +30,7 @@ import {
 
 export interface CollabInitialDraftCardProps {
   agent: CollaborationAgent;
+  modelSettings?: CollaborationAgentModelSettings;
   isPrimary: boolean;
   summary: string;
   artifacts: CollaborationGeneratedArtifact[];
@@ -35,17 +40,13 @@ export interface CollabInitialDraftCardProps {
   onRefClick?: (ref: CollaborationReference) => void;
 }
 
-const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
-
 function refLabel(ref: CollaborationReference): string {
   return ref.locator ? `${ref.artifact}#${ref.locator}` : ref.artifact;
 }
 
 export default function CollabInitialDraftCard({
   agent,
+  modelSettings,
   isPrimary,
   summary,
   artifacts,
@@ -69,6 +70,7 @@ export default function CollabInitialDraftCard({
         <>
           <span className={cardAgent} data-agent={agent}>
             {AGENT_LABEL[agent]}
+            <CollabAgentModelMeta settings={modelSettings} />
           </span>
           <span className={cardEyebrow}>Initial Draft</span>
           {isPrimary ? <span className={cardPrimaryFlag}>Primary</span> : null}

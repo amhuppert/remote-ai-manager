@@ -56,6 +56,7 @@ import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   collaborationArtifactSchema,
   collaborationAutonomousResolutionThresholdSchema,
+  type CollaborationAgentModelSettingsMap,
   type CollaborationArtifact,
 } from "./types";
 import { readCollaborationArtifacts } from "./artifacts-store";
@@ -170,6 +171,13 @@ export const collaborationStartRequestSchema = z.object({
   // manager reads `conversation.agentBackend` to pick Agent One. Optional so
   // older clients and direct API callers keep working.
   backend: agentBackendSchema.optional(),
+  // The user's currently-selected model/effort in the composer. They belong
+  // to the selected backend — Agent One's lane — so the manager overrides
+  // that lane's config-resolved settings with them; Agent Two's opposite-
+  // backend lane always runs on global config. Optional so older clients
+  // and direct API callers keep working.
+  modelId: z.string().trim().min(1).optional(),
+  effort: z.string().trim().min(1).optional(),
 });
 type CollaborationStartRequest = z.infer<
   typeof collaborationStartRequestSchema
@@ -657,6 +665,8 @@ export function createCollaborationManager(
         negotiationRounds: input.negotiationRounds,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,
         conversationId: input.conversationId,
+        modelId: input.modelId,
+        effort: input.effort,
       });
 
       const session = await deps.resolveSession({
@@ -693,8 +703,37 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
       });
 
-      const codexModelConfig = await deps.resolveCodexModelConfig();
-      const claudeModelConfig = await deps.resolveClaudeModelConfig();
+      // The request's model/effort reflect the composer selection for the
+      // conversation's backend, so they override the primary lane's config-
+      // resolved settings; the opposite lane keeps the global config values.
+      const primaryOverride = {
+        ...(parsed.modelId !== undefined ? { model: parsed.modelId } : {}),
+        ...(parsed.effort !== undefined
+          ? { reasoningEffort: parsed.effort }
+          : {}),
+      };
+      const codexModelConfig = {
+        ...(await deps.resolveCodexModelConfig()),
+        ...(primaryAgentBackend === "codex" ? primaryOverride : {}),
+      };
+      const claudeModelConfig = {
+        ...(await deps.resolveClaudeModelConfig()),
+        ...(primaryAgentBackend === "claude" ? primaryOverride : {}),
+      };
+      const agentModelSettings: CollaborationAgentModelSettingsMap = {
+        claude: {
+          model: claudeModelConfig.model,
+          ...(claudeModelConfig.reasoningEffort !== undefined
+            ? { effort: claudeModelConfig.reasoningEffort }
+            : {}),
+        },
+        codex: {
+          model: codexModelConfig.model,
+          ...(codexModelConfig.reasoningEffort !== undefined
+            ? { effort: codexModelConfig.reasoningEffort }
+            : {}),
+        },
+      };
 
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
@@ -729,6 +768,7 @@ export function createCollaborationManager(
         worktreePath: session.worktreePath,
         sessionKey,
         primaryAgentBackend,
+        agentModelSettings,
         negotiationRounds: parsed.negotiationRounds,
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
         conversationId: parsed.conversationId,
@@ -743,6 +783,12 @@ export function createCollaborationManager(
         negotiationRounds: parsed.negotiationRounds,
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
         primaryAgentBackend,
+        requestModelId: parsed.modelId ?? null,
+        requestEffort: parsed.effort ?? null,
+        claudeModel: agentModelSettings.claude.model,
+        claudeEffort: agentModelSettings.claude.effort ?? null,
+        codexModel: agentModelSettings.codex.model,
+        codexEffort: agentModelSettings.codex.effort ?? null,
         conversationId: parsed.conversationId,
         priorBackendRefBackend: conversation.backendRef?.backend ?? null,
       });

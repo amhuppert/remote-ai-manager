@@ -1,6 +1,8 @@
 import {
+  collaborationAgentModelSettingsMapSchema,
   collaborationArtifactSchema,
   type CollaborationAgent,
+  type CollaborationAgentModelSettingsMap,
   type CollaborationArtifact,
   type CollaborationAutonomousResolutionThreshold,
 } from "@/lib/workflows/collaboration/types";
@@ -26,6 +28,7 @@ export interface CollabFeatureSnapshot {
   mode: "asymmetric";
   brief: string;
   primaryAgentBackend: CollaborationAgent;
+  agentModelSettings?: CollaborationAgentModelSettingsMap;
   negotiationRounds: number;
   negotiationRoundsCompleted: number;
   autonomousResolutionThreshold: CollaborationAutonomousResolutionThreshold;
@@ -36,6 +39,7 @@ export interface CollabFeatureSnapshot {
 export interface CollabPassageProps {
   workflowId: string;
   primary: CollaborationAgent;
+  agentModelSettings?: CollaborationAgentModelSettingsMap;
   status: CollabPassageStatus;
   artifacts: CollaborationArtifact[];
   submittedAnswers: Record<string, string>;
@@ -119,10 +123,16 @@ export function parseCollabFeatureSnapshot(
     record["autonomousResolutionThreshold"],
   );
   if (!autonomousResolutionThreshold) return null;
+  const agentModelSettings = collaborationAgentModelSettingsMapSchema.safeParse(
+    record["agentModelSettings"],
+  );
   return {
     mode: "asymmetric",
     brief,
     primaryAgentBackend,
+    ...(agentModelSettings.success
+      ? { agentModelSettings: agentModelSettings.data }
+      : {}),
     negotiationRounds: Math.max(0, Math.floor(negotiationRounds)),
     negotiationRoundsCompleted: Math.max(
       0,
@@ -167,6 +177,9 @@ export function envelopeToCollabPassageProps(
   return {
     workflowId: envelope.workflowId,
     primary: snapshot.primaryAgentBackend,
+    ...(snapshot.agentModelSettings !== undefined
+      ? { agentModelSettings: snapshot.agentModelSettings }
+      : {}),
     status: passageStatusFor(envelope, snapshot.artifacts),
     artifacts: snapshot.artifacts,
     submittedAnswers: snapshot.userAnswersByQuestionId,

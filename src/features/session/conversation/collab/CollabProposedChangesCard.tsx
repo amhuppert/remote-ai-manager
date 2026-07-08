@@ -2,12 +2,16 @@
 
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
   CollaborationArtifactAgreement,
   CollaborationArtifactDisagreement,
   CollaborationChangeProposal,
   CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import CollabAgentModelMeta, {
+  AGENT_LABEL,
+} from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
@@ -32,6 +36,7 @@ import {
 
 export interface CollabProposedChangesCardProps {
   fromAgent: CollaborationAgent;
+  fromModelSettings?: CollaborationAgentModelSettings;
   round: number;
   summary: string;
   artifacts: CollaborationGeneratedArtifact[];
@@ -42,13 +47,9 @@ export interface CollabProposedChangesCardProps {
   onRefClick?: (ref: CollaborationReference) => void;
 }
 
-const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
-
 export default function CollabProposedChangesCard({
   fromAgent,
+  fromModelSettings,
   round,
   summary,
   artifacts,
@@ -77,6 +78,7 @@ export default function CollabProposedChangesCard({
         <>
           <span className={cardAgent} data-agent={fromAgent}>
             {AGENT_LABEL[fromAgent]}
+            <CollabAgentModelMeta settings={fromModelSettings} />
           </span>
           <span className={cardEyebrow}>Proposed changes</span>
           <span className={cardRound} aria-label={`Round ${round}`}>

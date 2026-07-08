@@ -56,6 +56,7 @@ import {
   collaborationFinalAnswerContentSchema,
   collaborationFinalAnswerOutputSchema,
   type CollaborationAgent,
+  type CollaborationAgentModelSettingsMap,
   type CollaborationArtifact,
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationCounterProposalOutput,
@@ -105,6 +106,12 @@ export interface AsymmetricCollaborationSliceInput {
    * backend (`claude` if primary is `codex`, otherwise `codex`).
    */
   primaryAgentBackend: CollaborationAgent;
+  /**
+   * The model + effort each lane runs with, resolved by the manager.
+   * Written into the envelope's feature snapshot so the UI can label
+   * artifacts with the model that produced them.
+   */
+  agentModelSettings?: CollaborationAgentModelSettingsMap;
   negotiationRounds: number;
   autonomousResolutionThreshold: CollaborationAutonomousResolutionThreshold;
   /**
@@ -717,6 +724,9 @@ async function initializeEnvelope(
         primaryAgentBackend: input.primaryAgentBackend,
         primaryBackend: backends.primaryBackend,
         secondaryBackend: backends.secondaryBackend,
+        ...(input.agentModelSettings !== undefined
+          ? { agentModelSettings: input.agentModelSettings }
+          : {}),
         negotiationRounds: input.negotiationRounds,
         negotiationRoundsCompleted: previousRoundsCompleted,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,

@@ -75,6 +75,8 @@ export interface UsePromptSubmissionArgs {
         autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
         conversationId: string;
         backend?: AgentBackendId;
+        modelId?: string;
+        effort?: string;
       },
       options?: {
         onSuccess?: () => void;
@@ -189,6 +191,8 @@ export function usePromptSubmission({
             effectiveCollabConfig.autonomousResolutionThreshold,
           conversationId: collabConversationId,
           backend: selectedBackend,
+          modelId: selectedModel,
+          ...(effortSupported ? { effort: selectedEffort } : {}),
         },
         {
           onSuccess: () => {
@@ -268,6 +272,9 @@ export function usePromptSubmission({
     editorRef,
     setPromptText,
     selectedBackend,
+    selectedModel,
+    selectedEffort,
+    effortSupported,
     collaborationStartMutation,
     effectiveCollabConfig.negotiationRounds,
     effectiveCollabConfig.autonomousResolutionThreshold,

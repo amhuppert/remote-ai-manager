@@ -36,6 +36,13 @@ export const ClaudeFromFixture = {
   args: fromFinalAnswerFixture(makeFinalAnswer(), "claude"),
 } satisfies Story;
 
+export const WithModelSettings = {
+  args: {
+    ...fromFinalAnswerFixture(makeFinalAnswer(), "claude"),
+    modelSettings: { model: "fable", effort: "max" },
+  },
+} satisfies Story;
+
 export const CodexFromFixture = {
   args: fromFinalAnswerFixture(
     makeFinalAnswer({

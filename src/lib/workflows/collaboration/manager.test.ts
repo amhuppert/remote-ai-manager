@@ -444,6 +444,158 @@ describe("createCollaborationManager.start", () => {
     ]);
   });
 
+  it("overrides the claude lane's model config with the request model/effort when the primary backend is claude", async () => {
+    const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(
+      {
+        resolveSessionResult: { worktreePath: "/wt/xyz" },
+        resolveConversationResult: { agentBackend: "claude" },
+        resolveCodexModelConfigResult: {
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+        resolveClaudeModelConfigResult: {
+          model: "opus",
+          reasoningEffort: "xhigh",
+        },
+      },
+    );
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      modelId: "fable",
+      effort: "max",
+    });
+
+    await runSliceCompletion;
+
+    expect(buildCallAgentCalls).toEqual([
+      {
+        workflowId: "wf-1",
+        worktreePath: "/wt/xyz",
+        codexModel: "gpt-5.5",
+        codexReasoningEffort: "high",
+        claudeModel: "fable",
+        claudeReasoningEffort: "max",
+      },
+    ]);
+  });
+
+  it("overrides the codex lane's model config with the request model/effort when the primary backend is codex", async () => {
+    const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(
+      {
+        resolveSessionResult: { worktreePath: "/wt/xyz" },
+        resolveConversationResult: { agentBackend: "codex" },
+        resolveCodexModelConfigResult: {
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+        resolveClaudeModelConfigResult: {
+          model: "opus",
+          reasoningEffort: "xhigh",
+        },
+      },
+    );
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      modelId: "gpt-5.5-codex",
+      effort: "medium",
+    });
+
+    await runSliceCompletion;
+
+    expect(buildCallAgentCalls).toEqual([
+      {
+        workflowId: "wf-1",
+        worktreePath: "/wt/xyz",
+        codexModel: "gpt-5.5-codex",
+        codexReasoningEffort: "medium",
+        claudeModel: "opus",
+        claudeReasoningEffort: "xhigh",
+      },
+    ]);
+  });
+
+  it("keeps the request effort out of the non-primary lane when only effort is sent", async () => {
+    const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(
+      {
+        resolveSessionResult: { worktreePath: "/wt/xyz" },
+        resolveConversationResult: { agentBackend: "claude" },
+        resolveCodexModelConfigResult: { model: "gpt-5.5" },
+        resolveClaudeModelConfigResult: { model: "opus" },
+      },
+    );
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      effort: "low",
+    });
+
+    await runSliceCompletion;
+
+    expect(buildCallAgentCalls).toEqual([
+      {
+        workflowId: "wf-1",
+        worktreePath: "/wt/xyz",
+        codexModel: "gpt-5.5",
+        codexReasoningEffort: undefined,
+        claudeModel: "opus",
+        claudeReasoningEffort: "low",
+      },
+    ]);
+  });
+
+  it("threads both lanes' effective model settings into sliceInput.agentModelSettings", async () => {
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: { agentBackend: "claude" },
+      resolveCodexModelConfigResult: {
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+      },
+      resolveClaudeModelConfigResult: { model: "opus" },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      modelId: "fable",
+      effort: "max",
+    });
+
+    await runSliceCompletion;
+
+    const call = runSliceCalls[0];
+    if (!call) throw new Error("expected one runSlice call");
+    expect(call.input.agentModelSettings).toEqual({
+      claude: { model: "fable", effort: "max" },
+      codex: { model: "gpt-5.5", effort: "high" },
+    });
+  });
+
   it("threads conversation.backendRef into sliceInput.priorBackendRef when present", async () => {
     const savedRef: AgentSessionRef = {
       backend: "claude",

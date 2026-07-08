@@ -393,6 +393,8 @@ export function useCollaborationStartMutation(
       autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
       conversationId: string;
       backend?: AgentBackendId;
+      modelId?: string;
+      effort?: string;
     }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration`,

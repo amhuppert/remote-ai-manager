@@ -122,6 +122,43 @@ describe("session-detail.store — mobile sidebar slice", () => {
   });
 });
 
+describe("session-detail.store — optimistic agent settings stamps", () => {
+  beforeEach(resetStore);
+
+  it("stamps the optimistic user row and the streaming assistant row with the turn's model/effort", () => {
+    useSessionDetailStore
+      .getState()
+      .submitPrompt(textBlock("hello"), 0, { model: "fable", effort: "max" });
+    expect(
+      useSessionDetailStore.getState().optimisticMessages[0],
+    ).toMatchObject({ role: "user", model: "fable", effort: "max" });
+
+    useSessionDetailStore
+      .getState()
+      .receiveStreamContent(textBlock("hello"), textBlock("partial answer"), {
+        model: "fable",
+        effort: "max",
+      });
+    const messages = useSessionDetailStore.getState().optimisticMessages;
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      model: "fable",
+      effort: "max",
+    });
+  });
+
+  it("leaves optimistic rows unstamped when the turn has no explicit model/effort", () => {
+    useSessionDetailStore.getState().submitPrompt(textBlock("hello"), 0);
+    useSessionDetailStore
+      .getState()
+      .receiveStreamContent(textBlock("hello"), textBlock("partial answer"));
+    const messages = useSessionDetailStore.getState().optimisticMessages;
+    expect(messages[0]).not.toHaveProperty("model");
+    expect(messages[1]).not.toHaveProperty("model");
+    expect(messages[1]).not.toHaveProperty("effort");
+  });
+});
+
 describe("session-detail.store — resetConversationState", () => {
   beforeEach(resetStore);
 

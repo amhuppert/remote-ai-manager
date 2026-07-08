@@ -428,6 +428,53 @@ describe("collaboration route handlers — START", () => {
     expect(meta).toEqual({ projectName: "example", sessionName: "sess-1" });
     expect(order).toEqual(["transcript", "manager.start"]);
     expect(startCalls).toHaveLength(1);
+    // No model/effort in the request → the entry stays unstamped, matching
+    // the pre-existing behavior for older clients.
+    expect(entry).not.toHaveProperty("model");
+    expect(entry).not.toHaveProperty("effort");
+  });
+
+  it("stamps the /collab transcript entry with the request model/effort and forwards them to the manager", async () => {
+    const { manager, startCalls } = buildScriptedManager({
+      startResult: { workflowId: "wf-stamp", status: "started" },
+    });
+    const appendTranscriptEntry = vi.fn(async (...args) => args);
+
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+      appendTranscriptEntry,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Z",
+          negotiationRounds: 4,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-stamp",
+          modelId: "fable",
+          effort: "max",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(appendTranscriptEntry).toHaveBeenCalledTimes(1);
+    const [, entry] = appendTranscriptEntry.mock.calls[0]!;
+    expect(entry).toMatchObject({
+      type: "user",
+      role: "user",
+      model: "fable",
+      effort: "max",
+    });
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0]).toMatchObject({
+      modelId: "fable",
+      effort: "max",
+    });
   });
 
   it("updates conversation metadata so a fresh /collab-started conversation leaves the new status with a transcriptPath (verified by reload through the real store)", async () => {

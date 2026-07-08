@@ -416,6 +416,8 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
           autonomousResolutionThreshold:
             body.collab?.autonomousResolutionThreshold ??
             DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
+          ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
+          ...(body.effort !== undefined ? { effort: body.effort } : {}),
         });
         const statusUrl = `/api/projects/${encodeURIComponent(name)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
         return NextResponse.json({ ...result, statusUrl }, { status: 202 });

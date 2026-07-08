@@ -123,6 +123,49 @@ describe("CollabPassage rendering", () => {
     expect(screen.getByText("Primary")).toBeInTheDocument();
   });
 
+  it("labels each card's authoring agent with its lane's model and effort when agentModelSettings is provided", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        agentModelSettings={{
+          claude: { model: "fable", effort: "max" },
+          codex: { model: "gpt-5.5", effort: "high" },
+        }}
+        status="drafting"
+        artifacts={[makeAgentOneInitialDraft(), makeAgentTwoInitialDraft()]}
+      />,
+    );
+    const drafts = document.querySelectorAll(
+      'section[data-kind="initial_draft"]',
+    );
+    expect(drafts).toHaveLength(2);
+    const claudeDraft = Array.from(drafts).find(
+      (d) => d.getAttribute("data-agent") === "claude",
+    );
+    const codexDraft = Array.from(drafts).find(
+      (d) => d.getAttribute("data-agent") === "codex",
+    );
+    expect(claudeDraft?.textContent).toContain("fable");
+    expect(claudeDraft?.textContent).toContain("max");
+    expect(codexDraft?.textContent).toContain("gpt-5.5");
+    expect(codexDraft?.textContent).toContain("high");
+  });
+
+  it("renders no model metadata when agentModelSettings is absent (pre-existing runs)", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="drafting"
+        artifacts={[makeAgentOneInitialDraft()]}
+      />,
+    );
+    const draft = document.querySelector('section[data-kind="initial_draft"]');
+    expect(draft?.textContent).not.toContain("fable");
+    expect(draft?.textContent).toContain("Claude");
+  });
+
   it("renders the resolution decision card in its own full-width lane", () => {
     render(
       <CollabPassage

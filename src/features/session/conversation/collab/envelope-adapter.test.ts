@@ -85,6 +85,34 @@ describe("parseCollabFeatureSnapshot", () => {
     expect(parsed).not.toBeNull();
     expect(parsed!.artifacts).toHaveLength(1);
   });
+
+  it("extracts per-agent model settings when the snapshot carries them", () => {
+    const parsed = parseCollabFeatureSnapshot({
+      ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+      agentModelSettings: {
+        claude: { model: "fable", effort: "max" },
+        codex: { model: "gpt-5.5" },
+      },
+    });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.agentModelSettings).toEqual({
+      claude: { model: "fable", effort: "max" },
+      codex: { model: "gpt-5.5" },
+    });
+  });
+
+  it("leaves agentModelSettings undefined for snapshots that predate the field or carry a malformed value", () => {
+    const base = makeEnvelope().featureSnapshot as Record<string, unknown>;
+    expect(parseCollabFeatureSnapshot(base)!.agentModelSettings).toBe(
+      undefined,
+    );
+    expect(
+      parseCollabFeatureSnapshot({
+        ...base,
+        agentModelSettings: { claude: { model: 42 } },
+      })!.agentModelSettings,
+    ).toBe(undefined);
+  });
 });
 
 describe("envelopeToCollabPassageProps", () => {
@@ -105,6 +133,25 @@ describe("envelopeToCollabPassageProps", () => {
     expect(props!.primary).toBe("codex");
     expect(props!.artifacts).toHaveLength(2);
     expect(props!.artifacts[0]!.kind).toBe("initial_draft");
+  });
+
+  it("forwards agentModelSettings to the passage props when present", () => {
+    const env = makeEnvelope({
+      featureSnapshot: {
+        ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+        agentModelSettings: {
+          claude: { model: "fable", effort: "max" },
+          codex: { model: "gpt-5.5", effort: "high" },
+        },
+      },
+    });
+
+    const props = envelopeToCollabPassageProps(env);
+    expect(props).not.toBeNull();
+    expect(props!.agentModelSettings).toEqual({
+      claude: { model: "fable", effort: "max" },
+      codex: { model: "gpt-5.5", effort: "high" },
+    });
   });
 
   it("returns null when the snapshot is unparseable (non-asymmetric or missing fields)", () => {

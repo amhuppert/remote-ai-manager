@@ -2,12 +2,16 @@
 
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
   CollaborationArtifactAgreement,
   CollaborationArtifactDisagreement,
   CollaborationChangeProposal,
   CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import CollabAgentModelMeta, {
+  AGENT_LABEL,
+} from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
@@ -34,6 +38,7 @@ import {
 
 export interface CollabCounterProposalCardProps {
   fromAgent: CollaborationAgent;
+  fromModelSettings?: CollaborationAgentModelSettings;
   round: number;
   summary: string;
   artifacts: CollaborationGeneratedArtifact[];
@@ -45,11 +50,6 @@ export interface CollabCounterProposalCardProps {
   defaultOpen?: boolean;
   onRefClick?: (ref: CollaborationReference) => void;
 }
-
-const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
 
 function IdList({
   ids,
@@ -77,6 +77,7 @@ function IdList({
 
 export default function CollabCounterProposalCard({
   fromAgent,
+  fromModelSettings,
   round,
   summary,
   artifacts,
@@ -112,6 +113,7 @@ export default function CollabCounterProposalCard({
         <>
           <span className={cardAgent} data-agent={fromAgent}>
             {AGENT_LABEL[fromAgent]}
+            <CollabAgentModelMeta settings={fromModelSettings} />
           </span>
           <span className={cardEyebrow}>Counter-proposal</span>
           <span className={cardRound} aria-label={`Round ${round}`}>

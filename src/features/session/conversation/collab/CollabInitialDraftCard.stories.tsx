@@ -46,6 +46,13 @@ export const ClaudePrimaryFromFixture = {
   args: fromInitialDraftFixture(makeAgentOneInitialDraft(), "claude", true),
 } satisfies Story;
 
+export const WithModelSettings = {
+  args: {
+    ...fromInitialDraftFixture(makeAgentOneInitialDraft(), "claude", true),
+    modelSettings: { model: "fable", effort: "max" },
+  },
+} satisfies Story;
+
 export const CodexSecondaryFromFixture = {
   args: fromInitialDraftFixture(makeAgentTwoInitialDraft(), "codex", false),
 } satisfies Story;

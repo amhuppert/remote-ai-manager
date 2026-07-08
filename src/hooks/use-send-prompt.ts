@@ -118,7 +118,11 @@ export function useSendPrompt(
           : userContent;
 
       // 1. Set optimistic state via Zustand
-      submitPrompt(displayContent, currentMessageCount);
+      const agentSettings = {
+        ...(modelId !== undefined ? { model: modelId } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      };
+      submitPrompt(displayContent, currentMessageCount, agentSettings);
 
       // 2. Build prompt URL
       const promptUrl = conversationId
@@ -205,7 +209,11 @@ export function useSendPrompt(
               try {
                 const block = JSON.parse(eventData) as MessageContentBlock;
                 streamBlocks.push(block);
-                receiveStreamContent(displayContent, [...streamBlocks]);
+                receiveStreamContent(
+                  displayContent,
+                  [...streamBlocks],
+                  agentSettings,
+                );
               } catch {
                 // Skip malformed content events
               }

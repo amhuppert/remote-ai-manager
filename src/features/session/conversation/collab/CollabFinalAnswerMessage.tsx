@@ -5,8 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
   CollaborationGeneratedArtifact,
 } from "@/lib/workflows/collaboration/types";
+import CollabAgentModelMeta, {
+  AGENT_LABEL,
+} from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 
 const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
@@ -15,16 +19,12 @@ const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
 
 export interface CollabFinalAnswerMessageProps {
   agent: CollaborationAgent;
+  modelSettings?: CollaborationAgentModelSettings;
   summary: string;
   artifacts: CollaborationGeneratedArtifact[];
   answer_artifact_id: string;
   artifactFileUrl?: (artifact: CollaborationGeneratedArtifact) => string;
 }
-
-const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
 
 // Agent identity accent + role color (legacy `[data-agent=codex]` overrode the
 // default cyan).
@@ -39,6 +39,7 @@ const roleColorByAgent: Record<CollaborationAgent, string> = {
 
 export default function CollabFinalAnswerMessage({
   agent,
+  modelSettings,
   summary,
   artifacts,
   answer_artifact_id,
@@ -118,6 +119,7 @@ export default function CollabFinalAnswerMessage({
           )}
         >
           {AGENT_LABEL[agent]}
+          <CollabAgentModelMeta settings={modelSettings} />
         </span>
       </header>
 

@@ -74,6 +74,28 @@ export {
 const collaborationAgentSchema = z.enum(["claude", "codex"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
 
+/**
+ * The model + reasoning effort a collaboration lane runs with, resolved by
+ * the manager (request override for the primary lane, global config for the
+ * other). Persisted into the envelope's feature snapshot so the UI can show
+ * which model produced each artifact.
+ */
+export const collaborationAgentModelSettingsSchema = z.object({
+  model: z.string(),
+  effort: z.string().optional(),
+});
+export type CollaborationAgentModelSettings = z.infer<
+  typeof collaborationAgentModelSettingsSchema
+>;
+
+export const collaborationAgentModelSettingsMapSchema = z.object({
+  claude: collaborationAgentModelSettingsSchema,
+  codex: collaborationAgentModelSettingsSchema,
+});
+export type CollaborationAgentModelSettingsMap = z.infer<
+  typeof collaborationAgentModelSettingsMapSchema
+>;
+
 const SHORT_TEXT_DESCRIPTION =
   "Short plain-text field only, ideally under ~500 characters. Do not include full prose, markdown tables, code blocks, XML/HTML, or generated file contents. Put substantive content in the generated artifact files.";
 

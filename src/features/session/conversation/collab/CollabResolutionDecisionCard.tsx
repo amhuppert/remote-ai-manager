@@ -2,6 +2,7 @@
 
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
   CollaborationArtifactAgreement,
   CollaborationArtifactDisagreement,
   CollaborationReference,
@@ -10,6 +11,9 @@ import type {
   CollaborationUserQuestion,
 } from "@/lib/workflows/collaboration/types";
 import { cn } from "@/lib/ui/cn";
+import CollabAgentModelMeta, {
+  AGENT_LABEL,
+} from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
@@ -27,6 +31,7 @@ import {
 
 export interface CollabResolutionDecisionCardProps {
   agent: CollaborationAgent;
+  modelSettings?: CollaborationAgentModelSettings;
   round: number;
   agreement_reached: boolean;
   next_action: CollaborationResolutionDecisionNextAction;
@@ -47,11 +52,6 @@ const VERDICT_LABEL: Record<CollaborationResolutionDecisionNextAction, string> =
     ask_user: "Ask Alex",
     fail: "Failed",
   };
-
-const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
 
 const SPARKLINE_WIDTH = 96;
 const SPARKLINE_HEIGHT = 24;
@@ -123,6 +123,7 @@ function TrajectorySparkline({
 
 export default function CollabResolutionDecisionCard({
   agent,
+  modelSettings,
   round,
   agreement_reached,
   next_action,
@@ -147,6 +148,7 @@ export default function CollabResolutionDecisionCard({
         <>
           <span className={cardAgent} data-agent={agent}>
             {AGENT_LABEL[agent]}
+            <CollabAgentModelMeta settings={modelSettings} />
           </span>
           <span className={cardEyebrow}>Resolution</span>
           <span className={cardRound} aria-label={`Round ${round}`}>

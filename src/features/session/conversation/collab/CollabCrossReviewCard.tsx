@@ -2,12 +2,16 @@
 
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
   CollaborationArtifactAgreement,
   CollaborationArtifactDisagreement,
   CollaborationGeneratedArtifact,
   CollaborationReference,
   CollaborationReviseSelfArtifact,
 } from "@/lib/workflows/collaboration/types";
+import CollabAgentModelMeta, {
+  AGENT_LABEL,
+} from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
@@ -21,6 +25,7 @@ import {
 
 export interface CollabCrossReviewCardProps {
   reviewerAgent: CollaborationAgent;
+  reviewerModelSettings?: CollaborationAgentModelSettings;
   targetAgent: CollaborationAgent;
   summary: string;
   artifacts: CollaborationGeneratedArtifact[];
@@ -31,13 +36,9 @@ export interface CollabCrossReviewCardProps {
   onRefClick?: (ref: CollaborationReference) => void;
 }
 
-const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
-
 export default function CollabCrossReviewCard({
   reviewerAgent,
+  reviewerModelSettings,
   targetAgent,
   summary,
   artifacts,
@@ -65,6 +66,7 @@ export default function CollabCrossReviewCard({
         <>
           <span className={cardAgent} data-agent={reviewerAgent}>
             {AGENT_LABEL[reviewerAgent]}
+            <CollabAgentModelMeta settings={reviewerModelSettings} />
           </span>
           <span className={cardEyebrow}>
             Review of {AGENT_LABEL[targetAgent]}&rsquo;s draft

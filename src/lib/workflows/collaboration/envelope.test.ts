@@ -1041,6 +1041,45 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     expect(snapshot["negotiationRounds"]).toBe(3);
     expect(snapshot["negotiationRoundsCompleted"]).toBe(1);
     expect(snapshot["autonomousResolutionThreshold"]).toBe("major");
+    expect(snapshot["agentModelSettings"]).toBeUndefined();
+  });
+
+  it("records the per-lane agentModelSettings on the snapshot when the input carries them", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges()),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer()),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
+      ],
+    });
+    const built = await buildDeps(programmed);
+
+    await runAsymmetricCollaborationSlice(
+      baseInput({
+        agentModelSettings: {
+          claude: { model: "fable", effort: "max" },
+          codex: { model: "gpt-5.5", effort: "high" },
+        },
+      }),
+      built.deps,
+    );
+
+    const stored = await built.envelopeStore.read("wf-asym");
+    if (!stored) throw new Error("envelope missing");
+    const snapshot = stored.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["agentModelSettings"]).toEqual({
+      claude: { model: "fable", effort: "max" },
+      codex: { model: "gpt-5.5", effort: "high" },
+    });
   });
 
   it("preserves all artifacts emitted before the agent failure in the failed envelope's snapshot", async () => {

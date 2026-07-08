@@ -323,6 +323,8 @@ export interface PromptDeps {
     brief: string;
     negotiationRounds?: number;
     autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
+    modelId?: string;
+    effort?: string;
   }): Promise<{ workflowId: string }>;
 
   /**
@@ -375,6 +377,8 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
               text: `/collab ${input.brief}`,
             },
           ],
+          ...(input.modelId !== undefined ? { model: input.modelId } : {}),
+          ...(input.effort !== undefined ? { effort: input.effort } : {}),
         },
         undefined,
         undefined,
@@ -394,6 +398,8 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
         autonomousResolutionThreshold:
           input.autonomousResolutionThreshold ??
           DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
+        ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+        ...(input.effort !== undefined ? { effort: input.effort } : {}),
       };
       const result = await collabManager.start(startInput);
       return { workflowId: result.workflowId };
@@ -783,6 +789,8 @@ export async function executePromptStream(
                 options.collab.autonomousResolutionThreshold,
             }
           : {}),
+        ...(modelId !== undefined ? { modelId } : {}),
+        ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       });
       emit("collab-started", {
         workflowId: result.workflowId,

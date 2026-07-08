@@ -89,9 +89,55 @@ describe("usePromptSubmission", () => {
       autonomousResolutionThreshold: "minor",
       conversationId: "c",
       backend: "claude",
+      modelId: "sonnet",
+      effort: "medium",
     });
     expect(clearCollabConfigDraft).toHaveBeenCalledWith("p", "s", "c");
     expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("omits effort from the /collab start when the backend does not support it", async () => {
+    const collabMutate = vi.fn();
+
+    const { result } = renderHook(() => {
+      const promptTextRef = useRef("/collab let's go");
+      const editorRef = useRef(null);
+      return usePromptSubmission({
+        projectName: "p",
+        sessionName: "s",
+        conversationId: "c",
+        conversations: [],
+        sending: false,
+        pendingImages: [],
+        promptTextRef,
+        editorRef,
+        setPromptText: () => {},
+        clearImages: () => {},
+        clearPersistedPendingPromptOnSubmit: () => {},
+        effectiveCollabConfig: {
+          negotiationRounds: 2,
+          autonomousResolutionThreshold: "minor",
+        },
+        clearCollabConfigDraft: () => {},
+        messagesLength: 0,
+        selectedModel: "sonnet",
+        selectedEffort: "medium",
+        effortSupported: false,
+        selectedBackend: "claude",
+        sendPrompt: vi.fn(async () => {}),
+        queueMessage: vi.fn(async () => {}),
+        collaborationStartMutation: { mutate: collabMutate },
+        enqueuePromptErrorToast: vi.fn(),
+      });
+    });
+
+    await act(async () => {
+      await result.current.handleSendPrompt();
+    });
+    expect(collabMutate).toHaveBeenCalledTimes(1);
+    const [vars] = collabMutate.mock.calls[0]!;
+    expect(vars).toMatchObject({ modelId: "sonnet" });
+    expect(vars).not.toHaveProperty("effort");
   });
 
   it("defers clearing the persisted /collab draft until the mutation succeeds", async () => {

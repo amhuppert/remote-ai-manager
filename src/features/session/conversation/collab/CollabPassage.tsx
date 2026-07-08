@@ -11,6 +11,8 @@ import {
 import { createPortal } from "react-dom";
 import type {
   CollaborationAgent,
+  CollaborationAgentModelSettings,
+  CollaborationAgentModelSettingsMap,
   CollaborationArtifact,
   CollaborationCounterProposalOutput,
   CollaborationCrossReviewOutput,
@@ -72,6 +74,7 @@ export interface CollabPassageProps {
   sessionName?: string;
   workflowId: string;
   primary: CollaborationAgent;
+  agentModelSettings?: CollaborationAgentModelSettingsMap;
   status: CollabPassageStatus;
   artifacts: CollaborationArtifact[];
   pauseHandlers?: CollabPauseHandlers;
@@ -355,6 +358,7 @@ function buildTimeline(
   workflowId: string,
   grouped: GroupedArtifacts,
   primary: CollaborationAgent,
+  agentModelSettings: CollaborationAgentModelSettingsMap | undefined,
   artifacts: CollaborationArtifact[],
   latestNonFinal: CollaborationArtifact | undefined,
   pauseHandlers: CollabPauseHandlers | undefined,
@@ -365,6 +369,9 @@ function buildTimeline(
   const rows: Array<{ rowId: string; cardIds: string[]; rowKind: string }> = [];
   const isLatest = (artifact: CollaborationArtifact): boolean =>
     latestNonFinal !== undefined && latestNonFinal === artifact;
+  const settingsFor = (
+    agent: CollaborationAgent,
+  ): CollaborationAgentModelSettings | undefined => agentModelSettings?.[agent];
   const artifactFileUrl =
     projectName && sessionName
       ? (artifact: { path: string }): string =>
@@ -386,6 +393,9 @@ function buildTimeline(
         render: () => (
           <CollabInitialDraftCard
             agent={flowAgentToBackend(primaryDraft.agent, primary)}
+            modelSettings={settingsFor(
+              flowAgentToBackend(primaryDraft.agent, primary),
+            )}
             isPrimary
             summary={primaryDraft.summary}
             artifacts={primaryDraft.artifacts}
@@ -407,6 +417,9 @@ function buildTimeline(
         render: () => (
           <CollabInitialDraftCard
             agent={flowAgentToBackend(secondaryDraft.agent, primary)}
+            modelSettings={settingsFor(
+              flowAgentToBackend(secondaryDraft.agent, primary),
+            )}
             isPrimary={false}
             summary={secondaryDraft.summary}
             artifacts={secondaryDraft.artifacts}
@@ -437,6 +450,7 @@ function buildTimeline(
       render: () => (
         <CollabCrossReviewCard
           reviewerAgent={reviewerAgent}
+          reviewerModelSettings={settingsFor(reviewerAgent)}
           targetAgent={targetAgent}
           summary={cr.summary}
           artifacts={cr.artifacts}
@@ -465,6 +479,9 @@ function buildTimeline(
         render: () => (
           <CollabProposedChangesCard
             fromAgent={flowAgentToBackend(proposed.agent, primary)}
+            fromModelSettings={settingsFor(
+              flowAgentToBackend(proposed.agent, primary),
+            )}
             round={proposed.round}
             summary={proposed.summary}
             artifacts={proposed.artifacts}
@@ -493,6 +510,9 @@ function buildTimeline(
         render: () => (
           <CollabCounterProposalCard
             fromAgent={flowAgentToBackend(counter.agent, primary)}
+            fromModelSettings={settingsFor(
+              flowAgentToBackend(counter.agent, primary),
+            )}
             round={counter.round}
             summary={counter.summary}
             artifacts={counter.artifacts}
@@ -521,6 +541,9 @@ function buildTimeline(
         render: () => (
           <CollabResolutionDecisionCard
             agent={flowAgentToBackend(decision.agent, primary)}
+            modelSettings={settingsFor(
+              flowAgentToBackend(decision.agent, primary),
+            )}
             round={decision.round}
             agreement_reached={decision.agreement_reached}
             next_action={decision.next_action}
@@ -585,6 +608,7 @@ function buildTimeline(
       render: () => (
         <CollabFinalAnswerMessage
           agent={flowAgentToBackend(fa.agent, primary)}
+          modelSettings={settingsFor(flowAgentToBackend(fa.agent, primary))}
           summary={fa.summary}
           artifacts={fa.artifacts}
           answer_artifact_id={fa.answer_artifact_id}
@@ -632,6 +656,7 @@ export default function CollabPassage({
   sessionName,
   workflowId,
   primary,
+  agentModelSettings,
   status,
   artifacts,
   pauseHandlers,
@@ -660,6 +685,7 @@ export default function CollabPassage({
         workflowId,
         grouped,
         primary,
+        agentModelSettings,
         artifacts,
         latestNonFinal,
         pauseHandlers,
@@ -670,6 +696,7 @@ export default function CollabPassage({
       grouped,
       projectName,
       primary,
+      agentModelSettings,
       artifacts,
       latestNonFinal,
       pauseHandlers,

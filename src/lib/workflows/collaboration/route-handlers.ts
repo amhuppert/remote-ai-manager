@@ -371,6 +371,9 @@ export function createCollaborationRouteHandlers(
       }
 
       try {
+        // Stamp the composer's model/effort like executePromptForMachine's
+        // user entry: the last-used composer restore and the assistant-row
+        // metadata propagation both read them off the latest user entry.
         await deps.appendTranscriptEntry(
           parsed.data.conversationId,
           {
@@ -383,6 +386,12 @@ export function createCollaborationRouteHandlers(
                 text: `/collab ${parsed.data.brief}`,
               },
             ],
+            ...(parsed.data.modelId !== undefined
+              ? { model: parsed.data.modelId }
+              : {}),
+            ...(parsed.data.effort !== undefined
+              ? { effort: parsed.data.effort }
+              : {}),
           },
           {
             projectName: sessionResolution.projectName,
