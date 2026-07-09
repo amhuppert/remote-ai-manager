@@ -112,9 +112,9 @@ function extractSourceMeta(prompt: string): {
 function envelopeFromPrompt(
   prompt: string,
   extra: Partial<CompactionEnvelope> = {},
-): CompactionEnvelope {
+) {
   const meta = extractSourceMeta(prompt);
-  return compactionEnvelopeSchema.parse({
+  const envelope = compactionEnvelopeSchema.parse({
     schemaVersion: 1,
     kind: meta.kind,
     source: meta.source,
@@ -127,6 +127,39 @@ function envelopeFromPrompt(
     omissions: { reasoningOmitted: true, largeToolOutputsElided: 0 },
     ...extra,
   });
+
+  const outputRef = (
+    ref: CompactionEnvelope["decisions"][number]["sourceRefs"][number],
+  ) => ({
+    ...ref,
+    quote: ref.quote ?? null,
+  });
+  return {
+    ...envelope,
+    decisions: envelope.decisions.map((decision) => ({
+      ...decision,
+      rationale: decision.rationale ?? null,
+      sourceRefs: decision.sourceRefs.map(outputRef),
+    })),
+    files: envelope.files.map((file) => ({
+      ...file,
+      details: file.details ?? null,
+      sourceRefs: file.sourceRefs.map(outputRef),
+    })),
+    commands: envelope.commands.map((command) => ({
+      ...command,
+      summary: command.summary ?? null,
+      sourceRefs: command.sourceRefs.map(outputRef),
+    })),
+    openQuestions: envelope.openQuestions.map((question) => ({
+      ...question,
+      sourceRefs: question.sourceRefs.map(outputRef),
+    })),
+    blockers: envelope.blockers.map((blocker) => ({
+      ...blocker,
+      sourceRefs: blocker.sourceRefs.map(outputRef),
+    })),
+  };
 }
 
 function makeTriggerInput(
@@ -459,6 +492,8 @@ describe("createCompactionService — delta run", () => {
 
     expect(row.status).toBe("complete");
     const reloaded = repo.findById("existing-artifact");
+    expect(reloaded?.status).toBe("complete");
+    expect(reloaded?.error).toBeNull();
     expect(reloaded?.coveredStartSeq).toBe(0);
     expect(reloaded?.coveredEndSeq).toBe(3);
     expect(reloaded?.createdAt).toBe("2026-01-01T00:00:00Z");

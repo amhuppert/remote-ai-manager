@@ -12,26 +12,95 @@ import {
   type RenderedTranscript,
 } from "@/lib/conversations/transcript-render";
 import {
+  anchoredNoteSchema,
+  commandEntrySchema,
   compactionEnvelopeSchema,
+  decisionSchema,
+  fileEntrySchema,
   type ArtifactKind,
   type CompactionEnvelope,
 } from "./schemas";
+import { sourceRefSchema } from "@/lib/conversations/schemas";
 
 /**
  * Stamped into `context_artifacts.prompt_version`; consumers compare it to
  * detect artifacts produced by an older prompt contract. Bump on any change
  * to the instruction text or prompt layout.
  */
-export const PROMPT_VERSION = "1";
+export const PROMPT_VERSION = "2";
+
+const compactionOutputSourceRefSchema = sourceRefSchema
+  .extend({
+    quote: z.string().nullable(),
+  })
+  .transform(({ quote, ...sourceRef }) =>
+    quote === null ? sourceRef : { ...sourceRef, quote },
+  );
+
+const compactionOutputDecisionSchema = decisionSchema
+  .extend({
+    rationale: z.string().nullable(),
+    status: decisionSchema.shape.status.removeDefault(),
+    sourceRefs: z.array(compactionOutputSourceRefSchema).min(1),
+  })
+  .transform(({ rationale, ...decision }) =>
+    rationale === null ? decision : { ...decision, rationale },
+  );
+
+const compactionOutputFileSchema = fileEntrySchema
+  .extend({
+    details: z.string().nullable(),
+    sourceRefs: z.array(compactionOutputSourceRefSchema).min(1),
+  })
+  .transform(({ details, ...file }) =>
+    details === null ? file : { ...file, details },
+  );
+
+const compactionOutputCommandSchema = commandEntrySchema
+  .extend({
+    summary: z.string().nullable(),
+    sourceRefs: z.array(compactionOutputSourceRefSchema).min(1),
+  })
+  .transform(({ summary, ...command }) =>
+    summary === null ? command : { ...command, summary },
+  );
+
+const compactionOutputAnchoredNoteSchema = anchoredNoteSchema.extend({
+  sourceRefs: z.array(compactionOutputSourceRefSchema).min(1),
+});
+
+/**
+ * Codex structured outputs require every object property to be required and
+ * every object to reject additional properties. Nullable input fields retain
+ * the domain schemas' optional-string semantics after parsing.
+ */
+export const compactionStructuredOutputSchema = compactionEnvelopeSchema.extend(
+  {
+    decisions: z.array(compactionOutputDecisionSchema),
+    files: z.array(compactionOutputFileSchema),
+    commands: z.array(compactionOutputCommandSchema),
+    openQuestions: z.array(compactionOutputAnchoredNoteSchema),
+    blockers: z.array(compactionOutputAnchoredNoteSchema),
+    extras: z.object({}),
+  },
+);
 
 /**
  * `outputFormat.schema` payload for the structured-output task run, derived
- * from {@link compactionEnvelopeSchema} so the two can never drift. Output-io
- * derivation makes defaulted fields required, so the model always emits the
- * full envelope shape.
+ * from the strict structured-output boundary schema. Input-io derivation
+ * exposes nullable placeholders before their transforms normalize them to the
+ * domain envelope's optional strings.
  */
 export const COMPACTION_JSON_SCHEMA: Record<string, unknown> = z.toJSONSchema(
-  compactionEnvelopeSchema,
+  compactionStructuredOutputSchema,
+  {
+    io: "input",
+    override: ({ jsonSchema }) => {
+      if (jsonSchema.type === "object") {
+        jsonSchema.additionalProperties = false;
+      }
+    },
+  },
 );
 
 /** Values the model must copy verbatim into the envelope's `source` block. */
@@ -67,6 +136,7 @@ const STABLE_INSTRUCTIONS = [
   "",
   "Rules:",
   "- Extract only what the rendered transcript supports. Never invent file paths, command outcomes, decisions, or state; if something is unknown, omit it.",
+  "- Emit every schema property. Use null for unavailable quote, rationale, details, or summary values; use empty arrays when there are no items and set extras to {}.",
   "- Every item in decisions, files, commands, openQuestions, and blockers MUST cite sourceRefs. Copy messageIndex and seq coordinates from the rendered unit headers (`#<messageIndex> [seq A–B] <role>`) and the per-line `[s<seq>]` prefixes. Use the narrowest span that supports the item; when filling `quote`, quote the transcript verbatim.",
   "- agentBrief is a dense handoff for another coding agent picking up this work: terse and complete, not a polished article.",
   "- currentState reflects where the work stands right now: status, the latest user goal, and the next best actions.",

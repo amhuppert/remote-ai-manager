@@ -35,13 +35,13 @@ import type {
 import {
   buildCompactionPrompt,
   COMPACTION_JSON_SCHEMA,
+  compactionStructuredOutputSchema,
   PROMPT_VERSION,
   type CompactionSourceMeta,
 } from "./generation";
 import { validateCompactionGuards, type CompactionRunMode } from "./guards";
 import { redactEnvelopeStrings } from "./redaction";
 import {
-  compactionEnvelopeSchema,
   CONTEXT_ARTIFACT_SCHEMA_VERSION,
   type ArtifactKind,
   type CompactionEnvelope,
@@ -470,7 +470,9 @@ export function createCompactionService(
 
         const parsed =
           result.kind === "structured"
-            ? compactionEnvelopeSchema.safeParse(result.structuredOutput)
+            ? compactionStructuredOutputSchema.safeParse(
+                result.structuredOutput,
+              )
             : null;
 
         if (parsed === null || !parsed.success) {

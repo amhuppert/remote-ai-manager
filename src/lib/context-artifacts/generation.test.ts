@@ -9,6 +9,7 @@ import {
   COMPACTION_JSON_SCHEMA,
   PROMPT_VERSION,
   buildCompactionPrompt,
+  compactionStructuredOutputSchema,
   type CompactionSourceMeta,
 } from "./generation";
 
@@ -179,6 +180,55 @@ function conformanceErrors(
   return errors;
 }
 
+function strictOutputSchemaErrors(schema: unknown, path = "$schema"): string[] {
+  if (typeof schema === "boolean") return [];
+  if (typeof schema !== "object" || schema === null) {
+    return [`${path}: unsupported schema node`];
+  }
+
+  const node = schema as Record<string, unknown>;
+  const errors: string[] = [];
+  if ("default" in node) {
+    errors.push(`${path}: default is not supported`);
+  }
+
+  if (node["type"] === "object") {
+    const properties =
+      typeof node["properties"] === "object" && node["properties"] !== null
+        ? (node["properties"] as Record<string, unknown>)
+        : {};
+    const required = Array.isArray(node["required"])
+      ? new Set(node["required"])
+      : new Set<unknown>();
+    for (const key of Object.keys(properties)) {
+      if (!required.has(key)) {
+        errors.push(`${path}: property ${key} is not required`);
+      }
+    }
+    if (node["additionalProperties"] !== false) {
+      errors.push(`${path}: additionalProperties must be false`);
+    }
+    for (const [key, propertySchema] of Object.entries(properties)) {
+      errors.push(
+        ...strictOutputSchemaErrors(propertySchema, `${path}.${key}`),
+      );
+    }
+  }
+
+  if (node["items"] !== undefined) {
+    errors.push(...strictOutputSchemaErrors(node["items"], `${path}[]`));
+  }
+  if (Array.isArray(node["anyOf"])) {
+    node["anyOf"].forEach((branch, index) => {
+      errors.push(
+        ...strictOutputSchemaErrors(branch, `${path}.anyOf[${index}]`),
+      );
+    });
+  }
+
+  return errors;
+}
+
 function makeRendered(
   overrides: Partial<RenderedTranscript> = {},
 ): RenderedTranscript {
@@ -223,8 +273,8 @@ const sourceMeta: CompactionSourceMeta = {
 };
 
 describe("PROMPT_VERSION", () => {
-  it("is the v1 prompt contract", () => {
-    expect(PROMPT_VERSION).toBe("1");
+  it("is the v2 prompt contract", () => {
+    expect(PROMPT_VERSION).toBe("2");
   });
 });
 
@@ -252,8 +302,55 @@ describe("COMPACTION_JSON_SCHEMA", () => {
 
   it("accepts a maximal envelope fixture (structural conformance)", () => {
     expect(
-      conformanceErrors(maximalEnvelope, COMPACTION_JSON_SCHEMA, "$"),
+      conformanceErrors(
+        { ...maximalEnvelope, extras: {} },
+        COMPACTION_JSON_SCHEMA,
+        "$",
+      ),
     ).toEqual([]);
+  });
+
+  it("uses the strict JSON Schema subset required by Codex", () => {
+    expect(strictOutputSchemaErrors(COMPACTION_JSON_SCHEMA)).toEqual([]);
+  });
+
+  it("normalizes required nullable placeholders to optional domain strings", () => {
+    const nullableRef = { ...ref, quote: null };
+    const parsed = compactionStructuredOutputSchema.parse({
+      ...maximalEnvelope,
+      decisions: [
+        {
+          ...maximalEnvelope.decisions[0],
+          rationale: null,
+          sourceRefs: [nullableRef],
+        },
+      ],
+      files: [
+        {
+          ...maximalEnvelope.files[0],
+          details: null,
+          sourceRefs: [nullableRef],
+        },
+      ],
+      commands: [
+        {
+          ...maximalEnvelope.commands[0],
+          summary: null,
+          sourceRefs: [nullableRef],
+        },
+      ],
+      openQuestions: [
+        { ...maximalEnvelope.openQuestions[0], sourceRefs: [nullableRef] },
+      ],
+      blockers: [{ ...maximalEnvelope.blockers[0], sourceRefs: [nullableRef] }],
+      extras: {},
+    });
+
+    expect(parsed.decisions[0]).not.toHaveProperty("rationale");
+    expect(parsed.files[0]).not.toHaveProperty("details");
+    expect(parsed.commands[0]).not.toHaveProperty("summary");
+    expect(parsed.decisions[0]?.sourceRefs[0]).not.toHaveProperty("quote");
+    expect(compactionEnvelopeSchema.safeParse(parsed).success).toBe(true);
   });
 
   it("stays in lockstep with compactionEnvelopeSchema.parse", () => {
@@ -301,6 +398,7 @@ describe("buildCompactionPrompt — full mode", () => {
     expect(prompt).toContain("sourceRefs");
     expect(prompt.toLowerCase()).toContain("never invent");
     expect(prompt).toContain("agentBrief");
+    expect(prompt).toContain("Use null for unavailable");
   });
 
   it("omits delta merge instructions", () => {
