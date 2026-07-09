@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="A sourced comparison of Claude Opus 4.8, Claude Fable 5, GPT-5.6 Sol, Terra, and Luna across pricing, task cost, speed, capability, and reasoning effort.">
+  <title>Frontier Atlas — LLM Model Comparison</title>
+  <style>
+    :root {
+      --ink: #f4f2ed;
+      --muted: #aaa9b4;
+      --dim: #767783;
+      --canvas: #08090d;
+      --surface: #111218;
+      --surface-2: #171820;
+      --surface-3: #1e2029;
+      --line: rgba(255, 255, 255, 0.1);
+      --line-strong: rgba(255, 255, 255, 0.18);
+      --sol: #ffb457;
+      --terra: #43d4b5;
+      --luna: #9fa8ff;
+      --fable: #cf91ff;
+      --opus: #ff8092;
+      --good: #70e3a1;
+      --warning: #ffd26f;
+      --max-width: 1220px;
+      --radius: 24px;
+      --radius-sm: 15px;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Baskerville, "Times New Roman", serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 82% 4%, rgba(159, 168, 255, 0.13), transparent 27rem),
+        radial-gradient(circle at 18% 13%, rgba(255, 180, 87, 0.1), transparent 30rem),
+        var(--canvas);
+      font: 16px/1.55 var(--sans);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    body::before {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      opacity: 0.25;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, black, transparent 72%);
+    }
+
+    a { color: inherit; }
+    button, input, select { font: inherit; }
+    button, select { color: inherit; }
+    .shell { width: min(calc(100% - 40px), var(--max-width)); margin-inline: auto; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: rgba(8, 9, 13, 0.82);
+      backdrop-filter: blur(18px);
+    }
+
+    .topbar-inner {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font: 700 12px/1 var(--mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .brand-mark {
+      width: 9px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: var(--sol);
+      box-shadow: 0 0 16px var(--sol), 15px 0 0 -2px var(--terra), 28px 0 0 -3px var(--luna);
+      margin-right: 28px;
+    }
+
+    .topnav { display: flex; gap: 22px; }
+    .topnav a {
+      color: var(--muted);
+      font-size: 12px;
+      text-decoration: none;
+      transition: color 160ms ease;
+    }
+    .topnav a:hover, .topnav a:focus-visible { color: var(--ink); }
+
+    .hero {
+      min-height: 700px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
+      align-items: center;
+      gap: 54px;
+      padding-block: 90px 74px;
+    }
+
+    .eyebrow, .section-kicker {
+      color: var(--muted);
+      font: 600 11px/1.2 var(--mono);
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .eyebrow::before { width: 34px; height: 1px; content: ""; background: var(--sol); }
+
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      font: 500 clamp(58px, 7vw, 100px)/0.91 var(--serif);
+      letter-spacing: -0.055em;
+    }
+
+    h1 em { color: var(--sol); font-weight: 400; }
+    .lede {
+      max-width: 700px;
+      margin: 30px 0 0;
+      color: var(--muted);
+      font-size: clamp(17px, 2vw, 21px);
+      line-height: 1.55;
+    }
+
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 34px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.025);
+      font: 500 11px/1.1 var(--mono);
+    }
+    .pill strong { color: var(--ink); font-weight: 600; }
+
+    .orbit-panel {
+      position: relative;
+      min-height: 500px;
+      isolation: isolate;
+    }
+
+    .orbit {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      transform: translate(-50%, -50%) rotate(-12deg);
+    }
+    .orbit.o1 { width: 470px; height: 300px; }
+    .orbit.o2 { width: 360px; height: 220px; transform: translate(-50%, -50%) rotate(28deg); }
+    .orbit.o3 { width: 240px; height: 150px; transform: translate(-50%, -50%) rotate(-50deg); }
+    .orbit-core {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 108px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 180, 87, 0.4);
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #ffe1a9, var(--sol) 36%, #b45a1e 72%, #2b1b17);
+      color: #1b1009;
+      box-shadow: 0 0 70px rgba(255, 180, 87, 0.24);
+      transform: translate(-50%, -50%);
+      font: 800 12px/1 var(--mono);
+      letter-spacing: 0.1em;
+    }
+
+    .planet {
+      position: absolute;
+      width: 94px;
+      padding: 11px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: rgba(17, 18, 24, 0.92);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(14px);
+      font: 700 11px/1.2 var(--mono);
+    }
+    .planet span { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; font-weight: 500; }
+    .planet::before { display: inline-block; width: 8px; aspect-ratio: 1; margin-right: 7px; border-radius: 50%; content: ""; background: currentColor; box-shadow: 0 0 12px currentColor; }
+    .planet.fable { left: 2%; top: 19%; color: var(--fable); }
+    .planet.opus { right: 2%; top: 20%; color: var(--opus); }
+    .planet.terra { left: 5%; bottom: 18%; color: var(--terra); }
+    .planet.luna { right: 7%; bottom: 13%; color: var(--luna); }
+    .planet.sol { left: calc(50% - 47px); bottom: 1%; color: var(--sol); }
+
+    main { overflow: clip; }
+    .section { padding-block: 84px; border-top: 1px solid var(--line); scroll-margin-top: 58px; }
+    .section-head {
+      display: grid;
+      grid-template-columns: 0.42fr 1fr;
+      gap: 40px;
+      align-items: end;
+      margin-bottom: 42px;
+    }
+    .section-head h2 {
+      margin: 12px 0 0;
+      font: 500 clamp(36px, 5vw, 60px)/0.98 var(--serif);
+      letter-spacing: -0.035em;
+    }
+    .section-intro { max-width: 700px; margin: 0; color: var(--muted); font-size: 17px; }
+
+    .verdict-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .verdict {
+      position: relative;
+      min-height: 180px;
+      overflow: hidden;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 70%), var(--surface);
+    }
+    .verdict::after {
+      position: absolute;
+      right: -34px;
+      bottom: -48px;
+      width: 130px;
+      aspect-ratio: 1;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      content: "";
+      opacity: 0.16;
+    }
+    .verdict-label { color: var(--dim); font: 600 10px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+    .verdict-model { margin-top: 18px; font: 600 25px/1 var(--serif); }
+    .verdict p { margin: 13px 0 0; color: var(--muted); font-size: 13px; }
+    .verdict.sol { color: var(--sol); }
+    .verdict.fable { color: var(--fable); }
+    .verdict.terra { color: var(--terra); }
+    .verdict.luna { color: var(--luna); }
+    .verdict p, .verdict-label { color: var(--muted); }
+
+    .model-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+    .model-card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--model-color);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+    }
+    .model-card .vendor { color: var(--dim); font: 600 10px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+    .model-card h3 { margin: 11px 0 18px; font: 600 23px/1 var(--serif); }
+    .model-card dl { margin: 0; }
+    .model-card dl > div { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .model-card dt { color: var(--dim); font-size: 11px; }
+    .model-card dd { margin: 0; font: 650 12px/1.3 var(--mono); text-align: right; }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(150deg, rgba(255, 255, 255, 0.035), transparent 50%), var(--surface);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.2);
+    }
+
+    .chart-panel { padding: 28px; }
+    .panel-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    .panel-title-row h3 { margin: 0; font: 600 24px/1.1 var(--serif); }
+    .panel-title-row p { max-width: 580px; margin: 7px 0 0; color: var(--muted); font-size: 13px; }
+    .data-tag { flex: 0 0 auto; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); font: 600 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+
+    .price-layout { display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 16px; }
+    .price-bars { display: grid; gap: 18px; }
+    .price-row { display: grid; grid-template-columns: 112px 1fr 52px; gap: 12px; align-items: center; }
+    .price-label { font-size: 13px; font-weight: 650; }
+    .price-track { height: 9px; overflow: hidden; border-radius: 999px; background: var(--surface-3); }
+    .price-fill { height: 100%; width: var(--w); border-radius: inherit; background: var(--c); box-shadow: 0 0 18px color-mix(in srgb, var(--c), transparent 60%); }
+    .price-value { font: 650 11px/1 var(--mono); text-align: right; }
+
+    .price-legend { display: flex; gap: 16px; margin: 18px 0 0 124px; color: var(--dim); font: 500 10px/1 var(--mono); }
+    .price-legend span { display: flex; align-items: center; gap: 7px; }
+    .price-legend i { width: 15px; height: 5px; border-radius: 2px; background: currentColor; }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+    table { width: 100%; border-collapse: collapse; background: rgba(8, 9, 13, 0.34); font-size: 12px; }
+    th, td { padding: 14px 15px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--dim); font: 600 9px/1.2 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; }
+    td { color: var(--muted); }
+    td strong { color: var(--ink); }
+    tr:last-child td { border-bottom: 0; }
+
+    .calculator { margin-top: 16px; display: grid; grid-template-columns: 0.7fr 1.3fr; overflow: hidden; }
+    .calc-controls { padding: 28px; border-right: 1px solid var(--line); }
+    .calc-output { padding: 28px; }
+    .control-group + .control-group { margin-top: 22px; }
+    .control-group > label, .control-label { display: block; margin-bottom: 9px; color: var(--muted); font-size: 11px; font-weight: 650; }
+    .profile-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .profile-button {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-2);
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .profile-button[aria-pressed="true"] { border-color: var(--sol); color: var(--sol); background: rgba(255, 180, 87, 0.08); }
+    .control-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    select, input[type="number"] {
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      outline: none;
+      background: var(--surface-2);
+    }
+    select:focus-visible, input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--sol); outline-offset: 2px; }
+    .calc-note { margin: 20px 0 0; color: var(--dim); font-size: 11px; }
+
+    .task-bars { display: grid; gap: 15px; }
+    .task-row { display: grid; grid-template-columns: 104px 1fr 70px; gap: 12px; align-items: center; }
+    .task-row-name { font-size: 12px; font-weight: 650; }
+    .task-track { height: 30px; overflow: hidden; border-radius: 9px; background: var(--surface-3); }
+    .task-fill { height: 100%; min-width: 3px; border-radius: inherit; background: var(--model-color); transition: width 300ms ease; }
+    .task-cost { font: 700 12px/1 var(--mono); text-align: right; }
+    .task-summary { display: flex; justify-content: space-between; gap: 24px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .task-summary strong { color: var(--ink); }
+
+    .pareto-wrap { position: relative; min-height: 470px; }
+    #paretoChart { display: block; width: 100%; height: 470px; overflow: visible; }
+    .axis-label { fill: var(--dim); font: 10px var(--mono); }
+    .grid-line { stroke: var(--line); stroke-width: 1; }
+    .pareto-label { fill: var(--ink); font: 650 11px var(--sans); paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
+
+    .benchmark-grid { display: grid; gap: 14px; }
+    .benchmark-row {
+      display: grid;
+      grid-template-columns: 210px repeat(5, 1fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+    .benchmark-name {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface-2);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .benchmark-name small { margin-top: 4px; color: var(--dim); font: 9px/1.3 var(--mono); font-weight: 500; }
+    .benchmark-cell {
+      position: relative;
+      min-height: 62px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      overflow: hidden;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface);
+      font: 700 11px/1 var(--mono);
+    }
+    .benchmark-cell::before {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+      height: var(--score);
+      content: "";
+      opacity: 0.2;
+      background: var(--model-color);
+    }
+    .benchmark-cell.best { border-color: color-mix(in srgb, var(--model-color), white 20%); }
+    .benchmark-cell.best::after { position: absolute; top: 8px; right: 8px; content: "●"; color: var(--model-color); font-size: 7px; }
+    .benchmark-head { min-height: auto; align-items: center; justify-content: center; color: var(--muted); font-size: 10px; }
+    .benchmark-head::before { display: none; }
+
+    .effort-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .effort-card { padding: 28px; }
+    .effort-brand { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; }
+    .effort-brand h3 { margin: 0; font: 600 27px/1 var(--serif); }
+    .effort-brand span { color: var(--dim); font: 600 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+    .effort-ladder { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-top: 27px; }
+    .effort-step { position: relative; padding-top: calc(58px - var(--h)); text-align: center; }
+    .effort-step i { display: block; height: var(--h); border: 1px solid var(--line-strong); border-radius: 8px 8px 4px 4px; background: linear-gradient(to top, var(--c), color-mix(in srgb, var(--c), transparent 70%)); opacity: 0.78; }
+    .effort-step b { display: block; margin-top: 9px; color: var(--muted); font: 600 9px/1 var(--mono); text-transform: uppercase; }
+    .effort-copy { margin: 24px 0 0; color: var(--muted); font-size: 13px; }
+    .ultra-callout { display: flex; gap: 16px; align-items: center; margin-top: 18px; padding: 15px; border: 1px solid rgba(255, 180, 87, 0.28); border-radius: 12px; background: rgba(255, 180, 87, 0.06); }
+    .ultra-mark { flex: 0 0 auto; width: 38px; aspect-ratio: 1; display: grid; place-items: center; border-radius: 50%; color: #1d1208; background: var(--sol); font: 800 9px/1 var(--mono); }
+    .ultra-callout p { margin: 0; color: var(--muted); font-size: 12px; }
+    .ultra-callout strong { color: var(--ink); }
+
+    .speed-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 16px; }
+    .speed-card { padding: 28px; }
+    .speed-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+    .speed-stat { padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,0.025); }
+    .speed-stat b { display: block; font: 600 35px/1 var(--serif); }
+    .speed-stat span { display: block; margin-top: 8px; color: var(--dim); font-size: 10px; }
+    .evidence-list { display: grid; gap: 0; margin-top: 16px; }
+    .evidence-row { display: grid; grid-template-columns: 96px 1fr auto; gap: 14px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
+    .evidence-model { font-weight: 650; font-size: 12px; }
+    .evidence-row p { margin: 0; color: var(--muted); font-size: 12px; }
+    .confidence { padding: 5px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); font: 600 8px/1 var(--mono); text-transform: uppercase; }
+    .confidence.independent { color: var(--good); border-color: rgba(112, 227, 161, 0.3); }
+
+    .decision-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+    .decision-card { position: relative; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+    .decision-card::before { position: absolute; top: 0; left: 20px; right: 20px; height: 2px; content: ""; background: var(--model-color); }
+    .decision-card h3 { margin: 12px 0 9px; font: 600 20px/1 var(--serif); }
+    .decision-card .fit { color: var(--model-color); font: 700 9px/1.3 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .decision-card p { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+    .decision-card ul { margin: 13px 0 0; padding: 0; list-style: none; color: var(--dim); font-size: 11px; }
+    .decision-card li + li { margin-top: 7px; }
+    .decision-card li::before { margin-right: 7px; content: "→"; color: var(--model-color); }
+
+    .method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .method-card { padding: 26px; }
+    .method-card h3 { margin: 0 0 13px; font: 600 22px/1 var(--serif); }
+    .method-card p, .method-card li { color: var(--muted); font-size: 13px; }
+    .method-card ul { margin: 0; padding-left: 18px; }
+    .method-card li + li { margin-top: 9px; }
+    .sources { display: grid; gap: 9px; margin-top: 26px; }
+    .source-link { display: grid; grid-template-columns: 88px 1fr auto; gap: 18px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); text-decoration: none; background: var(--surface); transition: border-color 160ms ease, transform 160ms ease; }
+    .source-link:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+    .source-type { color: var(--dim); font: 600 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+    .source-link strong { color: var(--ink); font-size: 12px; }
+    .source-link span:last-child { color: var(--dim); font-size: 15px; }
+
+    footer { padding: 36px 0 56px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; }
+    .footer-inner { display: flex; justify-content: space-between; gap: 20px; }
+    .mono { font-family: var(--mono); }
+
+    .model-sol { --model-color: var(--sol); }
+    .model-terra { --model-color: var(--terra); }
+    .model-luna { --model-color: var(--luna); }
+    .model-fable { --model-color: var(--fable); }
+    .model-opus { --model-color: var(--opus); }
+
+    @media (max-width: 1020px) {
+      .hero { grid-template-columns: 1fr; min-height: auto; }
+      .orbit-panel { max-width: 620px; width: 100%; margin-inline: auto; }
+      .model-grid, .decision-grid { grid-template-columns: repeat(3, 1fr); }
+      .verdict-grid { grid-template-columns: repeat(2, 1fr); }
+      .benchmark-row { grid-template-columns: 170px repeat(5, minmax(90px, 1fr)); min-width: 780px; }
+      .benchmark-grid { overflow-x: auto; padding-bottom: 8px; }
+    }
+
+    @media (max-width: 760px) {
+      .shell { width: min(calc(100% - 26px), var(--max-width)); }
+      .topnav { display: none; }
+      .hero { padding-block: 70px 54px; gap: 30px; }
+      h1 { font-size: clamp(52px, 17vw, 76px); }
+      .orbit-panel { min-height: 380px; transform: scale(0.88); }
+      .orbit.o1 { width: 390px; height: 250px; }
+      .section { padding-block: 62px; }
+      .section-head { grid-template-columns: 1fr; gap: 18px; }
+      .model-grid, .decision-grid { grid-template-columns: 1fr; }
+      .price-layout, .effort-layout, .speed-grid, .method-grid, .calculator { grid-template-columns: 1fr; }
+      .calc-controls { border-right: 0; border-bottom: 1px solid var(--line); }
+      .source-link { grid-template-columns: 70px 1fr; }
+      .source-link span:last-child { display: none; }
+      .footer-inner { flex-direction: column; }
+    }
+
+    @media (max-width: 520px) {
+      .verdict-grid { grid-template-columns: 1fr; }
+      .orbit-panel { margin: -30px 0; transform: scale(0.72); }
+      .panel-title-row { flex-direction: column; }
+      .control-row { grid-template-columns: 1fr; }
+      .task-row { grid-template-columns: 84px 1fr 58px; }
+      .price-row { grid-template-columns: 88px 1fr 48px; }
+      .price-legend { margin-left: 100px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+    }
+
+    @media print {
+      :root { color-scheme: light; --ink: #16151a; --muted: #4d4b55; --dim: #6d6975; --canvas: #fff; --surface: #fff; --surface-2: #f5f3f0; --surface-3: #ece9e4; --line: rgba(0,0,0,.14); --line-strong: rgba(0,0,0,.25); }
+      body { background: #fff; }
+      body::before, .topbar { display: none; }
+      .section { break-inside: avoid; padding-block: 36px; }
+      .hero { min-height: auto; padding-block: 50px; }
+      .panel, .model-card, .verdict { box-shadow: none; }
+      a { text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Frontier Atlas</div>
+      <nav class="topnav" aria-label="Report sections">
+        <a href="#market">Overview</a>
+        <a href="#economics">Economics</a>
+        <a href="#capability">Capability</a>
+        <a href="#effort">Reasoning</a>
+        <a href="#speed">Speed</a>
+        <a href="#method">Method</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="shell hero" aria-labelledby="report-title">
+      <div>
+        <div class="eyebrow">Model intelligence · economics · velocity</div>
+        <h1 id="report-title">Five models.<br>One <em>frontier.</em></h1>
+        <p class="lede">A decision-grade comparison of Claude Opus 4.8, Claude Fable 5, and the GPT‑5.6 family—Sol, Terra, and Luna—across official token prices, modeled task cost, reported speed, reasoning effort, and public capability benchmarks.</p>
+        <div class="hero-meta">
+          <span class="pill"><strong>Current</strong> July 9, 2026</span>
+          <span class="pill"><strong>5</strong> production models</span>
+          <span class="pill"><strong>7</strong> comparable benchmarks</span>
+          <span class="pill"><strong>USD</strong> API list pricing</span>
+        </div>
+      </div>
+      <div class="orbit-panel" aria-label="The five compared models arranged as an orbital system">
+        <div class="orbit o1" aria-hidden="true"></div>
+        <div class="orbit o2" aria-hidden="true"></div>
+        <div class="orbit o3" aria-hidden="true"></div>
+        <div class="orbit-core">FRONTIER</div>
+        <div class="planet fable">Fable 5<span>Capability edge</span></div>
+        <div class="planet opus">Opus 4.8<span>Daily driver</span></div>
+        <div class="planet terra">Terra<span>Balanced</span></div>
+        <div class="planet luna">Luna<span>Scale</span></div>
+        <div class="planet sol">Sol<span>Agentic lead</span></div>
+      </div>
+    </section>
+
+    <section class="section" id="market">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">01 · Executive read</div>
+            <h2>No universal winner.</h2>
+          </div>
+          <p class="section-intro">The market has separated into four useful positions. Fable retains a narrow lead on the broad Artificial Analysis Intelligence Index; Sol leads coding-agent and long-horizon professional work; Terra is the strongest price/performance compromise; Luna owns high-volume economics.</p>
+        </div>
+
+        <div class="verdict-grid">
+          <article class="verdict fable">
+            <div class="verdict-label">Highest broad intelligence</div>
+            <div class="verdict-model">Fable 5</div>
+            <p>59.9 on AA Intelligence v4.1, one point above Sol. It also leads GDPval-AA v2, but commands the highest list price.</p>
+          </article>
+          <article class="verdict sol">
+            <div class="verdict-label">Best agentic &amp; coding ceiling</div>
+            <div class="verdict-model">GPT‑5.6 Sol</div>
+            <p>80 on the AA Coding Agent Index and 52.7% on Agents’ Last Exam. Max and multi-agent ultra extend the ceiling.</p>
+          </article>
+          <article class="verdict terra">
+            <div class="verdict-label">Best balanced route</div>
+            <div class="verdict-model">GPT‑5.6 Terra</div>
+            <p>Near-Opus broad intelligence, above-Fable coding-agent score, and about half of Opus’s equal-token task cost.</p>
+          </article>
+          <article class="verdict luna">
+            <div class="verdict-label">Best high-volume economics</div>
+            <div class="verdict-model">GPT‑5.6 Luna</div>
+            <p>$1 / $6 per million input/output tokens. It still clears Opus on Agents’ Last Exam and the Coding Agent Index.</p>
+          </article>
+        </div>
+
+        <div class="model-grid" aria-label="At-a-glance model metrics">
+          <article class="model-card model-sol">
+            <div class="vendor">OpenAI · Flagship</div><h3>Sol</h3>
+            <dl><div><dt>Input / output</dt><dd>$5 / $30</dd></div><div><dt>AA intelligence</dt><dd>58.9</dd></div><div><dt>Coding agent</dt><dd>80.0</dd></div></dl>
+          </article>
+          <article class="model-card model-terra">
+            <div class="vendor">OpenAI · Balanced</div><h3>Terra</h3>
+            <dl><div><dt>Input / output</dt><dd>$2.5 / $15</dd></div><div><dt>AA intelligence</dt><dd>55.0</dd></div><div><dt>Coding agent</dt><dd>77.4</dd></div></dl>
+          </article>
+          <article class="model-card model-luna">
+            <div class="vendor">OpenAI · Efficient</div><h3>Luna</h3>
+            <dl><div><dt>Input / output</dt><dd>$1 / $6</dd></div><div><dt>AA intelligence</dt><dd>51.2</dd></div><div><dt>Coding agent</dt><dd>74.6</dd></div></dl>
+          </article>
+          <article class="model-card model-fable">
+            <div class="vendor">Anthropic · Mythos class</div><h3>Fable 5</h3>
+            <dl><div><dt>Input / output</dt><dd>$10 / $50</dd></div><div><dt>AA intelligence</dt><dd>59.9</dd></div><div><dt>Coding agent</dt><dd>77.2</dd></div></dl>
+          </article>
+          <article class="model-card model-opus">
+            <div class="vendor">Anthropic · Frontier</div><h3>Opus 4.8</h3>
+            <dl><div><dt>Input / output</dt><dd>$5 / $25</dd></div><div><dt>AA intelligence</dt><dd>55.7</dd></div><div><dt>Coding agent</dt><dd>72.5</dd></div></dl>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="economics">
+      <div class="shell">
+        <div class="section-head">
+          <div><div class="section-kicker">02 · Economics</div><h2>Output tokens set the bill.</h2></div>
+          <p class="section-intro">Reasoning and tool use are billed as output, so the output rate matters most for difficult agentic work. Fable costs 8.3× Luna at equal output volume; Sol sits close to Opus despite a higher output rate because its input rate is identical.</p>
+        </div>
+
+        <div class="price-layout">
+          <article class="panel chart-panel">
+            <div class="panel-title-row"><div><h3>Official list price</h3><p>USD per one million tokens. Bars share a $50 maximum.</p></div><span class="data-tag">Official</span></div>
+            <div class="price-bars" aria-label="Input token prices">
+              <div class="price-row"><span class="price-label">Fable 5</span><div class="price-track"><div class="price-fill" style="--w:20%;--c:var(--fable)"></div></div><span class="price-value">$10</span></div>
+              <div class="price-row"><span class="price-label">Sol</span><div class="price-track"><div class="price-fill" style="--w:10%;--c:var(--sol)"></div></div><span class="price-value">$5</span></div>
+              <div class="price-row"><span class="price-label">Opus 4.8</span><div class="price-track"><div class="price-fill" style="--w:10%;--c:var(--opus)"></div></div><span class="price-value">$5</span></div>
+              <div class="price-row"><span class="price-label">Terra</span><div class="price-track"><div class="price-fill" style="--w:5%;--c:var(--terra)"></div></div><span class="price-value">$2.5</span></div>
+              <div class="price-row"><span class="price-label">Luna</span><div class="price-track"><div class="price-fill" style="--w:2%;--c:var(--luna)"></div></div><span class="price-value">$1</span></div>
+            </div>
+            <div class="price-legend"><span><i></i>Input price</span></div>
+          </article>
+
+          <article class="panel chart-panel">
+            <div class="panel-title-row"><div><h3>Output &amp; reasoning price</h3><p>Thinking tokens, response text, and tool arguments count toward output.</p></div><span class="data-tag">Official</span></div>
+            <div class="price-bars" aria-label="Output token prices">
+              <div class="price-row"><span class="price-label">Fable 5</span><div class="price-track"><div class="price-fill" style="--w:100%;--c:var(--fable)"></div></div><span class="price-value">$50</span></div>
+              <div class="price-row"><span class="price-label">Sol</span><div class="price-track"><div class="price-fill" style="--w:60%;--c:var(--sol)"></div></div><span class="price-value">$30</span></div>
+              <div class="price-row"><span class="price-label">Opus 4.8</span><div class="price-track"><div class="price-fill" style="--w:50%;--c:var(--opus)"></div></div><span class="price-value">$25</span></div>
+              <div class="price-row"><span class="price-label">Terra</span><div class="price-track"><div class="price-fill" style="--w:30%;--c:var(--terra)"></div></div><span class="price-value">$15</span></div>
+              <div class="price-row"><span class="price-label">Luna</span><div class="price-track"><div class="price-fill" style="--w:12%;--c:var(--luna)"></div></div><span class="price-value">$6</span></div>
+            </div>
+            <div class="price-legend"><span><i></i>Output price</span></div>
+          </article>
+        </div>
+
+        <div class="table-wrap" style="margin-top:16px">
+          <table>
+            <thead><tr><th>Model</th><th>Input / 1M</th><th>Output / 1M</th><th>Cache read</th><th>Cache write</th><th>100k in + 20k out</th></tr></thead>
+            <tbody>
+              <tr><td><strong>GPT‑5.6 Sol</strong></td><td>$5.00</td><td>$30.00</td><td>90% off input</td><td>1.25× input</td><td><strong>$1.10</strong></td></tr>
+              <tr><td><strong>GPT‑5.6 Terra</strong></td><td>$2.50</td><td>$15.00</td><td>90% off input</td><td>1.25× input</td><td><strong>$0.55</strong></td></tr>
+              <tr><td><strong>GPT‑5.6 Luna</strong></td><td>$1.00</td><td>$6.00</td><td>90% off input</td><td>1.25× input</td><td><strong>$0.22</strong></td></tr>
+              <tr><td><strong>Claude Fable 5</strong></td><td>$10.00</td><td>$50.00</td><td>90% off input</td><td>Duration dependent</td><td><strong>$2.00</strong></td></tr>
+              <tr><td><strong>Claude Opus 4.8</strong></td><td>$5.00</td><td>$25.00</td><td>90% off input</td><td>Duration dependent</td><td><strong>$1.00</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <article class="panel calculator" aria-labelledby="calc-title">
+          <div class="calc-controls">
+            <div class="panel-title-row"><div><h3 id="calc-title">Task cost studio</h3><p>Equal-token comparison at official rates.</p></div><span class="data-tag">Interactive</span></div>
+            <div class="control-group">
+              <span class="control-label">Task profile</span>
+              <div class="profile-buttons" role="group" aria-label="Task profile">
+                <button class="profile-button" type="button" data-profile="quick" aria-pressed="false">Quick</button>
+                <button class="profile-button" type="button" data-profile="coding" aria-pressed="true">Coding</button>
+                <button class="profile-button" type="button" data-profile="research" aria-pressed="false">Research</button>
+              </div>
+            </div>
+            <div class="control-group control-row">
+              <label>Input tokens<input id="inputTokens" type="number" min="0" step="1000" value="100000" inputmode="numeric"></label>
+              <label>Answer tokens<input id="answerTokens" type="number" min="0" step="1000" value="10000" inputmode="numeric"></label>
+            </div>
+            <div class="control-group">
+              <label for="effortSelect">Reasoning effort assumption</label>
+              <select id="effortSelect">
+                <option value="0.35">Low · 0.35× reasoning budget</option>
+                <option value="0.7">Medium · 0.7× reasoning budget</option>
+                <option value="1" selected>High · baseline</option>
+                <option value="1.65">XHigh · 1.65× reasoning budget</option>
+                <option value="2.5">Max · 2.5× reasoning budget</option>
+              </select>
+            </div>
+            <p class="calc-note">The calculator adds an illustrative reasoning budget equal to the answer-token budget × the selected multiplier. It is a sensitivity model, not a promise of model token use. Cache and tool charges are excluded.</p>
+          </div>
+          <div class="calc-output">
+            <div class="panel-title-row"><div><h3>Estimated API cost per task</h3><p id="calcDescription">100k input + 10k answer + 10k reasoning tokens</p></div></div>
+            <div class="task-bars" id="taskBars" aria-live="polite"></div>
+            <div class="task-summary"><span>Equal-token spread <strong id="costSpread">—</strong></span><span>Lowest cost <strong id="lowestModel">—</strong></span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="capability">
+      <div class="shell">
+        <div class="section-head">
+          <div><div class="section-kicker">03 · Capability</div><h2>Two leaders, different shapes.</h2></div>
+          <p class="section-intro">Fable holds the broad composite edge. Sol leads the evaluated agentic workflows and coding index. Terra is unusually close to both at half or less of their list price; Luna remains competitive despite a radically lower cost floor.</p>
+        </div>
+
+        <article class="panel chart-panel">
+          <div class="panel-title-row"><div><h3>Capability × equal-token task cost</h3><p>Y-axis: Artificial Analysis Intelligence Index v4.1. X-axis: official cost for 100k input + 20k output tokens. Upper-left is the efficient frontier.</p></div><span class="data-tag">Independent index + official price</span></div>
+          <div class="pareto-wrap"><svg id="paretoChart" role="img" aria-labelledby="paretoTitle paretoDesc"><title id="paretoTitle">Model capability versus task cost</title><desc id="paretoDesc">A scatter plot showing Fable with the highest intelligence and highest task cost, Sol nearly as capable at a lower cost, Terra and Opus near each other in capability with Terra cheaper, and Luna lowest in cost and capability.</desc></svg></div>
+        </article>
+
+        <article class="panel chart-panel" style="margin-top:16px">
+          <div class="panel-title-row"><div><h3>Benchmark constellation</h3><p>Raw values are printed. Cell fill is normalized only within each benchmark row; do not compare fill height between rows.</p></div><span class="data-tag">July 9 published table</span></div>
+          <div class="benchmark-grid" id="benchmarkGrid"></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="effort">
+      <div class="shell">
+        <div class="section-head">
+          <div><div class="section-kicker">04 · Reasoning effort</div><h2>Effort is a product dial.</h2></div>
+          <p class="section-intro">Higher effort increases the model’s willingness to spend tokens, call tools, explore alternatives, and verify work. It is not a strict token budget. The economically correct setting is the lowest level that holds quality on your own evaluation set.</p>
+        </div>
+
+        <div class="effort-layout">
+          <article class="panel effort-card">
+            <div class="effort-brand"><h3>Claude effort</h3><span>Fable 5 · Opus 4.8</span></div>
+            <div class="effort-ladder" aria-label="Claude effort levels from low to max">
+              <div class="effort-step" style="--h:18px;--c:var(--opus)"><i></i><b>Low</b></div>
+              <div class="effort-step" style="--h:28px;--c:var(--opus)"><i></i><b>Medium</b></div>
+              <div class="effort-step" style="--h:38px;--c:var(--fable)"><i></i><b>High</b></div>
+              <div class="effort-step" style="--h:48px;--c:var(--fable)"><i></i><b>XHigh</b></div>
+              <div class="effort-step" style="--h:58px;--c:var(--fable)"><i></i><b>Max</b></div>
+            </div>
+            <p class="effort-copy"><strong>High is the API default.</strong> Anthropic recommends xhigh for coding and agentic work, high for most intelligence-sensitive tasks, and max only when evaluations show measurable headroom. Fable’s adaptive thinking is always on; Opus uses adaptive thinking when enabled.</p>
+          </article>
+
+          <article class="panel effort-card">
+            <div class="effort-brand"><h3>GPT‑5.6 effort</h3><span>Sol · Terra · Luna</span></div>
+            <div class="effort-ladder" aria-label="GPT-5.6 effort levels through max">
+              <div class="effort-step" style="--h:18px;--c:var(--luna)"><i></i><b>Lower</b></div>
+              <div class="effort-step" style="--h:28px;--c:var(--terra)"><i></i><b>Medium</b></div>
+              <div class="effort-step" style="--h:38px;--c:var(--terra)"><i></i><b>High</b></div>
+              <div class="effort-step" style="--h:48px;--c:var(--sol)"><i></i><b>XHigh</b></div>
+              <div class="effort-step" style="--h:58px;--c:var(--sol)"><i></i><b>Max</b></div>
+            </div>
+            <p class="effort-copy"><strong>Max extends beyond xhigh</strong> for more exploration, checking, and revision. OpenAI exposes effort controls for all three models in ChatGPT Work and Codex; product availability differs by surface and plan.</p>
+            <div class="ultra-callout"><span class="ultra-mark">4×</span><p><strong>Ultra is not just “more thinking.”</strong> Its default configuration coordinates four agents in parallel, increasing total token use while reducing wall-clock time on suitable tasks.</p></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="speed">
+      <div class="shell">
+        <div class="section-head">
+          <div><div class="section-kicker">05 · Speed</div><h2>Throughput is only half the story.</h2></div>
+          <p class="section-intro">Token throughput, time to first token, total reasoning time, number of tool turns, and parallelism all affect user-perceived speed. Public evidence is uneven, so this report avoids inventing one universal speed rank.</p>
+        </div>
+
+        <div class="speed-grid">
+          <article class="panel speed-card">
+            <div class="panel-title-row"><div><h3>Measured output throughput</h3><p>First-party Anthropic API measurements reported by Artificial Analysis at max adaptive reasoning.</p></div><span class="data-tag">Independent</span></div>
+            <div class="speed-pair">
+              <div class="speed-stat" style="color:var(--fable)"><b>70.2</b><span>Fable 5 · tokens/sec</span></div>
+              <div class="speed-stat" style="color:var(--opus)"><b>63.3</b><span>Opus 4.8 · tokens/sec</span></div>
+            </div>
+            <p class="calc-note">Reasoning-model latency can be dominated by hidden thinking before visible output. Artificial Analysis reported much longer time-to-first-token than ordinary chat models for these max-effort runs.</p>
+          </article>
+
+          <article class="panel speed-card">
+            <div class="panel-title-row"><div><h3>What is publicly supported</h3><p>Claims are separated by evidence type so qualitative tier names do not masquerade as measurements.</p></div></div>
+            <div class="evidence-list">
+              <div class="evidence-row"><span class="evidence-model" style="color:var(--sol)">Sol max</span><p>OpenAI reports 61% less task time than Fable on AA Intelligence v4.1 while finishing within one index point.</p><span class="confidence">Provider</span></div>
+              <div class="evidence-row"><span class="evidence-model" style="color:var(--terra)">Terra</span><p>Positioned as the balanced tier; on coding-agent comparisons OpenAI reports roughly one-third the time of Fable.</p><span class="confidence">Provider</span></div>
+              <div class="evidence-row"><span class="evidence-model" style="color:var(--luna)">Luna</span><p>Officially the fastest and most affordable GPT‑5.6 tier; no standard-API tokens/sec figure is published.</p><span class="confidence">Official tier</span></div>
+              <div class="evidence-row"><span class="evidence-model" style="color:var(--fable)">Fable</span><p>70.2 output tokens/sec in Artificial Analysis measurements; high reasoning latency remains workload-sensitive.</p><span class="confidence independent">Independent</span></div>
+              <div class="evidence-row"><span class="evidence-model" style="color:var(--opus)">Opus</span><p>63.3 output tokens/sec measured; Anthropic fast mode offers up to 2.5× throughput at 2× standard token prices.</p><span class="confidence independent">Mixed</span></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="decision">
+      <div class="shell">
+        <div class="section-head">
+          <div><div class="section-kicker">06 · Routing guide</div><h2>Route by failure cost.</h2></div>
+          <p class="section-intro">Start with the cheapest model likely to succeed, then escalate when a failed attempt costs more than the price gap. The right router uses your task distribution—not a single leaderboard—to decide.</p>
+        </div>
+        <div class="decision-grid">
+          <article class="decision-card model-sol"><span class="fit">Hard agentic work</span><h3>Sol</h3><p>Use when completion quality dominates token price.</p><ul><li>Long-horizon coding</li><li>Computer use</li><li>Multi-agent ultra</li></ul></article>
+          <article class="decision-card model-fable"><span class="fit">Maximum broad depth</span><h3>Fable 5</h3><p>Use for ambitious research and knowledge work that benefits from persistence.</p><ul><li>Deep analysis</li><li>Large migrations</li><li>High-stakes synthesis</li></ul></article>
+          <article class="decision-card model-terra"><span class="fit">Default workhorse</span><h3>Terra</h3><p>Use as the first serious attempt for everyday professional and coding tasks.</p><ul><li>General agents</li><li>Research</li><li>Production routing</li></ul></article>
+          <article class="decision-card model-opus"><span class="fit">Anthropic daily driver</span><h3>Opus 4.8</h3><p>Use when Claude behavior and ecosystem fit matter more than the last capability point.</p><ul><li>Judgment</li><li>Long context</li><li>Fast-mode option</li></ul></article>
+          <article class="decision-card model-luna"><span class="fit">Volume &amp; latency</span><h3>Luna</h3><p>Use for fan-out, drafts, classification, and inexpensive first passes.</p><ul><li>Subagents</li><li>Transforms</li><li>High-volume APIs</li></ul></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="method">
+      <div class="shell">
+        <div class="section-head">
+          <div><div class="section-kicker">07 · Method &amp; sources</div><h2>Read the fine print.</h2></div>
+          <p class="section-intro">Benchmark tables are snapshots, not laws of nature. Harness, effort, tool access, latency tier, safety configuration, and scoring method can move results materially.</p>
+        </div>
+        <div class="method-grid">
+          <article class="panel method-card"><h3>Comparison rules</h3><ul><li>Official provider list prices are used, before batch or volume discounts.</li><li>Capability values come from the July 9 OpenAI comparison table; independent indices remain attributed to Artificial Analysis.</li><li>Equal-token task cost is arithmetic, not a claim that models consume equal tokens to complete work.</li><li>Reasoning effort changes output-token consumption and tool behavior; only measured workloads reveal true cost per successful task.</li></ul></article>
+          <article class="panel method-card"><h3>Known caveats</h3><ul><li>OpenAI publishes more complete cross-model tables for GPT‑5.6 than Anthropic does for competing GPT‑5.6 models.</li><li>Some competitor results are reproduced by providers rather than run by a neutral lab.</li><li>Safety fallbacks can change Fable’s behavior and effective model on cyber, biology, chemistry, and frontier-AI requests.</li><li>Speed evidence mixes token throughput with end-to-end task time; they are intentionally not collapsed into one score.</li></ul></article>
+        </div>
+
+        <div class="sources" aria-label="Sources">
+          <a class="source-link" href="https://openai.com/index/gpt-5-6/" target="_blank" rel="noreferrer"><span class="source-type">Primary</span><strong>OpenAI — GPT‑5.6 general availability, pricing, effort, and benchmark tables</strong><span>↗</span></a>
+          <a class="source-link" href="https://www.anthropic.com/claude/fable" target="_blank" rel="noreferrer"><span class="source-type">Primary</span><strong>Anthropic — Claude Fable 5 product, pricing, safeguards, and use cases</strong><span>↗</span></a>
+          <a class="source-link" href="https://www.anthropic.com/news/claude-opus-4-8" target="_blank" rel="noreferrer"><span class="source-type">Primary</span><strong>Anthropic — Claude Opus 4.8 launch, pricing, fast mode, and evaluation claims</strong><span>↗</span></a>
+          <a class="source-link" href="https://platform.claude.com/docs/en/build-with-claude/effort" target="_blank" rel="noreferrer"><span class="source-type">Docs</span><strong>Claude Platform — effort levels and adaptive-thinking guidance</strong><span>↗</span></a>
+          <a class="source-link" href="https://deploymentsafety.openai.com/gpt-5-6" target="_blank" rel="noreferrer"><span class="source-type">System card</span><strong>OpenAI — updated GPT‑5.6 system card</strong><span>↗</span></a>
+          <a class="source-link" href="https://www.anthropic.com/claude-fable-5-mythos-5-system-card" target="_blank" rel="noreferrer"><span class="source-type">System card</span><strong>Anthropic — Claude Fable 5 &amp; Mythos 5 capability and safety evaluations</strong><span>↗</span></a>
+          <a class="source-link" href="https://artificialanalysis.ai/models/claude-fable-5" target="_blank" rel="noreferrer"><span class="source-type">Independent</span><strong>Artificial Analysis — Fable 5 intelligence, price, and API speed measurements</strong><span>↗</span></a>
+          <a class="source-link" href="https://artificialanalysis.ai/models/claude-opus-4-8" target="_blank" rel="noreferrer"><span class="source-type">Independent</span><strong>Artificial Analysis — Opus 4.8 intelligence, price, and API speed measurements</strong><span>↗</span></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="shell footer-inner"><span>Prepared as a comparative research artifact. Re-run cost math against current provider pricing before procurement.</span><span class="mono">FRONTIER ATLAS · 2026-07-09</span></div></footer>
+
+  <script>
+    const models = [
+      { id: "sol", name: "Sol", full: "GPT-5.6 Sol", input: 5, output: 30, intelligence: 58.9, color: "#ffb457" },
+      { id: "terra", name: "Terra", full: "GPT-5.6 Terra", input: 2.5, output: 15, intelligence: 55, color: "#43d4b5" },
+      { id: "luna", name: "Luna", full: "GPT-5.6 Luna", input: 1, output: 6, intelligence: 51.2, color: "#9fa8ff" },
+      { id: "fable", name: "Fable 5", full: "Claude Fable 5", input: 10, output: 50, intelligence: 59.9, color: "#cf91ff" },
+      { id: "opus", name: "Opus 4.8", full: "Claude Opus 4.8", input: 5, output: 25, intelligence: 55.7, color: "#ff8092" }
+    ];
+
+    const profiles = {
+      quick: { input: 5000, answer: 1000 },
+      coding: { input: 100000, answer: 10000 },
+      research: { input: 250000, answer: 40000 }
+    };
+
+    const benchmarks = [
+      { name: "AA Intelligence", note: "Index v4.1 · higher is better", suffix: "", values: [58.9, 55, 51.2, 59.9, 55.7] },
+      { name: "AA Coding Agent", note: "Index v1.1 · higher is better", suffix: "", values: [80, 77.4, 74.6, 77.2, 72.5] },
+      { name: "Agents' Last Exam", note: "Long-horizon professional work", suffix: "%", values: [52.7, 50.4, 50.3, 40.5, 45.2] },
+      { name: "Terminal-Bench 2.1", note: "Command-line agent tasks", suffix: "%", values: [88.8, 87.4, 84.7, 83.1, 78.9] },
+      { name: "BrowseComp", note: "Agentic browsing", suffix: "%", values: [90.4, 87.5, 83.3, 84.3, 85.9] },
+      { name: "HealthBench Pro", note: "OpenAI scoring method", suffix: "%", values: [60.5, 57.7, 55.7, 60.9, 53] },
+      { name: "gdp.pdf", note: "Document + visual reasoning", suffix: "%", values: [30.7, 24.7, 22.7, 29.8, 22.5] }
+    ];
+
+    const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 3 });
+    const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+    function renderTaskCosts() {
+      const input = Math.max(0, Number(document.querySelector("#inputTokens").value) || 0);
+      const answer = Math.max(0, Number(document.querySelector("#answerTokens").value) || 0);
+      const effort = Number(document.querySelector("#effortSelect").value);
+      const reasoning = answer * effort;
+      const output = answer + reasoning;
+      const costs = models.map(model => ({ ...model, cost: (input / 1_000_000) * model.input + (output / 1_000_000) * model.output }));
+      const max = Math.max(...costs.map(item => item.cost), 0.001);
+      const min = Math.min(...costs.map(item => item.cost));
+      const low = costs.find(item => item.cost === min);
+
+      document.querySelector("#taskBars").innerHTML = costs
+        .sort((a, b) => b.cost - a.cost)
+        .map(item => `<div class="task-row model-${item.id}"><span class="task-row-name">${item.name}</span><div class="task-track"><div class="task-fill" style="width:${(item.cost / max) * 100}%"></div></div><span class="task-cost">${currency.format(item.cost)}</span></div>`)
+        .join("");
+
+      document.querySelector("#calcDescription").textContent = `${compact.format(input)} input + ${compact.format(answer)} answer + ${compact.format(reasoning)} assumed reasoning tokens`;
+      document.querySelector("#costSpread").textContent = `${(max / Math.max(min, 0.000001)).toFixed(1)}×`;
+      document.querySelector("#lowestModel").textContent = low?.full ?? "—";
+    }
+
+    document.querySelectorAll(".profile-button").forEach(button => {
+      button.addEventListener("click", () => {
+        const profile = profiles[button.dataset.profile];
+        document.querySelectorAll(".profile-button").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+        document.querySelector("#inputTokens").value = profile.input;
+        document.querySelector("#answerTokens").value = profile.answer;
+        renderTaskCosts();
+      });
+    });
+    ["inputTokens", "answerTokens", "effortSelect"].forEach(id => document.querySelector(`#${id}`).addEventListener("input", renderTaskCosts));
+
+    function renderBenchmarks() {
+      const grid = document.querySelector("#benchmarkGrid");
+      const header = `<div class="benchmark-row"><div></div>${models.map(model => `<div class="benchmark-cell benchmark-head model-${model.id}">${model.name}</div>`).join("")}</div>`;
+      const rows = benchmarks.map(benchmark => {
+        const max = Math.max(...benchmark.values);
+        return `<div class="benchmark-row"><div class="benchmark-name">${benchmark.name}<small>${benchmark.note}</small></div>${benchmark.values.map((value, index) => `<div class="benchmark-cell model-${models[index].id} ${value === max ? "best" : ""}" style="--score:${(value / max) * 100}%">${value}${benchmark.suffix}</div>`).join("")}</div>`;
+      }).join("");
+      grid.innerHTML = header + rows;
+    }
+
+    function renderPareto() {
+      const svg = document.querySelector("#paretoChart");
+      const box = svg.getBoundingClientRect();
+      const width = Math.max(700, box.width || 900);
+      const height = 470;
+      const margin = { top: 28, right: 54, bottom: 58, left: 56 };
+      const innerW = width - margin.left - margin.right;
+      const innerH = height - margin.top - margin.bottom;
+      const costs = models.map(model => (0.1 * model.input) + (0.02 * model.output));
+      const xMax = 2.2;
+      const yMin = 49;
+      const yMax = 61;
+      const x = value => margin.left + (value / xMax) * innerW;
+      const y = value => margin.top + (1 - (value - yMin) / (yMax - yMin)) * innerH;
+      const xTicks = [0, 0.5, 1, 1.5, 2];
+      const yTicks = [50, 52, 54, 56, 58, 60];
+      const gridLines = [
+        ...xTicks.map(value => `<line class="grid-line" x1="${x(value)}" y1="${margin.top}" x2="${x(value)}" y2="${height - margin.bottom}"/><text class="axis-label" x="${x(value)}" y="${height - margin.bottom + 22}" text-anchor="middle">$${value.toFixed(1)}</text>`),
+        ...yTicks.map(value => `<line class="grid-line" x1="${margin.left}" y1="${y(value)}" x2="${width - margin.right}" y2="${y(value)}"/><text class="axis-label" x="${margin.left - 12}" y="${y(value) + 4}" text-anchor="end">${value}</text>`)
+      ].join("");
+      const points = models.map((model, index) => {
+        const cx = x(costs[index]);
+        const cy = y(model.intelligence);
+        const labelY = model.id === "terra" ? cy + 23 : cy - 16;
+        return `<g><circle cx="${cx}" cy="${cy}" r="19" fill="${model.color}" fill-opacity="0.12" stroke="${model.color}" stroke-width="1.5"/><circle cx="${cx}" cy="${cy}" r="5" fill="${model.color}"/><text class="pareto-label" x="${cx}" y="${labelY}" text-anchor="middle">${model.name} · ${model.intelligence}</text></g>`;
+      }).join("");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.innerHTML = `<title id="paretoTitle">Model capability versus task cost</title><desc id="paretoDesc">Fable is highest capability and cost; Sol is nearly as capable at lower cost; Terra is similar to Opus but cheaper; Luna is cheapest.</desc>${gridLines}${points}<text class="axis-label" x="${margin.left + innerW / 2}" y="${height - 10}" text-anchor="middle">Cost for 100k input + 20k output tokens</text><text class="axis-label" transform="translate(14 ${margin.top + innerH / 2}) rotate(-90)" text-anchor="middle">AA Intelligence Index v4.1</text>`;
+    }
+
+    renderTaskCosts();
+    renderBenchmarks();
+    renderPareto();
+    let resizeTimer;
+    window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderPareto, 120); });
+  </script>
+</body>
+</html>
