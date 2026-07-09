@@ -343,13 +343,16 @@ function buildMachineSnapshot(
 }
 
 /**
- * Outcome of the approval-gate wait: either the operator's recorded decision
- * was observed (the decision-application path consumes it), or the execution
- * left the running state and the wait exited without resolving — the pending
- * record, including any recorded decision, persists untouched.
+ * Outcome of the approval-gate wait: the operator's recorded decision was
+ * observed (the decision-application path consumes it), a halt is pending and
+ * the wait exited so the drain can settle (the parked record, including any
+ * recorded decision, persists and the gate re-engages on resume), or the
+ * execution left the running state and the wait exited without resolving —
+ * the pending record, including any recorded decision, persists untouched.
  */
 type ApprovalWaitOutcome =
   | { kind: "decision"; decision: GraphWorkflowApprovalDecision }
+  | { kind: "halt_pending" }
   | {
       kind: "execution_exited";
       status: Exclude<GraphWorkflowStatus, "running">;
@@ -358,13 +361,16 @@ type ApprovalWaitOutcome =
 /**
  * Outcome of the user-input-gate wait: answers were recorded on the parked
  * record (the resume path consumes them), the record was withdrawn out from
- * under the wait (abort raced — the context is no longer parked), or the
- * execution left the running state and the wait exited without resolving (the
- * record persists for resume on re-entry).
+ * under the wait (abort raced — the context is no longer parked), a halt is
+ * pending and the wait exited so the drain can settle (the record persists
+ * and the gate re-engages on resume), or the execution left the running
+ * state and the wait exited without resolving (the record persists for
+ * resume on re-entry).
  */
 type UserInputWaitOutcome =
   | { kind: "answers" }
   | { kind: "withdrawn" }
+  | { kind: "halt_pending" }
   | {
       kind: "execution_exited";
       status: Exclude<GraphWorkflowStatus, "running">;
@@ -508,10 +514,12 @@ export function createGraphWorkflowExecutionLoop(
     /**
      * Parks the context runner while its approval gate is pending. Polls via
      * the injected wait and refreshes execution state until the operator's
-     * decision is recorded or the execution leaves the running state
-     * (pause/halt/abort), in which case the wait exits without resolving and
-     * the pending record — including any decision recorded meanwhile —
-     * persists for resume.
+     * decision is recorded, a halt is recorded (drain window — the wait exits
+     * so the in-flight runner settles and the drain-then-halt path can
+     * complete; a decision recorded meanwhile is not applied until after
+     * resume), or the execution leaves the running state (pause/halt/abort),
+     * in which case the wait exits without resolving and the pending record —
+     * including any decision recorded meanwhile — persists for resume.
      */
     async function waitForApprovalResolution(
       contextId: string,
@@ -539,6 +547,20 @@ export function createGraphWorkflowExecutionLoop(
             cause: status,
           });
           return { kind: "execution_exited", status };
+        }
+
+        if (execution.pendingHaltReason !== null) {
+          execLogger?.iteration(contextId, "gate.wait_exit", {
+            cause: "halt_pending",
+            haltReasonType: execution.pendingHaltReason.type,
+          });
+          logger.info("graph-workflow.gate.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: "halt_pending",
+            haltReasonType: execution.pendingHaltReason.type,
+          });
+          return { kind: "halt_pending" };
         }
 
         const decision =
@@ -578,11 +600,13 @@ export function createGraphWorkflowExecutionLoop(
      * Parks the context runner while its user-input gate is pending. Mirrors
      * `waitForApprovalResolution`: polls via the injected wait and refreshes
      * execution state until answers are recorded on the parked record (resume),
-     * the record disappears (withdrawn — abort raced), or the execution leaves
-     * the running state (the record persists for resume on re-entry). The
-     * answers-present check at the top short-circuits, so a context re-entered
-     * with answers already recorded (recorded while paused) applies immediately
-     * without a wait poll (Req 7.3).
+     * the record disappears (withdrawn — abort raced), a halt is recorded
+     * (drain window — the wait exits so the drain-then-halt path can complete;
+     * answers recorded meanwhile are consumed after resume), or the execution
+     * leaves the running state (the record persists for resume on re-entry).
+     * The answers-present check at the top short-circuits, so a context
+     * re-entered with answers already recorded (recorded while paused) applies
+     * immediately without a wait poll (Req 7.3).
      */
     async function waitForUserInputResolution(
       contextId: string,
@@ -610,6 +634,20 @@ export function createGraphWorkflowExecutionLoop(
             cause: status,
           });
           return { kind: "execution_exited", status };
+        }
+
+        if (execution.pendingHaltReason !== null) {
+          execLogger?.iteration(contextId, "user_input.wait_exit", {
+            cause: "halt_pending",
+            haltReasonType: execution.pendingHaltReason.type,
+          });
+          logger.info("graph-workflow.user_input.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: "halt_pending",
+            haltReasonType: execution.pendingHaltReason.type,
+          });
+          return { kind: "halt_pending" };
         }
 
         const pending = execution.contextStates[contextId]?.pendingUserInput;
@@ -1222,7 +1260,10 @@ export function createGraphWorkflowExecutionLoop(
             execution.contextStates[contextId]?.status === "awaiting_approval"
           ) {
             const outcome = await waitForApprovalResolution(contextId);
-            if (outcome.kind === "execution_exited") {
+            if (
+              outcome.kind === "execution_exited" ||
+              outcome.kind === "halt_pending"
+            ) {
               return;
             }
 
@@ -1279,9 +1320,13 @@ export function createGraphWorkflowExecutionLoop(
             execution.contextStates[contextId]?.status === "awaiting_user_input"
           ) {
             const outcome = await waitForUserInputResolution(contextId);
-            if (outcome.kind === "execution_exited") {
-              // Pause/halt/abort raced the wait: the record persists for
-              // resume on re-entry (or was withdrawn by the abort path).
+            if (
+              outcome.kind === "execution_exited" ||
+              outcome.kind === "halt_pending"
+            ) {
+              // Pause/halt/abort or a pending halt raced the wait: the record
+              // persists for resume on re-entry (or was withdrawn by the
+              // abort path).
               return;
             }
             if (outcome.kind === "withdrawn") {

@@ -29,6 +29,7 @@ import {
   _resetActiveLoopsForTesting,
 } from "./execution-loop";
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
+import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
@@ -2671,5 +2672,249 @@ describe("execution loop — parallel integration", () => {
         contextId: "ctx-a",
       },
     ]);
+  });
+
+  it("scenario 17: a halt recorded while a sibling is parked at the approval gate drains the loop — the parked wait exits, the execution halts, and the gate record persists for resume", async () => {
+    _resetActiveLoopsForTesting();
+
+    const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const pendingApprovalRecord = {
+      conversationId: "conv-ctx-a",
+      requestedAt: "2026-03-27T12:01:00.000Z",
+      decision: null,
+    };
+
+    const ctxBFailure = deferred<void>();
+    const runIterationCalls: string[] = [];
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        runIterationCalls.push(input.contextId);
+        if (input.contextId === "ctx-b") {
+          await ctxBFailure.promise;
+          throw new AgentTurnFailedError("Socket is not connected (os error 57)", {
+            contextId: "ctx-b",
+            engine: "codex",
+            cause: "sdk_error",
+            originalMessage: "Socket is not connected (os error 57)",
+          });
+        }
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.completedTaskCount = 1;
+            cs.status = "awaiting_approval";
+            cs.pendingApproval = structuredClone(pendingApprovalRecord);
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) ts.status = "completed";
+          updated.activeContextIds = updated.activeContextIds.filter(
+            (id) => id !== input.contextId,
+          );
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner: {
+        async run() {
+          return buildSuccessMergeOutput();
+        },
+      },
+      joinRunner: createNoopJoinRunner(),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+      waitForApprovalProgress: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      },
+    });
+
+    const runPromise = loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    await vi.waitFor(() => {
+      expect(repository.read()?.contextStates["ctx-a"]?.status).toBe(
+        "awaiting_approval",
+      );
+    });
+    ctxBFailure.resolve();
+
+    const result = await runPromise;
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "agent_turn_failed",
+      contextId: "ctx-b",
+    });
+    expect(result.pendingHaltReason).toBeNull();
+    expect(result.contextStates["ctx-a"]?.status).toBe("awaiting_approval");
+    expect(result.contextStates["ctx-a"]?.pendingApproval).toEqual(
+      pendingApprovalRecord,
+    );
+    expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
+  });
+
+  it("scenario 18: a halt recorded while a sibling is parked at the user-input gate drains the loop — the parked wait exits, the execution halts, and the question record persists for resume", async () => {
+    _resetActiveLoopsForTesting();
+
+    const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const pendingUserInputRecord = {
+      conversationId: "conv-ctx-a",
+      lane: "implementer" as const,
+      questionBatchId: "batch-1",
+      questions: [],
+      requestedAt: "2026-03-27T12:01:00.000Z",
+      answers: null,
+    };
+
+    const ctxBFailure = deferred<void>();
+    const runIterationCalls: string[] = [];
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        runIterationCalls.push(input.contextId);
+        if (input.contextId === "ctx-b") {
+          await ctxBFailure.promise;
+          throw new AgentTurnFailedError("Socket is not connected (os error 57)", {
+            contextId: "ctx-b",
+            engine: "codex",
+            cause: "sdk_error",
+            originalMessage: "Socket is not connected (os error 57)",
+          });
+        }
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.status = "awaiting_user_input";
+            cs.pendingUserInput = structuredClone(pendingUserInputRecord);
+          }
+          updated.activeContextIds = updated.activeContextIds.filter(
+            (id) => id !== input.contextId,
+          );
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner: {
+        async run() {
+          return buildSuccessMergeOutput();
+        },
+      },
+      joinRunner: createNoopJoinRunner(),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+      waitForUserInputProgress: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      },
+    });
+
+    const runPromise = loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    await vi.waitFor(() => {
+      expect(repository.read()?.contextStates["ctx-a"]?.status).toBe(
+        "awaiting_user_input",
+      );
+    });
+    ctxBFailure.resolve();
+
+    const result = await runPromise;
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "agent_turn_failed",
+      contextId: "ctx-b",
+    });
+    expect(result.pendingHaltReason).toBeNull();
+    expect(result.contextStates["ctx-a"]?.status).toBe("awaiting_user_input");
+    expect(result.contextStates["ctx-a"]?.pendingUserInput).toEqual(
+      pendingUserInputRecord,
+    );
+    expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
   });
 });
