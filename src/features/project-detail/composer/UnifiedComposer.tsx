@@ -11,6 +11,7 @@ import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   effortLevelSchema,
+  getDefaultModelForBackend,
   getEffortLevelsForBackend,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
@@ -72,7 +73,7 @@ function modelForBackend(
   if (preferred !== undefined && modelOptions.includes(preferred)) {
     return preferred;
   }
-  return modelOptions[0] ?? "";
+  return getDefaultModelForBackend(backend);
 }
 
 function parseEffort(value: string | undefined): EffortLevel | undefined {
@@ -202,7 +203,7 @@ export default function UnifiedComposer({
   );
   const selectedModel = modelOptions.includes(modelPref)
     ? modelPref
-    : (modelOptions[0] ?? "");
+    : getDefaultModelForBackend(agentBackend);
 
   const availableEffortLevels = useMemo(
     () => getEffortLevelsForBackend(agentBackend, selectedModel),

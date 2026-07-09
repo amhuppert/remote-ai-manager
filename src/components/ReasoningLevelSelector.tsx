@@ -22,6 +22,7 @@ export const EFFORT_OPTIONS: EffortOption[] = [
   { id: "high", label: "High", description: "Default" },
   { id: "xhigh", label: "XHigh", description: "Extra high" },
   { id: "max", label: "Max", description: "Maximum" },
+  { id: "ultra", label: "Ultra", description: "Max + parallel agents" },
 ];
 
 interface ReasoningLevelSelectorProps {
@@ -105,7 +106,10 @@ export default function ReasoningLevelSelector({
     : "Reasoning level unavailable";
   const triggerTitle =
     disabled && disabledTooltip ? disabledTooltip : triggerLabel;
-  const isRainbow = selected?.id === "max" || selected?.id === "xhigh";
+  const isRainbow =
+    selected?.id === "max" ||
+    selected?.id === "xhigh" ||
+    selected?.id === "ultra";
 
   return (
     <Select

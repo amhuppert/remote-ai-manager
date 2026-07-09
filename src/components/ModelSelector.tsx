@@ -22,8 +22,15 @@ const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
 ];
 
 const CODEX_MODEL_OPTIONS: ModelOption[] = [
-  { id: "gpt-5.5", label: "GPT-5.5", description: "Latest" },
-  { id: "gpt-5.4", label: "GPT-5.4", description: "Most capable" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "Flagship" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "Balanced" },
+  {
+    id: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    description: "Fast & affordable",
+  },
+  { id: "gpt-5.5", label: "GPT-5.5", description: "Previous flagship" },
+  { id: "gpt-5.4", label: "GPT-5.4", description: "Previous generation" },
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", description: "Balanced" },
   { id: "gpt-5.4-nano", label: "GPT-5.4 Nano", description: "Fastest" },
 ];
@@ -57,9 +64,9 @@ export default function ModelSelector({
   onOpenChange,
 }: ModelSelectorProps): React.JSX.Element {
   const options = getModelsForBackend(backend);
-  // Fall back to the second option (the established default) when `value` does
-  // not match the current backend's set — e.g. mid backend-switch.
-  const selected = options.find((m) => m.id === value) ?? options[1]!;
+  // Fall back to the first option (the most capable of the set) when `value`
+  // does not match the current backend's set — e.g. mid backend-switch.
+  const selected = options.find((m) => m.id === value) ?? options[0]!;
 
   return (
     <Select

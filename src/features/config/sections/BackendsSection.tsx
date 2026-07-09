@@ -1,3 +1,8 @@
+import {
+  codexModelSchema,
+  getEffortLevelsForBackend,
+  type EffortLevel,
+} from "@/lib/agent-backends/schemas";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
@@ -12,6 +17,10 @@ export function BackendsSection({
   controller: ConfigFormController;
 }): React.JSX.Element {
   const { formState, handleChange, isDefault, isModified } = controller;
+  // Effort options track the selected model — the GPT-5.6 Sol-only "max"/"ultra"
+  // levels appear only when Sol is the default model.
+  const codexModel = formState.codex?.model ?? "gpt-5.4";
+  const codexEffortOptions = getEffortLevelsForBackend("codex", codexModel);
   return (
     <SettingsPage
       title="Agent"
@@ -45,10 +54,8 @@ export function BackendsSection({
           isModified={isModified("codex.model")}
         >
           <ConfigPillGroup
-            value={formState.codex?.model ?? "gpt-5.4"}
-            options={
-              ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"] as const
-            }
+            value={codexModel}
+            options={codexModelSchema.options}
             onChange={(value) => handleChange("codex.model", value)}
           />
         </ConfigField>
@@ -59,8 +66,10 @@ export function BackendsSection({
           isModified={isModified("codex.reasoningEffort")}
         >
           <ConfigPillGroup
-            value={formState.codex?.reasoningEffort ?? "medium"}
-            options={["minimal", "low", "medium", "high", "xhigh"] as const}
+            value={
+              (formState.codex?.reasoningEffort ?? "medium") as EffortLevel
+            }
+            options={codexEffortOptions}
             onChange={(value) => handleChange("codex.reasoningEffort", value)}
           />
         </ConfigField>

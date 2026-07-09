@@ -28,7 +28,7 @@ import {
 } from "@/lib/agent-backends/schemas";
 import { readConfig } from "@/lib/config/loader";
 import { estimateCodexCostUsd } from "./pricing";
-import { toStringEnv } from "./shared";
+import { toSdkModelReasoningEffort, toStringEnv } from "./shared";
 
 const logger = createLogger("codex:task-runner");
 
@@ -208,7 +208,11 @@ export class CodexTaskRunner implements AgentTaskRunner {
       // built-in default, which is rejected for ChatGPT-account auth.
       model: input.modelId ?? getDefaultCodexModel(),
       ...(validatedReasoningEffort
-        ? { modelReasoningEffort: validatedReasoningEffort }
+        ? {
+            modelReasoningEffort: toSdkModelReasoningEffort(
+              validatedReasoningEffort,
+            ),
+          }
         : {}),
     };
 

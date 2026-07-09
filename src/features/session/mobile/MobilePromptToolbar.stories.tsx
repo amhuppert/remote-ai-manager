@@ -23,8 +23,15 @@ const CLAUDE_MODELS = [
 ];
 
 const CODEX_MODELS = [
-  { id: "gpt-5.5", label: "GPT-5.5", description: "Latest" },
-  { id: "gpt-5.4", label: "GPT-5.4", description: "Most capable" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "Flagship" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "Balanced" },
+  {
+    id: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    description: "Fast & affordable",
+  },
+  { id: "gpt-5.5", label: "GPT-5.5", description: "Previous flagship" },
+  { id: "gpt-5.4", label: "GPT-5.4", description: "Previous generation" },
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", description: "Balanced" },
   { id: "gpt-5.4-nano", label: "GPT-5.4 Nano", description: "Fastest" },
 ];
@@ -36,6 +43,11 @@ const ALL_EFFORT_OPTIONS = [
   { id: "high" as const, label: "High", description: "Default" },
   { id: "xhigh" as const, label: "XHigh", description: "Extra high" },
   { id: "max" as const, label: "Max", description: "Maximum" },
+  {
+    id: "ultra" as const,
+    label: "Ultra",
+    description: "Max + parallel agents",
+  },
 ];
 
 function effortOptionsFor(backend: AgentBackendId, model: string) {

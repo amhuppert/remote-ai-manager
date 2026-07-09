@@ -22,6 +22,22 @@ describe("estimateCodexCostUsd", () => {
     );
   });
 
+  it("prices the GPT-5.6 Sol, Terra, and Luna models", () => {
+    // sol: $5 / $0.50 / $30 · terra: $2.50 / $0.25 / $15 · luna: $1 / $0.10 / $6
+    expect(estimateCodexCostUsd(usage, "gpt-5.6-sol")).toBeCloseTo(
+      (90 * 5 + 10 * 0.5 + 50 * 30) / 1_000_000,
+      10,
+    );
+    expect(estimateCodexCostUsd(usage, "gpt-5.6-terra")).toBeCloseTo(
+      (90 * 2.5 + 10 * 0.25 + 50 * 15) / 1_000_000,
+      10,
+    );
+    expect(estimateCodexCostUsd(usage, "gpt-5.6-luna")).toBeCloseTo(
+      (90 * 1 + 10 * 0.1 + 50 * 6) / 1_000_000,
+      10,
+    );
+  });
+
   it("falls back to the default Codex model when modelId is undefined", () => {
     expect(estimateCodexCostUsd(usage, undefined)).toBe(
       estimateCodexCostUsd(usage, "gpt-5.4"),

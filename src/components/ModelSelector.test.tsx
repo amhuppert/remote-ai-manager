@@ -17,6 +17,13 @@ describe("getModelsForBackend", () => {
     const ids = getModelsForBackend("codex").map((m) => m.id);
     expect(ids).not.toContain("fable");
   });
+
+  it("offers the GPT-5.6 Sol, Terra, and Luna models for the codex backend", () => {
+    const ids = getModelsForBackend("codex").map((m) => m.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]),
+    );
+  });
 });
 
 describe("ModelSelector", () => {

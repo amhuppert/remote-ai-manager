@@ -1802,9 +1802,33 @@ describe("codexConversationBackendFactory", () => {
     it("rejects invalid reasoning effort", () => {
       expect(() =>
         codexConversationBackendFactory.validateModelAndEffort!({
-          reasoningEffort: "max",
+          reasoningEffort: "turbo",
         }),
       ).toThrow();
+    });
+
+    it("accepts max and ultra for gpt-5.6-sol", () => {
+      for (const effort of ["max", "ultra"]) {
+        expect(() =>
+          codexConversationBackendFactory.validateModelAndEffort!({
+            modelId: "gpt-5.6-sol",
+            reasoningEffort: effort,
+          }),
+        ).not.toThrow();
+      }
+    });
+
+    it("rejects max and ultra for gpt-5.6-terra and gpt-5.6-luna (Sol-only)", () => {
+      for (const modelId of ["gpt-5.6-terra", "gpt-5.6-luna"]) {
+        for (const effort of ["max", "ultra"]) {
+          expect(() =>
+            codexConversationBackendFactory.validateModelAndEffort!({
+              modelId,
+              reasoningEffort: effort,
+            }),
+          ).toThrow();
+        }
+      }
     });
 
     it("rejects known-model with unsupported reasoning effort", () => {

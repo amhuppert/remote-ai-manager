@@ -1129,6 +1129,25 @@ describe("getCodexReasoningLevelsForModel", () => {
     );
   });
 
+  it("gives gpt-5.6-sol the max and ultra levels", () => {
+    expect(getCodexReasoningLevelsForModel("gpt-5.6-sol")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+  });
+
+  it("withholds max and ultra from gpt-5.6-terra and gpt-5.6-luna", () => {
+    for (const model of ["gpt-5.6-terra", "gpt-5.6-luna"]) {
+      const levels = getCodexReasoningLevelsForModel(model);
+      expect(levels).not.toContain("max");
+      expect(levels).not.toContain("ultra");
+    }
+  });
+
   it("returns null for unknown models (all levels allowed)", () => {
     expect(getCodexReasoningLevelsForModel("unknown-model")).toBeNull();
   });

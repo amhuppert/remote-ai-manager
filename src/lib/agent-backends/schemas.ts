@@ -4,6 +4,11 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 export const claudeModelSchema = z.enum(["fable", "opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
+/** Returns the default Claude model. */
+export function getDefaultClaudeModel(): ClaudeModel {
+  return "opus";
+}
+
 export const agentSessionRefSchema = z.discriminatedUnion("backend", [
   z.object({ backend: z.literal("claude"), sessionId: z.string() }),
   z.object({ backend: z.literal("codex"), threadId: z.string() }),
@@ -17,6 +22,7 @@ export const effortLevelSchema = z.enum([
   "high",
   "max",
   "xhigh",
+  "ultra",
 ]);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
 
@@ -61,6 +67,9 @@ export function clampEffortToModel(
 // ============================================================
 
 export const codexModelSchema = z.enum([
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
@@ -79,6 +88,8 @@ export const codexReasoningEffortSchema = z.enum([
   "medium",
   "high",
   "xhigh",
+  "max",
+  "ultra",
 ]);
 export type CodexReasoningEffort = z.infer<typeof codexReasoningEffortSchema>;
 
@@ -109,7 +120,14 @@ export type CodexConfig = z.infer<typeof codexConfigSchema>;
 // Codex Model Reasoning Levels
 // ============================================================
 
+// The GPT-5.6 "max" and "ultra" levels are exclusive to the Sol flagship; Terra
+// and Luna expose only the standard low→xhigh range (verified against OpenAI's
+// GPT-5.6 model docs, 2026-07). "minimal" is omitted from every model — Codex
+// does not accept it for these models.
 const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
+  "gpt-5.6-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
+  "gpt-5.6-terra": ["low", "medium", "high", "xhigh"],
+  "gpt-5.6-luna": ["low", "medium", "high", "xhigh"],
   "gpt-5.5": ["low", "medium", "high", "xhigh"],
   "gpt-5.4": ["low", "medium", "high", "xhigh"],
   "gpt-5.4-mini": ["low", "medium", "high", "xhigh"],
@@ -124,6 +142,15 @@ export function getCodexReasoningLevelsForModel(
   model: string,
 ): CodexReasoningEffort[] | null {
   return CODEX_MODEL_REASONING_LEVELS[model] ?? null;
+}
+
+/**
+ * Returns the canonical default model for a backend. Callers must resolve the
+ * default this way rather than indexing a display-ordered option list — model
+ * ordering is a UI concern and does not encode which model is the default.
+ */
+export function getDefaultModelForBackend(backend: AgentBackendId): string {
+  return backend === "codex" ? getDefaultCodexModel() : getDefaultClaudeModel();
 }
 
 /**

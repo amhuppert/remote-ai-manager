@@ -11,10 +11,10 @@ import {
   type SpawnResult,
 } from "@/lib/chat-spawning/schemas";
 import {
+  getDefaultModelForBackend,
   getEffortLevelsForBackend,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
-import { getModelsForBackend } from "@/components/ModelSelector";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 /**
@@ -63,12 +63,6 @@ export function backendForAgent(agent: SpawnAgent): AgentBackendId | null {
   return null;
 }
 
-/** The established default model for a backend (the second option: opus / gpt-5.4). */
-function defaultModelForBackend(backend: AgentBackendId): string {
-  const options = getModelsForBackend(backend);
-  return (options[1] ?? options[0]!).id;
-}
-
 /** A sensible default effort for a backend+model: prefer "high", else the highest supported. */
 function defaultEffortForModel(
   backend: AgentBackendId,
@@ -85,7 +79,7 @@ function modelEffortDefaults(agent: SpawnAgent): {
   reasoningEffort: EffortLevel;
 } {
   const backend = backendForAgent(agent) ?? "claude";
-  const model = defaultModelForBackend(backend);
+  const model = getDefaultModelForBackend(backend);
   return { model, reasoningEffort: defaultEffortForModel(backend, model) };
 }
 
@@ -112,7 +106,7 @@ function applyAgentChange(s: EditableSession, value: string): EditableSession {
   const agent = parsed.success ? parsed.data : s.agent;
   const backend = backendForAgent(agent);
   if (backend === null) return { ...s, agent };
-  const model = defaultModelForBackend(backend);
+  const model = getDefaultModelForBackend(backend);
   return {
     ...s,
     agent,

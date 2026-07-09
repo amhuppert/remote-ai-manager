@@ -102,6 +102,14 @@ export const CodexAllLevels = {
   },
 } satisfies Story;
 
+/** GPT-5.6 Sol exposes the flagship-only "max" and "ultra" tiers above xhigh. */
+export const CodexSol = {
+  args: {
+    value: "ultra",
+    availableLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  },
+} satisfies Story;
+
 /** Shows both selectors side-by-side in the prompt toolbar, as they appear in the actual UI */
 export const InPromptArea = {
   decorators: [

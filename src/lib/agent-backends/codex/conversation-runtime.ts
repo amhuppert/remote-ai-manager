@@ -562,6 +562,9 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     // built-in default, which is rejected for ChatGPT-account auth.
     options.model = this.modelId ?? getDefaultCodexModel();
     if (this.reasoningEffort) {
+      // Validated upstream by validateModelAndEffort. Cast past the SDK type,
+      // which omits the GPT-5.6 "max"/"ultra" levels the Codex CLI accepts (the
+      // SDK serializes this field verbatim into --config model_reasoning_effort).
       options.modelReasoningEffort = this
         .reasoningEffort as ThreadOptions["modelReasoningEffort"];
     }

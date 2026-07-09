@@ -20,6 +20,21 @@ import {
  * published discount.
  */
 export const DEFAULT_CODEX_PRICING: CodexPricingTable = {
+  "gpt-5.6-sol": {
+    inputPerMillion: 5,
+    cachedInputPerMillion: 0.5,
+    outputPerMillion: 30,
+  },
+  "gpt-5.6-terra": {
+    inputPerMillion: 2.5,
+    cachedInputPerMillion: 0.25,
+    outputPerMillion: 15,
+  },
+  "gpt-5.6-luna": {
+    inputPerMillion: 1,
+    cachedInputPerMillion: 0.1,
+    outputPerMillion: 6,
+  },
   "gpt-5.5": {
     inputPerMillion: 5,
     cachedInputPerMillion: 0.5,

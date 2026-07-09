@@ -144,10 +144,22 @@ describe("CodexTaskRunner", () => {
   });
 
   it("fails fast when reasoning effort is invalid", async () => {
-    const result = await runner.run(makeRequest({ reasoningEffort: "max" }));
+    const result = await runner.run(makeRequest({ reasoningEffort: "turbo" }));
 
     expect(startThreadMock).not.toHaveBeenCalled();
-    expect(result.error).toContain('Invalid Codex reasoning effort: "max"');
+    expect(result.error).toContain('Invalid Codex reasoning effort: "turbo"');
+  });
+
+  it("passes the GPT-5.6 max/ultra effort through to the SDK thread options", async () => {
+    for (const effort of ["max", "ultra"]) {
+      startThreadMock.mockClear();
+      await runner.run(
+        makeRequest({ modelId: "gpt-5.6-sol", reasoningEffort: effort }),
+      );
+      expect(startThreadMock).toHaveBeenCalledWith(
+        expect.objectContaining({ modelReasoningEffort: effort }),
+      );
+    }
   });
 
   it("passes populated mcp_servers to Codex when portableMcp translates to a non-empty map", async () => {

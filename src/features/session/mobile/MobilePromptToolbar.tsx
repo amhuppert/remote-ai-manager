@@ -22,7 +22,7 @@ const MOBILE_PROMPT_ROW_ICON_CLASS =
  *  via mutually-exclusive `data-active` gating (legacy relied on later-rule order). */
 const MOBILE_PROMPT_OPTION_CLASS =
   "flex items-center gap-sm w-full p-sm border-0 rounded-sm bg-transparent text-text-primary cursor-pointer text-left min-h-[52px] transition-[background] duration-100 data-[active=false]:hover:bg-bg-hover data-[active=true]:bg-cyan-glow";
-/** The xhigh/max reasoning option name renders as rainbow gradient text (legacy
+/** The xhigh/max/ultra reasoning option name renders as rainbow gradient text (legacy
  *  `.mobile-prompt-option.cc-rainbow .__name`); `rainbow-shift` keyframe is preserved. */
 const MOBILE_PROMPT_OPTION_NAME_RAINBOW =
   "bg-rainbow bg-[length:200%_auto] [-webkit-background-clip:text] [background-clip:text] [-webkit-text-fill-color:transparent] animate-[rainbow-shift_3s_linear_infinite] font-bold";
@@ -128,7 +128,10 @@ export default function MobilePromptToolbar({
   const chipModelLabel = selectedModelOpt?.label ?? selectedModel;
   const chipEffortLabel = selectedEffortOpt?.label;
   const effortIsRainbow =
-    effortSupported && (selectedEffort === "xhigh" || selectedEffort === "max");
+    effortSupported &&
+    (selectedEffort === "xhigh" ||
+      selectedEffort === "max" ||
+      selectedEffort === "ultra");
 
   return (
     <>
@@ -398,7 +401,10 @@ export default function MobilePromptToolbar({
           ) : (
             effortOptions.map((option) => {
               const active = option.id === selectedEffort;
-              const isRainbow = option.id === "xhigh" || option.id === "max";
+              const isRainbow =
+                option.id === "xhigh" ||
+                option.id === "max" ||
+                option.id === "ultra";
               return (
                 <button
                   key={option.id}

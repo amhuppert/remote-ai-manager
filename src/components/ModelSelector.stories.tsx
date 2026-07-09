@@ -58,6 +58,13 @@ export const ClaudeDefault = {
   },
 } satisfies Story;
 
+export const CodexSol = {
+  args: {
+    backend: "codex",
+    value: "gpt-5.6-sol",
+  },
+} satisfies Story;
+
 export const CodexDefault = {
   args: {
     backend: "codex",

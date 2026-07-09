@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   claudeEffortLevelSchema,
   claudeModelSchema,
+  codexModelSchema,
+  codexReasoningEffortSchema,
   effortLevelSchema,
+  getCodexReasoningLevelsForModel,
+  getEffortLevelsForBackend,
   getEffortLevelsForModel,
   clampEffortToModel,
 } from "@/lib/agent-backends/schemas";
@@ -99,6 +103,77 @@ describe("clampEffortToModel", () => {
   it("returns max and xhigh unchanged for fable", () => {
     expect(clampEffortToModel("max", "fable")).toBe("max");
     expect(clampEffortToModel("xhigh", "fable")).toBe("xhigh");
+  });
+});
+
+describe("codexModelSchema", () => {
+  it("accepts the GPT-5.6 Sol, Terra, and Luna models", () => {
+    expect(codexModelSchema.parse("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+    expect(codexModelSchema.parse("gpt-5.6-terra")).toBe("gpt-5.6-terra");
+    expect(codexModelSchema.parse("gpt-5.6-luna")).toBe("gpt-5.6-luna");
+  });
+
+  it("still accepts the GPT-5.5 and GPT-5.4 family", () => {
+    expect(codexModelSchema.parse("gpt-5.5")).toBe("gpt-5.5");
+    expect(codexModelSchema.parse("gpt-5.4")).toBe("gpt-5.4");
+    expect(codexModelSchema.parse("gpt-5.4-mini")).toBe("gpt-5.4-mini");
+    expect(codexModelSchema.parse("gpt-5.4-nano")).toBe("gpt-5.4-nano");
+  });
+});
+
+describe("codexReasoningEffortSchema", () => {
+  it("accepts the GPT-5.6 max and ultra levels", () => {
+    expect(codexReasoningEffortSchema.parse("max")).toBe("max");
+    expect(codexReasoningEffortSchema.parse("ultra")).toBe("ultra");
+  });
+
+  it("accepts the standard Codex levels", () => {
+    for (const level of ["minimal", "low", "medium", "high", "xhigh"]) {
+      expect(codexReasoningEffortSchema.parse(level)).toBe(level);
+    }
+  });
+});
+
+describe("getCodexReasoningLevelsForModel (GPT-5.6)", () => {
+  it("gives Sol the full range including max and ultra", () => {
+    expect(getCodexReasoningLevelsForModel("gpt-5.6-sol")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+  });
+
+  it("withholds max and ultra from Terra (Sol-only levels)", () => {
+    const levels = getCodexReasoningLevelsForModel("gpt-5.6-terra");
+    expect(levels).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(levels).not.toContain("max");
+    expect(levels).not.toContain("ultra");
+  });
+
+  it("withholds max and ultra from Luna (Sol-only levels)", () => {
+    const levels = getCodexReasoningLevelsForModel("gpt-5.6-luna");
+    expect(levels).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(levels).not.toContain("max");
+    expect(levels).not.toContain("ultra");
+  });
+});
+
+describe("getEffortLevelsForBackend (codex)", () => {
+  it("surfaces max and ultra for the Sol model", () => {
+    const levels = getEffortLevelsForBackend("codex", "gpt-5.6-sol");
+    expect(levels).toContain("max");
+    expect(levels).toContain("ultra");
+  });
+
+  it("does not surface max or ultra for Terra or Luna", () => {
+    for (const model of ["gpt-5.6-terra", "gpt-5.6-luna"]) {
+      const levels = getEffortLevelsForBackend("codex", model);
+      expect(levels).not.toContain("max");
+      expect(levels).not.toContain("ultra");
+    }
   });
 });
 
