@@ -21,7 +21,10 @@ import {
   toQueuedMessageView as defaultToQueuedMessageView,
   messageQueueService,
 } from "@/lib/conversations/message-queue-service";
-import { hasLiveConversationActor as defaultHasLiveConversationActor } from "@/lib/workflows/conversation/manager";
+import {
+  hasLiveConversationActor as defaultHasLiveConversationActor,
+  ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
+} from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/capabilities-descriptor";
 import { queueEnqueueRequestSchema } from "@/lib/prompt/schemas";
 import type { QueueCapability } from "@/lib/agent-backends/capabilities-descriptor";
@@ -83,6 +86,11 @@ export interface QueueRouteDeps {
     sessionName: string,
     conversationId: string,
   ): boolean;
+  ensureConversationActorAndDrain(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<void>;
   recoverAbandonedDeliveries(input: {
     projectPath: string;
     sessionName: string;
@@ -106,6 +114,7 @@ const defaultDeps: QueueRouteDeps = {
   toQueuedMessageView: defaultToQueuedMessageView,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
   hasLiveConversationActor: defaultHasLiveConversationActor,
+  ensureConversationActorAndDrain: defaultEnsureConversationActorAndDrain,
   recoverAbandonedDeliveries: (input) =>
     messageQueueService.recoverAbandonedDeliveries(input),
   cancel: (input) => messageQueueService.cancel(input),
@@ -241,6 +250,28 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
         : {}),
       backend: conversation.agentBackend,
     });
+
+    // The running-status check above raced the turn's end: if the turn
+    // finalized between that read and the enqueue commit, the idle-entry drain
+    // has already run and this row would sit pending until some future turn.
+    // Ensure+drain closes the gap — it is a no-op while a turn is running (the
+    // busy actor drains on its own idle entry) and delivers immediately when
+    // the actor settled. Never fails the already-committed enqueue.
+    try {
+      await deps.ensureConversationActorAndDrain(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+    } catch (err) {
+      logger.error("queue.post_enqueue_drain_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        sessionName,
+        conversationId,
+        messageIds: [result.entry.id],
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     const response: QueueEnqueueResponse = {
       queued: true,

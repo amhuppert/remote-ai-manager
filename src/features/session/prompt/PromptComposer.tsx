@@ -60,6 +60,7 @@ export function computeSendButtonState({
   promptText,
   pendingImageCount,
   sending,
+  conversationRunning = false,
   conversationId,
   backend,
   isReadOnly,
@@ -69,6 +70,13 @@ export function computeSendButtonState({
   promptText: string;
   pendingImageCount: number;
   sending: boolean;
+  /**
+   * The conversation's server-side status says a turn is running. Covers turns
+   * this tab did not start — a drained queued turn (Codex next-turn delivery),
+   * a turn started before a reload, or one started from another client —
+   * where `sending` is false but a submitted message will still be queued.
+   */
+  conversationRunning?: boolean;
   conversationId: string;
   backend: AgentBackendId;
   isReadOnly: boolean;
@@ -76,7 +84,8 @@ export function computeSendButtonState({
   queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
 }): SendButtonState {
   const sessionBusyNoConvo = sending && !conversationId;
-  const queuingIntoRunningTurn = sending && !!conversationId;
+  const queuingIntoRunningTurn =
+    (sending || conversationRunning) && !!conversationId;
   const noContent = !promptText.trim() && pendingImageCount === 0;
 
   if (isReadOnly) {
@@ -297,6 +306,7 @@ export default function PromptComposer({
     promptText,
     pendingImageCount: pendingImages.length,
     sending,
+    conversationRunning: activeConversation?.status === "running",
     conversationId,
     backend: selectedBackend,
     isReadOnly,

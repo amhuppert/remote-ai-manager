@@ -223,8 +223,17 @@ export function usePromptSubmission({
 
     const imagePayloads: ImagePayload[] = hasImages ? serialized.images : [];
 
+    // A turn is active when this tab's own prompt stream is open (`sending`)
+    // OR the conversation's server-side status says a turn is running — e.g. a
+    // drained queued turn (Codex next-turn delivery), a turn started before a
+    // reload, or one started from another client. Routing on `sending` alone
+    // would dispatch a direct prompt into the busy conversation and 409.
+    const turnActive =
+      sending ||
+      conversations?.find((c) => c.id === conversationId)?.status === "running";
+
     // Queue into running conversation instead of starting a new prompt
-    if (sending && conversationId) {
+    if (turnActive && conversationId) {
       const capability = queueCapabilityForBackend(selectedBackend);
       // The backend can't accept a queued message. Preserve the user's input
       // rather than dropping it into a queue that won't deliver (req 6.2/10.2);
@@ -242,7 +251,7 @@ export function usePromptSubmission({
       return;
     }
 
-    if (sending) return;
+    if (turnActive) return;
 
     // Warn — but do not block — when other conversations in this session are
     // actively running. Trust the user; concurrent edits in the same worktree

@@ -961,6 +961,71 @@ describe("CodexConversationRuntime", () => {
   // sendTurn — abort and error handling
   // --------------------------------------------------------
 
+  describe("sendTurn — input acceptance", () => {
+    // The SDK's runStreamed returns a LAZY generator — the codex process only
+    // spawns on the first iteration. Acceptance must therefore be signaled by
+    // the first ThreadEvent, never by runStreamed resolving: a false
+    // acceptance marks queued rows delivered for a message the agent never
+    // received (req 4.2).
+
+    it("emits input_accepted exactly once, before any other backend event", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const onEvent = vi.fn();
+      await runtime.sendTurn(makeTurnInput({ onEvent }));
+
+      const acceptedCalls = onEvent.mock.calls.filter(
+        ([e]) => (e as { type: string }).type === "input_accepted",
+      );
+      expect(acceptedCalls).toHaveLength(1);
+      expect(onEvent.mock.calls[0]?.[0]).toEqual({ type: "input_accepted" });
+    });
+
+    it("does not emit input_accepted when the process dies before producing any event", async () => {
+      const thread = makeCrashingThread([], new Error("spawn codex ENOENT"));
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const onEvent = vi.fn();
+      const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
+
+      expect(result.error).toContain("spawn codex ENOENT");
+      expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
+    });
+
+    it("does not emit input_accepted when a resumed thread has no rollout", async () => {
+      const thread = makeCrashingThread(
+        [],
+        new Error('thread/resume: no rollout found for thread id "t-gone"'),
+      );
+      resumeThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          persistedRef: { backend: "codex", threadId: "t-gone" },
+        }),
+        deps,
+      );
+      const onEvent = vi.fn();
+      const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
+
+      expect(result.error).toContain("Failed to resume Codex thread");
+      expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
+    });
+
+    it("does not emit input_accepted when aborted before any event", async () => {
+      const thread = makeAbortingThread([]);
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const onEvent = vi.fn();
+      const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
+
+      expect(result.aborted).toBe(true);
+      expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
+    });
+  });
+
   describe("sendTurn — abort and error handling", () => {
     it("preserves partial contentBlocks and backendRef on abort", async () => {
       const thread = makeAbortingThread([

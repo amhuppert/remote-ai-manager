@@ -60,6 +60,37 @@ describe("computeSendButtonState", () => {
     });
   });
 
+  it("labels queue delivery when the conversation runs server-side without a local stream", () => {
+    // Drained Codex next-turn delivery / reload / another client: `sending`
+    // is false but the conversation's turn is running.
+    expect(
+      computeSendButtonState({
+        ...base,
+        sending: false,
+        conversationRunning: true,
+        backend: "codex",
+      }),
+    ).toEqual({ disabled: false, title: "Queue for next turn" });
+  });
+
+  it("disables when the backend cannot accept and the turn runs server-side", () => {
+    const unsupported: QueueCapability = {
+      acceptsWhileRunning: false,
+      deliveryTiming: "next_turn",
+    };
+    expect(
+      computeSendButtonState({
+        ...base,
+        sending: false,
+        conversationRunning: true,
+        queueCapabilityForBackend: () => unsupported,
+      }),
+    ).toEqual({
+      disabled: true,
+      title: "Queuing isn't supported for this backend",
+    });
+  });
+
   it("marks session busy when sending without conversationId", () => {
     expect(
       computeSendButtonState({ ...base, sending: true, conversationId: "" }),

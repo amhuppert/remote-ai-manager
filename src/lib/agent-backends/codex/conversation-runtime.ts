@@ -233,7 +233,9 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
               : 0,
       });
 
-      // Start streaming
+      // Start streaming. `runStreamed` returns a LAZY generator — the codex
+      // process only spawns on the first iteration — so its resolution says
+      // nothing about the prompt reaching the agent.
       const streamed = await thread.runStreamed(promptInput, {
         signal: input.signal,
         ...(this.outputFormat
@@ -241,17 +243,24 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           : {}),
       });
 
-      // The prompt has been handed to the Codex process; signal acceptance
-      // before any assistant content so queued next-turn delivery can confirm.
-      input.onEvent({ type: "input_accepted" });
-      logger.debug("codex-runtime.input_accepted", {
-        conversationId: this.conversationId,
-        isResume,
-        threadId: this.threadId,
-      });
+      // Acceptance is the FIRST ThreadEvent (mirrors Claude's first-raw-
+      // provider-message gate): the process is running with the prompt. A
+      // spawn/resume failure yields no event, so acceptance never fires and
+      // the actor returns queued rows to `pending` for retry instead of
+      // falsely marking them delivered (req 4.2).
+      let inputAccepted = false;
 
       // Process events
       for await (const event of streamed.events) {
+        if (!inputAccepted) {
+          inputAccepted = true;
+          input.onEvent({ type: "input_accepted" });
+          logger.debug("codex-runtime.input_accepted", {
+            conversationId: this.conversationId,
+            isResume,
+            threadId: this.threadId,
+          });
+        }
         this.processEvent(event, input, contentBlocks, {
           setThreadId: (id) => {
             acc.knownThreadId = id;

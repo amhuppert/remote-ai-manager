@@ -240,11 +240,56 @@ describe("useSendPrompt — queue()", () => {
     expect(body.images).toEqual([image]);
   });
 
-  it("does not POST or touch state when not sending", async () => {
-    // sending is false by default after reset.
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+  it("posts to the queue endpoint even when this tab's sending flag is false", async () => {
+    // A running turn is not always one this tab started (drained Codex
+    // next-turn delivery, reload, another client), so queue() must not
+    // silently drop on the tab-local flag — routing is the caller's job.
+    expect(useSessionDetailStore.getState().sending).toBe(false);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        queued: true,
+        message: {
+          id: "srv-ext",
+          content: textBlock("hi"),
+          status: "pending",
+          enqueuedAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deliveredAt: null,
+          cancelledAt: null,
+          failedAt: null,
+          error: null,
+        },
+        deliveryTiming: "next_turn",
+      }),
+    );
 
     const { result } = renderQueueHook();
+
+    await act(async () => {
+      await result.current.queue("hi");
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe(
+      `/api/projects/${PROJECT}/sessions/${SESSION}/conversations/${CONVERSATION}/queue`,
+    );
+    const after = useSessionDetailStore.getState();
+    expect(after.optimisticQueue).toHaveLength(1);
+    expect(after.optimisticQueue[0]).toMatchObject({
+      queueId: "srv-ext",
+      status: "accepted",
+    });
+  });
+
+  it("does not POST without a conversationId", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const { result } = renderHook(
+      () => useSendPrompt(PROJECT, SESSION, undefined),
+      { wrapper: wrapperFor(makeQueryClient()) },
+    );
 
     await act(async () => {
       await result.current.queue("hi");

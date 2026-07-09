@@ -7,6 +7,45 @@ import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor"
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { QueueCapability } from "@/lib/agent-backends/capabilities-descriptor";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+
+function makeConversation(
+  overrides: Partial<ConversationState> & {
+    id: string;
+    status: ConversationState["status"];
+  },
+): ConversationState {
+  return {
+    createdAt: "2024-01-01T00:00:00Z",
+    lastActivityAt: "2024-01-01T00:00:00Z",
+    promptCount: 0,
+    scope: "session",
+    role: null,
+    activeTurnSource: null,
+    name: null,
+    summary: null,
+    transcriptPath: null,
+    totalCostUsd: 0,
+    totalDurationMs: 0,
+    totalTurns: 0,
+    source: "cc",
+    agentBackend: "claude",
+    backendRef: null,
+    unread: false,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    pendingPromptText: null,
+    forkedFrom: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    archived: false,
+    lastSeenAlignmentVersion: null,
+    pendingQueue: [],
+    ...overrides,
+  };
+}
 
 interface CollabMutateOptions {
   onSuccess?: () => void;
@@ -272,6 +311,7 @@ describe("usePromptSubmission", () => {
       sending: boolean;
       selectedBackend: AgentBackendId;
       serialized: { prompt: string; images: ImagePayload[] };
+      conversations?: ConversationState[];
       queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
     }) {
       const sendPrompt = vi.fn(async (_prompt: string) => {});
@@ -290,7 +330,7 @@ describe("usePromptSubmission", () => {
           projectName: "p",
           sessionName: "s",
           conversationId: "c",
-          conversations: [],
+          conversations: args.conversations ?? [],
           sending: args.sending,
           pendingImages: [],
           promptTextRef,
@@ -359,6 +399,99 @@ describe("usePromptSubmission", () => {
       expect(h.queueMessage).toHaveBeenCalledTimes(1);
       expect(h.queueMessage).toHaveBeenCalledWith("later", undefined);
       expect(h.sendPrompt).not.toHaveBeenCalled();
+    });
+
+    it("queues when the conversation is running server-side even though this tab did not start the turn", async () => {
+      // Codex next-turn delivery: the drained queued turn runs server-side with
+      // no client stream, so `sending` is false while status is "running".
+      const h = renderQueueHook({
+        sending: false,
+        selectedBackend: "codex",
+        serialized: { prompt: "follow up during drained turn", images: [] },
+        conversations: [
+          makeConversation({
+            id: "c",
+            status: "running",
+            agentBackend: "codex",
+          }),
+        ],
+      });
+
+      await act(async () => {
+        await h.result.current.handleSendPrompt();
+      });
+
+      expect(h.queueMessage).toHaveBeenCalledTimes(1);
+      expect(h.queueMessage).toHaveBeenCalledWith(
+        "follow up during drained turn",
+        undefined,
+      );
+      expect(h.sendPrompt).not.toHaveBeenCalled();
+    });
+
+    it("preserves input when the backend cannot accept while running and the turn is server-side", async () => {
+      const h = renderQueueHook({
+        sending: false,
+        selectedBackend: "claude",
+        serialized: { prompt: "no queue", images: [] },
+        conversations: [makeConversation({ id: "c", status: "running" })],
+        queueCapabilityForBackend: () => ({
+          acceptsWhileRunning: false,
+          deliveryTiming: "next_turn",
+        }),
+      });
+
+      await act(async () => {
+        await h.result.current.handleSendPrompt();
+      });
+
+      expect(h.queueMessage).not.toHaveBeenCalled();
+      expect(h.sendPrompt).not.toHaveBeenCalled();
+      expect(h.editorClear).not.toHaveBeenCalled();
+    });
+
+    it("uses the normal prompt path when the active conversation is not running", async () => {
+      const h = renderQueueHook({
+        sending: false,
+        selectedBackend: "codex",
+        serialized: { prompt: "fresh turn", images: [] },
+        conversations: [makeConversation({ id: "c", status: "awaiting" })],
+      });
+
+      await act(async () => {
+        await h.result.current.handleSendPrompt();
+      });
+
+      expect(h.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(h.sendPrompt.mock.calls[0]?.[0]).toBe("fresh turn");
+      expect(h.queueMessage).not.toHaveBeenCalled();
+    });
+
+    it("ignores other conversations' running status when routing", async () => {
+      // Another running conversation in the session triggers the concurrent
+      // warning, not the queue path — only the ACTIVE conversation's status
+      // may route to the queue.
+      const h = renderQueueHook({
+        sending: false,
+        selectedBackend: "claude",
+        serialized: { prompt: "other busy", images: [] },
+        conversations: [
+          makeConversation({ id: "c", status: "awaiting" }),
+          makeConversation({ id: "other", status: "running" }),
+        ],
+      });
+
+      await act(async () => {
+        await h.result.current.handleSendPrompt();
+      });
+
+      expect(h.queueMessage).not.toHaveBeenCalled();
+      expect(h.sendPrompt).not.toHaveBeenCalled();
+      expect(h.result.current.pendingConcurrentSubmission).toEqual({
+        text: "other busy",
+        images: [],
+        busyNames: ["Conversation 1"],
+      });
     });
 
     it("uses the normal prompt path when idle (not sending)", async () => {

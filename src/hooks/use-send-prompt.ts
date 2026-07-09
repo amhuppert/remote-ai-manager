@@ -9,7 +9,6 @@ import {
   useCompletePrompt,
   useFailPrompt,
   useShowQuestions,
-  useSending,
   useAddOptimisticQueueEntry,
   useAcceptOptimisticQueueEntry,
   useRollbackOptimisticQueueEntry,
@@ -56,7 +55,6 @@ export function useSendPrompt(
   const completePrompt = useCompletePrompt();
   const failPrompt = useFailPrompt();
   const showQuestions = useShowQuestions();
-  const sending = useSending();
   const addOptimisticQueueEntry = useAddOptimisticQueueEntry();
   const acceptOptimisticQueueEntry = useAcceptOptimisticQueueEntry();
   const rollbackOptimisticQueueEntry = useRollbackOptimisticQueueEntry();
@@ -286,7 +284,10 @@ export function useSendPrompt(
 
   const queue = useCallback(
     async (text: string, images?: ImagePayload[]) => {
-      if (!conversationId || !sending) return;
+      // No gate on the tab-local `sending` flag here: a running turn is not
+      // always one this tab started (drained next-turn delivery, reload,
+      // another client). The caller owns the queue-vs-send routing.
+      if (!conversationId) return;
 
       const trimmed = text.trim();
       const hasImages = images !== undefined && images.length > 0;
@@ -352,7 +353,6 @@ export function useSendPrompt(
       projectName,
       sessionName,
       conversationId,
-      sending,
       addOptimisticQueueEntry,
       acceptOptimisticQueueEntry,
       rollbackOptimisticQueueEntry,

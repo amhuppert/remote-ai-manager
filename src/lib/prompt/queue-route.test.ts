@@ -131,6 +131,7 @@ function createTestDeps(
     toQueuedMessageView: vi.fn((e: PendingQueuedMessage) => makeView(e)),
     setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
     hasLiveConversationActor: vi.fn().mockReturnValue(true),
+    ensureConversationActorAndDrain: vi.fn().mockResolvedValue(undefined),
     recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
     cancel: store.cancel,
     ...overrides,
@@ -343,6 +344,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     expect(body.code).toBe("NOT_RUNNING");
     expect(deps.queueMessage).not.toHaveBeenCalled();
     expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
+    expect(deps.ensureConversationActorAndDrain).not.toHaveBeenCalled();
   });
 
   it("returns 422 UNSUPPORTED_BACKEND when the backend cannot accept while running", async () => {
@@ -381,6 +383,41 @@ describe("POST .../conversations/[conversationId]/queue", () => {
       deliveryTiming: "next_turn",
     });
     expect(deps.toQueuedMessageView).toHaveBeenCalledWith(entry);
+  });
+
+  it("nudges a post-enqueue drain so a row enqueued as the turn ends is not stranded", async () => {
+    const response = await handlers.POST(
+      makeRequest({ text: "follow up" }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.ensureConversationActorAndDrain).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "test-session",
+      "conv-123",
+    );
+    // The nudge must run against the committed row, so only after the enqueue.
+    const enqueueOrder = vi.mocked(deps.queueMessage).mock
+      .invocationCallOrder[0]!;
+    const drainOrder = vi.mocked(deps.ensureConversationActorAndDrain).mock
+      .invocationCallOrder[0]!;
+    expect(drainOrder).toBeGreaterThan(enqueueOrder);
+  });
+
+  it("still returns the queued response when the post-enqueue drain fails", async () => {
+    vi.mocked(deps.ensureConversationActorAndDrain).mockRejectedValue(
+      new Error("actor load failed"),
+    );
+
+    const response = await handlers.POST(
+      makeRequest({ text: "follow up" }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.queued).toBe(true);
   });
 
   it("clears conversation pendingPromptText before queueing", async () => {
