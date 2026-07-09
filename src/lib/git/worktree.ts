@@ -293,6 +293,19 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
     return true;
   }
 
+  /** List files with unresolved merge conflicts (unmerged index entries). */
+  async function listUnmergedFiles(worktreePath: string): Promise<string[]> {
+    const { stdout } = await git(worktreePath, [
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+    return stdout
+      .split("\n")
+      .map((f) => f.trim())
+      .filter(Boolean);
+  }
+
   /** Merge the target branch into the current feature branch in the given worktree.
    *  On conflict the worktree is left in conflict state (merge is NOT aborted). */
   async function mergeTargetIntoFeature(
@@ -317,16 +330,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
       }
 
       // List conflicted (unmerged) files — do NOT abort the merge
-      const { stdout: diffOut } = await git(worktreePath, [
-        "diff",
-        "--name-only",
-        "--diff-filter=U",
-      ]);
-
-      const conflictFiles = diffOut
-        .split("\n")
-        .map((f) => f.trim())
-        .filter(Boolean);
+      const conflictFiles = await listUnmergedFiles(worktreePath);
 
       logger.info("git.mergeTarget.conflicts", { worktreePath, conflictFiles });
 
@@ -633,6 +637,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
 
   return {
     abortInProgressMerge,
+    listUnmergedFiles,
     mergeTargetIntoFeature,
     discoverTargetCheckout,
     prepareSquashMerge,
@@ -647,6 +652,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
 const defaultOps = createWorktreeOperations();
 
 export const abortInProgressMerge = defaultOps.abortInProgressMerge;
+export const listUnmergedFiles = defaultOps.listUnmergedFiles;
 export const mergeTargetIntoFeature = defaultOps.mergeTargetIntoFeature;
 export const discoverTargetCheckout = defaultOps.discoverTargetCheckout;
 export const prepareSquashMerge = defaultOps.prepareSquashMerge;

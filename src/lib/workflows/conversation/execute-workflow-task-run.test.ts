@@ -387,6 +387,78 @@ describe("executeWorkflowTaskRun", () => {
     }
   });
 
+  it("pins the conversation actor to the provided worktreePath instead of the session worktree", async () => {
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "resolve conflicts",
+      worktreePath: "/test/project/.worktrees/lane-feature",
+      timeoutMs: 5000,
+    });
+
+    const invocation = await nextPendingInvocation();
+    invocation.resolve(defaultResult());
+    await callPromise;
+
+    const actor = getConversationActor(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    expect(actor).toBeDefined();
+    expect(actor!.getSnapshot().context.worktreePath).toBe(
+      "/test/project/.worktrees/lane-feature",
+    );
+  });
+
+  it("rebinds an existing idle actor bound elsewhere to the requested worktreePath", async () => {
+    const first = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "first",
+      timeoutMs: 5000,
+    });
+    const inv1 = await nextPendingInvocation();
+    inv1.resolve(defaultResult());
+    await first;
+
+    const actorAfterFirst = getConversationActor(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    expect(actorAfterFirst!.getSnapshot().context.worktreePath).toBe(
+      "/test/project/.worktrees/test-session",
+    );
+
+    const second = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "second",
+      worktreePath: "/test/project/.worktrees/lane-feature",
+      timeoutMs: 5000,
+    });
+    const inv2 = await nextPendingInvocation();
+    inv2.resolve(defaultResult());
+    await second;
+
+    const actorAfterSecond = getConversationActor(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    expect(actorAfterSecond!.getSnapshot().context.worktreePath).toBe(
+      "/test/project/.worktrees/lane-feature",
+    );
+    expect(actorAfterSecond).not.toBe(actorAfterFirst);
+  });
+
   it("serializes concurrent calls so a second call only starts after the first finalizes", async () => {
     let firstSettled = false;
 

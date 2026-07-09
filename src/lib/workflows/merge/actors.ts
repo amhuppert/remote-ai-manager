@@ -27,11 +27,13 @@ const logger = createLogger("smart-merge-actors");
 // ============================================================
 
 /**
- * Resolve the conversation that conflict-resolution and validation-fix turns
- * should bind to for a given feature session. Picks the session's
- * most-recently-active conversation; throws when the session has no
- * conversation so the merge fails loudly rather than dispatching against an
- * undefined identifier.
+ * Fallback conversation for conflict-resolution and validation-fix turns
+ * when the machine input carries no explicit `conversationId`: the session's
+ * most-recently-active conversation. Only safe when every session
+ * conversation shares the session worktree (user-driven Smart Merge); graph
+ * joins must pass the source lane's conversation explicitly instead. Throws
+ * when the session has no conversation so the merge fails loudly rather than
+ * dispatching against an undefined identifier.
  */
 async function resolveSessionConversationId(
   projectPath: string,
@@ -88,6 +90,13 @@ export interface ResolveConflictsInput {
   worktreePath: string;
   projectPath: string;
   sessionName: string;
+  /** Explicit conversation for the resolver turn (graph joins pass the source
+   *  lane's implementer conversation). Falls back to the session's
+   *  most-recently-active conversation when omitted. */
+  conversationId?: string;
+  /** Files the merge reported as conflicted; the resolver verifies these are
+   *  marker-free after the agent claims resolution. */
+  conflictFiles?: string[];
   decisions?: ConflictDecisionInput[];
   resolutionContext?: string;
   targetBranch?: string;
@@ -102,6 +111,8 @@ export interface AnalyzeConflictsInput {
   worktreePath: string;
   projectPath: string;
   sessionName: string;
+  /** See {@link ResolveConflictsInput.conversationId}. */
+  conversationId?: string;
   resolutionContext?: string;
   targetBranch?: string;
 }
@@ -131,6 +142,8 @@ export interface FixValidationInput {
   validationOutput: string;
   projectPath: string;
   sessionName: string;
+  /** See {@link ResolveConflictsInput.conversationId}. */
+  conversationId?: string;
   branchName: string;
   isRetry: boolean;
 }
@@ -253,15 +266,15 @@ export const resolveConflictsActor = fromPromise<
 >(async ({ input }) => {
   const { resolveConflicts } =
     await import("@/lib/sessions/conflict-resolution");
-  const conversationId = await resolveSessionConversationId(
-    input.projectPath,
-    input.sessionName,
-  );
+  const conversationId =
+    input.conversationId ??
+    (await resolveSessionConversationId(input.projectPath, input.sessionName));
   const result = await resolveConflicts({
     worktreePath: input.worktreePath,
     projectPath: input.projectPath,
     sessionName: input.sessionName,
     conversationId,
+    conflictFiles: input.conflictFiles,
     decisions: input.decisions,
     resolutionContext: input.resolutionContext,
     targetBranch: input.targetBranch,
@@ -281,10 +294,9 @@ export const analyzeConflictsActor = fromPromise<
 >(async ({ input }) => {
   const { analyzeConflicts } =
     await import("@/lib/sessions/conflict-resolution");
-  const conversationId = await resolveSessionConversationId(
-    input.projectPath,
-    input.sessionName,
-  );
+  const conversationId =
+    input.conversationId ??
+    (await resolveSessionConversationId(input.projectPath, input.sessionName));
   const result = await analyzeConflicts({
     worktreePath: input.worktreePath,
     projectPath: input.projectPath,
@@ -352,10 +364,9 @@ export const fixValidation = fromPromise<
     // Best-effort: if we can't read the config, the agent just won't verify
   }
 
-  const conversationId = await resolveSessionConversationId(
-    input.projectPath,
-    input.sessionName,
-  );
+  const conversationId =
+    input.conversationId ??
+    (await resolveSessionConversationId(input.projectPath, input.sessionName));
 
   const result = await fixValidationErrors({
     worktreePath: input.worktreePath,

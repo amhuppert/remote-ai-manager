@@ -6,7 +6,11 @@ import type { ConflictEntry } from "@/lib/jobs/schemas";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
 import type { SessionGitLock } from "./session-git-lock";
-import { applyJoinProgress, remainingSourceLanes } from "./lane-join";
+import {
+  applyJoinProgress,
+  remainingSourceLanes,
+  resolveLaneConversationId,
+} from "./lane-join";
 import { buildJoinResolutionContext } from "./join-resolution-context";
 import type {
   GraphWorkflowExecution,
@@ -163,6 +167,15 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         const resolutionContext =
           buildJoinResolutionContext(execution, currentJoin, sourceLaneId) ??
           undefined;
+        const conversationId =
+          resolveLaneConversationId(execution, sourceLaneId) ?? undefined;
+        if (conversationId === undefined) {
+          logger.warn("graph-workflow.join.lane_conversation_missing", {
+            joinId,
+            sourceLaneId,
+            executionId: execution.id,
+          });
+        }
         const runMerge = () =>
           deps.mergeRunner.run({
             jobId: createJobId(),
@@ -175,6 +188,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             targetBranch,
             targetWorktreePath,
             message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
+            conversationId,
             decisions: currentJoin.conflictGuidance ?? undefined,
             resolutionContext,
           });

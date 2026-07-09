@@ -64,6 +64,26 @@ function createTestDeps(
 }
 
 describe("validation-fix (executeWorkflowTaskRun)", () => {
+  it("pins the fix turn to the merge worktree (worktreePath forwarded to executeWorkflowTaskRun)", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    await fixValidationErrors({
+      worktreePath: "/projects/repo/.worktrees/lane-feature",
+      validationOutput: "lint: 1 error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.worktreePath).toBe("/projects/repo/.worktrees/lane-feature");
+  });
+
   it("routes via executeWorkflowTaskRun with projectPath/sessionName/conversationId and kind=task_run", async () => {
     const executeWorkflowTaskRun = vi
       .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()

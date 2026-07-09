@@ -240,6 +240,129 @@ describe("join-runner", () => {
     );
   });
 
+  it("binds each source-lane merge to that lane's implementer conversation", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+          includedContextIds: ["context-target"],
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+          includedContextIds: ["context-source"],
+          lastCommittingContextId: "context-source",
+        }),
+      },
+    );
+    execution.laneStates = {
+      "context-source": {
+        implementer: {
+          lane: "implementer",
+          contextId: "context-source",
+          engine: "claude",
+          workflowConversationId: "conv-source-implementer",
+          sessionRef: {
+            engine: "claude",
+            lane: "implementer",
+            conversationId: "conv-source-implementer",
+          },
+          lastContextTokens: null,
+          lastContextWindowMax: null,
+          rotateBeforeNextTurn: false,
+          limitEvaluation: "supported",
+          lastUsedAt: t0,
+        },
+      },
+    };
+
+    const observed: GraphMergeRunnerInput[] = [];
+    const mergeRunner = fakeMergeRunner(
+      new Map([["csm/lane-b", completed("hash-b")]]),
+      observed,
+    );
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.conversationId).toBe("conv-source-implementer");
+  });
+
+  it("omits conversationId when the source lane recorded no conversation", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+      },
+    );
+
+    const observed: GraphMergeRunnerInput[] = [];
+    const mergeRunner = fakeMergeRunner(
+      new Map([["csm/lane-b", completed("hash-b")]]),
+      observed,
+    );
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.conversationId).toBeUndefined();
+  });
+
   it("merges each remaining source lane into target and marks join succeeded", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({

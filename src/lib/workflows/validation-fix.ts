@@ -266,6 +266,7 @@ async function fixValidationErrorsImpl(
       projectPath,
       sessionName,
       conversationId,
+      worktreePath,
       kind: "task_run",
       prompt,
       systemInstructions: VALIDATION_FIX_INSTRUCTIONS,

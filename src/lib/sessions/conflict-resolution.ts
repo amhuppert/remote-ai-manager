@@ -63,6 +63,20 @@ export interface ConflictResolutionDeps {
   buildIncomingChangesSection?(
     params: IncomingChangesParams,
   ): Promise<string | null>;
+  /**
+   * Ground-truth check for the post-resolution verification: files git still
+   * reports as unmerged in the worktree. Defaults to the real
+   * `git diff --diff-filter=U`.
+   */
+  listUnmergedFiles?(worktreePath: string): Promise<string[]>;
+  /**
+   * Reads a worktree file for the post-resolution marker scan. Null when the
+   * file does not exist (or cannot be read) — such files are skipped.
+   */
+  readWorktreeFile?(
+    worktreePath: string,
+    relativePath: string,
+  ): Promise<string | null>;
 }
 
 const defaultDeps: ConflictResolutionDeps = {
@@ -94,6 +108,11 @@ export interface ResolveConflictsParams {
   /** Branch being merged in; enables the incoming-changes lookup that
    *  describes the other side of the conflicts to the resolver. */
   targetBranch?: string;
+  /** Files the merge reported as conflicted. Scanned for leftover conflict
+   *  markers after the agent claims resolution — a resolution that stages a
+   *  file with markers clears git's unmerged state, so the unmerged-paths
+   *  check alone cannot catch it. */
+  conflictFiles?: string[];
 }
 
 export interface AnalyzeConflictsParams {
@@ -125,7 +144,10 @@ Follow these steps precisely:
 IMPORTANT:
 - Resolve ALL conflicted files before producing the structured output.
 - Every conflict marker must be removed — no <<<<<<< or ======= or >>>>>>> markers should remain.
-- Stage every resolved file with git add.`;
+- Stage every resolved file with git add.
+- Work ONLY in the current working directory — never cd into another worktree or repository.
+- NEVER initiate a merge yourself: do not run git merge, git pull, git rebase, or git cherry-pick. The orchestrator has already started the merge you are resolving.
+- If git reports no conflicted files and no merge is in progress, there is nothing to resolve: return an empty conflicts array as the structured output. Do NOT infer an intended merge from history and start it.`;
 
 const CONFLICT_ANALYSIS_INSTRUCTIONS = `You are a merge conflict analysis specialist. Your task is to analyze all git merge conflicts in this worktree and describe them, WITHOUT resolving them.
 
@@ -138,7 +160,10 @@ Follow these steps precisely:
 
 IMPORTANT:
 - DO NOT edit any files. DO NOT remove conflict markers. DO NOT run git add. This is analysis only.
-- Analyze ALL conflicted files before producing the structured output.`;
+- Analyze ALL conflicted files before producing the structured output.
+- Work ONLY in the current working directory — never cd into another worktree or repository.
+- NEVER run git merge, git pull, git rebase, or any other command that mutates the worktree.
+- If git reports no conflicted files, there is nothing to analyze: return an empty conflicts array as the structured output.`;
 
 // ============================================================
 // Resolution Context Prompt Builder
@@ -320,6 +345,119 @@ function parseConflictEntries(
 }
 
 // ============================================================
+// Post-resolution ground-truth verification
+// ============================================================
+
+/**
+ * Whether text contains git conflict begin/end markers (`<<<<<<< `,
+ * `>>>>>>> `, or the diff3 `||||||| ` base marker) at line start. The bare
+ * `=======` separator is deliberately NOT matched — it appears standalone in
+ * legitimate content (markdown setext headings, ini separators) and never
+ * without a begin/end marker in a real conflict.
+ */
+export function containsConflictMarkers(content: string): boolean {
+  return /^(<{7}|>{7}|\|{7}) /m.test(content);
+}
+
+async function defaultListUnmergedFiles(
+  worktreePath: string,
+): Promise<string[]> {
+  const { listUnmergedFiles } = await import("@/lib/git/worktree");
+  return listUnmergedFiles(worktreePath);
+}
+
+async function defaultReadWorktreeFile(
+  worktreePath: string,
+  relativePath: string,
+): Promise<string | null> {
+  const { readFile } = await import("node:fs/promises");
+  const path = await import("node:path");
+  try {
+    return await readFile(path.join(worktreePath, relativePath), "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify a claimed resolution against git ground truth before the caller
+ * commits it: no unmerged index entries may remain, and neither the files the
+ * merge reported as conflicted nor the files the agent claims to have
+ * resolved may still contain conflict markers. The agent's "resolved" signal
+ * is never trusted on its own — a mis-dispatched or sloppy agent turn
+ * otherwise gets its markers committed verbatim by the next machine state.
+ */
+async function verifyResolutionGroundTruth(
+  resolution: { status: "resolved"; conflicts: ConflictEntry[] },
+  params: { worktreePath: string; conflictFiles: string[] },
+  deps: ConflictResolutionDeps,
+): Promise<ConflictResolutionResult> {
+  const listUnmergedFiles = deps.listUnmergedFiles ?? defaultListUnmergedFiles;
+  const readWorktreeFile = deps.readWorktreeFile ?? defaultReadWorktreeFile;
+  const { worktreePath } = params;
+
+  let unmerged: string[];
+  try {
+    unmerged = await listUnmergedFiles(worktreePath);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logger.error("conflict-resolution.ground_truth_check_error", {
+      worktreePath,
+      error: errorMsg,
+    });
+    return {
+      status: "failed",
+      error: `Could not verify conflict resolution in ${worktreePath}: ${errorMsg}`,
+      partialConflicts: resolution.conflicts,
+    };
+  }
+
+  if (unmerged.length > 0) {
+    logger.error("conflict-resolution.ground_truth_unmerged", {
+      worktreePath,
+      unmerged,
+    });
+    return {
+      status: "failed",
+      error: `Conflict resolution reported success but ${unmerged.length} file(s) remain unresolved in ${worktreePath}: ${unmerged.join(", ")}`,
+      partialConflicts: resolution.conflicts,
+    };
+  }
+
+  const filesToScan = [
+    ...new Set([
+      ...params.conflictFiles,
+      ...resolution.conflicts.map((entry) => entry.file),
+    ]),
+  ];
+  const markerFiles: string[] = [];
+  for (const file of filesToScan) {
+    const content = await readWorktreeFile(worktreePath, file);
+    if (content !== null && containsConflictMarkers(content)) {
+      markerFiles.push(file);
+    }
+  }
+
+  if (markerFiles.length > 0) {
+    logger.error("conflict-resolution.ground_truth_markers", {
+      worktreePath,
+      markerFiles,
+    });
+    return {
+      status: "failed",
+      error: `Conflict resolution left conflict markers in: ${markerFiles.join(", ")}`,
+      partialConflicts: resolution.conflicts,
+    };
+  }
+
+  logger.info("conflict-resolution.ground_truth_verified", {
+    worktreePath,
+    scannedFiles: filesToScan.length,
+  });
+  return resolution;
+}
+
+// ============================================================
 // Main Entry Point
 // ============================================================
 
@@ -366,6 +504,7 @@ async function resolveConflictsImpl(
     conversationId,
     resolutionContext,
     targetBranch,
+    conflictFiles,
   } = params;
   const { readConfig } = deps;
   const executeWorkflowTaskRun =
@@ -411,6 +550,7 @@ async function resolveConflictsImpl(
       projectPath,
       sessionName,
       conversationId,
+      worktreePath,
       kind: "task_run",
       prompt,
       systemInstructions: CONFLICT_RESOLUTION_INSTRUCTIONS,
@@ -425,7 +565,13 @@ async function resolveConflictsImpl(
       origin: { source: "workflow" },
     });
 
-    return mapTaskRunResultToResolution(result, worktreePath);
+    const resolution = mapTaskRunResultToResolution(result, worktreePath);
+    if (resolution.status !== "resolved") return resolution;
+    return await verifyResolutionGroundTruth(
+      resolution,
+      { worktreePath, conflictFiles: conflictFiles ?? [] },
+      deps,
+    );
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     logger.error("conflict-resolution.runner_error", {
@@ -576,6 +722,7 @@ async function analyzeConflictsImpl(
       projectPath,
       sessionName,
       conversationId,
+      worktreePath,
       kind: "task_run",
       prompt,
       systemInstructions: CONFLICT_ANALYSIS_INSTRUCTIONS,

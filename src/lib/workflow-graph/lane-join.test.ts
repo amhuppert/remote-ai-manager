@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type {
+  GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
+  GraphWorkflowTaskState,
 } from "@/lib/workflows/schemas";
 import {
   appendPendingJoin,
@@ -14,6 +16,7 @@ import {
   planFinalPublishJoin,
   remainingSourceLanes,
   resetJoinForRetry,
+  resolveLaneConversationId,
 } from "./lane-join";
 import { createWorkflowExecution } from "./test-fixtures";
 
@@ -988,6 +991,162 @@ describe("resetJoinForRetry", () => {
       expect(next.joins["join-1"]?.status).toBe(status);
       expect(next.joins["join-1"]?.updatedAt).toBe(t0);
     }
+  });
+});
+
+describe("resolveLaneConversationId", () => {
+  function implementerLaneState(
+    contextId: string,
+    workflowConversationId: string,
+  ): GraphWorkflowAgentSessionState {
+    return {
+      lane: "implementer",
+      contextId,
+      engine: "claude",
+      workflowConversationId,
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: workflowConversationId,
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "supported",
+      lastUsedAt: t0,
+    };
+  }
+
+  function makeTask(
+    overrides: Partial<GraphWorkflowTaskState> &
+      Pick<GraphWorkflowTaskState, "taskId" | "contextId" | "order">,
+  ): GraphWorkflowTaskState {
+    return {
+      status: "completed",
+      summary: null,
+      startedAt: t0,
+      completedAt: t0,
+      lastConversationId: null,
+      failureMessage: null,
+      failureHistory: [],
+      ...overrides,
+    };
+  }
+
+  function executionWithLane(
+    lane: GraphWorkflowExecutionLaneState,
+  ): GraphWorkflowExecution {
+    const base = createWorkflowExecution();
+    return { ...base, executionLanes: { [lane.laneId]: lane } };
+  }
+
+  it("returns the implementer conversation of the lane's last committing context", () => {
+    const execution = executionWithLane(
+      makeLane({
+        laneId: "lane-a",
+        branchName: "csm/lane-a",
+        includedContextIds: ["ctx-1", "ctx-2"],
+        lastCommittingContextId: "ctx-2",
+      }),
+    );
+    execution.laneStates = {
+      "ctx-1": { implementer: implementerLaneState("ctx-1", "conv-ctx-1") },
+      "ctx-2": { implementer: implementerLaneState("ctx-2", "conv-ctx-2") },
+    };
+
+    expect(resolveLaneConversationId(execution, "lane-a")).toBe("conv-ctx-2");
+  });
+
+  it("falls back through includedContextIds (most recent first) when the last committing context has no conversation", () => {
+    const execution = executionWithLane(
+      makeLane({
+        laneId: "lane-a",
+        branchName: "csm/lane-a",
+        includedContextIds: ["ctx-1", "ctx-2"],
+        lastCommittingContextId: null,
+      }),
+    );
+    execution.laneStates = {
+      "ctx-1": { implementer: implementerLaneState("ctx-1", "conv-ctx-1") },
+    };
+
+    expect(resolveLaneConversationId(execution, "lane-a")).toBe("conv-ctx-1");
+  });
+
+  it("falls back to the context's most recent task conversation when no implementer lane state exists", () => {
+    const execution = executionWithLane(
+      makeLane({
+        laneId: "lane-a",
+        branchName: "csm/lane-a",
+        includedContextIds: ["ctx-1"],
+        lastCommittingContextId: "ctx-1",
+      }),
+    );
+    execution.taskStates = {
+      "task-1": makeTask({
+        taskId: "task-1",
+        contextId: "ctx-1",
+        order: 1,
+        lastConversationId: "conv-early",
+      }),
+      "task-2": makeTask({
+        taskId: "task-2",
+        contextId: "ctx-1",
+        order: 2,
+        lastConversationId: "conv-late",
+      }),
+      "task-other": makeTask({
+        taskId: "task-other",
+        contextId: "ctx-other",
+        order: 9,
+        lastConversationId: "conv-other-context",
+      }),
+    };
+
+    expect(resolveLaneConversationId(execution, "lane-a")).toBe("conv-late");
+  });
+
+  it("ignores non-implementer lane states", () => {
+    const validatorState: GraphWorkflowAgentSessionState = {
+      lane: "context_validator",
+      contextId: "ctx-1",
+      engine: "claude",
+      workflowConversationId: "conv-validator",
+      sessionRef: {
+        engine: "claude",
+        lane: "context_validator",
+        conversationId: "conv-validator",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "supported",
+      lastUsedAt: t0,
+    };
+    const execution = executionWithLane(
+      makeLane({
+        laneId: "lane-a",
+        branchName: "csm/lane-a",
+        includedContextIds: ["ctx-1"],
+        lastCommittingContextId: "ctx-1",
+      }),
+    );
+    execution.laneStates = { "ctx-1": { context_validator: validatorState } };
+
+    expect(resolveLaneConversationId(execution, "lane-a")).toBeNull();
+  });
+
+  it("returns null for an unknown lane or a lane with no recorded conversations", () => {
+    const execution = executionWithLane(
+      makeLane({
+        laneId: "lane-a",
+        branchName: "csm/lane-a",
+        includedContextIds: ["ctx-1"],
+      }),
+    );
+
+    expect(resolveLaneConversationId(execution, "lane-a")).toBeNull();
+    expect(resolveLaneConversationId(execution, "lane-missing")).toBeNull();
   });
 });
 

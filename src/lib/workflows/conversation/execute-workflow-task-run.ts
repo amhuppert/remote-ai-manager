@@ -48,6 +48,16 @@ export interface ExecuteWorkflowTaskRunInput {
   /** Override the agent reasoning effort / verbosity on this turn. */
   effort?: string;
   /**
+   * Pin the conversation actor to this worktree for the turn. Merge sub-turns
+   * (conflict resolution, validation fixes) MUST pass the merge's feature
+   * worktree: the selected conversation may be bound to a different lane's
+   * worktree in a parallel graph workflow, and running the agent there
+   * corrupts the wrong tree. An idle actor bound elsewhere is rebound; a
+   * running one makes the call fail loudly instead of executing in the wrong
+   * worktree. Omit to use the conversation's existing binding.
+   */
+  worktreePath?: string;
+  /**
    * When true, the post-dispatch structured-output gate in the AgentCall
    * facade is bypassed. Use this when the caller maintains its own
    * response-parsing chain (e.g. the graph-workflow validator's
@@ -157,9 +167,14 @@ async function runOnce(
     input.projectPath,
     input.sessionName,
     input.conversationId,
-    input.actorInput !== undefined
-      ? { actorInput: input.actorInput }
-      : undefined,
+    {
+      ...(input.actorInput !== undefined
+        ? { actorInput: input.actorInput }
+        : {}),
+      ...(input.worktreePath !== undefined
+        ? { executionTarget: { worktreePath: input.worktreePath } }
+        : {}),
+    },
   );
 
   logger.info("conversation.execute_workflow_task_run.dispatch", {

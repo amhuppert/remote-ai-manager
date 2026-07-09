@@ -98,6 +98,32 @@ describe("graph-merge-runner", () => {
     );
   });
 
+  it("threads conversationId into the machine so the conflict resolver binds to the lane conversation", async () => {
+    const captured: ResolveConflictsInput[] = [];
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () => buildCapturingMachine(captured),
+      recordMergeIntent: () => {},
+    });
+
+    const output = await runner.run({
+      jobId: "job-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "context-verify",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/lane-a",
+      targetWorktreePath: "/tmp/lane-a",
+      message: "join merge",
+      conversationId: "conv-lane-b-implementer",
+    });
+
+    expect(output.status).toBe("completed");
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.conversationId).toBe("conv-lane-b-implementer");
+  });
+
   it("records the intent against the landed squash commit when the merge completes", async () => {
     const recorded: unknown[] = [];
     const runner = createGraphWorkflowMergeRunner({

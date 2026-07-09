@@ -853,12 +853,7 @@ describe("conversation manager", () => {
         DEFAULT_INPUT.sessionName,
         DEFAULT_INPUT.conversationId,
         {
-          executionTarget: {
-            worktreePath: "/per-context-worktree",
-            branchName: "csm/sess-context",
-            isolation: "worktree",
-            laneId: null,
-          },
+          executionTarget: { worktreePath: "/per-context-worktree" },
         },
       );
 
@@ -886,12 +881,7 @@ describe("conversation manager", () => {
         DEFAULT_INPUT.sessionName,
         DEFAULT_INPUT.conversationId,
         {
-          executionTarget: {
-            worktreePath: "/per-context-worktree",
-            branchName: "csm/sess-context",
-            isolation: "worktree",
-            laneId: null,
-          },
+          executionTarget: { worktreePath: "/per-context-worktree" },
         },
       );
 
@@ -926,12 +916,7 @@ describe("conversation manager", () => {
         DEFAULT_INPUT.sessionName,
         DEFAULT_INPUT.conversationId,
         {
-          executionTarget: {
-            worktreePath: "/new-worktree",
-            branchName: "csm/sess-context",
-            isolation: "worktree",
-            laneId: null,
-          },
+          executionTarget: { worktreePath: "/new-worktree" },
         },
       );
 
@@ -969,12 +954,7 @@ describe("conversation manager", () => {
           DEFAULT_INPUT.sessionName,
           DEFAULT_INPUT.conversationId,
           {
-            executionTarget: {
-              worktreePath: "/new-worktree",
-              branchName: "csm/sess-context",
-              isolation: "worktree",
-              laneId: null,
-            },
+            executionTarget: { worktreePath: "/new-worktree" },
           },
         ),
       ).rejects.toThrow(/cannot rebind/);

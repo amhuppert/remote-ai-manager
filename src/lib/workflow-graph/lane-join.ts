@@ -376,6 +376,62 @@ export function resetJoinForRetry(
   };
 }
 
+/**
+ * Resolve the conversation a join merge's agent sub-turns (conflict
+ * resolution, validation fixes) should bind to for a source lane: the
+ * implementer conversation of the lane's most recent context. That
+ * conversation is idle by the time the lane joins (its contexts completed)
+ * and its actor is already bound to the lane's worktree — unlike the
+ * session's most-recently-active conversation, which in a parallel workflow
+ * may belong to a different lane that is still running, dispatching the
+ * resolver into the wrong worktree.
+ *
+ * Candidate contexts are checked most-recent-first: the lane's last
+ * committing context, then `includedContextIds` newest-first. Per context the
+ * implementer lane state's `workflowConversationId` wins; task states'
+ * `lastConversationId` (highest order first) is the fallback. Returns null
+ * when the lane recorded no conversation — callers fall back to the session
+ * heuristic.
+ */
+export function resolveLaneConversationId(
+  execution: GraphWorkflowExecution,
+  laneId: string,
+): string | null {
+  const lane = execution.executionLanes[laneId];
+  if (!lane) return null;
+
+  const candidateContextIds: string[] = [];
+  if (lane.lastCommittingContextId) {
+    candidateContextIds.push(lane.lastCommittingContextId);
+  }
+  for (const contextId of [...lane.includedContextIds].reverse()) {
+    if (!candidateContextIds.includes(contextId)) {
+      candidateContextIds.push(contextId);
+    }
+  }
+
+  for (const contextId of candidateContextIds) {
+    const laneStatesByKind = execution.laneStates[contextId];
+    if (laneStatesByKind) {
+      for (const state of Object.values(laneStatesByKind)) {
+        if (state.lane === "implementer" && state.workflowConversationId) {
+          return state.workflowConversationId;
+        }
+      }
+    }
+
+    const taskConversationId = Object.values(execution.taskStates)
+      .filter(
+        (task) =>
+          task.contextId === contextId && task.lastConversationId !== null,
+      )
+      .sort((a, b) => b.order - a.order)[0]?.lastConversationId;
+    if (taskConversationId) return taskConversationId;
+  }
+
+  return null;
+}
+
 export function materializeSessionLane(
   execution: GraphWorkflowExecution,
   input: MaterializeSessionLaneInput,

@@ -1108,7 +1108,7 @@ export async function ensureConversationActor(
   sessionName: string,
   conversationId: string,
   options?: {
-    executionTarget?: ExecutionTarget;
+    executionTarget?: Pick<ExecutionTarget, "worktreePath">;
     /**
      * Explicit actor input override for callers that drive transient
      * conversations not backed by a persisted CC conversation record

@@ -852,6 +852,95 @@ describe("mergeMachine", () => {
       expect(capturedInput!.targetBranch).toBe("main");
     });
 
+    it("passes conversationId and the detected conflictFiles to the resolveConflicts actor", async () => {
+      let capturedInput: ResolveConflictsInput | null = null;
+
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["src/index.ts", "package.json"],
+        })),
+        resolveConflicts: mockResolveConflicts(async (input) => {
+          capturedInput = input;
+          return { status: "resolved", conflicts: [] };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          conversationId: "conv-lane-implementer",
+        },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.conversationId).toBe("conv-lane-implementer");
+      expect(capturedInput!.conflictFiles).toEqual([
+        "src/index.ts",
+        "package.json",
+      ]);
+    });
+
+    it("passes conversationId to the analyzeConflicts actor when autoResolve is off", async () => {
+      let capturedInput: AnalyzeConflictsInput | null = null;
+
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["src/index.ts"],
+        })),
+        analyzeConflicts: mockAnalyzeConflicts(async (input) => {
+          capturedInput = input;
+          return { status: "analyzed", conflicts: [] };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          autoResolve: false,
+          conversationId: "conv-lane-implementer",
+        },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.conversationId).toBe("conv-lane-implementer");
+    });
+
+    it("passes conversationId to the fixValidation actor", async () => {
+      let capturedInput: FixValidationInput | null = null;
+      let validationRuns = 0;
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationRuns += 1;
+          if (validationRuns === 1) {
+            throw new Error("validation failed: lint error");
+          }
+        }),
+        fixValidation: mockFixValidation(async (input) => {
+          capturedInput = input;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          conversationId: "conv-lane-implementer",
+        },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.conversationId).toBe("conv-lane-implementer");
+    });
+
     it("defaults resolutionContext to null in context when omitted", () => {
       const machine = createTestMachine();
       const actor = createActor(machine, { input: defaultInput });

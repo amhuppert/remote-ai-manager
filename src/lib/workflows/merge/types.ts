@@ -41,6 +41,17 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Job type (merge, commit, or resolve-conflicts). */
   jobType: "merge" | "commit" | "resolve-conflicts";
 
+  /**
+   * Conversation the conflict-resolution / analysis / validation-fix agent
+   * turns bind to. Graph joins pass the source lane's implementer
+   * conversation — in a parallel workflow the session's most-recently-active
+   * conversation can belong to a different lane bound to a different
+   * worktree, which would dispatch the agent into the wrong tree. Null falls
+   * back to the session's most-recently-active conversation (user-driven
+   * Smart Merge, where every conversation shares the session worktree).
+   */
+  conversationId: string | null;
+
   /** Whether to auto-resolve conflicts via Claude. */
   autoResolve: boolean;
 
@@ -141,6 +152,8 @@ export interface MergeInput {
   message: string;
   autoResolve: boolean;
   jobType?: "merge" | "commit" | "resolve-conflicts";
+  /** See {@link MergeContext.conversationId}. */
+  conversationId?: string;
   decisions?: ConflictDecisionInput[];
   /** See {@link MergeContext.resolutionContext}. */
   resolutionContext?: string;

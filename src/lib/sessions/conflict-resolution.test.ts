@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  containsConflictMarkers,
   createConflictResolver,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
@@ -80,6 +81,8 @@ function createTestDeps(
       defaultModel: "opus",
     }) as unknown as ConflictResolutionDeps["readConfig"],
     executeWorkflowTaskRun: vi.fn().mockResolvedValue(textOk("")),
+    listUnmergedFiles: async () => [],
+    readWorktreeFile: async () => null,
     ...overrides,
   };
 }
@@ -145,6 +148,25 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
       required: ["conflicts"],
     });
     expect(input.timeoutMs).toBe(60_000);
+  });
+
+  it("pins the agent turn to the merge worktree (worktreePath forwarded to executeWorkflowTaskRun)", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    await resolveConflicts({
+      worktreePath: "/projects/repo/.worktrees/lane-feature",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.worktreePath).toBe("/projects/repo/.worktrees/lane-feature");
   });
 
   it("returns resolved status with conflicts when executeWorkflowTaskRun returns structured output", async () => {
@@ -386,6 +408,206 @@ ${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
 // analyzeConflicts
 // ============================================================
 
+describe("resolver prompt hardening", () => {
+  it("forbids the resolver from initiating merges and requires an empty result when nothing is conflicted", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: [] }));
+
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.systemInstructions).toContain("NEVER initiate a merge");
+    expect(input.systemInstructions).toContain("empty conflicts array");
+    expect(input.systemInstructions).toContain("current working directory");
+  });
+
+  it("forbids the analyzer from mutating the worktree or running merges", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: [] }));
+
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { analyzeConflicts } = createConflictResolver(deps);
+    await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.systemInstructions).toContain("NEVER run git merge");
+    expect(input.systemInstructions).toContain("empty conflicts array");
+  });
+});
+
+describe("resolveConflicts ground-truth verification", () => {
+  it("returns failed when git still reports unmerged paths after the agent claims resolution", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      listUnmergedFiles: async () => ["package.json"],
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("package.json");
+      expect(result.error).toContain("unresolved");
+      expect(result.partialConflicts).toEqual(SAMPLE_ENTRIES);
+    }
+  });
+
+  it("returns failed when a previously-conflicted file still contains conflict markers", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const markerContent = [
+      "{",
+      '  "scripts": {',
+      "<<<<<<< HEAD",
+      '    "export": "bun run src/cli/export.ts"',
+      "=======",
+      '    "ingest": "bun run src/cli/ingest.ts"',
+      ">>>>>>> csm/other-branch",
+      "  }",
+      "}",
+    ].join("\n");
+
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      listUnmergedFiles: async () => [],
+      readWorktreeFile: async (_worktreePath, file) =>
+        file === "package.json" ? markerContent : null,
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      conflictFiles: ["package.json"],
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("conflict markers");
+      expect(result.error).toContain("package.json");
+      expect(result.partialConflicts).toEqual(SAMPLE_ENTRIES);
+    }
+  });
+
+  it("scans the agent's claimed entry files even when the caller passes no conflictFiles", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      readWorktreeFile: async (_worktreePath, file) =>
+        file === "src/index.ts" ? "<<<<<<< HEAD\nours\n=======\n" : null,
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("src/index.ts");
+    }
+  });
+
+  it("returns resolved when no unmerged paths and no markers remain", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      readWorktreeFile: async () => '{ "scripts": { "export": "x" } }',
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      conflictFiles: ["package.json"],
+    });
+
+    expect(result.status).toBe("resolved");
+  });
+
+  it("returns failed when the ground-truth check itself cannot run", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      listUnmergedFiles: async () => {
+        throw new Error("not a git repository");
+      },
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("not a git repository");
+    }
+  });
+});
+
+describe("containsConflictMarkers", () => {
+  it("detects git begin/end markers", () => {
+    expect(
+      containsConflictMarkers("<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b"),
+    ).toBe(true);
+    expect(containsConflictMarkers("a\n>>>>>>> csm/branch\n")).toBe(true);
+  });
+
+  it("does not flag a bare ======= line (legitimate in markdown/config)", () => {
+    expect(containsConflictMarkers("Title\n=======\nbody text")).toBe(false);
+  });
+
+  it("does not flag marker-like text mid-line", () => {
+    expect(containsConflictMarkers("const s = 'a <<<<<<< b';")).toBe(false);
+  });
+});
+
 describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
   it("uses analysis-only system instructions (no edit/stage directives)", async () => {
     const executeWorkflowTaskRun = vi
@@ -406,6 +628,25 @@ describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
     expect(instructions).toContain("DO NOT");
     expect(instructions).not.toContain("Edit each file");
     expect(instructions).not.toContain("Stage each resolved file");
+  });
+
+  it("pins the analysis turn to the merge worktree (worktreePath forwarded to executeWorkflowTaskRun)", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    await analyzeConflicts({
+      worktreePath: "/projects/repo/.worktrees/lane-feature",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.worktreePath).toBe("/projects/repo/.worktrees/lane-feature");
   });
 
   it("appends the incoming-changes section to the analysis prompt when targetBranch is provided", async () => {

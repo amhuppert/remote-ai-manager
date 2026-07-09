@@ -22,6 +22,11 @@ export interface GraphMergeRunnerInput {
   targetBranch: string;
   targetWorktreePath: string;
   message: string;
+  /** The source lane's implementer conversation. Conflict-resolution and
+   *  validation-fix agent turns bind to it so they run in the lane's
+   *  worktree; omitted when the lane recorded no conversation, letting the
+   *  machine fall back to the session's most-recently-active conversation. */
+  conversationId?: string;
   /** Operator guidance for conflict resolution, threaded into the machine's
    *  resolver as per-file decisions. */
   decisions?: ConflictDecisionInput[];
@@ -100,6 +105,7 @@ export function createGraphWorkflowMergeRunner(
           worktreePath: input.featureWorktreePath,
           branchName: input.branchName,
           message: input.message,
+          conversationId: input.conversationId,
           autoResolve: true,
           decisions: input.decisions,
           resolutionContext: input.resolutionContext,
