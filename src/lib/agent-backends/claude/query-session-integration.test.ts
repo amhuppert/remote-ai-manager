@@ -187,14 +187,11 @@ describe("Multi-turn subprocess reuse", () => {
     expect(session.status).toBe("alive");
     expect(result1.sessionId).toBe("sess-1");
 
-    // Second prompt — same session, same subprocess
+    // Second prompt — same session, same subprocess, same input channel.
+    // streamInput must never be used: the SDK closes the CLI's stdin when a
+    // streamInput iterable completes.
     const turn2 = session.sendPrompt("Second prompt", emit);
-
-    // Wait for MCP health check to complete before checking streamInput
-    await new Promise((r) => setTimeout(r, 10));
-
-    // streamInput should have been called for the second prompt
-    expect(mock.query.streamInput).toHaveBeenCalledTimes(1);
+    expect(mock.query.streamInput).not.toHaveBeenCalled();
 
     mock.pushMessage(makeResultMessage("sess-1", "u3"));
     const result2 = await turn2;
@@ -208,15 +205,13 @@ describe("Multi-turn subprocess reuse", () => {
     session.close();
   });
 
-  it("raw Query object is accessible for queueMessage compatibility", () => {
+  it("raw Query object is accessible for control-plane requests", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(makeDefaultOptions());
 
-    // The query property should expose the SDK Query for streamInput
     expect(session.query).toBe(mock.query);
-    expect(session.query.streamInput).toBeDefined();
 
     session.close();
   });
@@ -280,15 +275,7 @@ describe("Crash recovery", () => {
     mock1.pushMessage(makeResultMessage("sess-1", "u1"));
     await turn1;
 
-    // Make streamInput hang so the pump can die before delivery
-    let resolveStreamInput: (() => void) | undefined;
-    mock1.query.streamInput.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveStreamInput = resolve;
-        }),
-    );
-
+    // The second prompt sits undelivered in the input channel when the pump dies
     const turn2 = session1.sendPrompt("Second", emit);
     mock1.endPump();
 
@@ -303,11 +290,6 @@ describe("Crash recovery", () => {
       "QuerySession died before prompt delivery",
     );
     expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
-
-    if (resolveStreamInput) {
-      resolveStreamInput();
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(session1.status).toBe("dead");
 

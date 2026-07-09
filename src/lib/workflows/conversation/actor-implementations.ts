@@ -2120,8 +2120,8 @@ export async function executePromptForMachine(
     // runtime refresh its transport BEFORE the prompt is delivered — the
     // disconnect window is safe because no tool call is in flight. On an
     // unrecoverable runtime, recreate it (resume-preserving) and retry once; a
-    // second failure fails the prompt BEFORE `streamInput` rather than
-    // delivering it into a broken runtime. Backends without
+    // second failure fails the prompt BEFORE delivery rather than
+    // feeding it into a broken runtime. Backends without
     // `prepareForTurnStart` are unaffected.
     const ready = (await backendRuntime!.prepareForTurnStart?.()) ?? {
       status: "ready" as const,

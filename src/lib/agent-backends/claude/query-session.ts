@@ -108,7 +108,13 @@ export interface QuerySession {
   /** The conversation ID this session belongs to */
   readonly conversationId: string;
 
-  /** The SDK Query object (for streamInput from queueMessage) */
+  /**
+   * The SDK Query object — control-plane requests only (supportedCommands,
+   * mcpServerStatus, applyFlagSettings, …). Never use `query.streamInput()`
+   * to deliver input: the SDK closes the CLI's stdin when a streamInput
+   * iterable completes, dooming the subprocess. Deliver through sendPrompt /
+   * queueUserInput, which feed the session's persistent input channel.
+   */
   readonly query: Query;
 
   /** The current turn options (read by canUseTool) */
@@ -158,6 +164,15 @@ export interface QuerySession {
     emit: TurnEmit,
     options?: TurnOptions,
   ): Promise<TurnResult>;
+
+  /**
+   * Deliver user input into the live session through the persistent input
+   * channel (mid-turn queued messages). Resolves once the SDK has consumed
+   * the message (its stdin write completed); rejects with a
+   * promptNotDelivered-tagged error when the session is dead or dies before
+   * consuming it, so the caller can leave the queue row pending.
+   */
+  queueUserInput(content: string | MessageContentBlock[]): Promise<void>;
 
   /**
    * Cancel the idle TTL timer because the caller is about to send a new turn.
@@ -268,8 +283,12 @@ interface BackgroundWaiter {
 /**
  * Create a new QuerySession that owns a long-lived SDK subprocess.
  *
- * The first prompt is delivered via an async generator (hanging generator pattern).
- * Subsequent prompts are delivered via streamInput().
+ * All input — every prompt and mid-turn queued user input — is delivered
+ * through a single persistent async generator handed to the SDK at creation.
+ * `Query.streamInput()` must never be used for delivery: the SDK calls
+ * `transport.endInput()` (closing the CLI's stdin) once a streamInput iterable
+ * completes, which schedules the subprocess to exit after the in-flight turn
+ * and silently drops background-task auto-continuations.
  */
 export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -279,7 +298,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let pendingTurn: PendingTurn | null = null;
   let currentTurnOptions: TurnOptions | null = null;
   let isFirstPrompt = true;
-  let firstPromptResolve: ((msg: SDKUserMessage) => void) | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const stderrChunks: string[] = [];
   let awaitingSubsequentPromptDelivery = false;
@@ -294,18 +312,69 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let attributedCostBaseline = 0;
   let attributedCostSessionId: string | null = null;
 
-  // The hanging generator: yields the first user message, then hangs forever.
-  // This keeps the SDK subprocess alive indefinitely.
-  async function* hangingGenerator(): AsyncGenerator<SDKUserMessage> {
-    const firstMessage = await new Promise<SDKUserMessage>((resolve) => {
-      firstPromptResolve = resolve;
+  // The persistent input channel: the SDK consumes this generator for the
+  // session's whole life. It never returns, so the SDK never closes the CLI's
+  // stdin; teardown happens exclusively through q.close().
+  interface PendingInput {
+    msg: SDKUserMessage;
+    resolveDelivered: () => void;
+    rejectDelivered: (err: Error) => void;
+  }
+  const inputQueue: PendingInput[] = [];
+  let inputWakeup: (() => void) | null = null;
+  let inFlightInput: PendingInput | null = null;
+
+  /**
+   * Enqueue a message for the SDK to consume from the input channel. Resolves
+   * once the SDK has consumed it (its stdin write completed); rejected by
+   * rejectPendingInputs when the session dies first.
+   */
+  function pushInput(msg: SDKUserMessage): Promise<void> {
+    const delivered = new Promise<void>((resolve, reject) => {
+      inputQueue.push({
+        msg,
+        resolveDelivered: resolve,
+        rejectDelivered: reject,
+      });
     });
-    yield firstMessage;
-    // Hang forever — subsequent messages come via streamInput()
-    await new Promise<void>(() => {});
+    if (inputWakeup) {
+      const wake = inputWakeup;
+      inputWakeup = null;
+      wake();
+    }
+    return delivered;
   }
 
-  // Create the SDK query with the hanging generator
+  async function* inputChannel(): AsyncGenerator<SDKUserMessage> {
+    while (true) {
+      const entry = inputQueue.shift();
+      if (!entry) {
+        await new Promise<void>((resolve) => {
+          inputWakeup = resolve;
+        });
+        continue;
+      }
+      inFlightInput = entry;
+      yield entry.msg;
+      // Control resumes when the SDK requests the next message, i.e. after it
+      // finished writing the yielded one to the CLI's stdin.
+      inFlightInput = null;
+      entry.resolveDelivered();
+    }
+  }
+
+  /** Reject every undelivered input so no delivery awaiter outlives the session. */
+  function rejectPendingInputs(): void {
+    const undelivered = inFlightInput
+      ? [inFlightInput, ...inputQueue]
+      : [...inputQueue];
+    inFlightInput = null;
+    inputQueue.length = 0;
+    for (const entry of undelivered) {
+      entry.rejectDelivered(createPromptNotDeliveredError());
+    }
+  }
+
   const sdkOptions: Options = {
     cwd: options.cwd,
     model: options.model ?? undefined,
@@ -338,7 +407,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   };
 
   const q: Query = sdkQuery({
-    prompt: hangingGenerator(),
+    prompt: inputChannel(),
     options: sdkOptions,
   });
 
@@ -373,6 +442,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
     awaitBackgroundTaskSettlement,
     sendPrompt,
+    queueUserInput,
     notifyTurnStarting,
     close,
   };
@@ -433,17 +503,37 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       };
 
       if (isFirstPrompt) {
-        // Deliver via the hanging generator
         isFirstPrompt = false;
-        const userMessage = buildUserMessage(prompt);
-        if (firstPromptResolve) {
-          firstPromptResolve(userMessage);
-          firstPromptResolve = null;
-        }
       } else {
-        void sendSubsequentPrompt(prompt);
+        // Cleared when delivery is observed (channel consumption, or the
+        // turn's first assistant/result message); a pump death while still
+        // set tags the rejection promptNotDelivered so the caller knows the
+        // prompt never reached the CLI and can redeliver.
+        awaitingSubsequentPromptDelivery = true;
       }
+      pushInput(buildUserMessage(prompt)).then(
+        () => {
+          awaitingSubsequentPromptDelivery = false;
+        },
+        () => {
+          // Delivery rejection means the session died first; the pump-death
+          // path settles the turn.
+        },
+      );
     });
+  }
+
+  // ------------------------------------------------------------------
+  // queueUserInput
+  // ------------------------------------------------------------------
+
+  async function queueUserInput(
+    content: string | MessageContentBlock[],
+  ): Promise<void> {
+    if (status === "dead") {
+      throw createPromptNotDeliveredError();
+    }
+    await pushInput(buildUserMessage(content));
   }
 
   // ------------------------------------------------------------------
@@ -629,6 +719,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     // Resolve any pending settlement waiters so a dead subprocess never hangs a
     // waiter. Report whatever has settled; never flag this as a timeout.
     resolveWaitersOnDeath();
+    rejectPendingInputs();
 
     // Reject any pending turn
     if (pendingTurn) {
@@ -731,47 +822,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     // through close(); resolve pending settlement waiters so they unwind
     // promptly (timedOut: false) instead of hanging until the hard timeout.
     resolveWaitersOnDeath();
-  }
-
-  async function sendSubsequentPrompt(
-    prompt: string | MessageContentBlock[],
-  ): Promise<void> {
-    awaitingSubsequentPromptDelivery = true;
-
-    try {
-      if (status === "dead") {
-        throw createPromptNotDeliveredError();
-      }
-
-      const userMessage = buildUserMessage(prompt);
-      await q.streamInput(wrapAsIterable(userMessage));
-      awaitingSubsequentPromptDelivery = false;
-    } catch (err) {
-      awaitingSubsequentPromptDelivery = false;
-
-      const baseError = err instanceof Error ? err : new Error(String(err));
-      const error = tagQuerySessionError(
-        baseError,
-        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
-      );
-
-      logger.error("query-session.stream_input_error", {
-        conversationId: options.conversationId,
-        error: error.message,
-      });
-
-      if (status === "alive") {
-        markDead("stream_input_error");
-      }
-
-      rejectPendingTurn(error);
-
-      try {
-        q.close();
-      } catch {
-        // best-effort
-      }
-    }
+    rejectPendingInputs();
   }
 
   // ------------------------------------------------------------------
@@ -1160,10 +1211,4 @@ function buildUserMessage(
     },
     parent_tool_use_id: null,
   } as SDKUserMessage;
-}
-
-async function* wrapAsIterable(
-  msg: SDKUserMessage,
-): AsyncGenerator<SDKUserMessage> {
-  yield msg;
 }

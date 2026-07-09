@@ -375,8 +375,8 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     const conversationId = this.querySession.conversationId;
 
     // Gate live delivery on the session being able to accept input. A dead
-    // session cannot accept a streamInput, so reject (rather than silently
-    // resolve) — the caller leaves the queue row pending for next-turn drain.
+    // session cannot accept input, so reject (rather than silently resolve) —
+    // the caller leaves the queue row pending for next-turn drain.
     if (this._status === "dead" || this.querySession.status === "dead") {
       logger.warn("claude-runtime.queue_input_rejected_dead", {
         conversationId,
@@ -389,10 +389,11 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       blockCount: input.content.length,
     });
 
-    // Resolution is gated on streamInput resolving: that is the live
-    // input-acceptance signal. A streamInput rejection (e.g. tagged
-    // promptNotDelivered) propagates so the caller leaves the row pending.
-    await this.querySession.query.streamInput(wrapAsUserMessage(input.content));
+    // Resolution is gated on the session's persistent input channel being
+    // consumed by the SDK: that is the live input-acceptance signal. A
+    // rejection (tagged promptNotDelivered — the session died before
+    // consuming it) propagates so the caller leaves the row pending.
+    await this.querySession.queueUserInput(input.content);
   }
 
   async applyPortableMcpConfig(
@@ -576,32 +577,6 @@ function buildExternalTurnHandler(
       });
     },
   };
-}
-
-async function* wrapAsUserMessage(
-  content: MessageContentBlock[],
-): AsyncGenerator<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage> {
-  yield {
-    type: "user",
-    session_id: "",
-    message: {
-      role: "user",
-      content: content.map((block) => {
-        if (block.type === "image") {
-          return {
-            type: "image" as const,
-            source: {
-              type: "base64" as const,
-              media_type: block.mediaType,
-              data: block.base64Data,
-            },
-          };
-        }
-        return block;
-      }),
-    },
-    parent_tool_use_id: null,
-  } as import("@anthropic-ai/claude-agent-sdk").SDKUserMessage;
 }
 
 // ============================================================

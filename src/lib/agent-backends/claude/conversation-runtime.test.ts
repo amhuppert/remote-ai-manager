@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 
 const queryMock = vi.hoisted(() => vi.fn());
 
@@ -16,11 +19,7 @@ import {
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
 import { backendCapabilities } from "../capabilities-descriptor";
 import type { ConversationBackendEvent } from "../conversation";
-import {
-  isUndeliveredQuerySessionError,
-  QUERY_SESSION_ERROR_CODES,
-  tagQuerySessionError,
-} from "./query-session-errors";
+import { isUndeliveredQuerySessionError } from "./query-session-errors";
 
 const createRuntimeWithFakeDeps: typeof claudeConversationBackendFactory.createRuntime =
   (input) => claudeConversationBackendFactory.createRuntime(input);
@@ -86,6 +85,15 @@ function createControllableMockQuery() {
         r({ value: msg, done: false });
       } else {
         messages.push(msg);
+      }
+    },
+    /** End the message pump normally (clean subprocess exit) */
+    endPump() {
+      done = true;
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r({ value: undefined, done: true });
       }
     },
   };
@@ -1040,26 +1048,22 @@ describe("ClaudeConversationRuntime — retryable error propagation", () => {
     } as unknown as SDKMessage);
     await turn1;
 
-    // Now make streamInput reject with a tagged promptNotDelivered error —
-    // this is what query-session emits when the SDK pipe is gone before
-    // delivery (e.g. EPIPE, ProcessTransport closed).
-    mock.query.streamInput.mockRejectedValue(
-      tagQuerySessionError(
-        new Error("ProcessTransport is not ready for writing"),
-        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
-      ),
-    );
+    // Kill the pump while the second prompt sits undelivered in the input
+    // channel — this is what query-session emits when the SDK pipe is gone
+    // before delivery (e.g. EPIPE, ProcessTransport closed).
+    const turn2 = runtime.sendTurn({
+      promptText: "second",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    mock.endPump();
 
     let caughtError: unknown;
     try {
-      await runtime.sendTurn({
-        promptText: "second",
-        imageRefs: [],
-        sessionInstructions: [],
-        autonomous: false,
-        signal: new AbortController().signal,
-        onEvent: () => {},
-      });
+      await turn2;
     } catch (error) {
       caughtError = error;
     }
@@ -1677,27 +1681,24 @@ describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
     } as unknown as SDKMessage);
     await turn1;
 
-    // Dispatch of the second turn rejects before any raw message is delivered.
-    mock.query.streamInput.mockRejectedValue(
-      tagQuerySessionError(
-        new Error("ProcessTransport is not ready for writing"),
-        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
-      ),
-    );
-
+    // The second turn's prompt dies undelivered in the input channel: the
+    // pump ends before any raw message arrives.
     const acceptedEvents: ConversationBackendEvent[] = [];
 
+    const turn2 = runtime.sendTurn({
+      promptText: "second",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: (event: ConversationBackendEvent) => {
+        if (event.type === "input_accepted") acceptedEvents.push(event);
+      },
+    });
+    mock.endPump();
+
     try {
-      await runtime.sendTurn({
-        promptText: "second",
-        imageRefs: [],
-        sessionInstructions: [],
-        autonomous: false,
-        signal: new AbortController().signal,
-        onEvent: (event: ConversationBackendEvent) => {
-          if (event.type === "input_accepted") acceptedEvents.push(event);
-        },
-      });
+      await turn2;
     } catch {
       // The retryable dispatch error is re-thrown; acceptance must not fire.
     }
@@ -1732,7 +1733,7 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
     runtime.close();
   });
 
-  it("resolves queueUserInput only after streamInput accepts the input (the observable)", async () => {
+  it("resolves queueUserInput only after the SDK consumes the input (the observable)", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1747,11 +1748,10 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
       tooling: {},
     });
 
-    let acceptInput: (() => void) | null = null;
-    const streamInputGate = new Promise<void>((resolve) => {
-      acceptInput = resolve;
-    });
-    mock.query.streamInput.mockReturnValue(streamInputGate);
+    // The persistent input channel handed to the SDK at session creation —
+    // the test plays the SDK's role of consuming it.
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
 
     let resolved = false;
     const queuePromise = runtime.queueUserInput!({ content: [textBlock] }).then(
@@ -1760,21 +1760,24 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
       },
     );
 
-    // Give the microtask queue a chance to settle: queueUserInput must still be
-    // pending because streamInput has not yet accepted the input.
+    // Give the microtask queue a chance to settle: queueUserInput must still
+    // be pending because the input has not been consumed from the channel.
     await new Promise((r) => setTimeout(r, 10));
     expect(resolved).toBe(false);
-    expect(mock.query.streamInput).toHaveBeenCalledTimes(1);
 
-    // Acceptance: streamInput resolves, so queueUserInput must now resolve.
-    acceptInput!();
+    // Acceptance: the message is consumed and the consumer requests the next
+    // one (the stdin write completed), so queueUserInput must now resolve.
+    const delivered = await channel.next();
+    expect(delivered.value!.message.content).toEqual([textBlock]);
+    const pending = channel.next();
     await queuePromise;
     expect(resolved).toBe(true);
 
+    void pending;
     runtime.close();
   });
 
-  it("rejects without calling streamInput when the runtime is dead", async () => {
+  it("rejects without delivering into the channel when the runtime is dead", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1795,10 +1798,9 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
     await expect(
       runtime.queueUserInput!({ content: [textBlock] }),
     ).rejects.toThrow();
-    expect(mock.query.streamInput).not.toHaveBeenCalled();
   });
 
-  it("propagates a streamInput rejection so the caller can leave the row pending", async () => {
+  it("propagates a tagged rejection when the session dies before consuming the input", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1813,20 +1815,20 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
       tooling: {},
     });
 
-    const rejection = tagQuerySessionError(
-      new Error("ProcessTransport is not ready for writing"),
-      QUERY_SESSION_ERROR_CODES.promptNotDelivered,
-    );
-    mock.query.streamInput.mockRejectedValue(rejection);
+    // The input is accepted into the channel but the subprocess dies before
+    // consuming it — the caller must see a tagged rejection so it can leave
+    // the queue row pending.
+    const queuePromise = runtime.queueUserInput!({ content: [textBlock] });
+    mock.endPump();
 
     let caught: unknown;
     try {
-      await runtime.queueUserInput!({ content: [textBlock] });
+      await queuePromise;
     } catch (err) {
       caught = err;
     }
 
-    expect(caught).toBe(rejection);
+    expect(caught).toBeInstanceOf(Error);
     expect(isUndeliveredQuerySessionError(caught)).toBe(true);
 
     runtime.close();

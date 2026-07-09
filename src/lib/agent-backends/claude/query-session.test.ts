@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   isUndeliveredQuerySessionError,
   isSessionDiedMidTurnError,
@@ -338,8 +341,11 @@ describe("QuerySession.sendPrompt", () => {
     const session = createQuerySession(makeDefaultOptions());
     const emit = vi.fn();
 
-    // Complete first turn so second uses streamInput (easier to inspect)
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+
     const turn1 = session.sendPrompt("First", emit);
+    await channel.next();
     mock.pushMessage({
       type: "result",
       subtype: "success",
@@ -366,17 +372,11 @@ describe("QuerySession.sendPrompt", () => {
       emit,
     );
 
-    // Wait for MCP health check to complete before checking streamInput
-    await new Promise((r) => setTimeout(r, 10));
-
-    // Inspect what streamInput received
-    expect(mock.query.streamInput).toHaveBeenCalled();
-    const iterable = mock.query.streamInput.mock.calls[0]![0];
-    const iterator = iterable[Symbol.asyncIterator]();
-    const { value: sdkMessage } = await iterator.next();
+    // Inspect what the input channel delivers for the second prompt
+    const { value: sdkMessage } = await channel.next();
 
     // Should be a properly formed SDKUserMessage with Anthropic API image format
-    expect(sdkMessage.message.content).toEqual([
+    expect(sdkMessage!.message.content).toEqual([
       { type: "text", text: "Check this screenshot" },
       {
         type: "image",
@@ -387,53 +387,6 @@ describe("QuerySession.sendPrompt", () => {
         },
       },
     ]);
-
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-1",
-      uuid: "u2",
-      total_cost_usd: 0.02,
-      duration_ms: 200,
-      num_turns: 1,
-      result: "",
-      is_error: false,
-    } as unknown as SDKMessage);
-    await turn2;
-
-    session.close();
-  });
-
-  it("feeds prompt via streamInput for subsequent prompts", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    // First prompt (via hanging generator)
-    const turn1 = session.sendPrompt("First prompt", emit);
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-1",
-      uuid: "u1",
-      total_cost_usd: 0.01,
-      duration_ms: 100,
-      num_turns: 1,
-      result: "",
-      is_error: false,
-    } as unknown as SDKMessage);
-    await turn1;
-
-    // Second prompt (via streamInput)
-    const turn2 = session.sendPrompt("Second prompt", emit);
-
-    // Wait for MCP health check to complete before checking streamInput
-    await new Promise((r) => setTimeout(r, 10));
-
-    // streamInput should have been called
-    expect(mock.query.streamInput).toHaveBeenCalled();
 
     mock.pushMessage({
       type: "result",
@@ -812,14 +765,17 @@ describe("QuerySession crash detection", () => {
     expect(session.status).toBe("dead");
   });
 
-  it("rejects a subsequent prompt when streamInput throws", async () => {
+  it("rejects a subsequent prompt as undelivered when the pump crashes before delivery", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(makeDefaultOptions());
     const emit = vi.fn();
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
 
     const turn1 = session.sendPrompt("First", emit);
+    await channel.next();
     mock.pushMessage({
       type: "result",
       subtype: "success",
@@ -833,11 +789,10 @@ describe("QuerySession crash detection", () => {
     } as unknown as SDKMessage);
     await turn1;
 
-    mock.query.streamInput.mockRejectedValue(
-      new Error("ProcessTransport is not ready for writing"),
-    );
-
+    // Transport write failures now surface through the pump (the SDK aborts
+    // the query), not through a per-prompt streamInput rejection.
     const turn2 = session.sendPrompt("Second", emit);
+    mock.crashPump(new Error("ProcessTransport is not ready for writing"));
 
     let caughtError: unknown;
     try {
@@ -2580,5 +2535,195 @@ describe("QuerySession cost attribution", () => {
     expect(result2.costUsd).toBe(10);
 
     session.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persistent input channel
+//
+// The SDK calls transport.endInput() (closing the CLI's stdin) once a
+// streamInput() iterable completes, which schedules the subprocess to exit
+// after the in-flight turn and drops background-task auto-continuations. All
+// input — first prompt, subsequent prompts, mid-turn queued input — must
+// therefore flow through the single prompt iterable handed to the SDK at
+// session creation, and streamInput() must never be called.
+// ---------------------------------------------------------------------------
+
+describe("QuerySession persistent input channel", () => {
+  function promptChannel(): AsyncGenerator<SDKUserMessage> {
+    return queryMock.mock.calls[0]![0].prompt;
+  }
+
+  function successResult(uuid: string): SDKMessage {
+    return {
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage;
+  }
+
+  it("delivers every prompt through the prompt iterable and never calls streamInput", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const channel = promptChannel();
+
+    const turn1 = session.sendPrompt("First prompt", emit);
+    const first = await channel.next();
+    expect(first.done).toBe(false);
+    expect(first.value!.message.content).toEqual([
+      { type: "text", text: "First prompt" },
+    ]);
+
+    mock.pushMessage(successResult("u1"));
+    await turn1;
+
+    const turn2 = session.sendPrompt("Second prompt", emit);
+    expect(mock.query.streamInput).not.toHaveBeenCalled();
+
+    const second = await channel.next();
+    expect(second.done).toBe(false);
+    expect(second.value!.message.content).toEqual([
+      { type: "text", text: "Second prompt" },
+    ]);
+
+    mock.pushMessage(successResult("u2"));
+    await turn2;
+    expect(mock.query.streamInput).not.toHaveBeenCalled();
+
+    session.close();
+  });
+
+  it("delivers queueUserInput content through the channel mid-turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const channel = promptChannel();
+
+    const turn1 = session.sendPrompt("First prompt", emit);
+    await channel.next();
+
+    const queued = session.queueUserInput([
+      { type: "text", text: "queued follow-up" },
+    ]);
+    const delivered = await channel.next();
+    expect(delivered.done).toBe(false);
+    expect(delivered.value!.message.content).toEqual([
+      { type: "text", text: "queued follow-up" },
+    ]);
+    // Delivery settles when the consumer requests the next message (the SDK's
+    // loop does this immediately after each stdin write completes).
+    const pending = channel.next();
+    await queued;
+    void pending;
+    expect(mock.query.streamInput).not.toHaveBeenCalled();
+
+    mock.pushMessage(successResult("u1"));
+    await turn1;
+
+    session.close();
+  });
+
+  it("resolves queueUserInput only once the SDK has consumed the message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const channel = promptChannel();
+
+    let resolved = false;
+    const queued = session
+      .queueUserInput([{ type: "text", text: "gated" }])
+      .then(() => {
+        resolved = true;
+      });
+
+    // Not consumed from the channel yet — acceptance must still be pending.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolved).toBe(false);
+
+    // yield hands the message to the consumer; delivery settles when the
+    // consumer requests the next one (the stdin write has completed).
+    const it1 = await channel.next();
+    expect(it1.done).toBe(false);
+    const pending = channel.next();
+    await queued;
+    expect(resolved).toBe(true);
+
+    void pending;
+    session.close();
+  });
+
+  it("rejects queueUserInput with a tagged error when the session is dead", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    session.close();
+    expect(session.status).toBe("dead");
+    void mock;
+
+    let caught: unknown;
+    try {
+      await session.queueUserInput([{ type: "text", text: "too late" }]);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(isUndeliveredQuerySessionError(caught)).toBe(true);
+  });
+
+  it("rejects an unconsumed queueUserInput when the pump dies", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    const queued = session.queueUserInput([
+      { type: "text", text: "never consumed" },
+    ]);
+    mock.endPump();
+
+    let caught: unknown;
+    try {
+      await queued;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(isUndeliveredQuerySessionError(caught)).toBe(true);
+    expect(session.status).toBe("dead");
+  });
+
+  it("rejects an unconsumed queueUserInput when the session is closed", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    void mock;
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    const queued = session.queueUserInput([
+      { type: "text", text: "never consumed" },
+    ]);
+    session.close();
+
+    let caught: unknown;
+    try {
+      await queued;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(isUndeliveredQuerySessionError(caught)).toBe(true);
   });
 });
