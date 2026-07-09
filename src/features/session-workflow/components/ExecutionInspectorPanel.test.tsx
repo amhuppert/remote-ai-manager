@@ -12,6 +12,12 @@ import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowValidationResultEvent,
 } from "@/lib/workflows/schemas";
+// Radix-backed tabs activate on pointer-down (automatic activation), not on a
+// bare synthetic click event.
+function selectDetailTab(name: RegExp | string) {
+  fireEvent.mouseDown(screen.getByRole("tab", { name }));
+}
+
 const baseHandlers = {
   onDeselectContext: vi.fn(),
   onAddTask: vi.fn(),
@@ -1200,7 +1206,7 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /history/i }));
+    selectDetailTab(/history/i);
 
     expect(screen.getByText("Kept after reset")).toBeInTheDocument();
     expect(screen.queryByText("Discarded by reset")).not.toBeInTheDocument();
@@ -1355,7 +1361,7 @@ describe("ExecutionInspectorPanel — Config tab + overview header", () => {
     // The config content is not mounted until the tab is selected.
     expect(screen.queryByTestId("context-config-tab")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    selectDetailTab("Config");
 
     const tab = screen.getByTestId("context-config-tab");
     // context-plan's resolved implementer is claude opus.
@@ -1418,7 +1424,7 @@ describe("ExecutionInspectorPanel — Config tab editing wiring", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    selectDetailTab("Config");
     fireEvent.change(screen.getByLabelText("Max iterations"), {
       target: { value: "7" },
     });
@@ -1460,7 +1466,7 @@ describe("ExecutionInspectorPanel — Config tab editing wiring", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    selectDetailTab("Config");
     fireEvent.click(screen.getByRole("button", { name: "Pause to edit" }));
     expect(onPauseExecution).toHaveBeenCalledTimes(1);
   });
@@ -1477,9 +1483,84 @@ describe("ExecutionInspectorPanel — Config tab editing wiring", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Config" }));
+    selectDetailTab("Config");
     expect(screen.getByTestId("config-affordance-conflict")).toHaveTextContent(
       /execution changed/i,
     );
+  });
+});
+
+describe("ExecutionInspectorPanel — brief markdown + focus modal", () => {
+  function makeBriefExecution(): GraphWorkflowExecution {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              description: "Plan the **entire** implementation",
+              acceptanceCriteria: "1. Criteria uses `deepEqualJson` everywhere",
+              humanApprovalGate: { enabled: true },
+            }
+          : context,
+    );
+    return createWorkflowExecution({ workingDefinition: definition });
+  }
+
+  function renderDetail() {
+    return render(
+      <ExecutionInspectorPanel
+        execution={makeBriefExecution()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+  }
+
+  it("renders description and acceptance criteria as formatted markdown", async () => {
+    renderDetail();
+
+    const bold = await screen.findByText("entire", undefined, {
+      timeout: 15000,
+    });
+    expect(bold.closest("strong")).toBeTruthy();
+    const code = await screen.findByText("deepEqualJson");
+    expect(code.closest("code")).toBeTruthy();
+  });
+
+  it("opens the acceptance criteria in a focus modal on click", async () => {
+    renderDetail();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /view acceptance criteria/i }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 15000 });
+    expect(within(dialog).getByText("Plan")).toBeInTheDocument();
+    const code = await within(dialog).findByText("deepEqualJson");
+    expect(code.closest("code")).toBeTruthy();
+  });
+
+  it("opens the description in a focus modal on click", async () => {
+    renderDetail();
+
+    fireEvent.click(screen.getByRole("button", { name: /view description/i }));
+
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 15000 });
+    const bold = await within(dialog).findByText("entire");
+    expect(bold.closest("strong")).toBeTruthy();
+  });
+
+  it("shows resolved implementer and enabled gate chips for the selected context", () => {
+    const { container } = renderDetail();
+
+    const strip = container.querySelector('[data-section="resolved-setup"]');
+    expect(strip).not.toBeNull();
+    expect(strip!.textContent).toContain("claude opus · high");
+    expect(strip!.textContent).toContain("Approval");
+    // Disabled gates render no chip.
+    expect(strip!.textContent).not.toContain("Script");
+    expect(strip!.textContent).not.toContain("Questions");
   });
 });

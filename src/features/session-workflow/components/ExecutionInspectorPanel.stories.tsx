@@ -608,7 +608,7 @@ function StoryWrapper(
   return (
     <div
       style={{
-        width: 340,
+        width: 500,
         height: 700,
         background: "var(--bg-void)",
       }}

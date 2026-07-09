@@ -1,7 +1,11 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type {
+  GraphWorkflowAgentConfig,
+  GraphWorkflowAgentValidatorConfig,
+} from "@/lib/workflows/schemas";
 import { cn } from "@/lib/ui/cn";
 
-// Shared glyphs + chips for the workflow-builder inspector rail. Backend
+// Shared glyphs + chips for the workflow inspector rails. Backend
 // identity follows the design system's semantic accents — cyan = Claude,
 // violet = Codex — and the gate glyphs (script / approval / questions) reuse
 // one vocabulary across the resolved-setup strip and the config blocks.
@@ -125,6 +129,21 @@ export function ExpandGlyphIcon({ size = 14 }: IconProps): React.JSX.Element {
       />
     </svg>
   );
+}
+
+export function implementerChipLabel(config: GraphWorkflowAgentConfig): string {
+  const effort = config.reasoningEffort;
+  const agent = `${config.backend} ${config.model}`;
+  return effort ? `${agent} · ${effort}` : agent;
+}
+
+export function validatorChipLabel(
+  validator: GraphWorkflowAgentValidatorConfig,
+): string {
+  if (validator.type === "claude") {
+    return `claude ${validator.agent.model}`;
+  }
+  return `codex ${validator.codex?.model ?? "default"}`;
 }
 
 const CHIP_BASE =

@@ -2,6 +2,23 @@
 
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import {
+  TabsContent,
+  TabsList,
+  TabsRoot,
+  TabsTrigger,
+} from "@/components/ui/Tabs";
+import { SectionLabel } from "@/components/ui/SectionHeader";
+import {
+  ApprovalGlyphIcon,
+  BackendChip,
+  ExpandGlyphIcon,
+  GateChip,
+  QuestionGlyphIcon,
+  ScriptGlyphIcon,
+  implementerChipLabel,
+  validatorChipLabel,
+} from "@/components/workflow-config/InspectorChips";
 import { cn } from "@/lib/ui/cn";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import type { AskQuestionPanelProps } from "@/features/session/hooks/use-user-input-gate";
@@ -18,15 +35,13 @@ const wbBtnDanger =
   "bg-bg-raised text-red border-[var(--cc-red-a25)] hover:bg-[var(--cc-red-a10)]";
 
 const wbInspector =
-  "w-[340px] min-w-[340px] bg-bg-surface border-l border-border-subtle flex flex-col overflow-hidden max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-l-0 max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=log]_&]:hidden";
+  "w-[500px] min-w-[500px] bg-bg-surface border-l border-border-subtle flex flex-col overflow-hidden max-1180:w-[420px] max-1180:min-w-[420px] max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-l-0 max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=log]_&]:hidden";
 const wbInspectorHeader =
-  "flex items-center justify-between gap-sm py-3 px-md border-b border-border-dim min-h-[44px]";
+  "flex items-center gap-sm py-3 px-md border-b border-border-dim min-h-[44px]";
 const wbInspectorTitle =
   "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-primary";
-const wbInspectorBody = "flex-1 overflow-y-auto p-md";
+const wbInspectorBody = "flex-1 overflow-y-auto p-lg";
 const wbOverviewSection = "mb-lg";
-const wbOverviewSectionTitle =
-  "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-secondary mb-sm pb-xs border-b border-border-dim";
 const wbOverviewStatGrid = "grid grid-cols-2 gap-sm mb-lg";
 const wbOverviewStat = "bg-bg-raised border border-border-dim rounded-md p-3";
 const wbOverviewStatValue =
@@ -102,6 +117,117 @@ import type {
 } from "@/lib/workflows/schemas";
 import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
 import ContextConfigTab from "./ContextConfigTab";
+import BriefFocusSheet from "./BriefFocusSheet";
+
+// Small inline affordance in a brief field's label row (opens the focus sheet).
+const wbFieldAction =
+  "inline-flex cursor-pointer items-center gap-[5px] rounded-sm border-0 bg-transparent px-[6px] py-[2px] font-mono text-[0.7rem] text-text-tertiary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+
+// Rendered-Markdown read view for the long-form brief fields; click (or
+// Enter/Space) opens the focus sheet.
+const wbReadView =
+  "w-full box-border cursor-pointer rounded-sm border border-solid border-border-default bg-bg-base px-[14px] py-[10px] text-left font-[inherit] text-[0.8rem] leading-[1.6] text-text-primary transition-[border-color] duration-150 hover:border-border-strong focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+
+const wbFieldLabelInline =
+  "block text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary";
+
+// Hairline-ruled group header (Brief / Tasks / Events / …).
+function GroupHeader({
+  label,
+  meta,
+}: {
+  label: string;
+  meta?: string;
+}): React.JSX.Element {
+  return (
+    <div className="mb-[10px] flex items-center gap-sm">
+      <SectionLabel>{label}</SectionLabel>
+      {meta !== undefined ? (
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
+          {meta}
+        </span>
+      ) : null}
+      <span aria-hidden="true" className="h-px flex-1 bg-border-dim" />
+    </div>
+  );
+}
+
+// Read view for a Markdown brief field. The whole box is a click target that
+// opens the focus sheet; keyboard users get the same via Enter/Space. Long
+// content is clamped — the focus sheet shows it in full.
+function MarkdownReadView({
+  value,
+  ariaLabel,
+  onOpen,
+}: {
+  value: string;
+  ariaLabel: string;
+  onOpen: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      className={wbReadView}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <div className="wb-markdown-inline max-h-[220px] overflow-hidden">
+        <MarkdownContent content={value} />
+      </div>
+    </div>
+  );
+}
+
+type ResolvedContextDefinition =
+  GraphWorkflowExecution["workingDefinition"]["executionContexts"][number];
+
+// At-a-glance summary of the selected context's resolved configuration:
+// implementer + enabled gates as compact chips. Everything renders straight
+// from the execution's already-resolved working definition.
+function ResolvedSetupStrip({
+  context,
+}: {
+  context: ResolvedContextDefinition;
+}): React.JSX.Element {
+  const validator = context.contextValidator;
+  return (
+    <div
+      className="flex flex-shrink-0 flex-wrap items-center gap-[6px] border-b border-solid border-border-dim bg-bg-base px-lg py-[10px]"
+      data-section="resolved-setup"
+    >
+      <BackendChip backend={context.implementer.backend}>
+        {implementerChipLabel(context.implementer)}
+      </BackendChip>
+      {validator?.enabled ? (
+        <BackendChip backend={validator.type === "codex" ? "codex" : "claude"}>
+          Validator · {validatorChipLabel(validator)}
+        </BackendChip>
+      ) : null}
+      {context.scriptValidator.enabled ? (
+        <GateChip tone="neutral" icon={<ScriptGlyphIcon size={13} />}>
+          Script
+        </GateChip>
+      ) : null}
+      {context.humanApprovalGate.enabled ? (
+        <GateChip tone="amber" icon={<ApprovalGlyphIcon size={13} />}>
+          Approval
+        </GateChip>
+      ) : null}
+      {context.askUserQuestions.enabled ? (
+        <GateChip tone="amber" icon={<QuestionGlyphIcon size={13} />}>
+          Questions
+        </GateChip>
+      ) : null}
+    </div>
+  );
+}
 
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
@@ -640,7 +766,7 @@ function OverviewView({
 
         {Object.keys(execution.boundInputs).length > 0 && (
           <section className={wbOverviewSection}>
-            <div className={wbOverviewSectionTitle}>Launch Inputs</div>
+            <GroupHeader label="Launch Inputs" />
             {Object.entries(execution.boundInputs).map(([name, value]) => (
               <div key={name} className={wbExecEvent}>
                 <div className={wbExecEventHeader}>
@@ -656,7 +782,7 @@ function OverviewView({
         )}
 
         <section className={wbOverviewSection}>
-          <div className={wbOverviewSectionTitle}>Events</div>
+          <GroupHeader label="Events" />
           <WorkflowEventLog
             execution={execution}
             events={events}
@@ -666,7 +792,7 @@ function OverviewView({
 
         {history.validationEvents.length > 0 && (
           <section className={wbOverviewSection}>
-            <div className={wbOverviewSectionTitle}>Recent Validations</div>
+            <GroupHeader label="Recent Validations" />
             {(() => {
               const reused = computeReusedSessions(history.validationEvents);
               return history.validationEvents
@@ -685,7 +811,7 @@ function OverviewView({
 
         {history.circuitBreakerEvents.length > 0 && (
           <section className={wbOverviewSection}>
-            <div className={wbOverviewSectionTitle}>Circuit Breakers</div>
+            <GroupHeader label="Circuit Breakers" />
             {history.circuitBreakerEvents.slice(0, 5).map((event, index) => {
               const ctxTitle =
                 execution.workingDefinition.executionContexts.find(
@@ -711,7 +837,7 @@ function OverviewView({
 
         {execution.sharedDocuments.length > 0 && (
           <section className={wbOverviewSection}>
-            <div className={wbOverviewSectionTitle}>Shared Documents</div>
+            <GroupHeader label="Shared Documents" />
             {execution.sharedDocuments.map((doc) => (
               <div key={doc.id} className={wbExecEvent}>
                 <div className={wbExecEventHeader}>
@@ -788,6 +914,9 @@ function DetailView({
   const [addTitle, setAddTitle] = useState("");
   const [addInstructions, setAddInstructions] = useState("");
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [sheetField, setSheetField] = useState<
+    "description" | "acceptanceCriteria" | null
+  >(null);
 
   const context = execution.workingDefinition.executionContexts.find(
     (ctx) => ctx.id === contextId,
@@ -866,12 +995,15 @@ function DetailView({
     <aside className={wbInspector}>
       <header className={wbInspectorHeader}>
         <button
-          className="-mx-2 -my-1 flex cursor-pointer appearance-none items-center gap-[6px] rounded-sm border-0 bg-transparent px-2 py-1 text-[0.72rem] font-medium text-text-secondary transition-all duration-150 hover:bg-bg-elevated hover:text-text-primary"
+          className="-mx-2 -my-1 flex shrink-0 cursor-pointer appearance-none items-center gap-[6px] rounded-sm border-0 bg-transparent px-2 py-1 text-[0.72rem] font-medium text-text-secondary transition-all duration-150 hover:bg-bg-elevated hover:text-text-primary"
           onClick={onDeselectContext}
           type="button"
         >
           ◂ Back
         </button>
+        <span className="min-w-0 flex-1 overflow-hidden text-[0.78rem] font-semibold text-ellipsis whitespace-nowrap text-text-primary">
+          {context.title}
+        </span>
         <span
           className={cn(
             graphNodeBadgeBase,
@@ -892,84 +1024,95 @@ function DetailView({
         )}
       </header>
 
-      <div className="flex shrink-0 border-b border-border-dim bg-bg-surface">
-        <button
-          className={cn(
-            "-mb-px flex-1 cursor-pointer appearance-none border-0 border-b-2 bg-transparent px-3 py-[10px] text-center text-[0.72rem] font-semibold tracking-[0.06em] uppercase transition-all duration-150",
-            activeTab === "tasks"
-              ? "border-b-cyan text-cyan"
-              : "border-b-transparent text-text-tertiary hover:text-text-secondary",
-          )}
-          onClick={() => setActiveTab("tasks")}
-          type="button"
-        >
-          Tasks
-        </button>
-        <button
-          className={cn(
-            "-mb-px flex-1 cursor-pointer appearance-none border-0 border-b-2 bg-transparent px-3 py-[10px] text-center text-[0.72rem] font-semibold tracking-[0.06em] uppercase transition-all duration-150",
-            activeTab === "config"
-              ? "border-b-cyan text-cyan"
-              : "border-b-transparent text-text-tertiary hover:text-text-secondary",
-          )}
-          onClick={() => setActiveTab("config")}
-          type="button"
-        >
-          Config
-        </button>
-        <button
-          className={cn(
-            "-mb-px flex-1 cursor-pointer appearance-none border-0 border-b-2 bg-transparent px-3 py-[10px] text-center text-[0.72rem] font-semibold tracking-[0.06em] uppercase transition-all duration-150",
-            activeTab === "history"
-              ? "border-b-cyan text-cyan"
-              : "border-b-transparent text-text-tertiary hover:text-text-secondary",
-          )}
-          onClick={() => setActiveTab("history")}
-          type="button"
-        >
-          History
-        </button>
-      </div>
+      <ResolvedSetupStrip context={context} />
 
-      <div className={cn(wbInspectorBody, "wb-inspector-body")}>
-        {userInputPanel && (
-          <section className={wbOverviewSection}>
-            <div className={wbOverviewSectionTitle}>Question</div>
-            <AskQuestionPanel {...userInputPanel} compact />
-          </section>
-        )}
-        {contextHaltReason && (
-          <ContextHaltCard primary={contextHaltReason} variant="card" />
-        )}
-        {context.description && (
-          <div className="mb-md border-b border-border-dim pb-sm text-[0.75rem] leading-[1.5] text-text-secondary">
-            <CollapsibleText maxCollapsedHeight={100}>
-              <div className="wb-markdown-inline">
-                <MarkdownContent content={context.description} />
-              </div>
-            </CollapsibleText>
-          </div>
-        )}
-
-        <div className={wbOverviewStatGrid}>
-          <div className={wbOverviewStat}>
-            <div className={wbOverviewStatValue}>
-              {completedCount}/{totalCount}
-            </div>
-            <div className={wbOverviewStatLabel}>Tasks</div>
-          </div>
-          <div className={wbOverviewStat}>
-            <div className={wbOverviewStatValue}>{iterationCount}</div>
-            <div className={wbOverviewStatLabel}>Iterations</div>
-          </div>
+      <TabsRoot
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as DetailTab)}
+        layoutClassName="flex min-h-0 flex-1 flex-col"
+      >
+        <div className="shrink-0 border-b border-solid border-border-dim px-md py-[8px]">
+          <TabsList aria-label="Context inspector sections">
+            <TabsTrigger value="tasks">Tasks</TabsTrigger>
+            <TabsTrigger value="config">Config</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+          </TabsList>
         </div>
 
-        {activeTab === "tasks" && (
-          <>
+        <div className={cn(wbInspectorBody, "wb-inspector-body", "min-h-0")}>
+          {userInputPanel && (
             <section className={wbOverviewSection}>
-              <div className={wbOverviewSectionTitle}>
-                Tasks ({completedCount}/{totalCount})
+              <GroupHeader label="Question" />
+              <AskQuestionPanel {...userInputPanel} compact />
+            </section>
+          )}
+          {contextHaltReason && (
+            <ContextHaltCard primary={contextHaltReason} variant="card" />
+          )}
+
+          <div className={wbOverviewStatGrid}>
+            <div className={wbOverviewStat}>
+              <div className={wbOverviewStatValue}>
+                {completedCount}/{totalCount}
               </div>
+              <div className={wbOverviewStatLabel}>Tasks</div>
+            </div>
+            <div className={wbOverviewStat}>
+              <div className={wbOverviewStatValue}>{iterationCount}</div>
+              <div className={wbOverviewStatLabel}>Iterations</div>
+            </div>
+          </div>
+
+          <TabsContent value="tasks">
+            <section className={wbOverviewSection} data-section="brief">
+              <GroupHeader label="Brief" />
+              <div className="flex flex-col gap-md">
+                {context.description && (
+                  <div>
+                    <div className="mb-xs flex items-center justify-between">
+                      <span className={wbFieldLabelInline}>Description</span>
+                      <button
+                        type="button"
+                        className={wbFieldAction}
+                        onClick={() => setSheetField("description")}
+                      >
+                        <ExpandGlyphIcon /> Open
+                      </button>
+                    </div>
+                    <MarkdownReadView
+                      value={context.description}
+                      ariaLabel="View description"
+                      onOpen={() => setSheetField("description")}
+                    />
+                  </div>
+                )}
+                <div>
+                  <div className="mb-xs flex items-center justify-between">
+                    <span className={wbFieldLabelInline}>
+                      Acceptance criteria
+                    </span>
+                    <button
+                      type="button"
+                      className={wbFieldAction}
+                      onClick={() => setSheetField("acceptanceCriteria")}
+                    >
+                      <ExpandGlyphIcon /> Open
+                    </button>
+                  </div>
+                  <MarkdownReadView
+                    value={context.acceptanceCriteria}
+                    ariaLabel="View acceptance criteria"
+                    onOpen={() => setSheetField("acceptanceCriteria")}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className={wbOverviewSection}>
+              <GroupHeader
+                label="Tasks"
+                meta={`${completedCount}/${totalCount}`}
+              />
               <div>
                 {tasks.map((task, index) => {
                   const taskState = execution.taskStates[task.id];
@@ -1160,7 +1303,7 @@ function DetailView({
 
             {canAddTasks && (
               <section className={wbOverviewSection}>
-                <div className={wbOverviewSectionTitle}>Add Task</div>
+                <GroupHeader label="Add Task" />
                 <label className="mb-md">
                   <span className="mb-xs block text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
                     Title
@@ -1202,29 +1345,27 @@ function DetailView({
                 </button>
               </section>
             )}
-          </>
-        )}
+          </TabsContent>
 
-        {activeTab === "config" && (
-          <ContextConfigTab
-            key={contextId}
-            execution={execution}
-            contextId={contextId}
-            onSaveContextConfig={onSaveContextConfig}
-            onPauseExecution={onPauseExecution}
-            onResumeExecution={onResumeExecution}
-            isSaving={isSavingConfig}
-            isPausing={isPausingExecution}
-            isResuming={isResumingExecution}
-            editConflict={configEditConflict}
-            saveSucceeded={configSaveSucceeded}
-          />
-        )}
+          <TabsContent value="config">
+            <ContextConfigTab
+              key={contextId}
+              execution={execution}
+              contextId={contextId}
+              onSaveContextConfig={onSaveContextConfig}
+              onPauseExecution={onPauseExecution}
+              onResumeExecution={onResumeExecution}
+              isSaving={isSavingConfig}
+              isPausing={isPausingExecution}
+              isResuming={isResumingExecution}
+              editConflict={configEditConflict}
+              saveSucceeded={configSaveSucceeded}
+            />
+          </TabsContent>
 
-        {activeTab === "history" && (
-          <>
+          <TabsContent value="history">
             <section className={wbOverviewSection}>
-              <div className={wbOverviewSectionTitle}>Events</div>
+              <GroupHeader label="Events" />
               <WorkflowEventLog
                 execution={execution}
                 events={events}
@@ -1233,7 +1374,7 @@ function DetailView({
               />
             </section>
             <section className={wbOverviewSection}>
-              <div className={wbOverviewSectionTitle}>Validations</div>
+              <GroupHeader label="Validations" />
               {history.validationEvents.length > 0 ? (
                 (() => {
                   const reused = computeReusedSessions(
@@ -1259,7 +1400,7 @@ function DetailView({
 
             {history.circuitBreakerEvents.length > 0 && (
               <section className={wbOverviewSection}>
-                <div className={wbOverviewSectionTitle}>Circuit Breakers</div>
+                <GroupHeader label="Circuit Breakers" />
                 {history.circuitBreakerEvents.map((event, index) => (
                   <div key={`cb-${index}`} className={wbExecEvent}>
                     <div className={wbExecEventHeader}>
@@ -1275,9 +1416,26 @@ function DetailView({
                 ))}
               </section>
             )}
-          </>
-        )}
-      </div>
+          </TabsContent>
+        </div>
+      </TabsRoot>
+      <BriefFocusSheet
+        open={sheetField !== null}
+        onOpenChange={(open) => {
+          if (!open) setSheetField(null);
+        }}
+        fieldLabel={
+          sheetField === "acceptanceCriteria"
+            ? "Acceptance criteria"
+            : "Description"
+        }
+        contextTitle={context.title}
+        content={
+          sheetField === "acceptanceCriteria"
+            ? context.acceptanceCriteria
+            : (context.description ?? "")
+        }
+      />
       <ConfirmDialog
         open={resetConfirmOpen}
         title="Reset context?"

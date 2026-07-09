@@ -67,7 +67,9 @@ import {
   GateChip,
   QuestionGlyphIcon,
   ScriptGlyphIcon,
-} from "./InspectorChips";
+  implementerChipLabel,
+  validatorChipLabel,
+} from "@/components/workflow-config/InspectorChips";
 
 const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
   ssr: false,
@@ -317,21 +319,6 @@ function summarizeCircuitBreaker(
 // summary keeps only the negotiation settings.
 function summarizeCollaboration(config: WorkflowCollaborationConfig): string {
   return `${config.negotiationRounds} rounds · auto ${config.autonomousResolutionThreshold}`;
-}
-
-function implementerChipLabel(config: GraphWorkflowAgentConfig): string {
-  const effort = config.reasoningEffort;
-  const agent = `${config.backend} ${config.model}`;
-  return effort ? `${agent} · ${effort}` : agent;
-}
-
-function validatorChipLabel(
-  validator: GraphWorkflowAgentValidatorConfig,
-): string {
-  if (validator.type === "claude") {
-    return `claude ${validator.agent.model}`;
-  }
-  return `codex ${validator.codex?.model ?? "default"}`;
 }
 
 type ResolvedContextCascade = {
