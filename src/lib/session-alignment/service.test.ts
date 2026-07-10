@@ -322,8 +322,54 @@ describe("fillDraft", () => {
     expect(
       h.repo.findActiveVersionNumber(PROJECT_PATH, SESSION_NAME),
     ).toBeNull();
-    // Filling a draft is not an activation → it must not broadcast.
-    expect(h.broadcasts).toHaveLength(0);
+    // Draft-ready broadcasts so every open conversation surfaces the
+    // Approve-Charter banner without a refetch.
+    expect(h.broadcasts).toHaveLength(1);
+    expect(h.broadcasts[0]).toMatchObject({
+      type: "session-alignment-updated",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      activeVersion: null,
+      hasDraft: true,
+    });
+  });
+
+  it("broadcasts the governing active version alongside a ready redraft", async () => {
+    const first = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+    await h.service.fillDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      content: "v1",
+    });
+    await h.service.approveDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      draftId: first.draftId,
+    });
+    await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+    h.broadcasts.length = 0;
+
+    await h.service.fillDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      content: "v2 redraft",
+    });
+
+    expect(h.broadcasts).toHaveLength(1);
+    expect(h.broadcasts[0]).toMatchObject({
+      activeVersion: 1,
+      hasDraft: true,
+    });
   });
 });
 
@@ -340,6 +386,7 @@ describe("approveDraft", () => {
       conversationId: CONVERSATION_ID,
       content: "# Mission\nVersion one charter.",
     });
+    h.broadcasts.length = 0;
 
     const activated = await h.service.approveDraft({
       projectPath: PROJECT_PATH,
@@ -462,6 +509,7 @@ describe("approveDraft", () => {
       conversationId: CONVERSATION_ID,
       content: "still activates",
     });
+    broadcasts.length = 0;
     const activated = await service.approveDraft({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
@@ -504,7 +552,7 @@ describe("approveDraft", () => {
 });
 
 describe("rejectDraft", () => {
-  it("discards an open draft and broadcasts nothing, with no active charter", async () => {
+  it("discards an open draft and broadcasts the dismissal, with no active charter", async () => {
     const begin = await h.service.beginDraft({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
@@ -516,6 +564,7 @@ describe("rejectDraft", () => {
       conversationId: CONVERSATION_ID,
       content: "to be discarded",
     });
+    h.broadcasts.length = 0;
 
     await h.service.rejectDraft({
       projectPath: PROJECT_PATH,
@@ -526,7 +575,16 @@ describe("rejectDraft", () => {
     expect(h.repo.findVersionById(begin.draftId)).toBeNull();
     expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
     expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
-    expect(h.broadcasts).toHaveLength(0);
+    // The dismissal broadcasts so every open conversation drops the
+    // Approve-Charter banner without a refetch.
+    expect(h.broadcasts).toHaveLength(1);
+    expect(h.broadcasts[0]).toMatchObject({
+      type: "session-alignment-updated",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      activeVersion: null,
+      hasDraft: false,
+    });
   });
 
   it("leaves the prior active version governing after rejecting a redraft", async () => {
@@ -560,6 +618,7 @@ describe("rejectDraft", () => {
       conversationId: CONVERSATION_ID,
       content: "# Mission\nRejected rewrite.",
     });
+    h.broadcasts.length = 0;
     await h.service.rejectDraft({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
@@ -572,9 +631,14 @@ describe("rejectDraft", () => {
     expect(stillActive?.content).toBe("# Mission\nGoverning charter.");
     expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
 
-    // Reject changes no charter → no new mirror write, no broadcast.
+    // Reject changes no charter → no new mirror write; the dismissal
+    // broadcast still reports the untouched governing version.
     expect(h.mirrorCalls).toHaveLength(mirrorCallsBefore);
-    expect(h.broadcasts).toHaveLength(0);
+    expect(h.broadcasts).toHaveLength(1);
+    expect(h.broadcasts[0]).toMatchObject({
+      activeVersion: 1,
+      hasDraft: false,
+    });
   });
 
   it("rejects rejecting a non-existent draft", async () => {

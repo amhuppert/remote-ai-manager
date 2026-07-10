@@ -359,6 +359,35 @@ export function createSessionAlignmentService(
   }
 
   /**
+   * Broadcast a draft-lifecycle transition (draft ready for review, or draft
+   * discarded) so every open conversation shows/drops the Approve-Charter
+   * banner without a refetch. The active version is untouched by these
+   * transitions and is reported as-is.
+   */
+  function broadcastDraftState(
+    projectPath: string,
+    sessionName: string,
+    hasDraft: boolean,
+  ): void {
+    broadcast(
+      {
+        type: "session-alignment-updated",
+        projectPath,
+        sessionName,
+        activeVersion: deps.repo.findActiveVersionNumber(
+          projectPath,
+          sessionName,
+        ),
+        hasDraft,
+        pendingProposalBatchIds: deps.repo
+          .findPendingProposalBatches(projectPath, sessionName)
+          .map((batch) => batch.batchId),
+      },
+      { projectPath, sessionName, hasDraft },
+    );
+  }
+
+  /**
    * Post-commit publication shared by every path that makes a version active:
    * best-effort worktree mirror (a failure must NOT fail activation, R8.3) and
    * the `session-alignment-updated` broadcast. The version is already persisted
@@ -524,6 +553,7 @@ export function createSessionAlignmentService(
         return { status: "activated", version: activated.version };
       }
 
+      broadcastDraftState(projectPath, sessionName, true);
       return { status: "draft_ready", version: null };
     },
 
@@ -558,7 +588,7 @@ export function createSessionAlignmentService(
         );
       }
 
-      // Discard only; the active charter is untouched and no event fires.
+      // Discard only; the active charter is untouched.
       deps.repo.deleteVersionById(projectPath, sessionName, draftId);
 
       logger.info("align.reject_draft", {
@@ -568,6 +598,8 @@ export function createSessionAlignmentService(
         conversationId: draft.authorConversationId,
         draftId,
       });
+
+      broadcastDraftState(projectPath, sessionName, false);
     },
 
     async proposeDecisions(input) {
