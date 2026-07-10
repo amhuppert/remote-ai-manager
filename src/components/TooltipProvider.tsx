@@ -97,6 +97,15 @@ export default function TooltipProvider(): React.JSX.Element | null {
       positionTooltip(target, text);
     }
 
+    function hideNow() {
+      if (hideTimeoutRef.current) {
+        clearTimeout(hideTimeoutRef.current);
+        hideTimeoutRef.current = null;
+      }
+      currentTargetRef.current = null;
+      setTooltip((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+    }
+
     function handleMouseLeave(e: Event) {
       const target = (e.target as Element).closest?.("[data-tooltip]");
       if (!target || target !== currentTargetRef.current) return;
@@ -105,6 +114,27 @@ export default function TooltipProvider(): React.JSX.Element | null {
         setTooltip((prev) => ({ ...prev, visible: false }));
         currentTargetRef.current = null;
       }, 50);
+    }
+
+    // A press anywhere dismisses the tooltip — the trigger itself or elsewhere
+    // on the page. Essential for triggers that flip to `disabled` on click
+    // (e.g. a mutation going pending): a disabled element never fires
+    // mouseleave, so the hover-hide path above can never run for it.
+    function handlePointerDown() {
+      if (currentTargetRef.current) hideNow();
+    }
+
+    // Self-heal when a mouseleave was never delivered — the trigger was
+    // disabled or unmounted while hovered. As soon as the pointer is over
+    // anything outside the tracked trigger (or the trigger has detached), drop
+    // the tooltip. Cheap: no-ops entirely unless a tooltip is currently shown.
+    function handlePointerMove(e: Event) {
+      const active = currentTargetRef.current;
+      if (!active) return;
+      const node = e.target;
+      const stillInside =
+        node instanceof Node && active.isConnected && active.contains(node);
+      if (!stillInside) hideNow();
     }
 
     function clearLongPress() {
@@ -143,6 +173,11 @@ export default function TooltipProvider(): React.JSX.Element | null {
 
     document.addEventListener("mouseenter", handleMouseEnter, true);
     document.addEventListener("mouseleave", handleMouseLeave, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("pointermove", handlePointerMove, {
+      capture: true,
+      passive: true,
+    });
     document.addEventListener("touchstart", handleTouchStart, {
       capture: true,
       passive: true,
@@ -157,6 +192,8 @@ export default function TooltipProvider(): React.JSX.Element | null {
     return () => {
       document.removeEventListener("mouseenter", handleMouseEnter, true);
       document.removeEventListener("mouseleave", handleMouseLeave, true);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("pointermove", handlePointerMove, true);
       document.removeEventListener("touchstart", handleTouchStart, true);
       document.removeEventListener("touchend", handleTouchEnd, true);
       document.removeEventListener("touchcancel", handleTouchEnd, true);
