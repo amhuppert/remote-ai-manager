@@ -135,6 +135,7 @@ const conversationsTableRowSchema = z.object({
   unread: z.union([z.literal(0), z.literal(1)]),
   pending_queue: z.string().nullable(),
   last_seen_alignment_version: z.number().int().nullable(),
+  pending_agent_notices: z.string().nullable(),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -172,6 +173,7 @@ interface SqlBindRow {
   unread: number;
   pending_queue: string | null;
   last_seen_alignment_version: number | null;
+  pending_agent_notices: string | null;
 }
 
 /**
@@ -192,6 +194,7 @@ function conversationToSqlBind(
     ...encodeSharedConversationColumns(conversation),
     pending_queue: jsonOrNull(conversation.pendingQueue),
     last_seen_alignment_version: conversation.lastSeenAlignmentVersion,
+    pending_agent_notices: jsonOrNull(conversation.pendingAgentNotices),
   };
 }
 
@@ -216,6 +219,7 @@ export function canonicalConversationRow(
 }
 
 const pendingQueueArraySchema = z.array(pendingQueuedMessageSchema);
+const pendingAgentNoticesArraySchema = z.array(z.string());
 
 function rowToDomain(rawRow: unknown): {
   projectPath: string;
@@ -246,11 +250,23 @@ function rowToDomain(rawRow: unknown): {
     return throwConversationValidationError(row.id, pendingQueue.issues);
   }
 
+  const pendingAgentNotices = parseJsonColumn(
+    "pendingAgentNotices",
+    row.pending_agent_notices,
+    pendingAgentNoticesArraySchema,
+    "default",
+    [],
+  );
+  if (!pendingAgentNotices.ok) {
+    return throwConversationValidationError(row.id, pendingAgentNotices.issues);
+  }
+
   const candidate: Record<string, unknown> = {
     id: row.id,
     ...decodeSharedConversationColumns(row.id, row),
     pendingQueue: pendingQueue.value ?? [],
     lastSeenAlignmentVersion: row.last_seen_alignment_version,
+    pendingAgentNotices: pendingAgentNotices.value ?? [],
   };
 
   const result = conversationStateSchema.safeParse(candidate);
@@ -320,6 +336,7 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "unread",
   "pending_queue",
   "last_seen_alignment_version",
+  "pending_agent_notices",
 ];
 
 function rawRowsEqual(
@@ -394,7 +411,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
-       unread, pending_queue, last_seen_alignment_version
+       unread, pending_queue, last_seen_alignment_version, pending_agent_notices
      ) VALUES (
        @id, @project_path, @session_name, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
@@ -402,7 +419,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
-       @unread, @pending_queue, @last_seen_alignment_version
+       @unread, @pending_queue, @last_seen_alignment_version, @pending_agent_notices
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -436,7 +453,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        agent_capabilities_runtime = excluded.agent_capabilities_runtime,
        unread                     = excluded.unread,
        pending_queue              = excluded.pending_queue,
-       last_seen_alignment_version = excluded.last_seen_alignment_version`,
+       last_seen_alignment_version = excluded.last_seen_alignment_version,
+       pending_agent_notices      = excluded.pending_agent_notices`,
   );
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
   const setPendingPromptTextStmt = db.prepare(

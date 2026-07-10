@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type {
   SDKMessage,
   SDKUserMessage,
@@ -2725,5 +2725,345 @@ describe("QuerySession persistent input channel", () => {
     }
     expect(caught).toBeInstanceOf(Error);
     expect(isUndeliveredQuerySessionError(caught)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idle-timer / waitable-task races (incident 2026-07-09: a stale idle timer
+// armed while the waitable set was momentarily empty fired later and killed
+// the subprocess — and every background task in it — mid-wait)
+// ---------------------------------------------------------------------------
+
+describe("QuerySession idle-timer vs waitable-task races", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    toolUseId?: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      ...(toolUseId ? { tool_use_id: toolUseId } : {}),
+      description: "running a build",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskNotification(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    status: "completed" | "failed" | "stopped",
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status,
+      output_file: "/tmp/out.txt",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: `u-notify-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  it("disarms a live idle timer when a waitable task starts between turns", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions({ idleTtlMs: 100 }));
+
+    // A turn with no tasks — its result arms the idle timer.
+    const turn = session.sendPrompt("quick check", vi.fn());
+    pushResult(mock, "u-r1");
+    await turn;
+
+    // A waitable task starts BETWEEN turns (idle-discard path, no handler).
+    pushTaskStarted(mock, "task-a", "tool-1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    // The already-armed timer must not fire and kill the task's subprocess.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(session.status).toBe("alive");
+
+    vi.useRealTimers();
+    session.close();
+  });
+
+  it("does not let a stale idle timer kill a waitable task started during an external turn (incident replay)", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onComplete = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({
+        idleTtlMs: 100,
+        externalTurnHandler: { emit: vi.fn(), onComplete },
+      }),
+    );
+
+    // Turn 1 ends with an empty waitable set — the idle timer arms.
+    const turn = session.sendPrompt("kick off", vi.fn());
+    pushResult(mock, "u-r1");
+    await turn;
+
+    // Auto-continuation: an external turn opens and starts a waitable watcher,
+    // then completes while the watcher is still running.
+    pushTaskStarted(mock, "task-w", "tool-w");
+    await vi.advanceTimersByTimeAsync(0);
+    pushResult(mock, "u-r2");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-w",
+    ]);
+
+    // The timer armed at turn 1's result must not fire and kill the watcher.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(session.status).toBe("alive");
+
+    // Settlement wakes one more external turn; once it completes with the
+    // waitable set drained, the idle timer arms and closes the session.
+    pushTaskNotification(mock, "task-w", "completed");
+    await vi.advanceTimersByTimeAsync(0);
+    pushResult(mock, "u-r3");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(session.status).toBe("dead");
+
+    vi.useRealTimers();
+  });
+
+  it("arms the idle timer when a between-turns settlement drains the waitable set with no continuation", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions({ idleTtlMs: 100 }));
+
+    // The final turn leaves a waitable task in flight — no arming at result.
+    const turn = session.sendPrompt("run the suite in the background", vi.fn());
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-r1");
+    await turn;
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(session.status).toBe("alive");
+
+    // The task settles between turns and no auto-continuation follows (no
+    // handler). The drain must arm the idle timer — otherwise the subprocess
+    // leaks until session deletion.
+    pushTaskNotification(mock, "task-a", "completed");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(session.status).toBe("dead");
+
+    vi.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Background-task loss surfacing: a session death with waitable tasks still
+// in flight kills those processes and the wake-on-complete contract — the
+// caller must be told so it can surface the loss.
+// ---------------------------------------------------------------------------
+
+describe("QuerySession onBackgroundTasksLost", () => {
+  function pushAssistantToolUse(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    toolName: string,
+  ) {
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: `u-asst-${toolUseId}`,
+      message: {
+        content: [
+          { type: "tool_use", id: toolUseId, name: toolName, input: {} },
+        ],
+      },
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    toolUseId?: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      ...(toolUseId ? { tool_use_id: toolUseId } : {}),
+      description: "full regression suite",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  async function runTurnWithInFlightTask(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    session: ReturnType<typeof createQuerySession>,
+  ) {
+    const turn = session.sendPrompt("run it in the background", vi.fn());
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-r1");
+    await turn;
+  }
+
+  it("invokes onBackgroundTasksLost with the lost tasks when closed mid-wait", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundTasksLost = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundTasksLost }),
+    );
+    await runTurnWithInFlightTask(mock, session);
+
+    session.close();
+
+    expect(onBackgroundTasksLost).toHaveBeenCalledTimes(1);
+    expect(onBackgroundTasksLost).toHaveBeenCalledWith({
+      tasks: [{ taskId: "task-a", description: "full regression suite" }],
+      reason: "closed",
+    });
+  });
+
+  it("invokes onBackgroundTasksLost when the pump completes with tasks in flight", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundTasksLost = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundTasksLost }),
+    );
+    await runTurnWithInFlightTask(mock, session);
+
+    mock.endPump();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.status).toBe("dead");
+    expect(onBackgroundTasksLost).toHaveBeenCalledTimes(1);
+    expect(onBackgroundTasksLost.mock.calls[0]![0]).toMatchObject({
+      reason: "pump_completed",
+      tasks: [{ taskId: "task-a" }],
+    });
+  });
+
+  it("does not invoke onBackgroundTasksLost when the waitable set is empty", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundTasksLost = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundTasksLost }),
+    );
+    const turn = session.sendPrompt("no tasks here", vi.fn());
+    pushResult(mock, "u-r1");
+    await turn;
+
+    session.close();
+    expect(onBackgroundTasksLost).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke onBackgroundTasksLost for excluded (Monitor) tasks", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundTasksLost = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundTasksLost }),
+    );
+    const turn = session.sendPrompt("watch the dev server", vi.fn());
+    pushAssistantToolUse(mock, "tool-mon", "Monitor");
+    pushTaskStarted(mock, "watch-1", "tool-mon");
+    pushResult(mock, "u-r1");
+    await turn;
+
+    session.close();
+    expect(onBackgroundTasksLost).not.toHaveBeenCalled();
+  });
+
+  it("invokes onBackgroundTasksLost exactly once when close follows pump death", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundTasksLost = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundTasksLost }),
+    );
+    await runTurnWithInFlightTask(mock, session);
+
+    mock.endPump();
+    await new Promise((resolve) => setImmediate(resolve));
+    session.close();
+
+    expect(onBackgroundTasksLost).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a throwing onBackgroundTasksLost callback and still tears down", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundTasksLost = vi.fn(() => {
+      throw new Error("boom");
+    });
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundTasksLost }),
+    );
+    await runTurnWithInFlightTask(mock, session);
+
+    expect(() => session.close()).not.toThrow();
+    expect(session.status).toBe("dead");
   });
 });

@@ -26,6 +26,7 @@ import type {
   ConversationBackendTurnResult,
   ConversationBackendEvent,
   ConversationImageRef,
+  BackgroundTasksLostInfo,
 } from "@/lib/agent-backends/conversation";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
@@ -103,6 +104,13 @@ import { getDebugManifestPath } from "@/lib/debug-log/service";
 import fs from "node:fs/promises";
 
 const logger = createLogger("conversation-actor");
+
+/**
+ * Cap for `pendingAgentNotices` growth between drains (the persisted-blob
+ * bounds gate requires every persisted collection to be bounded). Repeated
+ * losses with no intervening prompt keep only the most recent entries.
+ */
+const MAX_PENDING_AGENT_NOTICES = 10;
 
 const FOCUS_MEMORY_DESCRIPTION =
   "Current work-in-progress and remaining tasks for this session";
@@ -258,6 +266,11 @@ export interface ActorImplementationDeps {
     label: string,
     mutate: (conversation: ConversationState) => void,
   ): Promise<void>;
+  getConversation(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
   getSessionState(
     projectPath: string,
     sessionName: string,
@@ -566,6 +579,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     getProjectDisplayName: projectResolverMod.getProjectDisplayName,
     getDebugLogUrl: debugLogMod.getDebugLogUrl,
     mutateConversation: stateMod.mutateConversation,
+    getConversation: stateMod.getConversation,
     getSessionState: stateMod.getSession,
     getActiveAlignmentInjection: (projectPath: string, sessionName: string) =>
       alignmentService.getActiveInjection(projectPath, sessionName),
@@ -1659,6 +1673,29 @@ export async function executePromptForMachine(
       }
     }
 
+    // Pending agent notices — messages recorded while the conversation had no
+    // live backend session (e.g. background tasks lost with a dead session).
+    // Injected into this runtime's instructions and drained below once the
+    // runtime exists, so a notice is delivered exactly once.
+    const pendingAgentNotices = isProjectConversation
+      ? []
+      : ((
+          await deps.getConversation(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+          )
+        )?.pendingAgentNotices ?? []);
+    const pendingNoticesInstruction =
+      pendingAgentNotices.length > 0
+        ? [
+            "## Session notices",
+            "The following was recorded for this conversation while no agent session was live. Act on it before trusting prior assumptions:",
+            "",
+            ...pendingAgentNotices.map((n) => `- ${n}`),
+          ].join("\n")
+        : null;
+
     // Build session instructions (baked into the runtime once). Project
     // conversations run in the main worktree, so they use a CC context that
     // omits the per-session dev-server promise.
@@ -1680,6 +1717,7 @@ export async function executePromptForMachine(
       sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
       deps.getCodexToolPromptHint(config.codex?.enabled === true),
       referenceDocsPrompt,
+      pendingNoticesInstruction,
     ].filter((s): s is string => s != null && s.length > 0);
     const portableMcp = await deps.composePortableMcpForConversation({
       backend: input.agentBackend,
@@ -1794,6 +1832,58 @@ export async function executePromptForMachine(
       },
     );
 
+    // Surface background tasks that die with the session: a visible notice
+    // row for the user, and (session conversations only — the project
+    // sentinel cannot address the session aggregate) a durable agent notice
+    // drained into the NEXT runtime's instructions, so the agent learns its
+    // watchers are gone instead of waiting for a wake that can never come.
+    const onBackgroundTasksLost = (info: BackgroundTasksLostInfo): void => {
+      const summary = info.tasks
+        .map((t) =>
+          t.description ? `${t.taskId} (${t.description})` : t.taskId,
+        )
+        .join(", ");
+      logger.warn("prompt.background_tasks_lost_surfaced", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        reason: info.reason,
+        taskCount: info.tasks.length,
+      });
+      void safeAppendWithMeta(input.conversationId, {
+        timestamp: new Date().toISOString(),
+        type: "notice",
+        role: "notice",
+        content: [
+          {
+            type: "text",
+            text: `${info.tasks.length} background task(s) were terminated with the agent session (${info.reason}): ${summary}. Their completion can no longer wake the agent.`,
+          },
+        ],
+      });
+      if (isProjectConversation) return;
+      const reminder = `Your previous agent session ended (${info.reason}) while ${info.tasks.length} background task(s) were still running: ${summary}. Those processes were terminated with the session — their completion notifications will never arrive. Do not wait for them; check any output files on disk and re-run whatever is still needed.`;
+      void deps
+        .mutateConversation(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+          "background_tasks_lost",
+          (conversation) => {
+            conversation.pendingAgentNotices = [
+              ...conversation.pendingAgentNotices,
+              reminder,
+            ].slice(-MAX_PENDING_AGENT_NOTICES);
+          },
+        )
+        .catch((err) => {
+          logger.warn("prompt.background_tasks_lost_persist_failed", {
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    };
+
     const newRuntime = await factory.createRuntime({
       conversationId: input.conversationId,
       projectPath: input.projectPath,
@@ -1822,6 +1912,7 @@ export async function executePromptForMachine(
           }
         : {}),
       onExternalTurnEvent: externalTurnHandler,
+      onBackgroundTasksLost,
     });
 
     // Register in runtime-registry and local state
@@ -1831,6 +1922,33 @@ export async function executePromptForMachine(
     await seedRuntimeMcpState(portableMcp);
     if (capabilityRuntimeStateSeed) {
       await seedRuntimeCapabilityState(capabilityRuntimeStateSeed);
+    }
+
+    // Drain exactly the notices this runtime consumed. A notice recorded
+    // between the read above and this write (e.g. the freshly-created
+    // session dying immediately with tasks in flight) survives for the next
+    // runtime instead of being wiped.
+    if (pendingAgentNotices.length > 0 && !isProjectConversation) {
+      const consumed = [...pendingAgentNotices];
+      await deps.mutateConversation(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+        "drain_agent_notices",
+        (conversation) => {
+          const remaining = [...conversation.pendingAgentNotices];
+          for (const notice of consumed) {
+            const idx = remaining.indexOf(notice);
+            if (idx !== -1) remaining.splice(idx, 1);
+          }
+          conversation.pendingAgentNotices = remaining;
+        },
+      );
+      logger.info("prompt.agent_notices_drained", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        noticeCount: consumed.length,
+      });
     }
 
     return newRuntime;

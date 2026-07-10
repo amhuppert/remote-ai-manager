@@ -68,6 +68,7 @@ function stateWithAllScopes(): ManagerState {
                 backendRef: null,
                 unread: false,
                 lastSeenAlignmentVersion: null,
+                pendingAgentNotices: [],
                 pendingQueue: [],
               },
             ],

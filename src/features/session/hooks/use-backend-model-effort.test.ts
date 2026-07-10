@@ -31,6 +31,7 @@ function makeConversation(
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     forkedFrom: null,
     role: null,
     activeTurnSource: null,

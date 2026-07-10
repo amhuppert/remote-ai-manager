@@ -40,6 +40,7 @@ function makeConversation(
     machineSnapshot: null,
     archived: false,
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     pendingQueue: [],
     ...overrides,
   };

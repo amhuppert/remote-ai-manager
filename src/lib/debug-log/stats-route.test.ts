@@ -50,6 +50,7 @@ const BASE_CONVERSATION: ConversationState = {
   backendRef: null,
   unread: false,
   lastSeenAlignmentVersion: null,
+  pendingAgentNotices: [],
   pendingQueue: [],
 };
 

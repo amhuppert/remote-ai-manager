@@ -49,6 +49,7 @@ function makeProjectConversation(id: string): ConversationState {
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
   };
 }
 

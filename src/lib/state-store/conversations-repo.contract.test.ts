@@ -1414,6 +1414,9 @@ function buildMaximalConversation(): ConversationState {
       },
     ],
     lastSeenAlignmentVersion: 7,
+    pendingAgentNotices: [
+      "agent notice that must round-trip (lost background tasks)",
+    ],
   });
 }
 

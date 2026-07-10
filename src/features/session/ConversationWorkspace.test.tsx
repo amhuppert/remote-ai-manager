@@ -463,6 +463,7 @@ const baseSession: SessionState = {
       unread: false,
       pendingQueue: [],
       lastSeenAlignmentVersion: null,
+      pendingAgentNotices: [],
     },
   ],
   source: "cc" as const,

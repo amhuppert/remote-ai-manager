@@ -48,6 +48,7 @@ function makeConversation(
     agentBackend: "claude",
     backendRef: null,
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     ...o,
   };
 }

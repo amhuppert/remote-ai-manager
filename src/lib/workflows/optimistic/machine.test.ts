@@ -52,6 +52,7 @@ const testSession: SessionState = {
       unread: false,
       pendingQueue: [],
       lastSeenAlignmentVersion: null,
+      pendingAgentNotices: [],
     },
   ],
   source: "cc",

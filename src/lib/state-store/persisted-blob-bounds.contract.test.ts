@@ -57,6 +57,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: pending item ids sized by the configured capability cascade.",
       "pendingQueue.**":
         "pruned: terminal entries evicted in message-queue-service (active-only working set); per-entry content/input bounded by one message.",
+      pendingAgentNotices:
+        "pruned: capped to the most recent entries at append (background-tasks-lost handler in actor-implementations); drained into the next runtime's session instructions and cleared.",
     },
   },
   {

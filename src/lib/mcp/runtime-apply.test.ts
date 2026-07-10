@@ -67,6 +67,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     backendRef: null,
     unread: false,
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     pendingQueue: [],
     ...overrides,
   };

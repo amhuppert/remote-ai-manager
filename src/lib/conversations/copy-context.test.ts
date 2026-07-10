@@ -38,6 +38,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     ...overrides,
   };
 }

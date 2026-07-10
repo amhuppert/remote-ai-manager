@@ -65,6 +65,7 @@ function projectConversation(id: string): ConversationState {
     backendRef: null,
     unread: false,
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     pendingQueue: [],
   };
 }
@@ -113,6 +114,7 @@ function stateWithAllScopes(): ManagerState {
                 backendRef: null,
                 unread: false,
                 lastSeenAlignmentVersion: null,
+                pendingAgentNotices: [],
                 pendingQueue: [],
               },
             ],

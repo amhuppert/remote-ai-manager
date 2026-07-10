@@ -71,6 +71,7 @@ function makeConversation(
     pendingPromptText: null,
     unread: false,
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     pendingQueue: [],
     forkedFrom: null,
     role: null,

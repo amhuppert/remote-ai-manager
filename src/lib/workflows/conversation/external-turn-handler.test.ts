@@ -369,4 +369,153 @@ describe("createExternalTurnHandler", () => {
 
     expect(sendToMachine).not.toHaveBeenCalled();
   });
+
+  describe("wake marker notice", () => {
+    function assistantMsg(uuid: string, text: string): SDKMessage {
+      return {
+        type: "assistant",
+        session_id: "sess-1",
+        uuid,
+        message: { content: [{ type: "text", text }] },
+      } as unknown as SDKMessage;
+    }
+
+    function taskNotification(taskId: string, summary?: string): SDKMessage {
+      return {
+        type: "system",
+        subtype: "task_notification",
+        task_id: taskId,
+        status: "completed",
+        output_file: "/tmp/out.txt",
+        ...(summary ? { summary } : {}),
+        session_id: "sess-1",
+        uuid: `u-notify-${taskId}`,
+      } as unknown as SDKMessage;
+    }
+
+    it("appends a wake-marker notice before the external turn's first assistant entry", async () => {
+      const { deps, transcriptWrites } = makeDeps();
+      const handler = createExternalTurnHandler(
+        makeIdentity(),
+        { sendToMachine: vi.fn() },
+        deps,
+      );
+
+      handler({ type: "external_turn_started" });
+      handler({ type: "provider_event", payload: assistantMsg("u1", "woke") });
+      await new Promise((r) => setTimeout(r, 10));
+
+      const roles = transcriptWrites.map((w) => w.entry.role);
+      const noticeIdx = roles.indexOf("notice");
+      const assistantIdx = roles.indexOf("assistant");
+      expect(noticeIdx).not.toBe(-1);
+      expect(assistantIdx).not.toBe(-1);
+      expect(noticeIdx).toBeLessThan(assistantIdx);
+      const noticeText = (
+        transcriptWrites[noticeIdx]!.entry.content![0] as {
+          type: "text";
+          text: string;
+        }
+      ).text;
+      expect(noticeText).toMatch(/continued autonomously/i);
+    });
+
+    it("appends the marker once per external turn even across multiple assistant messages", async () => {
+      const { deps, transcriptWrites } = makeDeps();
+      const handler = createExternalTurnHandler(
+        makeIdentity(),
+        { sendToMachine: vi.fn() },
+        deps,
+      );
+
+      handler({ type: "external_turn_started" });
+      handler({ type: "provider_event", payload: assistantMsg("u1", "one") });
+      handler({ type: "provider_event", payload: assistantMsg("u2", "two") });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(
+        transcriptWrites.filter((w) => w.entry.role === "notice"),
+      ).toHaveLength(1);
+    });
+
+    it("appends no marker for an external turn with no assistant output (notification-only noise)", async () => {
+      const { deps, transcriptWrites } = makeDeps();
+      const handler = createExternalTurnHandler(
+        makeIdentity(),
+        { sendToMachine: vi.fn() },
+        deps,
+      );
+
+      handler({ type: "external_turn_started" });
+      handler({
+        type: "provider_event",
+        payload: taskNotification("task-a"),
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(
+        transcriptWrites.filter((w) => w.entry.role === "notice"),
+      ).toHaveLength(0);
+    });
+
+    it("includes the settled task's summary when a task_notification preceded the assistant output", async () => {
+      const { deps, transcriptWrites } = makeDeps();
+      const handler = createExternalTurnHandler(
+        makeIdentity(),
+        { sendToMachine: vi.fn() },
+        deps,
+      );
+
+      handler({ type: "external_turn_started" });
+      handler({
+        type: "provider_event",
+        payload: taskNotification("task-a", "full suite finished"),
+      });
+      handler({ type: "provider_event", payload: assistantMsg("u1", "done") });
+      await new Promise((r) => setTimeout(r, 10));
+
+      const notice = transcriptWrites.find((w) => w.entry.role === "notice");
+      expect(notice).toBeDefined();
+      const text = (notice!.entry.content![0] as { type: "text"; text: string })
+        .text;
+      expect(text).toContain("full suite finished");
+    });
+
+    it("re-arms the marker for each new external turn", async () => {
+      const { deps, transcriptWrites } = makeDeps();
+      const handler = createExternalTurnHandler(
+        makeIdentity(),
+        { sendToMachine: vi.fn() },
+        deps,
+      );
+
+      for (const uuid of ["u1", "u2"]) {
+        handler({ type: "external_turn_started" });
+        handler({
+          type: "provider_event",
+          payload: assistantMsg(uuid, "turn"),
+        });
+        await new Promise((r) => setTimeout(r, 10));
+        handler({
+          type: "external_turn_completed",
+          result: {
+            backendRef: { backend: "claude", sessionId: "sess-1" },
+            costUsd: 0,
+            durationMs: 0,
+            numTurns: 1,
+            contextTokens: null,
+            contextWindowMax: null,
+            contentBlocks: [],
+            aborted: false,
+            compacted: false,
+            error: null,
+          },
+        });
+      }
+
+      expect(
+        transcriptWrites.filter((w) => w.entry.role === "notice"),
+      ).toHaveLength(2);
+    });
+  });
 });

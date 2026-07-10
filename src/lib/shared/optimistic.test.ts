@@ -45,6 +45,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
         backendRef: null,
         unread: false,
         lastSeenAlignmentVersion: null,
+        pendingAgentNotices: [],
         pendingQueue: [],
       },
     ],

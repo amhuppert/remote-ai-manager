@@ -333,6 +333,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       unread: false,
       pendingQueue: [],
       lastSeenAlignmentVersion: null,
+      pendingAgentNotices: [],
     };
     const session: SessionState = {
       sessionName,

@@ -44,6 +44,7 @@ function makeProjectConversation(
     unread: overrides.unread ?? false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     spawnedSessionIds: overrides.spawnedSessionIds,
   };
 }

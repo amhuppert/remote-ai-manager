@@ -24,6 +24,7 @@ import type {
   ToolResultMetrics,
 } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import {
   captureTraceContext,
   createLogger,
@@ -232,6 +233,15 @@ export interface QuerySessionOptions {
     emit: TurnEmit;
     onComplete: (result: TurnResult) => void;
   };
+  /**
+   * Invoked at most once, when the session reaches `dead` with waitable
+   * background tasks still in flight. Those task processes are children of
+   * the subprocess — they die with it, and their completion can no longer
+   * wake the agent. The caller surfaces the loss to the user and to the
+   * conversation's next turn. Excluded (watch-style/demoted) tasks are not
+   * reported: they carry no wake-on-complete promise.
+   */
+  onBackgroundTasksLost?: (info: BackgroundTasksLostInfo) => void;
 }
 
 // ============================================================
@@ -666,7 +676,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
             conversationId: options.conversationId,
             taskIds: stillInFlight,
           });
-          armIdleTimerIfEligible();
+          reconcileIdleTimer();
         }
       }, timeoutMs);
     });
@@ -677,31 +687,51 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   /**
-   * Start the idle TTL timer — close the session if no new prompt arrives.
-   * Never armed while waitable background tasks are in flight, so a task's
-   * auto-continuation can still arrive past the default idle window. Called
-   * from each turn's `result` and from the wait-timeout demotion path: a
-   * final turn whose `result` skipped arming (task in flight) would otherwise
-   * never arm after demotion empties the waitable set, leaking the subprocess
-   * until session deletion.
+   * Enforce the idle-TTL invariant: the timer is live only while the session
+   * is idle-closable — alive, no turn in flight, and no waitable background
+   * task in flight (a waitable task's auto-continuation must be able to
+   * arrive arbitrarily late, so its subprocess must never be idle-closed).
+   *
+   * Called after every pumped message and from the wait-timeout demotion
+   * path, so all four transitions hold without coordination:
+   * - a turn `result` with a drained waitable set arms the timer;
+   * - a waitable task starting between turns (or an external turn opening)
+   *   DISARMS a previously-armed timer — the timer's arm-time eligibility
+   *   check alone is a TOCTOU hole: a timer armed while the set was
+   *   momentarily empty would otherwise fire later and kill the task
+   *   (incident 2026-07-09, conversation ce3106b6);
+   * - a settlement that drains the set between turns with no
+   *   auto-continuation following arms the timer, so a
+   *   notification-without-continuation never leaks the subprocess;
+   * - an already-armed timer is left running while eligibility holds, so
+   *   stray between-turn messages do not extend the idle window.
    */
-  function armIdleTimerIfEligible(): void {
-    if (
-      idleTtlMs <= 0 ||
-      status !== "alive" ||
-      getWaitableInFlightTaskIds(backgroundTaskState).length > 0
-    ) {
+  function reconcileIdleTimer(): void {
+    if (idleTtlMs <= 0 || status !== "alive") return;
+    const eligible =
+      pendingTurn === null &&
+      getWaitableInFlightTaskIds(backgroundTaskState).length === 0;
+    if (!eligible) {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
       return;
     }
-    if (idleTimer) clearTimeout(idleTimer);
+    if (idleTimer) return;
     idleTimer = setTimeout(() => {
-      if (status === "alive" && !pendingTurn) {
-        logger.info("query-session.idle_timeout", {
-          conversationId: options.conversationId,
-          idleTtlMs,
-        });
-        close();
-      }
+      idleTimer = null;
+      // Re-check eligibility at fire time — the backstop against any race
+      // the reconcile call sites miss. Skipping without re-arming is safe:
+      // whichever event made the session ineligible will reconcile again
+      // when it drains.
+      if (status !== "alive" || pendingTurn !== null) return;
+      if (getWaitableInFlightTaskIds(backgroundTaskState).length > 0) return;
+      logger.info("query-session.idle_timeout", {
+        conversationId: options.conversationId,
+        idleTtlMs,
+      });
+      close();
     }, idleTtlMs);
   }
 
@@ -739,11 +769,40 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       conversationId: options.conversationId,
     });
 
+    notifyBackgroundTasksLostIfAny("closed");
+
     // Close the SDK subprocess
     try {
       q.close();
     } catch {
       // best-effort
+    }
+  }
+
+  /**
+   * Surface waitable tasks that die with the session. Fires at most once —
+   * both death paths (`close`, `markDead`) flip `status` before calling, and
+   * the second caller returns on the idempotency guard above it.
+   */
+  function notifyBackgroundTasksLostIfAny(reason: string): void {
+    const lostIds = getWaitableInFlightTaskIds(backgroundTaskState);
+    if (lostIds.length === 0) return;
+    const tasks = lostIds.map((taskId) => ({
+      taskId,
+      description: backgroundTaskState.tasks.get(taskId)?.description ?? null,
+    }));
+    logger.warn("query-session.background_tasks_lost", {
+      conversationId: options.conversationId,
+      reason,
+      taskIds: lostIds,
+    });
+    try {
+      options.onBackgroundTasksLost?.({ tasks, reason });
+    } catch (err) {
+      logger.error("query-session.background_tasks_lost_callback_failed", {
+        conversationId: options.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -818,6 +877,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       conversationId: options.conversationId,
       reason,
     });
+    notifyBackgroundTasksLostIfAny(reason);
     // Pump-internal deaths (clean exit / pump_error) reach here without going
     // through close(); resolve pending settlement waiters so they unwind
     // promptly (timedOut: false) instead of hanging until the hard timeout.
@@ -832,9 +892,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   function processMessage(message: SDKMessage): void {
     // Run after every path (early returns included) so both "task settled"
     // (tracker update) and "turn finished" (pendingTurn cleared on `result`)
-    // wake the settlement waiters through the same pump.
+    // wake the settlement waiters through the same pump. The idle-timer
+    // reconcile runs last, once the message's full effect on pendingTurn and
+    // the waitable set is visible.
     processMessageBody(message);
     checkBackgroundTaskWaiters();
+    reconcileIdleTimer();
   }
 
   function processMessageBody(message: SDKMessage): void {
@@ -1044,8 +1107,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         });
 
         resolve(result);
-
-        armIdleTimerIfEligible();
 
         break;
       }

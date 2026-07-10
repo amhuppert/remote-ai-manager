@@ -64,6 +64,7 @@ function makeConvo(
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     ...overrides,
   };
 }

@@ -138,6 +138,7 @@ export function createProjectConversationService(
       backendRef: null,
       unread: false,
       lastSeenAlignmentVersion: null,
+      pendingAgentNotices: [],
       pendingQueue: [],
     };
 

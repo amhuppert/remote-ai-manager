@@ -102,6 +102,7 @@ function makeConversation(
     backendRef: null,
     unread: false,
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     pendingQueue: [],
     ...overrides,
   };

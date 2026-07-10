@@ -47,6 +47,7 @@ function makeProjectConversation(
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
   };
 }
 

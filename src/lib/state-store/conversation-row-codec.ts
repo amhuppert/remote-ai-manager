@@ -501,6 +501,11 @@ const CONVERSATION_COLUMN_MAP = [
     "last_seen_alignment_version",
     (c: ConversationState) => c.lastSeenAlignmentVersion,
   ],
+  [
+    "pendingAgentNotices",
+    "pending_agent_notices",
+    (c: ConversationState) => jsonOrNull(c.pendingAgentNotices),
+  ],
 ] as const satisfies ReadonlyArray<
   readonly [
     keyof ConversationState,

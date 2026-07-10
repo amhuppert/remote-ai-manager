@@ -710,6 +710,7 @@ const claudeConversationBackendFactory = {
       disallowedTools: ["AskUserQuestion"],
       outputFormat: input.outputFormat,
       externalTurnHandler,
+      onBackgroundTasksLost: input.onBackgroundTasksLost,
       ...(idleTtlMs !== undefined ? { idleTtlMs } : {}),
       ...(initialSettings ? { settings: initialSettings } : {}),
     };

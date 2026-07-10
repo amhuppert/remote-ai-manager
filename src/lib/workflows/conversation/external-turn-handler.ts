@@ -49,6 +49,12 @@ export function createExternalTurnHandler(
   deps: ExternalTurnHandlerDeps,
 ): (event: ConversationBackendEvent) => void {
   let contentBlocks: MessageContentBlock[] = [];
+  // Wake-marker state, reset per external turn. The marker is appended lazily
+  // on the turn's FIRST assistant message — never at turn start — so
+  // notification-only noise turns (trailing task lifecycle messages with no
+  // agentic continuation) leave no marker row.
+  let wakeMarkerAppended = false;
+  let lastSettledTaskSummary: string | null = null;
 
   const emit = (_event: string, _data: unknown): void => {
     // Content broadcast to external subscribers is handled by machine status
@@ -59,24 +65,62 @@ export function createExternalTurnHandler(
     switch (event.type) {
       case "external_turn_started": {
         contentBlocks = [];
+        wakeMarkerAppended = false;
+        lastSettledTaskSummary = null;
         runtime.sendToMachine({ type: "EXTERNAL_TURN_STARTED" });
         return;
       }
 
       case "provider_event": {
         const message = event.payload as SDKMessage;
-        void processMessage(
-          message,
-          identity.conversationId,
-          emit,
-          contentBlocks,
-          deps.safeAppendTranscriptEntry,
-        ).catch((err) => {
-          logger.warn("external_turn.process_message_failed", {
-            conversationId: identity.conversationId,
-            error: err instanceof Error ? err.message : String(err),
+        if (
+          message.type === "system" &&
+          message.subtype === "task_notification"
+        ) {
+          // Typed as required by the SDK, but this is subprocess wire input —
+          // treat it as untrusted and tolerate an omitted summary.
+          const summary: unknown = message.summary;
+          if (typeof summary === "string" && summary.length > 0) {
+            lastSettledTaskSummary = summary;
+          }
+        }
+        let markerAppend: Promise<void> = Promise.resolve();
+        if (message.type === "assistant" && !wakeMarkerAppended) {
+          wakeMarkerAppended = true;
+          const trigger = lastSettledTaskSummary
+            ? ` after background-task activity (${lastSettledTaskSummary})`
+            : " after background-task activity";
+          markerAppend = deps.safeAppendTranscriptEntry(
+            identity.conversationId,
+            {
+              timestamp: new Date().toISOString(),
+              type: "notice",
+              role: "notice",
+              content: [
+                {
+                  type: "text",
+                  text: `Agent continued autonomously${trigger}.`,
+                },
+              ],
+            },
+          );
+        }
+        void markerAppend
+          .then(() =>
+            processMessage(
+              message,
+              identity.conversationId,
+              emit,
+              contentBlocks,
+              deps.safeAppendTranscriptEntry,
+            ),
+          )
+          .catch((err) => {
+            logger.warn("external_turn.process_message_failed", {
+              conversationId: identity.conversationId,
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
-        });
         return;
       }
 

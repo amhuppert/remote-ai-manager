@@ -74,6 +74,7 @@ function makePlannerSession(
         unread: false,
         pendingQueue: [],
         lastSeenAlignmentVersion: null,
+        pendingAgentNotices: [],
       },
     ],
     ...overrides,

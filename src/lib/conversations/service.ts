@@ -172,6 +172,7 @@ export function createConversationService(
           backendRef: null,
           unread: false,
           lastSeenAlignmentVersion: null,
+          pendingAgentNotices: [],
           pendingQueue: [],
         };
 
@@ -595,6 +596,7 @@ export function createConversationService(
           backendRef,
           unread: false,
           lastSeenAlignmentVersion: null,
+          pendingAgentNotices: [],
           pendingQueue: [],
         };
 
@@ -667,6 +669,7 @@ export function createConversationService(
           backendRef: null,
           unread: false,
           lastSeenAlignmentVersion: null,
+          pendingAgentNotices: [],
           pendingQueue: [],
         };
 

@@ -741,6 +741,7 @@ describe("conversation manager", () => {
         unread: false,
         pendingQueue: [],
         lastSeenAlignmentVersion: null,
+        pendingAgentNotices: [],
       };
 
       applySyncDerivedFields(context, conv);

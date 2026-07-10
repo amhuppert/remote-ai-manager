@@ -41,6 +41,7 @@ function makeConv(
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
   };
 }
 

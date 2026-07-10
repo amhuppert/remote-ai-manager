@@ -11,6 +11,18 @@ import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/cla
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 
 /**
+ * Payload for `onBackgroundTasksLost`: the waitable background tasks that were
+ * still in flight when the backend session died. Their processes are children
+ * of the backend subprocess — they die with it, and their completion can no
+ * longer wake the agent.
+ */
+export interface BackgroundTasksLostInfo {
+  tasks: Array<{ taskId: string; description: string | null }>;
+  /** Why the session died — e.g. "closed", "pump_completed", "pump_error". */
+  reason: string;
+}
+
+/**
  * Result of a live capability-config apply attempt against a Claude
  * conversation runtime. Mirrors `ClaudeApplyPortResult` from the
  * capability apply service so the port can pass-through directly.
@@ -255,6 +267,12 @@ export interface ConversationBackendCreateInput {
    * `external_turn_completed` for each virtual turn.
    */
   onExternalTurnEvent?: (event: ConversationBackendEvent) => void;
+  /**
+   * Optional callback invoked at most once, when the backend session dies with
+   * waitable background tasks still in flight. The caller surfaces the loss to
+   * the user (transcript notice) and to the conversation's next turn.
+   */
+  onBackgroundTasksLost?: (info: BackgroundTasksLostInfo) => void;
 }
 
 export interface ConversationBackendFactory {

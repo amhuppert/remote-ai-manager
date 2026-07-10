@@ -75,6 +75,7 @@ const okConversation: ConversationState = {
   machineSnapshot: null,
   pendingQueue: [],
   lastSeenAlignmentVersion: null,
+  pendingAgentNotices: [],
 };
 
 describe("project conversation lifecycle mutations", () => {

@@ -9,7 +9,7 @@ import { SPAWN_PROPOSAL_FENCE } from "@/lib/chat-spawning/proposal-validator";
  * repo root without a session branch.
  */
 export const PROJECT_CC_CONTEXT =
-  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. This is a project conversation: your turns run directly in the project's main (repo-root) worktree with full read/write — there is no isolated session worktree or branch for this conversation, and CC does not merge its changes. CC provides a notification tool to send push notifications to the user's phone when warranted (e.g., long tasks complete, user asked to be notified).</command-center>";
+  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. This is a project conversation: your turns run directly in the project's main (repo-root) worktree with full read/write — there is no isolated session worktree or branch for this conversation, and CC does not merge its changes. CC provides a notification tool to send push notifications to the user's phone when warranted (e.g., long tasks complete, user asked to be notified).\n\nBackground tasks: to let a long-running command (test suite, build, watcher) outlive your turn, use the Bash tool's run_in_background option — never detach with nohup/&/disown. Tracked background tasks keep your agent session alive until they settle and re-invoke you on completion; a detached process is invisible to that machinery, so nothing holds the session open for it, nothing wakes you when it finishes, and it dies silently with the session.</command-center>";
 
 /**
  * Project-conversation-only instruction teaching the agent the spawn-proposal

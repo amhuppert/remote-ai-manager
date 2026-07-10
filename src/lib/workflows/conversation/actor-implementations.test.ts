@@ -11,6 +11,7 @@ import type {
   AgentCapabilityRuntimeApplicationState,
 } from "@/lib/agent-capabilities/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -154,6 +155,7 @@ function createMockDeps(
     resolvePluginPaths: vi.fn(async () => []),
     getCodexToolPromptHint: vi.fn(() => ""),
     mutateConversation: vi.fn(async () => {}),
+    getConversation: vi.fn(async () => null),
     getSessionState: vi.fn(async () => null),
     getActiveAlignmentInjection: vi.fn(async () => null),
     getActiveAlignmentVersion: vi.fn(async () => null),
@@ -4548,6 +4550,209 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       expect(recordedSeen).toContain(ADVANCED_VERSION);
     });
   }
+});
+
+// ===========================================================================
+// Integration tests: pending agent notices (lost background tasks)
+// ===========================================================================
+
+describe("executePromptForMachine pending agent notices", () => {
+  let mockDeps: ActorImplementationDeps;
+
+  function makeConversationState(
+    overrides: Partial<ConversationState> = {},
+  ): ConversationState {
+    return conversationStateSchema.parse({
+      id: "conv-1",
+      transcriptPath: null,
+      status: "idle",
+      promptCount: 0,
+      createdAt: "2026-01-01T00:00:00Z",
+      lastActivityAt: "2026-01-01T00:00:00Z",
+      ...overrides,
+    });
+  }
+
+  function capturedCreateInput(): Record<string, unknown> {
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    return (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+  }
+
+  function registerFreshRuntime(input: ExecutePromptInput): void {
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+  }
+
+  function mutatorCalls(label: string): Array<(c: ConversationState) => void> {
+    return (mockDeps.mutateConversation as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call: unknown[]) => call[3] === label)
+      .map((call: unknown[]) => call[4] as (c: ConversationState) => void);
+  }
+
+  beforeEach(() => {
+    _resetForTesting();
+    vi.clearAllMocks();
+    mockSendTurn.mockResolvedValue({
+      backendRef: { backend: "claude", sessionId: "sdk-session-notices" },
+      costUsd: 0.01,
+      durationMs: 100,
+      numTurns: 1,
+      contextTokens: 100,
+      contextWindowMax: 200000,
+      contentBlocks: [{ type: "text", text: "ok" }],
+      aborted: false,
+      compacted: false,
+      error: null,
+    });
+    mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
+    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    _resetActorDepsForTesting();
+    _resetForTesting();
+  });
+
+  it("injects pending agent notices into the new runtime's session instructions and drains them", async () => {
+    mockDeps = createMockDeps({
+      getConversation: vi.fn(async () =>
+        makeConversationState({
+          pendingAgentNotices: ["notice about lost task A", "notice B"],
+        }),
+      ),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+    await executePromptForMachine(input);
+
+    const instructions = capturedCreateInput()[
+      "sessionInstructions"
+    ] as string[];
+    const noticesSection = instructions.find((s) =>
+      s.includes("notice about lost task A"),
+    );
+    expect(noticesSection).toBeDefined();
+    expect(noticesSection).toContain("notice B");
+
+    // The consumed notices are drained — but only the consumed ones, so a
+    // notice recorded between read and drain survives.
+    const drains = mutatorCalls("drain_agent_notices");
+    expect(drains).toHaveLength(1);
+    const state = makeConversationState({
+      pendingAgentNotices: [
+        "notice about lost task A",
+        "notice B",
+        "recorded after the read",
+      ],
+    });
+    drains[0]!(state);
+    expect(state.pendingAgentNotices).toEqual(["recorded after the read"]);
+  });
+
+  it("adds no notices section and performs no drain when none are pending", async () => {
+    mockDeps = createMockDeps({
+      getConversation: vi.fn(async () => makeConversationState()),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+    await executePromptForMachine(input);
+
+    const instructions = capturedCreateInput()[
+      "sessionInstructions"
+    ] as string[];
+    expect(instructions.join("\n")).not.toContain("Session notices");
+    expect(mutatorCalls("drain_agent_notices")).toHaveLength(0);
+  });
+
+  it("wires onBackgroundTasksLost to append a visible notice and persist a capped agent reminder", async () => {
+    mockDeps = createMockDeps({
+      getConversation: vi.fn(async () => makeConversationState()),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+    await executePromptForMachine(input);
+
+    const onBackgroundTasksLost = capturedCreateInput()[
+      "onBackgroundTasksLost"
+    ] as (info: {
+      tasks: Array<{ taskId: string; description: string | null }>;
+      reason: string;
+    }) => void;
+    expect(onBackgroundTasksLost).toBeTypeOf("function");
+
+    onBackgroundTasksLost({
+      tasks: [{ taskId: "task-a", description: "full regression suite" }],
+      reason: "pump_completed",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // A visible notice row lands in the transcript.
+    const appendCalls = (
+      mockDeps.safeAppendTranscriptEntry as ReturnType<typeof vi.fn>
+    ).mock.calls;
+    const noticeCall = appendCalls.find(
+      (call: unknown[]) =>
+        (call[1] as { role?: string; type?: string }).role === "notice",
+    );
+    expect(noticeCall).toBeDefined();
+    const noticeEntry = noticeCall![1] as {
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(noticeEntry.content[0]!.text).toContain("full regression suite");
+    expect(noticeEntry.content[0]!.text).toContain("pump_completed");
+
+    // The agent reminder is persisted, capped to the most recent entries.
+    const persists = mutatorCalls("background_tasks_lost");
+    expect(persists).toHaveLength(1);
+    const crowded = makeConversationState({
+      pendingAgentNotices: Array.from({ length: 12 }, (_, i) => `old-${i}`),
+    });
+    persists[0]!(crowded);
+    expect(crowded.pendingAgentNotices.length).toBeLessThanOrEqual(10);
+    expect(
+      crowded.pendingAgentNotices[crowded.pendingAgentNotices.length - 1],
+    ).toContain("full regression suite");
+  });
+
+  it("does not persist agent reminders for project conversations", async () => {
+    mockDeps = createMockDeps({
+      getConversation: vi.fn(async () => makeConversationState()),
+      getSessionState: vi.fn(async () => null),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeProjectExecutePromptInput();
+    registerFreshRuntime(input);
+    await executePromptForMachine(input);
+
+    const onBackgroundTasksLost = capturedCreateInput()[
+      "onBackgroundTasksLost"
+    ] as (info: {
+      tasks: Array<{ taskId: string; description: string | null }>;
+      reason: string;
+    }) => void;
+    onBackgroundTasksLost({
+      tasks: [{ taskId: "task-a", description: null }],
+      reason: "closed",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(mutatorCalls("background_tasks_lost")).toHaveLength(0);
+  });
 });
 
 // ===========================================================================

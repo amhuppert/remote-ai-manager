@@ -64,6 +64,7 @@ function makeConversation(
     unread: false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
+    pendingAgentNotices: [],
     ...overrides,
   };
 }

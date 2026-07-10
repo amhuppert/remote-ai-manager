@@ -243,6 +243,11 @@ export const conversationStateSchema = z.object({
   // conversation has run a turn under an active charter. `.default(null)`
   // decodes conversations persisted before this field existed.
   lastSeenAlignmentVersion: z.number().int().nullable().default(null),
+  // Agent-facing notices queued while the conversation has no live backend
+  // session (e.g. "your background tasks died with the session"). Drained
+  // into the next runtime's session instructions and cleared. `.default([])`
+  // decodes conversations persisted before this field existed.
+  pendingAgentNotices: z.array(z.string()).default([]),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 

@@ -559,6 +559,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "last_seen_alignment_version",
     type: "INTEGER",
   },
+  { table: "conversations", column: "pending_agent_notices", type: "TEXT" },
 ];
 
 function columnExists(db: Db, table: string, column: string): boolean {

@@ -145,6 +145,7 @@ function conversation(
     unread: overrides.unread ?? false,
     pendingQueue: overrides.pendingQueue ?? [],
     lastSeenAlignmentVersion: overrides.lastSeenAlignmentVersion ?? null,
+    pendingAgentNotices: [],
     mcpOverrides: overrides.mcpOverrides,
     mcpRuntime: overrides.mcpRuntime,
   };
