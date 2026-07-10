@@ -835,25 +835,13 @@ export function resolveBackendTimeoutMs(
   return config.claudeTimeoutMs;
 }
 
-function buildNonClaudeTranscriptEntries(input: {
+function buildNonClaudeResultTranscriptEntry(input: {
   backend: Exclude<AgentBackendId, "claude">;
   backendRef: AgentSessionRef | null;
-  contentBlocks: MessageContentBlock[];
   turnResult: ConversationBackendTurnResult;
   timestamp: string;
-}): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
-
-  if (input.contentBlocks.length > 0) {
-    entries.push({
-      timestamp: input.timestamp,
-      type: "assistant",
-      role: "assistant",
-      content: input.contentBlocks,
-    });
-  }
-
-  entries.push({
+}): TranscriptEntry {
+  return {
     timestamp: input.timestamp,
     type: "result",
     raw: {
@@ -867,9 +855,7 @@ function buildNonClaudeTranscriptEntries(input: {
       aborted: input.turnResult.aborted,
       error: input.turnResult.error,
     },
-  });
-
-  return entries;
+  };
 }
 
 function formatTurnStartMcpApplyFailure(
@@ -2001,7 +1987,7 @@ export async function executePromptForMachine(
   // Build turn input and execute
   // ---------------------------------------------------------------
   const contentBlocks: MessageContentBlock[] = [];
-  const pendingTranscriptWrites: Promise<void>[] = [];
+  let persistedNonClaudeContentCount = 0;
   let sawErrorEvent = false;
 
   // Guards the queued-delivery transcript append. Set true the instant the
@@ -2047,23 +2033,37 @@ export async function executePromptForMachine(
           backendRef: event.backendRef,
         });
         if (event.backendRef.backend === "codex") {
-          pendingTranscriptWrites.push(
-            safeAppendWithMeta(input.conversationId, {
-              timestamp: new Date().toISOString(),
-              type: "system",
-              raw: {
-                subtype: "init",
-                backend: "codex",
-                thread_id: event.backendRef.threadId,
-              },
-            }),
-          );
+          await safeAppendWithMeta(input.conversationId, {
+            timestamp: new Date().toISOString(),
+            type: "system",
+            raw: {
+              subtype: "init",
+              backend: "codex",
+              thread_id: event.backendRef.threadId,
+            },
+          });
         }
         break;
 
       case "content":
         contentBlocks.push(event.block);
         runtimeState.streamEmit?.("content", event.block);
+        if (input.agentBackend !== "claude") {
+          await safeAppendWithMeta(input.conversationId, {
+            timestamp: new Date().toISOString(),
+            type: "assistant",
+            role: "assistant",
+            content: [event.block],
+          });
+          persistedNonClaudeContentCount += 1;
+          logger.debug("prompt.non_claude_content_persisted", {
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            backend: input.agentBackend,
+            blockType: event.block.type,
+            contentBlockCount: persistedNonClaudeContentCount,
+          });
+        }
         break;
 
       case "provider_event": {
@@ -2398,8 +2398,6 @@ export async function executePromptForMachine(
     }
   }
 
-  await Promise.all(pendingTranscriptWrites);
-
   // Funnel structured-output extraction through the shared AgentCall gate.
   // `applyStructuredOutputGate` runs inside `executeAgentCall` whenever
   // `outputSchema` is present — it may parse `text` into a structuredOutput
@@ -2432,21 +2430,38 @@ export async function executePromptForMachine(
     runtimeState.streamEmit?.("error", { message: effectiveError });
   }
 
-  // Post-turn transcript for non-Claude backends.
-  // Claude writes transcript entries inline via provider_event → processMessage();
-  // other backends emit content events that need explicit persistence.
+  // Codex content is persisted as each SDK item completes so every mounted
+  // conversation surface receives message-appended events during the turn.
+  // Preserve any trailing blocks returned by a backend that were not emitted
+  // through onEvent, then append the non-visible result envelope.
   if (backendRuntime!.backend !== "claude" && turnResult) {
-    const transcriptEntries = buildNonClaudeTranscriptEntries({
-      backend: backendRuntime!.backend,
-      backendRef: turnResult.backendRef,
-      contentBlocks: turnResult.contentBlocks,
-      turnResult,
-      timestamp: new Date().toISOString(),
-    });
-
-    for (const entry of transcriptEntries) {
-      await safeAppendWithMeta(input.conversationId, entry);
+    const missingContent = turnResult.contentBlocks.slice(
+      persistedNonClaudeContentCount,
+    );
+    if (missingContent.length > 0) {
+      logger.warn("prompt.non_claude_content_fallback", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        backend: backendRuntime!.backend,
+        missingContentBlockCount: missingContent.length,
+      });
+      await safeAppendWithMeta(input.conversationId, {
+        timestamp: new Date().toISOString(),
+        type: "assistant",
+        role: "assistant",
+        content: missingContent,
+      });
     }
+
+    await safeAppendWithMeta(
+      input.conversationId,
+      buildNonClaudeResultTranscriptEntry({
+        backend: backendRuntime!.backend,
+        backendRef: turnResult.backendRef,
+        turnResult,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 
   // Persist a typed `debug_structured` block when a debug-mode turn produced

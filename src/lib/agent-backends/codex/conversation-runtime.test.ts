@@ -15,6 +15,7 @@ import type {
   FileChangeItem,
   ReasoningItem,
   TodoListItem,
+  WebSearchItem,
 } from "@openai/codex-sdk";
 
 // Infrastructure mocks (acceptable per project rules)
@@ -262,6 +263,19 @@ function todoListCompleted(
   id = "todo-1",
 ): ItemCompletedEvent {
   const item: TodoListItem = { id, type: "todo_list", items };
+  return { type: "item.completed", item };
+}
+
+function webSearchStarted(query: string, id = "search-1"): ItemStartedEvent {
+  const item: WebSearchItem = { id, type: "web_search", query };
+  return { type: "item.started", item };
+}
+
+function webSearchCompleted(
+  query: string,
+  id = "search-1",
+): ItemCompletedEvent {
+  const item: WebSearchItem = { id, type: "web_search", query };
   return { type: "item.completed", item };
 }
 
@@ -657,6 +671,44 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
+    it("serializes async event delivery in provider order", async () => {
+      setupThread([
+        threadStarted(),
+        agentMessageCompleted("First progress", "msg-1"),
+        agentMessageCompleted("Second progress", "msg-2"),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const observed: string[] = [];
+
+      await runtime.sendTurn(
+        makeTurnInput({
+          onEvent: async (event) => {
+            if (event.type === "input_accepted") {
+              await Promise.resolve();
+              observed.push("accepted");
+              return;
+            }
+            if (event.type === "backend_init") {
+              observed.push("init");
+              return;
+            }
+            if (event.type === "content" && event.block.type === "text") {
+              await Promise.resolve();
+              observed.push(event.block.text);
+            }
+          },
+        }),
+      );
+
+      expect(observed).toEqual([
+        "accepted",
+        "init",
+        "First progress",
+        "Second progress",
+      ]);
+    });
+
     it("maps command_execution start to tool_use and completion to tool_result", async () => {
       setupThread([
         threadStarted(),
@@ -719,6 +771,24 @@ describe("CodexConversationRuntime", () => {
         id: "cmd-1",
         name: "Bash",
         input: { command: "pwd && ls -la" },
+      });
+    });
+
+    it("unwraps /bin/zsh -lc wrapper from command", async () => {
+      setupThread([
+        threadStarted(),
+        commandStarted("/bin/zsh -lc 'pwd && git status --short'"),
+        commandCompleted("/bin/zsh -lc 'pwd && git status --short'", "output"),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.contentBlocks.find((b) => b.type === "tool_use")).toEqual({
+        type: "tool_use",
+        id: "cmd-1",
+        name: "Bash",
+        input: { command: "pwd && git status --short" },
       });
     });
 
@@ -887,7 +957,7 @@ describe("CodexConversationRuntime", () => {
       expect(summary!.type === "text" && summary!.text).toContain("src/bar.ts");
     });
 
-    it("maps reasoning into a thinking block and still ignores todo_list", async () => {
+    it("maps reasoning and todo_list into visible conversation blocks", async () => {
       setupThread([
         threadStarted(),
         reasoningCompleted("Thinking hard..."),
@@ -898,11 +968,35 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      // Reasoning becomes a thinking block ahead of the answer; todo_list is
-      // still dropped.
       expect(result.contentBlocks).toEqual([
         { type: "thinking", text: "Thinking hard..." },
+        {
+          type: "tool_use",
+          id: "todo-1",
+          name: "TodoWrite",
+          input: { todos: [{ text: "Step 1", completed: false }] },
+        },
         { type: "text", text: "Done" },
+      ]);
+    });
+
+    it("maps web_search start into a visible tool block", async () => {
+      setupThread([
+        threadStarted(),
+        webSearchStarted("Codex SDK streaming"),
+        webSearchCompleted("Codex SDK streaming"),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.contentBlocks).toEqual([
+        {
+          type: "tool_use",
+          id: "search-1",
+          name: "WebSearch",
+          input: { query: "Codex SDK streaming" },
+        },
       ]);
     });
 

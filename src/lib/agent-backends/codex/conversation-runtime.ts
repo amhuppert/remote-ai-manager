@@ -254,14 +254,14 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       for await (const event of streamed.events) {
         if (!inputAccepted) {
           inputAccepted = true;
-          input.onEvent({ type: "input_accepted" });
+          await input.onEvent({ type: "input_accepted" });
           logger.debug("codex-runtime.input_accepted", {
             conversationId: this.conversationId,
             isResume,
             threadId: this.threadId,
           });
         }
-        this.processEvent(event, input, contentBlocks, {
+        await this.processEvent(event, input, contentBlocks, {
           setThreadId: (id) => {
             acc.knownThreadId = id;
             this.threadId = id;
@@ -572,7 +572,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     return options;
   }
 
-  private processEvent(
+  private async processEvent(
     event: ThreadEvent,
     input: ConversationBackendTurnInput,
     contentBlocks: MessageContentBlock[],
@@ -582,22 +582,22 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       setUsage(u: Usage): void;
       setErrorMessage(msg: string): void;
     },
-  ): void {
+  ): Promise<void> {
     switch (event.type) {
       case "thread.started":
         acc.setThreadId(event.thread_id);
-        input.onEvent({
+        await input.onEvent({
           type: "backend_init",
           backendRef: { backend: "codex", threadId: event.thread_id },
         });
         break;
 
       case "item.started":
-        this.processItemStarted(event, input, contentBlocks);
+        await this.processItemStarted(event, input, contentBlocks);
         break;
 
       case "item.completed":
-        this.processItemCompleted(event, input, contentBlocks, acc);
+        await this.processItemCompleted(event, input, contentBlocks, acc);
         break;
 
       case "turn.completed":
@@ -612,15 +612,30 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         acc.setErrorMessage(event.message);
         break;
 
-      // turn.started, item.updated — ignored
+      case "turn.started":
+        break;
+
+      case "item.updated":
+        logger.debug("codex-runtime.item_updated", {
+          conversationId: this.conversationId,
+          itemId: event.item.id,
+          itemType: event.item.type,
+        });
+        break;
+
+      default:
+        logger.warn("codex-runtime.event_unhandled", {
+          conversationId: this.conversationId,
+          eventType: (event as { type?: unknown }).type,
+        });
     }
   }
 
-  private processItemStarted(
+  private async processItemStarted(
     event: ItemStartedEvent,
     input: ConversationBackendTurnInput,
     contentBlocks: MessageContentBlock[],
-  ): void {
+  ): Promise<void> {
     const { item } = event;
     switch (item.type) {
       case "command_execution": {
@@ -631,7 +646,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           input: { command: unwrapBashCommand(item.command) },
         };
         contentBlocks.push(block);
-        input.onEvent({ type: "content", block });
+        await input.onEvent({ type: "content", block });
         break;
       }
       case "mcp_tool_call": {
@@ -645,13 +660,43 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           } as Record<string, unknown>,
         };
         contentBlocks.push(block);
-        input.onEvent({ type: "content", block });
+        await input.onEvent({ type: "content", block });
         break;
       }
+      case "web_search": {
+        const block: MessageContentBlock = {
+          type: "tool_use",
+          id: item.id,
+          name: "WebSearch",
+          input: { query: item.query },
+        };
+        contentBlocks.push(block);
+        await input.onEvent({ type: "content", block });
+        break;
+      }
+      case "agent_message":
+      case "reasoning":
+      case "file_change":
+      case "todo_list":
+      case "error":
+        logger.debug("codex-runtime.item_started_deferred", {
+          conversationId: this.conversationId,
+          itemId: item.id,
+          itemType: item.type,
+        });
+        break;
+      default:
+        logger.warn("codex-runtime.item_unhandled", {
+          conversationId: this.conversationId,
+          lifecycle: "started",
+          itemId: (item as { id?: unknown }).id,
+          itemType: (item as { type?: unknown }).type,
+        });
+        break;
     }
   }
 
-  private processItemCompleted(
+  private async processItemCompleted(
     event: ItemCompletedEvent,
     input: ConversationBackendTurnInput,
     contentBlocks: MessageContentBlock[],
@@ -659,14 +704,14 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       setLastAgentMessageText(text: string): void;
       setErrorMessage(msg: string): void;
     },
-  ): void {
+  ): Promise<void> {
     const { item } = event;
     switch (item.type) {
       case "agent_message": {
         const block: MessageContentBlock = { type: "text", text: item.text };
         contentBlocks.push(block);
         acc.setLastAgentMessageText(item.text);
-        input.onEvent({ type: "content", block });
+        await input.onEvent({ type: "content", block });
         break;
       }
       case "command_execution": {
@@ -685,7 +730,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
             ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
           };
           contentBlocks.push(block);
-          input.onEvent({ type: "content", block });
+          await input.onEvent({ type: "content", block });
         }
         break;
       }
@@ -702,7 +747,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
         };
         contentBlocks.push(block);
-        input.onEvent({ type: "content", block });
+        await input.onEvent({ type: "content", block });
         break;
       }
       case "file_change": {
@@ -714,7 +759,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           text: `File changes: ${summary}`,
         };
         contentBlocks.push(block);
-        input.onEvent({ type: "content", block });
+        await input.onEvent({ type: "content", block });
         break;
       }
       case "error": {
@@ -727,10 +772,35 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           text: item.text,
         };
         contentBlocks.push(block);
-        input.onEvent({ type: "content", block });
+        await input.onEvent({ type: "content", block });
         break;
       }
-      // todo_list, web_search — ignored
+      case "todo_list": {
+        const block: MessageContentBlock = {
+          type: "tool_use",
+          id: item.id,
+          name: "TodoWrite",
+          input: { todos: item.items },
+        };
+        contentBlocks.push(block);
+        await input.onEvent({ type: "content", block });
+        break;
+      }
+      case "web_search":
+        logger.debug("codex-runtime.web_search_completed", {
+          conversationId: this.conversationId,
+          itemId: item.id,
+          query: item.query,
+        });
+        break;
+      default:
+        logger.warn("codex-runtime.item_unhandled", {
+          conversationId: this.conversationId,
+          lifecycle: "completed",
+          itemId: (item as { id?: unknown }).id,
+          itemType: (item as { type?: unknown }).type,
+        });
+        break;
     }
   }
 }
@@ -742,10 +812,10 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
 type ItemStartedEvent = Extract<ThreadEvent, { type: "item.started" }>;
 type ItemCompletedEvent = Extract<ThreadEvent, { type: "item.completed" }>;
 
-/** Strip the `/bin/bash -lc '...'` wrapper Codex adds around commands. */
-const BASH_WRAPPER_RE = /^\/bin\/bash\s+-lc\s+(['"])(.*)\1$/s;
+/** Strip the shell `-lc '...'` wrapper Codex adds around commands. */
+const SHELL_WRAPPER_RE = /^\/bin\/(?:ba|z)?sh\s+-lc\s+(['"])(.*)\1$/s;
 function unwrapBashCommand(raw: string): string {
-  const m = BASH_WRAPPER_RE.exec(raw);
+  const m = SHELL_WRAPPER_RE.exec(raw);
   return m ? m[2]! : raw;
 }
 
