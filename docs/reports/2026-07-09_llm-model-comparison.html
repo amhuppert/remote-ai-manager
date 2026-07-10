@@ -406,6 +406,63 @@
     .benchmark-head { min-height: auto; align-items: center; justify-content: center; color: var(--muted); font-size: 10px; }
     .benchmark-head::before { display: none; }
 
+    .benchmark-guide { margin-top: 16px; padding: 28px; }
+    .benchmark-guide-intro {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 28px;
+      align-items: start;
+      margin-bottom: 20px;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .benchmark-guide-intro h3 { margin: 0; font: 600 28px/1.05 var(--serif); }
+    .benchmark-guide-intro p { max-width: 760px; margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+    .respect-scale { display: grid; gap: 7px; justify-items: end; }
+    .respect-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--dim);
+      font: 650 8px/1 var(--mono);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .respect-chip::before { width: 6px; aspect-ratio: 1; border-radius: 50%; content: ""; background: currentColor; }
+    .respect-chip.high { color: var(--good); border-color: rgba(112, 227, 161, 0.28); }
+    .respect-chip.strong { color: var(--warning); border-color: rgba(255, 210, 111, 0.28); }
+    .respect-chip.emerging { color: var(--luna); border-color: rgba(159, 168, 255, 0.28); }
+    .benchmark-explain-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .benchmark-explain {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.022);
+    }
+    .benchmark-explain.featured { grid-column: 1 / -1; }
+    .benchmark-explain-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+    .benchmark-explain h4 { margin: 0; font: 600 18px/1.1 var(--serif); }
+    .benchmark-explain .plain-language { margin: 13px 0 0; color: var(--muted); font-size: 13px; }
+    .benchmark-meaning { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+    .meaning-block { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(8, 9, 13, 0.28); }
+    .meaning-block b { display: block; margin-bottom: 6px; color: var(--ink); font: 650 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .meaning-block span { color: var(--dim); font-size: 11px; line-height: 1.45; }
+    .meaning-block.positive b { color: var(--good); }
+    .meaning-block.limit b { color: var(--warning); }
+    .benchmark-explain .why-weight {
+      margin: 13px 0 0;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--dim);
+      font-size: 11px;
+    }
+    .benchmark-explain .why-weight strong { color: var(--muted); }
+    .benchmark-explain a { color: inherit; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+
     .effort-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .effort-card { padding: 28px; }
     .effort-brand { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; }
@@ -486,7 +543,10 @@
       .section { padding-block: 62px; }
       .section-head { grid-template-columns: 1fr; gap: 18px; }
       .model-grid, .decision-grid { grid-template-columns: 1fr; }
-      .price-layout, .effort-layout, .speed-grid, .method-grid, .calculator { grid-template-columns: 1fr; }
+      .price-layout, .effort-layout, .speed-grid, .method-grid, .calculator, .benchmark-explain-grid { grid-template-columns: 1fr; }
+      .benchmark-explain.featured { grid-column: auto; }
+      .benchmark-guide-intro { grid-template-columns: 1fr; }
+      .respect-scale { justify-items: start; }
       .calc-controls { border-right: 0; border-bottom: 1px solid var(--line); }
       .source-link { grid-template-columns: 70px 1fr; }
       .source-link span:last-child { display: none; }
@@ -501,6 +561,7 @@
       .task-row { grid-template-columns: 84px 1fr 58px; }
       .price-row { grid-template-columns: 88px 1fr 48px; }
       .price-legend { margin-left: 100px; }
+      .benchmark-meaning { grid-template-columns: 1fr; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -716,6 +777,92 @@
           <div class="panel-title-row"><div><h3>Benchmark constellation</h3><p>Raw values are printed. Cell fill is normalized only within each benchmark row; do not compare fill height between rows.</p></div><span class="data-tag">July 9 published table</span></div>
           <div class="benchmark-grid" id="benchmarkGrid"></div>
         </article>
+
+        <article class="panel benchmark-guide" aria-labelledby="benchmark-guide-title">
+          <div class="benchmark-guide-intro">
+            <div>
+              <h3 id="benchmark-guide-title">What the benchmarks actually mean</h3>
+              <p><strong>The most decision-useful benchmarks here are the Artificial Analysis Intelligence Index for a broad first pass, Terminal‑Bench for tool-using engineering, BrowseComp for deep web research, and HealthBench Professional for clinician-facing work.</strong> They earn weight through independent aggregation, executable grading, open task design, or expert-written rubrics. None is a universal IQ test: use the benchmark closest to your workload, then validate finalists on your own tasks.</p>
+            </div>
+            <div class="respect-scale" aria-label="Decision-weight legend">
+              <span class="respect-chip high">High decision weight</span>
+              <span class="respect-chip strong">Strong but scoped</span>
+              <span class="respect-chip emerging">Emerging signal</span>
+            </div>
+          </div>
+
+          <div class="benchmark-explain-grid">
+            <section class="benchmark-explain featured">
+              <div class="benchmark-explain-head"><h4>Artificial Analysis Intelligence Index v4.1</h4><span class="respect-chip high">Most respected broad view</span></div>
+              <p class="plain-language">Think of this as a decathlon rather than one exam. It combines nine evaluations covering agents, coding, scientific reasoning, factual knowledge, mathematics, and professional work into one independent score.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>A high score suggests</b><span>A strong general-purpose model that transfers well across unfamiliar reasoning, research, coding, and knowledge-work tasks.</span></div>
+                <div class="meaning-block limit"><b>A low score may suggest</b><span>More uneven general capability—but it does not prove weakness on a narrow specialty, language, or workflow excluded from the composite.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why it carries weight:</strong> independent operator, disclosed prompts and weights, multiple benchmark families, aligned cost/time reporting, and a reported confidence interval under ±1%. <strong>Watch out:</strong> it is English and text focused, and any single composite can hide important strengths and weaknesses. <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noreferrer">Methodology ↗</a></p>
+            </section>
+
+            <section class="benchmark-explain">
+              <div class="benchmark-explain-head"><h4>AA Coding Agent Index v1.1</h4><span class="respect-chip strong">Strong coding signal</span></div>
+              <p class="plain-language">An agent gets a real repository or terminal environment and must answer questions, change code, debug, and make the tests pass. The index combines 321 tasks from long-horizon engineering, terminal use, and repository Q&amp;A.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>Good at</b><span>Repository navigation, implementation, bug fixing, terminal work, and completing engineering tasks with limited supervision.</span></div>
+                <div class="meaning-block limit"><b>Does not prove</b><span>Architecture judgment, maintainability, product taste, security, or performance on your language, framework, and agent harness.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why scoped:</strong> independent, execution-oriented, and cost-aware, but version 1.1 is new and agent-harness quality affects the model score. <a href="https://artificialanalysis.ai/methodology/coding-agents-benchmarking" target="_blank" rel="noreferrer">Methodology ↗</a></p>
+            </section>
+
+            <section class="benchmark-explain">
+              <div class="benchmark-explain-head"><h4>Agents’ Last Exam</h4><span class="respect-chip emerging">Promising, very new</span></div>
+              <p class="plain-language">Instead of answering quiz questions, an agent performs long digital-work tasks drawn from more than 50 industries—using software, files, and tools to deliver an actual result.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>Good at</b><span>Sustained professional workflows, planning across steps, computer use, producing files, and recovering when a task changes.</span></div>
+                <div class="meaning-block limit"><b>Does not prove</b><span>Reliability in your company’s exact workflow. Some tasks require licensed software or proprietary data, and cost telemetry can be incomplete.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why emerging:</strong> unusually realistic and broad, with runtime and task-cost reporting, but it is only months old and its mix of environments is still evolving. <a href="https://agents-last-exam.org/leaderboard" target="_blank" rel="noreferrer">Leaderboard and method ↗</a></p>
+            </section>
+
+            <section class="benchmark-explain">
+              <div class="benchmark-explain-head"><h4>Terminal‑Bench 2.1</h4><span class="respect-chip high">Most respected coding task</span></div>
+              <p class="plain-language">The model is placed in a real command-line environment and must finish 89 difficult tasks such as fixing software, configuring systems, processing data, training models, and working with security tools. Tests verify whether the final environment actually works.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>Good at</b><span>Shell use, debugging, tool coordination, iterative problem solving, system administration, and engineering work with objective success criteria.</span></div>
+                <div class="meaning-block limit"><b>Does not prove</b><span>Good UI design, writing, business judgment, or safe unsupervised operation. Scores are sensitive to agent harnesses, timeouts, and environment drift.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why it carries weight:</strong> open tasks, real execution, deterministic tests, and active maintenance. Version 2.1 repaired or revalidated many tasks after environment changes. <a href="https://www.tbench.ai/news/terminal-bench-2-1" target="_blank" rel="noreferrer">Benchmark details ↗</a></p>
+            </section>
+
+            <section class="benchmark-explain">
+              <div class="benchmark-explain-head"><h4>BrowseComp</h4><span class="respect-chip high">Respected for deep search</span></div>
+              <p class="plain-language">The agent must find one obscure, verifiable fact hidden across the web. The 1,266 questions are intentionally hard enough to require creative searches, following clues, comparing sources, and persisting through dead ends.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>Good at</b><span>Investigative web research, multi-hop fact finding, search-query reformulation, persistence, and locating evidence that is not on the first results page.</span></div>
+                <div class="meaning-block limit"><b>Does not prove</b><span>Good long-form reports, source synthesis, judgment under ambiguity, freshness, or visual/video research. Answers are deliberately short and easy to grade.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why it carries weight:</strong> open dataset, clear scoring, large hard set, and a useful history of adoption. <strong>Watch out:</strong> OpenAI created it, and the task format is narrower than real research. <a href="https://openai.com/index/browsecomp/" target="_blank" rel="noreferrer">Paper and dataset ↗</a></p>
+            </section>
+
+            <section class="benchmark-explain">
+              <div class="benchmark-explain-head"><h4>HealthBench Professional</h4><span class="respect-chip high">Most respected health signal</span></div>
+              <p class="plain-language">Models respond to realistic conversations based on tasks clinicians bring to AI: care consultation, medical writing and documentation, and research. Three or more physicians iteratively review the scoring rubric for each example.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>Good at</b><span>Clinical knowledge support, context-aware medical communication, documentation, research assistance, and expressing uncertainty appropriately.</span></div>
+                <div class="meaning-block limit"><b>Does not prove</b><span>Safe diagnosis, treatment decisions, improved patient outcomes, regulatory compliance, or readiness to work without clinician oversight.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why it carries weight:</strong> real clinician task distribution, specialist-matched human baselines, and physician-authored, adjudicated rubrics. <strong>Watch out:</strong> the published table uses OpenAI’s scoring method, which OpenAI says is not directly comparable with Anthropic system-card scores. <a href="https://arxiv.org/abs/2604.27470" target="_blank" rel="noreferrer">Paper ↗</a></p>
+            </section>
+
+            <section class="benchmark-explain">
+              <div class="benchmark-explain-head"><h4>gdp.pdf</h4><span class="respect-chip emerging">Useful niche signal</span></div>
+              <p class="plain-language">The model works through realistic professional prompts attached to complex PDFs. It must read prose, tables, charts, and page layouts together rather than treating the document as plain text.</p>
+              <div class="benchmark-meaning">
+                <div class="meaning-block positive"><b>Good at</b><span>Financial and business-document analysis, chart and table reading, extracting evidence from long PDFs, and producing answers grounded in visual documents.</span></div>
+                <div class="meaning-block limit"><b>Does not prove</b><span>General vision, image creation, web research, or reliable handling of every scan, handwriting style, spreadsheet, or company-specific document format.</span></div>
+              </div>
+              <p class="why-weight"><strong>Why emerging:</strong> realistic multimodal professional work is valuable, but the benchmark is younger, narrower, and less independently reproduced than Terminal‑Bench or the AA composites. <a href="https://epoch.ai/benchmarks/gdp-pdf" target="_blank" rel="noreferrer">Benchmark overview ↗</a></p>
+            </section>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -820,6 +967,13 @@
           <a class="source-link" href="https://platform.claude.com/docs/en/build-with-claude/effort" target="_blank" rel="noreferrer"><span class="source-type">Docs</span><strong>Claude Platform — effort levels and adaptive-thinking guidance</strong><span>↗</span></a>
           <a class="source-link" href="https://deploymentsafety.openai.com/gpt-5-6" target="_blank" rel="noreferrer"><span class="source-type">System card</span><strong>OpenAI — updated GPT‑5.6 system card</strong><span>↗</span></a>
           <a class="source-link" href="https://www.anthropic.com/claude-fable-5-mythos-5-system-card" target="_blank" rel="noreferrer"><span class="source-type">System card</span><strong>Anthropic — Claude Fable 5 &amp; Mythos 5 capability and safety evaluations</strong><span>↗</span></a>
+          <a class="source-link" href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noreferrer"><span class="source-type">Method</span><strong>Artificial Analysis — Intelligence Index v4.1 composition, weighting, and limitations</strong><span>↗</span></a>
+          <a class="source-link" href="https://artificialanalysis.ai/methodology/coding-agents-benchmarking" target="_blank" rel="noreferrer"><span class="source-type">Method</span><strong>Artificial Analysis — Coding Agent Index v1.1 tasks, scoring, cost, and runtime</strong><span>↗</span></a>
+          <a class="source-link" href="https://www.tbench.ai/news/terminal-bench-2-1" target="_blank" rel="noreferrer"><span class="source-type">Benchmark</span><strong>Terminal‑Bench — 2.1 task repair, validation, and leaderboard context</strong><span>↗</span></a>
+          <a class="source-link" href="https://agents-last-exam.org/leaderboard" target="_blank" rel="noreferrer"><span class="source-type">Benchmark</span><strong>Agents’ Last Exam — task coverage, runtime, cost, and licensing methodology</strong><span>↗</span></a>
+          <a class="source-link" href="https://openai.com/index/browsecomp/" target="_blank" rel="noreferrer"><span class="source-type">Benchmark</span><strong>BrowseComp — dataset construction, task design, scoring, and limitations</strong><span>↗</span></a>
+          <a class="source-link" href="https://arxiv.org/abs/2604.27470" target="_blank" rel="noreferrer"><span class="source-type">Paper</span><strong>HealthBench Professional — clinician task distribution and physician-adjudicated rubrics</strong><span>↗</span></a>
+          <a class="source-link" href="https://epoch.ai/benchmarks/gdp-pdf" target="_blank" rel="noreferrer"><span class="source-type">Benchmark</span><strong>Epoch AI — gdp.pdf professional multimodal document benchmark overview</strong><span>↗</span></a>
           <a class="source-link" href="https://artificialanalysis.ai/models/claude-fable-5" target="_blank" rel="noreferrer"><span class="source-type">Independent</span><strong>Artificial Analysis — Fable 5 intelligence, price, and API speed measurements</strong><span>↗</span></a>
           <a class="source-link" href="https://artificialanalysis.ai/models/claude-opus-4-8" target="_blank" rel="noreferrer"><span class="source-type">Independent</span><strong>Artificial Analysis — Opus 4.8 intelligence, price, and API speed measurements</strong><span>↗</span></a>
         </div>
