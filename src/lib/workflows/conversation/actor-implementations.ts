@@ -321,7 +321,10 @@ export interface ActorImplementationDeps {
     conversationId: string,
     controller: AbortController,
   ): void;
-  unregisterAbortController(conversationId: string): void;
+  unregisterAbortController(
+    conversationId: string,
+    controller: AbortController,
+  ): void;
 
   /**
    * Compose the effective portable MCP config for the next turn, honoring the
@@ -2362,7 +2365,7 @@ export async function executePromptForMachine(
     }
     runtimeState.currentTurnAutonomous = undefined;
     runtimeState.currentTurnMessageId = undefined;
-    deps.unregisterAbortController(input.conversationId);
+    deps.unregisterAbortController(input.conversationId, abortController);
 
     // Queued delivery that never reached backend acceptance (turn completed,
     // errored, or aborted before `input_accepted`): return the claimed batch to
@@ -2579,12 +2582,20 @@ export async function runTaskRunTurnForMachine(
         }
       : {};
 
+  // Register the run in the conversations abort-registry so a workflow
+  // abort/pause/halt (which fires abortConversation for lane conversations)
+  // tears down the live task-run instead of letting it burn to completion.
+  // The runner receives the controller's signal through the facade.
+  const abortController = new AbortController();
+  deps.registerAbortController(input.conversationId, abortController);
+
   const facadeDeps: AgentCallFacadeDeps = {
     resolveTaskRunner: () => ({
       runner: deps.getTaskRunner(input.agentBackend),
       capabilityView: capabilityViewForBackend(input.agentBackend),
       workingDirectory: input.worktreePath,
       autonomous: true,
+      signal: abortController.signal,
       ...(input.modelId != null ? { modelId: input.modelId } : {}),
       ...(input.effort != null ? { reasoningEffort: input.effort } : {}),
       ...(input.backendRef !== null ? { resumeRef: input.backendRef } : {}),
@@ -2631,6 +2642,8 @@ export async function runTaskRunTurnForMachine(
       compacted: false,
       error: errorMsg,
     };
+  } finally {
+    deps.unregisterAbortController(input.conversationId, abortController);
   }
 
   const usage = result.usage;

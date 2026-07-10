@@ -375,6 +375,19 @@ The canonical check is `isContextLanded` in `src/lib/workflow-graph/validation.t
 
 Join merges (context_merge / final_publish) run the Smart Merge machine with `autoResolve: true`, so conflicts get LLM resolution + pre-merge validation per pairwise lane merge. The join runner aborts any unconcluded merge in the source lane worktree before merging (self-healing preflight) and retries a conflicted merge once from a clean tree before failing. A `join_failure` halt is recoverable: `resume()` resets concluded-failed joins to `pending` (per-lane `mergedSourceLaneIds` progress survives), optionally attaching per-file `conflictGuidance` (resume body → join state → merge machine `decisions`), and the join's persisted `conflicts.analysis` powers the retry-with-guidance UI (`JoinConflictRecoveryCard`). An operator who resolves manually must **commit** the merge in the lane worktree — an uncommitted mid-merge state is aborted by the preflight on retry.
 
+## Loop-generation fence invariant
+
+Every graph-workflow execution loop instance is pinned to the `(executionId, loopEpoch)` generation it was started for (`src/lib/workflow-graph/loop-fence.ts`). `loopEpoch` lives on the execution (runtime tier) and is bumped ONLY by `resume()` — abort/halt/pause never bump it (abort replaces the execution id instead). The fence rides a dedicated AsyncLocalStorage from `executionLoop.run()` into everything the loop awaits, and `executionRepository.mutateActive` rejects any write whose ambient fence no longer matches the session's persisted generation (`StaleLoopFenceError`). The loop treats that error — and any refresh that returns a different generation — as "I have been superseded": it exits silently (`graph-workflow.loop.fenced_out`), never recording a halt or draining, because those are session-keyed and would mutate the successor's state.
+
+Consequences when touching engine code:
+
+- Never adopt a `getActive` result inside loop-owned code without a generation check (`adoptExecution`/`refreshExecution` in `execution-loop.ts` are the only sanctioned adoption paths).
+- User/agent-route mutations carry no fence and are unaffected; the fence is scoped to its own session, so fenced code touching ANOTHER session (e.g. collaboration dispatch) is also unaffected.
+- `activeLoops` is instance-tokened: an exiting stale loop cannot unregister the live loop; do not revert it to a bare per-session Set.
+- `StaleLoopFenceError` must stay excluded from halt conversion (`runContextTask`'s catch and the loop's outer catch) — converting it to a halt re-creates the incident-622782a0 failure mode (a zombie loop halting the successor execution).
+
+Active cancellation complements the fence: user-initiated pause/abort/halt and `resume()` abort every cancellable conversation via `collectCancellableConversationIds` (running-task conversations ∪ `laneStates` lane conversations, so validator task-runs stop spending too). Task-run turns register an `AbortController` in the conversations abort-registry (`runTaskRunTurnForMachine`) and the signal threads facade → `dispatchTaskRun` → runner (both codex and claude runners fold it into their teardown path). The loop's own drain-and-halt intentionally does NOT cancel — engine halts drain so completed sibling work lands. Fence = correctness (a superseded loop cannot write); cancellation = economy (a cancelled turn stops burning tokens); keep both.
+
 ## Templates (storage, tiers, parameters, prerequisites)
 
 A saved workflow definition is a reusable **template**, launched via `cctl workflow start <id>`. Templates are **not in the repo** — they live in the OS config dir (the dir from `tech.md` "OS-aware config dir") at `<configDir>/workflows/<scopeKey>/<id>.json`. `src/lib/workflow-graph/storage.ts` (`createWorkflowStorageService`) is the read/write choke point: it runs full accept-time validation and mints `id`/`revision`/timestamps.

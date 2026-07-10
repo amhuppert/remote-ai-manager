@@ -76,6 +76,8 @@ interface TaskRunnerResolution {
   additionalDirectories?: readonly string[];
   skipGitRepoCheck?: boolean;
   artifacts?: readonly ArtifactRef[];
+  /** External cancellation signal for the run (see DispatchTaskRunDeps). */
+  signal?: AbortSignal;
 }
 
 export interface AgentCallFacadeDeps {
@@ -228,6 +230,7 @@ async function executeTaskRun(
     ...(resolution.artifacts !== undefined
       ? { artifacts: resolution.artifacts }
       : {}),
+    ...(resolution.signal !== undefined ? { signal: resolution.signal } : {}),
   });
 
   return applyStructuredOutputGate(request, dispatchResult, deps);

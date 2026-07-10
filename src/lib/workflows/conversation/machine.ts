@@ -300,6 +300,10 @@ export const conversationMachine = setup({
             activeTurn: ({ context, event }) =>
               conversationTurnFromEvent(context, event),
             pendingQuestion: null,
+            // Clear the previous turn's result with the error: an abort mid-turn
+            // sets only lastError, and a surviving stale success would be
+            // returned as the aborted turn's outcome.
+            lastResult: null,
             lastError: null,
           }),
         },
@@ -309,6 +313,9 @@ export const conversationMachine = setup({
             activeTurn: ({ context, event }) =>
               taskRunFromEvent(context, event),
             pendingQuestion: null,
+            // See SUBMIT_PROMPT: a stale success must not survive into a turn
+            // whose abort path sets only lastError.
+            lastResult: null,
             lastError: null,
           }),
         },
@@ -1004,6 +1011,10 @@ export const conversationMachine = setup({
             activeTurn: ({ context, event }) =>
               conversationTurnFromEvent(context, event),
             pendingQuestion: null,
+            // Clear the previous turn's result with the error: an abort mid-turn
+            // sets only lastError, and a surviving stale success would be
+            // returned as the aborted turn's outcome.
+            lastResult: null,
             lastError: null,
           }),
         },
@@ -1013,6 +1024,9 @@ export const conversationMachine = setup({
             activeTurn: ({ context, event }) =>
               taskRunFromEvent(context, event),
             pendingQuestion: null,
+            // See SUBMIT_PROMPT: a stale success must not survive into a turn
+            // whose abort path sets only lastError.
+            lastResult: null,
             lastError: null,
           }),
         },
@@ -1097,6 +1111,10 @@ export const conversationMachine = setup({
             activeTurn: ({ context, event }) =>
               conversationTurnFromEvent(context, event),
             pendingQuestion: null,
+            // Clear the previous turn's result with the error: an abort mid-turn
+            // sets only lastError, and a surviving stale success would be
+            // returned as the aborted turn's outcome.
+            lastResult: null,
             lastError: null,
           }),
         },
@@ -1329,6 +1347,7 @@ export const conversationMachine = setup({
               guard: ({ context }) => context.activeTurn != null,
               target: "#conversation.acquiringResources",
               actions: assign({
+                lastResult: null,
                 lastError: null,
               }),
             },

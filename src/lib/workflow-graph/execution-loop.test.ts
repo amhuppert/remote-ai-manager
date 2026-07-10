@@ -37,6 +37,8 @@ import {
   type TraceContext,
 } from "@/lib/logging";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
+import { AgentTurnFailedError } from "./errors";
+import { StaleLoopFenceError } from "./loop-fence";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import type {
   RecordPendingHaltReasonResult,
@@ -92,6 +94,7 @@ function createRunningExecution(
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition:
@@ -373,6 +376,11 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
       applyAdditionalMutation?(execution: GraphWorkflowExecution): void;
     }): Promise<RecordPendingHaltReasonResult> => {
       const e = getCurrent();
+      // Mirrors the manager: a pending halt reason only targets a running
+      // loop's drain path; transitions own non-running state.
+      if (e.status !== "running") {
+        return { execution: e, accepted: false };
+      }
       if (e.pendingHaltReason !== null) {
         return { execution: e, accepted: false };
       }
@@ -4338,5 +4346,356 @@ describe("execution loop", () => {
         resolution: "withdrawn",
       });
     });
+  });
+});
+
+describe("execution loop generation fencing", () => {
+  it("exits silently when an iteration surfaces a stale-fence rejection instead of halting the successor", async () => {
+    // Incident shape (loop A): the loop's execution was aborted and replaced
+    // while it was blocked; its next persisted write throws
+    // StaleLoopFenceError. The loop must NOT translate that into a halt — the
+    // halt would land on the successor execution it no longer owns.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new StaleLoopFenceError(
+            {
+              projectPath: "/repo",
+              sessionName: "session-1",
+              executionId: "exec-1",
+              loopEpoch: 0,
+            },
+            { id: "exec-2", loopEpoch: 0 },
+          );
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    // The successor's state is untouched: still running, no halt recorded.
+    expect(harness.getCurrent().status).toBe("running");
+    expect(harness.getCurrent().pendingHaltReason).toBeNull();
+    expect(result.status).toBe("running");
+  });
+
+  it("exits without adopting a successor execution observed on refresh", async () => {
+    // Incident shape (loop A, adoption variant): getActive is session-scoped,
+    // so after this loop's execution is aborted and a new one started, refresh
+    // returns the successor. The loop must exit instead of driving it.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const successor = createRunningExecution(definition, { id: "exec-2" });
+    const runIteration = vi.fn(
+      async (): Promise<GraphWorkflowIterationResult> => {
+        if (runIteration.mock.calls.length === 1) {
+          // During the turn, the original execution is aborted and replaced.
+          harness.setCurrent(structuredClone(successor));
+          const finished = structuredClone(initial);
+          finished.contextStates["ctx-1"]!.status = "completed";
+          finished.contextStates["ctx-1"]!.completedTaskCount = 1;
+          finished.taskStates["task-1"]!.status = "completed";
+          return {
+            conversationId: "conv-1",
+            execution: finished,
+            shouldContinueInContext: false,
+          };
+        }
+        // A second call means the loop kept driving work — for whichever
+        // execution — after its own was replaced.
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "completed";
+        next.contextStates["ctx-1"]!.completedTaskCount = 1;
+        next.taskStates["task-1"]!.status = "completed";
+        harness.setCurrent(next);
+        return {
+          conversationId: "conv-2",
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(runIteration).toHaveBeenCalledTimes(1);
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    // The successor is untouched.
+    expect(harness.getCurrent().id).toBe("exec-2");
+    expect(harness.getCurrent().status).toBe("running");
+    expect(harness.getCurrent().contextStates["ctx-1"]?.status).toBe("pending");
+  });
+
+  it("exits after a resume bumps the loop epoch instead of scheduling the next wave", async () => {
+    // Incident shape (loop B): the execution was halted and resumed while
+    // this loop was blocked in a turn. Resume cleared the halt signals, so
+    // status checks pass — only the epoch bump reveals the loop is stale. It
+    // must not schedule more work or complete the resumed execution.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const runIteration = vi.fn(
+      async (): Promise<GraphWorkflowIterationResult> => {
+        if (runIteration.mock.calls.length === 1) {
+          // Halt + resume land while the turn is in flight: the persisted
+          // execution is now generation 1 with the context still incomplete.
+          const resumed = structuredClone(initial);
+          resumed.loopEpoch = 1;
+          harness.setCurrent(resumed);
+          // The zombie's own view of its finished iteration (generation 0).
+          const finished = structuredClone(initial);
+          finished.contextStates["ctx-1"]!.status = "completed";
+          finished.contextStates["ctx-1"]!.completedTaskCount = 1;
+          finished.taskStates["task-1"]!.status = "completed";
+          return {
+            conversationId: "conv-1",
+            execution: finished,
+            shouldContinueInContext: false,
+          };
+        }
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "completed";
+        next.contextStates["ctx-1"]!.completedTaskCount = 1;
+        next.taskStates["task-1"]!.status = "completed";
+        harness.setCurrent(next);
+        return {
+          conversationId: "conv-2",
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(runIteration).toHaveBeenCalledTimes(1);
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    // The resumed generation is untouched: still running, still incomplete.
+    expect(harness.getCurrent().loopEpoch).toBe(1);
+    expect(harness.getCurrent().status).toBe("running");
+    expect(
+      harness.getCurrent().contextStates["ctx-1"]?.completedTaskCount,
+    ).toBe(0);
+  });
+
+  it("keeps the session marked loop-active while a newer loop instance is still running", async () => {
+    // The registry must be instance-keyed: when a stale loop exits after a
+    // newer loop registered for the same session, the exit must not
+    // unregister the newer loop.
+    _resetActiveLoopsForTesting();
+
+    const definition = createSingleContextDefinition(5);
+
+    function buildGatedHarness(): {
+      harness: LoopHarness;
+      releaseIteration: () => void;
+    } {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const initial = createRunningExecution(definition);
+      const harness = buildHarness({
+        initialExecution: initial,
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            await gate;
+            const next = structuredClone(harness.getCurrent());
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.taskStates["task-1"]!.status = "completed";
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+      return { harness, releaseIteration: () => release() };
+    }
+
+    const first = buildGatedHarness();
+    const second = buildGatedHarness();
+
+    const firstRun = createGraphWorkflowExecutionLoop(first.harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: first.harness.getCurrent(),
+    });
+    // Let the first loop register and block inside its iteration.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
+
+    const secondRun = createGraphWorkflowExecutionLoop(second.harness.deps).run(
+      {
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: second.harness.getCurrent(),
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The stale first loop exits while the second is still running.
+    first.releaseIteration();
+    await firstRun;
+    expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
+
+    second.releaseIteration();
+    await secondRun;
+    expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
+  });
+
+  it("exits without recording a halt when a turn cancelled by a pause settles as an abort failure", async () => {
+    // Pause/halt actively cancel in-flight turns; the cancelled turn wakes
+    // into its failure path within seconds while the execution is already
+    // suspended. Recording that as agent_turn_failed would poison the
+    // suspended state and drain-halt the next resume with a stale reason.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const runIteration = vi.fn(
+      async (): Promise<GraphWorkflowIterationResult> => {
+        // The pause transition lands mid-turn and cancels it.
+        const paused = structuredClone(harness.getCurrent());
+        paused.status = "paused";
+        harness.setCurrent(paused);
+        throw new AgentTurnFailedError("Prompt execution was aborted", {
+          contextId: "ctx-1",
+          engine: "claude",
+          cause: "abort",
+          originalMessage: "Prompt execution was aborted",
+        });
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(harness.getCurrent().status).toBe("paused");
+    expect(harness.getCurrent().pendingHaltReason).toBeNull();
+    expect(result.status).toBe("paused");
+  });
+
+  it("still halts on an abort-caused turn failure when the execution is running (not transition-cancelled)", async () => {
+    // An abort with no lifecycle transition behind it (e.g. a direct Stop on
+    // the lane conversation) is a genuine interruption of a running
+    // execution — the drain-then-halt path must still engage.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new AgentTurnFailedError("Prompt execution was aborted", {
+            contextId: "ctx-1",
+            engine: "claude",
+            cause: "abort",
+            originalMessage: "Prompt execution was aborted",
+          });
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "agent_turn_failed",
+      cause: "abort",
+    });
+  });
+
+  it("skips drain-and-halt when a recovery error lands after the execution left running", async () => {
+    // The recovery path records a pending halt then drains. If a lifecycle
+    // transition parked the execution while the loop was failing, the
+    // transition owns the terminal state: the (refused) record must not be
+    // followed by a drain that flips paused to halted.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const scheduleEligibleContexts = vi.fn(
+      async (): Promise<ScheduleEligibleContextsResult> => {
+        const paused = structuredClone(harness.getCurrent());
+        paused.status = "paused";
+        harness.setCurrent(paused);
+        throw new Error("unexpected scheduler failure");
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new Error("iteration should not run in this test");
+        },
+      },
+      scheduleEligibleContexts,
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(result.status).toBe("paused");
+    expect(harness.getCurrent().status).toBe("paused");
+    expect(harness.getCurrent().pendingHaltReason).toBeNull();
   });
 });

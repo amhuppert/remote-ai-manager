@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
+import { assertLoopFence } from "./loop-fence";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -746,6 +747,11 @@ export function createGraphWorkflowIterationOrchestrator(
       projectPath,
       sessionName,
     );
+    // Fence before the status/null checks: for a stale loop generation those
+    // errors would describe the SUCCESSOR's state and be recorded against it
+    // as a halt. The fence error instead exits the caller silently, before a
+    // conversation is created or an agent turn is prompted.
+    assertLoopFence(projectPath, sessionName, execution);
     if (!execution) {
       throw new Error(
         "Session does not have an active graph workflow execution",
@@ -769,6 +775,7 @@ export function createGraphWorkflowIterationOrchestrator(
       projectPath,
       sessionName,
     );
+    assertLoopFence(projectPath, sessionName, execution);
     if (!execution) {
       throw new Error(
         "Session does not have an active graph workflow execution",

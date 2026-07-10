@@ -4,7 +4,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { getConfiguredQueryConcurrency as defaultGetMaxConcurrentQueries } from "@/lib/shared/query-semaphore";
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-import { toHaltReason, type DirtyPath } from "./errors";
+import { AgentTurnFailedError, toHaltReason, type DirtyPath } from "./errors";
 import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
   type CircuitBreakerGateResult,
@@ -58,7 +58,16 @@ import type {
   GraphWorkflowStatus,
 } from "@/lib/workflows/schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
-import { hasPartialIterationProgress } from "./iteration-failure-with-progress";
+import {
+  StaleLoopFenceError,
+  matchesLoopFence,
+  runWithLoopFence,
+  type GraphWorkflowLoopFence,
+} from "./loop-fence";
+import {
+  hasPartialIterationProgress,
+  IterationFailureWithProgressError,
+} from "./iteration-failure-with-progress";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import type { MutateActiveResult } from "./execution-repository";
 import type {
@@ -251,7 +260,13 @@ export interface GraphWorkflowExecutionLoopDeps {
 
 // -- Active loop registry -----------------------------------------------------
 
-const activeLoops = new Set<string>();
+// Keyed by session, valued by the OWNING loop instance's token. Two loop
+// instances can briefly overlap on one session (a stale generation still
+// draining while its successor registers); the newest registrant owns the
+// entry, and an exiting loop only deletes it if it still owns it — otherwise
+// a stale loop's exit would make the session look loop-free while the live
+// loop is still running.
+const activeLoops = new Map<string, string>();
 
 function loopKey(projectPath: string, sessionName: string): string {
   return `${projectPath}::${sessionName}`;
@@ -275,6 +290,22 @@ export function _resetActiveLoopsForTesting(): void {
 function isRetryableIterationError(error: unknown): boolean {
   return /stream closed|querysession (died|is dead|ended before)|processtransport is not ready for writing/i.test(
     getErrorMessage(error),
+  );
+}
+
+/**
+ * An implementer turn that failed because its prompt was aborted. The
+ * orchestrator wraps a mid-iteration failure in
+ * IterationFailureWithProgressError when earlier turns completed, so unwrap
+ * before inspecting the cause.
+ */
+function isAbortCausedTurnFailure(error: unknown): boolean {
+  const unwrapped =
+    error instanceof IterationFailureWithProgressError
+      ? error.originalError
+      : error;
+  return (
+    unwrapped instanceof AgentTurnFailedError && unwrapped.cause === "abort"
   );
 }
 
@@ -442,18 +473,31 @@ export function createGraphWorkflowExecutionLoop(
   function run(
     input: GraphWorkflowExecutionLoopInput,
   ): Promise<GraphWorkflowExecution> {
+    // Pin this loop instance to the generation it was started for. The fence
+    // rides AsyncLocalStorage into everything the loop awaits — iterations,
+    // validators, committers, and every repository mutation — so a stale
+    // instance is rejected at the write path even while blocked in an await
+    // it entered before being superseded.
+    const fence: GraphWorkflowLoopFence = {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      loopEpoch: input.execution.loopEpoch,
+    };
     return runAsTrace(
       `workflow:${input.execution.id}`,
-      () => runImpl(input),
+      () => runWithLoopFence(fence, () => runImpl(input, fence)),
       captureTraceContext(),
     );
   }
 
   async function runImpl(
     input: GraphWorkflowExecutionLoopInput,
+    fence: GraphWorkflowLoopFence,
   ): Promise<GraphWorkflowExecution> {
     const key = loopKey(input.projectPath, input.sessionName);
-    activeLoops.add(key);
+    const loopInstanceToken = randomUUID();
+    activeLoops.set(key, loopInstanceToken);
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
     // Answers consumed on the awaiting-user-input resume path, keyed by context.
@@ -482,6 +526,31 @@ export function createGraphWorkflowExecutionLoop(
       execution = result.execution;
     }
 
+    /**
+     * Adopt an execution snapshot only if it still belongs to this loop's
+     * generation. `getActive` is keyed by session, not execution, so after an
+     * abort/replace or a halt/resume the session's active state belongs to a
+     * successor generation — adopting it would turn this loop into a second,
+     * unaccounted driver of state it does not own (the incident-622782a0
+     * zombie). Staleness throws; the loop's error handling exits silently.
+     */
+    function adoptExecution(next: GraphWorkflowExecution | null): void {
+      if (next === null || !matchesLoopFence(fence, next)) {
+        throw new StaleLoopFenceError(fence, next);
+      }
+      execution = next;
+    }
+
+    /** Refresh from the session's active execution, fence-checked. */
+    async function refreshExecution(): Promise<void> {
+      adoptExecution(
+        await deps.workflowManager.getActive(
+          input.projectPath,
+          input.sessionName,
+        ),
+      );
+    }
+
     async function waitForPendingCollaborationProgress(): Promise<void> {
       const pendingWorkflowIds = Object.values(
         execution.pendingCollaborations ?? {},
@@ -502,13 +571,7 @@ export function createGraphWorkflowExecutionLoop(
         executionId: execution.id,
       });
 
-      const refreshed = await deps.workflowManager.getActive(
-        input.projectPath,
-        input.sessionName,
-      );
-      if (refreshed) {
-        execution = refreshed;
-      }
+      await refreshExecution();
     }
 
     /**
@@ -586,13 +649,7 @@ export function createGraphWorkflowExecutionLoop(
           contextId,
         });
 
-        const refreshed = await deps.workflowManager.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (refreshed) {
-          execution = refreshed;
-        }
+        await refreshExecution();
       }
     }
 
@@ -689,13 +746,7 @@ export function createGraphWorkflowExecutionLoop(
           contextId,
         });
 
-        const refreshed = await deps.workflowManager.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (refreshed) {
-          execution = refreshed;
-        }
+        await refreshExecution();
       }
     }
 
@@ -763,13 +814,7 @@ export function createGraphWorkflowExecutionLoop(
           executionId: execution.id,
           contextId,
         });
-        const refreshed = await deps.workflowManager.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (refreshed) {
-          execution = refreshed;
-        }
+        await refreshExecution();
       }
     }
 
@@ -944,11 +989,7 @@ export function createGraphWorkflowExecutionLoop(
               return next;
             },
           );
-          const refreshed = await deps.workflowManager.getActive(
-            input.projectPath,
-            input.sessionName,
-          );
-          if (refreshed) execution = refreshed;
+          await refreshExecution();
           continue;
         }
         execLogger?.lifecycle("merge.retry_attempted", { contextId });
@@ -958,11 +999,7 @@ export function createGraphWorkflowExecutionLoop(
         });
         await runFanInMerge(contextId, state.worktreePath, state.branchName);
 
-        const refreshed = await deps.workflowManager.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (refreshed) execution = refreshed;
+        await refreshExecution();
 
         const refreshedState = execution.contextStates[contextId];
         if (refreshedState?.mergeStatus === "merged-success") {
@@ -977,11 +1014,7 @@ export function createGraphWorkflowExecutionLoop(
               return next;
             },
           );
-          const post = await deps.workflowManager.getActive(
-            input.projectPath,
-            input.sessionName,
-          );
-          if (post) execution = post;
+          await refreshExecution();
           continue;
         }
         // Merge failed again — halt path is already recorded by runFanInMerge.
@@ -1343,13 +1376,7 @@ export function createGraphWorkflowExecutionLoop(
               sessionName: input.sessionName,
               contextId,
             });
-            const refreshed = await deps.workflowManager.getActive(
-              input.projectPath,
-              input.sessionName,
-            );
-            if (refreshed) {
-              execution = refreshed;
-            }
+            await refreshExecution();
             if (consumed === null) {
               return;
             }
@@ -1385,6 +1412,36 @@ export function createGraphWorkflowExecutionLoop(
             });
             retryableRecoveryAttempts.delete(contextId);
           } catch (error) {
+            if (error instanceof StaleLoopFenceError) {
+              // This loop generation was superseded mid-iteration (execution
+              // aborted/replaced or resumed under a new epoch). Recording a
+              // halt here would land on the successor generation's state —
+              // propagate instead so the loop exits silently.
+              throw error;
+            }
+            if (isAbortCausedTurnFailure(error)) {
+              // An aborted turn is usually the effect of a lifecycle
+              // transition (pause/halt/abort actively cancel in-flight
+              // turns), not an agent failure. The fence cannot reject the
+              // settling write — same id and epoch — so check the persisted
+              // status: if the execution has left `running`, the transition
+              // owns the outcome and recording agent_turn_failed here would
+              // poison the suspended state (and drain-halt the next resume).
+              await refreshExecution();
+              if (execution.status !== "running") {
+                execLogger?.iteration(
+                  contextId,
+                  "loop.turn_aborted_by_transition",
+                  { executionStatus: execution.status },
+                );
+                logger.info("graph-workflow.loop.turn_aborted_by_transition", {
+                  executionId: execution.id,
+                  contextId,
+                  executionStatus: execution.status,
+                });
+                return;
+              }
+            }
             if (hasPartialIterationProgress(error)) {
               retryableRecoveryAttempts.delete(contextId);
             }
@@ -1426,7 +1483,7 @@ export function createGraphWorkflowExecutionLoop(
             continue;
           }
 
-          execution = iterationResult.execution;
+          adoptExecution(iterationResult.execution);
 
           const pendingCollaboration =
             execution.pendingCollaborations?.[contextId];
@@ -1930,11 +1987,7 @@ export function createGraphWorkflowExecutionLoop(
           ),
       });
 
-      const refreshed = await deps.workflowManager.getActive(
-        input.projectPath,
-        input.sessionName,
-      );
-      if (refreshed) execution = refreshed;
+      await refreshExecution();
 
       if (result.status === "succeeded") {
         execLogger?.lifecycle("join.completed", {
@@ -2067,11 +2120,15 @@ export function createGraphWorkflowExecutionLoop(
               sessionName: input.sessionName,
               executionId: execution.id,
             });
+            // Tolerant refresh: an abort may archive the execution (getActive
+            // returns null or a successor). This loop is about to break and
+            // return its own aborted snapshot, so staleness is not an error
+            // here — only a same-generation refresh is worth adopting.
             const refreshed = await deps.workflowManager.getActive(
               input.projectPath,
               input.sessionName,
             );
-            if (refreshed) {
+            if (refreshed !== null && matchesLoopFence(fence, refreshed)) {
               execution = refreshed;
             }
           }
@@ -2131,7 +2188,7 @@ export function createGraphWorkflowExecutionLoop(
             sessionLaneEnabled: input.sessionLaneEnabled,
             capacityRemaining,
           });
-        execution = scheduleResult.execution;
+        adoptExecution(scheduleResult.execution);
 
         // The scheduler only seeds pending/ready contexts, so a context
         // restored as awaiting_approval (a park persisted across a pause,
@@ -2298,17 +2355,37 @@ export function createGraphWorkflowExecutionLoop(
           await Promise.race(inFlight.values());
         }
 
-        const refreshed = await deps.workflowManager.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (refreshed) {
-          execution = refreshed;
-        }
+        await refreshExecution();
       }
 
       return execution;
     } catch (error) {
+      if (error instanceof StaleLoopFenceError) {
+        // This loop instance was superseded: its execution was aborted and
+        // replaced, or halted and resumed under a new loop generation. Exit
+        // WITHOUT recording a halt or draining — recordPendingHaltReason and
+        // drainAndHalt are session-keyed and would mutate the successor
+        // generation's state (the incident-622782a0 failure mode). In-flight
+        // context tasks are fenced themselves; absorb their eventual
+        // settlement so a late rejection is not unhandled, but do not block
+        // the exit on work that may run for minutes.
+        execLogger?.lifecycle("loop.fenced_out", {
+          fencedExecutionId: error.fence.executionId,
+          fencedLoopEpoch: error.fence.loopEpoch,
+          activeExecutionId: error.actualExecutionId,
+          activeLoopEpoch: error.actualLoopEpoch,
+          inFlightContextIds: [...inFlight.keys()],
+        });
+        logger.info("graph-workflow.loop.fenced_out", {
+          executionId: fence.executionId,
+          loopEpoch: fence.loopEpoch,
+          activeExecutionId: error.actualExecutionId,
+          activeLoopEpoch: error.actualLoopEpoch,
+          inFlightContextIds: [...inFlight.keys()],
+        });
+        void Promise.allSettled(inFlight.values());
+        return execution;
+      }
       execLogger?.lifecycle("loop.recovery_error", {
         error: getErrorMessage(error),
       });
@@ -2316,8 +2393,9 @@ export function createGraphWorkflowExecutionLoop(
         executionId: execution.id,
         error: getErrorMessage(error),
       });
+      let recorded: RecordPendingHaltReasonResult | null = null;
       try {
-        await deps.workflowManager.recordPendingHaltReason({
+        recorded = await deps.workflowManager.recordPendingHaltReason({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           reason: {
@@ -2332,13 +2410,27 @@ export function createGraphWorkflowExecutionLoop(
         });
       }
       await Promise.allSettled(inFlight.values());
+      if (recorded !== null && recorded.execution.status !== "running") {
+        // A lifecycle transition parked the execution while the loop was
+        // failing (the record above was refused). The transition owns the
+        // terminal state — draining would flip it to halted and overwrite
+        // the operator's decision.
+        logger.info("graph-workflow.loop.recovery_skipped_non_running", {
+          executionId: recorded.execution.id,
+          executionStatus: recorded.execution.status,
+          error: getErrorMessage(error),
+        });
+        return recorded.execution;
+      }
       const haltedExecution = await deps.workflowManager.drainAndHalt({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
       });
       return haltedExecution;
     } finally {
-      activeLoops.delete(key);
+      if (activeLoops.get(key) === loopInstanceToken) {
+        activeLoops.delete(key);
+      }
     }
   }
 

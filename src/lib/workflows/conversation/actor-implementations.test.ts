@@ -4799,6 +4799,68 @@ describe("runTaskRunTurnForMachine", () => {
     _resetForTesting();
   });
 
+  it("registers an abort controller for the turn and threads its signal into the runner, unregistering after", async () => {
+    // A workflow abort cancels task-run turns (validators) through the
+    // conversations abort-registry: the turn must register a controller under
+    // its conversation id, hand that controller's signal to the runner, and
+    // unregister once the run settles.
+    let runnerSignal: AbortSignal | undefined;
+    const runner = makeMockTaskRunner(async (req) => {
+      runnerSignal = req.signal;
+      return {
+        backendRef: null,
+        text: "task complete",
+        usage: null,
+        error: null,
+        timedOut: false,
+      };
+    });
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    await runTaskRunTurnForMachine(makeRunTaskRunInput());
+
+    const registerCalls = vi.mocked(mockDeps.registerAbortController).mock
+      .calls;
+    expect(registerCalls).toHaveLength(1);
+    const [registeredConversationId, registeredController] = registerCalls[0]!;
+    expect(registeredConversationId).toBe("conv-1");
+
+    expect(runnerSignal).toBeDefined();
+    expect(runnerSignal!.aborted).toBe(false);
+    registeredController.abort();
+    expect(runnerSignal!.aborted).toBe(true);
+
+    // Compare-and-delete contract: teardown unregisters the exact controller
+    // it registered so a stale finally can never strip a replacement turn's.
+    expect(mockDeps.unregisterAbortController).toHaveBeenCalledWith(
+      "conv-1",
+      registeredController,
+    );
+  });
+
+  it("unregisters the abort controller when the agent call throws", async () => {
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => {
+        throw new Error("no runner available");
+      }),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+
+    expect(result.error).toContain("no runner available");
+    expect(mockDeps.unregisterAbortController).toHaveBeenCalledWith(
+      "conv-1",
+      expect.any(AbortController),
+    );
+  });
+
   it("task_run WITHOUT outputFormat: persists exactly one assistant TranscriptMessage and forwards content blocks", async () => {
     const runner = makeMockTaskRunner(async () => ({
       backendRef: null,

@@ -1502,6 +1502,13 @@ export const graphWorkflowExecutionSchema = z.object({
   // guards catch edit-vs-edit lost updates. Persisted in the runtime tier
   // (`RUNTIME_TIER_KEYS`); rows written before the field existed parse as `1`.
   liveRevision: z.number().int().min(1).default(1),
+  // Loop-generation fence token. Incremented ONLY by `resume()` — every resume
+  // starts a new loop generation, and any execution loop still alive from a
+  // prior generation (a "zombie" blocked in a long await across the
+  // halt/resume) fails its fence check on the next read or write instead of
+  // racing the new loop. Persisted in the runtime tier; rows written before
+  // the field existed parse as `0`.
+  loopEpoch: z.number().int().min(0).default(0),
   // Raw bound-input snapshot recording which parameter values produced the run.
   // All supported parameter types (string/text/enum) bind to string values, so
   // the value type is `string`. `.default({})` lets legacy execution rows that

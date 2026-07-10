@@ -257,6 +257,65 @@ describe("ClaudeTaskRunner", () => {
     vi.useRealTimers();
   });
 
+  it("aborts the SDK run when an external cancellation signal fires", async () => {
+    let capturedController: AbortController | undefined;
+
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      capturedController = options.abortController;
+
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            resolve(),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    const external = new AbortController();
+    const runPromise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    external.abort();
+    await runPromise;
+
+    expect(capturedController?.signal.aborted).toBe(true);
+  });
+
+  it("tears down immediately when the external signal is already aborted", async () => {
+    let capturedController: AbortController | undefined;
+
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      capturedController = options.abortController;
+
+      return (async function* () {
+        if (options.abortController.signal.aborted) return;
+        await new Promise<void>((resolve) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            resolve(),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    const external = new AbortController();
+    external.abort();
+    const runPromise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+
+    await runPromise;
+    expect(capturedController?.signal.aborted).toBe(true);
+  });
+
   it("returns error when the SDK query throws", async () => {
     mockQuery.mockReturnValue(
       (async function* () {

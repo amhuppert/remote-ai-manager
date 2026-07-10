@@ -196,6 +196,7 @@ export function createWorkflowExecution(
     seedDefinitionId: "workflow-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition: definition,

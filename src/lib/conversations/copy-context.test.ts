@@ -72,6 +72,7 @@ function makeGraphWorkflowExecution(
     seedDefinitionId: "def-abc",
     seedDefinitionRevision: 3,
     liveRevision: 1,
+    loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition: {

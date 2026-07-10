@@ -981,6 +981,28 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
             lane,
             validatorType,
           );
+    // Persist the lane binding BEFORE dispatch. Active cancellation
+    // (pause/abort/halt/resume) collects abortable conversations from
+    // execution.laneStates; a lane resolved only in local state — every
+    // first or rotated Claude turn, and every Codex turn (whose synthetic
+    // dispatch id is never part of continuity state) — would otherwise be
+    // undiscoverable for the whole run, letting the turn burn to completion.
+    if (resolvedLaneState) {
+      const laneStateForDispatch = {
+        ...resolvedLaneState,
+        workflowConversationId: dispatchConversationId,
+      };
+      await applyLaneStateUpdate(projectPath, sessionName, (latest) => ({
+        ...latest,
+        laneStates: {
+          ...latest.laneStates,
+          [contextId]: {
+            ...latest.laneStates[contextId],
+            [lane]: laneStateForDispatch,
+          },
+        },
+      }));
+    }
     const taskResult = await dispatchValidatorTurn({
       prompt,
       backend: validatorType,

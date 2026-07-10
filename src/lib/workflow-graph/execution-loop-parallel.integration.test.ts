@@ -317,6 +317,7 @@ function createInitialExecution(
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition:
@@ -2708,12 +2709,15 @@ describe("execution loop — parallel integration", () => {
         runIterationCalls.push(input.contextId);
         if (input.contextId === "ctx-b") {
           await ctxBFailure.promise;
-          throw new AgentTurnFailedError("Socket is not connected (os error 57)", {
-            contextId: "ctx-b",
-            engine: "codex",
-            cause: "sdk_error",
-            originalMessage: "Socket is not connected (os error 57)",
-          });
+          throw new AgentTurnFailedError(
+            "Socket is not connected (os error 57)",
+            {
+              contextId: "ctx-b",
+              engine: "codex",
+              cause: "sdk_error",
+              originalMessage: "Socket is not connected (os error 57)",
+            },
+          );
         }
         const next = await manager.mutateActive("/repo", "session-1", (e) => {
           const updated = structuredClone(e);
@@ -2833,12 +2837,15 @@ describe("execution loop — parallel integration", () => {
         runIterationCalls.push(input.contextId);
         if (input.contextId === "ctx-b") {
           await ctxBFailure.promise;
-          throw new AgentTurnFailedError("Socket is not connected (os error 57)", {
-            contextId: "ctx-b",
-            engine: "codex",
-            cause: "sdk_error",
-            originalMessage: "Socket is not connected (os error 57)",
-          });
+          throw new AgentTurnFailedError(
+            "Socket is not connected (os error 57)",
+            {
+              contextId: "ctx-b",
+              engine: "codex",
+              cause: "sdk_error",
+              originalMessage: "Socket is not connected (os error 57)",
+            },
+          );
         }
         const next = await manager.mutateActive("/repo", "session-1", (e) => {
           const updated = structuredClone(e);

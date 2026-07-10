@@ -3,6 +3,12 @@ import { createLogger } from "@/lib/logging";
 import { ensureCcArtifactsExcluded } from "@/lib/git/worktree";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import {
+  StaleLoopFenceError,
+  getCurrentLoopFence,
+  loopFenceAppliesTo,
+  matchesLoopFence,
+} from "./loop-fence";
+import {
   createWorkflowCharterService,
   type WorkflowCharterService,
 } from "./charter/service";
@@ -26,8 +32,10 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowStatus,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
+import { WorkflowStartGuardError } from "./workflow-manager";
 export { GraphWorkflowValidationError } from "./validation";
 
 const logger = createLogger("graph-workflow-execution-repository");
@@ -274,7 +282,33 @@ export function createGraphWorkflowExecutionRepository(
       projectPath,
       sessionName,
       "graphWorkflowExecution.create",
-      async () => {
+      async (current) => {
+        // Compare-and-set inside the write-queue critical section. start()'s
+        // active-execution guard runs a long async gauntlet (git probes,
+        // definition load, charter seeding) before create, so two concurrent
+        // starts can both pass it — the second create must not silently
+        // overwrite the first execution, which would leave two loop drivers
+        // on one execution under matching (executionId, loopEpoch) fences.
+        // Terminal statuses mirror the start() guard: those actives are
+        // replaceable (start archives them before creating).
+        const replaceableStatuses: GraphWorkflowStatus[] = [
+          "completed",
+          "halted",
+          "aborted",
+        ];
+        if (current && !replaceableStatuses.includes(current.status)) {
+          logger.warn("graph-workflow.execution.create_conflict_rejected", {
+            projectPath,
+            sessionName,
+            attemptedExecutionId: seededExecution.id,
+            activeExecutionId: current.id,
+            activeStatus: current.status,
+          });
+          throw new WorkflowStartGuardError(
+            "active_execution",
+            `Session "${sessionName}" already has an active graph workflow execution`,
+          );
+        }
         const updateEvents = eventPublisher.publishExecutionUpdate({
           projectPath,
           sessionName,
@@ -330,6 +364,26 @@ export function createGraphWorkflowExecutionRepository(
       sessionName,
       "graphWorkflowExecution.mutateActive",
       async (current) => {
+        // Loop-generation fence, checked inside the write-queue critical
+        // section against the *persisted* execution: a mutation issued by a
+        // superseded loop instance (its execution aborted/replaced, or resumed
+        // under a new epoch) is rejected atomically before the mutator runs.
+        const fence = getCurrentLoopFence();
+        if (
+          fence !== null &&
+          loopFenceAppliesTo(fence, projectPath, sessionName) &&
+          !matchesLoopFence(fence, current)
+        ) {
+          logger.warn("graph-workflow.loop_fence.stale_write_rejected", {
+            projectPath,
+            sessionName,
+            fencedExecutionId: fence.executionId,
+            fencedLoopEpoch: fence.loopEpoch,
+            activeExecutionId: current?.id ?? null,
+            activeLoopEpoch: current?.loopEpoch ?? null,
+          });
+          throw new StaleLoopFenceError(fence, current);
+        }
         if (!current) {
           throw new Error(
             "Session does not have an active graph workflow execution",

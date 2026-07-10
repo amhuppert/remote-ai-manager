@@ -29,10 +29,22 @@ export function registerAbortController(
 
 /**
  * Remove a registered AbortController (called on normal completion).
+ * Compare-and-delete: a turn's teardown may run after a replacement turn
+ * has registered its own controller under the same conversation id (abort →
+ * immediate re-dispatch), and an id-only delete would strip the live turn's
+ * controller, making it uncancellable.
  * @public Accessed via dynamic `import()` in actor-implementations.
  */
-export function unregisterAbortController(conversationId: string): void {
-  getRegistry().delete(conversationId);
+export function unregisterAbortController(
+  conversationId: string,
+  controller: AbortController,
+): void {
+  const registry = getRegistry();
+  if (registry.get(conversationId) !== controller) {
+    logger.debug("abort.unregister_skipped_stale", { conversationId });
+    return;
+  }
+  registry.delete(conversationId);
   logger.debug("abort.unregistered", { conversationId });
 }
 

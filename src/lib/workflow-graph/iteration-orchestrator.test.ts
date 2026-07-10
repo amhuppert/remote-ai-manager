@@ -23,6 +23,7 @@ import {
   IterationHaltedError,
 } from "./iteration-orchestrator";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
+import { StaleLoopFenceError, runWithLoopFence } from "./loop-fence";
 import { AgentTurnFailedError } from "./errors";
 import type {
   ResolveImplementerCallInput,
@@ -341,6 +342,54 @@ function seedFailedContextValidationEvent(
 }
 
 describe("graph workflow iteration orchestrator", () => {
+  it("rejects an iteration from a stale loop generation before any agent work starts", async () => {
+    // A zombie loop that wakes from a long await seeds its next iteration
+    // through here; the ambient fence no longer matches the persisted
+    // generation (the execution was resumed), so the iteration must die
+    // before creating a conversation or prompting an agent.
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const runAgentIteration = vi.fn();
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const staleFence = {
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: repository.read().id,
+      loopEpoch: repository.read().loopEpoch + 1,
+    };
+    await expect(
+      runWithLoopFence(staleFence, () =>
+        orchestrator.runIteration({
+          projectPath: "/repo",
+          projectName: "repo",
+          sessionName: "session-1",
+          contextId: "context-plan",
+        }),
+      ),
+    ).rejects.toThrow(StaleLoopFenceError);
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(runAgentIteration).not.toHaveBeenCalled();
+  });
+
   it("runs an iteration that completes one task and signals more remain", async () => {
     const repository = createRepository(
       createExecutionWithPlanTasks({

@@ -732,6 +732,287 @@ describe("graph workflow manager", () => {
     }
   });
 
+  it("aborts lane conversations (implementer + validator) alongside running-task conversations", async () => {
+    // Validator runs live on lane conversations tracked in laneStates, not in
+    // taskStates — without collecting them, an abort mid-validation lets a
+    // long codex validator run burn to completion.
+    const buildExecution = () =>
+      createWorkflowExecution({
+        status: "running",
+        activeContextIds: ["context-plan"],
+        taskStates: {
+          "task-plan-1": {
+            taskId: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            status: "running",
+            summary: null,
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: null,
+            lastConversationId: "conv-impl",
+            failureMessage: null,
+            failureHistory: [],
+          },
+        },
+        laneStates: {
+          "context-plan": {
+            implementer: {
+              lane: "implementer",
+              contextId: "context-plan",
+              engine: "claude",
+              workflowConversationId: "conv-impl",
+              sessionRef: {
+                engine: "claude",
+                lane: "implementer",
+                conversationId: "conv-impl",
+              },
+              lastContextTokens: null,
+              lastContextWindowMax: null,
+              rotateBeforeNextTurn: false,
+              limitEvaluation: "supported",
+              lastUsedAt: "2026-03-27T15:00:00.000Z",
+            },
+            context_validator: {
+              lane: "context_validator",
+              contextId: "context-plan",
+              engine: "codex",
+              // Production shape: the validator runner persists the synthetic
+              // dispatch id (__validator__:{executionId}:{contextId}:{lane}:{backend})
+              // onto the lane state before dispatching the turn.
+              workflowConversationId:
+                "__validator__:execution-1:context-plan:context_validator:codex",
+              lastTurnUsage: null,
+              rotateBeforeNextTurn: false,
+              limitEvaluation: "unsupported",
+              lastUsedAt: "2026-03-27T15:01:00.000Z",
+            },
+          },
+        },
+      });
+
+    const repository = createRepository(buildExecution());
+    const abortConversation = vi.fn();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      abortConversation,
+    });
+
+    await manager.send("/repo", "session-1", { type: "abort" });
+
+    const conversationIds = abortConversation.mock.calls
+      .map(([input]) => (input as { conversationId: string }).conversationId)
+      .sort((a, b) => a.localeCompare(b));
+    // conv-impl appears in both taskStates and the implementer lane — deduped.
+    expect(conversationIds).toEqual([
+      "__validator__:execution-1:context-plan:context_validator:codex",
+      "conv-impl",
+    ]);
+  });
+
+  it("resume aborts in-flight turns on lane conversations before the new loop generation starts", async () => {
+    // A zombie loop's in-flight turn is write-fenced but can still hold a
+    // lane conversation; aborting on resume frees the lane for the new
+    // generation. Safe: no legitimate turn can be running while halted.
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "halted",
+        haltReason: { type: "recovery_error", message: "halted for the test" },
+        laneStates: {
+          "context-plan": {
+            implementer: {
+              lane: "implementer",
+              contextId: "context-plan",
+              engine: "claude",
+              workflowConversationId: "conv-impl",
+              sessionRef: {
+                engine: "claude",
+                lane: "implementer",
+                conversationId: "conv-impl",
+              },
+              lastContextTokens: null,
+              lastContextWindowMax: null,
+              rotateBeforeNextTurn: false,
+              limitEvaluation: "supported",
+              lastUsedAt: "2026-03-27T15:00:00.000Z",
+            },
+          },
+        },
+      }),
+    );
+    const abortConversation = vi.fn();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      abortConversation,
+    });
+
+    const resumed = await manager.resume("/repo", "session-1");
+
+    expect(resumed.status).toBe("running");
+    expect(
+      abortConversation.mock.calls.map(
+        ([input]) => (input as { conversationId: string }).conversationId,
+      ),
+    ).toEqual(["conv-impl"]);
+  });
+
+  it("does not abort the conversation holding a parked user question on pause or halt", async () => {
+    // A parked lane has no in-flight turn — its machine sits in
+    // waitingForInput, which accepts ABORT_TURN and would persist a cleared
+    // question. The execution keeps pendingUserInput, so answers would 410
+    // forever and the context could never be re-dispatched.
+    const buildParkedExecution = () => {
+      const execution = createWorkflowExecution({
+        status: "running",
+        activeContextIds: ["context-implement"],
+        laneStates: {
+          "context-plan": {
+            implementer: {
+              lane: "implementer",
+              contextId: "context-plan",
+              engine: "claude",
+              workflowConversationId: "conv-parked",
+              sessionRef: {
+                engine: "claude",
+                lane: "implementer",
+                conversationId: "conv-parked",
+              },
+              lastContextTokens: null,
+              lastContextWindowMax: null,
+              rotateBeforeNextTurn: false,
+              limitEvaluation: "supported",
+              lastUsedAt: "2026-03-27T15:00:00.000Z",
+            },
+          },
+          "context-implement": {
+            implementer: {
+              lane: "implementer",
+              contextId: "context-implement",
+              engine: "claude",
+              workflowConversationId: "conv-live",
+              sessionRef: {
+                engine: "claude",
+                lane: "implementer",
+                conversationId: "conv-live",
+              },
+              lastContextTokens: null,
+              lastContextWindowMax: null,
+              rotateBeforeNextTurn: false,
+              limitEvaluation: "supported",
+              lastUsedAt: "2026-03-27T15:01:00.000Z",
+            },
+          },
+        },
+      });
+      const parkedContext = execution.contextStates["context-plan"];
+      if (!parkedContext) throw new Error("fixture missing context-plan");
+      parkedContext.status = "awaiting_user_input";
+      parkedContext.pendingUserInput = {
+        conversationId: "conv-parked",
+        lane: "implementer",
+        questionBatchId: "batch-1",
+        questions: [],
+        requestedAt: "2026-03-27T15:00:00.000Z",
+        answers: null,
+      };
+      return execution;
+    };
+
+    for (const event of [
+      { type: "pause" as const },
+      {
+        type: "halt" as const,
+        reason: {
+          type: "max_iterations" as const,
+          contextId: "context-implement",
+          iterationCount: 1,
+        },
+      },
+    ]) {
+      const repository = createRepository(buildParkedExecution());
+      const abortConversation = vi.fn();
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        abortConversation,
+      });
+
+      await manager.send("/repo", "session-1", event);
+
+      const conversationIds = abortConversation.mock.calls.map(
+        ([input]) => (input as { conversationId: string }).conversationId,
+      );
+      expect(conversationIds, `transition=${event.type}`).toEqual([
+        "conv-live",
+      ]);
+      expect(
+        repository.read()?.contextStates["context-plan"]?.pendingUserInput,
+      ).not.toBeNull();
+    }
+  });
+
+  it("resume does not abort the conversation holding a parked user question", async () => {
+    const execution = createWorkflowExecution({
+      status: "paused",
+      laneStates: {
+        "context-plan": {
+          implementer: {
+            lane: "implementer",
+            contextId: "context-plan",
+            engine: "claude",
+            workflowConversationId: "conv-parked",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-parked",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "supported",
+            lastUsedAt: "2026-03-27T15:00:00.000Z",
+          },
+        },
+      },
+    });
+    const parkedContext = execution.contextStates["context-plan"];
+    if (!parkedContext) throw new Error("fixture missing context-plan");
+    parkedContext.status = "awaiting_user_input";
+    parkedContext.pendingUserInput = {
+      conversationId: "conv-parked",
+      lane: "implementer",
+      questionBatchId: "batch-1",
+      questions: [],
+      requestedAt: "2026-03-27T15:00:00.000Z",
+      answers: null,
+    };
+
+    const repository = createRepository(execution);
+    const abortConversation = vi.fn();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      abortConversation,
+    });
+
+    const resumed = await manager.resume("/repo", "session-1");
+
+    expect(resumed.status).toBe("running");
+    expect(abortConversation).not.toHaveBeenCalled();
+    expect(
+      repository.read()?.contextStates["context-plan"]?.pendingUserInput,
+    ).not.toBeNull();
+  });
+
   describe("lane dev-server cleanup on terminal transitions", () => {
     function runningExecution(): GraphWorkflowExecution {
       return createWorkflowExecution({
@@ -2078,6 +2359,66 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("bumps loopEpoch on every resume so a prior loop generation is fenced out", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "halted",
+        haltReason: {
+          type: "recovery_error",
+          message: "halted for the test",
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const resumed = await manager.resume("/repo", "session-1");
+    expect(resumed.loopEpoch).toBe(1);
+
+    // The bump must be persisted, not just returned: a zombie loop checks the
+    // stored execution, so the fence only works if the epoch survives a read.
+    const persisted = await repository.getActive("/repo", "session-1");
+    expect(persisted?.loopEpoch).toBe(1);
+
+    await manager.send("/repo", "session-1", { type: "pause" });
+    const resumedAgain = await manager.resume("/repo", "session-1");
+    expect(resumedAgain.loopEpoch).toBe(2);
+  });
+
+  it("resume clears a stale pendingHaltReason so the new generation does not immediately drain-halt", async () => {
+    // A turn cancelled by pause/halt can settle into recordPendingHaltReason
+    // while the execution is suspended. Resume is a manual retry decision:
+    // any not-yet-drained pending reason belongs to the superseded
+    // generation, and preserving it would halt the replacement loop on its
+    // first pass.
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "paused",
+        pendingHaltReason: {
+          type: "recovery_error",
+          message: "stale reason from a cancelled turn",
+        },
+      }),
+    );
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const resumed = await manager.resume("/repo", "session-1");
+
+    expect(resumed.status).toBe("running");
+    expect(resumed.pendingHaltReason).toBeNull();
+    expect(repository.read()?.pendingHaltReason).toBeNull();
+  });
+
   it("resumes a halted execution, resetting the failure counter of the context the breaker bumped to ready", async () => {
     // The context that trips the circuit breaker is active+running at halt, so
     // the halt transition (markActiveContextReady) bumps it to `ready`, not
@@ -2194,6 +2535,55 @@ describe("graph workflow manager", () => {
     expect(execution.contextStates["context-implement"]).toMatchObject({
       status: "ready",
       consecutiveFailureCount: 0,
+    });
+  });
+
+  it("resume resets an in-progress merge to pending and schedules a retry", async () => {
+    // A merge whose success write was fenced out (resume landed mid-git-op)
+    // strands mergeStatus at in-progress: the context is completed so it is
+    // never rescheduled, and downstream eligibility requires merged-success.
+    // Resume treats it like merged-failed — retry and let the merge runner
+    // reconcile against what actually landed on the branch.
+    const baseExecution = createWorkflowExecution();
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        completedAt: "2026-03-27T15:30:00.000Z",
+        haltReason: {
+          type: "recovery_error",
+          message: "Refusing to complete with incomplete contexts",
+        },
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "completed",
+            isolation: "worktree",
+            worktreePath: "/repo/.worktrees/session-1.context-plan",
+            branchName: "csm/session-1-context-plan",
+            mergeStatus: "in-progress",
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(execution.status).toBe("running");
+    expect(execution.pendingMergeRetry).toEqual(["context-plan"]);
+    expect(execution.contextStates["context-plan"]).toMatchObject({
+      status: "completed",
+      mergeStatus: "pending",
+      lastMergeError: null,
     });
   });
 
@@ -5502,6 +5892,45 @@ describe("graph workflow manager", () => {
         type: "recovery_error",
         message: "first",
       });
+    });
+
+    it("refuses to record onto a non-running execution and skips the additional mutation", async () => {
+      // A pause/halt/abort transition already parked the execution; a turn
+      // that settles afterwards (its cancellation classified as a failure)
+      // must not poison the suspended state with a pending halt reason or
+      // flip contexts to halted — same id and epoch, so the loop fence alone
+      // does not reject the write.
+      for (const status of ["paused", "halted", "aborted"] as const) {
+        const repository = createRepository(
+          createWorkflowExecution({
+            status,
+            activeContextIds: [],
+          }),
+        );
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return null;
+          },
+        });
+
+        const result = await manager.recordPendingHaltReason({
+          projectPath: "/repo",
+          sessionName: "session-1",
+          reason: { type: "recovery_error", message: "late settle" },
+          applyAdditionalMutation(next) {
+            const cs = next.contextStates["context-plan"];
+            if (cs) cs.status = "halted";
+          },
+        });
+
+        expect(result.accepted, `status=${status}`).toBe(false);
+        expect(repository.read()?.pendingHaltReason).toBeNull();
+        expect(repository.read()?.secondaryHaltReasons).toEqual([]);
+        expect(repository.read()?.contextStates["context-plan"]?.status).toBe(
+          "pending",
+        );
+      }
     });
 
     it("throws when there is no active graph workflow execution", async () => {

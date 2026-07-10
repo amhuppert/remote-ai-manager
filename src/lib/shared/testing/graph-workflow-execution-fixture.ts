@@ -17,6 +17,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
     liveRevision: 4,
+    loopEpoch: 2,
     boundInputs: {
       feature: "search box",
       notes: "first line\nsecond line",

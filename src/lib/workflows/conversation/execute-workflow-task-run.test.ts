@@ -247,6 +247,52 @@ describe("executeWorkflowTaskRun", () => {
     ).toBe(actorAfterFirst);
   });
 
+  it("returns an error, not the preceding turn's success, when a task_run is aborted mid-flight", async () => {
+    // The machine actor persists across task-runs on the same conversation,
+    // so `lastResult` still holds run 1's success when run 2 starts. An
+    // abort mid-run-2 must not surface run 1's result as run 2's outcome —
+    // for a validator turn that would report a stale PASS for a validation
+    // that never ran.
+    const first = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "first",
+      timeoutMs: 5000,
+    });
+    const inv1 = await nextPendingInvocation();
+    inv1.resolve(
+      defaultResult({ contentBlocks: [{ type: "text", text: "PASS" }] }),
+    );
+    const firstResult = await first;
+    expect(firstResult.kind).toBe("text");
+
+    const second = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "second",
+      timeoutMs: 5000,
+    });
+    // Wait until run 2 is genuinely in flight, then abort it.
+    await nextPendingInvocation();
+    const actor = getConversationActor(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    actor!.send({ type: "ABORT_TURN", reason: "user" });
+
+    const secondResult = await second;
+
+    expect(secondResult.kind).toBe("error");
+    if (secondResult.kind === "error") {
+      expect(secondResult.error).toContain("Aborted");
+    }
+  });
+
   it("returns the parsed structured output when outputFormat is set", async () => {
     const structured = { answer: 42, label: "the-meaning" };
 

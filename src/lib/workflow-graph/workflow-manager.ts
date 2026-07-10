@@ -446,16 +446,80 @@ function markActiveContextReady(execution: GraphWorkflowExecution): void {
   }
 }
 
+/**
+ * Conversations parked on a user question. Their machines sit in
+ * waitingForInput, which accepts ABORT_TURN and would persist a cleared
+ * question while the execution keeps pendingUserInput — subsequent answers
+ * would be rejected and the context could never be re-dispatched. A parked
+ * conversation has no in-flight turn, so excluding it from cancellation
+ * costs nothing.
+ */
+function collectParkedQuestionConversationIds(
+  execution: GraphWorkflowExecution,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const contextState of Object.values(execution.contextStates)) {
+    const conversationId = contextState.pendingUserInput?.conversationId;
+    if (conversationId) {
+      ids.add(conversationId);
+    }
+  }
+  return ids;
+}
+
 function collectRunningTaskConversationIds(
   execution: GraphWorkflowExecution,
 ): string[] {
+  const parked = collectParkedQuestionConversationIds(execution);
   const ids = new Set<string>();
   for (const taskState of Object.values(execution.taskStates)) {
-    if (taskState.status === "running" && taskState.lastConversationId) {
+    if (
+      taskState.status === "running" &&
+      taskState.lastConversationId &&
+      !parked.has(taskState.lastConversationId)
+    ) {
       ids.add(taskState.lastConversationId);
     }
   }
   return [...ids];
+}
+
+/**
+ * CC conversation ids of every lane (implementer + validator) tracked on the
+ * execution, except conversations parked on a user question. Validator runs
+ * live here, NOT in taskStates — collecting only running-task conversations
+ * lets a long validator run burn to completion after an abort. Aborting an
+ * idle (non-parked) lane conversation is a harmless no-op (abort-registry
+ * miss; the actor ignores ABORT_TURN when idle).
+ */
+function collectLaneConversationIds(
+  execution: GraphWorkflowExecution,
+): string[] {
+  const parked = collectParkedQuestionConversationIds(execution);
+  const ids = new Set<string>();
+  for (const lanes of Object.values(execution.laneStates)) {
+    for (const laneState of Object.values(lanes)) {
+      if (laneState.workflowConversationId) {
+        ids.add(laneState.workflowConversationId);
+      }
+      if (laneState.sessionRef?.engine === "claude") {
+        ids.add(laneState.sessionRef.conversationId);
+      }
+    }
+  }
+  return [...ids].filter((id) => !parked.has(id));
+}
+
+/** Every conversation an active-cancellation transition should abort. */
+function collectCancellableConversationIds(
+  execution: GraphWorkflowExecution,
+): string[] {
+  return [
+    ...new Set([
+      ...collectRunningTaskConversationIds(execution),
+      ...collectLaneConversationIds(execution),
+    ]),
+  ];
 }
 
 function interruptRunningTasks(execution: GraphWorkflowExecution): boolean {
@@ -741,7 +805,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         projectPath,
         sessionName,
         (execution) => {
-          conversationIdsToAbort = collectRunningTaskConversationIds(execution);
+          conversationIdsToAbort = collectCancellableConversationIds(execution);
           return transitionToNonRunningState(execution, "paused", null, null);
         },
       );
@@ -764,7 +828,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         projectPath,
         sessionName,
         (execution) => {
-          conversationIdsToAbort = collectRunningTaskConversationIds(execution);
+          conversationIdsToAbort = collectCancellableConversationIds(execution);
           return transitionToNonRunningState(execution, "aborted", now, {
             type: "aborted",
           });
@@ -819,7 +883,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
       (execution) => {
-        conversationIdsToAbort = collectRunningTaskConversationIds(execution);
+        conversationIdsToAbort = collectCancellableConversationIds(execution);
         return transitionToNonRunningState(
           execution,
           "halted",
@@ -856,6 +920,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     let hasInterrupted = false;
     let mergeRetryContextIds: string[] = [];
     let resetJoinIds: string[] = [];
+    let laneConversationIdsToAbort: string[] = [];
 
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
@@ -888,14 +953,37 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           );
         }
         resetJoinIds = joinIdsToReset;
+        // A zombie loop's in-flight turn is write-fenced but can still hold a
+        // lane conversation against the new generation; collect the lanes so
+        // any such turn is actively aborted below. Safe: no legitimate turn
+        // can be running while the execution is paused/halted, so aborting an
+        // idle lane conversation is a no-op.
+        laneConversationIdsToAbort = collectLaneConversationIds(execution);
         execution.status = "running";
         execution.completedAt = null;
         execution.haltReason = null;
         execution.secondaryHaltReasons = [];
+        // A pending reason recorded by a turn that settled after the
+        // pause/halt belongs to the superseded generation; preserving it
+        // would drain-halt the replacement loop on its first pass.
+        execution.pendingHaltReason = null;
+        // Start a new loop generation: resume clears the halt signals a
+        // blocked loop would otherwise observe on wake, so the epoch bump is
+        // what fences out any loop instance still alive from before the halt.
+        execution.loopEpoch += 1;
 
         const retryIds: string[] = [];
         for (const contextState of Object.values(execution.contextStates)) {
-          if (contextState.mergeStatus === "merged-failed") {
+          // in-progress: the merge's success write was fenced out (resume
+          // landed mid-git-operation) or the server died mid-merge. The
+          // context is completed so it is never rescheduled and downstream
+          // eligibility requires merged-success — without a retry the
+          // execution wedges. The merge runner reconciles against whatever
+          // actually landed on the branch.
+          if (
+            contextState.mergeStatus === "merged-failed" ||
+            contextState.mergeStatus === "in-progress"
+          ) {
             contextState.mergeStatus = "pending";
             contextState.lastMergeError = null;
             retryIds.push(contextState.contextId);
@@ -930,6 +1018,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
+    // Abort only after the epoch bump is committed: a zombie turn racing the
+    // abort is already write-fenced, and the new loop is not kicked until
+    // resume returns, so a fresh generation's turn can never be the target.
+    if (laneConversationIdsToAbort.length > 0) {
+      logger.info("graph-workflow.resume.lane_turns_aborted", {
+        executionId: nextExecution.id,
+        conversationIds: laneConversationIdsToAbort,
+      });
+      abortRunningTaskConversations(
+        projectPath,
+        sessionName,
+        laneConversationIdsToAbort,
+      );
+    }
+
     // Re-register execution logger on resume
     const execLogger = createExecutionLogger(nextExecution.id);
     registerExecutionLogger(execLogger);
@@ -963,6 +1066,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     logger.info("graph-workflow.execution.resumed", {
       executionId: nextExecution.id,
       previousStatus,
+      loopEpoch: nextExecution.loopEpoch,
     });
 
     return nextExecution;
@@ -1807,11 +1911,22 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   ): Promise<RecordPendingHaltReasonResult> {
     const { projectPath, sessionName, reason, applyAdditionalMutation } = input;
     let accepted = false;
+    let rejectedStatus: GraphWorkflowStatus | null = null;
 
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
       (execution) => {
+        // A pending halt reason is a signal to a running loop's
+        // drain-then-halt path. Once a transition has parked the execution
+        // (pause/halt/abort), a late-settling turn — typically one the
+        // transition itself cancelled — must not poison the suspended state:
+        // the fence cannot reject it (same id and epoch), and resume would
+        // otherwise drain-halt the replacement loop immediately.
+        if (execution.status !== "running") {
+          rejectedStatus = execution.status;
+          return execution;
+        }
         const next = cloneExecution(execution);
         if (applyAdditionalMutation) {
           applyAdditionalMutation(next);
@@ -1825,6 +1940,20 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         return next;
       },
     );
+
+    if (rejectedStatus !== null) {
+      const execLogger = getExecutionLogger(nextExecution.id);
+      execLogger?.lifecycle("parallel.pending_halt_rejected_non_running", {
+        attemptedHaltReason: reason,
+        executionStatus: rejectedStatus,
+      });
+      logger.warn("graph-workflow.parallel.pending_halt_rejected_non_running", {
+        executionId: nextExecution.id,
+        attemptedHaltReasonType: reason.type,
+        executionStatus: rejectedStatus,
+      });
+      return { execution: nextExecution, accepted: false };
+    }
 
     if (accepted) {
       const execLogger = getExecutionLogger(nextExecution.id);

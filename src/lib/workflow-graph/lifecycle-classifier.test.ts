@@ -84,6 +84,7 @@ function makeExecution(
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    loopEpoch: 0,
     workingDefinition,
     charter: makeTestCharter(),
     status: overrides.status ?? "running",

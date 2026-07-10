@@ -356,6 +356,53 @@ describe("workflow graph execution schemas", () => {
       expect(result.data.sharedDocuments).toHaveLength(1);
     }
   });
+
+  it("defaults loopEpoch to 0 for execution rows written before the field existed", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      id: "execution-legacy",
+      seedDefinitionId: "workflow-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: createResolvedDefinition(),
+      charter: makeTestCharter(),
+      status: "running",
+      startedAt: timestamp,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.loopEpoch).toBe(0);
+    }
+  });
+
+  it("round-trips an explicit loopEpoch and rejects non-integer values", () => {
+    const base = {
+      id: "execution-epoch",
+      seedDefinitionId: "workflow-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: createResolvedDefinition(),
+      charter: makeTestCharter(),
+      status: "running",
+      startedAt: timestamp,
+    };
+
+    const parsed = graphWorkflowExecutionSchema.safeParse({
+      ...base,
+      loopEpoch: 3,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.loopEpoch).toBe(3);
+    }
+
+    expect(
+      graphWorkflowExecutionSchema.safeParse({ ...base, loopEpoch: -1 })
+        .success,
+    ).toBe(false);
+    expect(
+      graphWorkflowExecutionSchema.safeParse({ ...base, loopEpoch: 1.5 })
+        .success,
+    ).toBe(false);
+  });
 });
 
 describe("workflow charter requirement on persisted schemas", () => {

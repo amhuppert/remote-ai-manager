@@ -1322,6 +1322,132 @@ describe("context validator continuity runtime integration", () => {
     expect(conversationIds[0]).toBe(conversationIds[1]);
   });
 
+  it("persists the Claude validator lane before dispatch so cancellation can find the in-flight turn", async () => {
+    // Active cancellation (pause/abort/halt/resume) collects abortable
+    // conversations from execution.laneStates. A lane resolved only in local
+    // state until after the turn is invisible for the whole first (and every
+    // rotated) validator run.
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+
+    const createConversation = vi.fn(async () => ({ id: "conv-val-1" }));
+    const continuityService = createWorkflowContinuityService({
+      createConversation,
+      getConversation: vi.fn(async (_p: string, _s: string, id: string) => ({
+        id,
+      })),
+      startCodexThread: vi.fn(),
+      resumeCodexThread: vi.fn(),
+      now: () => NOW,
+    });
+
+    let laneAtDispatch: unknown = null;
+    let dispatchedConversationId: string | null = null;
+    const executeWorkflowTaskRun = vi.fn(
+      async (input: ExecuteWorkflowTaskRunInput) => {
+        laneAtDispatch =
+          repo.read().laneStates["context-plan"]?.["context_validator"] ?? null;
+        dispatchedConversationId = input.conversationId;
+        return textTaskRun(passResponseJson, {
+          backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+        });
+      },
+    );
+
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(dispatchedConversationId).toBe("conv-val-1");
+    expect(laneAtDispatch).toMatchObject({
+      lane: "context_validator",
+      engine: "claude",
+      workflowConversationId: "conv-val-1",
+    });
+  });
+
+  it("persists the Codex validator lane with its synthetic conversation id before dispatch", async () => {
+    // Codex validator turns dispatch under a deterministic synthetic
+    // conversation id that is registered in the abort registry; without
+    // persisting it on the lane state, no codex validator turn is ever
+    // discoverable by cancellation.
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+    };
+    const execution = buildExecutionWithContextValidation(codexValidator);
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation: vi.fn(),
+      getConversation: vi.fn(),
+      startCodexThread: vi.fn(async () => ({ threadId: "thread-1" })),
+      resumeCodexThread: vi.fn(),
+      now: () => NOW,
+    });
+
+    let laneAtDispatch: unknown = null;
+    let dispatchedConversationId: string | null = null;
+    const executeWorkflowTaskRun = vi.fn(
+      async (input: ExecuteWorkflowTaskRunInput) => {
+        laneAtDispatch =
+          repo.read().laneStates["context-plan"]?.["context_validator"] ?? null;
+        dispatchedConversationId = input.conversationId;
+        return textTaskRun(passResponseJson, {
+          backendRef: { backend: "codex", threadId: "thread-1" },
+        });
+      },
+    );
+
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: codexValidator,
+    });
+
+    expect(dispatchedConversationId).toBe(
+      "__validator__:execution-1:context-plan:context_validator:codex",
+    );
+    expect(laneAtDispatch).toMatchObject({
+      lane: "context_validator",
+      engine: "codex",
+      workflowConversationId:
+        "__validator__:execution-1:context-plan:context_validator:codex",
+    });
+  });
+
   it("records limitEvaluation=metrics_unavailable for a Claude validator turn when a limit is configured", async () => {
     const limitedClaudeValidator: GraphWorkflowAgentValidatorConfig = {
       type: "claude",

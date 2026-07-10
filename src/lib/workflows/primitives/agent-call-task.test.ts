@@ -440,4 +440,26 @@ describe("dispatchTaskRun", () => {
     expect(capturedInput.value?.skipGitRepoCheck).toBe(true);
     expect(capturedInput.value?.networkAccessEnabled).toBe(false);
   });
+
+  it("threads the external cancellation signal through to the runner", async () => {
+    const { runner, capturedInput } = makeStubRunner("codex");
+    const controller = new AbortController();
+
+    await dispatchTaskRun(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+        writeCapability: "read_only",
+      },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+        signal: controller.signal,
+      },
+    );
+
+    expect(capturedInput.value?.signal).toBe(controller.signal);
+  });
 });

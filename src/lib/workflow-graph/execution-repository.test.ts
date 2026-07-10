@@ -1,5 +1,5 @@
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
@@ -11,8 +11,13 @@ import {
   createGraphWorkflowExecutionRepository,
 } from "./execution-repository";
 import { LegacyWorkflowSchemaError } from "./schema-cutover-guard";
-import { createWorkflowDefinition } from "./test-fixtures";
+import { StaleLoopFenceError, runWithLoopFence } from "./loop-fence";
+import {
+  createWorkflowDefinition,
+  createWorkflowExecution,
+} from "./test-fixtures";
 import type {
+  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
   WorkflowSemanticDefinition,
@@ -186,6 +191,81 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     expect(execution.id).toBe("exec-1");
     expect(execution.status).toBe("pending");
+  });
+
+  it("rejects create when a non-terminal execution is already active, leaving it untouched", async () => {
+    // Concurrent-start race: start()'s active-execution guard runs a long
+    // async gauntlet before create, so two starts can both pass it. The
+    // second create must fail inside the write-queue critical section
+    // instead of silently overwriting the first execution (which would put
+    // two loop drivers on one execution under matching fences).
+    const { repo, sessions } = createInMemoryRepo();
+    const seed = {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project" as const,
+    };
+    const first = await repo.create("/repo", "session-1", seed);
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        ...seed,
+        executionId: "exec-2",
+      }),
+    ).rejects.toMatchObject({
+      name: "WorkflowStartGuardError",
+      guard: "active_execution",
+    });
+
+    const active = sessions.get("/repo:session-1")?.graphWorkflowExecution;
+    expect(active?.id).toBe(first.id);
+  });
+
+  it("allows create to replace a terminal active execution", async () => {
+    // Mirrors start()'s guard semantics: completed/halted/aborted actives
+    // are replaceable (start archives them first, but create must not be
+    // stricter than the guard it backs).
+    for (const status of ["completed", "halted", "aborted"] as const) {
+      const { repo, sessions } = createInMemoryRepo();
+      const session = (() => {
+        sessions.set("/repo:session-1", {
+          worktreePath: WORKTREE_PATH,
+          graphWorkflowExecution: createWorkflowExecution({
+            id: "exec-old",
+            status,
+            ...(status === "halted"
+              ? {
+                  haltReason: {
+                    type: "recovery_error",
+                    message: "old halt",
+                  },
+                }
+              : {}),
+          }),
+        } as unknown as SessionState);
+        return sessions.get("/repo:session-1")!;
+      })();
+
+      const created = await repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-new",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
+      });
+
+      expect(created.id, `status=${status}`).toBe("exec-new");
+      expect(
+        (session as unknown as { graphWorkflowExecution: { id: string } })
+          .graphWorkflowExecution.id,
+      ).toBe("exec-new");
+    }
   });
 
   it("seeds the lane plan from the resolved working definition at creation time", async () => {
@@ -646,5 +726,140 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
 
     const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
     expect(stored?.launchedTier).toBe("global");
+  });
+});
+
+describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => {
+  function seedActiveExecution(
+    harness: ReturnType<typeof createInMemoryRepo>,
+    overrides: Partial<GraphWorkflowExecution> = {},
+  ): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({
+      id: "execution-1",
+      ...overrides,
+    });
+    const key = "/repo:session-1";
+    const session = makeSession();
+    session.graphWorkflowExecution = execution;
+    harness.sessions.set(key, session);
+    return execution;
+  }
+
+  it("applies a mutation whose ambient fence matches the persisted generation", async () => {
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness);
+
+    const next = await runWithLoopFence(
+      {
+        projectPath: "/repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        loopEpoch: 0,
+      },
+      () =>
+        harness.repo.mutateActive("/repo", "session-1", (execution) => ({
+          ...execution,
+          activeContextIds: ["context-updated"],
+        })),
+    );
+
+    expect(next.activeContextIds).toEqual(["context-updated"]);
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.activeContextIds,
+    ).toEqual(["context-updated"]);
+  });
+
+  it("rejects a mutation from a stale loop generation without persisting anything", async () => {
+    const harness = createInMemoryRepo();
+    // Persisted execution has been resumed since the loop captured its fence.
+    seedActiveExecution(harness, { loopEpoch: 1 });
+
+    const mutator = vi.fn((execution: GraphWorkflowExecution) => ({
+      ...execution,
+      activeContextIds: ["context-stale-write"],
+    }));
+
+    await expect(
+      runWithLoopFence(
+        {
+          projectPath: "/repo",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          loopEpoch: 0,
+        },
+        () => harness.repo.mutateActive("/repo", "session-1", mutator),
+      ),
+    ).rejects.toThrow(StaleLoopFenceError);
+
+    expect(mutator).not.toHaveBeenCalled();
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.activeContextIds,
+    ).toEqual([]);
+    expect(harness.appendedEvents).toEqual([]);
+  });
+
+  it("rejects a mutation from a loop whose execution was replaced by a successor", async () => {
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness, { id: "execution-2" });
+
+    await expect(
+      runWithLoopFence(
+        {
+          projectPath: "/repo",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          loopEpoch: 0,
+        },
+        () =>
+          harness.repo.mutateActive("/repo", "session-1", (execution) => ({
+            ...execution,
+            activeContextIds: ["context-stale-write"],
+          })),
+      ),
+    ).rejects.toThrow(StaleLoopFenceError);
+
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.activeContextIds,
+    ).toEqual([]);
+  });
+
+  it("rejects a fenced mutation when the execution was archived (no active row)", async () => {
+    const harness = createInMemoryRepo();
+
+    await expect(
+      runWithLoopFence(
+        {
+          projectPath: "/repo",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          loopEpoch: 0,
+        },
+        () =>
+          harness.repo.mutateActive(
+            "/repo",
+            "session-1",
+            (execution) => execution,
+          ),
+      ),
+    ).rejects.toThrow(StaleLoopFenceError);
+  });
+
+  it("keeps unfenced mutations (user/agent routes) unaffected", async () => {
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness, { loopEpoch: 7 });
+
+    const next = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({
+        ...execution,
+        activeContextIds: ["context-route-write"],
+      }),
+    );
+
+    expect(next.activeContextIds).toEqual(["context-route-write"]);
   });
 });

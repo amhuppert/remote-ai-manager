@@ -49,6 +49,9 @@ export interface DispatchTaskRunDeps {
   additionalDirectories?: readonly string[];
   skipGitRepoCheck?: boolean;
   artifacts?: readonly ArtifactRef[];
+  /** External cancellation signal, forwarded to the runner so a live run can
+   * be torn down (e.g. workflow abort cancelling a validator task-run). */
+  signal?: AbortSignal;
   logger?: Logger;
 }
 
@@ -103,6 +106,7 @@ export async function dispatchTaskRun(
     ...(request.outputSchema !== undefined
       ? { outputSchema: request.outputSchema }
       : {}),
+    ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     ...(request.tooling
       ? { tooling: { portableMcp: request.tooling as PortableMcpConfig } }
       : {}),

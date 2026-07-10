@@ -20,6 +20,7 @@ function makeExecution(
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
     workingDefinition: {
