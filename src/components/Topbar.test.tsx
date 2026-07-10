@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
+import { hydrateRoot } from "react-dom/client";
 import Topbar from "./Topbar";
 import type {
   ActiveConversation,
@@ -179,6 +181,48 @@ describe("Topbar", () => {
   it("renders unified panel toggle button", () => {
     render(<Topbar breadcrumbs={[]} page="projects" />);
     expect(screen.getByTitle("Activity & Notifications")).toBeInTheDocument();
+  });
+
+  it("hydrates without replacing the tree when attention data is already cached on the client", async () => {
+    const serverHtml = renderToString(
+      <Topbar breadcrumbs={[]} page="projects" />,
+    );
+    setActiveConversations([
+      makeProjectConversation({
+        id: "project-unread",
+        projectName: "root-tools",
+        status: "awaiting",
+        unread: true,
+      }),
+    ]);
+
+    const container = document.createElement("div");
+    container.innerHTML = serverHtml;
+    document.body.append(container);
+    const recoverableErrors: Error[] = [];
+
+    const root = hydrateRoot(
+      container,
+      <Topbar breadcrumbs={[]} page="projects" />,
+      {
+        onRecoverableError(error) {
+          recoverableErrors.push(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        },
+      },
+    );
+    let renderedNeedsLink = false;
+    try {
+      await act(async () => undefined);
+      renderedNeedsLink = within(container).queryByText("needs you") !== null;
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+
+    expect(recoverableErrors).toEqual([]);
+    expect(renderedNeedsLink).toBe(true);
   });
 
   it("counts project waiting_for_input rows and links to the project focus URL (Req 11.2, 12.1, 12.3)", () => {

@@ -18,7 +18,7 @@ import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   topmostMessageIndexForRange,
   type ConversationRow,
-} from "@/features/session/conversation/conversation-rows";
+} from "@/components/conversation/conversation-rows";
 import type {
   ConversationVirtuosoListProps,
   VirtuosoHandle,
@@ -26,7 +26,7 @@ import type {
 import {
   useClearMessageNavRequest,
   useMessageNavRequest,
-  useSending,
+  useSendingFor,
 } from "@/stores/session-detail.store";
 
 export interface UseConversationNavArgs {
@@ -106,6 +106,7 @@ export function useConversationNav({
   // they scroll up. Submitting a new prompt re-engages it so the user sees
   // the loading indicator and incoming response without manual scrolling.
   const [followBottom, setFollowBottom] = useState(true);
+  const [reengagingBottom, setReengagingBottom] = useState(false);
 
   const handleRangeChanged = useCallback(
     ({ startIndex }: { startIndex: number; endIndex: number }) => {
@@ -121,18 +122,26 @@ export function useConversationNav({
     [rows],
   );
 
-  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
-    setFollowBottom(atBottom);
-    setNavState((prev) =>
-      prev.atBottom === atBottom
-        ? prev
-        : {
-            ...prev,
-            atBottom,
-            edgePosition: atBottom ? "bottom" : prev.atTop ? "top" : "middle",
-          },
-    );
-  }, []);
+  const handleAtBottomStateChange = useCallback(
+    (atBottom: boolean) => {
+      if (atBottom) {
+        setReengagingBottom(false);
+        setFollowBottom(true);
+      } else if (!reengagingBottom) {
+        setFollowBottom(false);
+      }
+      setNavState((prev) =>
+        prev.atBottom === atBottom
+          ? prev
+          : {
+              ...prev,
+              atBottom,
+              edgePosition: atBottom ? "bottom" : prev.atTop ? "top" : "middle",
+            },
+      );
+    },
+    [reengagingBottom],
+  );
 
   const handleAtTopStateChange = useCallback((atTop: boolean) => {
     setNavState((prev) =>
@@ -234,12 +243,14 @@ export function useConversationNav({
   // Re-engage follow mode whenever a new prompt enters the sending phase so
   // the user is taken back to the bottom even if they had scrolled up. The
   // state update happens at render time (React's "info from previous renders"
-  // pattern) so we don't trip `react-hooks/set-state-in-effect`.
-  const sending = useSending();
+  // pattern) so we don't trip `react-hooks/set-state-in-effect`. The empty-id
+  // fallback subscribes to a key that never exists, so it stays false.
+  const sending = useSendingFor(conversationId ?? "");
   const [prevSending, setPrevSending] = useState(sending);
   if (sending !== prevSending) {
     setPrevSending(sending);
     if (sending) {
+      setReengagingBottom(true);
       setFollowBottom(true);
     }
   }

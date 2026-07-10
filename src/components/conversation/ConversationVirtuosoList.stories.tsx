@@ -7,7 +7,7 @@ import ConversationVirtuosoList, {
 import {
   buildConversationRows,
   type ConversationRow,
-} from "@/features/session/conversation/conversation-rows";
+} from "@/components/conversation/conversation-rows";
 
 const meta = {
   title: "Projects/ConversationVirtuosoList",

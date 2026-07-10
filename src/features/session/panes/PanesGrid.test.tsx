@@ -58,6 +58,7 @@ function renderGrid(props: {
         isAtCap={props.isAtCap ?? false}
         addableConversations={props.addableConversations ?? []}
         onActivate={onActivate}
+        onOpenConversation={vi.fn()}
         onOpenFull={onOpenFull}
         onClose={onClose}
         onAdd={onAdd}

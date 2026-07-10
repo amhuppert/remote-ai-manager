@@ -3,9 +3,16 @@
 import { memo } from "react";
 import { cn } from "@/lib/ui/cn";
 import { messageRoleClass } from "@/components/conversation/MessageRow";
-import { useOptimisticMessages } from "@/stores/session-detail.store";
+import { useOptimisticMessagesFor } from "@/stores/session-detail.store";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 interface TypingIndicatorProps {
+  /**
+   * The conversation this indicator renders for. In-flight state is keyed per
+   * conversation, so the indicator reads its own conversation's optimistic
+   * stream to pick the visual variant — any surface (panel, pane, peek,
+   * cockpit) gets the correct variant for the conversation it shows.
+   */
+  conversationId: string;
   selectedBackend: AgentBackendId;
   /**
    * Whether the indicator should be visible at all. The parent computes this
@@ -13,14 +20,6 @@ interface TypingIndicatorProps {
    * decides which visual variant to render based on optimistic-message state.
    */
   visible: boolean;
-  /**
-   * Override the session-detail store's optimistic-message check. The default
-   * reads `useOptimisticMessages()` which is keyed to the currently-mounted
-   * conversation — callers rendering for a *different* conversation (e.g. the
-   * sidebar peek popover) must pass `false` explicitly so the store does not
-   * leak the active conversation's optimistic state into the peek.
-   */
-  hasAssistantOptimistic?: boolean;
 }
 
 const dotClass =
@@ -30,11 +29,11 @@ const dotClass =
 // (ConversationWorkspace + ProjectTranscriptHost query them); `message assistant`
 // mirror the row hooks. The indicators' own appearance is utilities.
 function TypingIndicator({
+  conversationId,
   selectedBackend,
   visible,
-  hasAssistantOptimistic: hasAssistantOptimisticOverride,
 }: TypingIndicatorProps): React.JSX.Element | null {
-  const optimisticMessages = useOptimisticMessages();
+  const optimisticMessages = useOptimisticMessagesFor(conversationId);
   if (!visible) return null;
 
   const isCodex = selectedBackend === "codex";
@@ -47,9 +46,9 @@ function TypingIndicator({
     </div>
   );
 
-  const hasAssistantOptimistic =
-    hasAssistantOptimisticOverride ??
-    optimisticMessages.some((m) => m.role === "assistant");
+  const hasAssistantOptimistic = optimisticMessages.some(
+    (m) => m.role === "assistant",
+  );
   if (hasAssistantOptimistic) {
     return (
       <div

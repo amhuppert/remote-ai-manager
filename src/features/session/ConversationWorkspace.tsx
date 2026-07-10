@@ -90,7 +90,7 @@ export default function ConversationWorkspace({
     rawMessages,
   } = useSessionPageQueries(projectName, sessionName, conversationId);
 
-  const store = useSessionPageStoreBundle();
+  const store = useSessionPageStoreBundle(conversationId);
 
   const {
     servers: dsServers,

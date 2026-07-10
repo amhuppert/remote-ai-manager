@@ -70,18 +70,51 @@ interface OptimisticQueueEntry {
   status: OptimisticQueueStatus;
 }
 
-interface SessionDetailState {
-  layout: LayoutMode;
-  mobilePanel: MobilePanel;
-  rightPaneTab: RightPaneTab;
+/**
+ * The in-flight prompt state for one conversation. Keyed per conversation so
+ * every surface rendering a transcript (main panel, split-screen pane, sidebar
+ * peek, project cockpit) reads its own conversation's state — a turn streaming
+ * in one conversation never leaks its indicator, optimistic rows, or errors
+ * into another conversation's view.
+ */
+export interface ConversationInFlight {
   sending: boolean;
-  isVoiceRecording: boolean;
-  promptPlaceholder: string | null;
   promptError: string | null;
   promptCancelled: boolean;
   optimisticMessages: TranscriptMessage[];
   optimisticQueue: OptimisticQueueEntry[];
   messageCountBeforeSubmit: number;
+}
+
+/**
+ * Shared default returned for conversations with no in-flight state. A single
+ * frozen instance so keyed selectors keep referential stability for missing
+ * entries (no per-render churn).
+ */
+export const EMPTY_IN_FLIGHT: ConversationInFlight = Object.freeze({
+  sending: false,
+  promptError: null,
+  promptCancelled: false,
+  optimisticMessages: [],
+  optimisticQueue: [],
+  messageCountBeforeSubmit: 0,
+});
+
+export function selectInFlightFor(
+  state: Pick<SessionDetailState, "inFlight">,
+  conversationId: string,
+): ConversationInFlight {
+  return state.inFlight[conversationId] ?? EMPTY_IN_FLIGHT;
+}
+
+interface SessionDetailState {
+  layout: LayoutMode;
+  mobilePanel: MobilePanel;
+  rightPaneTab: RightPaneTab;
+  isVoiceRecording: boolean;
+  promptPlaceholder: string | null;
+  /** Per-conversation in-flight prompt state, keyed by conversation id. */
+  inFlight: Record<string, ConversationInFlight>;
   showDeleteConfirm: boolean;
   sidebarCollapsed: boolean;
   mobileSidebarOpen: boolean;
@@ -117,28 +150,41 @@ interface SessionDetailActions {
   switchMobilePanel: (panel: MobilePanel) => void;
   switchRightPaneTab: (tab: RightPaneTab) => void;
   submitPrompt: (
+    conversationId: string,
     userContent: MessageContentBlock[],
     currentMessageCount: number,
     agentSettings?: OptimisticAgentSettings,
   ) => void;
   receiveStreamContent: (
+    conversationId: string,
     userContent: MessageContentBlock[],
     allBlocks: MessageContentBlock[],
     agentSettings?: OptimisticAgentSettings,
   ) => void;
-  completePrompt: () => void;
-  failPrompt: (error: string) => void;
-  setQueueError: (error: string) => void;
-  queueMessage: (userContent: MessageContentBlock[]) => void;
-  addOptimisticQueueEntry(tempId: string, content: MessageContentBlock[]): void;
-  acceptOptimisticQueueEntry(tempId: string, queueId: string): void;
-  failOptimisticQueueEntry(tempId: string): void;
-  cancelOptimisticQueueEntry(idOrTempId: string): void;
-  rollbackOptimisticQueueEntry(tempId: string): void;
-  dismissError: () => void;
-  markCancelled: () => void;
-  dismissCancelled: () => void;
-  reconcileMessages: (serverCount: number) => void;
+  completePrompt: (conversationId: string) => void;
+  failPrompt: (conversationId: string, error: string) => void;
+  setQueueError: (conversationId: string, error: string) => void;
+  queueMessage: (
+    conversationId: string,
+    userContent: MessageContentBlock[],
+  ) => void;
+  addOptimisticQueueEntry(
+    conversationId: string,
+    tempId: string,
+    content: MessageContentBlock[],
+  ): void;
+  acceptOptimisticQueueEntry(
+    conversationId: string,
+    tempId: string,
+    queueId: string,
+  ): void;
+  failOptimisticQueueEntry(conversationId: string, tempId: string): void;
+  cancelOptimisticQueueEntry(conversationId: string, idOrTempId: string): void;
+  rollbackOptimisticQueueEntry(conversationId: string, tempId: string): void;
+  dismissError: (conversationId: string) => void;
+  markCancelled: (conversationId: string) => void;
+  dismissCancelled: (conversationId: string) => void;
+  reconcileMessages: (conversationId: string, serverCount: number) => void;
   startRecording: () => void;
   stopRecording: () => void;
   showPlaceholder: (text: string) => void;
@@ -169,7 +215,7 @@ interface SessionDetailActions {
   openContextArtifactPanel: () => void;
   requestMessageNav: (conversationId: string, messageIndex: number) => void;
   clearMessageNavRequest: () => void;
-  clearConversationMessages: () => void;
+  clearConversationMessages: (conversationId: string) => void;
   resetConversationState: () => void;
   resetStore: () => void;
 }
@@ -181,7 +227,36 @@ type SessionDetailStore = SessionDetailState & SessionDetailActions;
 // ---------------------------------------------------------------------------
 
 const SIDEBAR_STORAGE_KEY = "cc-sidebar-collapsed";
-let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
+const cancelledTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearAllCancelledTimers(): void {
+  for (const timer of cancelledTimers.values()) clearTimeout(timer);
+  cancelledTimers.clear();
+}
+
+/**
+ * Get-or-create the in-flight entry for a conversation inside a producer.
+ * Write actions that begin a turn use this; actions that only clear or adjust
+ * existing state read the entry directly and no-op when absent, so they never
+ * materialize entries for conversations that were never in flight.
+ */
+function ensureInFlight(
+  state: SessionDetailState,
+  conversationId: string,
+): ConversationInFlight {
+  const existing = state.inFlight[conversationId];
+  if (existing) return existing;
+  const created: ConversationInFlight = {
+    sending: false,
+    promptError: null,
+    promptCancelled: false,
+    optimisticMessages: [],
+    optimisticQueue: [],
+    messageCountBeforeSubmit: 0,
+  };
+  state.inFlight[conversationId] = created;
+  return created;
+}
 
 const validLayouts: LayoutMode[] = [
   "conversation",
@@ -195,14 +270,9 @@ const initialState: SessionDetailState = {
   layout: "conversation",
   mobilePanel: "chat",
   rightPaneTab: "diff",
-  sending: false,
   isVoiceRecording: false,
   promptPlaceholder: null,
-  promptError: null,
-  promptCancelled: false,
-  optimisticMessages: [],
-  optimisticQueue: [],
-  messageCountBeforeSubmit: 0,
+  inFlight: {},
   showDeleteConfirm: false,
   sidebarCollapsed: false,
   mobileSidebarOpen: false,
@@ -267,12 +337,18 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Prompt streaming --
 
-    submitPrompt: (userContent, currentMessageCount, agentSettings) =>
+    submitPrompt: (
+      conversationId,
+      userContent,
+      currentMessageCount,
+      agentSettings,
+    ) =>
       set((state) => {
-        state.sending = true;
-        state.promptError = null;
-        state.messageCountBeforeSubmit = currentMessageCount;
-        state.optimisticMessages = [
+        const entry = ensureInFlight(state, conversationId);
+        entry.sending = true;
+        entry.promptError = null;
+        entry.messageCountBeforeSubmit = currentMessageCount;
+        entry.optimisticMessages = [
           {
             role: "user",
             content: userContent,
@@ -282,11 +358,17 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         ];
       }),
 
-    receiveStreamContent: (userContent, allBlocks, agentSettings) =>
+    receiveStreamContent: (
+      conversationId,
+      userContent,
+      allBlocks,
+      agentSettings,
+    ) =>
       set((state) => {
+        const entry = ensureInFlight(state, conversationId);
         // Preserve any queued user messages appended after the initial pair
-        const queued = state.optimisticMessages.slice(2);
-        state.optimisticMessages = [
+        const queued = entry.optimisticMessages.slice(2);
+        entry.optimisticMessages = [
           {
             role: "user",
             content: userContent,
@@ -303,29 +385,32 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         ];
       }),
 
-    completePrompt: () =>
+    completePrompt: (conversationId) =>
       set((state) => {
-        state.sending = false;
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.sending = false;
       }),
 
-    failPrompt: (error) =>
+    failPrompt: (conversationId, error) =>
       set((state) => {
-        state.promptError = error;
-        state.sending = false;
+        const entry = ensureInFlight(state, conversationId);
+        entry.promptError = error;
+        entry.sending = false;
       }),
 
     // Surface a queue failure to the user WITHOUT clearing `sending`: a queue
     // POST failing must leave the still-running turn shown as running (req 5.2)
     // while the error is visible (req 5.1). Distinct from `failPrompt`, which
     // also stops the running indicator.
-    setQueueError: (error) =>
+    setQueueError: (conversationId, error) =>
       set((state) => {
-        state.promptError = error;
+        ensureInFlight(state, conversationId).promptError = error;
       }),
 
-    queueMessage: (userContent) =>
+    queueMessage: (conversationId, userContent) =>
       set((state) => {
-        state.optimisticMessages.push({
+        ensureInFlight(state, conversationId).optimisticMessages.push({
           role: "user",
           content: userContent,
           timestamp: new Date().toISOString(),
@@ -337,9 +422,9 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
     // here: a queue failure must leave a still-running turn shown as running
     // (req 5.2) while removing the optimistic entry (req 5.3).
 
-    addOptimisticQueueEntry: (tempId, content) =>
+    addOptimisticQueueEntry: (conversationId, tempId, content) =>
       set((state) => {
-        state.optimisticQueue.push({
+        ensureInFlight(state, conversationId).optimisticQueue.push({
           tempId,
           queueId: null,
           content,
@@ -347,67 +432,87 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         });
       }),
 
-    acceptOptimisticQueueEntry: (tempId, queueId) =>
+    acceptOptimisticQueueEntry: (conversationId, tempId, queueId) =>
       set((state) => {
-        const entry = state.optimisticQueue.find((e) => e.tempId === tempId);
+        const entry = state.inFlight[conversationId]?.optimisticQueue.find(
+          (e) => e.tempId === tempId,
+        );
         if (!entry) return;
         entry.queueId = queueId;
         entry.status = "accepted";
       }),
 
-    failOptimisticQueueEntry: (tempId) =>
+    failOptimisticQueueEntry: (conversationId, tempId) =>
       set((state) => {
-        state.optimisticQueue = state.optimisticQueue.filter(
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.optimisticQueue = entry.optimisticQueue.filter(
           (e) => e.tempId !== tempId,
         );
       }),
 
-    cancelOptimisticQueueEntry: (idOrTempId) =>
+    cancelOptimisticQueueEntry: (conversationId, idOrTempId) =>
       set((state) => {
-        state.optimisticQueue = state.optimisticQueue.filter(
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.optimisticQueue = entry.optimisticQueue.filter(
           (e) => e.tempId !== idOrTempId && e.queueId !== idOrTempId,
         );
       }),
 
-    rollbackOptimisticQueueEntry: (tempId) =>
+    rollbackOptimisticQueueEntry: (conversationId, tempId) =>
       set((state) => {
-        state.optimisticQueue = state.optimisticQueue.filter(
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.optimisticQueue = entry.optimisticQueue.filter(
           (e) => e.tempId !== tempId,
         );
       }),
 
-    dismissError: () =>
+    dismissError: (conversationId) =>
       set((state) => {
-        state.promptError = null;
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.promptError = null;
       }),
 
-    markCancelled: () => {
-      if (cancelledTimer) clearTimeout(cancelledTimer);
+    markCancelled: (conversationId) => {
+      const existing = cancelledTimers.get(conversationId);
+      if (existing) clearTimeout(existing);
       set((state) => {
-        state.promptCancelled = true;
+        ensureInFlight(state, conversationId).promptCancelled = true;
       });
-      cancelledTimer = setTimeout(() => {
-        cancelledTimer = null;
-        set((state) => {
-          state.promptCancelled = false;
-        });
-      }, 2500);
+      cancelledTimers.set(
+        conversationId,
+        setTimeout(() => {
+          cancelledTimers.delete(conversationId);
+          set((state) => {
+            const entry = state.inFlight[conversationId];
+            if (!entry) return;
+            entry.promptCancelled = false;
+          });
+        }, 2500),
+      );
     },
 
-    dismissCancelled: () =>
+    dismissCancelled: (conversationId) =>
       set((state) => {
-        state.promptCancelled = false;
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.promptCancelled = false;
       }),
 
-    reconcileMessages: (serverCount) => {
-      const { messageCountBeforeSubmit, optimisticMessages } = get();
-      if (optimisticMessages.length === 0) return;
-      if (serverCount <= messageCountBeforeSubmit) return;
+    reconcileMessages: (conversationId, serverCount) => {
+      const entry = get().inFlight[conversationId];
+      if (!entry || entry.optimisticMessages.length === 0) return;
+      if (serverCount <= entry.messageCountBeforeSubmit) return;
 
       // Server has the prompt data — clear all optimistic messages.
       // (This is only called when sending=false, so the stream is done.)
       set((state) => {
-        state.optimisticMessages = [];
+        const target = state.inFlight[conversationId];
+        if (!target) return;
+        target.optimisticMessages = [];
       });
     },
 
@@ -658,10 +763,12 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Reset --
 
-    clearConversationMessages: () =>
+    clearConversationMessages: (conversationId) =>
       set((state) => {
-        state.optimisticMessages = [];
-        state.messageCountBeforeSubmit = 0;
+        const entry = state.inFlight[conversationId];
+        if (!entry) return;
+        entry.optimisticMessages = [];
+        entry.messageCountBeforeSubmit = 0;
       }),
 
     // Reset everything scoped to a single conversation workspace. Rail-owned
@@ -670,7 +777,10 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
     // page-level layout is host-shell state too — it is hydrated once at the
     // page and not re-read per conversation, so it must also survive the reset,
     // otherwise activating another conversation silently reverts the rendered
-    // layout to the default (req 3.5, 5.2).
+    // layout to the default (req 3.5, 5.2). In-flight prompt state is keyed per
+    // conversation — it belongs to each conversation, not to the workspace that
+    // happens to display it — so a workspace swap must not clear another
+    // conversation's streaming turn out from under the panes/peek surfaces.
     resetConversationState: () =>
       set((state) => ({
         ...initialState,
@@ -679,9 +789,13 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         sidebarFilter: state.sidebarFilter,
         sidebarSessionFilter: state.sidebarSessionFilter,
         layout: state.layout,
+        inFlight: state.inFlight,
       })),
 
-    resetStore: () => set(() => ({ ...initialState })),
+    resetStore: () => {
+      clearAllCancelledTimers();
+      set(() => ({ ...initialState, inFlight: {} }));
+    },
   })),
 );
 
@@ -691,18 +805,36 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
 export const useLayout = () => useSessionDetailStore((s) => s.layout);
 export const useMobilePanel = () => useSessionDetailStore((s) => s.mobilePanel);
-export const useSending = () => useSessionDetailStore((s) => s.sending);
 export const usePromptPlaceholder = () =>
   useSessionDetailStore((s) => s.promptPlaceholder);
-export const usePromptError = () => useSessionDetailStore((s) => s.promptError);
-export const usePromptCancelled = () =>
-  useSessionDetailStore((s) => s.promptCancelled);
-export const useOptimisticMessages = () =>
-  useSessionDetailStore((s) => s.optimisticMessages);
-export const useOptimisticQueue = () =>
-  useSessionDetailStore((s) => s.optimisticQueue);
-export const useMessageCountBeforeSubmit = () =>
-  useSessionDetailStore((s) => s.messageCountBeforeSubmit);
+
+// Keyed in-flight selectors: each returns one conversation's slice with a
+// stable default for conversations that were never in flight (focused
+// accessors per PERFORMANCE.md — subscribe to one field, not the whole map).
+export const useSendingFor = (conversationId: string) =>
+  useSessionDetailStore((s) => s.inFlight[conversationId]?.sending ?? false);
+export const usePromptErrorFor = (conversationId: string) =>
+  useSessionDetailStore((s) => s.inFlight[conversationId]?.promptError ?? null);
+export const usePromptCancelledFor = (conversationId: string) =>
+  useSessionDetailStore(
+    (s) => s.inFlight[conversationId]?.promptCancelled ?? false,
+  );
+export const useOptimisticMessagesFor = (conversationId: string) =>
+  useSessionDetailStore(
+    (s) =>
+      s.inFlight[conversationId]?.optimisticMessages ??
+      EMPTY_IN_FLIGHT.optimisticMessages,
+  );
+export const useOptimisticQueueFor = (conversationId: string) =>
+  useSessionDetailStore(
+    (s) =>
+      s.inFlight[conversationId]?.optimisticQueue ??
+      EMPTY_IN_FLIGHT.optimisticQueue,
+  );
+export const useMessageCountBeforeSubmitFor = (conversationId: string) =>
+  useSessionDetailStore(
+    (s) => s.inFlight[conversationId]?.messageCountBeforeSubmit ?? 0,
+  );
 export const useShowDeleteConfirm = () =>
   useSessionDetailStore((s) => s.showDeleteConfirm);
 export const useSidebarCollapsed = () =>

@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback } from "react";
+import { StopIcon } from "@/components/icons";
+import { canStopTurn } from "@/features/session/hooks/turn-activity";
+import { useAbortPrompt } from "@/hooks/use-abort-prompt";
+import { useSessionQuery } from "@/lib/sessions/queries";
+import { useSendingFor } from "@/stores/session-detail.store";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import { cn } from "@/lib/ui/cn";
 import { toPaneViewModel } from "./pane-view-model";
@@ -12,6 +17,8 @@ export interface PaneProps {
   onActivate: (id: string) => void;
   onOpenFull: (id: string) => void;
   onClose: (id: string) => void;
+  /** Open a conversation in the working set (fork lands in a new pane). */
+  onOpenConversation: (id: string) => void;
   /**
    * External-geometry utilities applied by the parent grid — the asym-5 shape's
    * per-pane column span (layout-only; docs/tailwind-conventions §2). Appended
@@ -103,9 +110,41 @@ export default function Pane({
   onActivate,
   onOpenFull,
   onClose,
+  onOpenConversation,
   layoutClassName,
 }: PaneProps): React.JSX.Element {
   const vm = toPaneViewModel(conversation);
+
+  // Stop control: same gate as the main panel's header — the conversation's
+  // own keyed sending flag or a server-running turn, suppressed for
+  // workflow-driven turns. `activeTurnSource` rides the session detail (the
+  // same cache the pane body reads), so the queries dedupe.
+  const sending = useSendingFor(conversation.id);
+  const sessionQuery = useSessionQuery(
+    conversation.projectName,
+    conversation.sessionName,
+  );
+  const canStop = canStopTurn({
+    sending,
+    status: conversation.status,
+    drivenByWorkflow:
+      sessionQuery.data?.conversations.find((c) => c.id === conversation.id)
+        ?.activeTurnSource === "workflow",
+  });
+  // A background pane must not clear the active conversation's question panel.
+  const abortPrompt = useAbortPrompt(
+    conversation.projectName,
+    conversation.sessionName,
+    conversation.id,
+    { preserveQuestions: !active },
+  );
+  const handleStop = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      void abortPrompt();
+    },
+    [abortPrompt],
+  );
 
   const handleActivate = useCallback(() => {
     if (!active) onActivate(conversation.id);
@@ -152,6 +191,20 @@ export default function Pane({
           aria-hidden="true"
         />
         <span className={titleClass}>{vm.title}</span>
+        {canStop && (
+          <button
+            type="button"
+            className={cn(
+              iconBtnClass,
+              "text-red hover:bg-[var(--cc-red-soft-a08)] hover:text-red",
+            )}
+            aria-label="Stop agent"
+            title="Stop agent"
+            onClick={handleStop}
+          >
+            <StopIcon size={11} />
+          </button>
+        )}
         <button
           type="button"
           className={iconBtnClass}
@@ -192,6 +245,7 @@ export default function Pane({
         selectedBackend={conversation.agentBackend}
         status={conversation.status}
         isActive={active}
+        onOpenConversation={onOpenConversation}
       />
     </section>
   );

@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import type { ComponentProps } from "react";
+import { renderToString } from "react-dom/server";
+import { hydrateRoot } from "react-dom/client";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -122,6 +126,59 @@ describe("ConversationSidebar", () => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     useSessionDetailStore.getState().resetStore();
+  });
+
+  it("hydrates without replacing the tree when active conversations are already cached on the client", async () => {
+    const serverClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    const serverHtml = renderToString(
+      <QueryClientProvider client={serverClient}>
+        <ConversationSidebar
+          projectName="remote-ai-manager"
+          sessionName="conversation-ui-overhaul"
+          activeConversationId="session-convo"
+        />
+      </QueryClientProvider>,
+    );
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    client.setQueryData(conversationKeys.active(), activeConversations);
+    const container = document.createElement("div");
+    container.innerHTML = serverHtml;
+    document.body.append(container);
+    const recoverableErrors: Error[] = [];
+    const root = hydrateRoot(
+      container,
+      <QueryClientProvider client={client}>
+        <ConversationSidebar
+          projectName="remote-ai-manager"
+          sessionName="conversation-ui-overhaul"
+          activeConversationId="session-convo"
+        />
+      </QueryClientProvider>,
+      {
+        onRecoverableError(error) {
+          recoverableErrors.push(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        },
+      },
+    );
+    let renderedActiveCount = false;
+    try {
+      await act(async () => undefined);
+      renderedActiveCount =
+        within(container).queryByText("(2)", { exact: true }) !== null;
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+
+    expect(recoverableErrors).toEqual([]);
+    expect(renderedActiveCount).toBe(true);
   });
 
   it("pushes production-derived project focus URLs for current-project and other-project active rows", () => {

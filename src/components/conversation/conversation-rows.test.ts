@@ -5,7 +5,7 @@ import {
   computeRowKey,
   findCollabAnchorIndex,
   topmostMessageIndexForRange,
-} from "@/features/session/conversation/conversation-rows";
+} from "@/components/conversation/conversation-rows";
 
 function message(
   role: "user" | "assistant",
@@ -144,5 +144,74 @@ describe("conversation rows", () => {
       { kind: "message", messageIndex: 0, msg: messages[0] },
       { kind: "message", messageIndex: 1, msg: messages[1] },
     ]);
+  });
+});
+
+describe("buildConversationRows — extension rows (spawn-card seam)", () => {
+  const ext = (key: string, anchorMessageIndex: number) => ({
+    key,
+    anchorMessageIndex,
+  });
+
+  it("interleaves an extension row immediately after its anchor message", () => {
+    const messages = [message("user", "a"), message("assistant", "b")];
+
+    expect(
+      buildConversationRows(messages, undefined, null, [ext("card-1", 0)]),
+    ).toEqual([
+      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "extension", ext: ext("card-1", 0) },
+      { kind: "message", messageIndex: 1, msg: messages[1] },
+    ]);
+  });
+
+  it("prepends rows anchored before the first message and appends rows anchored past the last", () => {
+    const messages = [message("user", "a")];
+
+    expect(
+      buildConversationRows(messages, undefined, null, [
+        ext("late", 9),
+        ext("early", -1),
+      ]),
+    ).toEqual([
+      { kind: "extension", ext: ext("early", -1) },
+      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "extension", ext: ext("late", 9) },
+    ]);
+  });
+
+  it("keeps supplied order for multiple rows at the same anchor", () => {
+    const messages = [message("user", "a")];
+
+    const rows = buildConversationRows(messages, undefined, null, [
+      ext("first", 0),
+      ext("second", 0),
+    ]);
+    expect(
+      rows.map((r) => (r.kind === "extension" ? r.ext.key : r.kind)),
+    ).toEqual(["message", "first", "second"]);
+  });
+
+  it("renders extension rows alone when there are no messages", () => {
+    expect(
+      buildConversationRows([], undefined, null, [ext("only", 0)]),
+    ).toEqual([{ kind: "extension", ext: ext("only", 0) }]);
+  });
+
+  it("composes with a collab row without disturbing either anchor", () => {
+    const messages = [message("user", "/collab go"), message("assistant", "b")];
+
+    const rows = buildConversationRows(messages, { workflowId: "wf-1" }, null, [
+      ext("card", 1),
+    ]);
+    expect(
+      rows.map((r) => (r.kind === "extension" ? `ext:${r.ext.key}` : r.kind)),
+    ).toEqual(["message", "collab", "message", "ext:card"]);
+  });
+
+  it("keys extension rows by their stable key", () => {
+    expect(computeRowKey({ kind: "extension", ext: ext("spawn:p1", 2) })).toBe(
+      "extension:spawn:p1",
+    );
   });
 });

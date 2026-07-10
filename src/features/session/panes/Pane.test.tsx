@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { z } from "zod";
-import type { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
+import type { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 import Pane from "./Pane";
 
 type StampedTranscriptMessage = z.infer<typeof stampedTranscriptMessageSchema>;
@@ -80,6 +80,7 @@ function renderPane(
   const onActivate = props.onActivate ?? vi.fn();
   const onOpenFull = props.onOpenFull ?? vi.fn();
   const onClose = props.onClose ?? vi.fn();
+  const onOpenConversation = vi.fn();
   const utils = render(
     <QueryClientProvider client={qc}>
       <Pane
@@ -88,6 +89,7 @@ function renderPane(
         onActivate={onActivate}
         onOpenFull={onOpenFull}
         onClose={onClose}
+        onOpenConversation={onOpenConversation}
       />
     </QueryClientProvider>,
   );
@@ -249,6 +251,36 @@ describe("Pane", () => {
     });
   });
 
+  describe("stop control", () => {
+    beforeEach(() => useSessionDetailStore.getState().resetStore());
+    afterEach(() => {
+      useSessionDetailStore.getState().resetStore();
+      vi.restoreAllMocks();
+    });
+
+    it("shows Stop for a running conversation and posts to the abort endpoint", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(null, { status: 200 }));
+
+      renderPane({ conversation: baseConversation({ status: "running" }) });
+
+      fireEvent.click(screen.getByRole("button", { name: "Stop agent" }));
+
+      await waitFor(() => {
+        const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+        expect(
+          urls.some((u) => u.endsWith(`/conversations/${CONV_ID}/abort`)),
+        ).toBe(true);
+      });
+    });
+
+    it("hides Stop for an idle conversation", () => {
+      renderPane({ conversation: baseConversation({ status: "awaiting" }) });
+      expect(screen.queryByRole("button", { name: "Stop agent" })).toBeNull();
+    });
+  });
+
   describe("optimistic message isolation (split-screen)", () => {
     beforeEach(() => useSessionDetailStore.getState().resetStore());
     afterEach(() => useSessionDetailStore.getState().resetStore());
@@ -258,31 +290,38 @@ describe("Pane", () => {
     // conversation: whether the in-flight optimistic row is merged flips the
     // pane between its "No messages yet" empty state (no rows) and the
     // transcript body (one optimistic row) — a non-virtualized DOM difference.
-    it("merges the in-flight optimistic message only into the active pane, not inactive panes", () => {
-      // The shared pinned composer submitted a message to the active
-      // conversation, setting the page-level optimistic state.
+    it("merges the in-flight optimistic message only into its own conversation's pane", () => {
+      // The shared pinned composer submitted a message to the active pane's
+      // conversation; in-flight state is keyed to that conversation id.
       useSessionDetailStore
         .getState()
-        .submitPrompt([{ type: "text", text: "pending to active convo" }], 0);
+        .submitPrompt(
+          CONV_ID,
+          [{ type: "text", text: "pending to active convo" }],
+          0,
+        );
 
-      // An inactive pane (a different, idle conversation in the split view) has
-      // no server messages and must NOT inherit the optimistic row → empty
+      // A pane showing a DIFFERENT idle conversation has no server messages
+      // and must NOT inherit the other conversation's optimistic row → empty
       // state. Status is `awaiting` (not `running`) so the empty-vs-body signal
       // isolates the optimistic-merge variable from the running-pane typing
       // indicator (which would otherwise replace the empty state).
       const inactive = renderPane(
         {
           active: false,
-          conversation: baseConversation({ status: "awaiting" }),
+          conversation: baseConversation({
+            id: "conv-other",
+            status: "awaiting",
+          }),
         },
         [],
       );
       expect(screen.getByText("No messages yet")).toBeInTheDocument();
       inactive.unmount();
 
-      // The active pane (the composer's target) merges the optimistic row, so
-      // it shows the transcript body (marked by data-backend), not the empty
-      // state.
+      // The pane showing the submitting conversation merges the optimistic
+      // row, so it shows the transcript body (marked by data-backend), not the
+      // empty state.
       const active = renderPane({ active: true }, []);
       expect(screen.queryByText("No messages yet")).toBeNull();
       expect(active.container.querySelector("[data-backend]")).not.toBeNull();

@@ -1,18 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { useRef, useState } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
-import MessageRow from "@/components/conversation/MessageRow";
-import type {
-  ConversationVirtuosoListProps,
-  VirtuosoHandle,
-} from "@/components/conversation/ConversationVirtuosoList";
-import {
-  buildConversationRows,
-  type ConversationRow,
-} from "@/features/session/conversation/conversation-rows";
-import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
-import { useConversationNav } from "@/features/session/hooks/use-conversation-nav";
+import ConversationTranscript, {
+  type TranscriptNav,
+} from "@/components/conversation/ConversationTranscript";
 import { useSessionQuery } from "@/lib/sessions/queries";
 
 interface WorkflowConversationViewerProps {
@@ -26,7 +18,6 @@ interface WorkflowConversationViewerProps {
 }
 
 const noop = () => {};
-const noopAsync = async () => {};
 
 export default function WorkflowConversationViewer({
   projectName,
@@ -37,54 +28,14 @@ export default function WorkflowConversationViewer({
   taskTitle,
   onClose,
 }: WorkflowConversationViewerProps) {
-  const messagesQuery = useConversationMessagesQuery(
-    projectName,
-    sessionName,
-    conversationId,
-  );
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const worktreePath = sessionQuery.data?.worktreePath;
+  const conversationStatus = sessionQuery.data?.conversations.find(
+    (c) => c.id === conversationId,
+  )?.status;
 
-  const messages = messagesQuery.data ?? [];
-
-  const rows = useMemo<ConversationRow[]>(
-    () => buildConversationRows(messages, undefined),
-    [messages],
-  );
-
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const panelBodyRef = useRef<HTMLDivElement | null>(null);
-
-  const nav = useConversationNav({
-    rows,
-    totalMessages: messages.length,
-    virtuosoRef,
-  });
-
-  const renderMessageRow = useCallback<
-    ConversationVirtuosoListProps["renderMessage"]
-  >(
-    ({ row }) => (
-      <MessageRow
-        msg={row.msg}
-        messageIndex={row.messageIndex}
-        isLast={row.messageIndex === messages.length - 1}
-        selectedBackend="claude"
-        worktreePath={worktreePath}
-        onFork={noopAsync}
-        lastMessageExtras={null}
-      />
-    ),
-    [messages.length, worktreePath],
-  );
-
-  const renderCollabRow = useCallback<
-    ConversationVirtuosoListProps["renderCollab"]
-  >(() => null, []);
-
-  const renderTypingIndicator = useCallback<
-    ConversationVirtuosoListProps["renderFooter"]
-  >(() => null, []);
+  const [nav, setNav] = useState<TranscriptNav | null>(null);
 
   return (
     <div
@@ -125,32 +76,29 @@ export default function WorkflowConversationViewer({
         canStop={false}
         onStop={noop}
         openMobileSidebar={noop}
-        currentMessageIndex={nav.currentMessageIndex}
-        totalMessages={messages.length}
-        handleFirstMessage={nav.handleFirstMessage}
-        handlePrevMessage={nav.handlePrevMessage}
-        handleNextMessage={nav.handleNextMessage}
-        handleLastMessage={nav.handleLastMessage}
+        currentMessageIndex={nav?.currentMessageIndex ?? 0}
+        totalMessages={nav?.totalMessages ?? 0}
+        handleFirstMessage={nav?.handleFirstMessage ?? noop}
+        handlePrevMessage={nav?.handlePrevMessage ?? noop}
+        handleNextMessage={nav?.handleNextMessage ?? noop}
+        handleLastMessage={nav?.handleLastMessage ?? noop}
         contextPercent={null}
-        promptError={null}
-        promptCancelled={false}
-        dismissError={noop}
-        dismissCancelled={noop}
         panelBodyRef={panelBodyRef}
         selectedBackend="claude"
-        setCollabPinnedTopTarget={noop}
-        isCollabPassageInView={false}
-        messagesPending={messagesQuery.isLoading}
-        rows={rows}
-        virtuosoRef={virtuosoRef}
-        conversationId={conversationId}
-        followBottom={nav.followBottom}
-        renderMessageRow={renderMessageRow}
-        renderCollabRow={renderCollabRow}
-        renderTypingIndicator={renderTypingIndicator}
-        handleRangeChanged={nav.handleRangeChanged}
-        handleAtBottomStateChange={nav.handleAtBottomStateChange}
-        handleAtTopStateChange={nav.handleAtTopStateChange}
+        transcript={
+          <ConversationTranscript
+            scope={{
+              kind: "session",
+              projectName,
+              sessionName,
+              conversationId,
+            }}
+            backend="claude"
+            status={conversationStatus}
+            worktreePath={worktreePath}
+            onNavChange={setNav}
+          />
+        }
         alignmentGateSlot={null}
         promptInputSlot={null}
       />

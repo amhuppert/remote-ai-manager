@@ -5,7 +5,7 @@ import { useSessionPageStoreBundle } from "./use-session-page-store-bundle";
 
 describe("useSessionPageStoreBundle", () => {
   it("returns a bundle of store selectors and actions with stable callable identities", () => {
-    const { result } = renderHook(() => useSessionPageStoreBundle());
+    const { result } = renderHook(() => useSessionPageStoreBundle("conv-1"));
     const bundle = result.current;
     expect(typeof bundle.switchLayout).toBe("function");
     expect(typeof bundle.hydrateLayout).toBe("function");
@@ -20,7 +20,7 @@ describe("useSessionPageStoreBundle", () => {
   });
 
   it("switchMobilePanel forwards the panel value without throwing", () => {
-    const { result } = renderHook(() => useSessionPageStoreBundle());
+    const { result } = renderHook(() => useSessionPageStoreBundle("conv-1"));
     act(() => {
       result.current.switchMobilePanel("docs");
     });

@@ -16,16 +16,23 @@ import { gitKeys } from "@/lib/git/query-keys";
  * 1. Calling the server-side abort endpoint (signals SDK AbortController)
  * 2. Cleaning up Zustand UI state (sending, pending questions)
  * 3. Invalidating TanStack Query caches
+ *
+ * `preserveQuestions` skips the pending-question cleanup: the question panel
+ * is workspace-scoped (it belongs to the composer's target conversation), so
+ * a surface stopping a DIFFERENT conversation (a background pane) must not
+ * clear the active conversation's questions.
  */
 export function useAbortPrompt(
   projectName: string,
   sessionName: string,
   conversationId?: string,
+  options: { preserveQuestions?: boolean } = {},
 ): () => Promise<void> {
   const queryClient = useQueryClient();
   const completePrompt = useCompletePrompt();
   const clearQuestions = useClearQuestions();
   const markCancelled = useMarkCancelled();
+  const { preserveQuestions = false } = options;
 
   return useCallback(async () => {
     if (!conversationId) return;
@@ -39,9 +46,9 @@ export function useAbortPrompt(
 
       if (res.ok || res.status === 409) {
         // 409 means nothing was running — still safe to clean up UI state
-        clearQuestions();
-        completePrompt();
-        markCancelled();
+        if (!preserveQuestions) clearQuestions();
+        completePrompt(conversationId);
+        markCancelled(conversationId);
 
         // Invalidate caches so the UI refreshes with final state
         void queryClient.invalidateQueries({
@@ -60,7 +67,7 @@ export function useAbortPrompt(
       }
     } catch {
       // Network error — still try to clean up local UI
-      completePrompt();
+      completePrompt(conversationId);
     }
   }, [
     projectName,
@@ -70,5 +77,6 @@ export function useAbortPrompt(
     completePrompt,
     clearQuestions,
     markCancelled,
+    preserveQuestions,
   ]);
 }

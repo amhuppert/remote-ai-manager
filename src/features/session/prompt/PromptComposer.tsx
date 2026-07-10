@@ -327,14 +327,14 @@ export default function PromptComposer({
       try {
         res = await tracedFetch(url, "cancel-queued", { method: "DELETE" });
       } catch {
-        setQueueError("Failed to cancel queued message");
+        setQueueError(conversationId, "Failed to cancel queued message");
         return;
       }
       if (!res.ok) {
-        setQueueError("Failed to cancel queued message");
+        setQueueError(conversationId, "Failed to cancel queued message");
         return;
       }
-      cancelOptimisticQueueEntry(id);
+      cancelOptimisticQueueEntry(conversationId, id);
     },
     [
       projectName,

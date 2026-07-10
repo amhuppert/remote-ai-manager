@@ -4,7 +4,14 @@ import { createRef } from "react";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import PromptComposer from "@/features/session/prompt/PromptComposer";
-import { useSessionDetailStore } from "@/stores/session-detail.store";
+import {
+  selectInFlightFor,
+  useSessionDetailStore,
+} from "@/stores/session-detail.store";
+
+function inFlight() {
+  return selectInFlightFor(useSessionDetailStore.getState(), "conv-1");
+}
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
@@ -116,8 +123,10 @@ describe("PromptComposer cancellation affordance", () => {
     // Seed the optimistic mirror so we can observe its removal.
     useSessionDetailStore
       .getState()
-      .addOptimisticQueueEntry("temp-1", entry.content);
-    useSessionDetailStore.getState().acceptOptimisticQueueEntry("temp-1", "q1");
+      .addOptimisticQueueEntry("conv-1", "temp-1", entry.content);
+    useSessionDetailStore
+      .getState()
+      .acceptOptimisticQueueEntry("conv-1", "temp-1", "q1");
 
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -142,7 +151,7 @@ describe("PromptComposer cancellation affordance", () => {
     expect(fetchSpy.mock.calls[0]?.[1]?.method).toBe("DELETE");
 
     await waitFor(() => {
-      expect(useSessionDetailStore.getState().optimisticQueue).toHaveLength(0);
+      expect(inFlight().optimisticQueue).toHaveLength(0);
     });
   });
 
@@ -161,8 +170,10 @@ describe("PromptComposer cancellation affordance", () => {
     const entry = makeQueueEntry({ id: "q1" });
     useSessionDetailStore
       .getState()
-      .addOptimisticQueueEntry("temp-1", entry.content);
-    useSessionDetailStore.getState().acceptOptimisticQueueEntry("temp-1", "q1");
+      .addOptimisticQueueEntry("conv-1", "temp-1", entry.content);
+    useSessionDetailStore
+      .getState()
+      .acceptOptimisticQueueEntry("conv-1", "temp-1", "q1");
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "conflict" }), { status: 409 }),
@@ -177,8 +188,8 @@ describe("PromptComposer cancellation affordance", () => {
     );
 
     await waitFor(() => {
-      expect(useSessionDetailStore.getState().promptError).not.toBeNull();
+      expect(inFlight().promptError).not.toBeNull();
     });
-    expect(useSessionDetailStore.getState().optimisticQueue).toHaveLength(1);
+    expect(inFlight().optimisticQueue).toHaveLength(1);
   });
 });

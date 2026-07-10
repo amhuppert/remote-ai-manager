@@ -8,7 +8,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import {
   computeRowKey,
   type ConversationRow,
-} from "@/features/session/conversation/conversation-rows";
+} from "@/components/conversation/conversation-rows";
 
 export const ConversationVirtuosoItem = forwardRef<
   HTMLDivElement,
@@ -39,10 +39,20 @@ export interface ConversationVirtuosoListProps {
   renderCollab(args: {
     row: Extract<ConversationRow, { kind: "collab" }>;
   }): ReactNode;
+  renderExtension?(args: {
+    row: Extract<ConversationRow, { kind: "extension" }>;
+  }): ReactNode;
   renderFooter(): ReactNode;
   onRangeChanged(range: { startIndex: number; endIndex: number }): void;
   onAtBottomStateChange(atBottom: boolean): void;
   onAtTopStateChange(atTop: boolean): void;
+}
+
+export function resolveConversationFollowOutput(
+  isAtBottom: boolean,
+  followBottom: boolean,
+): "smooth" | false {
+  return isAtBottom || followBottom ? "smooth" : false;
 }
 
 export default function ConversationVirtuosoList({
@@ -52,6 +62,7 @@ export default function ConversationVirtuosoList({
   followBottom,
   renderMessage,
   renderCollab,
+  renderExtension,
   renderFooter,
   onRangeChanged,
   onAtBottomStateChange,
@@ -70,9 +81,13 @@ export default function ConversationVirtuosoList({
       itemContent={(index, row) =>
         row.kind === "message"
           ? renderMessage({ row, isLast: index === rows.length - 1 })
-          : renderCollab({ row })
+          : row.kind === "collab"
+            ? renderCollab({ row })
+            : (renderExtension?.({ row }) ?? null)
       }
-      followOutput={() => (followBottom ? "smooth" : false)}
+      followOutput={(isAtBottom) =>
+        resolveConversationFollowOutput(isAtBottom, followBottom)
+      }
       atBottomThreshold={4}
       components={{ Footer: renderFooter, Item: ConversationVirtuosoItem }}
       rangeChanged={onRangeChanged}

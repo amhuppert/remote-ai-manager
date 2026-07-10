@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useRef } from "react";
 import { useConversationNav } from "./use-conversation-nav";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
-import type { ConversationRow } from "@/features/session/conversation/conversation-rows";
+import type { ConversationRow } from "@/components/conversation/conversation-rows";
 import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 
@@ -39,6 +39,7 @@ function setupWithRef(args: {
       rows: args.rows,
       totalMessages: args.totalMessages,
       virtuosoRef,
+      conversationId: "conv-1",
     });
   });
 }
@@ -165,7 +166,7 @@ describe("useConversationNav", () => {
     act(() => {
       useSessionDetailStore
         .getState()
-        .submitPrompt([{ type: "text", text: "hello" }], 3);
+        .submitPrompt("conv-1", [{ type: "text", text: "hello" }], 3);
     });
 
     expect(result.current.followBottom).toBe(true);
@@ -176,6 +177,39 @@ describe("useConversationNav", () => {
         behavior: "smooth",
       }),
     );
+  });
+
+  it("keeps followBottom engaged through send-time size growth, then respects a later user scroll", () => {
+    const rows = [messageRow(0), messageRow(1), messageRow(2)];
+    const virtuosoHandle = {
+      scrollToIndex: vi.fn(),
+    } as unknown as VirtuosoHandle;
+    const { result } = setupWithRef({
+      rows,
+      totalMessages: 3,
+      virtuosoHandle,
+    });
+
+    act(() => {
+      result.current.handleAtBottomStateChange(false);
+      useSessionDetailStore
+        .getState()
+        .submitPrompt("conv-1", [{ type: "text", text: "hello" }], 3);
+    });
+    expect(result.current.followBottom).toBe(true);
+
+    act(() => {
+      result.current.handleAtBottomStateChange(false);
+    });
+    expect(result.current.followBottom).toBe(true);
+
+    act(() => {
+      result.current.handleAtBottomStateChange(true);
+    });
+    act(() => {
+      result.current.handleAtBottomStateChange(false);
+    });
+    expect(result.current.followBottom).toBe(false);
   });
 });
 

@@ -9,7 +9,6 @@ describe("useMessageRowRenderer", () => {
   it("returns a callback that renders a JSX element for a given row", () => {
     const { result } = renderHook(() =>
       useMessageRowRenderer({
-        lastMessageIndex: 0,
         activeConversation: undefined,
         selectedBackend: "claude",
         worktreePath: "/tmp/w",

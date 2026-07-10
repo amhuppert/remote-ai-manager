@@ -9,7 +9,6 @@ import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export interface UseMessageRowRendererArgs {
-  lastMessageIndex: number;
   activeConversation: ConversationState | undefined;
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
@@ -22,7 +21,6 @@ export interface UseMessageRowRendererArgs {
 }
 
 export function useMessageRowRenderer({
-  lastMessageIndex,
   activeConversation,
   selectedBackend,
   worktreePath,
@@ -44,9 +42,10 @@ export function useMessageRowRenderer({
     [projectName, sessionName, conversationId],
   );
   return useCallback<ConversationVirtuosoListProps["renderMessage"]>(
-    ({ row }) => {
+    // `isLast` is message-based, supplied by ConversationTranscript (a
+    // trailing collab row does not shift it).
+    ({ row, isLast }) => {
       const { messageIndex, msg } = row;
-      const isLast = messageIndex === lastMessageIndex;
       const extras =
         isLast && msg.role !== "user" && activeConversation
           ? {
@@ -75,7 +74,6 @@ export function useMessageRowRenderer({
     },
     [
       activeConversation,
-      lastMessageIndex,
       handleDebugPrompt,
       handleFork,
       isBusy,

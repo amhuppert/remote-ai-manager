@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo } from "react";
 import {
-  useMessageCountBeforeSubmit,
-  useOptimisticMessages,
-  useOptimisticQueue,
+  useMessageCountBeforeSubmitFor,
+  useOptimisticMessagesFor,
+  useOptimisticQueueFor,
   useReconcileMessages,
-  useSending,
+  useSendingFor,
 } from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type {
@@ -36,25 +36,6 @@ export interface QueuedDisplayMeta {
  * simply ignore `queued`.
  */
 export type DisplayMessage = TranscriptMessage & { queued?: QueuedDisplayMeta };
-
-// Stable empty references so a non-active pane (includeOptimistic=false) never
-// changes identity between renders and keeps memoization intact.
-const NO_OPTIMISTIC_MESSAGES: readonly TranscriptMessage[] = [];
-const NO_OPTIMISTIC_QUEUE: readonly OptimisticQueueProjectionEntry[] = [];
-
-export interface UseDisplayMessagesOptions {
-  /**
-   * Whether to merge the global in-flight optimistic state (just-submitted
-   * message, optimistic queue) into this view. The optimistic state lives in a
-   * single page-level store and belongs to the conversation the shared composer
-   * targets — the active one. In split-screen, every pane renders its own
-   * transcript through this hook, so non-active panes MUST pass `false` or they
-   * would all show the active conversation's pending message (and could clear
-   * its optimistic state via the reconcile effect). Defaults to `true` for the
-   * single-conversation panel, which always shows the active conversation.
-   */
-  includeOptimistic?: boolean;
-}
 
 /** Structural shape of a store optimistic-queue entry consumed by the pure
  * projection. Matches `OptimisticQueueEntry` in the session-detail store. */
@@ -154,35 +135,27 @@ export function buildDisplayProjection({
  * delivered (shown by its transcript row) or cancelled.
  */
 export function useDisplayMessages(
+  conversationId: string,
   messages: readonly TranscriptMessage[],
   pendingQueue: readonly PendingQueuedMessage[] = [],
-  options: UseDisplayMessagesOptions = {},
 ): readonly DisplayMessage[] {
-  const { includeOptimistic = true } = options;
-  const storeOptimisticMessages = useOptimisticMessages();
-  const storeOptimisticQueue = useOptimisticQueue();
-  const messageCountBeforeSubmit = useMessageCountBeforeSubmit();
-  const sending = useSending();
+  const optimisticMessages = useOptimisticMessagesFor(conversationId);
+  const optimisticQueue = useOptimisticQueueFor(conversationId);
+  const messageCountBeforeSubmit =
+    useMessageCountBeforeSubmitFor(conversationId);
+  const sending = useSendingFor(conversationId);
   const reconcileMessages = useReconcileMessages();
 
-  // A non-active pane participates in none of the in-flight machinery: it sees
-  // no optimistic rows and never runs the reconcile (which would clear another
-  // conversation's optimistic state from the wrong transcript's row count).
-  const optimisticMessages = includeOptimistic
-    ? storeOptimisticMessages
-    : NO_OPTIMISTIC_MESSAGES;
-  const optimisticQueue = includeOptimistic
-    ? storeOptimisticQueue
-    : NO_OPTIMISTIC_QUEUE;
-
+  // The reconcile is keyed to this conversation, so it only ever clears this
+  // conversation's optimistic echo — multiple surfaces mounting the same
+  // conversation reconcile idempotently.
   useEffect(() => {
-    if (!includeOptimistic) return;
     if (optimisticMessages.length === 0) return;
     if (!sending && messages.length > messageCountBeforeSubmit) {
-      reconcileMessages(messages.length);
+      reconcileMessages(conversationId, messages.length);
     }
   }, [
-    includeOptimistic,
+    conversationId,
     messages.length,
     optimisticMessages.length,
     messageCountBeforeSubmit,

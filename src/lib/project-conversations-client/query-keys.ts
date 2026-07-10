@@ -3,9 +3,9 @@
  * query layer. These keys address the project-level-conversations foundation's
  * project routes (list / messages) and the derived open-conversation count.
  *
- * The factory is exported so the notifications extension (which owns the global
- * SSE → invalidation listener) can invalidate `list`/`openCount`/`messages` on
- * `scope: "project"` conversation events without this spec forking that listener.
+ * The factory is exported so the global SSE → invalidation listener
+ * (NotificationListener) invalidates `list`/`openCount` and patches `messages`
+ * on `scope: "project"` conversation events without forking key definitions.
  */
 export const projectConversationKeys = {
   all: ["project-conversations"] as const,

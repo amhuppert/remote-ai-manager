@@ -5,7 +5,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import ConversationPanel, {
   type ConversationPanelProps,
 } from "@/components/conversation/ConversationPanel";
-import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 
 function makeProps(
   overrides: Partial<ConversationPanelProps> = {},
@@ -22,25 +21,9 @@ function makeProps(
     handleNextMessage: vi.fn(),
     handleLastMessage: vi.fn(),
     contextPercent: null,
-    promptError: null,
-    promptCancelled: false,
-    dismissError: vi.fn(),
-    dismissCancelled: vi.fn(),
     panelBodyRef: createRef<HTMLDivElement>(),
     selectedBackend: "claude",
-    setCollabPinnedTopTarget: vi.fn(),
-    isCollabPassageInView: false,
-    messagesPending: false,
-    rows: [],
-    virtuosoRef: createRef<VirtuosoHandle>(),
-    conversationId: "conv-1",
-    followBottom: true,
-    renderMessageRow: () => null,
-    renderCollabRow: () => null,
-    renderTypingIndicator: () => null,
-    handleRangeChanged: vi.fn(),
-    handleAtBottomStateChange: vi.fn(),
-    handleAtTopStateChange: vi.fn(),
+    transcript: null,
     alignmentGateSlot: null,
     canStop: false,
     onStop: vi.fn(),
@@ -50,66 +33,34 @@ function makeProps(
 }
 
 describe("ConversationPanel", () => {
-  it("renders 'Loading conversation...' when messagesPending=true", () => {
-    render(<ConversationPanel {...makeProps({ messagesPending: true })} />);
-    expect(screen.getByText("Loading conversation...")).toBeInTheDocument();
-    // The empty-state and the virtualized list should NOT render together.
-    expect(screen.queryByText("No messages yet")).toBeNull();
-  });
-
-  it("renders 'No messages yet' when not pending and rows is empty", () => {
+  it("renders the transcript slot inside the panel body", () => {
     render(
       <ConversationPanel
-        {...makeProps({ messagesPending: false, rows: [] })}
+        {...makeProps({
+          transcript: <div data-testid="transcript">rows</div>,
+        })}
       />,
     );
-    expect(screen.getByText("No messages yet")).toBeInTheDocument();
-    expect(
-      screen.getByText("Send a prompt to start the conversation."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Loading conversation...")).toBeNull();
+    expect(screen.getByTestId("transcript")).toBeInTheDocument();
   });
 
-  it("renders the promptError text and invokes dismissError on click", () => {
-    const dismissError = vi.fn();
-    render(
-      <ConversationPanel
-        {...makeProps({ promptError: "boom", dismissError })}
-      />,
+  it("shows the message count and title from the active conversation", () => {
+    render(<ConversationPanel {...makeProps({ totalMessages: 3 })} />);
+    expect(screen.getByText("3 messages")).toBeInTheDocument();
+    // Falls back to the session name when the conversation is unnamed.
+    expect(screen.getByText("session-1")).toBeInTheDocument();
+  });
+
+  it("renders the Stop control only when a turn can be stopped, and invokes onStop", () => {
+    const onStop = vi.fn();
+    const { rerender } = render(
+      <ConversationPanel {...makeProps({ canStop: false, onStop })} />,
     );
-    expect(screen.getByText("boom")).toBeInTheDocument();
-    const dismiss = screen
-      .getByText("boom")
-      .parentElement?.querySelector("button");
-    expect(dismiss).not.toBeNull();
-    fireEvent.click(dismiss!);
-    expect(dismissError).toHaveBeenCalledTimes(1);
-  });
+    expect(screen.queryByRole("button", { name: "Stop agent" })).toBeNull();
 
-  it("does not render the prompt-error banner when promptError is null", () => {
-    render(<ConversationPanel {...makeProps({ promptError: null })} />);
-    expect(screen.queryByText("×")).toBeNull();
-  });
-
-  it("renders 'Prompt cancelled' and invokes dismissCancelled on dismiss click", () => {
-    const dismissCancelled = vi.fn();
-    render(
-      <ConversationPanel
-        {...makeProps({ promptCancelled: true, dismissCancelled })}
-      />,
-    );
-    expect(screen.getByText("Prompt cancelled")).toBeInTheDocument();
-    const dismiss = screen
-      .getByText("Prompt cancelled")
-      .parentElement?.querySelector("button");
-    expect(dismiss).not.toBeNull();
-    fireEvent.click(dismiss!);
-    expect(dismissCancelled).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not render the prompt-cancelled banner when promptCancelled=false", () => {
-    render(<ConversationPanel {...makeProps({ promptCancelled: false })} />);
-    expect(screen.queryByText("Prompt cancelled")).toBeNull();
+    rerender(<ConversationPanel {...makeProps({ canStop: true, onStop })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop agent" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
   });
 
   it("renders the promptInputSlot in the panel", () => {

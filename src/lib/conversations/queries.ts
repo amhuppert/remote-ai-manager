@@ -6,7 +6,6 @@ import {
   allConversationsResponseSchema,
   conversationListItemSchema,
   conversationStateSchema,
-  transcriptMessageSchema,
 } from "./schemas";
 
 export function useConversationsQuery(
@@ -22,10 +21,6 @@ export function useConversationsQuery(
       ),
   });
 }
-
-export const stampedTranscriptMessageSchema = transcriptMessageSchema.extend({
-  seq: z.number().int().nonnegative(),
-});
 
 /**
  * Resolve a session-scoped conversation by id alone via

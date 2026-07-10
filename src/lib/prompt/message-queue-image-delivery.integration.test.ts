@@ -61,7 +61,10 @@ import {
 } from "@/lib/conversations/message-queue-service";
 
 import { useSendPrompt } from "@/hooks/use-send-prompt";
-import { useSessionDetailStore } from "@/stores/session-detail.store";
+import {
+  selectInFlightFor,
+  useSessionDetailStore,
+} from "@/stores/session-detail.store";
 
 import { queueMessage, type QueueMessageDeps } from "./queue";
 
@@ -390,14 +393,18 @@ function renderQueueHook() {
   });
 }
 
+function inFlight() {
+  return selectInFlightFor(useSessionDetailStore.getState(), CONVERSATION);
+}
+
 /** Put the store into a "running turn" state so queue() will proceed. */
 function startRunningTurn() {
   act(() => {
     useSessionDetailStore
       .getState()
-      .submitPrompt([{ type: "text", text: "turn" }], 0);
+      .submitPrompt(CONVERSATION, [{ type: "text", text: "turn" }], 0);
   });
-  expect(useSessionDetailStore.getState().sending).toBe(true);
+  expect(inFlight().sending).toBe(true);
 }
 
 describe("Task 7.4 Scenario B — image-queue failure surfaces instead of silently dropping (req 8.3)", () => {
@@ -430,7 +437,7 @@ describe("Task 7.4 Scenario B — image-queue failure surfaces instead of silent
       await result.current.queue("with image", [IMAGE]);
     });
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
 
     // The optimistic image entry was rolled back (removed) — the failed item is
     // not left displayed as queued.

@@ -6,7 +6,10 @@ import {
   buildDisplayProjection,
   type OptimisticQueueProjectionEntry,
 } from "./use-display-messages";
-import { useSessionDetailStore } from "@/stores/session-detail.store";
+import {
+  selectInFlightFor,
+  useSessionDetailStore,
+} from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 
@@ -56,6 +59,14 @@ function optimistic(
   };
 }
 
+const A = "conv-a";
+const B = "conv-b";
+
+function optimisticMessagesFor(conversationId: string) {
+  return selectInFlightFor(useSessionDetailStore.getState(), conversationId)
+    .optimisticMessages;
+}
+
 describe("useDisplayMessages", () => {
   beforeEach(() => {
     useSessionDetailStore.getState().resetStore();
@@ -66,7 +77,7 @@ describe("useDisplayMessages", () => {
       msg("user", "hello"),
       msg("assistant", "hi"),
     ];
-    const { result } = renderHook(() => useDisplayMessages(messages));
+    const { result } = renderHook(() => useDisplayMessages(A, messages));
     expect(result.current).toBe(messages);
   });
 
@@ -80,9 +91,9 @@ describe("useDisplayMessages", () => {
     // Simulate that the optimistic submit happened after 2 messages
     useSessionDetailStore
       .getState()
-      .submitPrompt([{ type: "text", text: "second user" }], 2);
+      .submitPrompt(A, [{ type: "text", text: "second user" }], 2);
 
-    const { result } = renderHook(() => useDisplayMessages(serverMessages));
+    const { result } = renderHook(() => useDisplayMessages(A, serverMessages));
 
     expect(result.current).toHaveLength(3);
     expect(result.current[0]).toBe(serverMessages[0]);
@@ -96,45 +107,40 @@ describe("useDisplayMessages", () => {
   it("when messageCountBeforeSubmit=0, returns only optimistic messages", () => {
     useSessionDetailStore
       .getState()
-      .submitPrompt([{ type: "text", text: "kickoff" }], 0);
+      .submitPrompt(A, [{ type: "text", text: "kickoff" }], 0);
 
-    const { result } = renderHook(() => useDisplayMessages([]));
+    const { result } = renderHook(() => useDisplayMessages(A, []));
     expect(result.current).toHaveLength(1);
     expect(result.current[0]?.content).toEqual([
       { type: "text", text: "kickoff" },
     ]);
   });
 
-  it("excludes optimistic messages when includeOptimistic is false (a non-active split-screen pane)", () => {
-    // The shared composer's in-flight submit targets only the active
-    // conversation; an inactive pane must render just its own server transcript
-    // even though the global optimistic state is set.
+  it("does not merge another conversation's optimistic state (a non-active split-screen pane)", () => {
+    // In-flight state is keyed per conversation: a pane rendering B must show
+    // only B's server transcript while A's submit is in flight.
     useSessionDetailStore
       .getState()
-      .submitPrompt([{ type: "text", text: "to active convo" }], 1);
+      .submitPrompt(A, [{ type: "text", text: "to active convo" }], 1);
 
     const serverMessages: TranscriptMessage[] = [
       msg("user", "previous"),
       msg("assistant", "reply"),
     ];
-    const { result } = renderHook(() =>
-      useDisplayMessages(serverMessages, undefined, {
-        includeOptimistic: false,
-      }),
-    );
+    const { result } = renderHook(() => useDisplayMessages(B, serverMessages));
 
     expect(result.current).toBe(serverMessages);
   });
 
-  it("does not clear the active conversation's optimistic state from a non-active pane (includeOptimistic false)", () => {
-    // A non-active pane whose own transcript has more rows than the active
-    // conversation's submit point must NOT run the reconcile that clears the
-    // active conversation's optimistic message — otherwise the active pane's
-    // pending message flickers away before its real row lands.
+  it("does not clear another conversation's optimistic state from a different pane", () => {
+    // A pane whose own transcript has more rows than another conversation's
+    // submit point must NOT clear that conversation's optimistic message —
+    // otherwise the sending pane's pending message flickers away before its
+    // real row lands.
     useSessionDetailStore
       .getState()
-      .submitPrompt([{ type: "text", text: "the prompt" }], 1);
-    useSessionDetailStore.getState().completePrompt();
+      .submitPrompt(A, [{ type: "text", text: "the prompt" }], 1);
+    useSessionDetailStore.getState().completePrompt(A);
 
     const otherPaneMessages: TranscriptMessage[] = [
       msg("user", "a"),
@@ -142,22 +148,18 @@ describe("useDisplayMessages", () => {
       msg("user", "c"),
       msg("assistant", "d"),
     ];
-    renderHook(() =>
-      useDisplayMessages(otherPaneMessages, undefined, {
-        includeOptimistic: false,
-      }),
-    );
+    renderHook(() => useDisplayMessages(B, otherPaneMessages));
 
-    expect(useSessionDetailStore.getState().optimisticMessages).toHaveLength(1);
+    expect(optimisticMessagesFor(A)).toHaveLength(1);
   });
 
   it("reconciles by clearing optimistic when streaming finished and server caught up", () => {
     // Set up an in-flight submit at count=1
     useSessionDetailStore
       .getState()
-      .submitPrompt([{ type: "text", text: "the prompt" }], 1);
+      .submitPrompt(A, [{ type: "text", text: "the prompt" }], 1);
     // Stream completes (sending=false)
-    useSessionDetailStore.getState().completePrompt();
+    useSessionDetailStore.getState().completePrompt(A);
 
     const serverMessages: TranscriptMessage[] = [
       msg("user", "previous"),
@@ -169,7 +171,7 @@ describe("useDisplayMessages", () => {
     // server.slice(0, 1) + optimistic = 1 + 1 = 2 items
     const { result, rerender } = renderHook(
       ({ messages }: { messages: TranscriptMessage[] }) =>
-        useDisplayMessages(messages),
+        useDisplayMessages(A, messages),
       { initialProps: { messages: serverMessages } },
     );
 
@@ -177,7 +179,7 @@ describe("useDisplayMessages", () => {
     // render with the same server messages should pass them through directly.
     rerender({ messages: serverMessages });
     expect(result.current).toBe(serverMessages);
-    expect(useSessionDetailStore.getState().optimisticMessages).toHaveLength(0);
+    expect(optimisticMessagesFor(A)).toHaveLength(0);
   });
 });
 

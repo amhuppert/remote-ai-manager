@@ -113,6 +113,10 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}MessageActions.tsx`,
   `${path.sep}components${path.sep}VoiceRecordButton.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}ConversationPanel.tsx`,
+  // ConversationTranscript hosts the transcript body extracted from
+  // ConversationPanel — utility-first by design (its banner/state markup moved
+  // here from the already-exempt panel).
+  `${path.sep}components${path.sep}conversation${path.sep}ConversationTranscript.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}MessageRow.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}TypingIndicator.tsx`,
   // EffortLabel (the message-metadata effort cell, shown inside MessageRow) is

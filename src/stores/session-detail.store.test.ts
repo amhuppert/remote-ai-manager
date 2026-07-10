@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import {
   useSessionDetailStore,
@@ -6,6 +6,8 @@ import {
   useSetSidebarFilter,
   useComposerFocused,
   useSetComposerFocused,
+  selectInFlightFor,
+  EMPTY_IN_FLIGHT,
 } from "./session-detail.store";
 
 function resetStore() {
@@ -15,6 +17,14 @@ function resetStore() {
 function textBlock(text: string): MessageContentBlock[] {
   return [{ type: "text", text }];
 }
+
+/** Read conversation A/B in-flight state directly off the store. */
+function inFlightFor(conversationId: string) {
+  return selectInFlightFor(useSessionDetailStore.getState(), conversationId);
+}
+
+const A = "conv-a";
+const B = "conv-b";
 
 describe("session-detail.store — sidebar UI slice", () => {
   beforeEach(resetStore);
@@ -126,20 +136,25 @@ describe("session-detail.store — optimistic agent settings stamps", () => {
   beforeEach(resetStore);
 
   it("stamps the optimistic user row and the streaming assistant row with the turn's model/effort", () => {
-    useSessionDetailStore
-      .getState()
-      .submitPrompt(textBlock("hello"), 0, { model: "fable", effort: "max" });
-    expect(
-      useSessionDetailStore.getState().optimisticMessages[0],
-    ).toMatchObject({ role: "user", model: "fable", effort: "max" });
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("hello"), 0, {
+      model: "fable",
+      effort: "max",
+    });
+    expect(inFlightFor(A).optimisticMessages[0]).toMatchObject({
+      role: "user",
+      model: "fable",
+      effort: "max",
+    });
 
     useSessionDetailStore
       .getState()
-      .receiveStreamContent(textBlock("hello"), textBlock("partial answer"), {
-        model: "fable",
-        effort: "max",
-      });
-    const messages = useSessionDetailStore.getState().optimisticMessages;
+      .receiveStreamContent(
+        A,
+        textBlock("hello"),
+        textBlock("partial answer"),
+        { model: "fable", effort: "max" },
+      );
+    const messages = inFlightFor(A).optimisticMessages;
     expect(messages[1]).toMatchObject({
       role: "assistant",
       model: "fable",
@@ -148,25 +163,175 @@ describe("session-detail.store — optimistic agent settings stamps", () => {
   });
 
   it("leaves optimistic rows unstamped when the turn has no explicit model/effort", () => {
-    useSessionDetailStore.getState().submitPrompt(textBlock("hello"), 0);
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("hello"), 0);
     useSessionDetailStore
       .getState()
-      .receiveStreamContent(textBlock("hello"), textBlock("partial answer"));
-    const messages = useSessionDetailStore.getState().optimisticMessages;
+      .receiveStreamContent(A, textBlock("hello"), textBlock("partial answer"));
+    const messages = inFlightFor(A).optimisticMessages;
     expect(messages[0]).not.toHaveProperty("model");
     expect(messages[1]).not.toHaveProperty("model");
     expect(messages[1]).not.toHaveProperty("effort");
   });
 });
 
+describe("session-detail.store — in-flight state is keyed per conversation", () => {
+  beforeEach(resetStore);
+
+  it("returns the shared default for a conversation with no in-flight state (stable identity)", () => {
+    expect(inFlightFor(A)).toBe(EMPTY_IN_FLIGHT);
+    expect(inFlightFor(A).sending).toBe(false);
+    expect(inFlightFor(A).optimisticMessages).toEqual([]);
+    expect(inFlightFor(A).optimisticQueue).toEqual([]);
+    expect(inFlightFor(A).promptError).toBeNull();
+    expect(inFlightFor(A).promptCancelled).toBe(false);
+    expect(inFlightFor(A).messageCountBeforeSubmit).toBe(0);
+  });
+
+  it("submitPrompt sets sending + optimistic echo for its conversation only", () => {
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("hello"), 3);
+
+    expect(inFlightFor(A).sending).toBe(true);
+    expect(inFlightFor(A).messageCountBeforeSubmit).toBe(3);
+    expect(inFlightFor(A).optimisticMessages).toHaveLength(1);
+
+    expect(inFlightFor(B)).toBe(EMPTY_IN_FLIGHT);
+  });
+
+  it("two conversations stream independently; completing one leaves the other in flight", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 0);
+    s.submitPrompt(B, textBlock("b"), 5);
+    s.receiveStreamContent(A, textBlock("a"), textBlock("partial a"));
+
+    expect(inFlightFor(A).sending).toBe(true);
+    expect(inFlightFor(A).optimisticMessages).toHaveLength(2);
+    expect(inFlightFor(B).sending).toBe(true);
+    expect(inFlightFor(B).optimisticMessages).toHaveLength(1);
+
+    s.completePrompt(A);
+
+    expect(inFlightFor(A).sending).toBe(false);
+    expect(inFlightFor(B).sending).toBe(true);
+    expect(inFlightFor(B).messageCountBeforeSubmit).toBe(5);
+  });
+
+  it("failPrompt surfaces the error on its conversation only", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 0);
+    s.submitPrompt(B, textBlock("b"), 0);
+
+    s.failPrompt(A, "boom");
+
+    expect(inFlightFor(A).promptError).toBe("boom");
+    expect(inFlightFor(A).sending).toBe(false);
+    expect(inFlightFor(B).promptError).toBeNull();
+    expect(inFlightFor(B).sending).toBe(true);
+  });
+
+  it("dismissError clears only its conversation's error", () => {
+    const s = useSessionDetailStore.getState();
+    s.failPrompt(A, "a-error");
+    s.failPrompt(B, "b-error");
+
+    s.dismissError(A);
+
+    expect(inFlightFor(A).promptError).toBeNull();
+    expect(inFlightFor(B).promptError).toBe("b-error");
+  });
+
+  it("reconcileMessages clears only its conversation's optimistic echo once the server catches up", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 2);
+    s.submitPrompt(B, textBlock("b"), 2);
+    s.completePrompt(A);
+    s.completePrompt(B);
+
+    s.reconcileMessages(A, 4);
+
+    expect(inFlightFor(A).optimisticMessages).toEqual([]);
+    expect(inFlightFor(B).optimisticMessages).toHaveLength(1);
+  });
+
+  it("reconcileMessages is a no-op while the server transcript has not caught up", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 2);
+    s.completePrompt(A);
+
+    s.reconcileMessages(A, 2);
+
+    expect(inFlightFor(A).optimisticMessages).toHaveLength(1);
+  });
+
+  it("clearConversationMessages clears only its conversation", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 2);
+    s.submitPrompt(B, textBlock("b"), 2);
+
+    s.clearConversationMessages(A);
+
+    expect(inFlightFor(A).optimisticMessages).toEqual([]);
+    expect(inFlightFor(A).messageCountBeforeSubmit).toBe(0);
+    expect(inFlightFor(B).optimisticMessages).toHaveLength(1);
+  });
+});
+
+describe("session-detail.store — markCancelled per conversation", () => {
+  beforeEach(() => {
+    resetStore();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("flags only its conversation and auto-clears after the banner window", () => {
+    const s = useSessionDetailStore.getState();
+    s.markCancelled(A);
+
+    expect(inFlightFor(A).promptCancelled).toBe(true);
+    expect(inFlightFor(B).promptCancelled).toBe(false);
+
+    vi.advanceTimersByTime(2500);
+
+    expect(inFlightFor(A).promptCancelled).toBe(false);
+  });
+
+  it("re-marking restarts the window without clearing another conversation's flag", () => {
+    const s = useSessionDetailStore.getState();
+    s.markCancelled(A);
+    vi.advanceTimersByTime(2000);
+    s.markCancelled(B);
+    s.markCancelled(A);
+    vi.advanceTimersByTime(2000);
+
+    // A's window restarted at t=2000, so it is still visible at t=4000.
+    expect(inFlightFor(A).promptCancelled).toBe(true);
+    expect(inFlightFor(B).promptCancelled).toBe(true);
+
+    vi.advanceTimersByTime(500);
+    expect(inFlightFor(A).promptCancelled).toBe(false);
+    expect(inFlightFor(B).promptCancelled).toBe(false);
+  });
+
+  it("dismissCancelled clears only its conversation", () => {
+    const s = useSessionDetailStore.getState();
+    s.markCancelled(A);
+    s.markCancelled(B);
+
+    s.dismissCancelled(A);
+
+    expect(inFlightFor(A).promptCancelled).toBe(false);
+    expect(inFlightFor(B).promptCancelled).toBe(true);
+  });
+});
+
 describe("session-detail.store — resetConversationState", () => {
   beforeEach(resetStore);
 
-  it("resets conversation-scoped state to defaults", () => {
+  it("resets workspace-scoped state to defaults", () => {
     const s = useSessionDetailStore.getState();
     s.switchMobilePanel("diff");
     s.switchRightPaneTab("docs");
-    s.submitPrompt(textBlock("hello"), 3);
     s.showQuestions("q-1", []);
 
     useSessionDetailStore.getState().resetConversationState();
@@ -174,9 +339,19 @@ describe("session-detail.store — resetConversationState", () => {
     const after = useSessionDetailStore.getState();
     expect(after.mobilePanel).toBe("chat");
     expect(after.rightPaneTab).toBe("diff");
-    expect(after.sending).toBe(false);
-    expect(after.optimisticMessages).toEqual([]);
     expect(after.pendingQuestionId).toBeNull();
+  });
+
+  it("preserves per-conversation in-flight state across a workspace swap", () => {
+    // A turn streaming in conversation A must stay visible in every surface
+    // (pane, sidebar peek) after the workspace switches to conversation B.
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("hello"), 3);
+
+    useSessionDetailStore.getState().resetConversationState();
+
+    expect(inFlightFor(A).sending).toBe(true);
+    expect(inFlightFor(A).optimisticMessages).toHaveLength(1);
+    expect(inFlightFor(A).messageCountBeforeSubmit).toBe(3);
   });
 
   it("preserves rail-owned state (collapse, mobile drawer, filters)", () => {
@@ -208,20 +383,19 @@ describe("session-detail.store — resetConversationState", () => {
     expect(useSessionDetailStore.getState().layout).toBe("panes");
   });
 
-  it("still resets conversation-scoped state while preserving layout", () => {
+  it("preserves layout AND in-flight state while resetting workspace bits", () => {
     const s = useSessionDetailStore.getState();
     s.switchLayout("panes", "cc-conversations-layout");
-    s.submitPrompt(textBlock("hello"), 7);
-    expect(useSessionDetailStore.getState().sending).toBe(true);
-    expect(useSessionDetailStore.getState().messageCountBeforeSubmit).toBe(7);
+    s.submitPrompt(A, textBlock("hello"), 7);
+    s.switchMobilePanel("diff");
 
     useSessionDetailStore.getState().resetConversationState();
 
     const after = useSessionDetailStore.getState();
     expect(after.layout).toBe("panes");
-    expect(after.sending).toBe(false);
-    expect(after.messageCountBeforeSubmit).toBe(0);
-    expect(after.optimisticMessages).toEqual([]);
+    expect(after.mobilePanel).toBe("chat");
+    expect(inFlightFor(A).sending).toBe(true);
+    expect(inFlightFor(A).messageCountBeforeSubmit).toBe(7);
   });
 
   it("resetStore still resets layout to the default (only resetConversationState preserves it)", () => {
@@ -239,18 +413,18 @@ describe("session-detail.store — optimistic queue slice", () => {
   beforeEach(resetStore);
 
   it("defaults optimisticQueue to an empty array", () => {
-    expect(useSessionDetailStore.getState().optimisticQueue).toEqual([]);
+    expect(inFlightFor(A).optimisticQueue).toEqual([]);
   });
 
   it("addOptimisticQueueEntry appends a pending entry without touching sending", () => {
-    const before = useSessionDetailStore.getState();
+    const before = inFlightFor(A);
     expect(before.sending).toBe(false);
 
     useSessionDetailStore
       .getState()
-      .addOptimisticQueueEntry("temp-1", textBlock("hello"));
+      .addOptimisticQueueEntry(A, "temp-1", textBlock("hello"));
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlightFor(A);
     expect(after.optimisticQueue).toHaveLength(1);
     const [entry] = after.optimisticQueue;
     expect(entry).toMatchObject({
@@ -261,21 +435,18 @@ describe("session-detail.store — optimistic queue slice", () => {
     });
     // Touches nothing else.
     expect(after.sending).toBe(before.sending);
-    expect(after.optimisticMessages).toBe(before.optimisticMessages);
-    expect(after.promptError).toBe(before.promptError);
+    expect(after.optimisticMessages).toEqual([]);
+    expect(after.promptError).toBeNull();
   });
 
   it("acceptOptimisticQueueEntry records the server queue id and sets status accepted", () => {
     const store = useSessionDetailStore.getState();
-    store.addOptimisticQueueEntry("temp-a", textBlock("a"));
-    store.addOptimisticQueueEntry("temp-b", textBlock("b"));
+    store.addOptimisticQueueEntry(A, "temp-a", textBlock("a"));
+    store.addOptimisticQueueEntry(A, "temp-b", textBlock("b"));
 
-    const before = useSessionDetailStore.getState();
-    expect(before.sending).toBe(false);
+    store.acceptOptimisticQueueEntry(A, "temp-b", "server-b");
 
-    store.acceptOptimisticQueueEntry("temp-b", "server-b");
-
-    const after = useSessionDetailStore.getState();
+    const after = inFlightFor(A);
     const accepted = after.optimisticQueue.find((e) => e.tempId === "temp-b");
     const untouched = after.optimisticQueue.find((e) => e.tempId === "temp-a");
     expect(accepted).toMatchObject({
@@ -288,24 +459,24 @@ describe("session-detail.store — optimistic queue slice", () => {
       queueId: null,
       status: "pending",
     });
-    expect(after.sending).toBe(before.sending);
+    expect(after.sending).toBe(false);
   });
 
   it("failOptimisticQueueEntry rolls back ONLY the failed entry and leaves sending unchanged (THE OBSERVABLE)", () => {
     // Arrange: a turn is running.
-    useSessionDetailStore.getState().submitPrompt(textBlock("turn"), 0);
-    expect(useSessionDetailStore.getState().sending).toBe(true);
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("turn"), 0);
+    expect(inFlightFor(A).sending).toBe(true);
 
     const store = useSessionDetailStore.getState();
-    store.addOptimisticQueueEntry("temp-keep", textBlock("keep"));
-    store.addOptimisticQueueEntry("temp-fail", textBlock("fail"));
-    expect(useSessionDetailStore.getState().optimisticQueue).toHaveLength(2);
+    store.addOptimisticQueueEntry(A, "temp-keep", textBlock("keep"));
+    store.addOptimisticQueueEntry(A, "temp-fail", textBlock("fail"));
+    expect(inFlightFor(A).optimisticQueue).toHaveLength(2);
 
     // Act: fail one entry.
-    store.failOptimisticQueueEntry("temp-fail");
+    store.failOptimisticQueueEntry(A, "temp-fail");
 
     // Assert: only the failed entry is removed; the other remains.
-    const after = useSessionDetailStore.getState();
+    const after = inFlightFor(A);
     expect(after.optimisticQueue).toHaveLength(1);
     expect(after.optimisticQueue[0]?.tempId).toBe("temp-keep");
     expect(after.optimisticQueue.some((e) => e.tempId === "temp-fail")).toBe(
@@ -316,44 +487,49 @@ describe("session-detail.store — optimistic queue slice", () => {
     expect(after.sending).toBe(true);
   });
 
+  it("queue entries are isolated between conversations", () => {
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry(A, "temp-a", textBlock("a"));
+    store.addOptimisticQueueEntry(B, "temp-b", textBlock("b"));
+
+    store.cancelOptimisticQueueEntry(A, "temp-a");
+
+    expect(inFlightFor(A).optimisticQueue).toHaveLength(0);
+    expect(inFlightFor(B).optimisticQueue).toHaveLength(1);
+  });
+
   it("cancelOptimisticQueueEntry removes an entry by server queue id", () => {
     const store = useSessionDetailStore.getState();
-    store.addOptimisticQueueEntry("temp-1", textBlock("one"));
-    store.acceptOptimisticQueueEntry("temp-1", "server-1");
-    store.addOptimisticQueueEntry("temp-2", textBlock("two"));
+    store.addOptimisticQueueEntry(A, "temp-1", textBlock("one"));
+    store.acceptOptimisticQueueEntry(A, "temp-1", "server-1");
+    store.addOptimisticQueueEntry(A, "temp-2", textBlock("two"));
 
-    const before = useSessionDetailStore.getState();
-    expect(before.sending).toBe(false);
+    store.cancelOptimisticQueueEntry(A, "server-1");
 
-    store.cancelOptimisticQueueEntry("server-1");
-
-    const after = useSessionDetailStore.getState();
+    const after = inFlightFor(A);
     expect(after.optimisticQueue).toHaveLength(1);
     expect(after.optimisticQueue[0]?.tempId).toBe("temp-2");
-    expect(after.sending).toBe(before.sending);
+    expect(after.sending).toBe(false);
   });
 
   it("cancelOptimisticQueueEntry also removes an entry by temp id", () => {
     const store = useSessionDetailStore.getState();
-    store.addOptimisticQueueEntry("temp-1", textBlock("one"));
+    store.addOptimisticQueueEntry(A, "temp-1", textBlock("one"));
 
-    store.cancelOptimisticQueueEntry("temp-1");
+    store.cancelOptimisticQueueEntry(A, "temp-1");
 
-    expect(useSessionDetailStore.getState().optimisticQueue).toHaveLength(0);
+    expect(inFlightFor(A).optimisticQueue).toHaveLength(0);
   });
 
   it("rollbackOptimisticQueueEntry removes the target entry by temp id without touching sending", () => {
-    useSessionDetailStore.getState().submitPrompt(textBlock("turn"), 0);
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("turn"), 0);
     const store = useSessionDetailStore.getState();
-    store.addOptimisticQueueEntry("temp-1", textBlock("one"));
-    store.addOptimisticQueueEntry("temp-2", textBlock("two"));
+    store.addOptimisticQueueEntry(A, "temp-1", textBlock("one"));
+    store.addOptimisticQueueEntry(A, "temp-2", textBlock("two"));
 
-    const before = useSessionDetailStore.getState();
-    expect(before.sending).toBe(true);
+    store.rollbackOptimisticQueueEntry(A, "temp-1");
 
-    store.rollbackOptimisticQueueEntry("temp-1");
-
-    const after = useSessionDetailStore.getState();
+    const after = inFlightFor(A);
     expect(after.optimisticQueue).toHaveLength(1);
     expect(after.optimisticQueue[0]?.tempId).toBe("temp-2");
     expect(after.sending).toBe(true);
@@ -361,12 +537,12 @@ describe("session-detail.store — optimistic queue slice", () => {
 
   it("resetStore restores optimisticQueue to empty", () => {
     const store = useSessionDetailStore.getState();
-    store.addOptimisticQueueEntry("temp-1", textBlock("one"));
-    expect(useSessionDetailStore.getState().optimisticQueue).toHaveLength(1);
+    store.addOptimisticQueueEntry(A, "temp-1", textBlock("one"));
+    expect(inFlightFor(A).optimisticQueue).toHaveLength(1);
 
     store.resetStore();
 
-    expect(useSessionDetailStore.getState().optimisticQueue).toEqual([]);
+    expect(inFlightFor(A).optimisticQueue).toEqual([]);
   });
 });
 
@@ -375,28 +551,30 @@ describe("session-detail.store — setQueueError", () => {
 
   it("sets promptError and leaves sending unchanged (req 5.1, 5.2)", () => {
     // Arrange: a turn is running.
-    useSessionDetailStore.getState().submitPrompt(textBlock("turn"), 0);
-    expect(useSessionDetailStore.getState().sending).toBe(true);
+    useSessionDetailStore.getState().submitPrompt(A, textBlock("turn"), 0);
+    expect(inFlightFor(A).sending).toBe(true);
 
     // Act: surface a queue error.
-    useSessionDetailStore.getState().setQueueError("Failed to queue message");
+    useSessionDetailStore
+      .getState()
+      .setQueueError(A, "Failed to queue message");
 
     // Assert: error is visible, running indicator stays running.
-    const after = useSessionDetailStore.getState();
+    const after = inFlightFor(A);
     expect(after.promptError).toBe("Failed to queue message");
     expect(after.sending).toBe(true);
   });
 
   it("does not clear sending the way failPrompt does", () => {
     const store = useSessionDetailStore.getState();
-    store.submitPrompt(textBlock("turn"), 0);
+    store.submitPrompt(A, textBlock("turn"), 0);
 
-    store.failPrompt("boom");
-    expect(useSessionDetailStore.getState().sending).toBe(false);
+    store.failPrompt(A, "boom");
+    expect(inFlightFor(A).sending).toBe(false);
 
-    store.submitPrompt(textBlock("turn-2"), 0);
-    store.setQueueError("queue boom");
-    expect(useSessionDetailStore.getState().sending).toBe(true);
+    store.submitPrompt(A, textBlock("turn-2"), 0);
+    store.setQueueError(A, "queue boom");
+    expect(inFlightFor(A).sending).toBe(true);
   });
 });
 

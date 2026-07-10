@@ -34,7 +34,10 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import { useSendPrompt } from "@/hooks/use-send-prompt";
-import { useSessionDetailStore } from "@/stores/session-detail.store";
+import {
+  selectInFlightFor,
+  useSessionDetailStore,
+} from "@/stores/session-detail.store";
 
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
@@ -98,12 +101,18 @@ function renderQueueHook() {
   });
 }
 
+function inFlight() {
+  return selectInFlightFor(useSessionDetailStore.getState(), CONVERSATION);
+}
+
 /** Put the store into a "running turn" state so queue() will proceed. */
 function startRunningTurn() {
   act(() => {
-    useSessionDetailStore.getState().submitPrompt([textBlock("turn")], 0);
+    useSessionDetailStore
+      .getState()
+      .submitPrompt(CONVERSATION, [textBlock("turn")], 0);
   });
-  expect(useSessionDetailStore.getState().sending).toBe(true);
+  expect(inFlight().sending).toBe(true);
 }
 
 describe("Task 7.3 Scenario A — client queue failure (real hook + real store)", () => {
@@ -155,7 +164,7 @@ describe("Task 7.3 Scenario A — client queue failure (real hook + real store)"
       await result.current.queue("oops");
     });
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
 
     // Rollback removes ONLY the failed item: the accepted survivor remains.
     expect(after.optimisticQueue).toHaveLength(1);
@@ -186,7 +195,7 @@ describe("Task 7.3 Scenario A — client queue failure (real hook + real store)"
       await result.current.queue("oops");
     });
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
     // The optimistic queue entry was rolled back (removed) — req 5.3.
     expect(after.optimisticQueue).toHaveLength(0);
     // The error is surfaced — req 5.1.

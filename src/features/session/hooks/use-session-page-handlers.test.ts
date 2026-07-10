@@ -40,7 +40,7 @@ describe("useSessionPageHandlers", () => {
     const { result } = renderHook(
       () => {
         const local = useSessionPageLocalState();
-        const store = useSessionPageStoreBundle();
+        const store = useSessionPageStoreBundle("c");
         const router = { push: vi.fn(), replace: vi.fn() } as never;
         return useSessionPageHandlers({
           projectName: "p",

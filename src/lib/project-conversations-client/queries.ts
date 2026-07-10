@@ -10,7 +10,7 @@ import {
   conversationStateSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
-import { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
+import { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { projectConversationKeys } from "./query-keys";
 
@@ -100,10 +100,10 @@ export function useProjectConversationMessagesQuery(
 }
 
 /**
- * Refetch-on-focus fallback for near-real-time consistency. The notifications
- * extension owns invalidating `projectConversationKeys` on `scope:"project"`
- * SSE events (it holds the global listener); until that lands, re-validating the
- * open list / open-count when the window regains focus keeps the cockpit's
+ * Refetch-on-focus fallback for near-real-time consistency. The global SSE
+ * listener (NotificationListener) invalidates `projectConversationKeys` on
+ * `scope:"project"` conversation events; this focus refetch is the safety net
+ * for silently dropped SSE connections, keeping the cockpit's
  * first-run↔cockpit boundary and tabs correct (Req 12.1 / 12.3).
  */
 export function useRefetchProjectConversationsOnFocus(

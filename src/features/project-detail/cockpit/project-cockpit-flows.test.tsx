@@ -275,8 +275,10 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     );
     showConversationsView();
     // Pre-init: the backend toggle is interactive, not the locked badge.
+    // The transcript region also carries data-backend, so target the toggle's
+    // BUTTON specifically.
     expect(document.querySelector(".backend-toggle-badge")).toBeNull();
-    const codexBtn = document.querySelector('[data-backend="codex"]');
+    const codexBtn = document.querySelector('button[data-backend="codex"]');
     expect(codexBtn).not.toBeNull();
     fireEvent.click(codexBtn!);
     expect(onSelectedBackendChange).toHaveBeenCalledWith("codex");
@@ -285,7 +287,7 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     // (the composer value tracks the pre-init selection, not the conv's backend).
     rerender(withClient(<ProjectCockpit {...props("codex")} />));
     expect(
-      document.querySelector('[data-backend="codex"]')?.className,
+      document.querySelector('button[data-backend="codex"]')?.className,
     ).toContain("active");
   });
 });

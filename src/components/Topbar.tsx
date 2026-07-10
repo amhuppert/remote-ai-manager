@@ -14,6 +14,7 @@ import {
   activeConversationHref,
   activeConversationNeedsAttention,
 } from "@/lib/active-conversations/row-helpers";
+import { useClientStateReady } from "@/hooks/use-client-state-ready";
 
 interface BreadcrumbSegment {
   label: string;
@@ -43,12 +44,17 @@ export default function Topbar({
   const { data: notificationsData } = useNotificationsQuery();
   const activeJobs = useActiveJobs();
   const { data: activeConvosData } = useActiveConversationsQuery();
+  const clientStateReady = useClientStateReady();
   // Badge shows unread notification count + running jobs
-  const unreadCount = notificationsData?.unreadCount ?? 0;
-  const badgeCount = unreadCount + activeJobs.length;
-  const pinnedConversations = (activeConvosData?.conversations ?? []).filter(
-    activeConversationNeedsAttention,
-  );
+  const unreadCount = clientStateReady
+    ? (notificationsData?.unreadCount ?? 0)
+    : 0;
+  const badgeCount = unreadCount + (clientStateReady ? activeJobs.length : 0);
+  const pinnedConversations = clientStateReady
+    ? (activeConvosData?.conversations ?? []).filter(
+        activeConversationNeedsAttention,
+      )
+    : [];
   const needsCount = pinnedConversations.length;
   const approvalsCount = pinnedConversations.filter(
     (row) => row.pendingApproval !== null,

@@ -8,7 +8,7 @@ import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
-import { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
+import { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 const stampedMessagesResponseSchema = z.array(stampedTranscriptMessageSchema);
 
 type StampedMessage = z.infer<typeof stampedTranscriptMessageSchema>;

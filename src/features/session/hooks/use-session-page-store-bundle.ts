@@ -4,10 +4,10 @@ import { useCallback } from "react";
 import {
   useLayout,
   useMobilePanel,
-  useSending,
+  useSendingFor,
   usePromptPlaceholder,
-  usePromptError,
-  usePromptCancelled,
+  usePromptErrorFor,
+  usePromptCancelledFor,
   useSwitchLayout,
   useHydrateLayout,
   useSwitchMobilePanel,
@@ -39,15 +39,15 @@ import {
 
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 
-export function useSessionPageStoreBundle() {
+export function useSessionPageStoreBundle(conversationId: string) {
   const layout = useLayout();
   const sidebarCollapsed = useSidebarCollapsed();
   const toggleSidebar = useToggleSidebar();
   const mobilePanel = useMobilePanel();
-  const sending = useSending();
+  const sending = useSendingFor(conversationId);
   const promptPlaceholder = usePromptPlaceholder();
-  const promptError = usePromptError();
-  const promptCancelled = usePromptCancelled();
+  const promptError = usePromptErrorFor(conversationId);
+  const promptCancelled = usePromptCancelledFor(conversationId);
 
   const switchLayout = useSwitchLayout();
   const hydrateLayout = useHydrateLayout();
@@ -63,21 +63,39 @@ export function useSessionPageStoreBundle() {
     [switchMobilePanelRaw, switchRightPaneTab],
   );
 
-  const dismissError = useDismissError();
-  const dismissCancelled = useDismissCancelled();
+  // In-flight actions are keyed per conversation; bind them to this
+  // workspace's conversation so consumers keep their arg-less signatures.
+  const dismissErrorAction = useDismissError();
+  const dismissError = useCallback(
+    () => dismissErrorAction(conversationId),
+    [dismissErrorAction, conversationId],
+  );
+  const dismissCancelledAction = useDismissCancelled();
+  const dismissCancelled = useCallback(
+    () => dismissCancelledAction(conversationId),
+    [dismissCancelledAction, conversationId],
+  );
   const showPlaceholder = useShowPlaceholderAction();
   const clearPlaceholder = useClearPlaceholder();
   const requestDelete = useRequestDeleteSession();
   const cancelDelete = useCancelDeleteSessionDetail();
   const resetConversationState = useResetConversationState();
-  const clearConversationMessages = useClearConversationMessages();
+  const clearConversationMessagesAction = useClearConversationMessages();
+  const clearConversationMessages = useCallback(
+    () => clearConversationMessagesAction(conversationId),
+    [clearConversationMessagesAction, conversationId],
+  );
   const pendingQuestions = usePendingQuestions();
   const pendingQuestionId = usePendingQuestionId();
   const currentQuestionIndex = useCurrentQuestionIndex();
   const showQuestions = useShowQuestions();
   const navigateQuestion = useNavigateQuestion();
   const clearQuestions = useClearQuestions();
-  const failPrompt = useFailPrompt();
+  const failPromptAction = useFailPrompt();
+  const failPrompt = useCallback(
+    (error: string) => failPromptAction(conversationId, error),
+    [failPromptAction, conversationId],
+  );
   const openDocById = useOpenDocById();
 
   const dsOpen = useDevServerDrawerOpen();

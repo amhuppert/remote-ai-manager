@@ -1,4 +1,4 @@
-import { isCollabTriggerMessage } from "@/features/session/conversation/conversation-rows";
+import { isCollabTriggerMessage } from "@/components/conversation/conversation-rows";
 import type { CollaborationArtifact } from "@/lib/workflows/collaboration/types";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 

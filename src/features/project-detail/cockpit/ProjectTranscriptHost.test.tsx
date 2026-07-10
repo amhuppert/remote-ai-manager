@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { render, screen, cleanup } from "@testing-library/react";
 import ProjectTranscriptHost from "./ProjectTranscriptHost";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 
@@ -33,7 +34,10 @@ const messages: TranscriptMessage[] = [
   },
 ];
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useSessionDetailStore.getState().resetStore();
+});
 
 describe("ProjectTranscriptHost", () => {
   it("shows the empty transcript state when the conversation has no messages", () => {
@@ -76,12 +80,16 @@ describe("ProjectTranscriptHost", () => {
   });
 
   it("shows the typing indicator while a send is in flight, before the server reports running", () => {
+    // useSendProjectPrompt marks the conversation's keyed in-flight state on
+    // submit; the host reads it directly.
+    useSessionDetailStore
+      .getState()
+      .submitPrompt("c1", [{ type: "text", text: "hi" }], 0);
     const { container } = renderSeeded(
       <ProjectTranscriptHost
         projectName="proj"
         conversationId="c1"
         selectedBackend="claude"
-        sending
       />,
       [[projectConversationKeys.messages("proj", "c1"), []]],
     );

@@ -519,9 +519,9 @@ export default function PeekPopover({
                 ))
               )}
               <TypingIndicator
+                conversationId={conversation.id}
                 selectedBackend={conversation.agentBackend}
                 visible={conversation.status === "running"}
-                hasAssistantOptimistic={false}
               />
             </div>
 

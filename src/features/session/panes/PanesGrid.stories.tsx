@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { z } from "zod";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
-import type { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
+import type { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import PanesGrid from "./PanesGrid";
 
@@ -185,6 +185,7 @@ function PanesHarness({
         isAtCap={count >= 6}
         addableConversations={[]}
         onActivate={() => {}}
+        onOpenConversation={() => {}}
         onOpenFull={() => {}}
         onClose={() => {}}
         onAdd={() => {}}

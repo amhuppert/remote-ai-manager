@@ -15,6 +15,8 @@ export interface PanesGridProps {
   onOpenFull: (id: string) => void;
   onClose: (id: string) => void;
   onAdd: (id: string) => void;
+  /** Open a conversation in the working set (fork-from-a-pane lands here). */
+  onOpenConversation: (id: string) => void;
   onExit: () => void;
 }
 
@@ -27,6 +29,7 @@ export default function PanesGrid({
   onOpenFull,
   onClose,
   onAdd,
+  onOpenConversation,
   onExit,
 }: PanesGridProps): React.JSX.Element {
   const panes = workingSet;
@@ -74,6 +77,7 @@ export default function PanesGrid({
             onActivate={onActivate}
             onOpenFull={onOpenFull}
             onClose={onClose}
+            onOpenConversation={onOpenConversation}
             // asym-5: the first three panes span 2 of 6 columns, the last two
             // span 3 (the legacy `[data-shape="asym-5"] > .pane:nth-child` rule,
             // applied as external grid placement). Other shapes auto-place.

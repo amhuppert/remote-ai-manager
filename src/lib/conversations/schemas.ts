@@ -101,6 +101,14 @@ export interface TranscriptMessage {
   origin?: TranscriptMessageOrigin;
 }
 
+/**
+ * A transcript message stamped with its append sequence number — the wire
+ * shape of the messages endpoints, letting SSE patches address rows by `seq`.
+ */
+export const stampedTranscriptMessageSchema = transcriptMessageSchema.extend({
+  seq: z.number().int().nonnegative(),
+});
+
 // AskUserQuestion schemas (defined before conversationStateSchema which references them)
 const askQuestionTradeoffSchema = z.object({
   pro: z.string().optional(),

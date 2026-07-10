@@ -9,7 +9,12 @@ import { mutationFetch } from "@/lib/api/fetcher";
 import {
   conversationStateSchema,
   type ConversationState,
+  type MessageContentBlock,
 } from "@/lib/conversations/schemas";
+import {
+  useSubmitPrompt,
+  useCompletePrompt,
+} from "@/stores/session-detail.store";
 import type {
   ActiveConversation,
   ActiveConversationsResponse,
@@ -304,13 +309,6 @@ export interface ProjectPromptError {
 export interface UseSendProjectPromptResult {
   send(input: SendProjectPromptInput): Promise<void>;
   sending: boolean;
-  /**
-   * Conversation targeted by the in-flight send; null when idle or while the
-   * create-and-send entry is creating the first conversation. Lets per-tab UI
-   * (the transcript typing indicator) react only to its own conversation's
-   * send instead of every tab going busy.
-   */
-  sendingConversationId: string | null;
   error: ProjectPromptError | null;
   clearError(): void;
 }
@@ -321,8 +319,8 @@ export interface UseSendProjectPromptResult {
  * so the foundation creates the first conversation; otherwise it posts to the
  * per-conversation prompt route. The SSE stream is read to completion so we know
  * when to invalidate; transcript/list updates ride React Query invalidation
- * (and the global SSE→invalidation path once the notifications extension wires
- * `scope:"project"`). Prompt errors (busy / backend-mismatch / validation) are
+ * and the global SSE→invalidation path (NotificationListener handles
+ * `scope:"project"` events). Prompt errors (busy / backend-mismatch / validation) are
  * surfaced through the error envelope without redefining the foundation's codes.
  */
 export function useSendProjectPrompt(
@@ -330,11 +328,10 @@ export function useSendProjectPrompt(
 ): UseSendProjectPromptResult {
   const queryClient = useQueryClient();
   const [sending, setSending] = useState(false);
-  const [sendingConversationId, setSendingConversationId] = useState<
-    string | null
-  >(null);
   const [error, setError] = useState<ProjectPromptError | null>(null);
   const inFlight = useRef(false);
+  const submitPrompt = useSubmitPrompt();
+  const completePrompt = useCompletePrompt();
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -346,7 +343,30 @@ export function useSendProjectPrompt(
       setError(null);
 
       const { conversationId } = input;
-      setSendingConversationId(conversationId);
+      // Mark the target conversation's keyed in-flight state so its transcript
+      // surfaces (typing indicator) react to this send. The create-and-send
+      // path has no conversation id yet — the first-run view has no transcript
+      // to indicate on, so it rides the local `sending` flag alone.
+      if (conversationId !== null) {
+        const cached = queryClient.getQueryData(
+          projectConversationKeys.messages(projectName, conversationId),
+        );
+        const userContent: MessageContentBlock[] = [
+          ...(input.text.trim()
+            ? [{ type: "text" as const, text: input.text.trim() }]
+            : []),
+          ...(input.images ?? []).map((img) => ({
+            type: "image" as const,
+            mediaType: img.mediaType,
+            base64Data: img.base64Data,
+          })),
+        ];
+        submitPrompt(
+          conversationId,
+          userContent,
+          Array.isArray(cached) ? cached.length : 0,
+        );
+      }
       const url =
         conversationId === null
           ? `/api/projects/${encodeURIComponent(projectName)}/prompt`
@@ -393,7 +413,7 @@ export function useSendProjectPrompt(
       } finally {
         inFlight.current = false;
         setSending(false);
-        setSendingConversationId(null);
+        if (conversationId !== null) completePrompt(conversationId);
         invalidateProjectLifecycle(queryClient, projectName);
         if (conversationId !== null) {
           void queryClient.invalidateQueries({
@@ -405,10 +425,10 @@ export function useSendProjectPrompt(
         }
       }
     },
-    [projectName, queryClient],
+    [projectName, queryClient, submitPrompt, completePrompt],
   );
 
-  return { send, sending, sendingConversationId, error, clearError };
+  return { send, sending, error, clearError };
 }
 
 interface PromptStreamFrame {

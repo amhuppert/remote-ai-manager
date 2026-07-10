@@ -214,6 +214,12 @@ export default function SessionContent({
                 onActivate={openTabs.activate}
                 onClose={openTabs.closeTab}
                 onAdd={openTabs.addTab}
+                // Fork-from-a-pane: land the new conversation in the working
+                // set and make it the composer's target.
+                onOpenConversation={(id) => {
+                  openTabs.addTab(id);
+                  openTabs.activate(id);
+                }}
                 // Open-full activates the conversation AND drops to the
                 // conversation-only layout so it fills the view.
                 onOpenFull={(id) => {

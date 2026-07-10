@@ -47,7 +47,7 @@ export interface SendPromptHandle {
 export function useSendPrompt(
   projectName: string,
   sessionName: string,
-  conversationId?: string,
+  conversationId: string,
 ): SendPromptHandle {
   const queryClient = useQueryClient();
   const submitPrompt = useSubmitPrompt();
@@ -120,12 +120,15 @@ export function useSendPrompt(
         ...(modelId !== undefined ? { model: modelId } : {}),
         ...(effort !== undefined ? { effort } : {}),
       };
-      submitPrompt(displayContent, currentMessageCount, agentSettings);
+      submitPrompt(
+        conversationId,
+        displayContent,
+        currentMessageCount,
+        agentSettings,
+      );
 
       // 2. Build prompt URL
-      const promptUrl = conversationId
-        ? `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/prompt`
-        : `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/prompt`;
+      const promptUrl = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/prompt`;
 
       // Phase 1: dispatch the POST. Transport-level failures and non-OK
       // responses surface to callers via a rejected promise so atomic-flow
@@ -146,9 +149,14 @@ export function useSendPrompt(
           signal: controller.signal,
         });
       } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") return;
-        failPrompt("Failed to send prompt");
-        completePrompt();
+        if (e instanceof DOMException && e.name === "AbortError") {
+          // Keyed in-flight state survives workspace swaps, so an aborted
+          // request must clear its own sending flag — nothing else resets it.
+          completePrompt(conversationId);
+          return;
+        }
+        failPrompt(conversationId, "Failed to send prompt");
+        completePrompt(conversationId);
         throw e instanceof Error ? e : new Error("Failed to send prompt");
       }
 
@@ -159,8 +167,8 @@ export function useSendPrompt(
           error?: string;
         };
         const message = data.error ?? "Prompt failed";
-        failPrompt(message);
-        completePrompt();
+        failPrompt(conversationId, message);
+        completePrompt(conversationId);
         throw new Error(message);
       }
 
@@ -168,7 +176,7 @@ export function useSendPrompt(
         // 4. Read SSE stream
         const reader = res.body?.getReader();
         if (!reader) {
-          failPrompt("No response stream");
+          failPrompt(conversationId, "No response stream");
           return;
         }
 
@@ -208,6 +216,7 @@ export function useSendPrompt(
                 const block = JSON.parse(eventData) as MessageContentBlock;
                 streamBlocks.push(block);
                 receiveStreamContent(
+                  conversationId,
                   displayContent,
                   [...streamBlocks],
                   agentSettings,
@@ -230,9 +239,9 @@ export function useSendPrompt(
                 const data = JSON.parse(eventData) as {
                   message?: string;
                 };
-                failPrompt(data.message ?? "Prompt failed");
+                failPrompt(conversationId, data.message ?? "Prompt failed");
               } catch {
-                failPrompt("Prompt failed");
+                failPrompt(conversationId, "Prompt failed");
               }
             } else if (eventName === "aborted") {
               break;
@@ -244,23 +253,25 @@ export function useSendPrompt(
       } catch (e) {
         // Abort is expected during navigation — don't treat as error
         if (e instanceof DOMException && e.name === "AbortError") return;
-        failPrompt("Failed to send prompt");
+        failPrompt(conversationId, "Failed to send prompt");
       } finally {
-        // Skip completion/invalidation for aborted requests
+        // Always clear this conversation's sending flag — in-flight state is
+        // keyed per conversation and survives workspace swaps, so an aborted
+        // client stream must not strand a stale "sending" on the conversation
+        // (the server turn, if still running, keeps the indicator alive via
+        // status === "running"). Only the cache invalidations are skipped for
+        // aborted requests.
+        completePrompt(conversationId);
         if (controller.signal.aborted) return;
 
-        completePrompt();
-
         // 5. Invalidate TanStack Query caches
-        if (conversationId) {
-          void queryClient.invalidateQueries({
-            queryKey: conversationKeys.messages(
-              projectName,
-              sessionName,
-              conversationId,
-            ),
-          });
-        }
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.messages(
+            projectName,
+            sessionName,
+            conversationId,
+          ),
+        });
         void queryClient.invalidateQueries({
           queryKey: gitKeys.diff(projectName, sessionName),
         });
@@ -287,8 +298,6 @@ export function useSendPrompt(
       // No gate on the tab-local `sending` flag here: a running turn is not
       // always one this tab started (drained next-turn delivery, reload,
       // another client). The caller owns the queue-vs-send routing.
-      if (!conversationId) return;
-
       const trimmed = text.trim();
       const hasImages = images !== undefined && images.length > 0;
       if (!trimmed && !hasImages) return;
@@ -307,7 +316,7 @@ export function useSendPrompt(
       // Optimistically add the pending entry. This never touches `sending`, so a
       // later failure leaves the running turn shown as running (req 5.2).
       const tempId = crypto.randomUUID();
-      addOptimisticQueueEntry(tempId, content);
+      addOptimisticQueueEntry(conversationId, tempId, content);
 
       const queueUrl = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/queue`;
 
@@ -325,8 +334,8 @@ export function useSendPrompt(
         if (e instanceof DOMException && e.name === "AbortError") return;
         // Roll back ONLY this failed entry (req 5.3) and surface the error
         // (req 5.1) without clearing `sending` (req 5.2).
-        rollbackOptimisticQueueEntry(tempId);
-        setQueueError("Failed to queue message");
+        rollbackOptimisticQueueEntry(conversationId, tempId);
+        setQueueError(conversationId, "Failed to queue message");
         return;
       }
 
@@ -334,8 +343,8 @@ export function useSendPrompt(
         const data = (await res.json().catch(() => ({}))) as {
           error?: string;
         };
-        rollbackOptimisticQueueEntry(tempId);
-        setQueueError(data.error ?? "Failed to queue message");
+        rollbackOptimisticQueueEntry(conversationId, tempId);
+        setQueueError(conversationId, data.error ?? "Failed to queue message");
         return;
       }
 
@@ -346,7 +355,7 @@ export function useSendPrompt(
       // can target this entry. A malformed success body leaves the entry pending
       // optimistically rather than crashing.
       if (data && data.queued) {
-        acceptOptimisticQueueEntry(tempId, data.message.id);
+        acceptOptimisticQueueEntry(conversationId, tempId, data.message.id);
       }
     },
     [

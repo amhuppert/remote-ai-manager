@@ -1,25 +1,25 @@
 "use client";
 
-import { useCallback } from "react";
+import { useState } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
-import TypingIndicator from "@/components/conversation/TypingIndicator";
+import ConversationTranscript, {
+  type TranscriptNav,
+} from "@/components/conversation/ConversationTranscript";
 import AlignmentGate from "@/features/session/conversation/AlignmentGate";
 import { useOpenMobileSidebar } from "@/stores/session-detail.store";
-import { useSessionPageConversation } from "@/features/session/hooks/use-session-page-conversation";
-import { useConversationPanelProps } from "@/features/session/hooks/use-conversation-panel-props";
+import { useCollabPassageVisibility } from "@/features/session/hooks/use-collab-passage-visibility";
+import { useCollabRowRenderer } from "@/features/session/hooks/use-collab-row-renderer";
+import { useMessageRowRenderer } from "@/features/session/hooks/use-message-row-renderer";
 import { useThinkingBlockExpansionHotkeys } from "@/features/session/hooks/use-thinking-block-expansion-hotkeys";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
-import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
-import type {
-  ConversationState,
-  TranscriptMessage,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
-type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type CollabContext = ReturnType<typeof useCollabContext>;
+
+const noop = (): void => {};
 
 export interface ConversationPanelContainerProps {
   projectName: string;
@@ -28,7 +28,6 @@ export interface ConversationPanelContainerProps {
 
   activeConversation: ConversationState | undefined;
   conversations: ConversationState[] | undefined;
-  messages: readonly TranscriptMessage[];
 
   isBusy: boolean;
   isReadOnly: boolean;
@@ -36,12 +35,10 @@ export interface ConversationPanelContainerProps {
   worktreePath: string | undefined;
   selectedBackend: AgentBackendId;
   contextPercent: number | null;
-  messagesPending: boolean;
 
   handleDebugPrompt: (text: string) => Promise<void>;
   handleFork: (messageIndex: number) => Promise<void>;
 
-  store: StoreBundle;
   local: LocalState;
   collab: CollabContext;
 
@@ -55,94 +52,131 @@ export default function ConversationPanelContainer({
   conversationId,
   activeConversation,
   conversations,
-  messages,
   isBusy,
   isReadOnly,
   hasActiveCollab,
   worktreePath,
   selectedBackend,
   contextPercent,
-  messagesPending,
   handleDebugPrompt,
   handleFork,
-  store,
   local,
   collab,
   canStop,
   onStop,
 }: ConversationPanelContainerProps): React.JSX.Element {
+  const {
+    virtuosoRef,
+    panelBodyRef,
+    collabPinnedTopTarget,
+    setCollabPinnedTopTarget,
+    collabRowEl,
+    setCollabRowEl,
+  } = local;
+  const {
+    collabPassageProps,
+    collabEnvelopeForConversation,
+    isCollabRunning,
+    hiddenMessageIndex,
+    handleCollabStop,
+    handleCollabRefClick,
+    collabUserAnswerDrafts,
+    setCollabUserAnswerDraft,
+    clearCollabUserAnswerDrafts,
+    collabResumeMutation,
+  } = collab;
   const openMobileSidebar = useOpenMobileSidebar();
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
-  const conversation = useSessionPageConversation({
+  const [nav, setNav] = useState<TranscriptNav | null>(null);
+
+  const renderMessageRow = useMessageRowRenderer({
+    activeConversation,
+    selectedBackend,
+    worktreePath,
+    thinkingExpansionCommand,
+    handleDebugPrompt,
+    handleFork,
+    isBusy,
+    projectName,
+    sessionName,
+  });
+
+  const renderCollabRow = useCollabRowRenderer({
+    collabPassageProps,
+    collabEnvelopeForConversation,
+    isCollabRunning,
+    collabPinnedTopTarget,
+    setCollabRowEl,
+    handleCollabStop,
+    handleCollabRefClick,
     projectName,
     sessionName,
     conversationId,
-    messages,
-    activeConversation,
-    worktreePath,
-    isBusy,
-    selectedBackend,
-    handleDebugPrompt,
-    handleFork,
-    thinkingExpansionCommand,
-    local,
-    collab,
+    collabUserAnswerDrafts,
+    setCollabUserAnswerDraft,
+    clearCollabUserAnswerDrafts,
+    collabResumeMutation,
   });
 
-  const typingIndicatorVisible =
-    !hasActiveCollab &&
-    (store.sending || activeConversation?.status === "running");
-  const renderTypingIndicator = useCallback(
-    () => (
-      <TypingIndicator
-        selectedBackend={selectedBackend}
-        visible={typingIndicatorVisible}
-      />
-    ),
-    [selectedBackend, typingIndicatorVisible],
+  const isCollabPassageInView = useCollabPassageVisibility(
+    collabRowEl,
+    panelBodyRef,
   );
 
-  const panelProps = useConversationPanelProps({
-    conversations,
-    activeConversation,
-    sessionName,
-    openMobileSidebar,
-    currentMessageIndex: conversation.nav.currentMessageIndex,
-    totalMessages: conversation.displayMessages.length,
-    handleFirstMessage: conversation.nav.handleFirstMessage,
-    handlePrevMessage: conversation.nav.handlePrevMessage,
-    handleNextMessage: conversation.nav.handleNextMessage,
-    handleLastMessage: conversation.nav.handleLastMessage,
-    contextPercent,
-    promptError: store.promptError,
-    promptCancelled: store.promptCancelled,
-    dismissError: store.dismissError,
-    dismissCancelled: store.dismissCancelled,
-    panelBodyRef: local.panelBodyRef,
-    selectedBackend,
-    setCollabPinnedTopTarget: local.setCollabPinnedTopTarget,
-    isCollabPassageInView: conversation.isCollabPassageInView,
-    messagesPending,
-    rows: conversation.rows,
-    virtuosoRef: local.virtuosoRef,
-    conversationId,
-    followBottom: conversation.nav.followBottom,
-    renderMessageRow: conversation.renderMessageRow,
-    renderCollabRow: conversation.renderCollabRow,
-    renderTypingIndicator,
-    handleRangeChanged: conversation.nav.handleRangeChanged,
-    handleAtBottomStateChange: conversation.nav.handleAtBottomStateChange,
-    handleAtTopStateChange: conversation.nav.handleAtTopStateChange,
-    alignmentGateSlot: (
-      <AlignmentGate
-        projectName={projectName}
-        sessionName={sessionName}
-        disabled={isReadOnly}
-      />
-    ),
-    canStop,
-    onStop,
-  });
+  const transcript = (
+    <ConversationTranscript
+      scope={{ kind: "session", projectName, sessionName, conversationId }}
+      backend={selectedBackend}
+      status={activeConversation?.status}
+      pendingQueue={activeConversation?.pendingQueue}
+      worktreePath={worktreePath}
+      thinkingExpansionCommand={thinkingExpansionCommand}
+      renderMessageRow={renderMessageRow}
+      collab={{
+        envelope: collabEnvelopeForConversation,
+        hiddenMessageIndex,
+        renderRow: renderCollabRow,
+        suppressIndicator: hasActiveCollab,
+      }}
+      showInFlightBanners
+      leadingSlot={
+        <div
+          ref={setCollabPinnedTopTarget}
+          className="collab-pinned-top-target sticky -top-lg z-[5] -mx-lg -mt-lg mb-0 border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base px-lg py-sm empty:hidden data-[visible=false]:hidden max-768:-top-sm max-768:-mx-sm max-768:-mt-sm max-768:border-b-0 max-768:px-0 max-768:py-0"
+          data-visible={isCollabPassageInView ? "true" : "false"}
+        />
+      }
+      onNavChange={setNav}
+      virtuosoRef={virtuosoRef}
+    />
+  );
 
-  return <ConversationPanel {...panelProps} promptInputSlot={undefined} />;
+  return (
+    <ConversationPanel
+      conversations={Boolean(conversations)}
+      activeConversation={activeConversation}
+      sessionName={sessionName}
+      openMobileSidebar={openMobileSidebar}
+      currentMessageIndex={nav?.currentMessageIndex ?? 0}
+      totalMessages={nav?.totalMessages ?? 0}
+      handleFirstMessage={nav?.handleFirstMessage ?? noop}
+      handlePrevMessage={nav?.handlePrevMessage ?? noop}
+      handleNextMessage={nav?.handleNextMessage ?? noop}
+      handleLastMessage={nav?.handleLastMessage ?? noop}
+      contextPercent={contextPercent}
+      panelBodyRef={panelBodyRef}
+      selectedBackend={selectedBackend}
+      transcript={transcript}
+      alignmentGateSlot={
+        <AlignmentGate
+          projectName={projectName}
+          sessionName={sessionName}
+          disabled={isReadOnly}
+        />
+      }
+      canStop={canStop}
+      onStop={onStop}
+      promptInputSlot={undefined}
+    />
+  );
 }

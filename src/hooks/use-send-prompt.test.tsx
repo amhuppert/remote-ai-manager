@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PropsWithChildren } from "react";
 
 import { useSendPrompt } from "./use-send-prompt";
-import { useSessionDetailStore } from "@/stores/session-detail.store";
+import {
+  selectInFlightFor,
+  useSessionDetailStore,
+} from "@/stores/session-detail.store";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 
@@ -47,12 +50,19 @@ function renderQueueHook() {
   });
 }
 
+/** Read the test conversation's keyed in-flight state off the store. */
+function inFlight() {
+  return selectInFlightFor(useSessionDetailStore.getState(), CONVERSATION);
+}
+
 /** Put the store into a "running turn" state so queue() will proceed. */
 function startRunningTurn() {
   act(() => {
-    useSessionDetailStore.getState().submitPrompt(textBlock("turn"), 0);
+    useSessionDetailStore
+      .getState()
+      .submitPrompt(CONVERSATION, textBlock("turn"), 0);
   });
-  expect(useSessionDetailStore.getState().sending).toBe(true);
+  expect(inFlight().sending).toBe(true);
 }
 
 beforeEach(() => {
@@ -78,7 +88,7 @@ describe("useSendPrompt — send()", () => {
       await result.current.send("hi", 0, "fable", undefined, "max", "claude");
     });
 
-    const messages = useSessionDetailStore.getState().optimisticMessages;
+    const messages = inFlight().optimisticMessages;
     expect(messages[0]).toMatchObject({
       role: "user",
       model: "fable",
@@ -106,7 +116,7 @@ describe("useSendPrompt — queue()", () => {
       await result.current.queue("hi");
     });
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
     // The optimistic entry was rolled back.
     expect(after.optimisticQueue).toHaveLength(0);
     // The running indicator stays running (req 5.2).
@@ -152,7 +162,7 @@ describe("useSendPrompt — queue()", () => {
       await result.current.queue("fail");
     });
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
     expect(after.optimisticQueue).toHaveLength(1);
     const [survivor] = after.optimisticQueue;
     expect(survivor?.queueId).toBe("srv-keep");
@@ -188,7 +198,7 @@ describe("useSendPrompt — queue()", () => {
       await result.current.queue("hi");
     });
 
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
     expect(after.optimisticQueue).toHaveLength(1);
     const [entry] = after.optimisticQueue;
     expect(entry?.queueId).toBe("srv-1");
@@ -244,7 +254,7 @@ describe("useSendPrompt — queue()", () => {
     // A running turn is not always one this tab started (drained Codex
     // next-turn delivery, reload, another client), so queue() must not
     // silently drop on the tab-local flag — routing is the caller's job.
-    expect(useSessionDetailStore.getState().sending).toBe(false);
+    expect(inFlight().sending).toBe(false);
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(200, {
@@ -275,27 +285,31 @@ describe("useSendPrompt — queue()", () => {
     expect(String(url)).toBe(
       `/api/projects/${PROJECT}/sessions/${SESSION}/conversations/${CONVERSATION}/queue`,
     );
-    const after = useSessionDetailStore.getState();
+    const after = inFlight();
     expect(after.optimisticQueue).toHaveLength(1);
     expect(after.optimisticQueue[0]).toMatchObject({
       queueId: "srv-ext",
       status: "accepted",
     });
   });
+});
 
-  it("does not POST without a conversationId", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-
-    const { result } = renderHook(
-      () => useSendPrompt(PROJECT, SESSION, undefined),
-      { wrapper: wrapperFor(makeQueryClient()) },
+describe("useSendPrompt — client abort", () => {
+  it("clears the conversation's sending flag when the request is aborted client-side", async () => {
+    // In-flight state is keyed per conversation and survives workspace swaps,
+    // so an aborted client stream must not strand sending=true — nothing else
+    // resets it anymore (the server turn keeps indicators alive via status).
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new DOMException("aborted", "AbortError"),
     );
 
+    const { result } = renderQueueHook();
+
     await act(async () => {
-      await result.current.queue("hi");
+      await result.current.send("hi", 0);
     });
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(useSessionDetailStore.getState().optimisticQueue).toHaveLength(0);
+    expect(inFlight().sending).toBe(false);
+    expect(inFlight().promptError).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
-import { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
+import { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 
 export function useConversationMessagesQuery(
   projectName: string,

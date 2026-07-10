@@ -314,7 +314,6 @@ export default function ProjectCockpit({
       selectedBackend={agentBackend}
       spawnCards={spawnCards}
       renderSpawnCardRow={renderSpawnCardRow}
-      sending={sender.sendingConversationId === activeTabId}
       {...(activeConversation ? { status: activeConversation.status } : {})}
     />
   ) : null;

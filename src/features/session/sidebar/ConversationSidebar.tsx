@@ -67,6 +67,7 @@ import PeekPopover, {
 } from "@/features/session/sidebar/PeekPopover";
 import { usePeekReply } from "@/features/session/sidebar/use-peek-reply";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
+import { useClientStateReady } from "@/hooks/use-client-state-ready";
 import {
   filterConversations,
   splitNeedsYou,
@@ -270,17 +271,19 @@ function ConversationSidebar({
 
   // --- Active conversations query ---
   const { data: activeData } = useActiveConversationsQuery();
+  const clientStateReady = useClientStateReady();
   const activeConvoList = useMemo(
-    () => activeData?.conversations ?? [],
-    [activeData],
+    () => (clientStateReady ? (activeData?.conversations ?? []) : []),
+    [activeData, clientStateReady],
   );
   const activeGraphWorkflows = useMemo(
-    () => activeData?.graphWorkflowExecutions ?? [],
-    [activeData],
+    () => (clientStateReady ? (activeData?.graphWorkflowExecutions ?? []) : []),
+    [activeData, clientStateReady],
   );
   const activeCollaborations = useMemo(
-    () => activeData?.activeCollaborationExecutions ?? [],
-    [activeData],
+    () =>
+      clientStateReady ? (activeData?.activeCollaborationExecutions ?? []) : [],
+    [activeData, clientStateReady],
   );
 
   // --- Mutations ---
