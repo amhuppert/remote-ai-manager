@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "../core";
+import { askHelpEntries } from "./ask.help";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
 
 const baseEnv: CliEnv = {
@@ -274,5 +275,27 @@ describe("cctl ask", () => {
     );
     expect(result.exitCode).toBe(2);
     expect(host.requests).toHaveLength(0);
+  });
+});
+
+describe("ask help entry", () => {
+  // The help example is the only place agents learn the --file payload shape,
+  // so it must name every field the question panel renders — a field omitted
+  // here is a field agents never send.
+  it("documents the full question and option shape in the batch-form example", () => {
+    const entry = askHelpEntries.find((e) => e.path.join(" ") === "ask");
+    const batchExample = entry?.examples?.find((example) =>
+      example.invocation.includes("--file"),
+    );
+    expect(batchExample).toBeDefined();
+    for (const field of [
+      "description",
+      "recommended",
+      "tradeoff",
+      "required",
+      "allowNote",
+    ]) {
+      expect(batchExample?.explanation).toContain(field);
+    }
   });
 });

@@ -268,6 +268,15 @@ describe("ASK_QUESTION_INSTRUCTIONS", () => {
     expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/denied for autonomous turns/i);
     expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/best judgment/i);
   });
+
+  it("advertises the rich option fields the panel renders", () => {
+    // The panel renders per-option description, a Suggested badge, and pro/con
+    // trade-off lines — agents author the payload freehand, so fields the
+    // instructions don't name never get sent.
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/description/i);
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/recommended/i);
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/tradeoff/i);
+  });
 });
 
 describe("ASK_QUESTION_INSTRUCTIONS_ENABLED (workflow lane variant, Req 8.1-8.3)", () => {
@@ -299,6 +308,12 @@ describe("ASK_QUESTION_INSTRUCTIONS_ENABLED (workflow lane variant, Req 8.1-8.3)
     expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).not.toMatch(
       /denied for autonomous turns/i,
     );
+  });
+
+  it("advertises the rich option fields the panel renders", () => {
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/description/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/recommended/i);
+    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/tradeoff/i);
   });
 });
 

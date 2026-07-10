@@ -844,12 +844,19 @@ cctl ask --question "<text>" --option <label> --option <label> [--multi-select] 
 ```
 
 - `--file` — a JSON object `{ "questions": [ … ] }`, each question
-  `{ "id"?, "question", "header"?, "context"?, "options": [{ "label", "description"? }],
-  "multiSelect"?, "required"?, "allowNote"? }`. Author it under `.cc/temp/` with
-  the Write tool.
+  `{ "id"?, "question", "header"?, "context"?, "options": [ … ],
+  "multiSelect"?, "required"?, "allowNote"? }`. Each option is
+  `{ "label", "description"?, "recommended"?, "tradeoff"?: { "pro"?, "con"? } }`:
+  `recommended` renders a "Suggested" badge (with a one-click "Accept all
+  suggested" action), `tradeoff` renders as `+ pro` / `− con` lines under the
+  option, and the question-level `context` supports markdown-lite (`**bold**`,
+  `` `code` ``, `- ` bullets). Author the file under `.cc/temp/` with the Write
+  tool.
 - The `--question` form is sugar for a single question: repeat `--option` per
   choice (at least one); `--multi-select` allows picking several; `--header`
-  and `--context` fill the panel's header and implications note.
+  and `--context` fill the panel's header and implications note. Options are
+  bare labels here — use `--file` when options warrant descriptions, a
+  recommended pick, or trade-offs (they usually do at a real fork).
 
 On success it prints the registration and the end-turn instruction. With
 `--json` the envelope is `{ ok, questionBatchId, instruction }` — `instruction`

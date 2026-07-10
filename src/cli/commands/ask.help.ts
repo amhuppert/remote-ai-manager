@@ -22,7 +22,7 @@ export const askHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<questions.json>",
         description:
-          'batch form — a JSON object {"questions":[…]} authored with the Write tool under .cc/temp/ (git-ignored scratch)',
+          'batch form — a JSON object {"questions":[…]} authored with the Write tool under .cc/temp/ (git-ignored scratch); the only form that takes rich options (description, recommended, tradeoff)',
       },
       {
         name: "question",
@@ -34,7 +34,8 @@ export const askHelpEntries: CommandHelpEntry[] = [
         name: "option",
         kind: "value",
         valuePlaceholder: "<label>",
-        description: "a choice for --question; repeat once per option (≥ 1)",
+        description:
+          "a choice for --question; repeat once per option (≥ 1); bare label only — use --file for description/recommended/tradeoff",
         repeatable: true,
       },
       {
@@ -65,7 +66,7 @@ export const askHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl ask --file .cc/temp/questions.json",
         explanation:
-          'batch form — the payload is {"questions":[{"question":"…","options":[{"label":"…"}],"multiSelect"?,"header"?,"context"?}]}',
+          'batch form — the payload is {"questions":[{"question":"…","header"?,"context"?,"options":[{"label":"…","description"?,"recommended"?,"tradeoff"?:{"pro"?,"con"?}}],"multiSelect"?,"required"?,"allowNote"?}]}; "recommended" renders a Suggested badge, "tradeoff" pro/con render as +/− lines under the option, and "context" supports **bold**, `code`, and "- " bullets',
       },
     ],
     domainContext:
