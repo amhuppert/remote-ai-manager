@@ -3023,7 +3023,7 @@ describe("executePromptForMachine", () => {
     );
   });
 
-  it("writes system, assistant, and result transcript entries for non-Claude backends", async () => {
+  it("persists non-Claude content events incrementally before the result entry", async () => {
     const codexRuntime = createMockBackendRuntime({
       backend: "codex" as const,
     });
@@ -3037,10 +3037,17 @@ describe("executePromptForMachine", () => {
           type: "content",
           block: { type: "text", text: "Codex says hello" },
         });
+        await turnInput.onEvent({
+          type: "content",
+          block: { type: "thinking", text: "Checking the implementation" },
+        });
         return {
           ...defaultTurnResult,
           backendRef: { backend: "codex" as const, threadId: "thread-1" },
-          contentBlocks: [{ type: "text" as const, text: "Codex says hello" }],
+          contentBlocks: [
+            { type: "text" as const, text: "Codex says hello" },
+            { type: "thinking" as const, text: "Checking the implementation" },
+          ],
         };
       },
     );
@@ -3062,7 +3069,7 @@ describe("executePromptForMachine", () => {
     const systemEntry = calls.find(
       ([, entry]) => (entry as { type?: string }).type === "system",
     );
-    const assistantEntry = calls.find(
+    const assistantEntries = calls.filter(
       ([, entry]) => (entry as { role?: string }).role === "assistant",
     );
     const resultEntry = calls.find(
@@ -3079,9 +3086,9 @@ describe("executePromptForMachine", () => {
         },
       }),
     );
-    expect(assistantEntry).toBeDefined();
-    expect((assistantEntry![1] as { content: unknown }).content).toEqual([
-      { type: "text", text: "Codex says hello" },
+    expect(assistantEntries.map(([, entry]) => entry.content)).toEqual([
+      [{ type: "text", text: "Codex says hello" }],
+      [{ type: "thinking", text: "Checking the implementation" }],
     ]);
     expect(resultEntry).toBeDefined();
     expect(resultEntry![1]).toEqual(
@@ -3094,6 +3101,9 @@ describe("executePromptForMachine", () => {
           error: null,
         }),
       }),
+    );
+    expect(calls.indexOf(assistantEntries[0]!)).toBeLessThan(
+      calls.indexOf(resultEntry!),
     );
   });
 
