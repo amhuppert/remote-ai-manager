@@ -102,6 +102,9 @@ export interface TaskRunActive {
    * text the caller still needs.
    */
   skipStructuredOutputGate?: boolean;
+  /** When set, persist this validated structured-output string field as the
+   *  visible assistant text instead of the backend's schema transport text. */
+  structuredOutputTextField?: string;
   /**
    * Provenance stamp forwarded onto the persisted assistant TranscriptMessage.
    * Workflow callers set `source: "workflow"` so a single JSONL transcript can
@@ -211,6 +214,7 @@ export type ConversationEvent =
       tooling?: PortableMcpConfig;
       timeoutMs?: number;
       skipStructuredOutputGate?: boolean;
+      structuredOutputTextField?: string;
       origin?: TranscriptMessageOrigin;
     }
   | { type: "RESOURCES_ACQUIRED"; transcriptPath: string }
@@ -395,6 +399,8 @@ export interface RunTaskRunInput {
   tooling?: PortableMcpConfig;
   timeoutMs?: number;
   skipStructuredOutputGate?: boolean;
+  /** See {@link TaskRunActive.structuredOutputTextField}. */
+  structuredOutputTextField?: string;
   /** Forwarded onto the appended assistant TranscriptMessage so workflow-driven
    *  turns are distinguishable from user-driven turns in the shared JSONL. */
   origin?: TranscriptMessageOrigin;

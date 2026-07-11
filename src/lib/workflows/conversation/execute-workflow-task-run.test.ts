@@ -374,6 +374,34 @@ describe("executeWorkflowTaskRun", () => {
     expect(result.kind).toBe("text");
   });
 
+  it("forwards the structured-output transcript field into the runTaskRun input", async () => {
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "generate message",
+      outputFormat: {
+        type: "json_schema",
+        schema: { type: "object" },
+      },
+      structuredOutputTextField: "message",
+      timeoutMs: 5000,
+    });
+
+    const invocation = await nextPendingInvocation();
+    expect(invocation.input.structuredOutputTextField).toBe("message");
+    invocation.resolve(
+      defaultResult({
+        contentBlocks: [{ type: "text", text: "Readable message" }],
+        structuredOutput: { message: "Readable message" },
+      }),
+    );
+
+    const result = await callPromise;
+    expect(result.kind).toBe("structured");
+  });
+
   it("resolves to an error TaskRunResult when the entrypoint timer fires", async () => {
     const callPromise = executeWorkflowTaskRun({
       projectPath: PROJECT_PATH,

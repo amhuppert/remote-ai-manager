@@ -65,6 +65,9 @@ export interface ExecuteWorkflowTaskRunInput {
    * available even when a structured payload was requested.
    */
   skipStructuredOutputGate?: boolean;
+  /** Persist this validated structured-output string field as the assistant
+   *  transcript text, keeping backend transport JSON out of the UI. */
+  structuredOutputTextField?: string;
   /**
    * Optional explicit actor input. When provided, the conversation actor is
    * created (or matched) using this data directly instead of being loaded
@@ -204,6 +207,9 @@ async function runOnce(
     ...(input.tooling !== undefined ? { tooling: input.tooling } : {}),
     ...(input.skipStructuredOutputGate !== undefined
       ? { skipStructuredOutputGate: input.skipStructuredOutputGate }
+      : {}),
+    ...(input.structuredOutputTextField !== undefined
+      ? { structuredOutputTextField: input.structuredOutputTextField }
       : {}),
     ...(input.origin !== undefined ? { origin: input.origin } : {}),
     timeoutMs: input.timeoutMs,

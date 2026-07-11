@@ -391,6 +391,7 @@ describe("createConversationCommandService eligible path", () => {
       sessionName: "my-session",
       conversationId: "conv-1",
       kind: "task_run",
+      structuredOutputTextField: "message",
       outputFormat: {
         type: "json_schema",
         schema: COMMIT_MESSAGE_JSON_SCHEMA,

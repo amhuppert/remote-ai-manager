@@ -4962,6 +4962,54 @@ describe("runTaskRunTurnForMachine", () => {
     expect(result.aborted).toBe(false);
   });
 
+  it("presents a configured structured-output string field while preserving the full payload", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: '{"message":"Add eligibility checks","resolutionContext":"Keep guard ordering."}',
+      usage: null,
+      error: null,
+      timedOut: false,
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              message: { type: "string" },
+              resolutionContext: { type: "string" },
+            },
+            required: ["message", "resolutionContext"],
+          },
+        },
+        structuredOutputTextField: "message",
+      }),
+    );
+
+    expect(result.structuredOutput).toEqual({
+      message: "Add eligibility checks",
+      resolutionContext: "Keep guard ordering.",
+    });
+    expect(result.contentBlocks).toEqual([
+      { type: "text", text: "Add eligibility checks" },
+    ]);
+    expect(mockDeps.safeAppendTranscriptEntry).toHaveBeenCalledWith(
+      "conv-1",
+      expect.objectContaining({
+        content: [{ type: "text", text: "Add eligibility checks" }],
+      }),
+      expect.anything(),
+    );
+  });
+
   it("task_run failure surfaces aborted=true when failureKind is aborted and persists no transcript entry", async () => {
     const runner = makeMockTaskRunner(async () => ({
       backendRef: null,

@@ -2629,6 +2629,7 @@ export async function runTaskRunTurnForMachine(
     backend: input.agentBackend,
     conversationId: input.conversationId,
     hasOutputSchema: request.outputSchema !== undefined,
+    structuredOutputTextField: input.structuredOutputTextField,
   });
 
   let result: AgentCallResult;
@@ -2665,7 +2666,25 @@ export async function runTaskRunTurnForMachine(
   const backendRef = result.backendRef ?? null;
 
   if (result.outcome.kind === "completed") {
-    const text = result.outcome.text;
+    let text = result.outcome.text;
+    if (input.structuredOutputTextField !== undefined) {
+      const structuredOutput = result.outcome.structuredOutput;
+      const presentedValue =
+        typeof structuredOutput === "object" && structuredOutput !== null
+          ? Reflect.get(structuredOutput, input.structuredOutputTextField)
+          : undefined;
+      if (typeof presentedValue === "string") {
+        text = presentedValue;
+      } else {
+        text = null;
+        logger.warn("task_run.structured_output_text_field_missing", {
+          sessionName: input.sessionName,
+          backend: input.agentBackend,
+          conversationId: input.conversationId,
+          structuredOutputTextField: input.structuredOutputTextField,
+        });
+      }
+    }
     const contentBlocks: MessageContentBlock[] = text
       ? [{ type: "text", text }]
       : [];

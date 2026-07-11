@@ -254,6 +254,7 @@ export function createConversationCommandService(
               ? MERGE_MESSAGE_JSON_SCHEMA
               : COMMIT_MESSAGE_JSON_SCHEMA,
         },
+        structuredOutputTextField: "message",
         timeoutMs: GENERATION_TIMEOUT_MS,
       });
       logger.info("command.generation_complete", {

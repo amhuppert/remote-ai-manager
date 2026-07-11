@@ -129,6 +129,9 @@ function taskRunFromEvent(
     ...(event.skipStructuredOutputGate !== undefined
       ? { skipStructuredOutputGate: event.skipStructuredOutputGate }
       : {}),
+    ...(event.structuredOutputTextField !== undefined
+      ? { structuredOutputTextField: event.structuredOutputTextField }
+      : {}),
     ...(event.origin !== undefined ? { origin: event.origin } : {}),
   };
 }
@@ -638,6 +641,12 @@ export const conversationMachine = setup({
                   ? {
                       skipStructuredOutputGate:
                         activeTurn.skipStructuredOutputGate,
+                    }
+                  : {}),
+                ...(activeTurn.structuredOutputTextField !== undefined
+                  ? {
+                      structuredOutputTextField:
+                        activeTurn.structuredOutputTextField,
                     }
                   : {}),
                 ...(activeTurn.origin !== undefined
