@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   GraphWorkflowAgentSessionState,
+  GraphWorkflowContextStatus,
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
@@ -10,6 +11,7 @@ import {
   appendPendingJoin,
   applyJoinProgress,
   findActiveJoin,
+  findBusyJoinSourceLaneIds,
   materializeSessionLane,
   pickJoinTarget,
   planContextJoin,
@@ -22,6 +24,14 @@ import { createWorkflowExecution } from "./test-fixtures";
 
 const t0 = "2026-03-27T12:00:00.000Z";
 const t1 = "2026-03-27T12:05:00.000Z";
+const nonCompletedContextStatuses = [
+  "pending",
+  "ready",
+  "running",
+  "halted",
+  "awaiting_approval",
+  "awaiting_user_input",
+] satisfies readonly GraphWorkflowContextStatus[];
 
 function makeLane(
   overrides: Partial<GraphWorkflowExecutionLaneState> &
@@ -103,6 +113,122 @@ describe("pickJoinTarget", () => {
     };
 
     expect(pickJoinTarget(["lane-z", "lane-a"], execution)).toBe("lane-a");
+  });
+});
+
+describe("findBusyJoinSourceLaneIds", () => {
+  it("returns no busy lanes when every context on the source lanes is completed", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          laneId: "lane-a",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "completed",
+          laneId: "lane-b",
+        },
+      },
+    };
+    const join = makeJoin({
+      joinId: "join-1",
+      targetLaneId: "lane-a",
+      sourceLaneIds: ["lane-a", "lane-b"],
+    });
+
+    expect(findBusyJoinSourceLaneIds(join, execution)).toEqual([]);
+  });
+
+  it.each(nonCompletedContextStatuses)(
+    "returns a source lane occupied by a context with status %s",
+    (status) => {
+      const base = createWorkflowExecution();
+      const execution: GraphWorkflowExecution = {
+        ...base,
+        contextStates: {
+          ...base.contextStates,
+          "context-plan": {
+            ...base.contextStates["context-plan"]!,
+            status,
+            laneId: "lane-a",
+          },
+        },
+      };
+      const join = makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-b",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      });
+
+      expect(findBusyJoinSourceLaneIds(join, execution)).toEqual(["lane-a"]);
+    },
+  );
+
+  it("de-duplicates busy lanes and preserves source-lane order", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "ready",
+          laneId: "lane-b",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "running",
+          laneId: "lane-a",
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "awaiting_approval",
+          laneId: "lane-b",
+        },
+      },
+    };
+    const join = makeJoin({
+      joinId: "join-1",
+      targetLaneId: "lane-b",
+      sourceLaneIds: ["lane-b", "lane-a"],
+    });
+
+    expect(findBusyJoinSourceLaneIds(join, execution)).toEqual([
+      "lane-b",
+      "lane-a",
+    ]);
+  });
+
+  it("ignores incomplete contexts on unrelated lanes", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          laneId: "lane-a",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "ready",
+          laneId: "lane-unrelated",
+        },
+      },
+    };
+    const join = makeJoin({
+      joinId: "join-1",
+      targetLaneId: "lane-a",
+      sourceLaneIds: ["lane-a", "lane-b"],
+    });
+
+    expect(findBusyJoinSourceLaneIds(join, execution)).toEqual([]);
   });
 });
 

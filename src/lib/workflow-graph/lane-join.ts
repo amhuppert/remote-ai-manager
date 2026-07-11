@@ -165,6 +165,47 @@ export function planContextJoin(
 }
 
 /**
+ * Collect lanes that contain partial or unvalidated context work. This
+ * join/publication safety predicate is intentionally broader than the
+ * scheduler's lane-busy check: every non-completed context blocks a merge,
+ * including parked and halted contexts that do not have a live agent turn.
+ */
+function collectLanesWithIncompleteContextWork(
+  execution: GraphWorkflowExecution,
+): Set<string> {
+  const laneIds = new Set<string>();
+  for (const state of Object.values(execution.contextStates)) {
+    if (state.laneId === null) continue;
+    if (state.status === "completed") continue;
+    laneIds.add(state.laneId);
+  }
+  return laneIds;
+}
+
+/**
+ * Return the join's source lanes that cannot be merged without consuming
+ * partial or unvalidated context work.
+ */
+export function findBusyJoinSourceLaneIds(
+  join: GraphWorkflowExecutionJoinState,
+  execution: GraphWorkflowExecution,
+): string[] {
+  const incompleteLaneIds = collectLanesWithIncompleteContextWork(execution);
+  const seen = new Set<string>();
+  const busyLaneIds: string[] = [];
+
+  for (const laneId of join.sourceLaneIds) {
+    if (seen.has(laneId)) continue;
+    seen.add(laneId);
+    if (incompleteLaneIds.has(laneId)) {
+      busyLaneIds.push(laneId);
+    }
+  }
+
+  return busyLaneIds;
+}
+
+/**
  * Plan the final publish join over the *terminal* unpublished worktree lanes.
  *
  * A non-session lane is **terminal** when no succeeded context_merge join has
@@ -192,17 +233,11 @@ export function planFinalPublishJoin(
     }
   }
 
-  // A lane whose currently-assigned context has not completed holds partial,
-  // unvalidated work and must never be folded into the session via the final
-  // publish. An interrupted parallel wave reset to `ready` still occupies its
-  // forked lane; publishing it would land half-finished work and let the loop
+  // An interrupted parallel wave reset to `ready` still occupies its forked
+  // lane; publishing it would land half-finished work and let the loop
   // converge to completion with the context's remaining tasks dropped.
-  const lanesWithIncompleteWork = new Set<string>();
-  for (const state of Object.values(execution.contextStates)) {
-    if (state.laneId === null) continue;
-    if (state.status === "completed") continue;
-    lanesWithIncompleteWork.add(state.laneId);
-  }
+  const lanesWithIncompleteWork =
+    collectLanesWithIncompleteContextWork(execution);
 
   const unpublishedSources: string[] = [];
   for (const lane of Object.values(execution.executionLanes)) {

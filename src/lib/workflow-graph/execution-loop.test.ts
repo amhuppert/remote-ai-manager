@@ -4,7 +4,11 @@ import type {
   ExecutionTargetResolver,
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
-import { applyJoinProgress } from "@/lib/workflow-graph/lane-join";
+import {
+  applyJoinProgress,
+  planContextJoin,
+} from "@/lib/workflow-graph/lane-join";
+import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
@@ -44,6 +48,11 @@ import type {
   RecordPendingHaltReasonResult,
   ScheduleEligibleContextsResult,
 } from "./workflow-manager";
+import {
+  registerExecutionLogger,
+  unregisterExecutionLogger,
+  type ExecutionLogger,
+} from "./execution-logger";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 function createSingleContextDefinition(
@@ -195,6 +204,165 @@ function baseTaskState(
     failureMessage: null,
     failureHistory: [],
   };
+}
+
+function createTestDefinition(
+  contextIds: string[],
+  edges: Array<[sourceContextId: string, targetContextId: string]>,
+): WorkflowSemanticDefinition {
+  const base = createSingleContextDefinition(5);
+  const contextTemplate = base.executionContexts[0]!;
+  const taskTemplate = base.tasks[0]!;
+  return {
+    ...base,
+    executionContexts: contextIds.map((contextId) => ({
+      ...contextTemplate,
+      id: contextId,
+      title: contextId,
+      description: contextId,
+    })),
+    tasks: contextIds.map((contextId) => ({
+      ...taskTemplate,
+      id: `task-${contextId}`,
+      contextId,
+      title: `Task ${contextId}`,
+    })),
+    edges: edges.map(([sourceContextId, targetContextId], index) => ({
+      id: `edge-${index + 1}`,
+      sourceContextId,
+      targetContextId,
+    })),
+  };
+}
+
+function completedWorktreeContext(
+  contextId: string,
+  laneId: string,
+): GraphWorkflowExecution["contextStates"][string] {
+  return {
+    ...baseContextState(contextId),
+    status: "completed",
+    completedTaskCount: 1,
+    iterationCount: 1,
+    worktreePath: `/repo/.worktrees/session-1.${laneId}`,
+    branchName: `csm/session-1-${laneId}`,
+    isolation: "worktree",
+    laneId,
+    mergeStatus: "merged-success",
+  };
+}
+
+function worktreeLane(
+  laneId: string,
+  includedContextIds: string[],
+): GraphWorkflowExecution["executionLanes"][string] {
+  return {
+    laneId,
+    kind: "worktree",
+    status: "active",
+    worktreePath: `/repo/.worktrees/session-1.${laneId}`,
+    branchName: `csm/session-1-${laneId}`,
+    includedContextIds,
+    lastCommittingContextId: includedContextIds.at(-1) ?? null,
+    commitSnapshots: [],
+    createdAt: "2026-03-27T11:40:00.000Z",
+    updatedAt: "2026-03-27T11:50:00.000Z",
+  };
+}
+
+function createEagerJoinFixture(options: { sourceBCompleted?: boolean } = {}): {
+  definition: WorkflowSemanticDefinition;
+  initialExecution: GraphWorkflowExecution;
+} {
+  const definition = createTestDefinition(
+    ["source-a", "source-b", "unrelated", "downstream", "integration"],
+    [
+      ["source-a", "downstream"],
+      ["source-b", "downstream"],
+      ["downstream", "integration"],
+    ],
+  );
+  const sourceBCompleted = options.sourceBCompleted ?? false;
+  const initialExecution = createRunningExecution(definition, {
+    contextStates: {
+      "source-a": completedWorktreeContext("source-a", "lane-a"),
+      "source-b": sourceBCompleted
+        ? completedWorktreeContext("source-b", "lane-b")
+        : baseContextState("source-b"),
+      unrelated: baseContextState("unrelated"),
+      downstream: baseContextState("downstream"),
+      integration: baseContextState("integration"),
+    },
+    taskStates: {
+      "task-source-a": {
+        ...baseTaskState("task-source-a", "source-a"),
+        status: "completed",
+        completedAt: "2026-03-27T11:45:00.000Z",
+      },
+      "task-source-b": sourceBCompleted
+        ? {
+            ...baseTaskState("task-source-b", "source-b"),
+            status: "completed",
+            completedAt: "2026-03-27T11:50:00.000Z",
+          }
+        : baseTaskState("task-source-b", "source-b"),
+      "task-unrelated": baseTaskState("task-unrelated", "unrelated"),
+      "task-downstream": baseTaskState("task-downstream", "downstream"),
+      "task-integration": baseTaskState("task-integration", "integration"),
+    },
+    executionLanes: {
+      "lane-a": worktreeLane("lane-a", ["source-a"]),
+      "lane-b": worktreeLane("lane-b", sourceBCompleted ? ["source-b"] : []),
+      "lane-unrelated": worktreeLane("lane-unrelated", []),
+    },
+  });
+  return { definition, initialExecution };
+}
+
+function scheduleDisjointUpstreams(
+  execution: GraphWorkflowExecution,
+): ScheduleEligibleContextsResult {
+  const next = structuredClone(execution);
+  next.activeContextIds = ["source-b", "unrelated"];
+  Object.assign(next.contextStates["source-b"]!, {
+    status: "running",
+    worktreePath: "/repo/.worktrees/session-1.lane-b",
+    branchName: "csm/session-1-lane-b",
+    isolation: "worktree",
+    laneId: "lane-b",
+    batchId: "batch-upstreams",
+  });
+  Object.assign(next.contextStates.unrelated!, {
+    status: "running",
+    worktreePath: "/repo/.worktrees/session-1.lane-unrelated",
+    branchName: "csm/session-1-lane-unrelated",
+    isolation: "worktree",
+    laneId: "lane-unrelated",
+    batchId: "batch-upstreams",
+  });
+  return {
+    execution: next,
+    scheduled: {
+      kind: "parallel",
+      batchId: "batch-upstreams",
+      contextIds: ["source-b", "unrelated"],
+    },
+  };
+}
+
+function completeTestContext(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): GraphWorkflowExecution {
+  const next = structuredClone(execution);
+  next.contextStates[contextId]!.status = "completed";
+  next.contextStates[contextId]!.completedTaskCount = 1;
+  next.contextStates[contextId]!.iterationCount = 1;
+  next.taskStates[`task-${contextId}`]!.status = "completed";
+  next.activeContextIds = next.activeContextIds.filter(
+    (activeContextId) => activeContextId !== contextId,
+  );
+  return next;
 }
 
 function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
@@ -2215,6 +2383,1084 @@ describe("execution loop", () => {
     expect(result.contextStates["ctx-1"]?.lastMergeError).toBe(
       "git commit failed on lane",
     );
+  });
+
+  it("runs a required context join before dispatching a directly schedulable sibling", async () => {
+    const definition = createTestDefinition(
+      ["foundation", "references", "list-board", "detail", "integration"],
+      [
+        ["foundation", "list-board"],
+        ["foundation", "detail"],
+        ["references", "detail"],
+        ["list-board", "integration"],
+        ["detail", "integration"],
+      ],
+    );
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        foundation: completedWorktreeContext("foundation", "lane-foundation"),
+        references: completedWorktreeContext("references", "lane-references"),
+        "list-board": baseContextState("list-board"),
+        detail: baseContextState("detail"),
+        integration: baseContextState("integration"),
+      },
+      taskStates: {
+        "task-foundation": {
+          ...baseTaskState("task-foundation", "foundation"),
+          status: "completed",
+          completedAt: "2026-03-27T11:45:00.000Z",
+        },
+        "task-references": {
+          ...baseTaskState("task-references", "references"),
+          status: "completed",
+          completedAt: "2026-03-27T11:50:00.000Z",
+        },
+        "task-list-board": baseTaskState("task-list-board", "list-board"),
+        "task-detail": baseTaskState("task-detail", "detail"),
+        "task-integration": baseTaskState("task-integration", "integration"),
+      },
+      executionLanes: {
+        "lane-foundation": worktreeLane("lane-foundation", ["foundation"]),
+        "lane-references": worktreeLane("lane-references", ["references"]),
+      },
+    });
+
+    const callOrder: string[] = [];
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        callOrder.push("join-runner");
+        expect(harness.getCurrent().executionLanes.__session__).toBeUndefined();
+        await runInput.mutateActive((execution) =>
+          applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T11:55:00.000Z",
+            { status: "succeeded" },
+          ),
+        );
+        return { status: "succeeded" };
+      },
+    );
+
+    let releaseIterations!: () => void;
+    const bothIterationsStarted = new Promise<void>((resolve) => {
+      releaseIterations = resolve;
+    });
+    const startedContextIds = new Set<string>();
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 2,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => {
+        callOrder.push("scheduler");
+        const current = harness.getCurrent();
+        const succeededJoin = Object.values(current.joins).find(
+          (join) =>
+            join.kind === "context_merge" &&
+            join.contextId === "detail" &&
+            join.status === "succeeded",
+        );
+        expect(succeededJoin).toBeDefined();
+
+        const next = structuredClone(current);
+        next.activeContextIds = ["list-board", "detail"];
+        Object.assign(next.contextStates["list-board"]!, {
+          status: "running",
+          batchId: "batch-ticket-ui",
+          worktreePath: "/repo/.worktrees/session-1.lane-foundation",
+          branchName: "csm/session-1-lane-foundation",
+          isolation: "worktree",
+          laneId: "lane-foundation",
+        });
+        Object.assign(next.contextStates.detail!, {
+          status: "running",
+          batchId: "batch-ticket-ui",
+          worktreePath: "/repo/.worktrees/session-1.lane-references",
+          branchName: "csm/session-1-lane-references",
+          isolation: "worktree",
+          laneId: "lane-references",
+        });
+        harness.setCurrent(next);
+        return {
+          execution: next,
+          scheduled: {
+            kind: "parallel",
+            batchId: "batch-ticket-ui",
+            contextIds: ["list-board", "detail"],
+          },
+        };
+      },
+      executionTargetResolver: {
+        resolve({ execution, contextId }) {
+          const contextState = execution.contextStates[contextId]!;
+          return {
+            worktreePath: contextState.worktreePath!,
+            branchName: contextState.branchName!,
+            isolation: "worktree",
+            laneId: contextState.laneId,
+          };
+        },
+      },
+      iterationOrchestrator: {
+        async runIteration({
+          contextId,
+        }): Promise<GraphWorkflowIterationResult> {
+          callOrder.push(`iteration:${contextId}`);
+          expect(
+            harness.getCurrent().contextStates[
+              contextId === "list-board" ? "detail" : "list-board"
+            ]?.status,
+          ).toBe("running");
+          startedContextIds.add(contextId);
+          if (startedContextIds.size === 2) releaseIterations();
+          await bothIterationsStarted;
+
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates[contextId]!.status = "completed";
+          next.contextStates[contextId]!.completedTaskCount = 1;
+          next.contextStates[contextId]!.iterationCount = 1;
+          next.taskStates[`task-${contextId}`]!.status = "completed";
+          next.activeContextIds = next.activeContextIds.filter(
+            (activeContextId) => activeContextId !== contextId,
+          );
+          next.status = "aborted";
+          harness.setCurrent(next);
+          return {
+            conversationId: `conv-${contextId}`,
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(callOrder).toEqual([
+      "join-runner",
+      "scheduler",
+      "iteration:list-board",
+      "iteration:detail",
+    ]);
+    expect(startedContextIds).toEqual(new Set(["list-board", "detail"]));
+    expect(joinRunSpy).toHaveBeenCalledTimes(1);
+    const join = result.joins[joinRunSpy.mock.calls[0]![0].joinId];
+    expect(join).toMatchObject({
+      kind: "context_merge",
+      contextId: "detail",
+      sourceLaneIds: ["lane-foundation", "lane-references"],
+      status: "succeeded",
+    });
+    expect(join?.sourceLaneIds).toContain(join?.targetLaneId);
+    expect(result.contextStates["list-board"]?.status).toBe("completed");
+    expect(result.contextStates.detail?.status).toBe("completed");
+  });
+
+  it("does not claim an eager join when draining begins between selection and persistence", async () => {
+    const { initialExecution: initial } = createEagerJoinFixture({
+      sourceBCompleted: true,
+    });
+    const pendingReason: GraphWorkflowHaltReason = {
+      type: "recovery_error",
+      message: "lifecycle transition won the join claim race",
+    };
+    const joinRunSpy = vi.fn(
+      async (): ReturnType<JoinRunner["run"]> => ({ status: "succeeded" }),
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => ({
+        execution: harness.getCurrent(),
+        scheduled: { kind: "none" },
+      }),
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new Error("iterationOrchestrator should not run");
+        },
+      },
+    });
+
+    const mutateActive = harness.deps.workflowManager.mutateActive;
+    let lifecycleChanged = false;
+    harness.deps.workflowManager.mutateActive = async (
+      projectPath,
+      sessionName,
+      mutator,
+    ) => {
+      if (!lifecycleChanged) {
+        lifecycleChanged = true;
+        const draining = structuredClone(harness.getCurrent());
+        draining.pendingHaltReason = pendingReason;
+        harness.setCurrent(draining);
+      }
+      return mutateActive(projectPath, sessionName, mutator);
+    };
+
+    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(lifecycleChanged).toBe(true);
+    expect(joinRunSpy).not.toHaveBeenCalled();
+    expect(harness.scheduleEligibleContextsSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).toHaveBeenCalledTimes(1);
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    expect(Object.keys(result.joins)).toEqual([]);
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toEqual(pendingReason);
+  });
+
+  it("deduplicates a busy-source lifecycle event when the atomic claim rechecks stale readiness", async () => {
+    const { initialExecution: initial } = createEagerJoinFixture({
+      sourceBCompleted: true,
+    });
+    Object.assign(initial.contextStates.unrelated!, {
+      status: "ready",
+      worktreePath: "/repo/.worktrees/session-1.lane-a",
+      branchName: "csm/session-1-lane-a",
+      isolation: "worktree",
+      laneId: "lane-a",
+    });
+
+    const lifecycleEvents: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }> = [];
+    const executionLogger: ExecutionLogger = {
+      executionId: initial.id,
+      logDir: "/tmp/eager-join-dedup",
+      writeManifest() {},
+      lifecycle(event, data) {
+        lifecycleEvents.push({ event, data });
+      },
+      iteration() {},
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision() {},
+    };
+    registerExecutionLogger(executionLogger);
+
+    let schedulerClearedLane = false;
+    let claimReintroducedBusyLane = false;
+    let scheduleCallCount = 0;
+    const harness = buildHarness({
+      initialExecution: initial,
+      joinRunner: {
+        async run(): ReturnType<JoinRunner["run"]> {
+          throw new Error("busy join must not run");
+        },
+      },
+      scheduleEligibleContexts: async () => {
+        scheduleCallCount += 1;
+        if (scheduleCallCount === 1) {
+          const cleared = structuredClone(harness.getCurrent());
+          cleared.contextStates.unrelated!.status = "completed";
+          cleared.contextStates.unrelated!.completedTaskCount = 1;
+          harness.setCurrent(cleared);
+          schedulerClearedLane = true;
+          return {
+            execution: cleared,
+            scheduled: { kind: "none" },
+          };
+        }
+        if (scheduleCallCount === 2) {
+          const changed = structuredClone(harness.getCurrent());
+          changed.contextStates.unrelated!.laneId = "lane-b";
+          changed.contextStates.unrelated!.worktreePath =
+            "/repo/.worktrees/session-1.lane-b";
+          changed.contextStates.unrelated!.branchName = "csm/session-1-lane-b";
+          harness.setCurrent(changed);
+          return {
+            execution: changed,
+            scheduled: { kind: "none" },
+          };
+        }
+        throw new StaleLoopFenceError(
+          {
+            projectPath: "/repo",
+            sessionName: "session-1",
+            executionId: initial.id,
+            loopEpoch: initial.loopEpoch,
+          },
+          null,
+        );
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new Error("iterationOrchestrator should not run");
+        },
+      },
+    });
+
+    const mutateActive = harness.deps.workflowManager.mutateActive;
+    harness.deps.workflowManager.mutateActive = async (
+      projectPath,
+      sessionName,
+      mutator,
+    ) => {
+      if (schedulerClearedLane && !claimReintroducedBusyLane) {
+        claimReintroducedBusyLane = true;
+        const busy = structuredClone(harness.getCurrent());
+        busy.contextStates.unrelated!.status = "ready";
+        busy.contextStates.unrelated!.completedTaskCount = 0;
+        harness.setCurrent(busy);
+      }
+      return mutateActive(projectPath, sessionName, mutator);
+    };
+
+    try {
+      await createGraphWorkflowExecutionLoop(harness.deps).run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+    } finally {
+      unregisterExecutionLogger(initial.id);
+    }
+
+    expect(claimReintroducedBusyLane).toBe(true);
+    expect(
+      lifecycleEvents
+        .filter(({ event }) => event === "join.deferred_busy_source_lanes")
+        .map(({ data }) => data?.busyLaneIds),
+    ).toEqual([["lane-a"], ["lane-b"]]);
+  });
+
+  it("defers a persisted context join whose source lane became busy", async () => {
+    const definition = createTestDefinition(
+      ["source-a", "source-b", "busy-owner", "downstream", "integration"],
+      [
+        ["source-a", "downstream"],
+        ["source-b", "downstream"],
+        ["downstream", "integration"],
+      ],
+    );
+    const busyOwnerState = {
+      ...baseContextState("busy-owner"),
+      status: "ready" as const,
+      worktreePath: "/repo/.worktrees/session-1.lane-a",
+      branchName: "csm/session-1-lane-a",
+      isolation: "worktree" as const,
+      laneId: "lane-a",
+    };
+    const downstreamState = {
+      ...baseContextState("downstream"),
+      joinId: "join-original",
+    };
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "source-a": completedWorktreeContext("source-a", "lane-a"),
+        "source-b": completedWorktreeContext("source-b", "lane-b"),
+        "busy-owner": busyOwnerState,
+        downstream: downstreamState,
+        integration: baseContextState("integration"),
+      },
+      taskStates: {
+        "task-source-a": {
+          ...baseTaskState("task-source-a", "source-a"),
+          status: "completed",
+          completedAt: "2026-03-27T11:45:00.000Z",
+        },
+        "task-source-b": {
+          ...baseTaskState("task-source-b", "source-b"),
+          status: "completed",
+          completedAt: "2026-03-27T11:50:00.000Z",
+        },
+        "task-busy-owner": baseTaskState("task-busy-owner", "busy-owner"),
+        "task-downstream": baseTaskState("task-downstream", "downstream"),
+        "task-integration": baseTaskState("task-integration", "integration"),
+      },
+      executionLanes: {
+        "lane-a": worktreeLane("lane-a", ["source-a"]),
+        "lane-b": worktreeLane("lane-b", ["source-b"]),
+      },
+      joins: {
+        "join-original": {
+          joinId: "join-original",
+          kind: "context_merge",
+          contextId: "downstream",
+          targetLaneId: "lane-a",
+          sourceLaneIds: ["lane-a", "lane-b"],
+          mergedSourceLaneIds: [],
+          status: "pending",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-03-27T11:55:00.000Z",
+          updatedAt: "2026-03-27T11:55:00.000Z",
+          completedAt: null,
+        },
+      },
+    });
+
+    const callOrder: string[] = [];
+    let signalBusyOwnerStarted!: () => void;
+    const busyOwnerStarted = new Promise<void>((resolve) => {
+      signalBusyOwnerStarted = resolve;
+    });
+    let releaseBusyOwner!: () => void;
+    const busyOwnerRelease = new Promise<void>((resolve) => {
+      releaseBusyOwner = resolve;
+    });
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        callOrder.push("join");
+        expect(runInput.joinId).toBe("join-original");
+        await runInput.mutateActive((execution) => {
+          const next = applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T12:00:00.000Z",
+            { status: "succeeded" },
+          );
+          next.status = "aborted";
+          return next;
+        });
+        return { status: "succeeded" };
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 2,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => {
+        const current = harness.getCurrent();
+        const next = structuredClone(current);
+        next.activeContextIds = ["busy-owner"];
+        next.contextStates["busy-owner"]!.status = "running";
+        harness.setCurrent(next);
+        return {
+          execution: next,
+          scheduled: { kind: "solo", contextId: "busy-owner" },
+        };
+      },
+      executionTargetResolver: {
+        resolve({ execution, contextId }) {
+          const state = execution.contextStates[contextId]!;
+          return {
+            worktreePath: state.worktreePath!,
+            branchName: state.branchName!,
+            isolation: "worktree",
+            laneId: state.laneId,
+          };
+        },
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          callOrder.push("busy-owner-started");
+          signalBusyOwnerStarted();
+          await busyOwnerRelease;
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["busy-owner"]!.status = "completed";
+          next.contextStates["busy-owner"]!.completedTaskCount = 1;
+          next.contextStates["busy-owner"]!.iterationCount = 1;
+          next.taskStates["task-busy-owner"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          callOrder.push("busy-owner-completed");
+          return {
+            conversationId: "conv-busy-owner",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    await busyOwnerStarted;
+    expect(joinRunSpy).not.toHaveBeenCalled();
+    expect(Object.keys(harness.getCurrent().joins)).toEqual(["join-original"]);
+
+    releaseBusyOwner();
+    const result = await runPromise;
+
+    expect(callOrder).toEqual([
+      "busy-owner-started",
+      "busy-owner-completed",
+      "join",
+    ]);
+    expect(joinRunSpy).toHaveBeenCalledTimes(1);
+    expect(Object.keys(result.joins)).toEqual(["join-original"]);
+    expect(result.joins["join-original"]?.status).toBe("succeeded");
+  });
+
+  it("runs a context join while an in-flight context occupies only a disjoint lane", async () => {
+    const { initialExecution: initial } = createEagerJoinFixture();
+
+    const startedContextIds = new Set<string>();
+    let signalBothStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      signalBothStarted = resolve;
+    });
+    let unrelatedReleased = false;
+    let releaseUnrelated!: () => void;
+    const unrelatedRelease = new Promise<void>((resolve) => {
+      releaseUnrelated = () => {
+        unrelatedReleased = true;
+        resolve();
+      };
+    });
+    let signalJoinStarted!: () => void;
+    const joinStarted = new Promise<void>((resolve) => {
+      signalJoinStarted = resolve;
+    });
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        expect(unrelatedReleased).toBe(false);
+        expect(harness.getCurrent().contextStates.unrelated?.status).toBe(
+          "running",
+        );
+        signalJoinStarted();
+        await runInput.mutateActive((execution) => {
+          const next = applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T12:00:00.000Z",
+            { status: "succeeded" },
+          );
+          next.status = "aborted";
+          return next;
+        });
+        return { status: "succeeded" };
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 3,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => {
+        const result = scheduleDisjointUpstreams(harness.getCurrent());
+        harness.setCurrent(result.execution);
+        return result;
+      },
+      executionTargetResolver: {
+        resolve({ execution, contextId }) {
+          const state = execution.contextStates[contextId]!;
+          return {
+            worktreePath: state.worktreePath!,
+            branchName: state.branchName!,
+            isolation: "worktree",
+            laneId: state.laneId,
+          };
+        },
+      },
+      iterationOrchestrator: {
+        async runIteration({
+          contextId,
+        }): Promise<GraphWorkflowIterationResult> {
+          startedContextIds.add(contextId);
+          if (startedContextIds.size === 2) signalBothStarted();
+          await bothStarted;
+          if (contextId === "unrelated") await unrelatedRelease;
+
+          const next = completeTestContext(harness.getCurrent(), contextId);
+          harness.setCurrent(next);
+          return {
+            conversationId: `conv-${contextId}`,
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    await joinStarted;
+    expect(joinRunSpy).toHaveBeenCalledTimes(1);
+    expect(unrelatedReleased).toBe(false);
+    const joinId = joinRunSpy.mock.calls[0]![0].joinId;
+    expect(harness.getCurrent().joins[joinId]).toMatchObject({
+      kind: "context_merge",
+      contextId: "downstream",
+      sourceLaneIds: ["lane-a", "lane-b"],
+    });
+
+    releaseUnrelated();
+    const result = await runPromise;
+    expect(result.status).toBe("aborted");
+    expect(result.contextStates.unrelated?.status).toBe("completed");
+  });
+
+  it("drains after an eager context join fails while unrelated work is in flight", async () => {
+    const { initialExecution: initial } = createEagerJoinFixture();
+    const startedContextIds = new Set<string>();
+    let signalBothStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      signalBothStarted = resolve;
+    });
+    let releaseUnrelated!: () => void;
+    const unrelatedRelease = new Promise<void>((resolve) => {
+      releaseUnrelated = resolve;
+    });
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        expect(harness.getCurrent().contextStates.unrelated?.status).toBe(
+          "running",
+        );
+        await runInput.mutateActive((execution) =>
+          applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T12:00:00.000Z",
+            {
+              status: "failed",
+              errorMessage: "merge conflict in ticket-detail.ts",
+              conflicts: {
+                files: ["ticket-detail.ts"],
+                message: "merge conflict in ticket-detail.ts",
+                analysis: null,
+              },
+            },
+          ),
+        );
+        return {
+          status: "failed",
+          message: "merge conflict in ticket-detail.ts",
+          conflictFiles: ["ticket-detail.ts"],
+          failedSourceLaneId: "lane-b",
+        };
+      },
+    );
+    const runIterationSpy = vi.fn(
+      async ({
+        contextId,
+      }: Parameters<
+        GraphWorkflowExecutionLoopDeps["iterationOrchestrator"]["runIteration"]
+      >[0]): Promise<GraphWorkflowIterationResult> => {
+        startedContextIds.add(contextId);
+        if (startedContextIds.size === 2) signalBothStarted();
+        await bothStarted;
+        if (contextId === "unrelated") await unrelatedRelease;
+
+        const next = completeTestContext(harness.getCurrent(), contextId);
+        harness.setCurrent(next);
+        return {
+          conversationId: `conv-${contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 3,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => {
+        const result = scheduleDisjointUpstreams(harness.getCurrent());
+        harness.setCurrent(result.execution);
+        return result;
+      },
+      executionTargetResolver: {
+        resolve({ execution, contextId }) {
+          const state = execution.contextStates[contextId]!;
+          return {
+            worktreePath: state.worktreePath!,
+            branchName: state.branchName!,
+            isolation: "worktree",
+            laneId: state.laneId,
+          };
+        },
+      },
+      iterationOrchestrator: { runIteration: runIterationSpy },
+    });
+
+    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledTimes(1);
+    });
+    const joinId = joinRunSpy.mock.calls[0]![0].joinId;
+    const failedJoin = harness.getCurrent().joins[joinId]!;
+    const expectedReason: GraphWorkflowHaltReason = {
+      type: "join_failure",
+      joinId,
+      joinKind: "context_merge",
+      contextId: "downstream",
+      sourceLaneIds: failedJoin.sourceLaneIds,
+      targetLaneId: failedJoin.targetLaneId,
+      message: "merge conflict in ticket-detail.ts",
+      conflictFiles: ["ticket-detail.ts"],
+    };
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      reason: expectedReason,
+    });
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(harness.scheduleEligibleContextsSpy).toHaveBeenCalledTimes(1);
+    expect(harness.getCurrent().contextStates.unrelated?.status).toBe(
+      "running",
+    );
+
+    releaseUnrelated();
+    const result = await runPromise;
+
+    expect(runIterationSpy).toHaveBeenCalledTimes(2);
+    expect(harness.scheduleEligibleContextsSpy).toHaveBeenCalledTimes(1);
+    expect(harness.drainAndHaltSpy).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toEqual(expectedReason);
+    expect(result.contextStates.unrelated?.status).toBe("completed");
+    expect(result.contextStates.downstream?.status).toBe("pending");
+  });
+
+  it("does not start an eager join when query capacity is exhausted", async () => {
+    const definition = createTestDefinition(
+      ["source-a", "source-b", "unrelated", "downstream", "integration"],
+      [
+        ["source-a", "downstream"],
+        ["source-b", "downstream"],
+        ["downstream", "integration"],
+      ],
+    );
+    const approvedDecision = {
+      type: "approved" as const,
+      decidedAt: "2026-03-27T11:58:00.000Z",
+    };
+    const sourceBState = {
+      ...baseContextState("source-b"),
+      status: "awaiting_approval" as const,
+      completedTaskCount: 1,
+      iterationCount: 1,
+      worktreePath: "/repo/.worktrees/session-1.lane-b",
+      branchName: "csm/session-1-lane-b",
+      isolation: "worktree" as const,
+      laneId: "lane-b",
+      pendingApproval: {
+        conversationId: "conv-source-b",
+        requestedAt: "2026-03-27T11:55:00.000Z",
+        decision: approvedDecision,
+      },
+    };
+    const unrelatedState = {
+      ...baseContextState("unrelated"),
+      status: "awaiting_approval" as const,
+      completedTaskCount: 1,
+      iterationCount: 1,
+      worktreePath: "/repo/.worktrees/session-1.lane-unrelated",
+      branchName: "csm/session-1-lane-unrelated",
+      isolation: "worktree" as const,
+      laneId: "lane-unrelated",
+      pendingApproval: {
+        conversationId: "conv-unrelated",
+        requestedAt: "2026-03-27T11:55:00.000Z",
+        decision: null,
+      },
+    };
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "source-a": completedWorktreeContext("source-a", "lane-a"),
+        "source-b": sourceBState,
+        unrelated: unrelatedState,
+        downstream: baseContextState("downstream"),
+        integration: baseContextState("integration"),
+      },
+      taskStates: {
+        "task-source-a": {
+          ...baseTaskState("task-source-a", "source-a"),
+          status: "completed",
+          completedAt: "2026-03-27T11:45:00.000Z",
+        },
+        "task-source-b": {
+          ...baseTaskState("task-source-b", "source-b"),
+          status: "completed",
+          completedAt: "2026-03-27T11:55:00.000Z",
+        },
+        "task-unrelated": {
+          ...baseTaskState("task-unrelated", "unrelated"),
+          status: "completed",
+          completedAt: "2026-03-27T11:55:00.000Z",
+        },
+        "task-downstream": baseTaskState("task-downstream", "downstream"),
+        "task-integration": baseTaskState("task-integration", "integration"),
+      },
+      executionLanes: {
+        "lane-a": worktreeLane("lane-a", ["source-a"]),
+        "lane-b": worktreeLane("lane-b", []),
+        "lane-unrelated": worktreeLane("lane-unrelated", []),
+      },
+    });
+
+    let signalCapacityExhausted!: () => void;
+    const capacityExhausted = new Promise<void>((resolve) => {
+      signalCapacityExhausted = resolve;
+    });
+    let releaseUnrelated!: () => void;
+    const unrelatedRelease = new Promise<void>((resolve) => {
+      releaseUnrelated = resolve;
+    });
+    const callOrder: string[] = [];
+    const observedCapacities: number[] = [];
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        callOrder.push("join");
+        await runInput.mutateActive((execution) => {
+          const next = applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T12:00:00.000Z",
+            { status: "succeeded" },
+          );
+          next.status = "aborted";
+          return next;
+        });
+        return { status: "succeeded" };
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 1,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async ({ capacityRemaining }) => {
+        observedCapacities.push(capacityRemaining ?? -1);
+        if (capacityRemaining === 0) {
+          callOrder.push("capacity-exhausted");
+          signalCapacityExhausted();
+        }
+        return {
+          execution: harness.getCurrent(),
+          scheduled: { kind: "none" },
+        };
+      },
+      waitForApprovalProgress: async ({ contextId }) => {
+        expect(contextId).toBe("unrelated");
+        await unrelatedRelease;
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates.unrelated!.pendingApproval!.decision = {
+          type: "approved",
+          decidedAt: "2026-03-27T12:01:00.000Z",
+        };
+        harness.setCurrent(next);
+      },
+      isConversationBusy: () => false,
+      acquireConversationLock: () => () => {},
+      executionTargetResolver: {
+        resolve({ execution, contextId }) {
+          const state = execution.contextStates[contextId]!;
+          return {
+            worktreePath: state.worktreePath!,
+            branchName: state.branchName!,
+            isolation: "worktree",
+            laneId: state.laneId,
+          };
+        },
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new Error(
+            "persisted approval contexts must not seed an iteration",
+          );
+        },
+      },
+    });
+
+    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    await capacityExhausted;
+    expect(joinRunSpy).not.toHaveBeenCalled();
+    expect(observedCapacities).toEqual([1, 0]);
+
+    releaseUnrelated();
+    const result = await runPromise;
+
+    expect(callOrder).toEqual(["capacity-exhausted", "join"]);
+    expect(joinRunSpy).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("aborted");
+  });
+
+  it("allows terminal fan-in to reach final publish when no context merge is planned", async () => {
+    const definition = createTestDefinition(
+      ["source-a", "source-b", "terminal"],
+      [
+        ["source-a", "terminal"],
+        ["source-b", "terminal"],
+      ],
+    );
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "source-a": completedWorktreeContext("source-a", "lane-a"),
+        "source-b": completedWorktreeContext("source-b", "lane-b"),
+        terminal: baseContextState("terminal"),
+      },
+      taskStates: {
+        "task-source-a": {
+          ...baseTaskState("task-source-a", "source-a"),
+          status: "completed",
+          completedAt: "2026-03-27T11:45:00.000Z",
+        },
+        "task-source-b": {
+          ...baseTaskState("task-source-b", "source-b"),
+          status: "completed",
+          completedAt: "2026-03-27T11:50:00.000Z",
+        },
+        "task-terminal": baseTaskState("task-terminal", "terminal"),
+      },
+      executionLanes: {
+        "lane-a": worktreeLane("lane-a", ["source-a"]),
+        "lane-b": worktreeLane("lane-b", ["source-b"]),
+      },
+    });
+
+    expect(
+      classifyContextSchedulability({
+        contextId: "terminal",
+        definition,
+        execution: initial,
+      }),
+    ).toEqual({
+      kind: "wait-for-join",
+      sourceLaneIds: ["lane-a", "lane-b"],
+    });
+    expect(
+      planContextJoin({
+        contextId: "terminal",
+        execution: initial,
+        now: () => "2026-03-27T11:55:00.000Z",
+        generateJoinId: () => "context-join-must-not-be-created",
+      }),
+    ).toBeNull();
+
+    let terminalScheduled = false;
+    const callOrder: string[] = [];
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        const join = harness.getCurrent().joins[runInput.joinId];
+        expect(join?.kind).toBe("final_publish");
+        callOrder.push("final-publish");
+        await runInput.mutateActive((execution) =>
+          applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T12:00:00.000Z",
+            { status: "succeeded" },
+          ),
+        );
+        return { status: "succeeded" };
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => {
+        callOrder.push("scheduler");
+        const current = harness.getCurrent();
+        const finalPublishSucceeded = Object.values(current.joins).some(
+          (join) =>
+            join.kind === "final_publish" && join.status === "succeeded",
+        );
+        if (!finalPublishSucceeded || terminalScheduled) {
+          return {
+            execution: current,
+            scheduled: { kind: "none" },
+          };
+        }
+
+        terminalScheduled = true;
+        const next = structuredClone(current);
+        next.activeContextIds = ["terminal"];
+        next.contextStates.terminal!.status = "running";
+        harness.setCurrent(next);
+        return {
+          execution: next,
+          scheduled: { kind: "solo", contextId: "terminal" },
+        };
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates.terminal!.status = "completed";
+          next.contextStates.terminal!.completedTaskCount = 1;
+          next.contextStates.terminal!.iterationCount = 1;
+          next.taskStates["task-terminal"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-terminal",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(joinRunSpy).toHaveBeenCalledTimes(1);
+    expect(callOrder.indexOf("scheduler")).toBeLessThan(
+      callOrder.indexOf("final-publish"),
+    );
+    const finalPublish = result.joins[joinRunSpy.mock.calls[0]![0].joinId];
+    expect(finalPublish).toMatchObject({
+      kind: "final_publish",
+      contextId: null,
+      targetLaneId: "__session__",
+      sourceLaneIds: ["lane-a", "lane-b"],
+      status: "succeeded",
+    });
+    expect(
+      Object.values(result.joins).some((join) => join.kind === "context_merge"),
+    ).toBe(false);
+    expect(result.contextStates.terminal?.status).toBe("completed");
+    expect(result.status).toBe("completed");
   });
 
   it("runs a final publish join before completing when a non-session lane is unpublished", async () => {
@@ -4350,6 +5596,144 @@ describe("execution loop", () => {
 });
 
 describe("execution loop generation fencing", () => {
+  it("exits through generation fencing when an eager join is replaced mid-run", async () => {
+    const { initialExecution: initial } = createEagerJoinFixture();
+    const successor = createRunningExecution(createSingleContextDefinition(5), {
+      id: "exec-2",
+    });
+    const startedContextIds = new Set<string>();
+    let signalBothStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      signalBothStarted = resolve;
+    });
+    let releaseUnrelated!: () => void;
+    const unrelatedRelease = new Promise<void>((resolve) => {
+      releaseUnrelated = resolve;
+    });
+    let signalUnrelatedReturned!: () => void;
+    const unrelatedReturned = new Promise<void>((resolve) => {
+      signalUnrelatedReturned = resolve;
+    });
+    let scheduledSnapshot: GraphWorkflowExecution | null = null;
+    const joinRunSpy = vi.fn(
+      async (
+        runInput: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        harness.setCurrent(structuredClone(successor));
+        await runInput.mutateActive((execution) =>
+          applyJoinProgress(
+            execution,
+            runInput.joinId,
+            "2026-03-27T12:00:00.000Z",
+            { status: "succeeded" },
+          ),
+        );
+        return { status: "succeeded" };
+      },
+    );
+    const runIterationSpy = vi.fn(
+      async ({
+        contextId,
+      }: Parameters<
+        GraphWorkflowExecutionLoopDeps["iterationOrchestrator"]["runIteration"]
+      >[0]): Promise<GraphWorkflowIterationResult> => {
+        startedContextIds.add(contextId);
+        if (startedContextIds.size === 2) signalBothStarted();
+        await bothStarted;
+        if (contextId === "unrelated") {
+          await unrelatedRelease;
+          const staleResult = completeTestContext(
+            scheduledSnapshot!,
+            contextId,
+          );
+          signalUnrelatedReturned();
+          return {
+            conversationId: "conv-unrelated",
+            execution: staleResult,
+            shouldContinueInContext: false,
+          };
+        }
+
+        const next = completeTestContext(harness.getCurrent(), contextId);
+        harness.setCurrent(next);
+        return {
+          conversationId: `conv-${contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 3,
+      joinRunner: { run: joinRunSpy },
+      scheduleEligibleContexts: async () => {
+        const result = scheduleDisjointUpstreams(harness.getCurrent());
+        scheduledSnapshot = structuredClone(result.execution);
+        harness.setCurrent(result.execution);
+        return result;
+      },
+      executionTargetResolver: {
+        resolve({ execution, contextId }) {
+          const state = execution.contextStates[contextId]!;
+          return {
+            worktreePath: state.worktreePath!,
+            branchName: state.branchName!,
+            isolation: "worktree",
+            laneId: state.laneId,
+          };
+        },
+      },
+      iterationOrchestrator: { runIteration: runIterationSpy },
+    });
+    const mutateActive = harness.deps.workflowManager.mutateActive;
+    harness.deps.workflowManager.mutateActive = async (
+      projectPath,
+      sessionName,
+      mutator,
+    ) => {
+      const current = harness.getCurrent();
+      if (current.id !== initial.id) {
+        throw new StaleLoopFenceError(
+          {
+            projectPath: "/repo",
+            sessionName: "session-1",
+            executionId: initial.id,
+            loopEpoch: initial.loopEpoch,
+          },
+          current,
+        );
+      }
+      return mutateActive(projectPath, sessionName, mutator);
+    };
+
+    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(joinRunSpy).toHaveBeenCalledTimes(1);
+    expect(harness.scheduleEligibleContextsSpy).toHaveBeenCalledTimes(1);
+    expect(runIterationSpy).toHaveBeenCalledTimes(2);
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    expect(result.id).toBe(initial.id);
+    expect(harness.getCurrent()).toMatchObject({
+      id: "exec-2",
+      loopEpoch: 0,
+      status: "running",
+      pendingHaltReason: null,
+      joins: {},
+      contextStates: { "ctx-1": { status: "pending" } },
+    });
+
+    releaseUnrelated();
+    await unrelatedReturned;
+  });
+
   it("exits silently when an iteration surfaces a stale-fence rejection instead of halting the successor", async () => {
     // Incident shape (loop A): the loop's execution was aborted and replaced
     // while it was blocked; its next persisted write throws

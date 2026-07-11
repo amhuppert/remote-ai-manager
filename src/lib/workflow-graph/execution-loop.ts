@@ -45,7 +45,9 @@ import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import {
   SESSION_LANE_ID,
   appendPendingJoin,
+  applyJoinProgress,
   findActiveJoin,
+  findBusyJoinSourceLaneIds,
   materializeSessionLane,
   planContextJoin,
   planFinalPublishJoin,
@@ -54,6 +56,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionJoinState,
   GraphWorkflowHaltReason,
   GraphWorkflowStatus,
 } from "@/lib/workflows/schemas";
@@ -506,6 +509,7 @@ export function createGraphWorkflowExecutionLoop(
     // and embeds the answers block. Deleted on drain — one resume.
     const pendingResumeUserInput = new Map<string, ConsumeAnswersResult>();
     const inFlight = new Map<string, Promise<void>>();
+    const deferredJoinBusySignatures = new Map<string, string>();
     const maxConcurrency = await getMaxConcurrentQueries();
     const execLogger = getExecutionLogger(execution.id);
 
@@ -1873,112 +1877,290 @@ export function createGraphWorkflowExecutionLoop(
       );
     }
 
-    async function runEligibleJoinIfAny(): Promise<"ran" | "halted" | "none"> {
-      const session = await deps.getSession(
-        input.projectPath,
-        input.sessionName,
-      );
-      if (!session) {
-        await recordHalt({
-          type: "recovery_error",
-          message: `Session "${input.sessionName}" not found during join orchestration`,
-        });
-        return "halted";
+    type ContextJoinCandidate = {
+      join: GraphWorkflowExecutionJoinState;
+      alreadyPersisted: boolean;
+    };
+    type BlockedContextJoinCandidate = ContextJoinCandidate & {
+      busyLaneIds: string[];
+    };
+    type ContextJoinSelection = {
+      runnable: ContextJoinCandidate | null;
+      blocked: BlockedContextJoinCandidate[];
+      requiredCandidateExists: boolean;
+      activeFinalPublish: GraphWorkflowExecutionJoinState | null;
+    };
+    type JoinRunOutcome = "ran" | "halted" | "none" | "retry";
+
+    function selectEligibleContextJoin(): ContextJoinSelection {
+      const active = findActiveJoin(execution);
+      if (active?.kind === "final_publish") {
+        return {
+          runnable: null,
+          blocked: [],
+          requiredCandidateExists: false,
+          activeFinalPublish: active,
+        };
+      }
+      if (active) {
+        const busyLaneIds = findBusyJoinSourceLaneIds(active, execution);
+        if (busyLaneIds.length > 0) {
+          return {
+            runnable: null,
+            blocked: [{ join: active, alreadyPersisted: true, busyLaneIds }],
+            requiredCandidateExists: true,
+            activeFinalPublish: null,
+          };
+        }
+        return {
+          runnable: { join: active, alreadyPersisted: true },
+          blocked: [],
+          requiredCandidateExists: true,
+          activeFinalPublish: null,
+        };
       }
 
-      execution = await deps.workflowManager.mutateActive(
+      const blocked: BlockedContextJoinCandidate[] = [];
+      let runnable: ContextJoinCandidate | null = null;
+      let requiredCandidateExists = false;
+      const eligibleIds = getEligibleContextIds(
+        execution.workingDefinition,
+        execution,
+      );
+      for (const contextId of eligibleIds) {
+        const classification = classifyContextSchedulability({
+          contextId,
+          definition: execution.workingDefinition,
+          execution,
+        });
+        if (classification.kind !== "wait-for-join") continue;
+
+        const planned = planContextJoin({
+          contextId,
+          execution,
+          now: () => new Date().toISOString(),
+          generateJoinId: () => createJobId(),
+        });
+        if (!planned) continue;
+        requiredCandidateExists = true;
+
+        const busyLaneIds = findBusyJoinSourceLaneIds(planned, execution);
+        if (busyLaneIds.length > 0) {
+          blocked.push({
+            join: planned,
+            alreadyPersisted: false,
+            busyLaneIds,
+          });
+          continue;
+        }
+
+        runnable ??= { join: planned, alreadyPersisted: false };
+      }
+
+      return {
+        runnable,
+        blocked,
+        requiredCandidateExists,
+        activeFinalPublish: null,
+      };
+    }
+
+    function logBlockedContextJoins(
+      blocked: readonly BlockedContextJoinCandidate[],
+    ): void {
+      for (const candidate of blocked) {
+        const { join, busyLaneIds } = candidate;
+        const contextKey = join.contextId ?? join.joinId;
+        const signature = JSON.stringify(busyLaneIds);
+        logger.info("graph-workflow.join.deferred_busy_source_lanes", {
+          executionId: execution.id,
+          contextId: join.contextId,
+          sourceLaneIds: join.sourceLaneIds,
+          busyLaneIds,
+          activeContextIds: execution.activeContextIds,
+        });
+        if (deferredJoinBusySignatures.get(contextKey) === signature) continue;
+        deferredJoinBusySignatures.set(contextKey, signature);
+        execLogger?.lifecycle("join.deferred_busy_source_lanes", {
+          contextId: join.contextId,
+          sourceLaneIds: join.sourceLaneIds,
+          busyLaneIds,
+          activeContextIds: execution.activeContextIds,
+        });
+      }
+    }
+
+    async function executeJoin(
+      join: GraphWorkflowExecutionJoinState,
+      plannedFor: "context" | "final_publish",
+      alreadyPersisted: boolean,
+    ): Promise<Exclude<JoinRunOutcome, "none">> {
+      type ClaimDeferralReason =
+        | "execution_not_running"
+        | "pending_halt"
+        | "active_join_changed"
+        | "candidate_changed"
+        | "busy_source_lanes";
+      const claim: {
+        join: GraphWorkflowExecutionJoinState | null;
+        deferredJoin: GraphWorkflowExecutionJoinState | null;
+        busyLaneIds: string[];
+        reason: ClaimDeferralReason | null;
+      } = {
+        join: null,
+        deferredJoin: null,
+        busyLaneIds: [],
+        reason: null,
+      };
+      const claimedExecution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
-        (e) =>
-          materializeSessionLane(e, {
-            sessionLaneId: SESSION_LANE_ID,
-            branchName: session.branchName,
-            worktreePath: session.worktreePath,
-            now: () => new Date().toISOString(),
-          }),
+        (current) => {
+          if (current.status !== "running") {
+            claim.reason = "execution_not_running";
+            return current;
+          }
+          if (current.pendingHaltReason !== null) {
+            claim.reason = "pending_halt";
+            return current;
+          }
+
+          const active = findActiveJoin(current);
+          let currentJoin: GraphWorkflowExecutionJoinState | null = null;
+          if (alreadyPersisted) {
+            if (!active || active.joinId !== join.joinId) {
+              claim.reason = "active_join_changed";
+              return current;
+            }
+            currentJoin = active;
+          } else {
+            if (active !== null) {
+              claim.reason = "active_join_changed";
+              return current;
+            }
+
+            if (plannedFor === "context") {
+              const contextId = join.contextId;
+              const eligibleIds = getEligibleContextIds(
+                current.workingDefinition,
+                current,
+              );
+              if (contextId === null || !eligibleIds.includes(contextId)) {
+                claim.reason = "candidate_changed";
+                return current;
+              }
+              const classification = classifyContextSchedulability({
+                contextId,
+                definition: current.workingDefinition,
+                execution: current,
+              });
+              if (classification.kind !== "wait-for-join") {
+                claim.reason = "candidate_changed";
+                return current;
+              }
+              currentJoin = planContextJoin({
+                contextId,
+                execution: current,
+                now: () => new Date().toISOString(),
+                generateJoinId: () => join.joinId,
+              });
+            } else {
+              currentJoin = planFinalPublishJoin({
+                execution: current,
+                sessionLaneId: SESSION_LANE_ID,
+                now: () => new Date().toISOString(),
+                generateJoinId: () => join.joinId,
+              });
+            }
+
+            if (!currentJoin) {
+              claim.reason = "candidate_changed";
+              return current;
+            }
+          }
+
+          const busyLaneIds = findBusyJoinSourceLaneIds(currentJoin, current);
+          if (busyLaneIds.length > 0) {
+            claim.deferredJoin = currentJoin;
+            claim.busyLaneIds = busyLaneIds;
+            claim.reason = "busy_source_lanes";
+            return current;
+          }
+
+          const withJoin = alreadyPersisted
+            ? current
+            : appendPendingJoin(current, currentJoin);
+          claim.join = currentJoin;
+          return applyJoinProgress(
+            withJoin,
+            currentJoin.joinId,
+            new Date().toISOString(),
+            { status: "running" },
+          );
+        },
+      );
+      adoptExecution(claimedExecution);
+
+      const claimedJoin = claim.join;
+      if (!claimedJoin) {
+        if (claim.deferredJoin && claim.busyLaneIds.length > 0) {
+          logBlockedContextJoins([
+            {
+              join: claim.deferredJoin,
+              alreadyPersisted,
+              busyLaneIds: claim.busyLaneIds,
+            },
+          ]);
+        }
+        logger.info("graph-workflow.join.claim_deferred", {
+          executionId: execution.id,
+          joinId: join.joinId,
+          kind: join.kind,
+          plannedFor,
+          reason: claim.reason,
+          busyLaneIds: claim.busyLaneIds,
+        });
+        return "retry";
+      }
+      deferredJoinBusySignatures.delete(
+        claimedJoin.contextId ?? claimedJoin.joinId,
       );
 
-      let active = findActiveJoin(execution);
-      if (!active) {
-        const eligibleIds = getEligibleContextIds(
-          execution.workingDefinition,
-          execution,
-        );
-        let planned = null as ReturnType<typeof planContextJoin> | null;
-        let plannedFor: "context" | "final_publish" | null = null;
-        for (const contextId of eligibleIds) {
-          const classification = classifyContextSchedulability({
-            contextId,
-            definition: execution.workingDefinition,
-            execution,
-          });
-          if (classification.kind !== "wait-for-join") continue;
-          planned = planContextJoin({
-            contextId,
-            execution,
-            now: () => new Date().toISOString(),
-            generateJoinId: () => createJobId(),
-          });
-          if (planned) {
-            plannedFor = "context";
-            break;
-          }
-        }
-
-        if (!planned) {
-          planned = planFinalPublishJoin({
-            execution,
-            sessionLaneId: SESSION_LANE_ID,
-            now: () => new Date().toISOString(),
-            generateJoinId: () => createJobId(),
-          });
-          if (planned) plannedFor = "final_publish";
-        }
-
-        if (!planned) return "none";
-
-        const toPersist = planned;
-        execution = await deps.workflowManager.mutateActive(
-          input.projectPath,
-          input.sessionName,
-          (e) => appendPendingJoin(e, toPersist),
-        );
-        active = toPersist;
+      if (!alreadyPersisted) {
         execLogger?.lifecycle("join.planned", {
-          joinId: planned.joinId,
-          kind: planned.kind,
-          contextId: planned.contextId,
-          sourceLaneIds: planned.sourceLaneIds,
-          targetLaneId: planned.targetLaneId,
+          joinId: claimedJoin.joinId,
+          kind: claimedJoin.kind,
+          contextId: claimedJoin.contextId,
+          sourceLaneIds: claimedJoin.sourceLaneIds,
+          targetLaneId: claimedJoin.targetLaneId,
         });
         logger.info("graph-workflow.join.planned", {
           executionId: execution.id,
-          joinId: planned.joinId,
-          kind: planned.kind,
+          joinId: claimedJoin.joinId,
+          kind: claimedJoin.kind,
           plannedFor,
-          sourceLaneIds: planned.sourceLaneIds,
-          targetLaneId: planned.targetLaneId,
+          sourceLaneIds: claimedJoin.sourceLaneIds,
+          targetLaneId: claimedJoin.targetLaneId,
         });
       }
 
-      const join = active;
       execLogger?.lifecycle("join.started", {
-        joinId: join.joinId,
-        kind: join.kind,
-        sourceLaneIds: join.sourceLaneIds,
-        targetLaneId: join.targetLaneId,
+        joinId: claimedJoin.joinId,
+        kind: claimedJoin.kind,
+        sourceLaneIds: claimedJoin.sourceLaneIds,
+        targetLaneId: claimedJoin.targetLaneId,
       });
       logger.info("graph-workflow.join.started", {
         executionId: execution.id,
-        joinId: join.joinId,
-        kind: join.kind,
+        joinId: claimedJoin.joinId,
+        kind: claimedJoin.kind,
       });
 
       const result = await deps.joinRunner.run({
         projectPath: input.projectPath,
         projectName: input.projectName,
         sessionName: input.sessionName,
-        joinId: join.joinId,
+        joinId: claimedJoin.joinId,
         mutateActive: (mutator) =>
           deps.workflowManager.mutateActive(
             input.projectPath,
@@ -1991,8 +2173,8 @@ export function createGraphWorkflowExecutionLoop(
 
       if (result.status === "succeeded") {
         execLogger?.lifecycle("join.completed", {
-          joinId: join.joinId,
-          kind: join.kind,
+          joinId: claimedJoin.joinId,
+          kind: claimedJoin.kind,
         });
         return "ran";
       }
@@ -2002,30 +2184,87 @@ export function createGraphWorkflowExecutionLoop(
         sessionName: input.sessionName,
         reason: {
           type: "join_failure",
-          joinId: join.joinId,
-          joinKind: join.kind,
-          contextId: join.contextId,
-          sourceLaneIds: join.sourceLaneIds,
-          targetLaneId: join.targetLaneId,
+          joinId: claimedJoin.joinId,
+          joinKind: claimedJoin.kind,
+          contextId: claimedJoin.contextId,
+          sourceLaneIds: claimedJoin.sourceLaneIds,
+          targetLaneId: claimedJoin.targetLaneId,
           message: result.message,
           conflictFiles: result.conflictFiles,
         },
       });
-      execution = haltResult.execution;
+      adoptExecution(haltResult.execution);
       execLogger?.lifecycle("join.failed", {
-        joinId: join.joinId,
-        kind: join.kind,
+        joinId: claimedJoin.joinId,
+        kind: claimedJoin.kind,
         failedSourceLaneId: result.failedSourceLaneId,
         conflictFiles: result.conflictFiles,
       });
       logger.error("graph-workflow.join.failed", {
         executionId: execution.id,
-        joinId: join.joinId,
-        kind: join.kind,
+        joinId: claimedJoin.joinId,
+        kind: claimedJoin.kind,
         message: result.message,
         conflictFiles: result.conflictFiles.length,
       });
       return "halted";
+    }
+
+    async function runEligibleContextJoinIfAny(): Promise<JoinRunOutcome> {
+      const selection = selectEligibleContextJoin();
+      logBlockedContextJoins(selection.blocked);
+      if (!selection.runnable) return "none";
+
+      const { join, alreadyPersisted } = selection.runnable;
+      return executeJoin(join, "context", alreadyPersisted);
+    }
+
+    async function runQuiescentJoinIfAny(): Promise<JoinRunOutcome> {
+      const selection = selectEligibleContextJoin();
+      logBlockedContextJoins(selection.blocked);
+
+      if (selection.activeFinalPublish) {
+        return executeJoin(selection.activeFinalPublish, "final_publish", true);
+      }
+      if (selection.runnable) {
+        const { join, alreadyPersisted } = selection.runnable;
+        return executeJoin(join, "context", alreadyPersisted);
+      }
+      if (selection.requiredCandidateExists) return "none";
+
+      const session = await deps.getSession(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (!session) {
+        await recordHalt({
+          type: "recovery_error",
+          message: `Session "${input.sessionName}" not found during final publish orchestration`,
+        });
+        return "halted";
+      }
+
+      const materialized = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (e) =>
+          materializeSessionLane(e, {
+            sessionLaneId: SESSION_LANE_ID,
+            branchName: session.branchName,
+            worktreePath: session.worktreePath,
+            now: () => new Date().toISOString(),
+          }),
+      );
+      adoptExecution(materialized);
+
+      const finalPublish = planFinalPublishJoin({
+        execution,
+        sessionLaneId: SESSION_LANE_ID,
+        now: () => new Date().toISOString(),
+        generateJoinId: () => createJobId(),
+      });
+      if (!finalPublish) return "none";
+      return executeJoin(finalPublish, "final_publish", false);
     }
 
     // A merged lane's content lives on the session branch, so its worktree and
@@ -2181,6 +2420,16 @@ export function createGraphWorkflowExecutionLoop(
           inFlight: inFlight.size,
           capacityRemaining,
         });
+        if (capacityRemaining > 0) {
+          const eagerJoinOutcome = await runEligibleContextJoinIfAny();
+          if (
+            eagerJoinOutcome === "ran" ||
+            eagerJoinOutcome === "halted" ||
+            eagerJoinOutcome === "retry"
+          ) {
+            continue;
+          }
+        }
         const scheduleResult =
           await deps.workflowManager.scheduleEligibleContexts({
             projectPath: input.projectPath,
@@ -2269,7 +2518,7 @@ export function createGraphWorkflowExecutionLoop(
           if (hasAwaitingUserInputContexts(execution)) {
             continue;
           }
-          const joinOutcome = await runEligibleJoinIfAny();
+          const joinOutcome = await runQuiescentJoinIfAny();
           if (joinOutcome === "halted") {
             execution = await deps.workflowManager.drainAndHalt({
               projectPath: input.projectPath,
@@ -2278,6 +2527,9 @@ export function createGraphWorkflowExecutionLoop(
             break;
           }
           if (joinOutcome === "ran") {
+            continue;
+          }
+          if (joinOutcome === "retry") {
             continue;
           }
           // Completion invariant: the loop only reaches this point when nothing
