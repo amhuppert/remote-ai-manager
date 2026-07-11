@@ -1,0 +1,186 @@
+# Implementation Plan
+
+- [ ] 1. Foundation: pure worktree resolution and conversation ownership
+- [ ] 1.1 Build the discriminated persisted-worktree resolver
+  - Write failing tests first covering: shared execution lane, legacy per-context worktree, proven session isolation, pending/ready contexts, cleanup pending, removed, and failed cleanup aggregation across lane siblings
+  - Implement the client-safe resolver: lane first, then legacy worktree, then session worktree only for contexts whose status proves scheduling; shared-lane cleanup aggregation where removed wins, then pending; unscheduled contexts classify as not provisioned
+  - Keep the module free of server-only imports; run the production build to prove the client bundle stays clean
+  - Observable completion: resolver tests green; a pending/ready context returns not-provisioned and never the session path; production build passes
+  - _Requirements: 2.8, 2.9, 2.10, 9.5, 9.6_
+- [ ] 1.2 Refactor the orchestration target resolver to delegate with pinned call-site behavior
+  - Write failing tests pinning the context status each existing orchestration caller resolves at, so the fallback-to-throw change cannot land silently
+  - Delegate resolution to the pure resolver, unwrap the available variant, and throw the typed invariant error for unavailable states
+  - Observable completion: resolving an unscheduled context now throws; all three pinned call-site tests and existing orchestration regressions green
+  - _Requirements: 2.9_
+- [ ] 1.3 (P) Build the reverse conversation-ownership module
+  - Write failing tests first covering: pending approval ownership, pending user input, implementer and validator lane bindings (including one context carrying both — the post-fencing norm), task-state fallback ordering, and deterministic priority
+  - Move the existing lane-binding reverse lookup out of the user-input gate so the gate imports it unchanged; prove gate behavior with its existing tests without widening ask permission
+  - Add the forward/reverse round-trip consistency test: every lane with a recorded conversation reverse-resolves to a context on the same lane
+  - Observable completion: ownership tests and the round-trip consistency test green; user-input-gate tests green using the shared lookup
+  - _Requirements: 1.1, 1.4, 1.6_
+  - _Boundary: conversation-owner_
+
+- [ ] 2. Dev-server target contracts and server-side resolution
+- [ ] 2.1 Define target schemas and perform the ownership vocabulary rename
+  - Add the target-reference and resolved-target schemas plus response schemas carrying the resolved target; derive all types via inference
+  - Add the server-derived local URL to runtime state; store and emit the public project name separately from the project path; make the worktree path required on newly emitted status events
+  - Rename the session-ownership flag to worktree-ownership vocabulary atomically across registry, service, SSE schema, API schema, UI/CLI fixtures, and tests — no alias
+  - Observable completion: typecheck green across the repo with the rename applied everywhere; schema unit tests green
+  - _Requirements: 2.1, 2.11_
+- [ ] 2.2 Build the server-side dev-server target resolver
+  - Write failing tests first covering: session target, active worktree-lane context, shared lane, session-isolated context, partial and stale IDs, pending target, removed target, and missing directory
+  - Resolve session targets from session state; resolve workflow targets through the exact active execution and the pure resolver; map unavailable states to the typed error taxonomy; normalize resolved paths and verify directory existence — never accept or normalize a client-supplied path
+  - Emit the target-resolved debug log and target-rejected warn log with IDs only
+  - Observable completion: resolver test matrix green; each typed rejection carries the correct error code
+  - _Requirements: 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 10.3_
+  - _Depends: 1.1_
+
+- [ ] 3. Target-scoped dev-server service and HTTP contract
+- [ ] 3.1 Thread the required target through every service operation
+  - Extend service tests first for list, ensure/start, start-all, stop, and stop-unmanaged: response target metadata, stopped-row worktree path, local URL forwarding, and public project name
+  - Every public method takes the target reference and resolves it internally; remove the raw worktree override from the public surface; read per-worktree dev-server configuration from the resolved target so lane-local config applies
+  - Normalize registry key construction and worktree comparisons consistently across registry, reconciliation, and service filtering so the reservation owner key contract is stable
+  - Observable completion: service tests prove a lane list/start/stop operates on the lane worktree and a running server is reused instead of duplicated
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.11_
+- [ ] 3.2 Add target-scoped stop-all while preserving session lifecycle cleanup
+  - Write failing tests: stop-all for a lane target stops only that worktree's servers; session deletion/archive, merge completion, and CC shutdown still stop every server beneath the session including lane worktrees
+  - Implement stop-all on worktree-scoped registry cleanup; rename session reconciliation to target reconciliation; keep session-wide cleanup exclusively for lifecycle operations, never for the user-facing stop-all action
+  - Observable completion: lane stop-all isolation and session-lifecycle aggregate tests green
+  - _Requirements: 3.5, 3.8_
+- [ ] 3.3 Rewire route handlers for target parsing, scoped operations, and typed error bodies
+  - Write failing route tests: both-or-neither query validation, stop-all leaving session and sibling-lane servers running, and each typed resolver error mapped to its HTTP status
+  - Parse the target query once per request with schema validation; route stop and stop-all through the service; include the resolved target in every response; attach server-authored recovery instructions to both conflict responses per the CLI output contract
+  - Observable completion: route tests green including the lane stop-all isolation assertion and instruction fields present on both 409 bodies
+  - _Requirements: 2.3, 2.4, 2.5, 2.6, 2.7, 2.11, 3.1, 3.5_
+
+- [ ] 4. Concurrent multi-lane port safety
+- [ ] 4.1 (P) Build the port reservation service
+  - Write failing tests first covering: distinct reservations across targets, release reasons, range exhaustion, skipping ports reserved by other CC starts, and cancellation before spawn
+  - Implement the process-local reservation map with a serialized allocation critical section; reserve the selected port before leaving the critical section; never hold the mutex during readiness polling
+  - Observable completion: two simulated concurrent allocations for the same range receive different ports; reservations are empty after a simulated restart (process-local state only)
+  - _Requirements: 4.1, 4.2, 4.5, 10.1_
+  - _Boundary: port-reservation_
+- [ ] 4.2 Create the entry-state transition seam and route all status transitions through it
+  - Write failing tests proving every direct terminal transition (readiness timeout, spawn failure, process exit, explicit stop, liveness death, reconciliation correction) releases the reservation
+  - The seam owns status mutation, terminal reservation release, ownership resets, and event construction/broadcast; registry, reconciliation, and liveness lose their direct status writes; initialization remains the only direct assignment outside the seam
+  - Observable completion: no direct status assignment remains outside the seam and initialization; transition tests prove stopped/error always releases the reservation
+  - _Requirements: 4.5, 4.7_
+  - _Depends: 2.1, 4.1_
+- [ ] 4.3 Add start coalescing, early port visibility, and teardown-race protection
+  - Write failing tests: simultaneous same-target ensures spawn exactly one process; simultaneous lane-A/lane-B ensures reserve different ports before either readiness completes; a teardown that wins the race prevents the spawn; reset/shutdown cancel reservations even with no registry entry
+  - Register the starting entry with its assigned port before spawning; share in-flight starts per reservation owner; assert the reservation is active immediately before spawn; classify reservation-held ports as managed so they never surface as unmanaged conflicts
+  - Observable completion: coalescing, race, and cancellation tests green; a starting server already reports its port
+  - _Requirements: 4.3, 4.4, 4.6, 4.7, 3.6_
+  - _Depends: 4.2_
+
+- [ ] 5. CLI and dynamic help target propagation
+- [ ] 5.1 (P) Build the shared CLI target inference and URL construction
+  - Write failing tests first: ordinary session, implementer/validator ambient environment, partial environment exits with usage code 2 naming the missing variable and issues no request, explicit project/session flags ignore ambient workflow IDs
+  - One exported URL builder serves list, start, readiness polling, stop, and fixture discovery so every request carries identical target parameters
+  - Observable completion: inference tests green including the explicit-flag override regression (running against another session from inside a lane reads that session's target)
+  - _Requirements: 7.1, 7.2, 7.3_
+  - _Boundary: dev-target CLI helper_
+  - _Depends: 3.3_
+- [ ] 5.2 Integrate lane targeting into the dev and fixture commands
+  - Write failing command tests: worktree line in text output, JSON passthrough of server-returned target and local URL without client derivation, polling retains the target pair, and the stale-environment case — a superseded execution ID gets the conflict response, the command exits with the operation-failed code rendering the server instruction verbatim, and no session-target request is ever issued
+  - Add a failing fixture test proving lane server discovery retains the target query
+  - Observable completion: command and fixture tests green; the stale-env case shows the rendered instruction and zero fallback requests
+  - _Requirements: 7.4, 7.5, 7.6, 7.7_
+- [ ] 5.3 Make dynamic help and agent-facing guidance match command behavior
+  - Write failing provider tests: dev and fixture help read the requested workflow target, explicit project/session flags suppress ambient lane IDs, and a partial workflow environment yields static-only help
+  - Update the help entries, help-registry contract, and the CC CLI skill content to state lane auto-targeting, explicit-flag behavior, independent lane ports, and report-don't-adopt for unmanaged listeners
+  - Observable completion: provider and help contract tests green; help output inside a lane names the lane worktree
+  - _Requirements: 7.8, 7.9_
+
+- [ ] 6. Validator agent environment parity
+- [ ] 6.1 (P) Thread workflow identity through task runs
+  - Write failing tests proving the workflow context is installed on conversation runtime state after the actor is ensured and before the task run is submitted, so backend runtime construction sees it
+  - Extend the task-run input with optional workflow identity; non-lane runs remain without workflow variables
+  - Observable completion: task-run tests prove identity lands before backend creation and stays absent for non-lane runs
+  - _Requirements: 8.1, 8.4_
+  - _Boundary: Validator parity plumbing_
+- [ ] 6.2 Dispatch validator turns with workflow identity for both backends
+  - Write failing validator-runner tests (on the post-fencing baseline) for Claude and Codex dispatches asserting workflow context, lane working directory, and transcript provenance remain distinct; the pre-dispatch lane-binding persistence is not reordered or bypassed
+  - Extend session-env and backend runtime tests to prove both workflow variables reach the validator child environment and remain absent for non-lane runs; a validator listing dev servers reports the same context worktree as its implementer
+  - Update the embedded runtime guidance to the lane-aware wording and pin it with an exact-text assertion
+  - Observable completion: validator dispatch tests green for both backends; the runtime-guidance assertion pins the new wording
+  - _Requirements: 8.1, 8.2, 8.3, 8.5_
+
+- [ ] 7. Conversation review surface and target-aware dev-server data
+- [ ] 7.1 (P) Extend the shared GET fetcher to preserve the error envelope
+  - Write failing fetcher tests proving GET errors preserve status, code, output, details, and issues exactly as the mutation fetcher does
+  - Observable completion: fetcher tests green; a typed server rejection is distinguishable by code on the client
+  - _Requirements: 5.4_
+  - _Boundary: shared apiFetch plumbing_
+- [ ] 7.2 Refactor the dev-server hook to target-aware, schema-validated data
+  - Write failing hook tests: schema parsing for every response, target-aware URLs and cache keys (opaque target key, never a raw path), every mutation retains the target, target-switch clears pending/conflict state, stale mutation callbacks from a previous target are ignored, typed errors do not retry and never re-issue as a session request, and a stale-target error refreshes workflow state once then stays unavailable
+  - Disable fetching while a workflow conversation's target is loading or unavailable; consume the server-returned target and local URL; preserve optimistic starting and visible stop-pending behavior
+  - Observable completion: hook test matrix green; two mounted targets never cross-contaminate status, pending, or conflict state
+  - _Requirements: 5.1, 5.3, 5.4, 5.5, 5.7, 5.8_
+  - _Depends: 3.3, 7.1_
+- [ ] 7.3 Compute the conversation worktree selection and thread it to the info surfaces
+  - Write failing workspace and surface tests: ordinary session conversation, approval-lane conversation, validator-lane conversation, loading state, and unavailable state
+  - Ordinary conversations select the session; workflow-managed roles resolve through the reverse-ownership module and the pure resolver against the active execution; loading never substitutes the session worktree; unavailable states render explicitly, non-copyable, with dev-server controls hidden or disabled; the session's own worktree state is never mutated
+  - Thread the selected worktree and target to the desktop info strip, details popover, and mobile info panel; add info-strip composition stories for ordinary, approval-lane, loading, and unavailable states
+  - Observable completion: at an approval gate for a worktree-isolated context, all three info surfaces display and copy the lane path; surface tests green
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 5.5_
+  - _Depends: 1.3, 7.2_
+- [ ] 7.4 Scope the dev-server panel to the selected target
+  - Write failing panel tests: the header shows the shortened target path with full-path copy; running server names link preferring the remote URL with local-URL fallback; controls hidden or disabled for a loading/unavailable target
+  - Update the dev-server drawer stories for the target-state matrix: session target, lane target, two parallel lane ports, starting, unmanaged conflict, and mobile sheet
+  - Observable completion: panel tests green; the drawer story matrix covers all six target states
+  - _Requirements: 5.6, 5.7_
+  - _Depends: 7.3_
+- [ ] 7.5 (P) Harden the copy control for keyboard and touch
+  - Write failing tests: Enter and Space copy exactly as click does; focus shows the canonical visible outline
+  - Provide at least a 44px touch target for mobile and graph placements without changing the desktop info-strip footprint
+  - Observable completion: keyboard activation and focus-visibility tests green
+  - _Requirements: 1.7, 1.8, 1.9_
+  - _Boundary: CopyableId_
+- [ ] 7.6 Scope real-time invalidation and event identity by worktree
+  - Write failing tests: a dev-server status event refreshes only the affected session's mounted dev-server views; the event scope identity includes the worktree so same-named servers in different lanes stay distinct
+  - Parse the status event in the notification listener and invalidate the session prefix only; keep SSE as a notification with GET authoritative
+  - Observable completion: invalidation tests prove unrelated projects are not refetched and lane-shared sibling views refresh
+  - _Requirements: 5.2_
+  - _Depends: 2.1_
+
+- [ ] 8. Execution page worktree display
+- [ ] 8.1 (P) Derive and render per-context worktree state on graph nodes
+  - Extend graph-derivation tests first for resolved session, lane, not-provisioned, removing, and removed node data
+  - Every execution-mode context node renders a compact worktree row: available paths shortened with full-path tooltip and copy using the hardened copy control with its touch-target variant; unavailable states render the literal Not provisioned, Removing, or Removed as non-interactive values; copying neither selects, drags, nor pans the canvas
+  - Session-isolated running/completed contexts show the session worktree; pending contexts do not pre-claim it; no dev-server controls appear on nodes
+  - Observable completion: derivation and node tests green including copy-interaction isolation on the canvas
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 1.9_
+  - _Boundary: Execution-page worktree rows_
+  - _Depends: 1.1, 7.5_
+- [ ] 8.2 Show the resolved worktree in the inspector and thread session identity to the canvas
+  - Write failing inspector and panel tests for session-path propagation and the same available/unavailable states at desktop and mobile widths
+  - Fetch session detail for the connected panel so session-isolated contexts resolve; render the inspector worktree row below the setup strip with the full copy affordance
+  - Add Storybook states for session target, active lane, shared lane, not provisioned, removing, and removed on both the node and inspector; verify accessible names and keyboard-focusable copy controls
+  - Observable completion: inspector/panel tests green; stories cover the full target-state matrix
+  - _Requirements: 6.1, 6.2, 6.3, 6.4_
+  - _Depends: 7.5_
+
+- [ ] 9. Lifecycle integration and full verification
+- [ ] 9.1 Persist shared-lane cleanup results before workflow completion
+  - Extend the parallel execution integration test first to prove shared-lane cleanup persists pending then removed-or-failed for every context on the lane before the workflow completes
+  - Move merged-lane cleanup before the terminal completion transition inside the fenced loop generation; mark every lane context pending, run stop-before-remove cleanup, then atomically record removed or failed; cleanup failure stays non-fatal to completion
+  - Prove crash-window recovery: a recovering loop re-runs cleanup idempotently for lane contexts not yet recorded as removed before completing; no new persisted field is introduced
+  - Observable completion: after completion every lane context reads removed (or failed) durably; recovery re-run test green
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.2_
+  - _Boundary: Cleanup reordering_
+- [ ] 9.2 Extend lifecycle regression gates for target isolation and reservation release
+  - Extend lane-cleanup, parallel-worktree, workflow reset/abort/clear, and session-teardown tests to cover reserved-port release and target isolation: lane teardown stops only that lane's servers before directory removal; approval leaves the context's servers running; session deletion and CC shutdown still stop every server beneath the session including lane worktrees
+  - Observable completion: all extended lifecycle regressions green
+  - _Requirements: 3.5, 3.8, 3.9, 3.10, 4.6_
+  - _Depends: 4.3, 9.1_
+- [ ] 9.3 Align remaining agent-facing content and run full verification gates
+  - Update steering, project-configuration docs, the agent-context and dev-server-setup skill content, and Next.js/live-feature agent guidance to the lane-aware dev-server contract; remove inaccurate session-only and adoption claims; leave unrelated session-worktree contracts unchanged
+  - Run the full test suite, typecheck, lint, and production build
+  - Observable completion: all four gates green on the branch; no remaining in-repo claim that dev servers are session-only
+  - _Requirements: 7.9, 10.2_
+- [ ] 9.4 Live end-to-end acceptance pass
+  - Execute the acceptance matrix live: two concurrent worktree lanes plus an approval gate; per-lane ensure reports that lane's worktree and a distinct port while the session server is untouched; gated conversation surfaces show and copy the lane path; lane stop-all leaves the sibling lane and session running; Claude and Codex validators report the context worktree; teardown stops and releases only the affected lane's servers
+  - Verify execution-page nodes show copyable resolved paths for scheduled contexts and Not provisioned for unscheduled ones
+  - Observable completion: every acceptance-matrix row observed live with the expected target and isolation
+  - _Requirements: 1.4, 3.5, 4.1, 6.1, 7.1, 8.2_
