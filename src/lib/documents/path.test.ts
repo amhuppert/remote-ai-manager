@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isMarkdownPath,
+  normalizeMarkdownLocator,
   normalizeDocPath,
   resolveWithinWorktree,
 } from "./path";
@@ -79,6 +80,46 @@ describe("normalizeDocPath", () => {
       reason: "non-markdown",
     });
     expect(normalizeDocPath(`${WORKTREE}/build/output.js`, WORKTREE)).toEqual({
+      ok: false,
+      reason: "non-markdown",
+    });
+  });
+});
+
+describe("normalizeMarkdownLocator", () => {
+  it("returns a worktree-relative identity for paths inside the worktree", () => {
+    expect(
+      normalizeMarkdownLocator(`${WORKTREE}/docs/../README.md`, WORKTREE),
+    ).toEqual({ ok: true, docPath: "README.md", location: "worktree" });
+  });
+
+  it("returns a canonical absolute identity for paths outside the worktree", () => {
+    expect(
+      normalizeMarkdownLocator(
+        "/Users/alex/shared/../notes/runbook.md",
+        WORKTREE,
+      ),
+    ).toEqual({
+      ok: true,
+      docPath: "/Users/alex/notes/runbook.md",
+      location: "external",
+    });
+  });
+
+  it("resolves a relative escape to a canonical external identity", () => {
+    expect(normalizeMarkdownLocator("../shared/guide.md", WORKTREE)).toEqual({
+      ok: true,
+      docPath: "/Users/alex/github/command-center/.worktrees/shared/guide.md",
+      location: "external",
+    });
+  });
+
+  it("rejects empty and non-markdown locators", () => {
+    expect(normalizeMarkdownLocator("", WORKTREE)).toEqual({
+      ok: false,
+      reason: "non-markdown",
+    });
+    expect(normalizeMarkdownLocator("../shared/guide.mdx", WORKTREE)).toEqual({
       ok: false,
       reason: "non-markdown",
     });

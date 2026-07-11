@@ -17,6 +17,16 @@ function toolResult(toolUseId: string, content: string): MessageContentBlock {
 }
 
 describe("extractMarkdownFileRefs — native edits", () => {
+  it("detects a Read on a .md file with origin 'read'", () => {
+    expect(
+      extractMarkdownFileRefs([
+        toolUse("Read", { file_path: "docs/guide.MD" }),
+      ]),
+    ).toEqual([
+      { docPath: "docs/guide.MD", fileName: "guide.MD", origin: "read" },
+    ]);
+  });
+
   it("detects a Write on a .md file with origin 'write'", () => {
     const refs = extractMarkdownFileRefs([
       toolUse("Write", { file_path: "docs/guide.md" }),
@@ -56,9 +66,9 @@ describe("extractMarkdownFileRefs — native edits", () => {
     ).toEqual([]);
   });
 
-  it("ignores unrelated tools like Read even on a .md file", () => {
+  it("ignores unrelated tools", () => {
     expect(
-      extractMarkdownFileRefs([toolUse("Read", { file_path: "design.md" })]),
+      extractMarkdownFileRefs([toolUse("Glob", { pattern: "**/*.md" })]),
     ).toEqual([]);
   });
 });

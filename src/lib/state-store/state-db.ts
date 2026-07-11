@@ -254,6 +254,26 @@ const SCHEMA_DDL = `
     UNIQUE (project_path, session_name, file_path)
   );
 
+  CREATE TABLE IF NOT EXISTS session_markdown_documents (
+    project_path   TEXT NOT NULL,
+    session_name   TEXT NOT NULL,
+    doc_path       TEXT NOT NULL,
+    origin         TEXT NOT NULL,
+    first_seen_at  TEXT NOT NULL,
+    last_seen_at   TEXT NOT NULL,
+    PRIMARY KEY (project_path, session_name, doc_path),
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_markdown_documents_recent
+    ON session_markdown_documents (
+      project_path,
+      session_name,
+      last_seen_at DESC,
+      doc_path ASC
+    );
+
   CREATE TABLE IF NOT EXISTS document_comments (
     id            TEXT PRIMARY KEY,
     project_path  TEXT NOT NULL,

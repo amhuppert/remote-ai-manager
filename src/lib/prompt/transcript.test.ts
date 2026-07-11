@@ -1913,6 +1913,56 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it("indexes visible Markdown refs before broadcasting", async () => {
+    const order: string[] = [];
+    setTranscriptDeps({
+      indexMarkdownDocuments: vi.fn().mockImplementation(async () => {
+        order.push("index");
+      }),
+      broadcast: () => {
+        order.push("broadcast");
+      },
+    });
+
+    await appendTranscriptEntry(
+      "conv-index",
+      {
+        timestamp: "2026-07-11T10:00:00.000Z",
+        type: "assistant",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            name: "Read",
+            input: { file_path: "docs/plan.md" },
+          },
+        ],
+      },
+      TEST_DIR,
+      meta,
+    );
+
+    expect(order).toEqual(["index", "broadcast"]);
+  });
+
+  it("broadcasts even when Markdown indexing fails", async () => {
+    const broadcast = vi.fn();
+    setTranscriptDeps({
+      indexMarkdownDocuments: vi.fn().mockRejectedValue(new Error("db busy")),
+      broadcast,
+    });
+
+    await expect(
+      appendTranscriptEntry(
+        "conv-index-failure",
+        makeEntry("assistant", "still visible"),
+        TEST_DIR,
+        meta,
+      ),
+    ).resolves.toBeUndefined();
+    expect(broadcast).toHaveBeenCalledTimes(1);
+  });
+
   describe("seq cache", () => {
     beforeEach(() => {
       _resetLastSeqCacheForTesting();

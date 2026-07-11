@@ -8,6 +8,7 @@ import type { GraphWorkflowExecutionsRepo } from "./graph-workflow-executions-re
 import type { ProjectConversationsRepo } from "./project-conversations-repo";
 import type { ProjectsRepo } from "./projects-repo";
 import type { ReferenceDocumentsRepo } from "./reference-documents-repo";
+import type { SessionMarkdownDocumentsRepo } from "./session-markdown-documents-repo";
 import type { SessionsRepo } from "./sessions-repo";
 import type { StateAggregate } from "./state-aggregate";
 import type { WriteQueue } from "./write-queue";
@@ -20,6 +21,7 @@ export interface AllRepos {
   conversations: ConversationsRepo;
   projectConversations: ProjectConversationsRepo;
   referenceDocuments: ReferenceDocumentsRepo;
+  sessionMarkdownDocuments: SessionMarkdownDocumentsRepo;
   documentComments: DocumentCommentsRepo;
   graphWorkflowEvents: GraphWorkflowEventsRepo;
   graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;

@@ -97,7 +97,7 @@ describe("MarkdownFileCard in MessageContent", () => {
     ).toBeInTheDocument();
   });
 
-  it("indicates an out-of-worktree file as unavailable instead of opening", async () => {
+  it("opens an out-of-worktree Markdown file by canonical absolute path", async () => {
     const user = userEvent.setup();
     render(
       scoped([
@@ -110,15 +110,11 @@ describe("MarkdownFileCard in MessageContent", () => {
       ]),
     );
 
-    expect(screen.getByText("outside.md")).toBeInTheDocument();
-    expect(screen.getByText("unavailable")).toBeInTheDocument();
-    // No actionable button to open it.
-    expect(
-      screen.queryByRole("button", { name: /outside\.md/ }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByText("outside.md"));
-    expect(useSessionDetailStore.getState().openDocuments).toEqual([]);
+    await user.click(screen.getByRole("button", { name: /outside\.md/ }));
+    expect(useSessionDetailStore.getState().activeDocPath).toBe(
+      "/elsewhere/outside.md",
+    );
+    expect(screen.getByText("external")).toBeInTheDocument();
   });
 
   it("renders no file card outside a document scope", () => {

@@ -7,11 +7,13 @@ import {
   PromptEditorFileMentionPopup,
   type FileMentionPopupHandle,
 } from "@/features/session/prompt/PromptEditorFileMentionPopup";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
 
 const mockFiles = [
   { path: "src/index.ts" },
   { path: "src/components/Button.tsx" },
   { path: "src/components/Modal.tsx" },
+  { path: "docs/plan.md" },
 ];
 
 const { mockUseProjectFilesQuery } = vi.hoisted(() => ({
@@ -54,6 +56,7 @@ beforeEach(() => {
     error: null,
   });
   Element.prototype.scrollIntoView = vi.fn();
+  useSessionDetailStore.getState().resetStore();
 });
 
 describe("PromptEditorFileMentionPopup", () => {
@@ -159,6 +162,39 @@ describe("PromptEditorFileMentionPopup", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("opens a Markdown result without inserting it", async () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    await act(async () => {
+      renderPopup({ query: "plan", onSelect, onClose });
+    });
+
+    screen
+      .getByRole("button", { name: "Open docs/plan.md in Markdown viewer" })
+      .click();
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useSessionDetailStore.getState().activeDocPath).toBe("docs/plan.md");
+  });
+
+  it("Alt+Enter opens the active Markdown result", async () => {
+    const ref = createRef<FileMentionPopupHandle>();
+    const onSelect = vi.fn();
+    await act(async () => {
+      renderPopup({ query: "plan", onSelect }, ref);
+    });
+
+    act(() => {
+      ref.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter", altKey: true }),
+      );
+    });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(useSessionDetailStore.getState().activeDocPath).toBe("docs/plan.md");
   });
 });
 

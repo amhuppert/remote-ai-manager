@@ -11,6 +11,10 @@ export type NormalizeDocPathResult =
   | { ok: true; docPath: string }
   | { ok: false; reason: "non-markdown" | "traversal" | "outside-worktree" };
 
+export type NormalizeMarkdownLocatorResult =
+  | { ok: true; docPath: string; location: "worktree" | "external" }
+  | { ok: false; reason: "non-markdown" };
+
 /** A markdown path ends in `.md` (case-insensitive). `.mdx` is not markdown. */
 export function isMarkdownPath(p: string): boolean {
   return /\.md$/i.test(p);
@@ -53,6 +57,52 @@ function resolveAbsoluteSegments(segments: string[]): string[] {
     out.push(seg);
   }
   return out;
+}
+
+function canonicalAbsolutePath(segments: string[]): string {
+  return `/${resolveAbsoluteSegments(segments).join("/")}`;
+}
+
+function isSegmentPrefix(
+  prefix: readonly string[],
+  value: readonly string[],
+): boolean {
+  if (value.length <= prefix.length) return false;
+  return prefix.every((segment, index) => value[index] === segment);
+}
+
+/**
+ * Canonicalize a Markdown locator for the viewer. Worktree files use the
+ * existing relative identity; paths outside it use an absolute POSIX identity
+ * so exact session-index authorization can distinguish them safely.
+ */
+export function normalizeMarkdownLocator(
+  input: string,
+  worktreeRoot: string,
+): NormalizeMarkdownLocatorResult {
+  const trimmed = input.trim();
+  if (trimmed.length === 0 || !isMarkdownPath(trimmed)) {
+    return { ok: false, reason: "non-markdown" };
+  }
+
+  const rootSegments = resolveAbsoluteSegments(splitSegments(worktreeRoot));
+  const absoluteSegments = trimmed.startsWith("/")
+    ? resolveAbsoluteSegments(splitSegments(trimmed))
+    : resolveAbsoluteSegments([...rootSegments, ...splitSegments(trimmed)]);
+
+  if (isSegmentPrefix(rootSegments, absoluteSegments)) {
+    return {
+      ok: true,
+      docPath: absoluteSegments.slice(rootSegments.length).join("/"),
+      location: "worktree",
+    };
+  }
+
+  return {
+    ok: true,
+    docPath: canonicalAbsolutePath(absoluteSegments),
+    location: "external",
+  };
 }
 
 /**

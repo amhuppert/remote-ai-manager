@@ -11,6 +11,11 @@ const items: FileAutocompleteListItem[] = [
   { id: "2", path: "src/lib/utils.ts", matchIndices: [4, 5, 6] },
 ];
 
+const openItems: FileAutocompleteListItem[] = [
+  ...items,
+  { id: "3", path: "docs/plan.md", openable: true },
+];
+
 describe("FileAutocompleteList", () => {
   it("renders the file count footer when no totalCount is provided", () => {
     render(
@@ -66,7 +71,55 @@ describe("FileAutocompleteList", () => {
     expect(onSelect).toHaveBeenCalledWith(items[1]);
   });
 
-  it("gives every option a stable unique id for aria-activedescendant wiring", () => {
+  it("renders a separate Open action only for openable Markdown items", () => {
+    const onOpen = vi.fn();
+    render(
+      <FileAutocompleteList
+        items={openItems}
+        selectedIndex={0}
+        onHover={() => {}}
+        onSelect={() => {}}
+        onOpen={onOpen}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Open docs/plan.md in Markdown viewer",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Open src/components/App.tsx in Markdown viewer",
+      }),
+    ).toBeNull();
+    expect(screen.getByRole("grid", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(openItems.length);
+  });
+
+  it("opens without selecting the row", () => {
+    const onOpen = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <FileAutocompleteList
+        items={openItems}
+        selectedIndex={2}
+        onHover={() => {}}
+        onSelect={onSelect}
+        onOpen={onOpen}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Open docs/plan.md in Markdown viewer",
+      }),
+    );
+    expect(onOpen).toHaveBeenCalledWith(openItems[2]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("gives every row a stable unique id for aria-activedescendant wiring", () => {
     const { container } = render(
       <FileAutocompleteList
         items={items}
@@ -75,7 +128,7 @@ describe("FileAutocompleteList", () => {
         onSelect={() => {}}
       />,
     );
-    const ids = Array.from(container.querySelectorAll('[role="option"]')).map(
+    const ids = Array.from(container.querySelectorAll('[role="row"]')).map(
       (o) => o.getAttribute("id"),
     );
     expect(ids).toHaveLength(items.length);

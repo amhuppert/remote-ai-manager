@@ -13,7 +13,7 @@ const items: FileAutocompleteListItem[] = [
   },
   { id: "3", path: "src/app/globals.css" },
   { id: "4", path: "src/features/session/prompt/PromptEditor.tsx" },
-  { id: "5", path: "README.md" },
+  { id: "5", path: "README.md", openable: true },
 ];
 
 const meta = {
@@ -47,6 +47,7 @@ export const Default = {
     selectedIndex: 1,
     onHover: () => {},
     onSelect: () => {},
+    onOpen: () => {},
     totalCount: items.length,
   },
 } satisfies Story;

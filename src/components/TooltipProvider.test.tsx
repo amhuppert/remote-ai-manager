@@ -36,9 +36,14 @@ describe("TooltipProvider", () => {
     });
   }
 
+  it("does not expose an empty tooltip to assistive technology", () => {
+    expect(portal()).not.toHaveAttribute("role");
+  });
+
   it("shows the tooltip when a data-tooltip element is hovered", () => {
     hoverTrigger();
     expect(isShowing("New conversation")).toBe(true);
+    expect(portal()).toHaveAttribute("role", "tooltip");
   });
 
   it("hides on mouseleave from the tracked trigger", () => {

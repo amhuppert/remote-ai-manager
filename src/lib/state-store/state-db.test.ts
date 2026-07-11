@@ -22,6 +22,7 @@ const EXPECTED_TABLES = [
   "sessions",
   "conversations",
   "reference_documents",
+  "session_markdown_documents",
   "document_comments",
   "notifications",
   "job_records",

@@ -23,6 +23,8 @@ import {
 } from "@/lib/context-artifacts/sse-cache";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
 import { computeAlignmentInvalidations } from "@/lib/session-alignment/sse-invalidation";
+import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
+import { markdownDocumentKeys } from "@/lib/documents/query-keys";
 import { sessionAlignmentUpdatedEventSchema } from "@/lib/session-alignment/schemas";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import { reconnectReconcile } from "@/lib/events/sse-reconnect";
@@ -416,6 +418,14 @@ export default function NotificationListener(): null {
               d.conversationId,
             );
       appendMessageToQuery(queryKey, { ...d.message, seq: d.seq });
+      if (
+        d.scope === "session" &&
+        extractMarkdownFileRefs(d.message.content).length > 0
+      ) {
+        void queryClient.invalidateQueries({
+          queryKey: markdownDocumentKeys.list(d.projectName, d.sessionName),
+        });
+      }
     });
 
     es.addEventListener("message-updated", (event) => {

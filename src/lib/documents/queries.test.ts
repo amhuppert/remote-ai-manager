@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   classifyDocumentContentError,
   useDocumentContentQuery,
+  useMarkdownDocumentsQuery,
 } from "./queries";
 import { documentContentKeys } from "./query-keys";
 import { ApiCallError } from "@/lib/api/errors";
@@ -104,6 +105,44 @@ describe("useDocumentContentQuery", () => {
   it("keys the cache by document path", () => {
     expect(documentContentKeys.content("proj", "sess", "a.md")).not.toEqual(
       documentContentKeys.content("proj", "sess", "b.md"),
+    );
+  });
+});
+
+describe("useMarkdownDocumentsQuery", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("loads the session-scoped unified Markdown list", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse([
+        {
+          docPath: "docs/plan.md",
+          title: "plan.md",
+          origin: "edit",
+          firstSeenAt: "2026-07-11T10:00:00.000Z",
+          lastSeenAt: "2026-07-11T11:00:00.000Z",
+          location: "worktree",
+          registered: false,
+          description: null,
+        },
+      ]),
+    );
+
+    const { result } = renderHook(
+      () => useMarkdownDocumentsQuery("proj", "sess"),
+      { wrapper: wrapperFor(makeClient()) },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.[0]?.docPath).toBe("docs/plan.md");
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain(
+      "/api/projects/proj/sessions/sess/markdown-documents",
     );
   });
 });

@@ -241,7 +241,7 @@ export default function TooltipProvider(): React.JSX.Element | null {
         zIndex: 99999,
         transition: "opacity 0.12s ease",
       }}
-      role="tooltip"
+      role={tooltip.visible ? "tooltip" : undefined}
     >
       {tooltip.text}
     </div>,

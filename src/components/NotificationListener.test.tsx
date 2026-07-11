@@ -21,6 +21,7 @@ import type {
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
+import { markdownDocumentKeys } from "@/lib/documents/query-keys";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
 
@@ -647,6 +648,40 @@ describe("NotificationListener", () => {
     const cached = client.getQueryData<Array<{ seq: number }>>(key);
     expect(cached?.[1]?.seq).toBe(1);
     expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: key });
+  });
+
+  it("invalidates the session Markdown list when an appended message contains a Markdown ref", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+    renderWithClient(client);
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 2,
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            name: "Read",
+            input: { file_path: "docs/plan.md" },
+          },
+        ],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: markdownDocumentKeys.list("proj", "sess"),
+      }),
+    );
   });
 
   it("merges consecutive same-role message-appended events into the previous cache entry", async () => {

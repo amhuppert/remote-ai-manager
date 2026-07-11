@@ -13,6 +13,7 @@ import {
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
+import type { SessionMarkdownDocument } from "@/lib/documents/schemas";
 import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
@@ -390,6 +391,37 @@ export function createAccessors(core: StateStoreCore) {
     }
   }
 
+  async function getSessionMarkdownDocuments(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionMarkdownDocument[]> {
+    const start = performance.now();
+    try {
+      return repos.sessionMarkdownDocuments.findBySession(
+        projectPath,
+        sessionName,
+      );
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getSessionMarkdownDocuments",
+        projectPath,
+        sessionName,
+      });
+    }
+  }
+
+  async function isSessionMarkdownDocumentIndexed(
+    projectPath: string,
+    sessionName: string,
+    docPath: string,
+  ): Promise<boolean> {
+    return repos.sessionMarkdownDocuments.exists(
+      projectPath,
+      sessionName,
+      docPath,
+    );
+  }
+
   async function getDocumentComments(
     projectPath: string,
     sessionName: string,
@@ -585,6 +617,8 @@ export function createAccessors(core: StateStoreCore) {
     listAllProjectConversations,
     getSpawnedSessionStatuses,
     getReferenceDocuments,
+    getSessionMarkdownDocuments,
+    isSessionMarkdownDocumentIndexed,
     getDocumentComments,
     getSessionDocumentComments,
     getDocumentCommentInScope,

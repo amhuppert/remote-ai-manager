@@ -25,6 +25,28 @@ describe("AutocompleteListbox", () => {
     ).toBeInTheDocument();
   });
 
+  it("supports an APG grid popup when rows expose secondary actions", () => {
+    render(
+      <AutocompleteListbox label="Files" popupRole="grid">
+        <AutocompleteOption
+          active
+          semanticRole="row"
+          onSelect={() => {}}
+          onHover={() => {}}
+        >
+          <div role="gridcell">README.md</div>
+          <div role="gridcell">
+            <button type="button">Open</button>
+          </div>
+        </AutocompleteOption>
+      </AutocompleteListbox>,
+    );
+
+    expect(screen.getByRole("grid", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("row")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+  });
+
   it("applies the popup recipe and passes through the max-height utility", () => {
     const { container } = render(
       <AutocompleteListbox label="Files" maxHeightClassName="max-h-[340px]">

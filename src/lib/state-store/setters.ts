@@ -4,6 +4,7 @@ import { timed } from "@/lib/logging/timed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
+import type { SessionMarkdownDocument } from "@/lib/documents/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 import type {
@@ -654,6 +655,34 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     );
   }
 
+  async function upsertSessionMarkdownDocuments(
+    projectPath: string,
+    sessionName: string,
+    documents: readonly SessionMarkdownDocument[],
+  ): Promise<void> {
+    return writeQueue.withWriteQueue(
+      `upsertSessionMarkdownDocuments[${sessionName}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "upsertSessionMarkdownDocuments",
+            projectPath,
+            sessionName,
+            documentCount: documents.length,
+          },
+          async () => {
+            repos.sessionMarkdownDocuments.upsertMany(
+              projectPath,
+              sessionName,
+              documents,
+            );
+          },
+        ),
+    );
+  }
+
   /** Upsert a document comment through the serialized write queue. */
   async function upsertDocumentComment(
     comment: DocumentComment,
@@ -709,6 +738,7 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     mutateSessionWorkflowEnvelopes,
     createReferenceDocument,
     deleteReferenceDocument,
+    upsertSessionMarkdownDocuments,
     upsertDocumentComment,
     deleteDocumentComment,
   };

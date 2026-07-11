@@ -33,6 +33,10 @@ export const listAllProjectConversations =
   defaultStore.listAllProjectConversations;
 export const getSpawnedSessionStatuses = defaultStore.getSpawnedSessionStatuses;
 export const getReferenceDocuments = defaultStore.getReferenceDocuments;
+export const getSessionMarkdownDocuments =
+  defaultStore.getSessionMarkdownDocuments;
+export const isSessionMarkdownDocumentIndexed =
+  defaultStore.isSessionMarkdownDocumentIndexed;
 export const getDocumentComments = defaultStore.getDocumentComments;
 export const getSessionDocumentComments =
   defaultStore.getSessionDocumentComments;
@@ -82,3 +86,5 @@ export const listArchivedGraphWorkflowExecutions =
   defaultStore.listArchivedGraphWorkflowExecutions;
 export const createReferenceDocument = defaultStore.createReferenceDocument;
 export const deleteReferenceDocument = defaultStore.deleteReferenceDocument;
+export const upsertSessionMarkdownDocuments =
+  defaultStore.upsertSessionMarkdownDocuments;

@@ -31,6 +31,7 @@ import {
   type MessageAppendedEvent,
 } from "@/lib/conversations/schemas";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
+import { indexSessionMarkdownDocuments as defaultIndexMarkdownDocuments } from "@/lib/documents/session-index";
 // ============================================================
 // Transcript Entry Types
 // ============================================================
@@ -122,10 +123,17 @@ export interface TranscriptBroadcastMeta {
 
 interface TranscriptDeps {
   broadcast: BroadcastFn;
+  indexMarkdownDocuments(input: {
+    projectName: string;
+    sessionName: string;
+    seenAt: string;
+    content: MessageContentBlock[];
+  }): Promise<void>;
 }
 
 const productionDeps: TranscriptDeps = {
   broadcast: defaultBroadcast,
+  indexMarkdownDocuments: defaultIndexMarkdownDocuments,
 };
 
 let activeDeps: TranscriptDeps = productionDeps;
@@ -222,6 +230,24 @@ export async function appendTranscriptEntry(
 
   const line = JSON.stringify(entry) + "\n";
   await appendFile(filePath, line, "utf-8");
+
+  if (meta && isVisibleEntry(entry)) {
+    try {
+      await activeDeps.indexMarkdownDocuments({
+        projectName: meta.projectName,
+        sessionName: meta.sessionName,
+        seenAt: entry.timestamp,
+        content: entry.content,
+      });
+    } catch (err) {
+      transcriptLogger.warn("documents-index.index_failed", {
+        projectName: meta.projectName,
+        sessionName: meta.sessionName,
+        conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
 
   // direct broadcast (not StatusBus): clients register
   // `es.addEventListener('message-appended', ...)`, which requires a dedicated

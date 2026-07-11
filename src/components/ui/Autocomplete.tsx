@@ -1,22 +1,21 @@
 "use client";
 
-// Presentational autocomplete-popup primitive — the shared shell + listbox/option
-// ARIA semantics for CC's type-to-filter surfaces (slash commands, file mentions,
-// conversation mentions). It implements the *popup half* of the WAI-ARIA APG
-// "Combobox" pattern's list autocomplete:
+// Presentational autocomplete-popup primitive — the shared shell plus
+// listbox/option or grid/row ARIA semantics for CC's type-to-filter surfaces.
+// It implements the popup half of the WAI-ARIA APG "Combobox" pattern:
 //   - Combobox (editable):  https://www.w3.org/WAI/ARIA/apg/patterns/combobox/
 //   - Listbox:              https://www.w3.org/WAI/ARIA/apg/patterns/listbox/
+//   - Grid:                 https://www.w3.org/WAI/ARIA/apg/patterns/grid/
 //
 // IMPORTANT — what this primitive does NOT do. There is no Radix Combobox
 // primitive, so behaviour is NOT Radix-backed here. This wrapper owns ONLY CC
-// appearance plus the `role="listbox"` / `role="option"` / `aria-selected`
-// semantics and active-row scrolling. Filtering, focus management, and keyboard
-// navigation stay with each host (the Tiptap editor / composer / command input),
-// which keeps DOM focus on the text input and forwards keys to drive the active
-// index — the combobox's managed-focus model. Hosts are responsible for the
-// input-side roles (`role="combobox"`, `aria-expanded`, `aria-controls`,
-// `aria-activedescendant`); this primitive exposes stable option `id`s so a host
-// can wire `aria-activedescendant`. See docs/reports/combobox-autocomplete-decision.md.
+// appearance plus popup semantics and active-row scrolling. Listbox is the
+// default for single-action choices; grid supports rows with a secondary native
+// control without nesting it inside an option. Filtering, focus management, and
+// keyboard navigation stay with each host, which keeps DOM focus on the text
+// input and forwards keys to drive the active index. Hosts are responsible for
+// the input-side roles and `aria-activedescendant` wiring. See
+// docs/reports/combobox-autocomplete-decision.md.
 
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
@@ -101,8 +100,10 @@ export function AutocompleteNavFooter({
 // ── Listbox shell ──
 
 export interface AutocompleteListboxProps {
-  /** Accessible name for the `role="listbox"` region. */
+  /** Accessible name for the popup region. */
   label: string;
+  /** Grid is required when a row contains a secondary interactive action. */
+  popupRole?: "listbox" | "grid";
   /**
    * Index of the active option; the matching child of the listbox is scrolled
    * into view when it changes.
@@ -134,6 +135,7 @@ export interface AutocompleteListboxProps {
  */
 export function AutocompleteListbox({
   label,
+  popupRole = "listbox",
   activeIndex,
   header,
   footer,
@@ -186,7 +188,7 @@ export function AutocompleteListbox({
 
         <div
           ref={listRef}
-          role="listbox"
+          role={popupRole}
           aria-label={label}
           aria-busy={loading || undefined}
         >
@@ -213,6 +215,8 @@ export interface AutocompleteOptionProps {
   active: boolean;
   /** Stable id so a host can target it with `aria-activedescendant`. */
   id?: string;
+  /** Use `row` when the parent popup uses the grid pattern. */
+  semanticRole?: "option" | "row";
   /** Appearance recipe: compact single-line (default) or two-line conversation row. */
   variant?: AutocompleteOptionVariant;
   /** When set, mirrored to `data-archived` for the archived-dim style. */
@@ -230,6 +234,7 @@ export interface AutocompleteOptionProps {
 export function AutocompleteOption({
   active,
   id,
+  semanticRole = "option",
   variant = "default",
   archived,
   onSelect,
@@ -238,7 +243,7 @@ export function AutocompleteOption({
 }: AutocompleteOptionProps) {
   return (
     <div
-      role="option"
+      role={semanticRole}
       id={id}
       aria-selected={active}
       data-active={active}

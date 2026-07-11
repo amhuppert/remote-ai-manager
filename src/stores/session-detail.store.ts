@@ -687,10 +687,10 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Document viewer (multi-doc shell) --
 
-    // Open a document by its canonical worktree-relative `docPath`: add a tab if
-    // not already open (dedup by `docPath`, refreshing the title), make it the
-    // active document, route the right pane / mobile panel to the docs surface,
-    // and bump the activation nonce so the body flashes (reqs 1.1, 1.2, 1.5).
+    // Open a document by its canonical `docPath`: add a tab if not already open
+    // (dedup by `docPath`, refreshing the title), make it active, route the right
+    // pane / mobile panel to Docs, and bump the activation nonce so the body
+    // flashes (reqs 1.1, 1.2, 1.5).
     openDocument: (ref) =>
       set((state) => {
         const existing = state.openDocuments.find(

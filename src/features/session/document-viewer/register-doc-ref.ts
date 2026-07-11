@@ -1,6 +1,6 @@
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { DocumentRef } from "@/lib/document-comments/schemas";
-import { normalizeDocPath } from "@/lib/documents/path";
+import { normalizeMarkdownLocator } from "@/lib/documents/path";
 
 export type RegisteredDocResolution =
   | { available: true; doc: ReferenceDocument; ref: DocumentRef }
@@ -13,12 +13,10 @@ export type RegisteredDocResolution =
 /**
  * Resolve a registered reference document to a canonical, openable
  * `DocumentRef`, or mark it unavailable. The registry stores a `filePath` that
- * may be absolute; we normalize it against the session worktree so an absolute
- * path inside the worktree becomes the relative `docPath`, while one outside (or
- * a non-markdown / traversal path) is unavailable rather than openable — the
- * viewer is markdown-only and worktree-confined (req 10.4). Normalizing here
- * keeps comment identity canonical, so the same file opened from Docs, Specs, or
- * a transcript card shares one comment set.
+ * may be absolute; paths inside the session worktree become relative while
+ * external paths keep a canonical absolute identity. Normalizing here ensures
+ * the same file opened from Docs, Specs, or a transcript card resolves to one
+ * viewer tab.
  */
 export function resolveRegisteredDoc(
   doc: ReferenceDocument,
@@ -26,7 +24,7 @@ export function resolveRegisteredDoc(
   sessionName: string,
   worktreeRoot: string,
 ): RegisteredDocResolution {
-  const normalized = normalizeDocPath(doc.filePath, worktreeRoot);
+  const normalized = normalizeMarkdownLocator(doc.filePath, worktreeRoot);
   if (!normalized.ok) {
     return { available: false, doc, reason: normalized.reason };
   }

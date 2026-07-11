@@ -36,15 +36,18 @@ describe("resolveRegisteredDoc", () => {
     if (result.available) expect(result.ref.docPath).toBe("docs/notes.md");
   });
 
-  it("marks an absolute path outside the worktree as unavailable", () => {
+  it("returns a canonical absolute path outside the worktree", () => {
     const result = resolveRegisteredDoc(
       doc("/etc/other/readme.md"),
       "proj",
       "feat",
       WORKTREE,
     );
-    expect(result.available).toBe(false);
-    if (!result.available) expect(result.reason).toBe("outside-worktree");
+    expect(result.available).toBe(true);
+    if (result.available) {
+      expect(result.ref.docPath).toBe("/etc/other/readme.md");
+      expect(result.ref.title).toBe("readme.md");
+    }
   });
 
   it("marks a non-markdown registered file as unavailable", () => {

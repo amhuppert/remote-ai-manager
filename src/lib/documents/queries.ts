@@ -1,16 +1,32 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/fetcher";
 import { ApiCallError } from "@/lib/api/errors";
-import { documentContentKeys } from "./query-keys";
-import { documentContentResponseSchema } from "./schemas";
+import { documentContentKeys, markdownDocumentKeys } from "./query-keys";
+import {
+  documentContentResponseSchema,
+  markdownDocumentsResponseSchema,
+} from "./schemas";
+
+export function useMarkdownDocumentsQuery(
+  projectName: string,
+  sessionName: string,
+) {
+  return useQuery({
+    queryKey: markdownDocumentKeys.list(projectName, sessionName),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/markdown-documents`,
+        markdownDocumentsResponseSchema,
+      ),
+  });
+}
 
 /**
- * Load the markdown content of any file in the session worktree by its
- * worktree-relative (or absolute-inside-worktree) `docPath`. The endpoint
- * echoes the normalized `docPath` alongside the content so the viewer keys
- * comments/anchoring by the canonical identity. Disabled until a path is
- * available. Loading/error state comes from React Query; the distinct error
- * kinds are derived from the failed response via `classifyDocumentContentError`.
+ * Load Markdown content by its canonical worktree-relative or authorized
+ * external `docPath`. The endpoint echoes the normalized identity so the
+ * viewer keys content consistently. Disabled until a path is available.
+ * Loading/error state comes from React Query; the distinct error kinds are
+ * derived from the failed response via `classifyDocumentContentError`.
  */
 export function useDocumentContentQuery(
   projectName: string,
@@ -37,10 +53,9 @@ export type DocumentContentErrorKind = "unavailable" | "invalid" | "error";
 
 /**
  * Classify a `useDocumentContentQuery` error into a UI-actionable kind:
- * - `unavailable` (404) — the file is missing or its absolute path is outside
- *   the worktree; the viewer/file card shows "outside this worktree —
- *   unavailable".
- * - `invalid` (400) — a non-markdown or path-traversal path.
+ * - `unavailable` (404) — the file is missing or is not authorized for the
+ *   session.
+ * - `invalid` (400) — a non-Markdown path.
  * - `error` — any other failure (read error, network, non-API error).
  */
 export function classifyDocumentContentError(

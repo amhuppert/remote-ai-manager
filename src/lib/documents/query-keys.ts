@@ -1,5 +1,5 @@
 /**
- * React Query key factory for markdown content loaded by worktree-relative
+ * React Query key factory for Markdown content loaded by canonical document
  * path. Keyed by `(projectName, sessionName, docPath)` so each open document's
  * content is cached independently and re-reads stay scoped to one file.
  */
@@ -13,4 +13,11 @@ export const documentContentKeys = {
       sessionName,
       docPath,
     ] as const,
+};
+
+export const markdownDocumentKeys = {
+  all: ["markdown-documents"] as const,
+  lists: () => [...markdownDocumentKeys.all, "list"] as const,
+  list: (projectName: string, sessionName: string) =>
+    [...markdownDocumentKeys.lists(), projectName, sessionName] as const,
 };

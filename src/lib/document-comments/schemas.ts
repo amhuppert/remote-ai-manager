@@ -87,8 +87,10 @@ export type UpdateDocumentCommentRequest = z.infer<
 >;
 
 /**
- * Universal document identity across viewing surfaces (reference docs + Kiro
- * specs), keyed by a normalized worktree-relative `docPath`.
+ * Universal document identity across viewing surfaces, keyed by a canonical
+ * worktree-relative or external `docPath`. Comment endpoints accept only
+ * worktree-relative identities; external documents use the same shape for
+ * read-only viewer tabs.
  */
 export const documentRefSchema = z.object({
   projectName: z.string(),

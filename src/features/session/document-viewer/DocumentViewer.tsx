@@ -17,8 +17,9 @@ import {
 } from "@/stores/session-detail.store";
 import DocumentSurface from "./DocumentSurface";
 import DocumentTabs from "./DocumentTabs";
+import ReadOnlyDocumentSurface from "./ReadOnlyDocumentSurface";
 
-/** Split a worktree-relative `docPath` into its filename and directory. */
+/** Split a canonical `docPath` into its filename and directory. */
 function splitDocPath(docPath: string): { fileName: string; dir: string } {
   const idx = docPath.lastIndexOf("/");
   if (idx === -1) return { fileName: docPath, dir: "/" };
@@ -67,7 +68,7 @@ function DocumentViewerHeader({
   const commentsQuery = useDocumentCommentsQuery(
     docRef.projectName,
     docRef.sessionName,
-    docRef.docPath,
+    docRef.docPath.startsWith("/") ? null : docRef.docPath,
   );
   const count = commentsQuery.data?.length ?? 0;
   const { dir } = splitDocPath(docRef.docPath);
@@ -94,6 +95,11 @@ function DocumentViewerHeader({
       {count > 0 ? (
         <span className="inline-flex shrink-0 items-center rounded-full border border-solid border-cyan/50 bg-cyan-glow px-[7px] py-px font-mono text-[0.62rem] font-semibold text-cyan">
           {count}
+        </span>
+      ) : null}
+      {docRef.docPath.startsWith("/") ? (
+        <span className="shrink-0 font-mono text-[0.62rem] tracking-[0.04em] text-amber uppercase">
+          External · Read only
         </span>
       ) : null}
       <span
@@ -162,12 +168,20 @@ function OpenDocumentPane({
 
   return (
     <div className={cn("min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")}>
-      <DocumentSurface
-        docRef={docRef}
-        content={contentQuery.data?.content ?? null}
-        isLoading={contentQuery.isLoading}
-        contentError={contentError}
-      />
+      {docRef.docPath.startsWith("/") ? (
+        <ReadOnlyDocumentSurface
+          content={contentQuery.data?.content ?? null}
+          isLoading={contentQuery.isLoading}
+          contentError={contentError}
+        />
+      ) : (
+        <DocumentSurface
+          docRef={docRef}
+          content={contentQuery.data?.content ?? null}
+          isLoading={contentQuery.isLoading}
+          contentError={contentError}
+        />
+      )}
     </div>
   );
 }

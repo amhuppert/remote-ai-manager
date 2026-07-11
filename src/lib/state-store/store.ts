@@ -18,6 +18,7 @@ import { createGraphWorkflowExecutionsRepo } from "./graph-workflow-executions-r
 import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
 import { createReferenceDocumentsRepo } from "./reference-documents-repo";
+import { createSessionMarkdownDocumentsRepo } from "./session-markdown-documents-repo";
 import { createSetters } from "./setters";
 import { revalidateTrusted } from "../shared/parse-trusted";
 import { createSessionsRepo, diffChangedSessionColumns } from "./sessions-repo";
@@ -134,6 +135,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       deps.repos?.projectConversations ?? createProjectConversationsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
+    sessionMarkdownDocuments:
+      deps.repos?.sessionMarkdownDocuments ??
+      createSessionMarkdownDocumentsRepo(db),
     documentComments:
       deps.repos?.documentComments ?? createDocumentCommentsRepo(db),
     graphWorkflowEvents:
@@ -523,6 +527,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     listAllProjectConversations: accessors.listAllProjectConversations,
     getSpawnedSessionStatuses: accessors.getSpawnedSessionStatuses,
     getReferenceDocuments: accessors.getReferenceDocuments,
+    getSessionMarkdownDocuments: accessors.getSessionMarkdownDocuments,
+    isSessionMarkdownDocumentIndexed:
+      accessors.isSessionMarkdownDocumentIndexed,
     getDocumentComments: accessors.getDocumentComments,
     getSessionDocumentComments: accessors.getSessionDocumentComments,
     getDocumentCommentInScope: accessors.getDocumentCommentInScope,
@@ -563,6 +570,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
+    upsertSessionMarkdownDocuments: setters.upsertSessionMarkdownDocuments,
     upsertDocumentComment: setters.upsertDocumentComment,
     deleteDocumentComment: setters.deleteDocumentComment,
   };

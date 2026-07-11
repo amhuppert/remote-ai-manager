@@ -16,6 +16,8 @@ import {
 import { useProjectFilesQuery } from "@/lib/files/queries";
 import { filterAndScoreFiles } from "@/lib/files/file-autocomplete-filter";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import { isMarkdownPath } from "@/lib/documents/path";
+import { useOpenDocument } from "@/stores/session-detail.store";
 
 export interface FileMentionPopupHandle {
   /** Forward a keydown event from the editor; returns true when consumed. */
@@ -54,12 +56,12 @@ export const PromptEditorFileMentionPopup = forwardRef<
   { query, projectName, sessionName, onSelect, onClose },
   ref,
 ) {
+  const openDocument = useOpenDocument();
+  const projectLevel = isProjectSentinel(sessionName);
   // Project-level conversations (the `__project__` sentinel) scan the project
   // root; sessions scan their own worktree.
   const filesQuery = useProjectFilesQuery(
-    isProjectSentinel(sessionName)
-      ? { projectName }
-      : { projectName, sessionName },
+    projectLevel ? { projectName } : { projectName, sessionName },
   );
 
   const { display, totalCount, truncated } = useMemo(() => {
@@ -78,8 +80,9 @@ export const PromptEditorFileMentionPopup = forwardRef<
         id: s.item.path,
         path: s.item.path,
         matchIndices: s.indices,
+        openable: !projectLevel && isMarkdownPath(s.item.path),
       })),
-    [display],
+    [display, projectLevel],
   );
 
   const [activeIndex, setActiveIndex] = useState(0);
@@ -109,9 +112,34 @@ export const PromptEditorFileMentionPopup = forwardRef<
     [onSelect],
   );
 
+  const openAt = useCallback(
+    (index: number) => {
+      const target = displayRef.current[index];
+      if (!target || !isMarkdownPath(target.item.path) || projectLevel) return;
+      const { basename } = deriveBasenameAndExt(target.item.path);
+      openDocument({
+        projectName,
+        sessionName,
+        docPath: target.item.path,
+        title: basename,
+      });
+      onClose?.();
+    },
+    [onClose, openDocument, projectLevel, projectName, sessionName],
+  );
+
   const handleKeyDown = useCallback(
     (event: KeyboardEvent): boolean => {
       const total = displayRef.current.length;
+      if (event.altKey && event.key === "Enter") {
+        const target = displayRef.current[activeIndexRef.current];
+        if (!target || !isMarkdownPath(target.item.path) || projectLevel) {
+          return false;
+        }
+        event.preventDefault();
+        openAt(activeIndexRef.current);
+        return true;
+      }
       switch (event.key) {
         case "ArrowDown": {
           event.preventDefault();
@@ -140,7 +168,7 @@ export const PromptEditorFileMentionPopup = forwardRef<
           return false;
       }
     },
-    [selectAt, onClose],
+    [selectAt, openAt, onClose, projectLevel],
   );
 
   useImperativeHandle(ref, () => ({ handleKeyDown }), [handleKeyDown]);
@@ -157,6 +185,12 @@ export const PromptEditorFileMentionPopup = forwardRef<
       onSelect={(item) => {
         const idx = listItems.findIndex((i) => i.id === item.id);
         if (idx >= 0) selectAt(idx);
+      }}
+      onOpen={(item) => {
+        const idx = listItems.findIndex(
+          (candidate) => candidate.id === item.id,
+        );
+        if (idx >= 0) openAt(idx);
       }}
       totalCount={totalCount}
       loading={filesQuery.isLoading}

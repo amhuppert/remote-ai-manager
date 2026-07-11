@@ -27,6 +27,8 @@ function depsFromFixture(
     resolveProjectPath: async (name) =>
       name === PROJECT_NAME ? PROJECT_PATH : null,
     getSession: fx.store.getSession,
+    getSessionMarkdownDocuments: fx.store.getSessionMarkdownDocuments,
+    isSessionMarkdownDocumentIndexed: fx.store.isSessionMarkdownDocumentIndexed,
     readFile: async (absPath) => {
       readPaths.push(absPath);
       const content = files[absPath];
@@ -102,6 +104,71 @@ describe("documents content route handler", () => {
     expect(readPaths).toEqual([]);
   });
 
+  it("reads an indexed absolute path outside the worktree", async () => {
+    await fx.store.upsertSessionMarkdownDocuments(PROJECT_PATH, "sess", [
+      {
+        docPath: "/shared/runbook.md",
+        origin: "read",
+        firstSeenAt: "2026-07-11T10:00:00.000Z",
+        lastSeenAt: "2026-07-11T10:00:00.000Z",
+      },
+    ]);
+    const { deps, readPaths } = depsFromFixture(fx, {
+      "/shared/runbook.md": "# Runbook",
+    });
+    const handlers = createDocumentsRouteHandlers(deps);
+
+    const res = await handlers.GET(get("/shared/runbook.md"), params);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      content: "# Runbook",
+      docPath: "/shared/runbook.md",
+    });
+    expect(readPaths).toEqual(["/shared/runbook.md"]);
+  });
+
+  it("reads a registered absolute path outside the worktree", async () => {
+    await fx.store.createReferenceDocument(
+      PROJECT_PATH,
+      "sess",
+      "/shared/registered.md",
+      "Shared document",
+    );
+    const { deps } = depsFromFixture(fx, {
+      "/shared/registered.md": "# Registered",
+    });
+    const handlers = createDocumentsRouteHandlers(deps);
+
+    const res = await handlers.GET(get("/shared/registered.md"), params);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("returns the unified Markdown list", async () => {
+    await fx.store.upsertSessionMarkdownDocuments(PROJECT_PATH, "sess", [
+      {
+        docPath: "docs/plan.md",
+        origin: "edit",
+        firstSeenAt: "2026-07-11T10:00:00.000Z",
+        lastSeenAt: "2026-07-11T11:00:00.000Z",
+      },
+    ]);
+    await fx.store.createReferenceDocument(
+      PROJECT_PATH,
+      "sess",
+      "/shared/registered.md",
+      "Shared document",
+    );
+    const { deps } = depsFromFixture(fx, {});
+    const handlers = createDocumentsRouteHandlers(deps);
+
+    const res = await handlers.LIST(new Request("http://localhost"), params);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as unknown[]).toHaveLength(2);
+  });
+
   it("returns 400 for a non-markdown path", async () => {
     const { deps } = depsFromFixture(fx, {});
     const handlers = createDocumentsRouteHandlers(deps);
@@ -109,11 +176,11 @@ describe("documents content route handler", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 400 for a traversal path", async () => {
+  it("returns 404 for an unindexed relative path outside the worktree", async () => {
     const { deps, readPaths } = depsFromFixture(fx, {});
     const handlers = createDocumentsRouteHandlers(deps);
     const res = await handlers.GET(get("../../etc/secret.md"), params);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     expect(readPaths).toEqual([]);
   });
 

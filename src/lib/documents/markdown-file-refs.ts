@@ -6,10 +6,10 @@ import { isMarkdownPath } from "./path";
  * Derives clickable markdown file cards from a message's tool_use blocks. Pure
  * (no DOM/IO) so it runs at transcript render time on the client. The returned
  * `docPath` is the raw tool-supplied path; the viewer's content endpoint
- * normalizes it (absolute-inside→relative, outside→unavailable) on open.
+ * normalizes it to a canonical worktree-relative or external identity on open.
  */
 
-export type MarkdownFileRefOrigin = "write" | "edit" | "registered";
+export type MarkdownFileRefOrigin = "read" | "write" | "edit" | "registered";
 
 export interface MarkdownFileRef {
   docPath: string;
@@ -18,7 +18,8 @@ export interface MarkdownFileRef {
 }
 
 /** Native edit tools (SDK built-ins, not MCP-namespaced) → file-card origin. */
-const NATIVE_EDIT_ORIGINS: Record<string, "write" | "edit"> = {
+const NATIVE_FILE_ORIGINS: Record<string, "read" | "write" | "edit"> = {
+  Read: "read",
   Write: "write",
   Edit: "edit",
   MultiEdit: "edit",
@@ -86,7 +87,7 @@ export function extractMarkdownFileRefs(
         ? block.input.file_path
         : undefined;
 
-    const nativeOrigin = NATIVE_EDIT_ORIGINS[tool];
+    const nativeOrigin = NATIVE_FILE_ORIGINS[tool];
     if (nativeOrigin !== undefined) {
       if (filePath) add(filePath, nativeOrigin);
       continue;
