@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   runPrepare,
   runPublish,
+  runValidationInner,
   type PrepareActorDeps,
   type PrepareActorInput,
   type PublishActorDeps,
   type PublishActorInput,
+  type RunValidationDeps,
+  type RunValidationInput,
 } from "./actors";
 import type {
   PrepareResult,
@@ -353,5 +356,110 @@ describe("runPublish", () => {
     const out = await runPublish(deps, basePublishInput);
     expect(out.status).toBe("completed");
     expect(setFinished).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ============================================================
+// runValidationInner — pre-merge timeout resolution
+// ============================================================
+
+const baseValidationInput: RunValidationInput = {
+  projectPath: "/proj",
+  worktreePath: "/proj/.worktrees/feature",
+  sessionName: "feature",
+  branchName: "csm/feature",
+  targetBranch: "main",
+  // The merge machine's hardcoded default; the last-resort fallback.
+  timeoutMs: 300_000,
+};
+
+function makeValidationDeps(
+  overrides: Partial<RunValidationDeps> = {},
+): RunValidationDeps {
+  return {
+    readGlobalConfig: overrides.readGlobalConfig ?? vi.fn(async () => ({})),
+    readRepoConfig: overrides.readRepoConfig ?? vi.fn(async () => null),
+    runPreMergeValidation:
+      overrides.runPreMergeValidation ?? vi.fn(async () => {}),
+  };
+}
+
+describe("runValidationInner", () => {
+  it("uses the global config timeout when no per-repo override exists", async () => {
+    const runPreMergeValidation = vi.fn(async () => {});
+    const deps = makeValidationDeps({
+      readGlobalConfig: vi.fn(async () => ({ preMergeTimeoutMs: 3_600_000 })),
+      readRepoConfig: vi.fn(async () => null),
+      runPreMergeValidation,
+    });
+
+    await runValidationInner(deps, baseValidationInput);
+
+    expect(runPreMergeValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 3_600_000 }),
+    );
+  });
+
+  it("lets the per-repo timeout override the global config", async () => {
+    const runPreMergeValidation = vi.fn(async () => {});
+    const deps = makeValidationDeps({
+      readGlobalConfig: vi.fn(async () => ({ preMergeTimeoutMs: 3_600_000 })),
+      readRepoConfig: vi.fn(async () => ({ preMergeTimeoutMs: 600_000 })),
+      runPreMergeValidation,
+    });
+
+    await runValidationInner(deps, baseValidationInput);
+
+    expect(runPreMergeValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 600_000 }),
+    );
+  });
+
+  it("falls back to the machine default when neither config sets a timeout", async () => {
+    const runPreMergeValidation = vi.fn(async () => {});
+    const deps = makeValidationDeps({
+      readGlobalConfig: vi.fn(async () => ({})),
+      readRepoConfig: vi.fn(async () => null),
+      runPreMergeValidation,
+    });
+
+    await runValidationInner(deps, baseValidationInput);
+
+    expect(runPreMergeValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 300_000 }),
+    );
+  });
+
+  it("is best-effort: a failing global config read falls through to the per-repo timeout", async () => {
+    const runPreMergeValidation = vi.fn(async () => {});
+    const deps = makeValidationDeps({
+      readGlobalConfig: vi.fn(async () => {
+        throw new Error("config unreadable");
+      }),
+      readRepoConfig: vi.fn(async () => ({ preMergeTimeoutMs: 900_000 })),
+      runPreMergeValidation,
+    });
+
+    await runValidationInner(deps, baseValidationInput);
+
+    expect(runPreMergeValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 900_000 }),
+    );
+  });
+
+  it("forwards the merge context (paths, branch, target) to the validation runner", async () => {
+    const runPreMergeValidation = vi.fn(async () => {});
+    const deps = makeValidationDeps({ runPreMergeValidation });
+
+    await runValidationInner(deps, baseValidationInput);
+
+    expect(runPreMergeValidation).toHaveBeenCalledWith({
+      projectPath: "/proj",
+      worktreePath: "/proj/.worktrees/feature",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      targetBranch: "main",
+      timeoutMs: 300_000,
+    });
   });
 });

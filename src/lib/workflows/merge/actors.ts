@@ -311,26 +311,54 @@ export const analyzeConflictsActor = fromPromise<
   };
 });
 
-/** Run pre-merge validation (typecheck + tests). */
-export const runValidation = fromPromise<
-  RunValidationOutput,
-  RunValidationInput
->(async ({ input }) => {
-  const { runPreMergeValidation, readRepoConfig } =
-    await import("@/lib/projects/repo-config");
+export interface RunValidationDeps {
+  readGlobalConfig(): Promise<{ preMergeTimeoutMs?: number }>;
+  readRepoConfig(
+    projectPath: string,
+  ): Promise<{ preMergeTimeoutMs?: number } | null>;
+  runPreMergeValidation(params: {
+    projectPath: string;
+    worktreePath: string;
+    sessionName: string;
+    branchName: string;
+    targetBranch?: string;
+    timeoutMs: number;
+  }): Promise<void>;
+}
 
-  // Per-repo timeout takes precedence over the machine's default
-  let timeoutMs = input.timeoutMs;
+/**
+ * Resolve the pre-merge validation timeout, then run validation.
+ *
+ * Precedence: per-repo `CommandCenter.json` `preMergeTimeoutMs` > global config
+ * ("Limits and Timeouts") `preMergeTimeoutMs` > the machine's hardcoded default
+ * (`input.timeoutMs`). Both config reads are best-effort — an unreadable config
+ * falls through to the next source rather than failing the merge. Reading the
+ * global config here is what lets the UI's global timeout govern every merge
+ * path (manual and graph join), since no dispatch site passes an explicit
+ * `validationTimeoutMs` into the machine.
+ */
+export async function runValidationInner(
+  deps: RunValidationDeps,
+  input: RunValidationInput,
+): Promise<void> {
+  let globalTimeoutMs: number | undefined;
   try {
-    const repoConfig = await readRepoConfig(input.projectPath);
-    if (repoConfig?.preMergeTimeoutMs) {
-      timeoutMs = repoConfig.preMergeTimeoutMs;
-    }
+    globalTimeoutMs = (await deps.readGlobalConfig()).preMergeTimeoutMs;
   } catch {
-    // Best-effort: use the machine's default timeout
+    // Best-effort: fall through to the next timeout source.
   }
 
-  await runPreMergeValidation({
+  let perRepoTimeoutMs: number | undefined;
+  try {
+    perRepoTimeoutMs = (await deps.readRepoConfig(input.projectPath))
+      ?.preMergeTimeoutMs;
+  } catch {
+    // Best-effort: fall through to the next timeout source.
+  }
+
+  const timeoutMs = perRepoTimeoutMs ?? globalTimeoutMs ?? input.timeoutMs;
+
+  await deps.runPreMergeValidation({
     projectPath: input.projectPath,
     worktreePath: input.worktreePath,
     sessionName: input.sessionName,
@@ -338,6 +366,25 @@ export const runValidation = fromPromise<
     targetBranch: input.targetBranch,
     timeoutMs,
   });
+}
+
+/** Run pre-merge validation (typecheck + tests). */
+export const runValidation = fromPromise<
+  RunValidationOutput,
+  RunValidationInput
+>(async ({ input }) => {
+  const { runPreMergeValidation, readRepoConfig } =
+    await import("@/lib/projects/repo-config");
+  const { readConfig } = await import("@/lib/config/loader");
+
+  await runValidationInner(
+    {
+      readGlobalConfig: readConfig,
+      readRepoConfig,
+      runPreMergeValidation,
+    },
+    input,
+  );
 });
 
 /** Fix validation errors via the conversation actor. */
