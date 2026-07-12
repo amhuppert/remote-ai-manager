@@ -12,6 +12,7 @@ import { renderWithQuery } from "@/test/component-mocks";
 import ProjectDetailView from "./ProjectDetailView";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { TicketListItem } from "@/lib/tickets/schemas";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { _useCockpitViewStore } from "./cockpit/use-cockpit-view-state";
 // Shared mocks
@@ -343,6 +344,44 @@ describe("ProjectDetailView", () => {
       screen.getByRole("button", { name: /New session/ }),
     ).toBeInTheDocument();
     expect(screen.getByTitle("Open the Workflow Builder")).toBeInTheDocument();
+  });
+
+  it("renders a Tickets entry opening /tickets pre-filtered to the project (ticket-system Req 9.5)", async () => {
+    mockSessionsData.data = makeSessions(1);
+    const makeTicket = (
+      number: number,
+      status: TicketListItem["status"],
+    ): TicketListItem => ({
+      id: `ticket-${number}`,
+      projectPath: "/repos/my-project",
+      projectName: "my-project",
+      number,
+      title: `Ticket ${number}`,
+      workType: "feature",
+      status,
+      attachmentCount: 0,
+      activeSessionName: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    stubProjectFetch((url) =>
+      url.includes("/api/projects/my-project/tickets")
+        ? Response.json([
+            makeTicket(1, "not_started"),
+            makeTicket(2, "in_progress"),
+            makeTicket(3, "done"),
+          ])
+        : new Response(null, { status: 404 }),
+    );
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+
+    const link = screen.getByTitle("Tickets for this project");
+    expect(link.getAttribute("href")).toBe("/tickets?project=my-project");
+    expect(link).toHaveTextContent("Tickets");
+    // Badge counts open tickets only (done/closed excluded).
+    await waitFor(() =>
+      expect(within(link as HTMLElement).getByText("2")).toBeInTheDocument(),
+    );
   });
 
   it("renders the shared prompt composer in place of the legacy command console", async () => {

@@ -39,6 +39,9 @@ function makeHost(
     async readTextFile(filePath) {
       return files[filePath] ?? null;
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",

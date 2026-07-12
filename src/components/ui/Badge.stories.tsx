@@ -39,7 +39,14 @@ const statuses: BadgeStatus[] = [
   "awaiting",
   "warning",
 ];
-const kinds: BadgeKind[] = ["feature", "bug", "idea"];
+const kinds: BadgeKind[] = [
+  "feature",
+  "bug",
+  "idea",
+  "research",
+  "tech_debt",
+  "performance",
+];
 
 /** All tiers × values + backend + subtle — the full hybrid-API surface. */
 export const Matrix: Story = {
@@ -81,6 +88,50 @@ export const Matrix: Story = {
         <Badge tier="type" kind="bug" subtle>
           bug
         </Badge>
+      </div>
+    </div>
+  ),
+};
+
+const ticketKinds: BadgeKind[] = [
+  "feature",
+  "bug",
+  "research",
+  "tech_debt",
+  "performance",
+];
+
+/**
+ * The ticket motion tokens (`animate-tk-card-land` drag-commit wash,
+ * `animate-tk-sse-in` SSE-enter fade) demonstrated on ticket-card-shaped
+ * tiles carrying the five work-type badges. Remount the story to replay.
+ */
+export const TicketMotion: Story = {
+  render: () => (
+    <div style={{ display: "grid", gap: 12, width: 340 }}>
+      <div className="animate-tk-card-land rounded-md border border-border-default bg-bg-surface p-[12px] motion-reduce:animate-none">
+        <div style={{ ...row, marginBottom: 8 }}>
+          <span style={label}>drag-commit wash</span>
+        </div>
+        <div style={row}>
+          {ticketKinds.map((k) => (
+            <Badge key={k} tier="type" kind={k}>
+              {k}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      <div className="animate-tk-sse-in rounded-md border border-border-default bg-bg-surface p-[12px] motion-reduce:animate-none">
+        <div style={{ ...row, marginBottom: 8 }}>
+          <span style={label}>SSE-enter fade</span>
+        </div>
+        <div style={row}>
+          {ticketKinds.map((k) => (
+            <Badge key={k} tier="type" kind={k}>
+              {k}
+            </Badge>
+          ))}
+        </div>
       </div>
     </div>
   ),

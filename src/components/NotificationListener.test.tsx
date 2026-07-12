@@ -24,6 +24,9 @@ import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
 import { markdownDocumentKeys } from "@/lib/documents/query-keys";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
+import { ticketKeys } from "@/lib/tickets/query-keys";
+import { normalizeTicketListFilters } from "@/lib/tickets/list-filters";
+import type { TicketListItem } from "@/lib/tickets/schemas";
 
 const notificationStoreMocks = vi.hoisted(() => ({
   addOrUpdateJob: vi.fn(),
@@ -2006,6 +2009,50 @@ describe("NotificationListener", () => {
     );
   });
 
+  it("reconciles the linked ticket caches when a merge finishes the session", async () => {
+    const { client, invalidateQueries, es } = emitAndGetSpies();
+    const ticketListKey = ticketKeys.list(normalizeTicketListFilters({}));
+    const ticketDetailKey = ticketKeys.detail("proj", 7);
+    const ticketLinksKey = ticketKeys.sessionLinks("proj");
+    client.setQueryData(ticketListKey, []);
+    client.setQueryData(ticketDetailKey, { id: "ticket-7" });
+    client.setQueryData(ticketLinksKey, {
+      sess: {
+        ticketId: "ticket-7",
+        projectName: "proj",
+        number: 7,
+        title: "Linked ticket",
+        active: true,
+        linkedAt: "2026-07-01T00:00:00.000Z",
+        endedAt: null,
+      },
+    });
+    invalidateQueries.mockClear();
+
+    es.emit("job-status", {
+      type: "job-status",
+      jobType: "merge",
+      status: "completed",
+      projectName: "proj",
+      sessionName: "sess",
+      jobId: "job-1",
+      branchName: "csm/sess",
+      mergeHash: "abc123",
+    });
+
+    await waitFor(() => {
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ticketLinksKey,
+      });
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ticketKeys.lists(),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ticketDetailKey,
+    });
+  });
+
   function makeJobNotification(
     overrides: Partial<JobNotification> = {},
   ): JobNotification {
@@ -2204,5 +2251,94 @@ describe("NotificationListener", () => {
     expect(notificationStoreMocks.enqueueToast).toHaveBeenCalledWith(
       expect.objectContaining({ id: "notif-1" }),
     );
+  });
+
+  it("reduces validated ticket-changed events into the cached ticket lists", async () => {
+    const { client, invalidateQueries, es } = emitAndGetSpies();
+    const listKey = ticketKeys.list(normalizeTicketListFilters({}));
+    const row: TicketListItem = {
+      id: "alpha-1",
+      projectPath: "/projects/alpha",
+      projectName: "alpha",
+      number: 1,
+      title: "Ticket",
+      workType: "feature",
+      status: "not_started",
+      attachmentCount: 0,
+      activeSessionName: null,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    };
+    client.setQueryData(listKey, [row]);
+    invalidateQueries.mockClear();
+
+    es.emit("ticket-changed", {
+      type: "ticket-changed",
+      change: "updated",
+      projectName: "alpha",
+      ticketNumber: 1,
+      listItem: {
+        ...row,
+        status: "in_progress",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+      },
+      attachmentIndexChanged: false,
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryData<TicketListItem[]>(listKey)?.[0]?.status).toBe(
+        "in_progress",
+      );
+    });
+    // Lists reduce in place; the one detail key refetches so an open detail
+    // view reflects the external change (req 9.8) — nothing else invalidates.
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ticketKeys.detail("alpha", 1),
+    });
+  });
+
+  it("drops ticket-changed frames that fail schema validation", async () => {
+    const { client, es } = emitAndGetSpies();
+    const listKey = ticketKeys.list(normalizeTicketListFilters({}));
+    client.setQueryData(listKey, []);
+
+    es.emit("ticket-changed", {
+      type: "ticket-changed",
+      change: "materialized",
+      projectName: "alpha",
+      ticketNumber: 1,
+      listItem: null,
+      attachmentIndexChanged: false,
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryData<TicketListItem[]>(listKey)).toEqual([]);
+    });
+  });
+
+  it("applies exact invalidations for ticket data absent from the event", async () => {
+    const { client, invalidateQueries, es } = emitAndGetSpies();
+    client.setQueryData(ticketKeys.detail("alpha", 1), { id: "alpha-1" });
+    invalidateQueries.mockClear();
+
+    es.emit("ticket-changed", {
+      type: "ticket-changed",
+      change: "session",
+      projectName: "alpha",
+      ticketNumber: 1,
+      listItem: null,
+      attachmentIndexChanged: true,
+      linkedSessionName: "ticket-session",
+    });
+
+    await waitFor(() => {
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ticketKeys.detail("alpha", 1),
+      });
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ticketKeys.sessionLinks("alpha"),
+    });
   });
 });

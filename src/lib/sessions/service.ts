@@ -43,6 +43,14 @@ import { deleteCollaborationArtifacts } from "../workflows/collaboration/artifac
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
 import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
 import { getStateDb } from "../state-store";
+import type {
+  ReconcileTicketSessionLifecycleInput,
+  TicketProjectDeletionSnapshot,
+} from "@/lib/tickets/lifecycle";
+import {
+  getSessionLifecycleGate,
+  type SessionLifecycleOperationContext,
+} from "./lifecycle-gate";
 
 const logger = createLogger("sessions");
 
@@ -62,6 +70,35 @@ export const PLANNER_SESSION_NAME = "__planner__";
 // ============================================================
 // Types
 // ============================================================
+
+interface ProvisionSessionOptions {
+  mode: SessionCreationMode;
+  tddEnabled?: boolean;
+  baseBranch?: string;
+  targetBranch?: string;
+  parentSessionName?: string;
+  reservedDirName?: string;
+  // Explicit branch name used verbatim (no prefix). When omitted the branch
+  // is derived from the session name + config branch prefix as usual. Used
+  // by chat-spawning so a reviewed/edited branch is exactly what gets
+  // created (and a duplicate/invalid branch is rejected by `worktree add`).
+  branchName?: string;
+}
+
+export type DeleteSessionIfCurrentResult =
+  | { deleted: true; worktreeRemoved: boolean }
+  | { deleted: false; reason: "missing" | "replaced" | "finished" };
+
+export interface ExpectedSessionIncarnation {
+  createdAt: string;
+  worktreePath: string;
+  branchName: string;
+}
+
+export interface DeleteProjectResult {
+  sessionsRemoved: number;
+  deletedTicketNumbers: number[];
+}
 
 export interface SessionDeps {
   existsSync: typeof existsSync;
@@ -101,6 +138,43 @@ export interface SessionDeps {
     projectPath: string,
     sessionName?: string,
   ): number;
+  /**
+   * Capture ticket ids before the project-row cascade removes the lookup rows.
+   */
+  captureTicketContentForProject(projectPath: string): Promise<string[]>;
+  /** Best-effort removal of captured ticket-content snapshots after cascade. */
+  cleanupTicketContentForProject(
+    projectPath: string,
+    ticketIds: string[],
+  ): Promise<void>;
+  runSessionLifecycleOperation<T>(
+    projectPath: string,
+    sessionName: string,
+    operation: (context: SessionLifecycleOperationContext) => Promise<T>,
+  ): Promise<T>;
+  runSessionLifecycleOperations<T>(
+    projectPath: string,
+    sessionNames: Iterable<string>,
+    operation: (context: SessionLifecycleOperationContext) => Promise<T>,
+  ): Promise<T>;
+  runSessionProjectDeletion<T>(
+    projectPath: string,
+    deletion: () => Promise<T>,
+  ): Promise<T>;
+  /** Excludes ticket operations for the full project-deletion lifecycle. */
+  runTicketProjectDeletion<T>(
+    projectPath: string,
+    deletion: () => Promise<T>,
+  ): Promise<T>;
+  reconcileTicketSessionLifecycle(
+    input: ReconcileTicketSessionLifecycleInput,
+  ): Promise<void>;
+  captureTicketProjectDeletion(
+    projectPath: string,
+  ): Promise<TicketProjectDeletionSnapshot>;
+  publishTicketProjectDeletion(
+    snapshot: TicketProjectDeletionSnapshot,
+  ): Promise<void>;
   sweepLaneWorktrees(input: {
     projectPath: string;
     sessionWorktreePath: string;
@@ -155,6 +229,50 @@ const defaultSessionDeps: SessionDeps = {
       projectPath,
       sessionName,
     ),
+  captureTicketContentForProject: async (projectPath) => {
+    const { getTicketsRepo } = await import("@/lib/tickets/service-factory");
+    return getTicketsRepo().listTicketIds(projectPath);
+  },
+  cleanupTicketContentForProject: async (projectPath, ticketIds) => {
+    // Lazy: the sessions service must never import ticket modules statically
+    // (service-factory imports back into sessions/service — an ESM cycle).
+    const { getTicketContentStore } =
+      await import("@/lib/tickets/service-factory");
+    await getTicketContentStore().deleteProject(projectPath, ticketIds);
+  },
+  runSessionLifecycleOperation: (projectPath, sessionName, operation) =>
+    getSessionLifecycleGate().runExclusive(projectPath, sessionName, operation),
+  runSessionLifecycleOperations: (projectPath, sessionNames, operation) =>
+    getSessionLifecycleGate().runExclusiveMany(
+      projectPath,
+      sessionNames,
+      operation,
+    ),
+  runSessionProjectDeletion: (projectPath, deletion) =>
+    getSessionLifecycleGate().runProjectDeletion(projectPath, deletion),
+  runTicketProjectDeletion: async (projectPath, deletion) => {
+    const { getTicketProjectOperationGate } =
+      await import("@/lib/tickets/project-operation-gate");
+    return getTicketProjectOperationGate().runProjectDeletion(
+      projectPath,
+      deletion,
+    );
+  },
+  reconcileTicketSessionLifecycle: async (input) => {
+    const { reconcileTicketSessionLifecycle } =
+      await import("@/lib/tickets/lifecycle");
+    await reconcileTicketSessionLifecycle(input);
+  },
+  captureTicketProjectDeletion: async (projectPath) => {
+    const { captureTicketProjectDeletion } =
+      await import("@/lib/tickets/lifecycle");
+    return captureTicketProjectDeletion(projectPath);
+  },
+  publishTicketProjectDeletion: async (snapshot) => {
+    const { publishTicketProjectDeletion } =
+      await import("@/lib/tickets/lifecycle");
+    await publishTicketProjectDeletion(snapshot);
+  },
   sweepLaneWorktrees: (input) => createLaneWorktreeSweep().sweep(input),
   copyAlignmentCharterFromParent: async (input) => {
     await getAlignmentService().copyActiveCharter(input);
@@ -191,9 +309,54 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     deleteNotificationsForProject,
     deleteJobRecordsForProject,
     deleteContextArtifactsForScope,
+    captureTicketContentForProject,
+    cleanupTicketContentForProject,
+    runSessionLifecycleOperation,
+    runSessionLifecycleOperations,
+    runSessionProjectDeletion,
+    runTicketProjectDeletion,
+    reconcileTicketSessionLifecycle,
+    captureTicketProjectDeletion,
+    publishTicketProjectDeletion,
     sweepLaneWorktrees,
     copyAlignmentCharterFromParent,
   } = deps;
+
+  function assertProjectWasNotDeleted(
+    projectPath: string,
+    context: SessionLifecycleOperationContext,
+  ): void {
+    if (!context.projectDeletionPrecededOperation) return;
+    throw new Error(
+      `Project was deleted while the session operation waited: ${projectPath}`,
+    );
+  }
+
+  function runAvailableSessionLifecycleOperation<T>(
+    projectPath: string,
+    sessionName: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return runSessionLifecycleOperation(projectPath, sessionName, (context) => {
+      assertProjectWasNotDeleted(projectPath, context);
+      return operation();
+    });
+  }
+
+  function runAvailableSessionLifecycleOperations<T>(
+    projectPath: string,
+    sessionNames: Iterable<string>,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return runSessionLifecycleOperations(
+      projectPath,
+      sessionNames,
+      (context) => {
+        assertProjectWasNotDeleted(projectPath, context);
+        return operation();
+      },
+    );
+  }
 
   /** Execute a git command in the given working directory */
   async function git(
@@ -265,23 +428,18 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    * suffix use that literal name (no random hex suffix) — used to produce a
    * stable, lazily-created worktree for reserved sessions like the planner.
    */
-  async function provisionSession(
+  async function provisionSessionUnlocked(
     projectPath: string,
     sessionName: string,
-    opts: {
-      mode: SessionCreationMode;
-      tddEnabled?: boolean;
-      baseBranch?: string;
-      targetBranch?: string;
-      parentSessionName?: string;
-      reservedDirName?: string;
-      // Explicit branch name used verbatim (no prefix). When omitted the branch
-      // is derived from the session name + config branch prefix as usual. Used
-      // by chat-spawning so a reviewed/edited branch is exactly what gets
-      // created (and a duplicate/invalid branch is rejected by `worktree add`).
-      branchName?: string;
-    },
+    opts: ProvisionSessionOptions,
   ): Promise<SessionState> {
+    const stateAtEntry = await readState();
+    if (stateAtEntry.projects[projectPath]?.sessions[sessionName]) {
+      throw new Error(
+        `Session "${sessionName}" already exists in this project`,
+      );
+    }
+
     const dirName =
       opts.reservedDirName ??
       `${sanitizeBranchName(sessionName)}-${generateRandomSuffix()}`;
@@ -509,6 +667,16 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     return session;
   }
 
+  function provisionSession(
+    projectPath: string,
+    sessionName: string,
+    opts: ProvisionSessionOptions,
+  ): Promise<SessionState> {
+    return runAvailableSessionLifecycleOperation(projectPath, sessionName, () =>
+      provisionSessionUnlocked(projectPath, sessionName, opts),
+    );
+  }
+
   /**
    * Create a session in normal mode.
    * User provides the session name directly; branch is derived from it.
@@ -528,21 +696,27 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       throw new Error(validationError);
     }
 
-    // Ensure uniqueness within project
-    const state = await readState();
-    const project = state.projects[projectPath];
-    const existingNames = new Set(Object.keys(project?.sessions ?? {}));
-    if (existingNames.has(sessionName)) {
-      throw new Error(
-        `Session "${sessionName}" already exists in this project`,
-      );
-    }
+    return runAvailableSessionLifecycleOperation(
+      projectPath,
+      sessionName,
+      async () => {
+        // Ensure uniqueness within project
+        const state = await readState();
+        const project = state.projects[projectPath];
+        const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+        if (existingNames.has(sessionName)) {
+          throw new Error(
+            `Session "${sessionName}" already exists in this project`,
+          );
+        }
 
-    return provisionSession(projectPath, sessionName, {
-      mode: "normal",
-      tddEnabled,
-      ...branchOpts,
-    });
+        return provisionSessionUnlocked(projectPath, sessionName, {
+          mode: "normal",
+          tddEnabled,
+          ...branchOpts,
+        });
+      },
+    );
   }
 
   /**
@@ -625,19 +799,28 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       throw new Error(validationError);
     }
 
-    const state = await readState();
-    const project = state.projects[projectPath];
-    const existingNames = new Set(Object.keys(project?.sessions ?? {}));
-    if (existingNames.has(input.name)) {
-      throw new Error(`Session "${input.name}" already exists in this project`);
-    }
+    return runAvailableSessionLifecycleOperation(
+      projectPath,
+      input.name,
+      async () => {
+        // Ensure uniqueness within project
+        const state = await readState();
+        const project = state.projects[projectPath];
+        const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+        if (existingNames.has(input.name)) {
+          throw new Error(
+            `Session "${input.name}" already exists in this project`,
+          );
+        }
 
-    return provisionSession(projectPath, input.name, {
-      mode: input.mode,
-      tddEnabled: input.tddEnabled,
-      baseBranch: input.baseBranch,
-      targetBranch: input.targetBranch,
-    });
+        return provisionSessionUnlocked(projectPath, input.name, {
+          mode: input.mode,
+          tddEnabled: input.tddEnabled,
+          baseBranch: input.baseBranch,
+          targetBranch: input.targetBranch,
+        });
+      },
+    );
   }
 
   /**
@@ -653,17 +836,23 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   async function ensurePlannerSession(
     projectPath: string,
   ): Promise<SessionState> {
-    const state = await readState();
-    const existing =
-      state.projects[projectPath]?.sessions[PLANNER_SESSION_NAME];
-    if (existing) {
-      return existing;
-    }
+    return runAvailableSessionLifecycleOperation(
+      projectPath,
+      PLANNER_SESSION_NAME,
+      async () => {
+        const state = await readState();
+        const existing =
+          state.projects[projectPath]?.sessions[PLANNER_SESSION_NAME];
+        if (existing) {
+          return existing;
+        }
 
-    return provisionSession(projectPath, PLANNER_SESSION_NAME, {
-      mode: "normal",
-      reservedDirName: PLANNER_SESSION_NAME,
-    });
+        return provisionSessionUnlocked(projectPath, PLANNER_SESSION_NAME, {
+          mode: "normal",
+          reservedDirName: PLANNER_SESSION_NAME,
+        });
+      },
+    );
   }
 
   /**
@@ -833,6 +1022,25 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     });
   }
 
+  async function reconcileDeletedTicketSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<void> {
+    try {
+      await reconcileTicketSessionLifecycle({
+        projectPath,
+        sessionName,
+        endReason: "deleted",
+      });
+    } catch (err) {
+      logger.warn("session.delete.ticket_lifecycle_reconcile_failure", {
+        projectPath,
+        sessionName,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
   /**
    * Delete a session.
    * - Removes the worktree directory from disk (for both CC-created and imported sessions)
@@ -841,19 +1049,37 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    * - Removes the session row from state (which cascades conversations + reference docs)
    * - Does NOT delete the git branch or the project directory on disk
    */
-  async function deleteSession(
+  async function deleteSessionUnlocked(
     projectPath: string,
     sessionName: string,
-  ): Promise<{ worktreeRemoved: boolean }> {
+    expected?: ExpectedSessionIncarnation,
+  ): Promise<DeleteSessionIfCurrentResult> {
     const state = await readState();
     const project = state.projects[projectPath];
     if (!project) {
+      if (expected !== undefined) {
+        return { deleted: false, reason: "missing" };
+      }
       throw new Error(`Project not found: ${projectPath}`);
     }
 
     const session = project.sessions[sessionName];
     if (!session) {
+      if (expected !== undefined) {
+        return { deleted: false, reason: "missing" };
+      }
       throw new Error(`Session "${sessionName}" not found in project`);
+    }
+    if (
+      expected !== undefined &&
+      (session.createdAt !== expected.createdAt ||
+        session.worktreePath !== expected.worktreePath ||
+        session.branchName !== expected.branchName)
+    ) {
+      return { deleted: false, reason: "replaced" };
+    }
+    if (expected !== undefined && session.finished) {
+      return { deleted: false, reason: "finished" };
     }
 
     const result = await performSessionDeletionSideEffects(
@@ -862,9 +1088,54 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       session,
     );
 
-    await applyFusedDeleteMutation("deleteSession", projectPath, [sessionName]);
+    if (expected !== undefined) {
+      try {
+        await git(projectPath, ["branch", "-D", session.branchName]);
+        logger.info("session.compensation_branch_removed", {
+          projectPath,
+          sessionName,
+          branchName: session.branchName,
+        });
+      } catch (err) {
+        logger.error("session.compensation_branch_remove_failure", {
+          projectPath,
+          sessionName,
+          branchName: session.branchName,
+          error: getErrorMessage(err),
+        });
+        throw err;
+      }
+    }
 
-    return result;
+    await applyFusedDeleteMutation("deleteSession", projectPath, [sessionName]);
+    await reconcileDeletedTicketSession(projectPath, sessionName);
+
+    return { deleted: true, worktreeRemoved: result.worktreeRemoved };
+  }
+
+  async function deleteSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{ worktreeRemoved: boolean }> {
+    const result = await runAvailableSessionLifecycleOperation(
+      projectPath,
+      sessionName,
+      () => deleteSessionUnlocked(projectPath, sessionName),
+    );
+    if (!result.deleted) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
+    return { worktreeRemoved: result.worktreeRemoved };
+  }
+
+  function deleteSessionIfCurrent(
+    projectPath: string,
+    sessionName: string,
+    expected: ExpectedSessionIncarnation,
+  ): Promise<DeleteSessionIfCurrentResult> {
+    return runAvailableSessionLifecycleOperation(projectPath, sessionName, () =>
+      deleteSessionUnlocked(projectPath, sessionName, expected),
+    );
   }
 
   /**
@@ -879,7 +1150,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    * - A session that was not found is reported as a failure result and
    *   does not abort the rest of the batch.
    */
-  async function bulkDeleteSessions(
+  async function bulkDeleteSessionsUnlocked(
     projectPath: string,
     sessionNames: string[],
   ): Promise<BulkSessionResult[]> {
@@ -924,8 +1195,22 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       projectPath,
       succeeded,
     );
+    for (const sessionName of succeeded) {
+      await reconcileDeletedTicketSession(projectPath, sessionName);
+    }
 
     return results;
+  }
+
+  function bulkDeleteSessions(
+    projectPath: string,
+    sessionNames: string[],
+  ): Promise<BulkSessionResult[]> {
+    return runAvailableSessionLifecycleOperations(
+      projectPath,
+      sessionNames,
+      () => bulkDeleteSessionsUnlocked(projectPath, sessionNames),
+    );
   }
 
   /**
@@ -936,20 +1221,39 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    * - Removes the project row from state (cascades sessions/conversations/refs)
    * - Does NOT delete the project directory on disk or any git branches
    */
-  async function deleteProject(
+  async function deleteProjectGated(
     projectPath: string,
-  ): Promise<{ sessionsRemoved: number }> {
+  ): Promise<DeleteProjectResult> {
     const state = await readState();
     const project = state.projects[projectPath];
     if (!project) {
       throw new Error(`Project not found: ${projectPath}`);
     }
 
+    const ticketDeletionSnapshot: TicketProjectDeletionSnapshot =
+      await captureTicketProjectDeletion(projectPath);
+
+    let ticketContentIds: string[] | null = null;
+    try {
+      ticketContentIds = await captureTicketContentForProject(projectPath);
+    } catch (err) {
+      logger.warn("project.delete.ticket_content_capture_failure", {
+        projectPath,
+        orphanPathKey: await import("@/lib/tickets/content-store")
+          .then((m) => m.TICKET_CONTENT_ROOT_DIRNAME)
+          .catch(() => "ticket-content"),
+        error: getErrorMessage(err),
+      });
+    }
+
     const sessionNames = Object.keys(project.sessions);
     let sessionsRemoved = 0;
     for (const sessionName of sessionNames) {
       try {
-        await deleteSession(projectPath, sessionName);
+        const deletion = await deleteSessionUnlocked(projectPath, sessionName);
+        if (!deletion.deleted) {
+          throw new Error(`Session "${sessionName}" not found in project`);
+        }
         sessionsRemoved += 1;
       } catch (err) {
         logger.warn("project.delete.session_remove_failure", {
@@ -980,6 +1284,33 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       );
     });
 
+    // Ticket snapshot blobs live outside the DB, so the committed row cascade
+    // cannot reach them. The ids were captured while the ticket rows existed;
+    // cleanup is best-effort only after no live row can reference a blob.
+    if (ticketContentIds !== null) {
+      try {
+        await cleanupTicketContentForProject(projectPath, ticketContentIds);
+      } catch (err) {
+        logger.warn("project.delete.ticket_content_cleanup_failure", {
+          projectPath,
+          orphanPathKey: await import("@/lib/tickets/content-store")
+            .then((m) => m.TICKET_CONTENT_ROOT_DIRNAME)
+            .catch(() => "ticket-content"),
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
+    try {
+      await publishTicketProjectDeletion(ticketDeletionSnapshot);
+    } catch (err) {
+      logger.warn("project.delete.ticket_event_publish_failure", {
+        projectPath,
+        ticketCount: ticketDeletionSnapshot.ticketNumbers.length,
+        error: getErrorMessage(err),
+      });
+    }
+
     logger.info("project.delete", {
       projectPath,
       sessionsRemoved,
@@ -988,7 +1319,18 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       contextArtifactsRemoved,
     });
 
-    return { sessionsRemoved };
+    return {
+      sessionsRemoved,
+      deletedTicketNumbers: [...ticketDeletionSnapshot.ticketNumbers],
+    };
+  }
+
+  function deleteProject(projectPath: string): Promise<DeleteProjectResult> {
+    return runTicketProjectDeletion(projectPath, () =>
+      runSessionProjectDeletion(projectPath, () =>
+        deleteProjectGated(projectPath),
+      ),
+    );
   }
 
   return {
@@ -1000,6 +1342,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     ensurePlannerSession,
     retargetOrphanedChildren,
     deleteSession,
+    deleteSessionIfCurrent,
     bulkDeleteSessions,
     deleteProject,
   };
@@ -1017,5 +1360,6 @@ export const createSpawnedSession = defaultService.createSpawnedSession;
 export const ensurePlannerSession = defaultService.ensurePlannerSession;
 export const retargetOrphanedChildren = defaultService.retargetOrphanedChildren;
 export const deleteSession = defaultService.deleteSession;
+export const deleteSessionIfCurrent = defaultService.deleteSessionIfCurrent;
 export const bulkDeleteSessions = defaultService.bulkDeleteSessions;
 export const deleteProject = defaultService.deleteProject;

@@ -1,6 +1,14 @@
 import { createLogger } from "@/lib/logging";
+import {
+  isWorkflowLaneRole,
+  type ConversationRole,
+} from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import { getSession } from "@/lib/state-store";
+import {
+  getConversation,
+  getProjectConversation,
+  getSession,
+} from "@/lib/state-store";
 import { getJob, dispatchCommitJob, dispatchMergeJob } from "@/lib/jobs/queue";
 import { hasUncommittedChanges, collectChangeSummary } from "@/lib/git/commits";
 import { resolveMergeTarget, type MergeTarget } from "@/lib/git/merge-target";
@@ -12,6 +20,10 @@ import type {
 import { appendNotice, type AppendNoticeInput } from "@/lib/prompt/transcript";
 import { AlignmentNotSupportedError } from "@/lib/session-alignment/service";
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
+import type {
+  TicketCommandInput,
+  TicketCommandOutcome,
+} from "@/lib/tickets/slash-command";
 import { enqueueConversationMessage } from "@/lib/prompt/enqueue-conversation-message";
 import {
   buildGenerationPrompt,
@@ -97,6 +109,21 @@ export interface ConversationCommandDeps {
     conversationId: string;
     message: string;
   }): Promise<void>;
+  /**
+   * Server-owned `/ticket` creation: structured task-run turn, compaction
+   * snapshot, and create+attach in one transaction, with its own success and
+   * failure notices (see `@/lib/tickets/slash-command`).
+   */
+  runTicketCommand(input: TicketCommandInput): Promise<TicketCommandOutcome>;
+  /**
+   * Workflow role of the conversation (`null` for user conversations and when
+   * the conversation cannot be found — the ticket runner reports not-found).
+   */
+  getConversationRole(
+    projectPath: string,
+    sessionName: string | null,
+    conversationId: string,
+  ): Promise<ConversationRole>;
 }
 
 export interface RunCommandInput {
@@ -121,11 +148,22 @@ export type RejectionReason =
   | "job-active"
   | "no-changes"
   | "alignment-unavailable"
+  | "workflow-lane"
   | "dispatch-failed";
 
 export type RunCommandOutcome =
   | { status: "dispatched"; jobId: string; usedFallback: boolean }
   | { status: "alignment_draft_started"; draftId: string }
+  | {
+      status: "ticket_created";
+      identifier: string;
+      confirmationPersisted: boolean;
+    }
+  | {
+      status: "ticket_failed";
+      reason: string;
+      failureNoticePersisted: boolean;
+    }
   | { status: "rejected"; reason: RejectionReason };
 
 const REJECTION_NOTICES: Record<
@@ -142,6 +180,8 @@ const REJECTION_NOTICES: Record<
     `Cannot run /${command}: the session worktree has no uncommitted changes.`,
   "alignment-unavailable": () =>
     "Cannot run /align: alignment is unavailable for this session.",
+  "workflow-lane": (command) =>
+    `Cannot run /${command}: this conversation is managed by a graph workflow.`,
 };
 
 export function createConversationCommandService(
@@ -295,10 +335,12 @@ export function createConversationCommandService(
   ): Promise<RunCommandOutcome> {
     const { parsed } = input;
 
-    // align is routed by runAlign before this point; this guard narrows the
+    // align and ticket are routed before this point; this guard narrows the
     // remaining flow to the git-job commands.
-    if (parsed.command === "align") {
-      throw new Error("align must be routed by runAlign, not the git-job path");
+    if (parsed.command === "align" || parsed.command === "ticket") {
+      throw new Error(
+        `${parsed.command} must be routed by run(), not the git-job path`,
+      );
     }
 
     let target: MergeTarget | null = null;
@@ -474,8 +516,70 @@ export function createConversationCommandService(
     return { status: "alignment_draft_started", draftId: draft.draftId };
   }
 
+  /**
+   * `/ticket` is separate from the commit/merge git-job machinery: project
+   * conversations are eligible (the ticket lands in the conversation's
+   * project), and the job-active / uncommitted-changes gates do not apply.
+   * Session conversations still require a live session for the task-run turn,
+   * reusing the existing rejection notices. Graph-workflow lane conversations
+   * (implementer/validator) DO reach this path — an open approval gate admits
+   * lane prompts to the prompt route — so they are rejected here before any
+   * ticket work starts.
+   */
+  async function runTicket(input: RunCommandInput): Promise<RunCommandOutcome> {
+    const role = await deps.getConversationRole(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    if (isWorkflowLaneRole(role)) {
+      return reject(input, "workflow-lane");
+    }
+
+    if (input.sessionName !== null) {
+      const session = await deps.getSession(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (session === null) {
+        return reject(input, "no-session");
+      }
+      if (session.finished) {
+        return reject(input, "session-finished");
+      }
+    }
+
+    const outcome = await deps.runTicketCommand({
+      projectPath: input.projectPath,
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      hint: input.parsed.hint,
+    });
+
+    logger.info("command.ticket_complete", {
+      status: outcome.status,
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+    });
+
+    return outcome.status === "created"
+      ? {
+          status: "ticket_created",
+          identifier: outcome.identifier,
+          confirmationPersisted: outcome.confirmationPersisted,
+        }
+      : {
+          status: "ticket_failed",
+          reason: outcome.reason,
+          failureNoticePersisted: outcome.failureNoticePersisted,
+        };
+  }
+
   async function run(input: RunCommandInput): Promise<RunCommandOutcome> {
     if (input.parsed.command === "align") return runAlign(input);
+    if (input.parsed.command === "ticket") return runTicket(input);
 
     const eligibility = await checkEligibility(input);
     if (!eligibility.eligible) return eligibility.outcome;
@@ -504,6 +608,13 @@ const productionDeps: ConversationCommandDeps = {
   getSession(projectPath, sessionName) {
     return getSession(projectPath, sessionName);
   },
+  async getConversationRole(projectPath, sessionName, conversationId) {
+    const conversation =
+      sessionName === null
+        ? await getProjectConversation(projectPath, conversationId)
+        : await getConversation(projectPath, sessionName, conversationId);
+    return conversation?.role ?? null;
+  },
   hasActiveJob(projectPath, sessionName) {
     return getJob(projectPath, sessionName)?.status === "running";
   },
@@ -523,6 +634,13 @@ const productionDeps: ConversationCommandDeps = {
     });
   },
   enqueueAuthoringTurn: enqueueConversationMessage,
+  // Dynamic so the tickets/compaction graph stays off this module's static
+  // import graph (mirrors the dispatch.ts isolation rationale).
+  async runTicketCommand(input) {
+    const { getTicketCommandRunner } =
+      await import("@/lib/tickets/service-factory");
+    return getTicketCommandRunner().run(input);
+  },
 };
 
 export const conversationCommandService =

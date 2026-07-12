@@ -521,6 +521,7 @@ function makeFakeHandlers(
     diff: throwing,
     rollback: throwing,
     copyActiveCharter: throwing,
+    createAndActivateTicketCharter: throwing,
     ...overrides,
   };
   return createSessionAlignmentRouteHandlers({

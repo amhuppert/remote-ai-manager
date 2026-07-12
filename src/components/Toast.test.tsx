@@ -20,4 +20,34 @@ describe("Toast", () => {
     render(<Toast message="hi" onDismiss={vi.fn()} />);
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
+
+  it("renders the action button and invokes it once, then dismisses", () => {
+    const onDismiss = vi.fn();
+    const onClick = vi.fn();
+    render(
+      <Toast
+        message="Couldn't move"
+        action={{ label: "Retry", onClick }}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking the toast body dismisses without invoking the action", () => {
+    const onDismiss = vi.fn();
+    const onClick = vi.fn();
+    render(
+      <Toast
+        message="Couldn't move"
+        action={{ label: "Retry", onClick }}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByRole("status"));
+    expect(onClick).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
 });

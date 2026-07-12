@@ -76,6 +76,10 @@ import {
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { createLiveTicketContextProvider } from "@/lib/tickets/live-context";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 // ---------------------------------------------------------------------------
 // Shared mock backend runtime
@@ -159,6 +163,7 @@ function createMockDeps(
     getSessionState: vi.fn(async () => null),
     getActiveAlignmentInjection: vi.fn(async () => null),
     getActiveAlignmentVersion: vi.fn(async () => null),
+    getLiveTicketBlock: vi.fn(async () => null),
     createReferenceDocument: vi.fn(async () => ({})),
     getReferenceDocuments: vi.fn(async () => []),
     readConversationMessages: vi.fn(async () => []),
@@ -517,6 +522,69 @@ describe("shouldRecreateRuntime", () => {
 });
 
 describe("buildEffectivePrompt", () => {
+  it("prepends the active ticket block ahead of everything else", () => {
+    const block = "<active-ticket>\nidentifier: repo#3\n</active-ticket>";
+    const result = buildEffectivePrompt(
+      "hello",
+      false,
+      [],
+      null,
+      "http://debug",
+      ".debug/conv/instrumentation.json",
+      block,
+    );
+    expect(result).toBe(`${block}\n\nhello`);
+  });
+
+  it("places the ticket block before debug instructions", () => {
+    const block = "<active-ticket>\nidentifier: repo#3\n</active-ticket>";
+    const debugMode = {
+      active: true,
+      recording: true,
+      logFilePath: "/tmp/debug.jsonl",
+      enteredAt: "2024-01-01T00:00:00Z",
+      hypotheses: [] as never[],
+      reproductionSteps: [] as string[],
+      instructionsDelivered: false,
+      phase: "hypothesizing" as const,
+      fixSummary: null,
+      verificationSteps: [] as string[],
+      lastTurnFailed: false,
+    };
+    const result = buildEffectivePrompt(
+      "help debug",
+      false,
+      [],
+      debugMode,
+      "http://debug-url",
+      ".debug/conv/instrumentation.json",
+      block,
+    );
+    expect(typeof result).toBe("string");
+    expect((result as string).startsWith(block)).toBe(true);
+    expect(result as string).toContain("<debug-mode>");
+    expect(result as string).toContain("help debug");
+  });
+
+  it("prepends the ticket block as a text block when the prompt carries images", () => {
+    const block = "<active-ticket>\nidentifier: repo#3\n</active-ticket>";
+    const blocks = [
+      { type: "text" as const, text: "hello" },
+      { type: "image" as const, mediaType: "image/png", base64Data: "abc" },
+    ];
+    const result = buildEffectivePrompt(
+      "hello",
+      true,
+      blocks,
+      null,
+      "http://debug",
+      ".debug/conv/instrumentation.json",
+      block,
+    );
+    expect(Array.isArray(result)).toBe(true);
+    expect((result as unknown[])[0]).toEqual({ type: "text", text: block });
+  });
+
   it("returns plain text when no images", () => {
     const result = buildEffectivePrompt(
       "hello",
@@ -525,6 +593,7 @@ describe("buildEffectivePrompt", () => {
       null,
       "http://debug",
       ".debug/conv/instrumentation.json",
+      null,
     );
     expect(result).toBe("hello");
   });
@@ -541,6 +610,7 @@ describe("buildEffectivePrompt", () => {
       null,
       "http://debug",
       ".debug/conv/instrumentation.json",
+      null,
     );
     expect(result).toEqual(blocks);
   });
@@ -566,6 +636,7 @@ describe("buildEffectivePrompt", () => {
       debugMode,
       "http://debug-url",
       ".debug/conv/instrumentation.json",
+      null,
     );
     expect(typeof result).toBe("string");
     expect(result as string).toContain("<debug-mode>");
@@ -595,6 +666,7 @@ describe("buildEffectivePrompt", () => {
       debugMode,
       "http://debug-url",
       ".debug/conv/instrumentation.json",
+      null,
     );
     expect(typeof result).toBe("string");
     expect(result as string).toContain("<debug-phase>");
@@ -611,6 +683,7 @@ describe("buildEffectivePrompt", () => {
       null,
       "http://debug",
       ".debug/conv/instrumentation.json",
+      null,
     );
     expect(result).toBe("hello");
   });
@@ -640,6 +713,7 @@ describe("buildEffectivePrompt", () => {
       debugMode,
       "http://debug-url",
       ".debug/conv/instrumentation.json",
+      null,
     );
     expect(Array.isArray(result)).toBe(true);
     const arr = result as Array<{ type: string; text?: string }>;
@@ -3023,6 +3097,199 @@ describe("executePromptForMachine", () => {
     );
   });
 
+  describe("live ticket context injection", () => {
+    const TICKET_BLOCK = [
+      "<active-ticket>",
+      "identifier: repo#1",
+      "title: Injected ticket",
+      "status: In Progress",
+      "attachments: none",
+      "refresh: cctl ticket get repo#1",
+      "</active-ticket>",
+    ].join("\n");
+
+    function registerRuntime(input: ExecutePromptInput): void {
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+    }
+
+    function lastTurnInput(): ConversationBackendTurnInput {
+      const call = mockSendTurn.mock.calls.at(-1)! as unknown[];
+      return call[0] as ConversationBackendTurnInput;
+    }
+
+    it("prepends the live ticket block to the turn's effective prompt, never to sessionInstructions", async () => {
+      setActorDeps(
+        createMockDeps({
+          getLiveTicketBlock: vi.fn(async () => TICKET_BLOCK),
+        }),
+      );
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      const turnInput = lastTurnInput();
+      expect(turnInput.promptText.startsWith(TICKET_BLOCK)).toBe(true);
+      expect(turnInput.promptText).toContain("do the work");
+
+      expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+      const createRuntimeCall = (
+        mockFactory.createRuntime as ReturnType<typeof vi.fn>
+      ).mock.calls[0]! as unknown[];
+      const runtimeArgs = createRuntimeCall[0] as {
+        sessionInstructions: string[];
+      };
+      expect(runtimeArgs.sessionInstructions.join("\n")).not.toContain(
+        "<active-ticket>",
+      );
+    });
+
+    it("leaves the prompt untouched for unlinked sessions", async () => {
+      setActorDeps(
+        createMockDeps({
+          getLiveTicketBlock: vi.fn(async () => null),
+        }),
+      );
+      const input = makeExecutePromptInput({ promptText: "plain turn" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(lastTurnInput().promptText).toBe("plain turn");
+    });
+
+    it("does not look up tickets for project conversations", async () => {
+      const getLiveTicketBlock = vi.fn(async () => TICKET_BLOCK);
+      setActorDeps(createMockDeps({ getLiveTicketBlock }));
+      const input = makeProjectExecutePromptInput({
+        promptText: "project turn",
+      });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(getLiveTicketBlock).not.toHaveBeenCalled();
+      expect(lastTurnInput().promptText).toBe("project turn");
+    });
+
+    it("proceeds without the block when the ticket lookup fails", async () => {
+      setActorDeps(
+        createMockDeps({
+          getLiveTicketBlock: vi.fn(async () => {
+            throw new Error("db unavailable");
+          }),
+        }),
+      );
+      const input = makeExecutePromptInput({ promptText: "resilient turn" });
+      registerRuntime(input);
+
+      const result = await executePromptForMachine(input);
+
+      expect(result.error).toBeNull();
+      expect(lastTurnInput().promptText).toBe("resilient turn");
+    });
+
+    it("shows a mid-session attachment addition in the next turn's effective prompt without runtime recreation", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
+          "/projects/repo",
+        );
+        db.prepare(
+          `INSERT INTO sessions
+             (project_path, session_name, worktree_path, branch_name, created_at, last_activity_at, finished)
+           VALUES (?, ?, ?, ?, ?, ?, 0)`,
+        ).run(
+          "/projects/repo",
+          "test-session",
+          "/projects/repo/.worktrees/test-session",
+          "csm/test-session",
+          "2026-07-04T00:00:00.000Z",
+          "2026-07-04T00:00:00.000Z",
+        );
+        const repo = createTicketsRepo(db, createWriteQueue());
+        const ticket = await repo.create({
+          id: "t-1",
+          projectPath: "/projects/repo",
+          title: "Mid-session ticket",
+          description: "",
+          workType: "feature",
+          status: "not_started",
+          createdAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z",
+        });
+        await repo.linkStartedSession({
+          id: "l-1",
+          projectPath: "/projects/repo",
+          number: ticket.number,
+          sessionName: "test-session",
+          sessionCreatedAt: "2026-07-04T00:00:00.000Z",
+          startMode: "agent",
+          linkedAt: "2026-07-05T00:00:00.000Z",
+        });
+        const provider = createLiveTicketContextProvider({
+          findLinkedTicket(projectPath, sessionName) {
+            return repo.findLinkedTicket(projectPath, sessionName);
+          },
+        });
+        setActorDeps(
+          createMockDeps({
+            getLiveTicketBlock: (projectPath, sessionName) =>
+              provider.getForSession(projectPath, sessionName),
+          }),
+        );
+
+        // A persistent runtime is already alive — its instructions are frozen.
+        const existingRuntime = createMockBackendRuntime({ modelId: "opus" });
+        (
+          existingRuntime.sendTurn as ReturnType<typeof vi.fn>
+        ).mockResolvedValue(defaultTurnResult);
+        const input = makeExecutePromptInput({ promptText: "first turn" });
+        const key = conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        );
+        registerConversationRuntime(key, {
+          abortController: new AbortController(),
+          backendRuntime: existingRuntime,
+        });
+
+        await executePromptForMachine(input);
+        const firstPrompt = lastTurnInput().promptText;
+        expect(firstPrompt).toContain("<active-ticket>");
+        expect(firstPrompt).toContain("attachments: none");
+
+        await repo.addAttachment({
+          id: "att-mid",
+          ticketId: ticket.id,
+          description: "added mid-session",
+          payload: { kind: "note", markdown: "body stays out of prompts" },
+          createdAt: "2026-07-05T01:00:00.000Z",
+          updatedAt: "2026-07-05T01:00:00.000Z",
+        });
+
+        await executePromptForMachine(
+          makeExecutePromptInput({ promptText: "second turn" }),
+        );
+        const secondPrompt = lastTurnInput().promptText;
+        expect(secondPrompt).toContain("att-mid");
+        expect(secondPrompt).toContain("added mid-session");
+        expect(secondPrompt).not.toContain("body stays out of prompts");
+        expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+      } finally {
+        db.close();
+      }
+    });
+  });
+
   it("persists non-Claude content events incrementally before the result entry", async () => {
     const codexRuntime = createMockBackendRuntime({
       backend: "codex" as const,
@@ -5180,5 +5447,83 @@ describe("runTaskRunTurnForMachine", () => {
       writeCapability: "write_capable",
     });
     expect(typeof facadeDeps.resolveTaskRunner).toBe("function");
+  });
+
+  it("rebuilds and prepends the linked ticket block for every task_run turn", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: "done",
+      usage: null,
+      error: null,
+      timedOut: false,
+    }));
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+    const getLiveTicketBlock = vi.fn(async () =>
+      [
+        "<active-ticket>",
+        "identifier: repo#12",
+        "attachments: none",
+        "</active-ticket>",
+      ].join("\n"),
+    );
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      getLiveTicketBlock,
+      executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+        typeof vi.fn
+      >,
+    } as unknown as Partial<ActorImplementationDeps>);
+    setActorDeps(mockDeps);
+
+    await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ promptText: "derive ticket fields" }),
+    );
+
+    expect(getLiveTicketBlock).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+    );
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request.prompt).toBe(
+      [
+        "<active-ticket>",
+        "identifier: repo#12",
+        "attachments: none",
+        "</active-ticket>",
+        "",
+        "derive ticket fields",
+      ].join("\n"),
+    );
+  });
+
+  it("continues a task_run without ticket context when the focused lookup fails", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: "done",
+      usage: null,
+      error: null,
+      timedOut: false,
+    }));
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+    const getLiveTicketBlock = vi.fn(async () => {
+      throw new Error("ticket database unavailable");
+    });
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      getLiveTicketBlock,
+      executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+        typeof vi.fn
+      >,
+    } as unknown as Partial<ActorImplementationDeps>);
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ promptText: "derive ticket fields" }),
+    );
+
+    expect(result.error).toBeNull();
+    expect(getLiveTicketBlock).toHaveBeenCalledTimes(1);
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request.prompt).toBe("derive ticket fields");
   });
 });

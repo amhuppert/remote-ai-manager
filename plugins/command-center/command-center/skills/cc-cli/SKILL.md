@@ -281,6 +281,64 @@ cctl docs list
 cctl docs delete 4f1d2797-...
 ```
 
+## cctl ticket
+
+Manage Command Center **tickets** — durable work items owned by one project,
+identified as `<project>#<number>`.
+
+```
+cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <status>]
+cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all]
+cctl ticket get <number | project#number>
+cctl ticket update <number | project#number> [--title …] [--description …] [--type …] [--status …]
+cctl ticket delete <number | project#number>
+cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"
+cctl ticket attachment <get|update|remove> <number | project#number> <attachmentId>
+```
+
+**Identifier forms.** A bare `<number>` resolves through the ambient project
+scope (`--project` / `CC_PROJECT`); the `<project>#<number>` form addresses any
+project's tickets from any conversation — including graph-workflow lanes — and
+needs no ambient project. Unknown tickets exit `1` with `ticket_not_found`
+naming the reference; malformed references, missing flags, and invalid enum
+values exit `2` **before any network call**.
+
+**The attachment index.** `list` and `get` always render each ticket's typed
+attachment index — id, kind, description, and the exact retrieval/follow
+command per entry — in both text and `--json` output (`attachmentIndex` in the
+envelope). `list` bounds descriptions with an explicit `…`; `get` renders them
+in full. Retrieve any entry's content with the command shown in its index line
+(`cctl ticket attachment get <ticket> <id>`); related-ticket entries also carry
+a `cctl ticket get <project>#<number>` follow command.
+
+- `attach` — five kinds, each with a **required** `--description` (the
+  descriptions are the index): `file <path>` snapshots bytes at attach time
+  (survives source deletion; `--media-type` optional); `conversation
+  [<conversationId>]` snapshots the conversation's compaction (defaults to the
+  current conversation from `CC_CONVERSATION_ID`); `session <sessionName>` and
+  `ticket <ref>` are live pointers; `note "<markdown>"` is inline markdown.
+- `attachment get` — resolve full content per kind (file content, compaction
+  markdown with read commands, session state, related-ticket detail plus its
+  own index, note body). `attachment update` edits `--description` (any kind)
+  and `--markdown` (notes). `attachment remove` deletes the entry. All three
+  work in any ticket status.
+
+```
+cctl ticket create --title "Flaky pre-merge gate" --type bug
+# → created cc#12  Flaky pre-merge gate
+cctl ticket attach file 12 logs/ci-failure.txt --description "full CI log of the flaky run"
+cctl ticket get 12
+# → cc#12  Flaky pre-merge gate
+#   status: not_started  type: bug  created: …  updated: …
+#   attachments:
+#   - id-7 file — full CI log of the flaky run — cctl ticket attachment get cc#12 id-7
+cctl ticket update 12 --status in_progress
+```
+
+Related: `cctl conversation compaction get` reads a compaction directly once a
+conversation attachment names it; `cctl ticket get` is the follow command every
+related-ticket entry embeds.
+
 ## cctl conversation
 
 Read **conversation transcripts** in bounded windows and work with **compaction

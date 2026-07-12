@@ -30,9 +30,10 @@ import {
 /**
  * Scopes the session-level SSE adapter recognizes.
  *
- * The legacy feature scopes (`conversation`, `debug`, `graph_workflow`,
- * `merge_job`, `notification`) are derived by `resolveSessionStatusScope`
- * from each feature's typed SSE event. The two scoped-status scopes
+ * The feature scopes (`conversation`, `debug`, `graph_workflow`,
+ * `merge_job`, `notification`, `dev-server`, `ticket`) are derived by
+ * `resolveSessionStatusScope` from each feature's typed SSE event. The two
+ * scoped-status scopes
  * (`collaboration`, `workflow`) are carried directly on the wire via
  * the `scoped-status` SSE event so primitive-native workflows can
  * publish lifecycle/status without having to define a feature-specific
@@ -54,7 +55,8 @@ type SessionStatusScope =
   | "notification"
   | "collaboration"
   | "workflow"
-  | "dev-server";
+  | "dev-server"
+  | "ticket";
 
 export interface SessionStatusScopeResolution {
   scope: SessionStatusScope;
@@ -106,6 +108,7 @@ const SCOPED_STATUS_RECOGNIZED_SCOPES: ReadonlySet<SessionStatusScope> =
     "collaboration",
     "workflow",
     "dev-server",
+    "ticket",
   ]);
 
 function mapDevServerStatus(raw: unknown): StatusBusLifecycleStatus {
@@ -238,6 +241,20 @@ export function resolveSessionStatusScope(
         scope: "dev-server",
         scopeId,
         status: mapDevServerStatus(e.status),
+      };
+    }
+    case "ticket-changed": {
+      const projectName = pickString(e.projectName);
+      const ticketNumber =
+        typeof e.ticketNumber === "number" ? e.ticketNumber : undefined;
+      return {
+        scope: "ticket",
+        scopeId:
+          projectName !== undefined && ticketNumber !== undefined
+            ? `${projectName}#${ticketNumber}`
+            : FALLBACK_SCOPE_ID,
+        // Every ticket-changed event reports an already-committed mutation.
+        status: "completed",
       };
     }
     case "scoped-status": {

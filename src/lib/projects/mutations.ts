@@ -3,16 +3,30 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import type { z } from "zod";
+import { z } from "zod";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { projectKeys } from "@/lib/projects/query-keys";
 import type {
   discoveredProjectSchema,
   projectPreferencesResponseSchema,
 } from "@/lib/projects/schemas";
+import {
+  removeProjectTicketsOptimistically,
+  resetDeletedProjectTicketCaches,
+  restoreProjectTicketLists,
+} from "@/lib/tickets/cache-lifecycle";
+import { rememberAuthoritativeTicketDeletion } from "@/lib/tickets/event-version";
+import { scheduleTicketCacheInvalidation } from "@/lib/tickets/mutation-coordinator";
+import { ticketKeys } from "@/lib/tickets/query-keys";
 
 type DiscoveredProject = z.infer<typeof discoveredProjectSchema>;
 type ProjectPreferences = z.infer<typeof projectPreferencesResponseSchema>;
+
+const deleteProjectResponseSchema = z.object({
+  success: z.literal(true),
+  sessionsRemoved: z.number().int().nonnegative(),
+  deletedTicketNumbers: z.array(z.number().int().positive()),
+});
 
 function withMembership(
   names: readonly string[],
@@ -121,9 +135,15 @@ export function useDeleteProjectMutation() {
         `/api/projects/${encodeURIComponent(projectName)}?projectPath=${encodeURIComponent(projectPath)}`,
         "delete-project",
         { method: "DELETE" },
+        deleteProjectResponseSchema,
       ),
     onMutate: async ({ projectName }) => {
       const context = await snapshotProjectCaches(queryClient);
+      await queryClient.cancelQueries({ queryKey: ticketKeys.lists() });
+      const previousTicketLists = removeProjectTicketsOptimistically(
+        queryClient,
+        projectName,
+      );
       if (context.previousList) {
         queryClient.setQueryData<DiscoveredProject[]>(
           projectKeys.list(),
@@ -147,13 +167,21 @@ export function useDeleteProjectMutation() {
           },
         );
       }
-      return context;
+      return { ...context, previousTicketLists };
     },
     onError: (_err, _vars, context) => {
       rollbackProjectCaches(queryClient, context);
+      restoreProjectTicketLists(queryClient, context?.previousTicketLists);
+    },
+    onSuccess: (data, { projectName }) => {
+      for (const number of data.deletedTicketNumbers) {
+        rememberAuthoritativeTicketDeletion(queryClient, projectName, number);
+      }
+      resetDeletedProjectTicketCaches(queryClient, projectName);
     },
     onSettled: () => {
       invalidateProjectCaches(queryClient);
+      scheduleTicketCacheInvalidation(queryClient, { includeLists: true });
     },
   });
 }

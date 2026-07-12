@@ -40,6 +40,9 @@ function makeHost(
       }
       return null;
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",

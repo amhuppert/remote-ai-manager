@@ -10,7 +10,12 @@ export default function ToastContainer(): React.JSX.Element | null {
   return (
     <>
       {toasts.map((t) => (
-        <Toast key={t.id} message={t.message} onDismiss={() => dismiss(t.id)} />
+        <Toast
+          key={t.id}
+          message={t.message}
+          action={t.action}
+          onDismiss={() => dismiss(t.id)}
+        />
       ))}
     </>
   );

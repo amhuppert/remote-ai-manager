@@ -4,6 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
+import SessionTicketIndicator from "@/components/SessionTicketIndicator";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import TddToggle from "@/components/TddToggle";
 import LayoutSwitcher from "@/features/session/conversation/LayoutSwitcher";
@@ -163,89 +164,102 @@ function SessionInfoStrip({
   }, [conversationName, conversationId]);
 
   return (
-    <div className="relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem] max-768:hidden">
+    <div className="relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem]">
       <div className="hidden">
         <StatusDot />
         <span className="text-text-secondary">{session.branchName}</span>
       </div>
-      <div className="flex items-center gap-lg px-md py-[6px]">
-        <CopyableId
-          label="worktree"
-          value={session.worktreePath}
-          displayValue={shortenWorktreePath(session.worktreePath)}
-        />
-        <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-        <div className="inline-flex shrink-0 items-center gap-[6px] font-mono text-[0.72rem] leading-none font-medium tracking-[0.05em] text-text-secondary uppercase">
-          <span
-            className={cn(
-              "h-[6px] w-[6px] shrink-0 rounded-full",
-              SESSION_STATUS_DOT[statusKey] ?? "bg-text-tertiary",
-            )}
-            aria-hidden="true"
+      <div className="flex items-center gap-lg px-md py-[6px] max-768:gap-0 max-768:px-0 max-768:py-0">
+        <div className="contents max-768:hidden">
+          <CopyableId
+            label="worktree"
+            value={session.worktreePath}
+            displayValue={shortenWorktreePath(session.worktreePath)}
           />
-          {displayStatus}
+          <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+          <div className="inline-flex shrink-0 items-center gap-[6px] font-mono text-[0.72rem] leading-none font-medium tracking-[0.05em] text-text-secondary uppercase">
+            <span
+              className={cn(
+                "h-[6px] w-[6px] shrink-0 rounded-full",
+                SESSION_STATUS_DOT[statusKey] ?? "bg-text-tertiary",
+              )}
+              aria-hidden="true"
+            />
+            {displayStatus}
+          </div>
         </div>
-        {contextPercent != null && (
-          <>
-            <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-            <ContextFillIndicator percentage={contextPercent} />
-          </>
-        )}
-        <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-        <TddToggle
-          enabled={tddEnabled}
-          onChange={onTddChange}
-          disabled={tddDisabled}
-          compact
-        />
-        <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-        <AlignmentChip
-          state={alignmentChipState}
-          activeVersion={alignmentState?.active?.version ?? null}
-          onActivate={onActivateAlignment}
-        />
-        <div className="ml-auto inline-flex shrink-0 items-center gap-sm">
-          <DevServersButton
-            open={dsOpen}
-            servers={dsServers}
-            onClose={dsClose}
-            onToggle={dsToggle}
-            onStart={dsStartServer}
-            onStop={dsStopServer}
-            onStartAll={dsStartAll}
-            onStopAll={dsStopAll}
-            unmanagedConflict={dsUnmanagedConflict}
-            onDismissUnmanagedConflict={dsDismissUnmanagedConflict}
-            onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
-            isStoppingUnmanaged={dsIsStoppingUnmanaged}
+        <div
+          data-session-ticket-region
+          className="inline-flex items-center max-768:flex max-768:min-h-[32px] max-768:px-md max-768:py-[6px] max-768:empty:hidden"
+        >
+          <SessionTicketIndicator
+            projectName={projectName}
+            sessionName={sessionName}
           />
-          <CompactionStatusChip
-            state={compactionState}
-            onOpen={openContextArtifactPanel}
+        </div>
+        <div className="contents max-768:hidden">
+          {contextPercent != null && (
+            <>
+              <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+              <ContextFillIndicator percentage={contextPercent} />
+            </>
+          )}
+          <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+          <TddToggle
+            enabled={tddEnabled}
+            onChange={onTddChange}
+            disabled={tddDisabled}
+            compact
           />
-          <SessionActionsMenu
-            targetBranch={targetBranch}
-            onDelete={onDelete}
-            compaction={compactionState}
-            onCompactConversation={handleCompactConversation}
-            onViewArtifact={openContextArtifactPanel}
-            onRefreshArtifact={handleRefreshArtifact}
-            onCopyReference={handleCopyReference}
+          <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+          <AlignmentChip
+            state={alignmentChipState}
+            activeVersion={alignmentState?.active?.version ?? null}
+            onActivate={onActivateAlignment}
           />
-          <InfoDetailsPopover
-            conversationId={conversationId}
-            backendRef={activeConversation?.backendRef ?? null}
-            createdAt={session.createdAt}
-            worktreePath={session.worktreePath}
-            promptCount={deriveSessionPromptCount(session)}
-            onCopyContext={copyContext}
-            onOpenCapabilities={() => setCapabilitiesOpen(true)}
-          />
-          <span className="topbar-sep" />
-          <LayoutSwitcher
-            activeLayout={layout}
-            onLayoutChange={onLayoutChange}
-          />
+          <div className="ml-auto inline-flex shrink-0 items-center gap-sm">
+            <DevServersButton
+              open={dsOpen}
+              servers={dsServers}
+              onClose={dsClose}
+              onToggle={dsToggle}
+              onStart={dsStartServer}
+              onStop={dsStopServer}
+              onStartAll={dsStartAll}
+              onStopAll={dsStopAll}
+              unmanagedConflict={dsUnmanagedConflict}
+              onDismissUnmanagedConflict={dsDismissUnmanagedConflict}
+              onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
+              isStoppingUnmanaged={dsIsStoppingUnmanaged}
+            />
+            <CompactionStatusChip
+              state={compactionState}
+              onOpen={openContextArtifactPanel}
+            />
+            <SessionActionsMenu
+              targetBranch={targetBranch}
+              onDelete={onDelete}
+              compaction={compactionState}
+              onCompactConversation={handleCompactConversation}
+              onViewArtifact={openContextArtifactPanel}
+              onRefreshArtifact={handleRefreshArtifact}
+              onCopyReference={handleCopyReference}
+            />
+            <InfoDetailsPopover
+              conversationId={conversationId}
+              backendRef={activeConversation?.backendRef ?? null}
+              createdAt={session.createdAt}
+              worktreePath={session.worktreePath}
+              promptCount={deriveSessionPromptCount(session)}
+              onCopyContext={copyContext}
+              onOpenCapabilities={() => setCapabilitiesOpen(true)}
+            />
+            <span className="topbar-sep" />
+            <LayoutSwitcher
+              activeLayout={layout}
+              onLayoutChange={onLayoutChange}
+            />
+          </div>
         </div>
       </div>
       <ScopedAgentCapabilitiesConfig

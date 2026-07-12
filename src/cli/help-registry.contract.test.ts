@@ -107,6 +107,24 @@ const COVERAGE: string[] = [
   "conversation compaction",
   "conversation compaction get",
   "conversation compaction list",
+  // ticket
+  "ticket",
+  "ticket create",
+  "ticket list",
+  "ticket get",
+  "ticket update",
+  "ticket delete",
+  "ticket start",
+  "ticket attach",
+  "ticket attach file",
+  "ticket attach conversation",
+  "ticket attach session",
+  "ticket attach ticket",
+  "ticket attach note",
+  "ticket attachment",
+  "ticket attachment get",
+  "ticket attachment update",
+  "ticket attachment remove",
 ];
 
 describe("help registry contract", () => {

@@ -3,6 +3,7 @@ import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { ImagePayload, ImageMediaType } from "@/lib/images/schemas";
 import { escapeXmlAttr } from "@/lib/shared/xml";
 import { buildMessageRefXml } from "@/lib/conversations/message-ref";
+import { buildTicketRefXml } from "@/lib/tickets/references";
 export interface SerializePromptDocArgs {
   doc: ProseMirrorNode;
   attachments: ImageAttachment[];
@@ -109,6 +110,10 @@ function serializeInline(
       out += renderMessageRefXml(child.attrs);
       return;
     }
+    if (child.type.name === "ticketMention") {
+      out += renderTicketRefXml(child.attrs);
+      return;
+    }
     out += serializeInline(child, markerByAttachmentId);
   });
   return out;
@@ -202,6 +207,25 @@ function renderMessageRefXml(attrs: Record<string, unknown>): string {
             createdAt: str("compactCreatedAt"),
           }
         : null,
+  });
+}
+
+/**
+ * Convert a `ticketMention` node's string attributes back into the canonical
+ * `<ticket-ref />` tag. Identifier and read command are re-derived from
+ * project name and number, so the emitted XML stays canonical regardless of
+ * what was pasted.
+ */
+function renderTicketRefXml(attrs: Record<string, unknown>): string {
+  const str = (key: string): string => {
+    const raw = attrs[key];
+    return typeof raw === "string" ? raw : "";
+  };
+  const parsedNumber = Number.parseInt(str("ticketNumber"), 10);
+  return buildTicketRefXml({
+    projectName: str("projectName"),
+    ticketNumber: Number.isNaN(parsedNumber) ? 0 : parsedNumber,
+    title: str("title"),
   });
 }
 

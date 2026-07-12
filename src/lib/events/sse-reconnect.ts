@@ -8,6 +8,8 @@ import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import { ticketKeys } from "@/lib/tickets/query-keys";
+import { scheduleTicketCacheInvalidation } from "@/lib/tickets/mutation-coordinator";
 import { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 const stampedMessagesResponseSchema = z.array(stampedTranscriptMessageSchema);
 
@@ -89,6 +91,22 @@ export async function reconnectReconcile(
   void queryClient.invalidateQueries({ queryKey: mcpConfigKeys.all });
   void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });
   void queryClient.invalidateQueries({ queryKey: agentCapabilityKeys.all });
+  const ticketDetails = queryClient
+    .getQueriesData({ queryKey: ticketKeys.details() })
+    .flatMap(([queryKey]) => {
+      const projectName = queryKey[2];
+      const number = queryKey[3];
+      return typeof projectName === "string" && typeof number === "number"
+        ? [{ projectName, number }]
+        : [];
+    });
+  scheduleTicketCacheInvalidation(queryClient, {
+    includeLists: true,
+    details: ticketDetails,
+  });
+  void queryClient.invalidateQueries({
+    queryKey: ticketKeys.sessionLinksAll(),
+  });
 
   try {
     const res = await fetchFn("/api/jobs");

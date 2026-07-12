@@ -371,6 +371,80 @@ describe("PromptEditorSlashCommandPopup", () => {
     expect(onShowPlaceholder).toHaveBeenCalledWith(expect.any(String));
   });
 
+  it("lists the /ticket built-in with a command badge", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    await act(async () => {
+      renderPopup({ query: "ticket" });
+    });
+    expect(
+      screen.getByText((_, el) => el?.textContent === "/ticket"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("command")).toBeInTheDocument();
+    expect(
+      screen.getByText(/create a ticket from this conversation/i),
+    ).toBeInTheDocument();
+  });
+
+  it("selecting the /ticket built-in inserts the command ready for hint text", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const onSelect = vi.fn();
+    const onShowPlaceholder = vi.fn();
+    const ref = createRef<SlashCommandPopupHandle>();
+    await act(async () => {
+      renderPopup({ query: "ticket", onSelect, onShowPlaceholder }, ref);
+    });
+    act(() => {
+      ref.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    });
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "/ticket",
+        trigger: "/",
+        kind: "command",
+        source: "built-in",
+        argumentHint: expect.any(String),
+      }),
+    );
+    expect(onShowPlaceholder).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("hides the /ticket built-in in workflow-managed lane conversations", async () => {
+    // A gated iteration/validator lane mounts the composer; /ticket must not
+    // be advertised there (the server rejects it for lanes).
+    mockUseCommandsQuery.mockReturnValue({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    await act(async () => {
+      renderPopup({ isWorkflowManagedConversation: true });
+    });
+    expect(screen.queryByText("/ticket")).toBeNull();
+    expect(screen.getByText("/commit")).toBeInTheDocument();
+    expect(screen.getByText("/collab")).toBeInTheDocument();
+  });
+
+  it("hides the /ticket built-in on the Codex backend in workflow-managed lane conversations", async () => {
+    await act(async () => {
+      renderPopup({ backend: "codex", isWorkflowManagedConversation: true });
+    });
+    expect(screen.queryByText("/ticket")).toBeNull();
+    expect(screen.getByText("/commit")).toBeInTheDocument();
+  });
+
   it("returns false from handleKeyDown for unrelated keys", async () => {
     const ref = createRef<SlashCommandPopupHandle>();
     await act(async () => {
@@ -420,6 +494,7 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
     });
     expect(screen.getByText("/collab")).toBeInTheDocument();
     expect(screen.getByText("/commit")).toBeInTheDocument();
+    expect(screen.getByText("/ticket")).toBeInTheDocument();
   });
 
   it("does not fetch session-scoped commands at project scope", async () => {

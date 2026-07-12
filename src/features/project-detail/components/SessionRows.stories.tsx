@@ -2,6 +2,7 @@ import type { ComponentType, JSX } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import type { SessionListItem } from "@/lib/sessions/schemas";
+import type { TicketLinkSummary } from "@/lib/tickets/schemas";
 import SessionRows from "./SessionRows";
 
 const now = new Date().toISOString();
@@ -132,6 +133,65 @@ export const Archived = {
       }),
     ],
   },
+} satisfies Story;
+
+// ---------------------------------------------------------------------------
+// Ticket indicators — the per-project session-link map drives an identifier
+// pill after the session name (active = cyan, historical = muted).
+// ---------------------------------------------------------------------------
+
+const TICKET_LINKS: Record<string, TicketLinkSummary> = {
+  "implement-auth": {
+    ticketId: "t-1",
+    projectName: "my-app",
+    number: 12,
+    title: "Harden the auth flow",
+    active: true,
+    linkedAt: hourAgo,
+    endedAt: null,
+  },
+  "refactor-api": {
+    ticketId: "t-2",
+    projectName: "my-app",
+    number: 7,
+    title: "Collapse the v1 API shims",
+    active: false,
+    linkedAt: dayAgo,
+    endedAt: hourAgo,
+  },
+};
+
+function mockSessionLinksFetch() {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.pathname === "/api/projects/my-app/tickets/session-links") {
+      return Response.json(TICKET_LINKS);
+    }
+    return original(input, init);
+  };
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+/**
+ * Ticket-linked sessions: `implement-auth` carries an active (cyan) pill for
+ * my-app#12, `refactor-api` a muted historical pill for my-app#7; unlinked
+ * rows carry none. Clicking a pill navigates to the ticket's detail view.
+ */
+export const TicketLinked = {
+  args: {},
+  decorators: [
+    (Story: ComponentType): JSX.Element => {
+      const cleanup = mockSessionLinksFetch();
+      if (typeof window !== "undefined") {
+        window.addEventListener("beforeunload", cleanup, { once: true });
+      }
+      return <Story />;
+    },
+  ],
 } satisfies Story;
 
 /** Empty rows */

@@ -163,6 +163,9 @@ function makeHost(
         return null;
       }
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep(ms) {
       await new Promise((r) => setTimeout(r, ms));
     },
@@ -335,6 +338,9 @@ describe("cctl codex against the real route handlers", () => {
         } catch {
           return null;
         }
+      },
+      async readFileBytes() {
+        return null;
       },
       async sleep() {},
       platform: os.platform(),

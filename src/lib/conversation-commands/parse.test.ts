@@ -51,6 +51,22 @@ describe("parseConversationCommand", () => {
     });
   });
 
+  it("parses exact /ticket with empty hint", () => {
+    expect(parseConversationCommand("/ticket")).toEqual({
+      command: "ticket",
+      hint: "",
+    });
+  });
+
+  it("parses /ticket with trailing hint, trimmed", () => {
+    expect(
+      parseConversationCommand("/ticket capture the flaky retry bug  "),
+    ).toEqual({
+      command: "ticket",
+      hint: "capture the flaky retry bug",
+    });
+  });
+
   it("tolerates leading whitespace before the command", () => {
     expect(parseConversationCommand("   /commit")).toEqual({
       command: "commit",

@@ -1,12 +1,16 @@
 "use client";
 
+import type { ToastAction } from "@/stores/toast.store";
+
 interface ToastProps {
   message: string;
+  action?: ToastAction;
   onDismiss: () => void;
 }
 
 export default function Toast({
   message,
+  action,
   onDismiss,
 }: ToastProps): React.JSX.Element {
   // Reproduces the legacy `.cc-toast` recipe (globals.css) inline. The
@@ -31,6 +35,19 @@ export default function Toast({
       aria-live="polite"
     >
       {message}
+      {action && (
+        <button
+          type="button"
+          className="ml-[12px] inline-flex cursor-pointer items-center rounded-full border border-solid border-cyan-dim bg-transparent px-[10px] py-[2px] font-mono text-[0.72rem] font-semibold text-cyan"
+          onClick={(event) => {
+            event.stopPropagation();
+            action.onClick();
+            onDismiss();
+          }}
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

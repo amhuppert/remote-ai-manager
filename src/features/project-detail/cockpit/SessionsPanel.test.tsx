@@ -181,6 +181,12 @@ describe("SessionsPanel bulk actions", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
+    // Rows also issue read queries on mount (e.g. the ticket session-link
+    // map), so the no-request-before-confirm contract is about bulk calls.
+    const bulkCalls = () =>
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/sessions/bulk"),
+      );
 
     renderPanel(<Harness />);
     selectRows("auth", "parser");
@@ -193,12 +199,12 @@ describe("SessionsPanel bulk actions", () => {
       name: "Archive sessions?",
     });
     expect(within(overlay).getByText("Archive sessions?")).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(bulkCalls()).toHaveLength(0);
 
     fireEvent.click(within(overlay).getByRole("button", { name: "Archive 2" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    await waitFor(() => expect(bulkCalls()).toHaveLength(1));
+    const [url, init] = bulkCalls()[0] as [string, RequestInit];
     expect(url).toContain("/api/projects/proj/sessions/bulk");
     expect(init.method).toBe("POST");
     const body = JSON.parse(String(init.body)) as {

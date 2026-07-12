@@ -1,4 +1,5 @@
 import ConversationList from "@/features/session/conversation/ConversationList";
+import { decodeRouteSegment } from "@/lib/shared/decode-route-segment";
 
 interface PageProps {
   params: Promise<{ name: string; session: string }>;
@@ -10,8 +11,8 @@ export default async function SessionListPage({
   const { name, session } = await params;
   return (
     <ConversationList
-      projectName={name}
-      sessionName={decodeURIComponent(session)}
+      projectName={decodeRouteSegment(name)}
+      sessionName={decodeRouteSegment(session)}
     />
   );
 }

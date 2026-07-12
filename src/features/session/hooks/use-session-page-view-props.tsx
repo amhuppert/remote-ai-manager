@@ -166,6 +166,7 @@ export function useSessionPageViewProps(
     promptPlaceholder: store.promptPlaceholder,
     isReadOnly: args.isReadOnly,
     isFinished: args.isFinished,
+    isWorkflowManagedConversation: args.isWorkflowManagedConversation,
     sending: store.sending,
     hasActiveCollab: args.hasActiveCollab,
     isRecording: args.isRecording,

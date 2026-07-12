@@ -1,8 +1,15 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/ui/cn";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/DropdownMenu";
 import {
   useUnifiedPanelOpen,
   useToggleUnifiedPanel,
@@ -25,12 +32,16 @@ interface BreadcrumbSegment {
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
   /** Controls which right-side content to show */
-  page: "projects" | "sessions" | "detail" | "workflows";
+  page: "projects" | "sessions" | "detail" | "workflows" | "tickets";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
   /** Global status indicators — rendered when page !== "detail" */
   globalStatus?: React.ReactNode;
 }
+
+const subscribeToHydration = () => () => undefined;
+const getClientHydrationSnapshot = () => true;
+const getServerHydrationSnapshot = () => false;
 
 export default function Topbar({
   breadcrumbs,
@@ -38,6 +49,11 @@ export default function Topbar({
   sessionControls,
   globalStatus,
 }: TopbarProps): React.JSX.Element {
+  const hydrated = useSyncExternalStore(
+    subscribeToHydration,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot,
+  );
   const pathname = usePathname();
   const panelOpen = useUnifiedPanelOpen();
   const togglePanel = useToggleUnifiedPanel();
@@ -62,6 +78,7 @@ export default function Topbar({
   const firstPinned = pinnedConversations[0] ?? null;
   const needsHref =
     firstPinned !== null ? activeConversationHref(firstPinned) : null;
+  const ticketsActive = pathname?.startsWith("/tickets") ?? false;
   const workflowsActive = pathname?.startsWith("/workflows") ?? false;
   const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
@@ -75,8 +92,8 @@ export default function Topbar({
         >
           CC
         </Link>
-        <div className="h-[20px] w-px bg-border-default max-768:h-[16px]" />
-        <nav className="flex items-center gap-sm font-mono text-[0.8rem] font-normal text-text-secondary max-768:min-w-0 max-768:overflow-hidden">
+        <div className="h-[20px] w-px bg-border-default max-[360px]:hidden max-768:h-[16px]" />
+        <nav className="flex items-center gap-sm font-mono text-[0.8rem] font-normal text-text-secondary max-[360px]:hidden max-768:min-w-0 max-768:overflow-hidden">
           {breadcrumbs.length > 0 && (
             <Link
               href={
@@ -121,16 +138,16 @@ export default function Topbar({
           })}
         </nav>
       </div>
-      <div className="flex items-center gap-md">
-        {needsCount > 0 && needsHref !== null && (
+      <div className="flex items-center gap-md max-[360px]:gap-xs max-768:gap-sm">
+        {hydrated && needsCount > 0 && needsHref !== null && (
           <Link
             href={needsHref}
-            className="inline-flex h-[28px] cursor-pointer items-center gap-[7px] rounded-full border border-solid border-amber-dim bg-amber-glow pr-[11px] pl-[9px] font-mono text-[0.7rem] font-bold tracking-[0.07em] text-amber uppercase no-underline transition-colors duration-[140ms] ease-[ease] hover:border-amber hover:bg-[var(--cc-topbar-needs-hover-bg)]"
+            className="inline-flex h-[28px] cursor-pointer items-center gap-[7px] rounded-full border border-solid border-amber-dim bg-amber-glow pr-[11px] pl-[9px] font-mono text-[0.7rem] font-bold tracking-[0.07em] text-amber uppercase no-underline transition-colors duration-[140ms] ease-[ease] hover:border-amber hover:bg-[var(--cc-topbar-needs-hover-bg)] max-[360px]:px-[7px]"
             title={`${needsCount} conversation${needsCount === 1 ? "" : "s"} need your attention`}
             aria-label={`${needsCount} conversations need your attention`}
           >
             <span
-              className="h-[7px] w-[7px] [animation:pulse-dot_1.6s_ease-in-out_infinite] rounded-full bg-amber [box-shadow:0_0_7px_var(--amber)]"
+              className="h-[7px] w-[7px] [animation:pulse-dot_1.6s_ease-in-out_infinite] rounded-full bg-amber [box-shadow:0_0_7px_var(--amber)] motion-reduce:[animation:none]"
               aria-hidden="true"
             />
             <span className="tabular-nums">{needsCount}</span>
@@ -138,16 +155,51 @@ export default function Topbar({
               {needsCount === 1 ? "needs you" : "need you"}
             </span>
             {approvalsCount > 0 && (
-              <span className="font-semibold whitespace-nowrap text-amber">
+              <span className="font-semibold whitespace-nowrap text-amber max-[360px]:hidden">
                 · {approvalsCount} approval{approvalsCount === 1 ? "" : "s"}
               </span>
             )}
           </Link>
         )}
         <Link
-          href="/workflows"
+          href="/tickets"
           className={cn(
             "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:h-[44px] max-768:px-sm",
+            ticketsActive
+              ? "border-cyan text-text-primary!"
+              : "border-border-default text-text-secondary!",
+          )}
+          title="Tickets"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <rect
+              x="2"
+              y="3.5"
+              width="12"
+              height="9.5"
+              rx="1.4"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <path
+              d="M4.5 6.5 H11.5 M4.5 9 H8.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+            />
+          </svg>
+          <span className="leading-none max-768:hidden">Tickets</span>
+        </Link>
+        <Link
+          href="/workflows"
+          className={cn(
+            "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
             workflowsActive
               ? "border-cyan text-text-primary!"
               : "border-border-default text-text-secondary!",
@@ -194,7 +246,7 @@ export default function Topbar({
         <Link
           href="/templates"
           className={cn(
-            "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:h-[44px] max-768:px-sm",
+            "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
             templatesActive
               ? "border-cyan text-text-primary!"
               : "border-border-default text-text-secondary!",
@@ -230,7 +282,7 @@ export default function Topbar({
         <Link
           href="/config"
           className={cn(
-            "flex h-[30px] w-[30px] items-center justify-center rounded-sm no-underline [transition:all_0.15s_ease] hover:bg-bg-hover max-768:h-[44px] max-768:w-[44px]",
+            "flex h-[30px] w-[30px] items-center justify-center rounded-sm no-underline [transition:all_0.15s_ease] hover:bg-bg-hover max-768:hidden",
             configActive
               ? "text-cyan"
               : "text-text-secondary! hover:text-text-primary!",
@@ -259,6 +311,28 @@ export default function Topbar({
             />
           </svg>
         </Link>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="More destinations"
+              className="hidden h-[44px] w-[44px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent font-mono text-[1rem] tracking-[0.08em] text-text-secondary transition-colors hover:border-cyan hover:bg-bg-hover hover:text-text-primary max-768:flex"
+            >
+              <span aria-hidden="true">•••</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem asChild>
+              <Link href="/workflows">Workflow Atlas</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/templates">Workflow Templates</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/config">System Configuration</Link>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <div className="h-[24px] w-px shrink-0 bg-border-default" />
         <button
           className={cn(

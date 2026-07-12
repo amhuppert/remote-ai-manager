@@ -53,6 +53,7 @@ import type {
 import type { SpawnResultEvent } from "@/lib/chat-spawning/schemas";
 import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
 import type { ContextArtifactStatusEvent } from "@/lib/context-artifacts/schemas";
+import type { TicketChangedEvent } from "@/lib/tickets/schemas";
 
 // ============================================================
 // Scoped Status SSE Event (StatusBus → SSE bridge)
@@ -138,4 +139,5 @@ export type SSEEvent =
   | ScopedStatusEvent
   | SpawnResultEvent
   | SessionAlignmentUpdatedEvent
-  | ContextArtifactStatusEvent;
+  | ContextArtifactStatusEvent
+  | TicketChangedEvent;

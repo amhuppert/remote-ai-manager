@@ -22,6 +22,13 @@ export interface FetchInit {
   headers: Record<string, string>;
   body?: string;
   /**
+   * Binary request body (e.g. a multipart file upload). Wins over `body` when
+   * both are set; hosts pass it to fetch verbatim. A separate field (rather
+   * than widening `body`) so existing string-body assertions and hosts stay
+   * untouched.
+   */
+  rawBody?: Uint8Array<ArrayBuffer>;
+  /**
    * Optional per-request timeout in ms. The real host (`index.ts`) maps it to
    * `AbortSignal.timeout`; injected test hosts ignore it. Used by the
    * best-effort help-context fetch (doc 04 §4.4), which must fail open on
@@ -41,6 +48,11 @@ export interface CliHost {
   fetch: FetchLike;
   /** Read a text file, or null when it does not exist / is unreadable. */
   readTextFile(filePath: string): Promise<string | null>;
+  /**
+   * Read a file's raw bytes (binary-safe, e.g. ticket file attachments), or
+   * null when it does not exist / is unreadable.
+   */
+  readFileBytes(filePath: string): Promise<Uint8Array<ArrayBuffer> | null>;
   /**
    * Pause for `ms` milliseconds. Injected so polling commands (e.g. `dev
    * ensure`, which blocks until liveness) stay pure — tests supply an instant
@@ -585,6 +597,12 @@ export interface CliRequestParams {
   method: string;
   path: string;
   body?: unknown;
+  /**
+   * Pre-encoded binary body (e.g. multipart form data). Sent verbatim — the
+   * caller must supply the matching `content-type` via `headers`. Wins over
+   * `body`.
+   */
+  rawBody?: Uint8Array<ArrayBuffer>;
   /** Extra request headers (e.g. the caller-conversation audit header). */
   headers?: Record<string, string>;
 }
@@ -623,7 +641,8 @@ function buildRequestInit(params: CliRequestParams): FetchInit {
     headers["authorization"] = `Bearer ${params.token}`;
 
   const init: FetchInit = { method: params.method, headers };
-  if (params.body !== undefined) init.body = JSON.stringify(params.body);
+  if (params.rawBody !== undefined) init.rawBody = params.rawBody;
+  else if (params.body !== undefined) init.body = JSON.stringify(params.body);
   return init;
 }
 

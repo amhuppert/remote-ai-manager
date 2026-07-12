@@ -16,17 +16,24 @@ interface TooltipState {
   visible: boolean;
 }
 
+interface DescribedTarget {
+  target: Element;
+  previousAriaDescribedBy: string | null;
+}
+
+const TOOLTIP_ID = "cc-global-tooltip";
+
 const subscribeToMount = () => () => undefined;
 const getMountedSnapshot = () => true;
 const getServerSnapshot = () => false;
 
 /**
- * Global tooltip provider that renders tooltips via portal.
+ * Global tooltip provider for legacy `data-tooltip` triggers (WAI-ARIA APG
+ * Tooltip pattern: https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/).
  *
- * Listens for mouseenter/mouseleave on any element with a `data-tooltip`
- * attribute and renders a single positioned tooltip at `document.body` level,
- * ensuring it always renders above all other UI (topbar, modals, etc.)
- * regardless of the trigger element's stacking context.
+ * Mouse, keyboard focus, and long press reveal one portalled tooltip above all
+ * stacking contexts. The active trigger is associated through
+ * `aria-describedby`; blur, pointer leave, touch timeout, and Escape dismiss it.
  */
 export default function TooltipProvider(): React.JSX.Element | null {
   const mounted = useSyncExternalStore(
@@ -43,42 +50,95 @@ export default function TooltipProvider(): React.JSX.Element | null {
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const currentTargetRef = useRef<Element | null>(null);
+  const describedTargetRef = useRef<DescribedTarget | null>(null);
   const longPressTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
-  const positionTooltip = useCallback((target: Element, text: string) => {
-    const rect = target.getBoundingClientRect();
-    const GAP = 6;
-
-    // Start with position below the element, centered
-    let x = rect.left + rect.width / 2;
-    let y = rect.bottom + GAP;
-
-    // We need to set state first to render the tooltip, then adjust if needed
-    setTooltip({ text, x, y, visible: true });
-
-    // After render, check if tooltip overflows viewport and adjust
-    requestAnimationFrame(() => {
-      const el = tooltipRef.current;
-      if (!el) return;
-
-      const tooltipRect = el.getBoundingClientRect();
-
-      // Flip to above if not enough space below
-      if (tooltipRect.bottom > window.innerHeight) {
-        y = rect.top - GAP - tooltipRect.height;
-      }
-
-      // Keep within horizontal bounds
-      const halfWidth = tooltipRect.width / 2;
-      if (x - halfWidth < 4) {
-        x = halfWidth + 4;
-      } else if (x + halfWidth > window.innerWidth - 4) {
-        x = window.innerWidth - halfWidth - 4;
-      }
-
-      setTooltip({ text, x, y, visible: true });
-    });
+  const unlinkCurrentTarget = useCallback(() => {
+    const described = describedTargetRef.current;
+    if (described === null) return;
+    if (described.previousAriaDescribedBy === null) {
+      described.target.removeAttribute("aria-describedby");
+    } else {
+      described.target.setAttribute(
+        "aria-describedby",
+        described.previousAriaDescribedBy,
+      );
+    }
+    describedTargetRef.current = null;
   }, []);
+
+  const linkTarget = useCallback(
+    (target: Element) => {
+      if (describedTargetRef.current?.target === target) return;
+      unlinkCurrentTarget();
+      const previousAriaDescribedBy = target.getAttribute("aria-describedby");
+      const descriptionIds = new Set(
+        previousAriaDescribedBy?.split(/\s+/).filter(Boolean) ?? [],
+      );
+      descriptionIds.add(TOOLTIP_ID);
+      target.setAttribute("aria-describedby", [...descriptionIds].join(" "));
+      describedTargetRef.current = { target, previousAriaDescribedBy };
+    },
+    [unlinkCurrentTarget],
+  );
+
+  const hideTooltip = useCallback(() => {
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
+    }
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    setTooltip((previous) => ({ ...previous, visible: false }));
+    currentTargetRef.current = null;
+    unlinkCurrentTarget();
+  }, [unlinkCurrentTarget]);
+
+  const positionTooltip = useCallback(
+    (target: Element, text: string) => {
+      const rect = target.getBoundingClientRect();
+      const gap = 6;
+
+      let x = rect.left + rect.width / 2;
+      let y = rect.bottom + gap;
+
+      if (hideTimeoutRef.current) {
+        clearTimeout(hideTimeoutRef.current);
+        hideTimeoutRef.current = null;
+      }
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      currentTargetRef.current = target;
+      linkTarget(target);
+      setTooltip({ text, x, y, visible: true });
+
+      animationFrameRef.current = requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        const el = tooltipRef.current;
+        if (!el || currentTargetRef.current !== target) return;
+
+        const tooltipRect = el.getBoundingClientRect();
+
+        if (tooltipRect.bottom > window.innerHeight) {
+          y = rect.top - gap - tooltipRect.height;
+        }
+
+        const halfWidth = tooltipRect.width / 2;
+        if (x - halfWidth < 4) {
+          x = halfWidth + 4;
+        } else if (x + halfWidth > window.innerWidth - 4) {
+          x = window.innerWidth - halfWidth - 4;
+        }
+
+        setTooltip({ text, x, y, visible: true });
+      });
+    },
+    [linkTarget],
+  );
 
   useEffect(() => {
     function handleMouseEnter(e: Event) {
@@ -88,12 +148,6 @@ export default function TooltipProvider(): React.JSX.Element | null {
       const text = target.getAttribute("data-tooltip");
       if (!text) return;
 
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-        hideTimeoutRef.current = null;
-      }
-
-      currentTargetRef.current = target;
       positionTooltip(target, text);
     }
 
@@ -109,11 +163,34 @@ export default function TooltipProvider(): React.JSX.Element | null {
     function handleMouseLeave(e: Event) {
       const target = (e.target as Element).closest?.("[data-tooltip]");
       if (!target || target !== currentTargetRef.current) return;
+      if (target.contains(document.activeElement)) return;
 
       hideTimeoutRef.current = setTimeout(() => {
-        setTooltip((prev) => ({ ...prev, visible: false }));
-        currentTargetRef.current = null;
+        hideTooltip();
       }, 50);
+    }
+
+    function handleFocusIn(e: FocusEvent) {
+      const target = (e.target as Element).closest?.("[data-tooltip]");
+      if (!target) return;
+      const text = target.getAttribute("data-tooltip");
+      if (!text) return;
+      positionTooltip(target, text);
+    }
+
+    function handleFocusOut(e: FocusEvent) {
+      const target = (e.target as Element).closest?.("[data-tooltip]");
+      if (!target || target !== currentTargetRef.current) return;
+      if (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) {
+        return;
+      }
+      hideTooltip();
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && currentTargetRef.current !== null) {
+        hideTooltip();
+      }
     }
 
     // A press anywhere dismisses the tooltip — the trigger itself or elsewhere
@@ -153,11 +230,6 @@ export default function TooltipProvider(): React.JSX.Element | null {
 
       clearLongPress();
       longPressTimeoutRef.current = setTimeout(() => {
-        if (hideTimeoutRef.current) {
-          clearTimeout(hideTimeoutRef.current);
-          hideTimeoutRef.current = null;
-        }
-        currentTargetRef.current = target;
         positionTooltip(target, text);
       }, 500);
     }
@@ -166,13 +238,15 @@ export default function TooltipProvider(): React.JSX.Element | null {
       clearLongPress();
       if (!currentTargetRef.current) return;
       hideTimeoutRef.current = setTimeout(() => {
-        setTooltip((prev) => ({ ...prev, visible: false }));
-        currentTargetRef.current = null;
+        hideTooltip();
       }, 1500);
     }
 
     document.addEventListener("mouseenter", handleMouseEnter, true);
     document.addEventListener("mouseleave", handleMouseLeave, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    document.addEventListener("focusout", handleFocusOut, true);
+    document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("pointermove", handlePointerMove, {
       capture: true,
@@ -192,6 +266,9 @@ export default function TooltipProvider(): React.JSX.Element | null {
     return () => {
       document.removeEventListener("mouseenter", handleMouseEnter, true);
       document.removeEventListener("mouseleave", handleMouseLeave, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+      document.removeEventListener("focusout", handleFocusOut, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("pointermove", handlePointerMove, true);
       document.removeEventListener("touchstart", handleTouchStart, true);
@@ -201,9 +278,14 @@ export default function TooltipProvider(): React.JSX.Element | null {
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current);
       }
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
       clearLongPress();
+      currentTargetRef.current = null;
+      unlinkCurrentTarget();
     };
-  }, [positionTooltip]);
+  }, [hideTooltip, positionTooltip, unlinkCurrentTarget]);
 
   // Watch for attribute changes on the current target (e.g. "Copied!" state)
   useEffect(() => {
@@ -214,6 +296,8 @@ export default function TooltipProvider(): React.JSX.Element | null {
       const newText = target.getAttribute("data-tooltip");
       if (newText && newText !== tooltip.text) {
         positionTooltip(target, newText);
+      } else if (!newText) {
+        hideTooltip();
       }
     });
 
@@ -223,20 +307,21 @@ export default function TooltipProvider(): React.JSX.Element | null {
     });
 
     return () => observer.disconnect();
-  }, [tooltip.visible, tooltip.text, positionTooltip]);
+  }, [hideTooltip, tooltip.visible, tooltip.text, positionTooltip]);
 
-  if (!mounted) return null;
+  if (!mounted || !tooltip.visible || tooltip.text.length === 0) return null;
 
   return createPortal(
     <div
       ref={tooltipRef}
+      id={TOOLTIP_ID}
       className="tooltip-portal"
       style={{
         position: "fixed",
         left: tooltip.x,
         top: tooltip.y,
         transform: "translateX(-50%)",
-        opacity: tooltip.visible ? 1 : 0,
+        opacity: 1,
         pointerEvents: "none",
         zIndex: 99999,
         transition: "opacity 0.12s ease",

@@ -20,6 +20,7 @@ import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager"
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
+import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 import { dispatchConversationCommand as defaultDispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 import { createLogger } from "@/lib/logging";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
@@ -726,6 +727,18 @@ export async function executePromptStream(
         sessionName: session.sessionName,
         conversationId,
       });
+      const ticketFallback = ticketCommandFallbackMessage(outcome);
+      if (ticketFallback !== null) {
+        logger.warn("prompt.command_ticket_fallback", {
+          command: parsedCommand.command,
+          status: outcome.status,
+          sessionName: session.sessionName,
+          conversationId,
+        });
+        emit("error", {
+          message: ticketFallback,
+        });
+      }
       emit("done", {});
       return {
         conversationId,

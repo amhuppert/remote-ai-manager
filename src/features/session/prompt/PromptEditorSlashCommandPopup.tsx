@@ -60,6 +60,14 @@ const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
     type: "command",
     source: "built-in",
   },
+  {
+    name: "/ticket",
+    description:
+      "Create a ticket from this conversation's accumulated context.",
+    argumentHint: "[hint text]",
+    type: "command",
+    source: "built-in",
+  },
 ];
 
 export interface SlashCommandPopupHandle {
@@ -91,6 +99,12 @@ export interface SlashCommandPopupProps {
    */
   conversationId: string;
   backend?: AgentBackendId;
+  /**
+   * Graph-workflow lane conversations (the composer mounts for them while an
+   * approval gate or parked question is open) must not advertise /ticket —
+   * the server rejects the command for lanes.
+   */
+  isWorkflowManagedConversation?: boolean;
   /** Insert the chosen command into the editor at the trigger range. */
   onSelect: (selection: SlashCommandSelection) => void;
   /** Notify the host when an item with `argumentHint` is selected. */
@@ -117,6 +131,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     sessionName,
     conversationId,
     backend = "claude",
+    isWorkflowManagedConversation = false,
     onSelect,
     onShowPlaceholder,
     onClose,
@@ -176,6 +191,9 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   const isCodexSkillMode = backend === "codex" && triggerChar === "$";
 
   const items = useMemo<CommandItem[]>(() => {
+    const availableBuiltIns = isWorkflowManagedConversation
+      ? BUILT_IN_CLAUDE_COMMANDS.filter((i) => i.name !== "/ticket")
+      : BUILT_IN_CLAUDE_COMMANDS;
     const fetched = commandsQuery.data?.items ?? [];
     const filtered = filterDisabledCommandItems(
       fetched,
@@ -186,12 +204,10 @@ export const PromptEditorSlashCommandPopup = forwardRef<
       return filtered.filter((i) => i.name.startsWith("$"));
     }
     if (backend === "codex") {
-      return [...BUILT_IN_CLAUDE_COMMANDS];
+      return [...availableBuiltIns];
     }
     const fetchedNames = new Set(filtered.map((i) => i.name));
-    const builtIns = BUILT_IN_CLAUDE_COMMANDS.filter(
-      (i) => !fetchedNames.has(i.name),
-    );
+    const builtIns = availableBuiltIns.filter((i) => !fetchedNames.has(i.name));
     return [...builtIns, ...filtered.filter((i) => i.name.startsWith("/"))];
   }, [
     commandsQuery.data?.items,
@@ -199,6 +215,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     skillsView.data,
     backend,
     isCodexSkillMode,
+    isWorkflowManagedConversation,
   ]);
 
   const scored = useMemo<ScoredItem[]>(() => {

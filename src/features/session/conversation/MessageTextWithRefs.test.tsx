@@ -5,6 +5,7 @@ import type {
   ConversationRefAttrs,
   MessageRefAttrs,
 } from "@/lib/conversations/schemas";
+import type { TicketRefAttrs } from "@/lib/tickets/schemas";
 import { createMessageTextWithRefs } from "./MessageTextWithRefs";
 
 function MarkdownStub({ content }: { content: string }): React.JSX.Element {
@@ -33,10 +34,25 @@ function MsgChipStub({ attrs }: { attrs: MessageRefAttrs }): React.JSX.Element {
   );
 }
 
+function TicketChipStub({
+  attrs,
+}: {
+  attrs: TicketRefAttrs;
+}): React.JSX.Element {
+  return (
+    <span
+      data-testid="ticket-chip"
+      data-identifier={attrs.identifier}
+      data-ticket-title={attrs.title}
+    />
+  );
+}
+
 const Component = createMessageTextWithRefs({
   MarkdownContent: MarkdownStub,
   ConversationLinkChip: ChipStub,
   MessageRefChip: MsgChipStub,
+  TicketRefChip: TicketChipStub,
 });
 
 const REF_ATTRS_BASE = {
@@ -171,6 +187,39 @@ describe("MessageTextWithRefs", () => {
       <Component text={`x ${badRef} y`} />,
     );
     expect(container.querySelector('[data-testid="msg-chip"]')).toBeNull();
+    const joined = getAllByTestId("md")
+      .map((n) => n.textContent)
+      .join("");
+    expect(joined).toContain(badRef);
+  });
+
+  it("renders a ticket-ref as a chip between text segments", () => {
+    const ticketRef =
+      '<ticket-ref project-name="command-center" ticket-number="12" ' +
+      'identifier="command-center#12" title="Add durable ticket context" ' +
+      'read-command="cctl ticket get command-center#12" />';
+    const { getAllByTestId } = render(
+      <Component text={`see ${ticketRef} here`} />,
+    );
+
+    const chips = getAllByTestId("ticket-chip");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]?.getAttribute("data-identifier")).toBe("command-center#12");
+    expect(chips[0]?.getAttribute("data-ticket-title")).toBe(
+      "Add durable ticket context",
+    );
+    expect(getAllByTestId("md").map((n) => n.textContent)).toEqual([
+      "see ",
+      " here",
+    ]);
+  });
+
+  it("renders an unparseable ticket-ref tag as plain text", () => {
+    const badRef = '<ticket-ref project-name="command-center" />';
+    const { container, getAllByTestId } = render(
+      <Component text={`x ${badRef} y`} />,
+    );
+    expect(container.querySelector('[data-testid="ticket-chip"]')).toBeNull();
     const joined = getAllByTestId("md")
       .map((n) => n.textContent)
       .join("");

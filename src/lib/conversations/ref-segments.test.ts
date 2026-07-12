@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { segmentTextByRefs } from "./ref-segments";
 import { buildMessageRefXml } from "./message-ref";
+import { buildTicketRefXml } from "@/lib/tickets/references";
 
 const CONVERSATION_REF =
   '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
@@ -81,6 +82,81 @@ describe("segmentTextByRefs", () => {
         text: `\`\`\`\n${CONVERSATION_REF}\n${MESSAGE_REF}\n\`\`\``,
       },
     ]);
+  });
+
+  it("round-trips a built ticket ref through parse and segmentation", () => {
+    const ticketRef = buildTicketRefXml({
+      projectName: "command-center",
+      ticketNumber: 12,
+      title: "Add durable ticket context",
+    });
+    const segments = segmentTextByRefs(`before ${ticketRef} after`);
+    expect(segments).toHaveLength(3);
+    expect(segments[0]).toEqual({ type: "text", text: "before " });
+    expect(segments[1]!.type).toBe("ticket-ref");
+    if (segments[1]!.type === "ticket-ref") {
+      expect(segments[1]!.raw).toBe(ticketRef);
+      expect(segments[1]!.attrs).toEqual({
+        "project-name": "command-center",
+        "ticket-number": "12",
+        identifier: "command-center#12",
+        title: "Add durable ticket context",
+        "read-command": "cctl ticket get 'command-center#12'",
+      });
+    }
+    expect(segments[2]).toEqual({ type: "text", text: " after" });
+  });
+
+  it("interleaves ticket refs with the other ref kinds in document order", () => {
+    const ticketRef = buildTicketRefXml({
+      projectName: "my-app",
+      ticketNumber: 3,
+      title: "T",
+    });
+    const segments = segmentTextByRefs(
+      `a ${CONVERSATION_REF} b ${ticketRef} c ${MESSAGE_REF} d`,
+    );
+    expect(segments.map((s) => s.type)).toEqual([
+      "text",
+      "conversation-ref",
+      "text",
+      "ticket-ref",
+      "text",
+      "message-ref",
+      "text",
+    ]);
+  });
+
+  it("leaves ticket refs missing required attributes as plain text", () => {
+    const missingTitle =
+      '<ticket-ref project-name="my-app" ticket-number="3" identifier="my-app#3" read-command="cctl ticket get my-app#3" />';
+    expect(segmentTextByRefs(`p ${missingTitle} q`)).toEqual([
+      { type: "text", text: `p ${missingTitle} q` },
+    ]);
+  });
+
+  it("skips ticket refs inside fenced code blocks", () => {
+    const ticketRef = buildTicketRefXml({
+      projectName: "my-app",
+      ticketNumber: 9,
+      title: "Fenced",
+    });
+    expect(segmentTextByRefs(`\`\`\`\n${ticketRef}\n\`\`\``)).toEqual([
+      { type: "text", text: `\`\`\`\n${ticketRef}\n\`\`\`` },
+    ]);
+  });
+
+  it("decodes XML entities in ticket ref titles end to end", () => {
+    const ticketRef = buildTicketRefXml({
+      projectName: "my-app",
+      ticketNumber: 4,
+      title: 'Fix <a> & "b"',
+    });
+    const segments = segmentTextByRefs(ticketRef);
+    expect(segments).toHaveLength(1);
+    if (segments[0]!.type === "ticket-ref") {
+      expect(segments[0]!.attrs.title).toBe('Fix <a> & "b"');
+    }
   });
 
   it("decodes XML entities in ref attribute values", () => {

@@ -289,6 +289,14 @@ export interface ActorImplementationDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<number | null>;
+  // Current <active-ticket> block for the session's linked ticket, rebuilt on
+  // every turn (ticket-system 5.4/5.5); null when the session is unlinked.
+  // Prepended to the transient effective prompt only — never baked into
+  // session instructions, which persistent runtimes freeze at creation.
+  getLiveTicketBlock(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<string | null>;
 
   // Reference documents — production routes through the shared
   // ArtifactRegistry primitive (`register()` on `focus_memory`). Tests can
@@ -500,6 +508,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     capabilitiesDepsMod,
     messageQueueMod,
     alignmentServiceFactoryMod,
+    ticketServiceFactoryMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -522,6 +531,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/agent-capabilities/default-deps"),
     import("@/lib/conversations/message-queue-service"),
     import("@/lib/session-alignment/service-factory"),
+    import("@/lib/tickets/service-factory"),
   ]);
 
   // The alignment service holds a repo bound to the live DB; construct it once
@@ -588,6 +598,10 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       alignmentService.getActiveInjection(projectPath, sessionName),
     getActiveAlignmentVersion: (projectPath: string, sessionName: string) =>
       alignmentService.getActiveVersion(projectPath, sessionName),
+    getLiveTicketBlock: (projectPath: string, sessionName: string) =>
+      ticketServiceFactoryMod
+        .getLiveTicketContextProvider()
+        .getForSession(projectPath, sessionName),
     createReferenceDocument: stateMod.createReferenceDocument,
     getReferenceDocuments: stateMod.getReferenceDocuments,
     readConversationMessages: transcriptMod.readConversationMessages,
@@ -669,6 +683,11 @@ export function shouldRecreateRuntime(
 /**
  * Build the effective prompt, prepending debug mode instructions on the
  * first debug turn and phase-specific context on subsequent turns.
+ *
+ * `activeTicketBlock` is the linked ticket's current view (5.4); it is
+ * rebuilt and prepended per turn — transient by design, never baked into
+ * session instructions or the persistent runtime, so attachment changes
+ * appear on the next turn without runtime recreation (5.5).
  */
 export function buildEffectivePrompt(
   promptText: string,
@@ -677,6 +696,7 @@ export function buildEffectivePrompt(
   debugMode: ConversationContext["debugMode"],
   debugLogUrl: string,
   debugManifestPath: string,
+  activeTicketBlock: string | null,
 ): string | MessageContentBlock[] {
   let effectivePrompt: string | MessageContentBlock[] = hasImages
     ? userContentBlocks
@@ -713,6 +733,17 @@ export function buildEffectivePrompt(
           ...effectivePrompt,
         ];
       }
+    }
+  }
+
+  if (activeTicketBlock) {
+    if (typeof effectivePrompt === "string") {
+      effectivePrompt = activeTicketBlock + "\n\n" + effectivePrompt;
+    } else {
+      effectivePrompt = [
+        { type: "text" as const, text: activeTicketBlock },
+        ...effectivePrompt,
+      ];
     }
   }
 
@@ -2104,6 +2135,25 @@ export async function executePromptForMachine(
     }
   };
 
+  // Fetch the linked ticket's current view for this turn. Project
+  // conversations are session-less and can never be ticket-linked. A lookup
+  // failure degrades to an uncontextualized turn rather than failing it.
+  let activeTicketBlock: string | null = null;
+  if (!isProjectConversation) {
+    try {
+      activeTicketBlock = await deps.getLiveTicketBlock(
+        input.projectPath,
+        input.sessionName,
+      );
+    } catch (err) {
+      logger.warn("prompt.live_ticket_block_failed", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
   // Prepend debug mode instructions to the rewritten prompt text. Backends
   // receive a single string with `[Image #N]` markers; image data is carried
   // separately on `imageRefs`.
@@ -2114,6 +2164,7 @@ export async function executePromptForMachine(
     input.debugMode,
     deps.getDebugLogUrl(input.conversationId),
     getDebugManifestPath(input.worktreePath, input.conversationId),
+    activeTicketBlock,
   );
 
   const promptText =
@@ -2551,7 +2602,8 @@ export async function executePromptForMachine(
  * Execute a single-shot `task_run` turn via the shared AgentCall primitive.
  *
  * Non-streaming counterpart to `executePromptForMachine`. Builds one
- * `task_run` AgentCallRequest from the active turn, awaits the full
+ * `task_run` AgentCallRequest from the active turn, prepends the linked
+ * ticket's current context through the same transient per-turn seam, awaits the full
  * `AgentCallResult` (the facade's structured-output gate runs inside
  * `executeAgentCall` when `outputSchema` is present — the actor never
  * extracts structured payloads itself), persists exactly ONE final assistant
@@ -2571,9 +2623,28 @@ export async function runTaskRunTurnForMachine(
     sessionName: input.sessionName,
   };
 
+  let effectivePrompt = input.promptText;
+  if (!isProjectSentinel(input.sessionName)) {
+    try {
+      const activeTicketBlock = await deps.getLiveTicketBlock(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (activeTicketBlock !== null) {
+        effectivePrompt = `${activeTicketBlock}\n\n${effectivePrompt}`;
+      }
+    } catch (err) {
+      logger.warn("task_run.live_ticket_block_failed", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
   const request: AgentCallRequest = {
     kind: "task_run",
-    prompt: input.promptText,
+    prompt: effectivePrompt,
     backend: input.agentBackend,
     writeCapability: "write_capable",
     ...(input.outputFormat?.type === "json_schema"

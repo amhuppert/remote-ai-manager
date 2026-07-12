@@ -101,6 +101,19 @@ function getDefaultService(): CompactionService {
   return _defaultService;
 }
 
+/**
+ * Process-wide compaction singletons for other domains (e.g. ticket
+ * attachments). The service owns the single-flight generation map, so a
+ * second instance would race generations — always share these.
+ */
+export function getCompactionService(): CompactionService {
+  return getDefaultService();
+}
+
+export function getContextArtifactsRepo(): ContextArtifactsRepo {
+  return getDefaultRepo();
+}
+
 function defaultDeps(): ContextArtifactRouteDeps {
   return {
     resolveProjectPath: defaultResolveProjectPath,

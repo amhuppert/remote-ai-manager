@@ -15,8 +15,10 @@ import { tracedFetch } from "@/lib/shared/traced-fetch";
 export async function apiFetch<T>(
   url: string,
   schema: z.ZodType<T>,
+  options?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(url);
+  const res =
+    options === undefined ? await fetch(url) : await fetch(url, options);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Request failed" }));
     throw new ApiCallError(

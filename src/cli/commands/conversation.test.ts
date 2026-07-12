@@ -41,6 +41,9 @@ function makeHost(
     async readTextFile() {
       return null;
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",
@@ -1022,6 +1025,9 @@ describe("cctl conversation (dispatch)", () => {
         throw new Error("ECONNREFUSED");
       },
       async readTextFile() {
+        return null;
+      },
+      async readFileBytes() {
         return null;
       },
       async sleep() {},

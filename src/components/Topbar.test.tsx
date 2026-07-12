@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, it, expect, vi } from "vitest";
-import { act, render, screen, within } from "@testing-library/react";
-import { renderToString } from "react-dom/server";
+import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import Topbar from "./Topbar";
 import type {
   ActiveConversation,
@@ -183,6 +185,83 @@ describe("Topbar", () => {
     expect(screen.getByTitle("Activity & Notifications")).toBeInTheDocument();
   });
 
+  it("renders a global Tickets destination linking to /tickets (ticket-system Req 9.1)", () => {
+    render(<Topbar breadcrumbs={[]} page="projects" />);
+    const link = screen.getByTitle("Tickets");
+    expect(link.getAttribute("href")).toBe("/tickets");
+    expect(link).toHaveTextContent("Tickets");
+  });
+
+  it("keeps every global destination reachable without overflowing a 320px topbar", async () => {
+    render(<Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />);
+    const user = userEvent.setup();
+
+    expect(screen.getByTitle("Workflow Atlas")).toHaveClass("max-768:hidden");
+    expect(screen.getByTitle("Global Workflow Templates")).toHaveClass(
+      "max-768:hidden",
+    );
+    expect(screen.getByTitle("System Configuration")).toHaveClass(
+      "max-768:hidden",
+    );
+
+    const more = screen.getByRole("button", { name: "More destinations" });
+    expect(more).toHaveClass("max-768:flex");
+    await user.click(more);
+
+    expect(
+      screen.getByRole("menuitem", { name: "Workflow Atlas" }),
+    ).toHaveAttribute("href", "/workflows");
+    expect(
+      screen.getByRole("menuitem", { name: "Workflow Templates" }),
+    ).toHaveAttribute("href", "/templates");
+    expect(
+      screen.getByRole("menuitem", { name: "System Configuration" }),
+    ).toHaveAttribute("href", "/config");
+
+    expect(screen.getByRole("navigation")).toHaveClass("max-[360px]:hidden");
+  });
+
+  it("hydrates when attention data reaches the client before the server markup", async () => {
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(
+      <Topbar breadcrumbs={[]} page="tickets" />,
+    );
+    document.body.append(container);
+
+    setActiveConversations([
+      makeProjectConversation({
+        id: "client-cached-question",
+        status: "waiting_for_input",
+      }),
+    ]);
+    const hydrationErrors: unknown[][] = [];
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation((...args: unknown[]) => hydrationErrors.push(args));
+
+    const root = hydrateRoot(
+      container,
+      <Topbar breadcrumbs={[]} page="tickets" />,
+    );
+    await waitFor(() =>
+      expect(within(container).getByText("needs you")).toBeInTheDocument(),
+    );
+
+    expect(
+      hydrationErrors.some((args) =>
+        args.some(
+          (value) =>
+            typeof value === "string" &&
+            value.toLowerCase().includes("hydration"),
+        ),
+      ),
+    ).toBe(false);
+
+    await act(async () => root.unmount());
+    consoleError.mockRestore();
+    container.remove();
+  });
+
   it("hydrates without replacing the tree when attention data is already cached on the client", async () => {
     const serverHtml = renderToString(
       <Topbar breadcrumbs={[]} page="projects" />,
@@ -240,6 +319,9 @@ describe("Topbar", () => {
     expect(getNeedsLink().getAttribute("href")).toBe(
       "/projects/root-tools?focus=project-question",
     );
+    expect(
+      getNeedsLink().querySelector<HTMLElement>("[aria-hidden='true']"),
+    ).toHaveClass("motion-reduce:[animation:none]");
   });
 
   it("counts unread project awaiting rows as needing attention (Req 11.2, 11.3)", () => {

@@ -693,6 +693,56 @@ describe("message-ref paste handling", () => {
   });
 });
 
+describe("ticket-ref paste handling", () => {
+  const TICKET_REF =
+    '<ticket-ref project-name="command-center" ticket-number="12" ' +
+    'identifier="command-center#12" title="Harden ticket context" ' +
+    'read-command="cctl ticket get &apos;command-center#12&apos;" />';
+
+  function pasteText(pm: HTMLElement, text: string) {
+    fireEvent.paste(pm, {
+      clipboardData: {
+        items: [],
+        files: [],
+        types: ["text/plain"],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  }
+
+  it("reports a ticket-only document as non-empty while preserving canonical serialization and removal", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const onChange = vi.fn();
+    const { container } = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={onChange}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    pasteText(pm, TICKET_REF);
+
+    expect(onChange).toHaveBeenLastCalledWith("command-center#12");
+    expect(ref.current!.serialize([]).prompt).toBe(TICKET_REF);
+
+    fireEvent.click(
+      container.querySelector(
+        'button[aria-label="Remove ticket command-center#12"]',
+      ) as HTMLElement,
+    );
+    expect(onChange).toHaveBeenLastCalledWith("");
+    expect(ref.current!.serialize([]).prompt).toBe("");
+  });
+});
+
 describe("conversation-ref paste handling", () => {
   const CONVERSATION_REF =
     '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +

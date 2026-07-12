@@ -1,5 +1,27 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+
+const logger = vi.hoisted(() => ({
+  info: vi.fn(),
+  debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock("@/lib/logging", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/logging")>();
+  return { ...actual, createLogger: () => logger };
+});
+
+beforeEach(() => {
+  logger.info.mockClear();
+  logger.debug.mockClear();
+  logger.warn.mockClear();
+  logger.error.mockClear();
+});
+
 import type { GitClient } from "../git/client";
+import { createTicketProjectOperationGate } from "../tickets/project-operation-gate";
+import { createSessionLifecycleGate } from "./lifecycle-gate";
 import {
   validateSessionName,
   sanitizeBranchName,
@@ -13,6 +35,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function createTestDeps() {
+  const lifecycleGate = createSessionLifecycleGate();
   const gitMock = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
   const readStateMock = vi.fn().mockResolvedValue(emptyState());
   const writeStateMock = vi.fn();
@@ -65,6 +88,21 @@ function createTestDeps() {
     deleteNotificationsForProject: vi.fn().mockReturnValue(0),
     deleteJobRecordsForProject: vi.fn().mockReturnValue(0),
     deleteContextArtifactsForScope: vi.fn().mockReturnValue(0),
+    captureTicketContentForProject: vi.fn().mockResolvedValue([]),
+    cleanupTicketContentForProject: vi.fn().mockResolvedValue(undefined),
+    runSessionLifecycleOperation: (projectPath, sessionName, operation) =>
+      lifecycleGate.runExclusive(projectPath, sessionName, operation),
+    runSessionLifecycleOperations: (projectPath, sessionNames, operation) =>
+      lifecycleGate.runExclusiveMany(projectPath, sessionNames, operation),
+    runSessionProjectDeletion: (projectPath, deletion) =>
+      lifecycleGate.runProjectDeletion(projectPath, deletion),
+    runTicketProjectDeletion: (_projectPath, deletion) => deletion(),
+    reconcileTicketSessionLifecycle: vi.fn().mockResolvedValue(undefined),
+    captureTicketProjectDeletion: vi.fn().mockResolvedValue({
+      projectName: "repo",
+      ticketNumbers: [],
+    }),
+    publishTicketProjectDeletion: vi.fn(),
     sweepLaneWorktrees: sweepLaneWorktreesMock,
     copyAlignmentCharterFromParent: copyAlignmentCharterFromParentMock,
   };
@@ -126,6 +164,14 @@ function stateWithSession(
     archivedProjects: [] as string[],
     pinnedProjects: [] as string[],
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 /** Create a mock async iterable that yields SDK messages with the given text */
@@ -951,6 +997,10 @@ describe("deleteSession", () => {
       projectPath: "/projects/repo",
       sessionWorktreePath: "/projects/repo/.worktrees/to-delete",
     });
+    expect(gitMock).not.toHaveBeenCalledWith(
+      ["branch", "-D", "csm/to-delete"],
+      "/projects/repo",
+    );
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -975,6 +1025,24 @@ describe("deleteSession", () => {
     expect(
       savedState.projects["/projects/repo"].sessions["no-worktree"],
     ).toBeUndefined();
+  });
+
+  it("reconciles the ticket link after the session row is deleted", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "ticket-session"),
+    );
+
+    await service.deleteSession("/projects/repo", "ticket-session");
+
+    expect(deps.reconcileTicketSessionLifecycle).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      sessionName: "ticket-session",
+      endReason: "deleted",
+    });
+    expect(
+      (deps.reconcileTicketSessionLifecycle as Mock).mock
+        .invocationCallOrder[0],
+    ).toBeGreaterThan(writeStateMock.mock.invocationCallOrder[0] ?? 0);
   });
 
   it("still removes session from state when worktree removal fails", async () => {
@@ -1164,6 +1232,186 @@ describe("deleteSession", () => {
   });
 });
 
+describe("session incarnation lifecycle serialization", () => {
+  it("preserves a recreation queued between deletion and compensation", async () => {
+    const state = stateWithSession("/projects/repo", "same-name");
+    readStateMock.mockImplementation(async () => state);
+    const deleteEntered = deferred();
+    const releaseDelete = deferred();
+    (deps.stopAllForSession as Mock).mockImplementationOnce(async () => {
+      deleteEntered.resolve();
+      await releaseDelete.promise;
+    });
+    const original = state.projects["/projects/repo"]!.sessions["same-name"]!;
+    const expectedCreatedAt = original.createdAt;
+    const expectedWorktreePath = original.worktreePath;
+    const expectedBranchName = original.branchName;
+
+    const externalDelete = service.deleteSession("/projects/repo", "same-name");
+    await deleteEntered.promise;
+    const recreation = service.createSessionNormal(
+      "/projects/repo",
+      "same-name",
+    );
+    const compensation = service.deleteSessionIfCurrent(
+      "/projects/repo",
+      "same-name",
+      {
+        createdAt: expectedCreatedAt,
+        worktreePath: expectedWorktreePath,
+        branchName: expectedBranchName,
+      },
+    );
+
+    releaseDelete.resolve();
+    await externalDelete;
+    const recreated = await recreation;
+    await expect(compensation).resolves.toEqual({
+      deleted: false,
+      reason: "replaced",
+    });
+    expect(
+      state.projects["/projects/repo"]!.sessions["same-name"]?.createdAt,
+    ).toBe(recreated.createdAt);
+  });
+
+  it("skips compensation when a queued finish wins the lifecycle gate", async () => {
+    const state = stateWithSession("/projects/repo", "finishing");
+    readStateMock.mockImplementation(async () => state);
+    const finishEntered = deferred();
+    const releaseFinish = deferred();
+    const original = state.projects["/projects/repo"]!.sessions.finishing!;
+    const expectedCreatedAt = original.createdAt;
+    const expectedWorktreePath = original.worktreePath;
+    const expectedBranchName = original.branchName;
+
+    const finish = deps.runSessionLifecycleOperation(
+      "/projects/repo",
+      "finishing",
+      async () => {
+        state.projects["/projects/repo"]!.sessions.finishing!.finished = true;
+        finishEntered.resolve();
+        await releaseFinish.promise;
+      },
+    );
+    await finishEntered.promise;
+    const compensation = service.deleteSessionIfCurrent(
+      "/projects/repo",
+      "finishing",
+      {
+        createdAt: expectedCreatedAt,
+        worktreePath: expectedWorktreePath,
+        branchName: expectedBranchName,
+      },
+    );
+
+    releaseFinish.resolve();
+    await finish;
+    await expect(compensation).resolves.toEqual({
+      deleted: false,
+      reason: "finished",
+    });
+    expect(state.projects["/projects/repo"]!.sessions.finishing).toBeDefined();
+  });
+
+  it("lets a recreation proceed safely after compensation wins the lifecycle gate", async () => {
+    const state = stateWithSession("/projects/repo", "same-name");
+    readStateMock.mockImplementation(async () => state);
+    const compensationEntered = deferred();
+    const releaseCompensation = deferred();
+    (deps.stopAllForSession as Mock).mockImplementationOnce(async () => {
+      compensationEntered.resolve();
+      await releaseCompensation.promise;
+    });
+    const original = state.projects["/projects/repo"]!.sessions["same-name"]!;
+    const expectedCreatedAt = original.createdAt;
+    const expectedWorktreePath = original.worktreePath;
+    const expectedBranchName = original.branchName;
+
+    const compensation = service.deleteSessionIfCurrent(
+      "/projects/repo",
+      "same-name",
+      {
+        createdAt: expectedCreatedAt,
+        worktreePath: expectedWorktreePath,
+        branchName: expectedBranchName,
+      },
+    );
+    await compensationEntered.promise;
+    const recreation = service.createSessionNormal(
+      "/projects/repo",
+      "same-name",
+    );
+
+    releaseCompensation.resolve();
+    await expect(compensation).resolves.toMatchObject({ deleted: true });
+    const recreated = await recreation;
+    expect(
+      state.projects["/projects/repo"]!.sessions["same-name"]?.createdAt,
+    ).toBe(recreated.createdAt);
+  });
+
+  it("removes only the exact compensated incarnation's branch", async () => {
+    const state = stateWithSession("/projects/repo", "compensated");
+    readStateMock.mockImplementation(async () => state);
+    existsSyncMock.mockImplementation(
+      (candidate) => candidate === "/projects/repo/.worktrees/compensated",
+    );
+    const original = state.projects["/projects/repo"]!.sessions.compensated!;
+
+    const result = await service.deleteSessionIfCurrent(
+      "/projects/repo",
+      "compensated",
+      {
+        createdAt: original.createdAt,
+        worktreePath: original.worktreePath,
+        branchName: original.branchName,
+      },
+    );
+
+    expect(result).toMatchObject({ deleted: true });
+    expect(gitMock).toHaveBeenCalledWith(
+      ["branch", "-D", original.branchName],
+      "/projects/repo",
+    );
+    expect(
+      state.projects["/projects/repo"]!.sessions.compensated,
+    ).toBeUndefined();
+    const recreated = await service.createSessionNormal(
+      "/projects/repo",
+      "compensated",
+    );
+    expect(recreated.sessionName).toBe("compensated");
+  });
+
+  it("reports branch cleanup failure and retains the occupied incarnation", async () => {
+    const state = stateWithSession("/projects/repo", "compensated");
+    readStateMock.mockImplementation(async () => state);
+    gitMock.mockRejectedValueOnce(new Error("branch is locked"));
+    const original = state.projects["/projects/repo"]!.sessions.compensated!;
+
+    await expect(
+      service.deleteSessionIfCurrent("/projects/repo", "compensated", {
+        createdAt: original.createdAt,
+        worktreePath: original.worktreePath,
+        branchName: original.branchName,
+      }),
+    ).rejects.toThrow("branch is locked");
+    expect(
+      state.projects["/projects/repo"]!.sessions.compensated,
+    ).toBeDefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      "session.compensation_branch_remove_failure",
+      expect.objectContaining({
+        projectPath: "/projects/repo",
+        sessionName: "compensated",
+        branchName: original.branchName,
+        error: "branch is locked",
+      }),
+    );
+  });
+});
+
 // ===========================================================================
 // 1.6.b – Project deletion
 // ===========================================================================
@@ -1249,6 +1497,75 @@ describe("deleteProject", () => {
     expect(lastWriteState.projects["/projects/repo"]).toBeUndefined();
   });
 
+  it("holds the project-deletion gate across snapshot, cleanup, cascade, and events", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    const phases: string[] = [];
+    deps.runTicketProjectDeletion = async (projectPath, deletion) => {
+      phases.push(`gate:${projectPath}:start`);
+      const result = await deletion();
+      phases.push(`gate:${projectPath}:end`);
+      return result;
+    };
+    (deps.captureTicketProjectDeletion as Mock).mockImplementation(async () => {
+      phases.push("capture");
+      return { projectName: "repo", ticketNumbers: [2] };
+    });
+    (deps.cleanupTicketContentForProject as Mock).mockImplementation(
+      async () => {
+        phases.push("cleanup");
+      },
+    );
+    (deps.publishTicketProjectDeletion as Mock).mockImplementation(async () => {
+      phases.push("publish");
+    });
+    service = createSessionService(deps);
+
+    const result = await service.deleteProject("/projects/repo");
+
+    expect(result.deletedTicketNumbers).toEqual([2]);
+    expect(phases).toEqual([
+      "gate:/projects/repo:start",
+      "capture",
+      "cleanup",
+      "publish",
+      "gate:/projects/repo:end",
+    ]);
+  });
+
+  it("rejects session creation queued behind project deletion", async () => {
+    const state = stateWithProject("/projects/repo");
+    readStateMock.mockImplementation(async () => state);
+    const gate = createTicketProjectOperationGate();
+    deps.runTicketProjectDeletion = (projectPath, deletion) =>
+      gate.runProjectDeletion(projectPath, deletion);
+    const deletionEntered = deferred();
+    const releaseDeletion = deferred();
+    (deps.captureTicketProjectDeletion as Mock).mockImplementation(async () => {
+      deletionEntered.resolve();
+      await releaseDeletion.promise;
+      return { projectName: "repo", ticketNumbers: [] };
+    });
+    service = createSessionService(deps);
+
+    const deletion = service.deleteProject("/projects/repo");
+    await deletionEntered.promise;
+    const creation = service.createSessionNormal("/projects/repo", "too-late");
+    const creationOutcome = creation.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gitMock).not.toHaveBeenCalled();
+
+    releaseDeletion.resolve();
+    await deletion;
+    await expect(creationOutcome).resolves.toMatchObject({
+      message: expect.stringMatching(/deleted/i),
+    });
+    expect(state.projects["/projects/repo"]).toBeUndefined();
+    expect(gitMock).not.toHaveBeenCalled();
+  });
+
   it("succeeds for a project with zero sessions", async () => {
     readStateMock.mockResolvedValue(stateWithProject("/projects/empty"));
 
@@ -1270,6 +1587,115 @@ describe("deleteProject", () => {
     );
     expect(deps.deleteNotificationsForProject).not.toHaveBeenCalled();
     expect(deps.deleteJobRecordsForProject).not.toHaveBeenCalled();
+  });
+
+  it("revalidates project existence after entering the deletion gate", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    deps.runTicketProjectDeletion = async (_projectPath, deletion) => {
+      readStateMock.mockResolvedValue(emptyState());
+      return deletion();
+    };
+    service = createSessionService(deps);
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toThrow(
+      "Project not found: /projects/repo",
+    );
+    expect(deps.captureTicketProjectDeletion).not.toHaveBeenCalled();
+    expect(deps.cleanupTicketContentForProject).not.toHaveBeenCalled();
+  });
+
+  it("captures ticket ids before the project cascade and cleans their content afterward", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.captureTicketContentForProject as Mock).mockResolvedValue([
+      "ticket-a",
+      "ticket-b",
+    ]);
+
+    await service.deleteProject("/projects/repo");
+    const captureMock = deps.captureTicketContentForProject as Mock;
+    const cleanupMock = deps.cleanupTicketContentForProject as Mock;
+    expect(cleanupMock).toHaveBeenCalledWith("/projects/repo", [
+      "ticket-a",
+      "ticket-b",
+    ]);
+    const captureOrder = captureMock.mock.invocationCallOrder[0];
+    const cleanupOrder = cleanupMock.mock.invocationCallOrder[0];
+    const projectRowWriteOrder = writeStateMock.mock.invocationCallOrder.at(-1);
+    expect(captureOrder).toBeLessThan(projectRowWriteOrder ?? 0);
+    expect(cleanupOrder).toBeGreaterThan(projectRowWriteOrder ?? 0);
+  });
+
+  it("does not remove ticket content when the project cascade fails", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.captureTicketContentForProject as Mock).mockResolvedValue([
+      "ticket-a",
+    ]);
+    (deps.mutateState as Mock).mockRejectedValueOnce(
+      new Error("project cascade failed"),
+    );
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toThrow(
+      "project cascade failed",
+    );
+    expect(deps.cleanupTicketContentForProject).not.toHaveBeenCalled();
+  });
+
+  it("captures ticket identities before the project cascade and publishes their deletion afterward", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    const snapshot = { projectName: "repo", ticketNumbers: [3, 5] };
+    (deps.captureTicketProjectDeletion as Mock).mockResolvedValue(snapshot);
+
+    const result = await service.deleteProject("/projects/repo");
+
+    expect(result.deletedTicketNumbers).toEqual([3, 5]);
+    expect(deps.captureTicketProjectDeletion).toHaveBeenCalledWith(
+      "/projects/repo",
+    );
+    expect(deps.publishTicketProjectDeletion).toHaveBeenCalledWith(snapshot);
+    const captureOrder = (deps.captureTicketProjectDeletion as Mock).mock
+      .invocationCallOrder[0];
+    const projectRowWriteOrder = writeStateMock.mock.invocationCallOrder.at(-1);
+    const publishOrder = (deps.publishTicketProjectDeletion as Mock).mock
+      .invocationCallOrder[0];
+    expect(captureOrder).toBeLessThan(projectRowWriteOrder ?? 0);
+    expect(publishOrder).toBeGreaterThan(projectRowWriteOrder ?? 0);
+  });
+
+  it("aborts before destructive work when ticket-number capture fails", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithProject("/projects/repo", { alpha: {} }),
+    );
+    (deps.captureTicketProjectDeletion as Mock).mockRejectedValue(
+      new Error("ticket lookup failed"),
+    );
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toThrow(
+      "ticket lookup failed",
+    );
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+    expect(deps.mutateState).not.toHaveBeenCalled();
+  });
+
+  it("does not fail deletion when ticket-content cleanup throws and logs a stable orphan path key", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.cleanupTicketContentForProject as Mock).mockRejectedValue(
+      new Error("blob cleanup exploded"),
+    );
+
+    const result = await service.deleteProject("/projects/repo");
+
+    expect(result.sessionsRemoved).toBe(0);
+    const lastWriteState =
+      writeStateMock.mock.calls[writeStateMock.mock.calls.length - 1]![0];
+    expect(lastWriteState.projects["/projects/repo"]).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "project.delete.ticket_content_cleanup_failure",
+      expect.objectContaining({
+        projectPath: "/projects/repo",
+        orphanPathKey: "ticket-content",
+        error: "blob cleanup exploded",
+      }),
+    );
   });
 
   it("continues purging when one session's worktree removal fails", async () => {
@@ -1994,6 +2420,24 @@ describe("bulkDeleteSessions", () => {
     expect(child.parentSessionName).toBeNull();
   });
 
+  it("reconciles ticket links for every session removed by the batch", async () => {
+    readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
+
+    await service.bulkDeleteSessions("/projects/repo", ["A", "C"]);
+
+    expect(deps.reconcileTicketSessionLifecycle).toHaveBeenCalledTimes(2);
+    expect(deps.reconcileTicketSessionLifecycle).toHaveBeenNthCalledWith(1, {
+      projectPath: "/projects/repo",
+      sessionName: "A",
+      endReason: "deleted",
+    });
+    expect(deps.reconcileTicketSessionLifecycle).toHaveBeenNthCalledWith(2, {
+      projectPath: "/projects/repo",
+      sessionName: "C",
+      endReason: "deleted",
+    });
+  });
+
   it("a worktree-cleanup failure is non-fatal and does not abort the batch", async () => {
     readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
     existsSyncMock.mockReturnValue(true);
@@ -2141,6 +2585,29 @@ describe("ensurePlannerSession", () => {
     expect(session.conversations[0]?.id).toBe("planner-conv-1");
     expect(gitMock).not.toHaveBeenCalled();
     expect(writeStateMock).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent ensures and returns the one planner incarnation", async () => {
+    const state = emptyState();
+    readStateMock.mockImplementation(async () => state);
+    const firstProvisionEntered = deferred();
+    const releaseFirstProvision = deferred();
+    (deps.readConfig as Mock).mockImplementationOnce(async () => {
+      firstProvisionEntered.resolve();
+      await releaseFirstProvision.promise;
+      return {};
+    });
+
+    const first = service.ensurePlannerSession("/projects/repo");
+    await firstProvisionEntered.promise;
+    const second = service.ensurePlannerSession("/projects/repo");
+    await Promise.resolve();
+    releaseFirstProvision.resolve();
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.createdAt).toBe(b.createdAt);
+    expect(a.worktreePath).toBe(b.worktreePath);
+    expect(gitMock).toHaveBeenCalledTimes(1);
   });
 });
 

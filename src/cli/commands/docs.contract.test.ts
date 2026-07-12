@@ -89,6 +89,9 @@ function makeHost(): CliHost {
         return null;
       }
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: os.platform(),
     homedir: os.homedir(),

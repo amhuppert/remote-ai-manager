@@ -21,6 +21,7 @@ function fakeHost(overrides: Partial<CliHost> = {}): CliHost {
   return {
     fetch: async () => new Response("{}", { status: 200 }),
     readTextFile: async () => null,
+    readFileBytes: async () => null,
     sleep: async () => {},
     platform: "darwin",
     homedir: "/home/test",

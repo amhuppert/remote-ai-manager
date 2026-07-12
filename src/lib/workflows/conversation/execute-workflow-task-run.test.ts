@@ -25,6 +25,7 @@ import {
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 import {
   executeWorkflowTaskRun,
+  _getExecuteWorkflowTaskRunInFlightCountForTesting,
   _resetExecuteWorkflowTaskRunForTesting,
 } from "./execute-workflow-task-run";
 
@@ -204,6 +205,25 @@ describe("executeWorkflowTaskRun", () => {
     expect(
       getConversationActor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
     ).toBeDefined();
+  });
+
+  it("releases a settled conversation chain from the in-flight registry", async () => {
+    const call = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "one turn",
+      timeoutMs: 5000,
+    });
+
+    expect(_getExecuteWorkflowTaskRunInFlightCountForTesting()).toBe(1);
+    const invocation = await nextPendingInvocation();
+    invocation.resolve(defaultResult());
+    await call;
+    await Promise.resolve();
+
+    expect(_getExecuteWorkflowTaskRunInFlightCountForTesting()).toBe(0);
   });
 
   it("reuses the existing actor on a second call with the same identifiers", async () => {

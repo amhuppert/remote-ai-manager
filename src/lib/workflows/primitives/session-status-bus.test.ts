@@ -120,6 +120,28 @@ describe("resolveSessionStatusScope", () => {
     expect(resolution.status).toBe("running");
   });
 
+  it("classifies ticket-changed into the ticket scope with the identifier as scopeId", () => {
+    const resolution = resolveSessionStatusScope({
+      type: "ticket-changed",
+      change: "updated",
+      projectName: "command-center",
+      ticketNumber: 12,
+      listItem: null,
+      attachmentIndexChanged: false,
+    });
+    expect(resolution).toEqual({
+      scope: "ticket",
+      scopeId: "command-center#12",
+      status: "completed",
+    });
+  });
+
+  it("falls back to the unknown scopeId when ticket-changed identity fields are missing", () => {
+    const resolution = resolveSessionStatusScope({ type: "ticket-changed" });
+    expect(resolution.scope).toBe("ticket");
+    expect(resolution.scopeId).toBe("unknown");
+  });
+
   it("derives scopeId from the event payload", () => {
     expect(
       resolveSessionStatusScope({

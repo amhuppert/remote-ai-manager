@@ -170,7 +170,12 @@ function makePublishDeps(
         }),
       ),
     acquireProjectLock: overrides.acquireProjectLock ?? vi.fn(() => () => {}),
+    runSessionLifecycleOperation:
+      overrides.runSessionLifecycleOperation ??
+      ((_projectPath, _sessionName, operation) => operation()),
     setSessionFinished: overrides.setSessionFinished ?? vi.fn(async () => {}),
+    reconcileTicketSessionLifecycle:
+      overrides.reconcileTicketSessionLifecycle ?? vi.fn(async () => {}),
     retargetOrphanedChildren:
       overrides.retargetOrphanedChildren ?? vi.fn(async () => {}),
     stopAllForSession: overrides.stopAllForSession ?? vi.fn(async () => {}),
@@ -327,6 +332,53 @@ describe("runPublish", () => {
       sessionName: "feature",
     });
     expect(retarget).toHaveBeenCalledWith("/proj", "feature");
+  });
+
+  it("reconciles the ticket link as finished after marking the merged session finished", async () => {
+    const setFinished = vi.fn(async () => {});
+    const reconcileTicketSessionLifecycle = vi.fn(async () => {});
+    const deps = makePublishDeps({
+      setSessionFinished: setFinished,
+      reconcileTicketSessionLifecycle,
+    });
+
+    await runPublish(deps, basePublishInput);
+
+    expect(reconcileTicketSessionLifecycle).toHaveBeenCalledWith({
+      projectPath: "/proj",
+      sessionName: "feature",
+      endReason: "finished",
+    });
+    expect(setFinished.mock.invocationCallOrder[0]).toBeLessThan(
+      reconcileTicketSessionLifecycle.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("holds the session lifecycle gate across finish and ticket reconciliation", async () => {
+    const phases: string[] = [];
+    const deps = makePublishDeps({
+      async runSessionLifecycleOperation(projectPath, sessionName, operation) {
+        phases.push(`gate:${projectPath}:${sessionName}:start`);
+        const result = await operation();
+        phases.push(`gate:${projectPath}:${sessionName}:end`);
+        return result;
+      },
+      setSessionFinished: vi.fn(async () => {
+        phases.push("finished");
+      }),
+      reconcileTicketSessionLifecycle: vi.fn(async () => {
+        phases.push("reconciled");
+      }),
+    });
+
+    await runPublish(deps, basePublishInput);
+
+    expect(phases).toEqual([
+      "gate:/proj:feature:start",
+      "finished",
+      "reconciled",
+      "gate:/proj:feature:end",
+    ]);
   });
 
   it("releases the project lock when publishPreparedMerge throws", async () => {

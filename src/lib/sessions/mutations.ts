@@ -15,6 +15,7 @@ import {
   type SessionListItem,
 } from "@/lib/sessions/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
+import { invalidateTicketSessionLifecycle } from "@/lib/tickets/cache-lifecycle";
 
 interface SessionCachesSnapshot {
   previousSessions: SessionListItem[] | undefined;
@@ -179,8 +180,9 @@ export function useDeleteSessionMutation(projectName: string) {
     onError: (_err, _vars, context) => {
       rollbackSessionCaches(queryClient, projectName, context);
     },
-    onSettled: () => {
+    onSettled: (_data, _err, sessionName) => {
       invalidateSessionCaches(queryClient, projectName);
+      invalidateTicketSessionLifecycle(queryClient, projectName, [sessionName]);
     },
   });
 }
@@ -304,8 +306,15 @@ export function useBulkSessionsMutation(projectName: string) {
     onError: (_err, _vars, context) => {
       rollbackSessionCaches(queryClient, projectName, context);
     },
-    onSettled: () => {
+    onSettled: (_data, _err, req) => {
       invalidateSessionCaches(queryClient, projectName);
+      if (req.op === "delete") {
+        invalidateTicketSessionLifecycle(
+          queryClient,
+          projectName,
+          req.sessionNames,
+        );
+      }
     },
   });
 }

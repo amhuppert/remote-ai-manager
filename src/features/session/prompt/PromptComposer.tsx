@@ -167,6 +167,8 @@ interface PromptComposerProps {
   promptPlaceholder: string | null;
   isReadOnly: boolean;
   isFinished: boolean;
+  /** Graph-workflow lane conversation — hides lane-ineligible slash commands. */
+  isWorkflowManagedConversation?: boolean;
   sending: boolean;
   hasActiveCollab: boolean;
   isRecording: boolean;
@@ -215,6 +217,7 @@ export default function PromptComposer({
   promptPlaceholder,
   isReadOnly,
   isFinished,
+  isWorkflowManagedConversation = false,
   sending,
   hasActiveCollab,
   isRecording,
@@ -410,6 +413,7 @@ export default function PromptComposer({
               projectName={projectName}
               sessionName={sessionName}
               backend={selectedBackend}
+              isWorkflowManagedConversation={isWorkflowManagedConversation}
               onShowPlaceholder={showPlaceholder}
               disabled={isReadOnly}
               readOnly={hasActiveCollab}

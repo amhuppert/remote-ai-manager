@@ -7,6 +7,7 @@ vi.mock("@/lib/logging", () => ({
     warn: vi.fn(),
     error: vi.fn(),
   }),
+  withTracing: (handler: unknown) => handler,
 }));
 
 import {

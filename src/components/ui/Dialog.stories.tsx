@@ -109,7 +109,7 @@ export const WithCornerClose: Story = {
   ),
 };
 
-/** Mobile bottom-sheet variant (`mobileSheet`); review at 390×844. */
+/** Scrollable mobile bottom-sheet variant (`mobileSheet`); review in landscape. */
 export const MobileSheet: Story = {
   parameters: { viewport: { defaultViewport: "mobile1" } },
   render: () => (
@@ -120,8 +120,23 @@ export const MobileSheet: Story = {
       <DialogContent mobileSheet>
         <DialogTitle>New session</DialogTitle>
         <DialogDescription>
-          Docked as a bottom sheet on narrow viewports.
+          Docked as a bottom sheet on narrow viewports. Every field and action
+          stays reachable when the content is taller than the viewport.
         </DialogDescription>
+        {[
+          ["project", "Project"],
+          ["title", "Title"],
+          ["owner", "Owner"],
+          ["branch", "Branch"],
+          ["status", "Status"],
+          ["type", "Work type"],
+          ["context", "Context"],
+        ].map(([id, label]) => (
+          <FormGroup key={id}>
+            <FormLabel htmlFor={`mobile-sheet-${id}`}>{label}</FormLabel>
+            <FormInput id={`mobile-sheet-${id}`} defaultValue={label} />
+          </FormGroup>
+        ))}
         <DialogActions>
           <DialogClose asChild>
             <Button variant="default" size="sm" touch>

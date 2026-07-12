@@ -25,6 +25,7 @@ import {
   SlashCommand,
   SlashCommandMarker,
   TerminalHotkeys,
+  TicketMentionNode,
   type SerializedPromptDoc,
   type SlashCommandTrigger,
 } from "@/lib/prompt-editor";
@@ -89,6 +90,8 @@ export interface PromptEditorProps {
   projectName?: string;
   sessionName?: string;
   backend?: AgentBackendId;
+  /** Hides lane-ineligible built-ins (/ticket) in the slash-command popup. */
+  isWorkflowManagedConversation?: boolean;
   /** Called when a selected slash command exposes an `argumentHint`. */
   onShowPlaceholder?: (text: string) => void;
 }
@@ -247,6 +250,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       projectName,
       sessionName,
       backend,
+      isWorkflowManagedConversation = false,
       onShowPlaceholder,
     } = props;
     const editable = !disabled && !readOnly;
@@ -304,6 +308,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         FileMentionNode,
         ConversationMentionNode,
         MessageMentionNode,
+        TicketMentionNode,
         RefPasteHandler,
         ArgumentHint,
         ImagePasteHandler.configure({
@@ -457,6 +462,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             sessionName={sessionName}
             conversationId={conversationId}
             backend={backend}
+            isWorkflowManagedConversation={isWorkflowManagedConversation}
             onSelect={(selection) => slashState.command(selection)}
             onShowPlaceholder={onShowPlaceholder}
             onClose={() => setSlashState(null)}

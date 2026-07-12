@@ -1490,6 +1490,67 @@ describe("conversation manager", () => {
       });
     });
 
+    it("records the committed ticket identifier when a queued confirmation could not be persisted", async () => {
+      const deps = makeQueueDeps({
+        claimNextTurnBatch: vi.fn(async () => ({
+          ...COMMAND_BATCH,
+          content: [{ type: "text" as const, text: "/ticket retry bug" }],
+          command: { command: "ticket" as const, hint: "retry bug" },
+        })),
+        runConversationCommand: vi.fn(async () => ({
+          status: "ticket_created" as const,
+          identifier: "test-project#12",
+          confirmationPersisted: false,
+        })),
+      });
+      const { self } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(deps.markDelivered).not.toHaveBeenCalled();
+      expect(deps.markFailed).toHaveBeenCalledWith({
+        projectPath: DRAIN_CONTEXT.projectPath,
+        sessionName: DRAIN_CONTEXT.sessionName,
+        conversationId: DRAIN_CONTEXT.conversationId,
+        ids: ["c1"],
+        deliveryAttemptId: "att-cmd",
+        error:
+          "Created ticket test-project#12, but its confirmation could not be saved to this conversation.",
+      });
+    });
+
+    it("records the root ticket failure when its queued failure notice could not be persisted", async () => {
+      const runConversationCommand = vi.fn(async () => ({
+        status: "ticket_failed" as const,
+        reason: "generation turn failed: turn timed out",
+        failureNoticePersisted: false,
+      }));
+      const deps = makeQueueDeps({
+        claimNextTurnBatch: vi.fn(async () => ({
+          ...COMMAND_BATCH,
+          content: [{ type: "text" as const, text: "/ticket retry bug" }],
+          command: { command: "ticket" as const, hint: "retry bug" },
+        })),
+        runConversationCommand,
+      });
+      const { self } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(runConversationCommand).toHaveBeenCalledTimes(1);
+      expect(deps.markDelivered).not.toHaveBeenCalled();
+      expect(deps.markPending).not.toHaveBeenCalled();
+      expect(deps.markFailed).toHaveBeenCalledWith({
+        projectPath: DRAIN_CONTEXT.projectPath,
+        sessionName: DRAIN_CONTEXT.sessionName,
+        conversationId: DRAIN_CONTEXT.conversationId,
+        ids: ["c1"],
+        deliveryAttemptId: "att-cmd",
+        error:
+          "/ticket failed: generation turn failed: turn timed out — no ticket was created. The failure notice could not be saved to this conversation.",
+      });
+    });
+
     it("maps the project sentinel to sessionName null + noticeSessionName, like the direct path", async () => {
       const deps = makeQueueDeps({
         claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),

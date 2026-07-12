@@ -7,7 +7,10 @@ import {
 
 function createTestDeps(): ProjectRouteDeps {
   return {
-    deleteProject: vi.fn().mockResolvedValue({ sessionsRemoved: 0 }),
+    deleteProject: vi.fn().mockResolvedValue({
+      sessionsRemoved: 0,
+      deletedTicketNumbers: [],
+    }),
   };
 }
 
@@ -29,8 +32,11 @@ beforeEach(() => {
 });
 
 describe("DELETE /api/projects/[name]", () => {
-  it("deletes the project at the given projectPath and reports sessionsRemoved", async () => {
-    vi.mocked(deps.deleteProject).mockResolvedValue({ sessionsRemoved: 3 });
+  it("reports removed sessions and authoritative deleted ticket numbers", async () => {
+    vi.mocked(deps.deleteProject).mockResolvedValue({
+      sessionsRemoved: 3,
+      deletedTicketNumbers: [2, 7],
+    });
 
     const response = await handlers.DELETE(
       makeRequest(
@@ -43,6 +49,7 @@ describe("DELETE /api/projects/[name]", () => {
     expect(await response.json()).toEqual({
       success: true,
       sessionsRemoved: 3,
+      deletedTicketNumbers: [2, 7],
     });
     expect(deps.deleteProject).toHaveBeenCalledWith("/projects/test-proj");
   });

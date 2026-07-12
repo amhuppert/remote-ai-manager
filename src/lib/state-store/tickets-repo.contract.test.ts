@@ -1,0 +1,593 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+import type Database from "better-sqlite3";
+import { _createTestDb } from "./state-db";
+import { createTicketsRepo, type TicketsRepo } from "./tickets-repo";
+import { createWriteQueue, type WriteQueue } from "./write-queue";
+import {
+  ticketAttachmentSchema,
+  ticketSchema,
+  type Ticket,
+  type TicketAttachment,
+} from "@/lib/tickets/schemas";
+import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+
+type Db = InstanceType<typeof Database>;
+
+const PROJECT_PATH = "/repos/command-center";
+const OTHER_PROJECT = "/repos/other";
+
+let db: Db;
+let queue: WriteQueue;
+let repo: TicketsRepo;
+
+beforeEach(() => {
+  db = _createTestDb({ inMemory: true });
+  db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
+  db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(OTHER_PROJECT);
+  queue = createWriteQueue();
+  repo = createTicketsRepo(db, queue);
+});
+
+afterEach(() => {
+  db.close();
+});
+
+let inputSeq = 0;
+
+function makeCreateInput(overrides: Partial<Omit<Ticket, "number">> = {}) {
+  inputSeq += 1;
+  return {
+    id: `t-${inputSeq}`,
+    projectPath: PROJECT_PATH,
+    title: `Ticket ${inputSeq}`,
+    description: "",
+    workType: "feature" as const,
+    status: "not_started" as const,
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeAttachment(
+  ticketId: string,
+  overrides: Partial<TicketAttachment> = {},
+): TicketAttachment {
+  inputSeq += 1;
+  return ticketAttachmentSchema.parse({
+    id: `a-${inputSeq}`,
+    ticketId,
+    description: "A described attachment",
+    payload: { kind: "note", markdown: "## context" },
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T00:00:00.000Z",
+    ...overrides,
+  });
+}
+
+function makeConversationAttachment(
+  ticketId: string,
+  overrides: Partial<TicketAttachment> = {},
+): TicketAttachment {
+  inputSeq += 1;
+  return ticketAttachmentSchema.parse({
+    id: `a-${inputSeq}`,
+    ticketId,
+    description: "Originating conversation, pre-compacted",
+    payload: {
+      kind: "conversation",
+      projectPath: PROJECT_PATH,
+      sessionName: "csm/origin",
+      conversationId: "conv-1",
+      snapshotKey: "ticket-content/t/a/compaction.md",
+      snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+    },
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T00:00:00.000Z",
+    ...overrides,
+  });
+}
+
+describe("atomic number allocation", () => {
+  it("allocates 1, 2, 3 within a project and never reuses a number after deletion", async () => {
+    const first = await repo.create(makeCreateInput());
+    const second = await repo.create(makeCreateInput());
+    expect(first.number).toBe(1);
+    expect(second.number).toBe(2);
+
+    const deleted = await repo.delete(PROJECT_PATH, second.number);
+    expect(deleted).not.toBeNull();
+
+    const third = await repo.create(makeCreateInput());
+    expect(third.number).toBe(3);
+  });
+
+  it("keeps sequences independent per project", async () => {
+    await repo.create(makeCreateInput());
+    await repo.create(makeCreateInput());
+    const other = await repo.create(
+      makeCreateInput({ projectPath: OTHER_PROJECT }),
+    );
+    expect(other.number).toBe(1);
+  });
+
+  it("survives project delete/re-add without reusing numbers (counter has no FK)", async () => {
+    await repo.create(makeCreateInput());
+    await repo.create(makeCreateInput());
+
+    db.prepare("DELETE FROM projects WHERE root_path = ?").run(PROJECT_PATH);
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
+
+    const relisted = await repo.list({
+      projectPath: PROJECT_PATH,
+      sort: "updated",
+    });
+    expect(relisted).toHaveLength(0);
+
+    const next = await repo.create(makeCreateInput());
+    expect(next.number).toBe(3);
+  });
+
+  it("assigns unique sequential numbers under concurrent queued creates", async () => {
+    const created = await Promise.all(
+      Array.from({ length: 8 }, () => repo.create(makeCreateInput())),
+    );
+    const numbers = created.map((t) => t.number).sort((a, b) => a - b);
+    expect(numbers).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+});
+
+describe("ticket CRUD", () => {
+  it("find returns the detail with projectName, attachments, and sessions", async () => {
+    const ticket = await repo.create(makeCreateInput({ title: "Find me" }));
+    const detail = await repo.find(PROJECT_PATH, ticket.number);
+
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.title).toBe("Find me");
+    expect(detail.projectName).toBe("command-center");
+    expect(detail.attachments).toEqual([]);
+    expect(detail.sessions).toEqual([]);
+  });
+
+  it("find and update return null for an unknown ticket", async () => {
+    expect(await repo.find(PROJECT_PATH, 99)).toBeNull();
+    expect(
+      await repo.update({
+        projectPath: PROJECT_PATH,
+        number: 99,
+        title: "nope",
+        updatedAt: "2026-07-10T01:00:00.000Z",
+      }),
+    ).toBeNull();
+    expect(await repo.delete(PROJECT_PATH, 99)).toBeNull();
+  });
+
+  it("update changes only the provided fields and stamps updated_at", async () => {
+    const ticket = await repo.create(
+      makeCreateInput({ title: "Before", description: "body" }),
+    );
+
+    const updated = await repo.update({
+      projectPath: PROJECT_PATH,
+      number: ticket.number,
+      status: "blocked",
+      updatedAt: "2026-07-10T02:00:00.000Z",
+    });
+
+    expect(updated).not.toBeNull();
+    if (!updated) return;
+    expect(updated.status).toBe("blocked");
+    expect(updated.title).toBe("Before");
+    expect(updated.description).toBe("body");
+    expect(updated.updatedAt).toBe("2026-07-10T02:00:00.000Z");
+  });
+
+  it("advances updated_at when field writes reuse or regress the wall clock", async () => {
+    const ticket = await repo.create(makeCreateInput());
+
+    const equal = await repo.update({
+      projectPath: PROJECT_PATH,
+      number: ticket.number,
+      title: "Equal clock",
+      updatedAt: ticket.updatedAt,
+    });
+    const regressed = await repo.update({
+      projectPath: PROJECT_PATH,
+      number: ticket.number,
+      title: "Regressed clock",
+      updatedAt: "2026-07-09T23:59:59.000Z",
+    });
+
+    expect(equal?.updatedAt).toBe("2026-07-10T00:00:00.001Z");
+    expect(regressed?.updatedAt).toBe("2026-07-10T00:00:00.002Z");
+  });
+
+  it("delete returns the removed identity and cascades attachment rows", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    await repo.addAttachment(makeAttachment(ticket.id));
+
+    const deleted = await repo.delete(PROJECT_PATH, ticket.number);
+    expect(deleted).toEqual({
+      id: ticket.id,
+      projectPath: PROJECT_PATH,
+      projectName: "command-center",
+      number: ticket.number,
+    });
+
+    const orphans = db
+      .prepare("SELECT COUNT(*) AS n FROM ticket_attachments")
+      .get() as { n: number };
+    expect(orphans.n).toBe(0);
+  });
+
+  it("deleting the project row cascades tickets and their attachment rows", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    await repo.addAttachment(makeAttachment(ticket.id));
+
+    db.prepare("DELETE FROM projects WHERE root_path = ?").run(PROJECT_PATH);
+
+    const tickets = db
+      .prepare("SELECT COUNT(*) AS n FROM tickets WHERE project_path = ?")
+      .get(PROJECT_PATH) as { n: number };
+    expect(tickets.n).toBe(0);
+    const attachments = db
+      .prepare("SELECT COUNT(*) AS n FROM ticket_attachments")
+      .get() as { n: number };
+    expect(attachments.n).toBe(0);
+  });
+
+  it("rejects an invalid create input before touching the database", async () => {
+    await expect(
+      repo.create(makeCreateInput({ workType: "epic" as never })),
+    ).rejects.toThrow();
+    const counter = db
+      .prepare("SELECT last_number FROM ticket_counters WHERE project_path = ?")
+      .get(PROJECT_PATH) as { last_number: number } | undefined;
+    expect(counter).toBeUndefined();
+  });
+
+  it("creates the project aggregate row for a discovered project that has never been persisted", async () => {
+    const discovered = "/repos/discovered-only";
+    const ticket = await repo.create(
+      makeCreateInput({ projectPath: discovered }),
+    );
+    expect(ticket.number).toBe(1);
+    const row = db
+      .prepare("SELECT root_path FROM projects WHERE root_path = ?")
+      .get(discovered);
+    expect(row).toEqual({ root_path: discovered });
+  });
+});
+
+describe("createWithConversationAttachment", () => {
+  it("creates the ticket and its conversation attachment in one write", async () => {
+    const input = makeCreateInput({ title: "From slash command" });
+    const attachment = makeConversationAttachment(input.id);
+
+    const detail = await repo.createWithConversationAttachment(
+      input,
+      attachment,
+    );
+
+    expect(detail.number).toBe(1);
+    expect(detail.attachments).toHaveLength(1);
+    expect(detail.attachments[0]?.payload.kind).toBe("conversation");
+  });
+
+  it("rejects a non-conversation payload", async () => {
+    const input = makeCreateInput();
+    await expect(
+      repo.createWithConversationAttachment(input, makeAttachment(input.id)),
+    ).rejects.toThrow();
+  });
+
+  it("rolls back the ticket and the counter when the attachment insert fails", async () => {
+    const existing = await repo.create(makeCreateInput());
+    const clash = await repo.addAttachment(
+      makeConversationAttachment(existing.id),
+    );
+
+    const input = makeCreateInput();
+    await expect(
+      repo.createWithConversationAttachment(
+        input,
+        makeConversationAttachment(input.id, { id: clash.id }),
+      ),
+    ).rejects.toThrow();
+
+    // Nothing persisted: no second ticket, and the counter did not advance.
+    const tickets = db.prepare("SELECT COUNT(*) AS n FROM tickets").get() as {
+      n: number;
+    };
+    expect(tickets.n).toBe(1);
+
+    const next = await repo.create(makeCreateInput());
+    expect(next.number).toBe(2);
+  });
+});
+
+describe("attachment-row CRUD", () => {
+  it("addAttachment persists a validated row readable from the detail", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    const attachment = await repo.addAttachment(
+      makeAttachment(ticket.id, { description: "kickoff notes" }),
+    );
+
+    const detail = await repo.find(PROJECT_PATH, ticket.number);
+    expect(detail?.attachments).toEqual([attachment]);
+  });
+
+  it("updateAttachment edits description and payload; unknown id returns null", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    const attachment = await repo.addAttachment(makeAttachment(ticket.id));
+
+    const updated = await repo.updateAttachment({
+      ticketId: ticket.id,
+      attachmentId: attachment.id,
+      description: "sharper description",
+      payload: { kind: "note", markdown: "## revised" },
+      updatedAt: "2026-07-10T03:00:00.000Z",
+    });
+
+    expect(updated).not.toBeNull();
+    if (!updated) return;
+    expect(updated.description).toBe("sharper description");
+    expect(updated.payload).toEqual({ kind: "note", markdown: "## revised" });
+    expect(updated.updatedAt).toBe("2026-07-10T03:00:00.000Z");
+
+    expect(
+      await repo.updateAttachment({
+        ticketId: ticket.id,
+        attachmentId: "missing",
+        description: "x",
+        updatedAt: "2026-07-10T03:00:00.000Z",
+      }),
+    ).toBeNull();
+  });
+
+  it("uses one strictly increasing parent revision for attachment writes", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    const added = await repo.addAttachment(makeAttachment(ticket.id));
+    const afterAdd = await repo.find(PROJECT_PATH, ticket.number);
+
+    const updated = await repo.updateAttachment({
+      ticketId: ticket.id,
+      attachmentId: added.id,
+      description: "clock moved backwards",
+      updatedAt: "2026-07-09T23:59:59.000Z",
+    });
+    const afterUpdate = await repo.find(PROJECT_PATH, ticket.number);
+
+    await repo.deleteAttachment({
+      ticketId: ticket.id,
+      attachmentId: added.id,
+      updatedAt: "2026-07-09T23:59:58.000Z",
+    });
+    const afterDelete = await repo.find(PROJECT_PATH, ticket.number);
+
+    expect(added.updatedAt).toBe("2026-07-10T00:00:00.001Z");
+    expect(afterAdd?.updatedAt).toBe(added.updatedAt);
+    expect(updated?.updatedAt).toBe("2026-07-10T00:00:00.002Z");
+    expect(afterUpdate?.updatedAt).toBe(updated?.updatedAt);
+    expect(afterDelete?.updatedAt).toBe("2026-07-10T00:00:00.003Z");
+  });
+
+  it("deleteAttachment returns the removed row; unknown id returns null", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    const attachment = await repo.addAttachment(makeAttachment(ticket.id));
+
+    const removed = await repo.deleteAttachment({
+      ticketId: ticket.id,
+      attachmentId: attachment.id,
+      updatedAt: "2026-07-10T04:00:00.000Z",
+    });
+    expect(removed).toEqual({
+      attachment,
+      ticketUpdatedAt: "2026-07-10T04:00:00.000Z",
+    });
+
+    expect(
+      await repo.deleteAttachment({
+        ticketId: ticket.id,
+        attachmentId: attachment.id,
+        updatedAt: "2026-07-10T05:00:00.000Z",
+      }),
+    ).toBeNull();
+
+    const detail = await repo.find(PROJECT_PATH, ticket.number);
+    expect(detail?.attachments).toEqual([]);
+  });
+
+  it("deleteAttachment returns the committed parent revision when the requested clock moves backwards", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    const attachment = await repo.addAttachment(makeAttachment(ticket.id));
+
+    const removed = await repo.deleteAttachment({
+      ticketId: ticket.id,
+      attachmentId: attachment.id,
+      updatedAt: "2026-07-09T23:59:59.000Z",
+    });
+
+    expect(removed).toEqual({
+      attachment,
+      ticketUpdatedAt: "2026-07-10T00:00:00.002Z",
+    });
+    expect((await repo.find(PROJECT_PATH, ticket.number))?.updatedAt).toBe(
+      "2026-07-10T00:00:00.002Z",
+    );
+  });
+
+  it("rejects an attachment for a ticket that does not exist", async () => {
+    await expect(
+      repo.addAttachment(makeAttachment("t-missing")),
+    ).rejects.toThrow();
+  });
+});
+
+describe("list queries", () => {
+  async function seedListFixtures() {
+    await repo.create(
+      makeCreateInput({
+        title: "cc feature",
+        workType: "feature",
+        status: "not_started",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-04T00:00:00.000Z",
+      }),
+    );
+    await repo.create(
+      makeCreateInput({
+        title: "cc bug",
+        workType: "bug",
+        status: "in_progress",
+        createdAt: "2026-07-02T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      }),
+    );
+    await repo.create(
+      makeCreateInput({
+        projectPath: OTHER_PROJECT,
+        title: "other research",
+        workType: "research",
+        status: "in_progress",
+        createdAt: "2026-07-03T00:00:00.000Z",
+        updatedAt: "2026-07-05T00:00:00.000Z",
+      }),
+    );
+  }
+
+  it("filters by project, status, and work type (field equality)", async () => {
+    await seedListFixtures();
+
+    const byProject = await repo.list({
+      projectPath: PROJECT_PATH,
+      sort: "updated",
+    });
+    expect(byProject.map((t) => t.title)).toEqual(["cc bug", "cc feature"]);
+
+    const byStatus = await repo.list({
+      status: "in_progress",
+      sort: "updated",
+    });
+    expect(byStatus.map((t) => t.title)).toEqual(["cc bug", "other research"]);
+
+    const byType = await repo.list({ workType: "research", sort: "updated" });
+    expect(byType.map((t) => t.title)).toEqual(["other research"]);
+  });
+
+  it("sorts by last-updated or creation time, newest first", async () => {
+    await seedListFixtures();
+
+    const byUpdated = await repo.list({ sort: "updated" });
+    expect(byUpdated.map((t) => t.title)).toEqual([
+      "cc bug",
+      "other research",
+      "cc feature",
+    ]);
+
+    const byCreated = await repo.list({ sort: "created" });
+    expect(byCreated.map((t) => t.title)).toEqual([
+      "other research",
+      "cc bug",
+      "cc feature",
+    ]);
+  });
+
+  it("carries attachmentCount and a null activeSessionName when unlinked", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    await repo.addAttachment(makeAttachment(ticket.id));
+    await repo.addAttachment(makeAttachment(ticket.id));
+
+    const items = await repo.list({
+      projectPath: PROJECT_PATH,
+      sort: "updated",
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.attachmentCount).toBe(2);
+    expect(items[0]?.activeSessionName).toBeNull();
+    expect(items[0]?.projectName).toBe("command-center");
+  });
+});
+
+describe("durability contracts", () => {
+  it("round-trips every persisted ticket key path through the real repo", async () => {
+    await assertRoundTripDurability({
+      label: "tickets",
+      schema: ticketSchema,
+      buildMaximalFixture: () =>
+        ticketSchema.parse({
+          id: "t-maximal",
+          projectPath: PROJECT_PATH,
+          number: 1,
+          title: "A maximal durability fixture",
+          description: "Body with **markdown** and unicode ✓",
+          workType: "tech_debt",
+          status: "blocked",
+          createdAt: "2026-02-15T08:09:10.000Z",
+          updatedAt: "2026-03-16T09:10:11.000Z",
+        }),
+      persist: async (fixture) => {
+        const { number: _number, ...input } = fixture;
+        return await repo.create(input);
+      },
+      reload: async (expected) => {
+        const detail = await repo.find(expected.projectPath, expected.number);
+        if (!detail) return null;
+        const {
+          projectName: _projectName,
+          attachments: _attachments,
+          sessions: _sessions,
+          ...ticket
+        } = detail;
+        return ticket;
+      },
+      // `number` is allocated by the repo (persist returns the allocated row,
+      // which the harness compares against reload) — all other fields map to
+      // dedicated NOT NULL columns written from caller-supplied values.
+      fieldPolicies: { number: "derived-on-write" },
+    });
+  });
+
+  it("round-trips every persisted attachment key path through the real repo", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    await assertRoundTripDurability({
+      label: "ticket-attachments",
+      schema: ticketAttachmentSchema,
+      buildMaximalFixture: () =>
+        ticketAttachmentSchema.parse({
+          id: "a-maximal",
+          ticketId: ticket.id,
+          description: "A maximal attachment durability fixture",
+          payload: {
+            kind: "file",
+            fileName: "design notes.md",
+            snapshotKey: "ticket-content/t/a/design notes.md",
+            mediaType: "text/markdown",
+            sizeBytes: 4096,
+            sha256: "deadbeefcafef00d",
+          },
+          createdAt: "2026-02-15T08:09:10.000Z",
+          updatedAt: "2026-03-16T09:10:11.000Z",
+        }),
+      persist: (fixture) => repo.addAttachment(fixture),
+      reload: async (expected) => {
+        const detail = await repo.find(PROJECT_PATH, ticket.number);
+        return detail?.attachments.find((a) => a.id === expected.id) ?? null;
+      },
+      // Every field maps to a dedicated NOT NULL column (payload as validated
+      // JSON); persist returns the repo-normalized mutation revision.
+      fieldPolicies: {},
+    });
+  });
+});

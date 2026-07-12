@@ -39,7 +39,7 @@ export const cardSize: Record<DialogSize, string> = {
 // ConfirmDialog/BulkConfirmModal sheet): full-width, square bottom corners,
 // safe-area inset padding, and the `slideUpSheet` entrance.
 export const cardSheet =
-  "max-768:max-w-full max-768:rounded-b-none max-768:px-md max-768:py-lg max-768:pb-[calc(var(--space-lg)+env(safe-area-inset-bottom,0))] max-768:motion-safe:animate-[slideUpSheet_0.25s_ease]";
+  "max-768:max-h-[100dvh] max-768:max-w-full max-768:overflow-y-auto max-768:overscroll-contain max-768:rounded-b-none max-768:px-md max-768:py-lg max-768:pb-[calc(var(--space-lg)+env(safe-area-inset-bottom,0))] max-768:motion-safe:animate-[slideUpSheet_0.25s_ease]";
 
 // Title (Radix `*.Title`, an `h2`). The legacy modal heading recipe.
 export const dialogTitle = "font-display font-bold text-[1.2rem] mb-lg";

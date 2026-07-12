@@ -36,6 +36,7 @@ describe("usePromptComposerProps", () => {
         promptPlaceholder: null,
         isReadOnly: false,
         isFinished: false,
+        isWorkflowManagedConversation: true,
         sending: false,
         hasActiveCollab: false,
         isRecording: false,
@@ -67,6 +68,7 @@ describe("usePromptComposerProps", () => {
     });
 
     expect(result.current.projectName).toBe("p");
+    expect(result.current.isWorkflowManagedConversation).toBe(true);
     expect(result.current.selectedBackend).toBe("claude");
     expect(result.current.selectedModel).toBe("sonnet");
     expect(result.current.selectedEffort).toBe("medium");

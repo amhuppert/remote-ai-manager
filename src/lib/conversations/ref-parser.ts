@@ -1,6 +1,7 @@
 /**
  * Detect and parse the inline self-closing reference tags emitted by the
- * prompt-editor serializer (`<conversation-ref ... />`, `<message-ref ... />`).
+ * prompt-editor serializer (`<conversation-ref ... />`, `<message-ref ... />`,
+ * `<ticket-ref ... />`).
  *
  * Refs inside triple-backtick or triple-tilde fenced code blocks are skipped
  * — those represent literal code shown to the reader, not link targets.
@@ -23,6 +24,10 @@ export function findConversationRefs(text: string): FoundRef[] {
 
 export function findMessageRefs(text: string): FoundRef[] {
   return findRefTags(text, "message-ref");
+}
+
+export function findTicketRefs(text: string): FoundRef[] {
+  return findRefTags(text, "ticket-ref");
 }
 
 export function findRefTags(text: string, tagName: string): FoundRef[] {

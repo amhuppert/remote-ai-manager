@@ -157,6 +157,11 @@ const MIGRATED_UTILITY_FIRST = [
   // .prettierrc class-sort override and the tailwind-utility-collisions
   // UTILITY_FIRST_PATHS allowlist.
   "src/components/workflow-config/**/*.{ts,tsx}",
+  // Ticket-system UI: tickets feature + the promoted session indicator, authored
+  // utility-first against the design system. Mirrors the .prettierrc class-sort
+  // override and the tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
+  "src/features/tickets/**/*.{ts,tsx}",
+  "src/components/SessionTicketIndicator.tsx",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

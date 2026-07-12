@@ -1577,6 +1577,12 @@ describe("conversation command interception", () => {
         draftId: "draft-1",
       })),
       enqueueAuthoringTurn: vi.fn(async () => {}),
+      runTicketCommand: vi.fn(async () => ({
+        status: "created" as const,
+        identifier: "repo#1",
+        confirmationPersisted: true,
+      })),
+      getConversationRole: vi.fn(async () => null),
       ...overrides,
     };
   }
@@ -1656,6 +1662,64 @@ describe("conversation command interception", () => {
       parsed: { command: "merge", hint: "keep it short" },
       rawText: "/merge keep it short",
     });
+  });
+
+  it("reports a committed ticket identifier when its transcript confirmation could not be persisted", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "ticket_created" as const,
+      identifier: "repo#12",
+      confirmationPersisted: false,
+    }));
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+    const events: Array<[string, unknown]> = [];
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/ticket retry bug",
+      (event, data) => events.push([event, data]),
+      "conv-123",
+    );
+
+    expect(events).toContainEqual([
+      "error",
+      {
+        message:
+          "Created ticket repo#12, but its confirmation could not be saved to this conversation.",
+      },
+    ]);
+    expect(events.at(-1)).toEqual(["done", {}]);
+  });
+
+  it("surfaces the root ticket failure when its failure notice could not be persisted", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "ticket_failed" as const,
+      reason: "generation turn failed: turn timed out",
+      failureNoticePersisted: false,
+    }));
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+    const events: Array<[string, unknown]> = [];
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/ticket retry bug",
+      (event, data) => events.push([event, data]),
+      "conv-123",
+    );
+
+    expect(dispatchConversationCommand).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual([
+      "error",
+      {
+        message:
+          "/ticket failed: generation turn failed: turn timed out — no ticket was created. The failure notice could not be saved to this conversation.",
+      },
+    ]);
+    expect(events.at(-1)).toEqual(["done", {}]);
+    expect(deps.ensureConversationActor).not.toHaveBeenCalled();
   });
 
   it("maps the project sentinel session to sessionName null with noticeSessionName scope", async () => {

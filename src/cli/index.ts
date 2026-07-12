@@ -6,13 +6,14 @@ import { runCli } from "./core";
 
 const result = await runCli(process.argv.slice(2), process.env, {
   fetch: (url, init) => {
-    const { timeoutMs, ...requestInit } = init;
-    return fetch(
-      url,
-      timeoutMs === undefined
-        ? requestInit
-        : { ...requestInit, signal: AbortSignal.timeout(timeoutMs) },
-    );
+    const { timeoutMs, rawBody, ...requestInit } = init;
+    return fetch(url, {
+      ...requestInit,
+      ...(rawBody !== undefined ? { body: rawBody } : {}),
+      ...(timeoutMs !== undefined
+        ? { signal: AbortSignal.timeout(timeoutMs) }
+        : {}),
+    });
   },
   async readTextFile(filePath) {
     // `--file -` reads the payload from stdin, so an agent can pipe a small
@@ -26,6 +27,13 @@ const result = await runCli(process.argv.slice(2), process.env, {
     }
     try {
       return await readFile(filePath, "utf-8");
+    } catch {
+      return null;
+    }
+  },
+  async readFileBytes(filePath) {
+    try {
+      return new Uint8Array(await readFile(filePath));
     } catch {
       return null;
     }

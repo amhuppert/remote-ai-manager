@@ -495,6 +495,79 @@ const SCHEMA_DDL = `
     ON context_artifacts (conversation_id) WHERE kind = 'conversation_compaction';
   CREATE UNIQUE INDEX IF NOT EXISTS uq_context_artifacts_message
     ON context_artifacts (conversation_id, message_index) WHERE kind = 'message_compaction';
+
+  -- Deliberately no projects FK: a deleted-then-rediscovered project path must
+  -- never reuse ticket numbers, so counters outlive their project row.
+  CREATE TABLE IF NOT EXISTS ticket_counters (
+    project_path TEXT PRIMARY KEY,
+    last_number  INTEGER NOT NULL CHECK (last_number >= 0)
+  );
+
+  CREATE TABLE IF NOT EXISTS tickets (
+    id            TEXT PRIMARY KEY,
+    project_path  TEXT NOT NULL,
+    ticket_number INTEGER NOT NULL CHECK (ticket_number > 0),
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL,
+    work_type     TEXT NOT NULL CHECK (work_type IN (
+      'feature', 'bug', 'research', 'tech_debt', 'performance'
+    )),
+    status        TEXT NOT NULL CHECK (status IN (
+      'not_started', 'in_progress', 'done', 'blocked', 'closed'
+    )),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    UNIQUE (project_path, ticket_number),
+    UNIQUE (id, project_path),
+    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_tickets_project_updated
+    ON tickets (project_path, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_tickets_status_updated
+    ON tickets (status, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_tickets_project_status_type_updated
+    ON tickets (project_path, status, work_type, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS ticket_attachments (
+    id           TEXT PRIMARY KEY,
+    ticket_id    TEXT NOT NULL,
+    description  TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ticket_attachments_ticket_created
+    ON ticket_attachments (ticket_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS ticket_sessions (
+    id                 TEXT PRIMARY KEY,
+    ticket_id          TEXT NOT NULL,
+    project_path       TEXT NOT NULL,
+    session_name       TEXT NOT NULL,
+    -- Legacy links cannot prove which same-name session they referenced; NULL
+    -- keeps them historical instead of attaching them to a replacement.
+    session_created_at TEXT,
+    start_mode         TEXT NOT NULL CHECK (start_mode IN ('agent', 'prepared')),
+    linked_at          TEXT NOT NULL,
+    ended_at           TEXT,
+    end_reason         TEXT CHECK (end_reason IN ('finished', 'deleted', 'replaced')),
+    FOREIGN KEY (ticket_id, project_path)
+      REFERENCES tickets(id, project_path) ON DELETE CASCADE
+  );
+
+  -- Single-active-link invariants: at most one live link per ticket and per
+  -- (project, session name); history rows (ended_at set) are unbounded.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_sessions_active_ticket
+    ON ticket_sessions (ticket_id) WHERE ended_at IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_sessions_active_session
+    ON ticket_sessions (project_path, session_name) WHERE ended_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_ticket_sessions_ticket_linked
+    ON ticket_sessions (ticket_id, linked_at);
+  CREATE INDEX IF NOT EXISTS idx_ticket_sessions_project_session
+    ON ticket_sessions (project_path, session_name);
 `;
 
 class SchemaVersionConflictError extends Error {
@@ -578,6 +651,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "conversations",
     column: "last_seen_alignment_version",
     type: "INTEGER",
+  },
+  {
+    table: "ticket_sessions",
+    column: "session_created_at",
+    type: "TEXT",
   },
   { table: "conversations", column: "pending_agent_notices", type: "TEXT" },
 ];

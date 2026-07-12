@@ -162,6 +162,16 @@ export const conversationRoleSchema = z
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;
 
+/**
+ * Graph-workflow lane conversations — the autonomous implementer and
+ * context-validator roles. Lane conversations are workflow-managed: their
+ * composers only mount while an approval gate or parked question is open,
+ * and lane-ineligible commands (/ticket) are hidden and server-rejected.
+ */
+export function isWorkflowLaneRole(role: ConversationRole): boolean {
+  return role === "iteration" || role === "validator";
+}
+
 // Distinguishes user-initiated turns from workflow-driven background turns
 // (e.g. smart-merge's validation-fix task_run, graph-workflow's autonomous
 // implementer). Null when no turn is active. The conversation panel uses this

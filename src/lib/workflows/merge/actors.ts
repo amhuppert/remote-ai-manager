@@ -492,7 +492,17 @@ export interface PublishActorDeps {
     input: PublishPreparedMergeInput,
   ): Promise<PublishResult>;
   acquireProjectLock: AcquireProjectLockOptions["acquireProjectLock"];
+  runSessionLifecycleOperation<T>(
+    projectPath: string,
+    sessionName: string,
+    operation: () => Promise<T>,
+  ): Promise<T>;
   setSessionFinished(projectPath: string, sessionName: string): Promise<void>;
+  reconcileTicketSessionLifecycle(input: {
+    projectPath: string;
+    sessionName: string;
+    endReason: "finished";
+  }): Promise<void>;
   retargetOrphanedChildren(
     projectPath: string,
     sessionName: string,
@@ -521,7 +531,26 @@ async function finalizeSessionSideEffects(
     });
   }
 
-  await deps.setSessionFinished(projectPath, sessionName);
+  await deps.runSessionLifecycleOperation(
+    projectPath,
+    sessionName,
+    async () => {
+      await deps.setSessionFinished(projectPath, sessionName);
+      try {
+        await deps.reconcileTicketSessionLifecycle({
+          projectPath,
+          sessionName,
+          endReason: "finished",
+        });
+      } catch (err) {
+        logger.warn("publishActor.ticket_lifecycle_reconcile_failed", {
+          projectPath,
+          sessionName,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  );
   await deps.retargetOrphanedChildren(projectPath, sessionName);
 }
 
@@ -690,16 +719,27 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
     const { discoverTargetCheckout, publishPreparedMerge } =
       await import("@/lib/git/worktree");
     const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
+    const { getSessionLifecycleGate } =
+      await import("@/lib/sessions/lifecycle-gate");
     const { setSessionFinished } = await import("@/lib/state-store");
     const { stopAllForSession } = await import("@/lib/dev-server/registry");
     const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
+    const { reconcileTicketSessionLifecycle } =
+      await import("@/lib/tickets/lifecycle");
 
     return runPublish(
       {
         discoverTargetCheckout,
         publishPreparedMerge,
         acquireProjectLock,
+        runSessionLifecycleOperation: (projectPath, sessionName, operation) =>
+          getSessionLifecycleGate().runExclusive(
+            projectPath,
+            sessionName,
+            operation,
+          ),
         setSessionFinished,
+        reconcileTicketSessionLifecycle,
         retargetOrphanedChildren,
         stopAllForSession,
       },

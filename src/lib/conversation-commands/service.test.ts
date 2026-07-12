@@ -91,6 +91,12 @@ function makeDeps(
       draftId: "unused",
     })),
     enqueueAuthoringTurn: vi.fn(async () => {}),
+    runTicketCommand: vi.fn(async () => ({
+      status: "created" as const,
+      identifier: "demo#1",
+      confirmationPersisted: true,
+    })),
+    getConversationRole: vi.fn(async () => null),
     ...overrides,
   };
 }
@@ -890,5 +896,150 @@ describe("/align command", () => {
   it("surfaces AlignmentNotSupportedError as a graceful rejection, not a crash", () => {
     // Pin the error type the production rejection path catches.
     expect(new AlignmentNotSupportedError("x")).toBeInstanceOf(Error);
+  });
+});
+
+describe("/ticket command", () => {
+  it("runs the ticket command for an eligible session conversation", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "ticket", hint: "retry bug" } }),
+    );
+
+    expect(outcome).toEqual({
+      status: "ticket_created",
+      identifier: "demo#1",
+      confirmationPersisted: true,
+    });
+    expect(deps.runTicketCommand).toHaveBeenCalledWith({
+      projectPath: "/tmp/projects/demo",
+      projectName: "demo",
+      sessionName: "my-session",
+      conversationId: "conv-1",
+      hint: "retry bug",
+    });
+    expect(deps.appendNotice).not.toHaveBeenCalled();
+  });
+
+  it("is eligible for project conversations (sessionName null)", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({
+        sessionName: null,
+        noticeSessionName: "__project__",
+        parsed: { command: "ticket", hint: "" },
+      }),
+    );
+
+    expect(outcome.status).toBe("ticket_created");
+    expect(deps.getSession).not.toHaveBeenCalled();
+    expect(deps.runTicketCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionName: null }),
+    );
+  });
+
+  it("does not gate on active jobs or uncommitted changes", async () => {
+    const deps = makeDeps({
+      hasActiveJob: vi.fn(() => true),
+      hasUncommittedChanges: vi.fn(async () => false),
+    });
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "ticket", hint: "" } }),
+    );
+
+    expect(outcome.status).toBe("ticket_created");
+  });
+
+  it("rejects through the existing notice path when the session is unknown", async () => {
+    const deps = makeDeps({ getSession: vi.fn(async () => null) });
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "ticket", hint: "" } }),
+    );
+
+    expect(outcome).toEqual({ status: "rejected", reason: "no-session" });
+    expect(deps.runTicketCommand).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.text).toContain(
+      "Cannot run /ticket",
+    );
+  });
+
+  it("rejects through the existing notice path when the session is finished", async () => {
+    const deps = makeDeps({
+      getSession: vi.fn(async () => makeSession({ finished: true })),
+    });
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "ticket", hint: "" } }),
+    );
+
+    expect(outcome).toEqual({
+      status: "rejected",
+      reason: "session-finished",
+    });
+    expect(deps.runTicketCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["iteration", "validator"] as const)(
+    "rejects /ticket from a graph-workflow lane conversation (role %s) without creating anything",
+    async (role) => {
+      const deps = makeDeps({
+        getConversationRole: vi.fn(async () => role),
+      });
+      const service = createConversationCommandService(deps);
+
+      const outcome = await service.run(
+        makeInput({ parsed: { command: "ticket", hint: "" } }),
+      );
+
+      expect(outcome).toEqual({ status: "rejected", reason: "workflow-lane" });
+      expect(deps.runTicketCommand).not.toHaveBeenCalled();
+      expectNoAgentOrDispatch(deps);
+      expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.text).toContain(
+        "managed by a graph workflow",
+      );
+    },
+  );
+
+  it("does not reject non-lane workflow roles (planner keeps /ticket)", async () => {
+    const deps = makeDeps({
+      getConversationRole: vi.fn(async () => "planner" as const),
+    });
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "ticket", hint: "" } }),
+    );
+
+    expect(outcome.status).toBe("ticket_created");
+  });
+
+  it("maps a failed ticket run onto the ticket_failed outcome", async () => {
+    const deps = makeDeps({
+      runTicketCommand: vi.fn(async () => ({
+        status: "failed" as const,
+        reason: "generation turn failed",
+        failureNoticePersisted: false,
+      })),
+    });
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "ticket", hint: "" } }),
+    );
+
+    expect(outcome).toEqual({
+      status: "ticket_failed",
+      reason: "generation turn failed",
+      failureNoticePersisted: false,
+    });
   });
 });

@@ -18,6 +18,11 @@ export {
   messageRefAttrsToMentionAttrs,
 } from "./message-mention-node";
 export type { MessageMentionAttrs } from "./message-mention-node";
+export {
+  TicketMentionNode,
+  ticketRefAttrsToMentionAttrs,
+} from "./ticket-mention-node";
+export type { TicketMentionAttrs } from "./ticket-mention-node";
 export { RefPasteHandler } from "./ref-paste-extension";
 export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";

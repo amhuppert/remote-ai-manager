@@ -95,6 +95,9 @@ function routeHost(deps: DevServerRouteDeps): CliHost {
     async readTextFile() {
       return null;
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: os.platform(),
     homedir: os.homedir(),

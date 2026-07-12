@@ -24,6 +24,7 @@ import { devHelpEntries } from "./commands/dev.help";
 import { fixtureHelpEntries } from "./commands/fixture.help";
 import { metaHelpEntries } from "./commands/meta.help";
 import { notifyHelpEntries } from "./commands/notify.help";
+import { ticketHelpEntries } from "./commands/ticket.help";
 import { workflowHelpEntries } from "./commands/workflow.help";
 import {
   buildHelpJson,
@@ -174,6 +175,7 @@ const ENTRIES: CommandHelpEntry[] = [
   ...decisionsHelpEntries,
   ...codexHelpEntries,
   ...conversationHelpEntries,
+  ...ticketHelpEntries,
   ...metaHelpEntries,
 ];
 

@@ -51,6 +51,9 @@ function payloadHost(): CliHost {
         ? JSON.stringify({ prompt: "do the thing" })
         : null;
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",

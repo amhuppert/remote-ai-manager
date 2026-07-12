@@ -1,0 +1,22 @@
+{
+  "feature_name": "ticket-system",
+  "created_at": "2026-07-10T00:21:43.000Z",
+  "updated_at": "2026-07-10T06:10:00.000Z",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

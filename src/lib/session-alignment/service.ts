@@ -108,6 +108,15 @@ export interface CopyActiveCharterInput {
   targetSessionName: string;
 }
 
+export interface CreateAndActivateTicketCharterInput {
+  projectPath: string;
+  sessionName: string;
+  /** The ticket's display identifier (`<project>#<number>`). */
+  ticketIdentifier: string;
+  title: string;
+  description: string;
+}
+
 export type FillDraftResult =
   | { status: "draft_ready"; version: null }
   | { status: "activated"; version: number };
@@ -163,6 +172,17 @@ export interface SessionAlignmentService {
   copyActiveCharter(
     input: CopyActiveCharterInput,
   ): Promise<AlignmentVersion | null>;
+  /**
+   * Trusted programmatic entrypoint for ticket start-work: derive a charter
+   * from the ticket's identifier, title, and description and activate it
+   * immediately through the standard activation path (mirror + broadcast) with
+   * no human approval step. The target must be a normal session; throws
+   * {@link AlignmentNotSupportedError} otherwise. Deliberately not exposed
+   * over HTTP — the human `/align` approval flow keeps its own gate.
+   */
+  createAndActivateTicketCharter(
+    input: CreateAndActivateTicketCharterInput,
+  ): Promise<AlignmentVersion>;
 }
 
 // ============================================================
@@ -929,7 +949,79 @@ export function createSessionAlignmentService(
 
       return copied;
     },
+
+    async createAndActivateTicketCharter(input) {
+      const { projectPath, sessionName } = input;
+      const session = await requireNormalSession(projectPath, sessionName);
+
+      const content = composeTicketCharter(input);
+      const draft: AlignmentVersion = alignmentVersionSchema.parse({
+        id: newId(),
+        version: null,
+        content,
+        contentHash: deps.render.computeAlignmentHash(content),
+        status: "draft",
+        source: "ticket",
+        authorConversationId: null,
+        autoActivate: false,
+        linkedDecisionIds: [],
+        createdAt: now(),
+        activatedAt: null,
+        approver: null,
+      });
+      // ≤1 draft per session: replace any open draft (last-writer-wins),
+      // matching every other draft-producing path.
+      const openDraft = deps.repo.findDraftVersion(projectPath, sessionName);
+      deps.repo.transaction(() => {
+        if (openDraft) {
+          deps.repo.deleteVersionById(projectPath, sessionName, openDraft.id);
+        }
+        deps.repo.insertVersion(projectPath, sessionName, draft);
+      });
+
+      const activated = await activate(
+        projectPath,
+        sessionName,
+        session.worktreePath,
+        draft,
+        null,
+      );
+
+      logger.info("align.ticket_charter", {
+        projectPath,
+        sessionName,
+        ticketIdentifier: input.ticketIdentifier,
+        version: activated.version,
+      });
+
+      return activated;
+    },
   };
+}
+
+/**
+ * Deterministic ticket-derived charter body: the ticket's identity governs the
+ * session's mission. Creation-time snapshot by design — later ticket edits show
+ * up through the per-turn live ticket block, not by rewriting the charter.
+ */
+export function composeTicketCharter(input: {
+  ticketIdentifier: string;
+  title: string;
+  description: string;
+}): string {
+  return [
+    `# Ticket charter: ${input.ticketIdentifier}`,
+    "",
+    "## Mission",
+    input.title,
+    "",
+    "## Description",
+    input.description,
+    "",
+    "## Working agreement",
+    `This session exists to work ticket ${input.ticketIdentifier}. The ticket's current state (status and attachment index with retrieval commands) is provided on every turn; creation-time attachments are materialized under \`.cc/tickets/\` and registered as reference documents.`,
+    "",
+  ].join("\n");
 }
 
 /**

@@ -1,10 +1,20 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface ToastItem {
   id: string;
   message: string;
   createdAt: number;
+  action?: ToastAction;
+}
+
+export interface ToastOptions {
+  action?: ToastAction;
 }
 
 interface ToastState {
@@ -12,25 +22,31 @@ interface ToastState {
 }
 
 interface ToastActions {
-  push: (message: string) => void;
+  push: (message: string, options?: ToastOptions) => void;
   dismiss: (id: string) => void;
 }
 
 type ToastStore = ToastState & ToastActions;
 
 const TOAST_TTL_MS = 2200;
+/** Actionable toasts stay up long enough to reach and press the button. */
+const ACTION_TOAST_TTL_MS = 6000;
 
 const useToastStore = create<ToastStore>()(
   immer((set, get) => ({
     toasts: [],
 
-    push: (message: string) => {
+    push: (message: string, options?: ToastOptions) => {
       const id = crypto.randomUUID();
       const createdAt = Date.now();
+      const action = options?.action;
       set((state) => {
-        state.toasts.push({ id, message, createdAt });
+        state.toasts.push({ id, message, createdAt, action });
       });
-      setTimeout(() => get().dismiss(id), TOAST_TTL_MS);
+      setTimeout(
+        () => get().dismiss(id),
+        action ? ACTION_TOAST_TTL_MS : TOAST_TTL_MS,
+      );
     },
 
     dismiss: (id: string) =>
@@ -44,8 +60,8 @@ export const useToasts = (): ToastItem[] => useToastStore((s) => s.toasts);
 export const useDismissToast = (): ((id: string) => void) =>
   useToastStore((s) => s.dismiss);
 
-export function pushToast(message: string): void {
-  useToastStore.getState().push(message);
+export function pushToast(message: string, options?: ToastOptions): void {
+  useToastStore.getState().push(message, options);
 }
 
 export function dismissToast(id: string): void {

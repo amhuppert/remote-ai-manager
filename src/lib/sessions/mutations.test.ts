@@ -19,6 +19,8 @@ import type {
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
+import { normalizeTicketListFilters } from "@/lib/tickets/list-filters";
+import { ticketKeys } from "@/lib/tickets/query-keys";
 
 function activeConvo(
   overrides: Partial<SessionActiveConversation> & { id: string },
@@ -376,6 +378,22 @@ describe("useDeleteSessionMutation", () => {
         activeConvo({ id: "c3", sessionName: "other" }),
       ]),
     );
+    const ticketListKey = ticketKeys.list(normalizeTicketListFilters({}));
+    const ticketDetailKey = ticketKeys.detail("p", 7);
+    const ticketLinksKey = ticketKeys.sessionLinks("p");
+    client.setQueryData(ticketListKey, []);
+    client.setQueryData(ticketDetailKey, { id: "ticket-7" });
+    client.setQueryData(ticketLinksKey, {
+      s: {
+        ticketId: "ticket-7",
+        projectName: "p",
+        number: 7,
+        title: "Linked ticket",
+        active: true,
+        linkedAt: "2026-07-01T00:00:00.000Z",
+        endedAt: null,
+      },
+    });
 
     let resolveFetch: (res: Response) => void = () => {};
     fetchSpy.mockImplementation(
@@ -401,6 +419,9 @@ describe("useDeleteSessionMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(ticketListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(ticketDetailKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(ticketLinksKey)?.isInvalidated).toBe(true);
     });
   });
 

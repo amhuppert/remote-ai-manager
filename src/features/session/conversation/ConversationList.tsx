@@ -35,6 +35,7 @@ import {
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
+import SessionTicketIndicator from "@/components/SessionTicketIndicator";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import GraphWorkflowCard from "@/features/session/conversation/GraphWorkflowCard";
 
@@ -151,7 +152,6 @@ export default function ConversationList({
     () => conversationsQuery.data ?? [],
     [conversationsQuery.data],
   );
-  const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session?.finished ?? false;
   const targetBranch = session?.targetBranch ?? "main";
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
@@ -270,7 +270,7 @@ export default function ConversationList({
         breadcrumbs={[
           { label: "projects", href: "/projects" },
           {
-            label: decodedProjectName,
+            label: projectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
           },
           {
@@ -321,6 +321,10 @@ export default function ConversationList({
                     label="Worktree"
                     value={session.worktreePath}
                     truncateAt={999}
+                  />
+                  <SessionTicketIndicator
+                    projectName={projectName}
+                    sessionName={sessionName}
                   />
                   <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
                   <div className="flex items-center gap-[4px] text-[0.72rem]">

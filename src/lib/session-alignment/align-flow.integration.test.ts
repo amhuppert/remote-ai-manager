@@ -116,6 +116,10 @@ function setup(): Harness {
     enqueueAuthoringTurn: async (input) => {
       enqueuedAuthoringTurns.push({ message: input.message });
     },
+    runTicketCommand: async () => {
+      throw new Error("the /align flow must not run the ticket command");
+    },
+    getConversationRole: async () => null,
   };
 
   return {

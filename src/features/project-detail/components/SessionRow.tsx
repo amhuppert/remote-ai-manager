@@ -13,6 +13,7 @@ import {
 import { useConfirmDeleteSession } from "@/stores/sessions.store";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { cn } from "@/lib/ui/cn";
+import SessionTicketIndicator from "@/components/SessionTicketIndicator";
 import TddToggle from "@/components/TddToggle";
 import { ChatIcon } from "@/components/icons";
 import BranchChip from "./BranchChip";
@@ -165,6 +166,10 @@ export default function SessionRow({
           >
             {session.sessionName}
           </Link>
+          <SessionTicketIndicator
+            projectName={projectName}
+            sessionName={session.sessionName}
+          />
         </div>
       </div>
       <div className="flex min-w-0 max-768:items-center max-768:overflow-hidden max-768:[grid-area:branch]">

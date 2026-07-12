@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSessionsQuery } from "@/lib/sessions/queries";
 import { useProjectsQuery } from "@/lib/projects/queries";
+import { useTicketListQuery } from "@/lib/tickets/queries";
 import { useDeleteSessionMutation } from "@/lib/sessions/mutations";
 import {
   useShowCreateModal,
@@ -74,6 +75,35 @@ const CC_PRIMARY_CLASS =
   "font-semibold text-text-inverse transition-all duration-150 ease-[ease] " +
   "hover:border-cyan-dim hover:bg-cyan-dim hover:shadow-[0_0_18px_var(--color-cyan-glow-strong)] " +
   "max-768:h-[44px] max-768:min-h-[44px] max-768:flex-1 max-768:self-center max-768:px-md";
+
+function TicketGlyph(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <rect
+        x="2"
+        y="3.5"
+        width="12"
+        height="9.5"
+        rx="1.4"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M4.5 6.5 H11.5 M4.5 9 H8.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 function WorkflowGlyph(): React.JSX.Element {
   return (
@@ -237,6 +267,12 @@ export default function ProjectDetailView({
     (s) => s.derivedStatus === "running",
   ).length;
 
+  const ticketsQuery = useTicketListQuery({ projectName });
+  const openTicketCount =
+    ticketsQuery.data?.filter(
+      (ticket) => ticket.status !== "done" && ticket.status !== "closed",
+    ).length ?? null;
+
   const isLoading = sessionsQuery.isPending;
 
   return (
@@ -309,6 +345,19 @@ export default function ProjectDetailView({
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-sm max-768:self-stretch">
+                  <Link
+                    href={`/tickets?project=${encodeURIComponent(projectName)}`}
+                    className={CC_IBTN_LINK_CLASS}
+                    title="Tickets for this project"
+                  >
+                    <TicketGlyph />
+                    Tickets
+                    {openTicketCount !== null && (
+                      <span className="inline-flex min-w-[16px] justify-center rounded-full bg-bg-raised px-[5px] py-px font-mono text-[0.64rem] font-semibold text-text-secondary">
+                        {openTicketCount}
+                      </span>
+                    )}
+                  </Link>
                   <Link
                     href={`/projects/${encodeURIComponent(projectName)}/workflows`}
                     className={CC_IBTN_LINK_CLASS}

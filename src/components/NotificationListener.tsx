@@ -26,6 +26,9 @@ import { computeAlignmentInvalidations } from "@/lib/session-alignment/sse-inval
 import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
 import { markdownDocumentKeys } from "@/lib/documents/query-keys";
 import { sessionAlignmentUpdatedEventSchema } from "@/lib/session-alignment/schemas";
+import { ticketChangedEventSchema } from "@/lib/tickets/schemas";
+import { applyTicketChangedEvent } from "@/lib/tickets/sse-reducer";
+import { invalidateTicketSessionLifecycle } from "@/lib/tickets/cache-lifecycle";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import { reconnectReconcile } from "@/lib/events/sse-reconnect";
 import {
@@ -641,6 +644,11 @@ export default function NotificationListener(): null {
           void queryClient.invalidateQueries({
             queryKey: sessionKeys.detail(data.projectName, data.sessionName),
           });
+          if (data.jobType === "merge") {
+            invalidateTicketSessionLifecycle(queryClient, data.projectName, [
+              data.sessionName,
+            ]);
+          }
         }
       } catch {
         // best-effort: ignore malformed events
@@ -1267,6 +1275,21 @@ export default function NotificationListener(): null {
         );
         if (!parsed.success) return;
         applyContextArtifactStatusEvent(queryClient, parsed.data);
+      } catch {
+        // best-effort
+      }
+    });
+
+    // Ticket deltas → the pure idempotent list reducer + exact invalidations
+    // for data absent from the lean event (the one detail key on every
+    // surviving change, one project session-link key when a session is named).
+    es.addEventListener("ticket-changed", (event) => {
+      try {
+        const parsed = ticketChangedEventSchema.safeParse(
+          parseSseEventData(event.data),
+        );
+        if (!parsed.success) return;
+        applyTicketChangedEvent(queryClient, parsed.data);
       } catch {
         // best-effort
       }

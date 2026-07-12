@@ -1,19 +1,98 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act } from "react";
-import { render, cleanup } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import TooltipProvider from "./TooltipProvider";
 
-function portal(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(".tooltip-portal");
-}
-
-function isShowing(text: string): boolean {
-  const el = portal();
-  return !!el && el.style.opacity === "1" && el.textContent === text;
-}
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("TooltipProvider", () => {
+  it("does not expose an empty tooltip while idle", () => {
+    render(<TooltipProvider />);
+
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("reveals focused hints, associates them with the trigger, and dismisses on Escape", async () => {
+    render(
+      <>
+        <span id="existing-description">Existing description</span>
+        <button
+          type="button"
+          data-tooltip="Helpful hint"
+          aria-describedby="existing-description"
+        >
+          Trigger
+        </button>
+        <TooltipProvider />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Trigger" });
+
+    act(() => trigger.focus());
+
+    const tooltip = await screen.findByRole("tooltip", {
+      name: "Helpful hint",
+    });
+    expect(trigger).toHaveAttribute(
+      "aria-describedby",
+      `existing-description ${tooltip.id}`,
+    );
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveAttribute("aria-describedby", "existing-description");
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("preserves pointer reveal and delayed pointer-leave dismissal", () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <button type="button" data-tooltip="Pointer hint">
+          Trigger
+        </button>
+        <TooltipProvider />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Trigger" });
+
+    fireEvent.mouseEnter(trigger);
+    expect(
+      screen.getByRole("tooltip", { name: "Pointer hint" }),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseLeave(trigger);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(50));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+});
+
+describe("TooltipProvider pointer dismissal", () => {
+  function portal(): HTMLElement | null {
+    return document.querySelector<HTMLElement>(".tooltip-portal");
+  }
+
+  function isShowing(text: string): boolean {
+    const el = portal();
+    return !!el && el.style.opacity === "1" && el.textContent === text;
+  }
+
   let trigger: HTMLButtonElement;
 
   beforeEach(() => {
@@ -37,7 +116,7 @@ describe("TooltipProvider", () => {
   }
 
   it("does not expose an empty tooltip to assistive technology", () => {
-    expect(portal()).not.toHaveAttribute("role");
+    expect(portal()).toBeNull();
   });
 
   it("shows the tooltip when a data-tooltip element is hovered", () => {

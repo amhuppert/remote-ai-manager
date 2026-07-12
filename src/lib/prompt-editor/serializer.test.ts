@@ -96,6 +96,18 @@ const schema = new Schema({
         compactCreatedAt: { default: "" },
       },
     },
+    ticketMention: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        projectName: { default: "" },
+        ticketNumber: { default: "0" },
+        identifier: { default: "" },
+        title: { default: "" },
+      },
+    },
     codeBlock: {
       group: "block",
       content: "text*",
@@ -748,5 +760,67 @@ describe("messageMention serialization", () => {
 
     expect(result.prompt.startsWith("see <message-ref ")).toBe(true);
     expect(result.prompt.endsWith("/> here")).toBe(true);
+  });
+});
+
+function ticketMention(
+  overrides: Partial<{
+    projectName: string;
+    ticketNumber: string;
+    identifier: string;
+    title: string;
+  }> = {},
+): ProseMirrorNode {
+  return schema.nodes["ticketMention"]!.create({
+    projectName: "command-center",
+    ticketNumber: "12",
+    identifier: "command-center#12",
+    title: "Add durable ticket context",
+    ...overrides,
+  });
+}
+
+describe("ticketMention serialization", () => {
+  it("emits the canonical <ticket-ref /> tag with the embedded read command", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(ticketMention())),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe(
+      '<ticket-ref project-name="command-center" ticket-number="12" ' +
+        'identifier="command-center#12" title="Add durable ticket context" ' +
+        'read-command="cctl ticket get &apos;command-center#12&apos;" />',
+    );
+  });
+
+  it("escapes XML-significant characters in the title", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(ticketMention({ title: 'Fix "<broken>" & more' }))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain(
+      'title="Fix &quot;&lt;broken&gt;&quot; &amp; more"',
+    );
+  });
+
+  it("embeds a ticket-ref between surrounding text in a paragraph", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("see "), ticketMention(), t(" here"))),
+      attachments: [],
+    });
+
+    expect(result.prompt.startsWith("see <ticket-ref ")).toBe(true);
+    expect(result.prompt.endsWith("/> here")).toBe(true);
+  });
+
+  it("emits no ticket-ref when the document holds only text", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("no chips here"))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("no chips here");
   });
 });

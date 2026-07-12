@@ -262,6 +262,9 @@ function routeHost(
     async readTextFile(filePath) {
       return files[filePath] ?? null;
     },
+    async readFileBytes() {
+      return null;
+    },
     async sleep() {},
     platform: os.platform(),
     homedir: os.homedir(),

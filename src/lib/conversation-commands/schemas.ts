@@ -4,6 +4,7 @@ export const parsedConversationCommandSchema = z.discriminatedUnion("command", [
   z.object({ command: z.literal("commit"), hint: z.string() }),
   z.object({ command: z.literal("merge"), hint: z.string() }),
   z.object({ command: z.literal("align"), hint: z.string() }),
+  z.object({ command: z.literal("ticket"), hint: z.string() }),
 ]);
 
 export type ParsedConversationCommand = z.infer<

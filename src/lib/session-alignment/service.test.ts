@@ -1408,3 +1408,106 @@ describe("copyActiveCharter", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("createAndActivateTicketCharter", () => {
+  const TICKET_INPUT = {
+    projectPath: PROJECT_PATH,
+    sessionName: SESSION_NAME,
+    ticketIdentifier: "demo#12",
+    title: "Add durable ticket context",
+    description: "Agents need the ticket bundle materialized at start.",
+  };
+
+  it("creates and immediately activates a source=ticket charter with no approval step", async () => {
+    const activated =
+      await h.service.createAndActivateTicketCharter(TICKET_INPUT);
+
+    expect(activated.status).toBe("active");
+    expect(activated.source).toBe("ticket");
+    expect(activated.version).toBe(1);
+    expect(activated.approver).toBeNull();
+    expect(activated.authorConversationId).toBeNull();
+    expect(activated.content).toContain("demo#12");
+    expect(activated.content).toContain("Add durable ticket context");
+    expect(activated.content).toContain(
+      "Agents need the ticket bundle materialized at start.",
+    );
+
+    const active = h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME);
+    expect(active?.id).toBe(activated.id);
+    expect(active?.source).toBe("ticket");
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+  });
+
+  it("replaces an open draft instead of stranding it", async () => {
+    const { draftId } = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    await h.service.createAndActivateTicketCharter(TICKET_INPUT);
+
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+    expect(h.repo.findVersionById(draftId)).toBeNull();
+  });
+
+  it("activates through the existing mirror-and-broadcast path", async () => {
+    const activated =
+      await h.service.createAndActivateTicketCharter(TICKET_INPUT);
+
+    expect(h.mirrorCalls).toEqual([
+      {
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        worktreePath: WORKTREE_PATH,
+        content: activated.content,
+      },
+    ]);
+    expect(h.broadcasts).toHaveLength(1);
+    expect(h.broadcasts[0]).toMatchObject({
+      type: "session-alignment-updated",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      activeVersion: 1,
+      hasDraft: false,
+    });
+  });
+
+  it("supersedes an existing active charter through the standard activation path", async () => {
+    await h.service.createAndActivateTicketCharter(TICKET_INPUT);
+    const second = await h.service.createAndActivateTicketCharter({
+      ...TICKET_INPUT,
+      title: "Updated mission",
+    });
+
+    expect(second.version).toBe(2);
+    const versions = h.repo.findVersionHistory(PROJECT_PATH, SESSION_NAME);
+    const superseded = versions.find((version) => version.version === 1);
+    expect(superseded?.status).toBe("superseded");
+  });
+
+  it("rejects a non-normal session without persisting anything", async () => {
+    const { service, repo } = makeService(h.fixture, {
+      loadSession: () =>
+        Promise.resolve({
+          worktreePath: WORKTREE_PATH,
+          creationMode: "optimistic" as const,
+        }),
+    });
+
+    await expect(
+      service.createAndActivateTicketCharter(TICKET_INPUT),
+    ).rejects.toThrow("alignment is unavailable for optimistic sessions");
+    expect(repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+  });
+
+  it("rejects an unknown session", async () => {
+    await expect(
+      h.service.createAndActivateTicketCharter({
+        ...TICKET_INPUT,
+        sessionName: "missing-session",
+      }),
+    ).rejects.toThrow("session not found");
+  });
+});

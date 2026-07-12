@@ -12,6 +12,7 @@ import { useSessionPageHandlers } from "@/features/session/hooks/use-session-pag
 import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecycle";
 import { canStopTurn } from "@/features/session/hooks/turn-activity";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
+import { isWorkflowLaneRole } from "@/lib/conversations/schemas";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import ConversationWorkspaceView from "@/features/session/ConversationWorkspaceView";
@@ -112,8 +113,9 @@ export default function ConversationWorkspace({
   const conversationRole = session?.conversations.find(
     (c) => c.id === conversationId,
   )?.role;
-  const isWorkflowManagedConversation =
-    conversationRole === "iteration" || conversationRole === "validator";
+  const isWorkflowManagedConversation = isWorkflowLaneRole(
+    conversationRole ?? null,
+  );
 
   const activeConversation = useMemo(
     () => session?.conversations.find((c) => c.id === conversationId),

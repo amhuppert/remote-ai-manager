@@ -16,7 +16,8 @@ export type AlignmentVersionStatus = z.infer<
 
 /**
  * What produced a charter version. `forked` = seeded by copying a parent
- * session's active charter into a session branched from it.
+ * session's active charter into a session branched from it. `ticket` = derived
+ * from a ticket at start-work and activated programmatically (no human gate).
  */
 export const alignmentVersionSourceSchema = z.enum([
   "align_initial",
@@ -24,6 +25,7 @@ export const alignmentVersionSourceSchema = z.enum([
   "decision",
   "rollback",
   "forked",
+  "ticket",
 ]);
 export type AlignmentVersionSource = z.infer<
   typeof alignmentVersionSourceSchema

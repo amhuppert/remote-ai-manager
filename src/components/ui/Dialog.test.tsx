@@ -105,6 +105,9 @@ describe("Dialog", () => {
     const card = screen.getByRole("dialog");
     expect(card.className).toContain("max-768:max-w-full");
     expect(card.className).toContain("max-768:rounded-b-none");
+    expect(card.className).toContain("max-768:max-h-[100dvh]");
+    expect(card.className).toContain("max-768:overflow-y-auto");
+    expect(card.className).toContain("max-768:overscroll-contain");
     expect(card.className).toContain(
       "max-768:motion-safe:animate-[slideUpSheet_0.25s_ease]",
     );

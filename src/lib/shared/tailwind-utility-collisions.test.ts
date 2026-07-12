@@ -252,6 +252,12 @@ const UTILITY_FIRST_PATHS = [
   // design system. Registered in all three mirrored allowlists (here +
   // eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}workflow-config${path.sep}`,
+  // Ticket-system UI: the tickets feature and the promoted session indicator
+  // are authored utility-first against the design system. Registered in all
+  // three mirrored allowlists (here + eslint.config.mjs MIGRATED_UTILITY_FIRST
+  // + .prettierrc).
+  `${path.sep}features${path.sep}tickets${path.sep}`,
+  `${path.sep}components${path.sep}SessionTicketIndicator.tsx`,
 ];
 
 function srcFiles(ext: string): string[] {

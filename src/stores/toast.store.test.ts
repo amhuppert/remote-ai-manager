@@ -49,4 +49,20 @@ describe("toast.store", () => {
     dismissToast("ghost");
     expect(useToastStoreForTesting.getState().toasts).toHaveLength(1);
   });
+
+  it("stores an action and keeps actionable toasts up for 6000ms", () => {
+    const onClick = vi.fn();
+    pushToast("Couldn't move command-center#9 to Done — rolled back", {
+      action: { label: "Retry", onClick },
+    });
+    const toast = useToastStoreForTesting.getState().toasts[0]!;
+    expect(toast.action?.label).toBe("Retry");
+    toast.action?.onClick();
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(5999);
+    expect(useToastStoreForTesting.getState().toasts).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(useToastStoreForTesting.getState().toasts).toHaveLength(0);
+  });
 });

@@ -10,7 +10,13 @@ export type BadgeStatus =
   | "ready"
   | "awaiting"
   | "warning";
-export type BadgeKind = "feature" | "bug" | "idea";
+export type BadgeKind =
+  | "feature"
+  | "bug"
+  | "idea"
+  | "research"
+  | "tech_debt"
+  | "performance";
 export type BadgeBackend = "claude" | "codex";
 
 const base =
@@ -30,6 +36,9 @@ const typeAppearance: Record<BadgeKind, string> = {
   feature: "bg-cyan-glow text-cyan",
   bug: "bg-red-glow text-red",
   idea: "bg-amber-glow text-amber",
+  research: "bg-violet-glow text-violet",
+  tech_debt: "bg-amber-glow text-amber",
+  performance: "bg-green-glow text-green",
 };
 
 const countAppearance = {

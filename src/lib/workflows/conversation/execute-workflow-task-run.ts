@@ -137,6 +137,10 @@ export function _resetExecuteWorkflowTaskRunForTesting(): void {
   inFlightByKey.clear();
 }
 
+export function _getExecuteWorkflowTaskRunInFlightCountForTesting(): number {
+  return inFlightByKey.size;
+}
+
 export async function executeWorkflowTaskRun(
   input: ExecuteWorkflowTaskRunInput,
 ): Promise<TaskRunResult> {
@@ -151,14 +155,12 @@ export async function executeWorkflowTaskRun(
     .catch(() => undefined)
     .then(() => runOnce(input));
 
-  inFlightByKey.set(
-    key,
-    ours.finally(() => {
-      if (inFlightByKey.get(key) === ours) {
-        inFlightByKey.delete(key);
-      }
-    }),
-  );
+  const tracked = ours.finally(() => {
+    if (inFlightByKey.get(key) === tracked) {
+      inFlightByKey.delete(key);
+    }
+  });
+  inFlightByKey.set(key, tracked);
 
   return ours;
 }

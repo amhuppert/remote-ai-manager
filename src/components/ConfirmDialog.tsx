@@ -10,6 +10,7 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from "@/components/ui/AlertDialog";
+import { useOpenerFocus } from "@/hooks/use-opener-focus";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -50,6 +51,9 @@ export default function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps): React.JSX.Element {
   const confirmedRef = useRef(false);
+  // ConfirmDialog is always state-opened (no Radix trigger), so Radix cannot
+  // restore focus on close; capture the opener and return focus explicitly.
+  const { captureOpener, restoreOpener } = useOpenerFocus();
 
   return (
     <AlertDialog
@@ -64,7 +68,10 @@ export default function ConfirmDialog({
         }
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent
+        onOpenAutoFocus={captureOpener}
+        onCloseAutoFocus={restoreOpener}
+      >
         <AlertDialogTitle>{title}</AlertDialogTitle>
         <AlertDialogDescription>{message}</AlertDialogDescription>
         <AlertDialogActions>

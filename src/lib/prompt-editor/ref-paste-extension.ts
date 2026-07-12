@@ -5,13 +5,15 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { segmentTextByRefs } from "@/lib/conversations/ref-segments";
 import { conversationRefAttrsToMentionAttrs } from "./conversation-mention-node";
 import { messageRefAttrsToMentionAttrs } from "./message-mention-node";
+import { ticketRefAttrsToMentionAttrs } from "./ticket-mention-node";
 
 /**
  * Tiptap extension that intercepts pasted plain text containing
- * `<conversation-ref ... />` or `<message-ref ... />` tags (copied from a
- * conversation reference or a message's Copy-reference action) and inserts
- * them as mention chips, keeping the surrounding text. Pastes without a
- * schema-valid ref fall through to default handling.
+ * `<conversation-ref ... />`, `<message-ref ... />`, or `<ticket-ref ... />`
+ * tags (copied from a conversation reference, a message's Copy-reference
+ * action, or a ticket's Copy-reference control) and inserts them as mention
+ * chips, keeping the surrounding text. Pastes without a schema-valid ref fall
+ * through to default handling.
  */
 export const RefPasteHandler = Extension.create({
   name: "refPasteHandler",
@@ -26,7 +28,8 @@ export const RefPasteHandler = Extension.create({
             if (
               !text ||
               (!text.includes("<conversation-ref") &&
-                !text.includes("<message-ref"))
+                !text.includes("<message-ref") &&
+                !text.includes("<ticket-ref"))
             ) {
               return false;
             }
@@ -34,6 +37,7 @@ export const RefPasteHandler = Extension.create({
             const schema = view.state.schema;
             const conversationType = schema.nodes["conversationMention"];
             const messageType = schema.nodes["messageMention"];
+            const ticketType = schema.nodes["ticketMention"];
             const hardBreakType = schema.nodes["hardBreak"];
 
             const nodes: ProseMirrorNode[] = [];
@@ -74,6 +78,17 @@ export const RefPasteHandler = Extension.create({
                   messageType
                     ? messageType.create(
                         messageRefAttrsToMentionAttrs(segment.attrs),
+                      )
+                    : null,
+                  segment.raw,
+                );
+                continue;
+              }
+              if (segment.type === "ticket-ref") {
+                pushMention(
+                  ticketType
+                    ? ticketType.create(
+                        ticketRefAttrsToMentionAttrs(segment.attrs),
                       )
                     : null,
                   segment.raw,

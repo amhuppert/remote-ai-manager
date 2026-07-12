@@ -1,6 +1,7 @@
 {
   "initScriptPath": "scripts/worktree-init.sh",
   "preMergeCommand": "scripts/pre-merge-validate.sh",
+  "preMergeTimeoutMs": 3600000,
   "devServers": [
     {
       "name": "nextjs",

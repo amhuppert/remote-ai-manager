@@ -8,6 +8,9 @@ import { devServerKeys } from "../dev-server/query-keys";
 import { notificationKeys } from "../notifications/query-keys";
 import { sessionKeys } from "../sessions/query-keys";
 import { projectConversationKeys } from "../project-conversations-client/query-keys";
+import { normalizeTicketListFilters } from "../tickets/list-filters";
+import { beginTicketMutation } from "../tickets/mutation-coordinator";
+import { ticketKeys } from "../tickets/query-keys";
 
 type StampedMessage = {
   role: "user" | "assistant";
@@ -118,6 +121,12 @@ describe("reconnectReconcile", () => {
       mcpToolsKeys.inventory("proj", "sess-a", "conv-a", "calc"),
       {},
     );
+    const ticketListKey = ticketKeys.list(normalizeTicketListFilters({}));
+    const ticketDetailKey = ticketKeys.detail("proj", 7);
+    const ticketSessionLinksKey = ticketKeys.sessionLinks("proj");
+    client.setQueryData(ticketListKey, []);
+    client.setQueryData(ticketDetailKey, { id: "ticket-7" });
+    client.setQueryData(ticketSessionLinksKey, {});
 
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -150,6 +159,35 @@ describe("reconnectReconcile", () => {
         mcpToolsKeys.inventory("proj", "sess-a", "conv-a", "calc"),
       )?.isInvalidated,
     ).toBe(true);
+    expect(client.getQueryState(ticketListKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(ticketDetailKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(ticketSessionLinksKey)?.isInvalidated).toBe(
+      true,
+    );
+  });
+
+  it("defers ticket refetches until a pending optimistic mutation settles", async () => {
+    const client = makeClient();
+    const listKey = ticketKeys.list(normalizeTicketListFilters({}));
+    const detailKey = ticketKeys.detail("proj", 7);
+    client.setQueryData(listKey, []);
+    client.setQueryData(detailKey, { id: "ticket-7" });
+    const release = await beginTicketMutation(client, "proj", 7);
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/jobs") return jsonResponse({ jobs: [] });
+      return jsonResponse([]);
+    });
+
+    await reconnectReconcile(client, vi.fn(), fetchFn);
+
+    expect(client.getQueryState(listKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(false);
+
+    release();
+
+    expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
   });
 
   it("marks mounted project-conversation list, message, and open-count caches stale after reconciling", async () => {

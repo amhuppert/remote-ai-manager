@@ -209,6 +209,54 @@
   --animate-fade-in: fadeIn 0.3s ease;
   --animate-bulk-float-in: bulk-float-in 0.18s ease;
 
+  /* Ticket motion tokens: drag-commit wash (board drop lands with a cyan
+     wash), SSE-enter fade, and the 150ms collapse for removals.
+     The `@keyframes` are defined inside `@theme` so the `animate-tk-*`
+     utilities carry them — no global stylesheet involved. The inset
+     999px spread paints a full-surface tint over the element's own
+     background without replacing it. */
+  --animate-tk-card-land: tk-card-land 0.9s ease-out;
+  --animate-tk-sse-in: tk-sse-in 1.2s ease-out;
+  --animate-tk-sse-out: tk-sse-out 0.15s ease-in forwards;
+
+  @keyframes tk-card-land {
+    from {
+      box-shadow:
+        inset 0 0 0 999px var(--color-cyan-glow),
+        0 0 0 1px var(--color-cyan-dim);
+    }
+    to {
+      box-shadow:
+        inset 0 0 0 999px transparent,
+        0 0 0 1px transparent;
+    }
+  }
+
+  @keyframes tk-sse-in {
+    from {
+      opacity: 0;
+      box-shadow: inset 0 0 0 999px var(--color-cyan-glow);
+    }
+    to {
+      opacity: 1;
+      box-shadow: inset 0 0 0 999px transparent;
+    }
+  }
+
+  @keyframes tk-sse-out {
+    from {
+      opacity: 1;
+      transform: scaleY(1);
+    }
+    to {
+      max-height: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      opacity: 0;
+      transform: scaleY(0.85);
+    }
+  }
+
   /* ===== Popover / menu drop shadows =====
      The canonical design-system popover/menu black drop shadow, so the
      `shadow-dropdown` / `shadow-menu` utilities generate on the composer

@@ -9,6 +9,7 @@ import { runDev } from "./commands/dev";
 import { runDocs } from "./commands/docs";
 import { runFixture } from "./commands/fixture";
 import { runNotify } from "./commands/notify";
+import { runTicket } from "./commands/ticket";
 import { runWorkflow } from "./commands/workflow";
 import { fetchHelpContext } from "./help-context";
 import {
@@ -426,6 +427,10 @@ async function dispatchCli(
 
   if (command === "conversation") {
     return runConversation(positionals.slice(1), flags, values, env, host);
+  }
+
+  if (command === "ticket") {
+    return runTicket(positionals.slice(1), flags, values, env, host);
   }
 
   if (command === undefined) {

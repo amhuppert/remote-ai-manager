@@ -61,6 +61,7 @@ import type { ParsedConversationCommand } from "@/lib/conversation-commands/sche
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
 import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
+import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 const logger = createLogger("conversation-manager");
 
 type ProjectConversationStatusNotificationDeps = {
@@ -290,6 +291,26 @@ async function runQueuedCommand(
       parsed: command,
       rawText: promptText,
     });
+    const ticketFallback = ticketCommandFallbackMessage(outcome);
+    if (ticketFallback !== null) {
+      await deps.markFailed({
+        projectPath,
+        sessionName,
+        conversationId,
+        ids: batch.messageIds,
+        deliveryAttemptId: batch.deliveryAttemptId,
+        error: ticketFallback,
+      });
+      logger.warn("queue.drain_command_ticket_fallback", {
+        conversationId,
+        sessionName,
+        command: command.command,
+        status: outcome.status,
+        messageIds: batch.messageIds,
+        deliveryAttemptId: batch.deliveryAttemptId,
+      });
+      return;
+    }
     await deps.markDelivered({
       projectPath,
       sessionName,

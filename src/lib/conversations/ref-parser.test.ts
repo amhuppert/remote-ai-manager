@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { findConversationRefs, parseRefAttrs } from "./ref-parser";
+import {
+  findConversationRefs,
+  findTicketRefs,
+  parseRefAttrs,
+} from "./ref-parser";
 import { conversationRefAttrsSchema } from "./schemas";
 
 const SAMPLE_REF =
@@ -58,6 +62,41 @@ describe("findConversationRefs", () => {
     const text = `${prefix}${SAMPLE_REF}!`;
     const [ref] = findConversationRefs(text);
     expect(text.slice(ref!.start, ref!.end)).toBe(SAMPLE_REF);
+  });
+});
+
+const TICKET_REF =
+  '<ticket-ref project-name="command-center" ticket-number="12" identifier="command-center#12" title="Add durable ticket context" read-command="cctl ticket get command-center#12" />';
+
+describe("findTicketRefs", () => {
+  it("finds a ticket ref in plain text with its attribute map", () => {
+    const refs = findTicketRefs(`Please pick up ${TICKET_REF} next.`);
+    expect(refs).toHaveLength(1);
+    expect(refs[0]?.raw).toBe(TICKET_REF);
+    expect(refs[0]?.attrs["identifier"]).toBe("command-center#12");
+    expect(refs[0]?.attrs["ticket-number"]).toBe("12");
+    expect(refs[0]?.attrs["read-command"]).toBe(
+      "cctl ticket get command-center#12",
+    );
+  });
+
+  it("skips ticket refs inside fenced code blocks", () => {
+    expect(
+      findTicketRefs(`Before\n\`\`\`\n${TICKET_REF}\n\`\`\`\nAfter`),
+    ).toHaveLength(0);
+    expect(
+      findTicketRefs(`Before\n~~~\n${TICKET_REF}\n~~~\nAfter`),
+    ).toHaveLength(0);
+  });
+
+  it("does not match malformed tags", () => {
+    expect(findTicketRefs("<ticket-ref/>")).toHaveLength(0);
+    expect(
+      findTicketRefs("<ticket-ref project-name=command-center />"),
+    ).toHaveLength(0);
+    expect(
+      findTicketRefs('<ticket-ref project-name="command-center">'),
+    ).toHaveLength(0);
   });
 });
 

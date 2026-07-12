@@ -28,8 +28,17 @@ vi.mock(
 // The lazy PromptEditor pulls in TipTap/ProseMirror which JSDOM cannot mount.
 // Replace it with a focusable textarea so region focus/blur events flow through
 // `.prompt-input-area`, which is exactly what the focus model under test reads.
+// The stub mirrors the workflow-managed flag so the lane-exclusion threading
+// (composer → editor → slash popup) stays pinned.
 vi.mock("@/features/session/prompt/PromptEditor", () => ({
-  PromptEditor: () => <textarea data-testid="prompt-editor" />,
+  PromptEditor: (props: { isWorkflowManagedConversation?: boolean }) => (
+    <textarea
+      data-testid="prompt-editor"
+      data-workflow-managed={String(
+        props.isWorkflowManagedConversation ?? false,
+      )}
+    />
+  ),
 }));
 
 // AgentCapabilityPanel containers reach into query/data layers that JSDOM
@@ -167,5 +176,27 @@ describe("PromptComposer composer-focus wiring", () => {
     // Closing the drawer with focus still outside the region clears the flag.
     fireEvent.click(screen.getByTestId("agent-capabilities-drawer-overlay"));
     expect(composerFocused()).toBe(false);
+  });
+});
+
+describe("PromptComposer workflow-lane threading", () => {
+  beforeEach(() => {
+    useSessionDetailStore.getState().resetStore();
+  });
+
+  it("forwards isWorkflowManagedConversation to the prompt editor", () => {
+    renderWithQuery(
+      <PromptComposer {...makeProps()} isWorkflowManagedConversation />,
+    );
+    expect(
+      screen.getByTestId("prompt-editor").getAttribute("data-workflow-managed"),
+    ).toBe("true");
+  });
+
+  it("defaults to a non-workflow-managed editor", () => {
+    renderWithQuery(<PromptComposer {...makeProps()} />);
+    expect(
+      screen.getByTestId("prompt-editor").getAttribute("data-workflow-managed"),
+    ).toBe("false");
   });
 });

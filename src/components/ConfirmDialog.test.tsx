@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ConfirmDialog from "./ConfirmDialog";
 
 describe("ConfirmDialog", () => {
@@ -39,6 +40,38 @@ describe("ConfirmDialog", () => {
     );
     expect(container.innerHTML).toBe("");
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("returns focus to the opener element on close (state-opened, no Radix trigger)", async () => {
+    function Harness(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            open confirm
+          </button>
+          <ConfirmDialog
+            {...defaultProps}
+            open={open}
+            onCancel={() => setOpen(false)}
+          />
+        </>
+      );
+    }
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "open confirm" });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(
+      await screen.findByRole("alertdialog", { name: "Delete Item" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("alertdialog", { name: "Delete Item" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
   it("calls onConfirm when confirm button clicked", () => {

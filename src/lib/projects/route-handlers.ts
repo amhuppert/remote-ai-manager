@@ -13,7 +13,10 @@
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
 import { discoverProjects as defaultDiscoverProjects } from "@/lib/projects/discovery";
-import { deleteProject as defaultDeleteProject } from "@/lib/sessions/service";
+import {
+  deleteProject as defaultDeleteProject,
+  type DeleteProjectResult,
+} from "@/lib/sessions/service";
 import {
   getArchivedProjects as defaultGetArchivedProjects,
   getPinnedProjects as defaultGetPinnedProjects,
@@ -58,7 +61,7 @@ export function createProjectsRouteHandlers(
 // ---------------------------------------------------------------------------
 
 export interface ProjectRouteDeps {
-  deleteProject(projectPath: string): Promise<{ sessionsRemoved: number }>;
+  deleteProject(projectPath: string): Promise<DeleteProjectResult>;
 }
 
 const defaultProjectDeps: ProjectRouteDeps = {
@@ -81,8 +84,13 @@ export function createProjectRouteHandlers(
     }
 
     try {
-      const { sessionsRemoved } = await deps.deleteProject(projectPath);
-      return NextResponse.json({ success: true, sessionsRemoved });
+      const { sessionsRemoved, deletedTicketNumbers } =
+        await deps.deleteProject(projectPath);
+      return NextResponse.json({
+        success: true,
+        sessionsRemoved,
+        deletedTicketNumbers,
+      });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to delete project";

@@ -31,9 +31,10 @@ import type {
   ActiveConversation,
   SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
-import type {
-  AskQuestionAnswer,
-  TranscriptMessage,
+import {
+  isWorkflowLaneRole,
+  type AskQuestionAnswer,
+  type TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 
@@ -230,6 +231,7 @@ function PeekReplyComposer({
         projectName={conversation.projectName}
         sessionName={conversation.sessionName}
         backend={conversation.agentBackend}
+        isWorkflowManagedConversation={isWorkflowLaneRole(conversation.role)}
         ariaLabel="Reply text"
         placeholder={placeholder}
         onShowPlaceholder={setPlaceholder}
