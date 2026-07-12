@@ -57,7 +57,7 @@
     "mermaid": "^11.12.3",
     "next": "^16.1.6",
     "openseadragon": "^6.0.2",
-    "radix-ui": "^1.6.0",
+    "radix-ui": "^1.6.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-hotkeys-hook": "^5.2.4",

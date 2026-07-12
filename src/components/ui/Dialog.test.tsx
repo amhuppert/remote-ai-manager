@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  act,
+} from "@testing-library/react";
 import { isOverlayOpen } from "@/stores/overlay-scope.store";
 import { IconButton } from "./IconButton";
 import {
@@ -12,6 +18,13 @@ import {
   DialogActions,
   DialogClose,
 } from "./Dialog";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "./Select";
 
 // Radix locks scroll / manages focus on open; jsdom implements neither of the
 // pointer-capture APIs `react-remove-scroll` and the focus scope reach for.
@@ -163,5 +176,87 @@ describe("Dialog", () => {
 
     rerender(<Modal open={false} />);
     expect(isOverlayOpen()).toBe(false);
+  });
+});
+
+// While a nested overlay (Select listbox) is open, Radix disables pointer
+// events on the dialog card but the scrim keeps `pointer-events: auto`, so a
+// browser click aimed at the card hit-tests to the scrim. Dispatching the
+// pointer sequence on the scrim models that. The dismissal decision must be
+// made at pointerdown time (nested overlay open → dialog is not the top layer
+// → not dismissable); deciding at click time closes the dialog together with
+// the listbox.
+describe("Dialog with a nested Select", () => {
+  function ModalWithSelect({
+    onOpenChange,
+  }: {
+    onOpenChange: (open: boolean) => void;
+  }): React.JSX.Element {
+    return (
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogContent aria-label={undefined}>
+          <DialogTitle>New ticket</DialogTitle>
+          <Select>
+            <SelectTrigger aria-label="Work type">
+              <SelectValue placeholder="Choose…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="feature">Feature</SelectItem>
+              <SelectItem value="bug">Bug</SelectItem>
+            </SelectContent>
+          </Select>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  function scrim(): Element {
+    const node = document.querySelector("[data-cc-modal-scrim]");
+    if (node === null) throw new Error("scrim not rendered");
+    return node;
+  }
+
+  // Radix attaches its document-level outside-press listeners from a 0ms
+  // timeout after a layer mounts; flush that (and the deferred dismissal's own
+  // 0ms timeout) before/after dispatching events.
+  async function flushTimers(): Promise<void> {
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+  }
+
+  async function pressScrim(): Promise<void> {
+    fireEvent.pointerDown(scrim(), { button: 0, pointerType: "mouse" });
+    fireEvent.click(scrim(), { button: 0 });
+    await flushTimers();
+  }
+
+  it("closes only the listbox when a press lands while the listbox is open", async () => {
+    const onOpenChange = vi.fn();
+    render(<ModalWithSelect onOpenChange={onOpenChange} />);
+    await flushTimers();
+
+    fireEvent.pointerDown(screen.getByRole("combobox", { name: "Work type" }), {
+      button: 0,
+      pointerType: "mouse",
+    });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    await flushTimers();
+
+    await pressScrim();
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(
+      screen.getByRole("dialog", { name: "New ticket" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still dismisses the dialog on a scrim press when no nested overlay is open", async () => {
+    const onOpenChange = vi.fn();
+    render(<ModalWithSelect onOpenChange={onOpenChange} />);
+    await flushTimers();
+
+    await pressScrim();
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
