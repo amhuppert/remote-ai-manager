@@ -41,6 +41,8 @@ export interface ConversationWorkspaceProps {
   conversationId: string;
   defaultModel: string;
   defaultEffort?: EffortLevel;
+  defaultCodexModel: string;
+  defaultCodexEffort?: EffortLevel;
   /** Part of the /conversations URL vocabulary (`autoFocus=true`); accepted here but not consumed. */
   autoFocus?: boolean;
   /**
@@ -77,6 +79,8 @@ export default function ConversationWorkspace({
   conversationId,
   defaultModel,
   defaultEffort = "high",
+  defaultCodexModel,
+  defaultCodexEffort = "high",
   onOpenConversation,
   openTabs,
 }: ConversationWorkspaceProps): React.JSX.Element {
@@ -195,6 +199,8 @@ export default function ConversationWorkspace({
     activeConversation,
     defaultModel,
     defaultEffort,
+    defaultCodexModel,
+    defaultCodexEffort,
     lastUsedModelId: lastUserTurnAgentSettings.modelId,
     lastUsedEffort: lastUserTurnAgentSettings.effort,
   });

@@ -122,7 +122,10 @@ function renderPage(args: {
   }
   render(
     <QueryClientProvider client={queryClient}>
-      <ConversationsPage defaultModel="sonnet" />
+      <ConversationsPage
+        defaultModel="sonnet"
+        defaultCodexModel="gpt-5.6-sol"
+      />
     </QueryClientProvider>,
   );
   return queryClient;

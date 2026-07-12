@@ -1,4 +1,5 @@
 import ConversationsPage from "@/features/session/ConversationsPage";
+import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
 import { readConfig } from "@/lib/config/loader";
 
 export default async function Page(): Promise<React.JSX.Element> {
@@ -7,6 +8,8 @@ export default async function Page(): Promise<React.JSX.Element> {
     <ConversationsPage
       defaultModel={config.defaultModel}
       defaultEffort={config.defaultEffort}
+      defaultCodexModel={config.codex?.model ?? getDefaultCodexModel()}
+      defaultCodexEffort={config.codex?.reasoningEffort}
     />
   );
 }

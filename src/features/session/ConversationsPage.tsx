@@ -34,6 +34,8 @@ import {
 interface Props {
   defaultModel: string;
   defaultEffort?: EffortLevel;
+  defaultCodexModel: string;
+  defaultCodexEffort?: EffortLevel;
 }
 
 function StatusPanel({
@@ -77,6 +79,8 @@ function renderPanel(
           conversationId={state.conversation.conversationId}
           defaultModel={props.defaultModel}
           defaultEffort={props.defaultEffort}
+          defaultCodexModel={props.defaultCodexModel}
+          defaultCodexEffort={props.defaultCodexEffort}
           autoFocus={autoFocus}
           onOpenConversation={onOpenConversation}
           openTabs={openTabs}

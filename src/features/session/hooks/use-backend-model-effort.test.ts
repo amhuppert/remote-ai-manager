@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import {
   pickPreferredEffort,
@@ -73,6 +73,8 @@ describe("useBackendModelEffort", () => {
         activeConversation: makeConversation(),
         defaultModel: "fable",
         defaultEffort: "high",
+        defaultCodexModel: "gpt-5.4",
+        defaultCodexEffort: "high",
         lastUsedModelId: "sonnet",
         lastUsedEffort: "medium",
       }),
@@ -80,5 +82,23 @@ describe("useBackendModelEffort", () => {
 
     expect(result.current.selectedModel).toBe("sonnet");
     expect(result.current.selectedEffort).toBe("medium");
+  });
+
+  it("uses the configured Codex defaults when switching backends", () => {
+    const { result } = renderHook(() =>
+      useBackendModelEffort({
+        conversationId: "c1",
+        activeConversation: makeConversation({ promptCount: 0 }),
+        defaultModel: "fable",
+        defaultEffort: "high",
+        defaultCodexModel: "gpt-5.6-terra",
+        defaultCodexEffort: "xhigh",
+      }),
+    );
+
+    act(() => result.current.handleBackendChange("codex"));
+
+    expect(result.current.selectedModel).toBe("gpt-5.6-terra");
+    expect(result.current.selectedEffort).toBe("xhigh");
   });
 });

@@ -557,6 +557,8 @@ beforeEach(() => {
 
 function renderPage(props?: {
   defaultEffort?: "low" | "medium" | "high" | "max";
+  defaultCodexModel?: string;
+  defaultCodexEffort?: "low" | "medium" | "high" | "xhigh";
 }) {
   return renderWithQuery(
     <ConversationWorkspace
@@ -564,6 +566,7 @@ function renderPage(props?: {
       sessionName="test-session"
       conversationId="conv-1"
       defaultModel="sonnet"
+      defaultCodexModel="gpt-5.6-sol"
       {...props}
     />,
   );
@@ -1297,6 +1300,7 @@ describe("ConversationWorkspace", () => {
           sessionName="test-session"
           conversationId="conv-1"
           defaultModel="sonnet"
+          defaultCodexModel="gpt-5.6-sol"
         />,
       );
     }
@@ -1328,6 +1332,7 @@ describe("ConversationWorkspace", () => {
             sessionName="test-session"
             conversationId={conversationId}
             defaultModel="sonnet"
+            defaultCodexModel="gpt-5.6-sol"
           />
         </QueryClientProvider>
       );
@@ -1375,6 +1380,33 @@ describe("ConversationWorkspace", () => {
   });
 
   describe("Codex conversation initial model", () => {
+    it("submits the configured Codex defaults after switching backends", async () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          {
+            ...baseSession.conversations[0]!,
+            promptCount: 0,
+          },
+        ],
+      };
+      renderPage({
+        defaultCodexModel: "gpt-5.6-sol",
+        defaultCodexEffort: "xhigh",
+      });
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Codex" })[0]!);
+      fireEvent.change(await screen.findByRole("textbox"), {
+        target: { value: "Hello" },
+      });
+      fireEvent.click(screen.getAllByTitle("Send prompt")[0]!);
+
+      expect(sendPromptMock).toHaveBeenCalledTimes(1);
+      expect(sendPromptMock.mock.calls[0]?.[2]).toBe("gpt-5.6-sol");
+      expect(sendPromptMock.mock.calls[0]?.[4]).toBe("xhigh");
+      expect(sendPromptMock.mock.calls[0]?.[5]).toBe("codex");
+    });
+
     // Regression: when the active conversation's backend is "codex" and the
     // session query is already in cache (e.g. navigating between conversations),
     // both `selectedBackend` and `selectedModel` initialize together. Previously

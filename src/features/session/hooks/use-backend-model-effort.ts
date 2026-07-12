@@ -15,6 +15,8 @@ export interface UseBackendModelEffortArgs {
   activeConversation: ConversationState | undefined;
   defaultModel: string;
   defaultEffort: EffortLevel;
+  defaultCodexModel: string;
+  defaultCodexEffort: EffortLevel;
   lastUsedModelId?: string;
   lastUsedEffort?: string;
 }
@@ -71,38 +73,47 @@ function resolveModelEffortSelection({
   backend,
   defaultModel,
   defaultEffort,
+  defaultCodexModel,
+  defaultCodexEffort,
   lastUsedModelId,
   lastUsedEffort,
 }: {
   backend: AgentBackendId;
   defaultModel: string;
   defaultEffort: EffortLevel;
+  defaultCodexModel: string;
+  defaultCodexEffort: EffortLevel;
   lastUsedModelId: string | undefined;
   lastUsedEffort: string | undefined;
 }): {
   model: string;
   effort: EffortLevel;
 } {
-  const model = pickModel(backend, lastUsedModelId, defaultModel);
+  const backendDefaultModel =
+    backend === "codex" ? defaultCodexModel : defaultModel;
+  const backendDefaultEffort =
+    backend === "codex" ? defaultCodexEffort : defaultEffort;
+  const model = pickModel(backend, lastUsedModelId, backendDefaultModel);
   return {
     model,
     effort: pickEffort(
       backend,
       model,
-      parseEffort(lastUsedEffort) ?? defaultEffort,
+      parseEffort(lastUsedEffort) ?? backendDefaultEffort,
     ),
   };
 }
 
 // Initialize backend/model/effort consistently from the active conversation's
-// stored backend. The Claude `defaultModel` from server config must not leak
-// into a Codex conversation — picking the first backend-appropriate model
-// keeps these in sync from the very first render.
+// stored backend. Each backend has independent global defaults, so selection
+// must resolve them together from the first render.
 export function useBackendModelEffort({
   conversationId,
   activeConversation,
   defaultModel,
   defaultEffort,
+  defaultCodexModel,
+  defaultCodexEffort,
   lastUsedModelId,
   lastUsedEffort,
 }: UseBackendModelEffortArgs): UseBackendModelEffortResult {
@@ -111,6 +122,8 @@ export function useBackendModelEffort({
     backend: initialBackend,
     defaultModel,
     defaultEffort,
+    defaultCodexModel,
+    defaultCodexEffort,
     lastUsedModelId,
     lastUsedEffort,
   });
@@ -141,6 +154,8 @@ export function useBackendModelEffort({
     activeBackend,
     defaultModel,
     defaultEffort,
+    defaultCodexModel,
+    defaultCodexEffort,
     lastUsedModelId,
     lastUsedEffort,
   ]);
@@ -162,6 +177,8 @@ export function useBackendModelEffort({
         backend,
         defaultModel,
         defaultEffort,
+        defaultCodexModel,
+        defaultCodexEffort,
         lastUsedModelId,
         lastUsedEffort,
       });
@@ -177,13 +194,23 @@ export function useBackendModelEffort({
   );
   const effortSupported = availableEffortLevels.length > 0;
 
-  const handleBackendChange = useCallback((backend: AgentBackendId) => {
-    setSelectedBackend(backend);
-    const models = getModelsForBackend(backend);
-    setSelectedModel(models[0]!.id);
-    const levels = getEffortLevelsForBackend(backend, models[0]!.id);
-    setSelectedEffort(levels.includes("high") ? "high" : levels[0]!);
-  }, []);
+  const handleBackendChange = useCallback(
+    (backend: AgentBackendId) => {
+      const nextSelection = resolveModelEffortSelection({
+        backend,
+        defaultModel,
+        defaultEffort,
+        defaultCodexModel,
+        defaultCodexEffort,
+        lastUsedModelId: undefined,
+        lastUsedEffort: undefined,
+      });
+      setSelectedBackend(backend);
+      setSelectedModel(nextSelection.model);
+      setSelectedEffort(nextSelection.effort);
+    },
+    [defaultCodexEffort, defaultCodexModel, defaultEffort, defaultModel],
+  );
 
   const handleModelChange = useCallback(
     (model: string) => {
