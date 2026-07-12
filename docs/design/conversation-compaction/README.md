@@ -353,7 +353,7 @@ The merge/commit jobs substrate is session-shaped: `backgroundJobSchema` require
 - **Full run:** input = render of the whole transcript (compaction render opts: `includeTools=summary`, `includeThinking=false`, generous `maxBytes`).
 - **Delta run** (existing artifact + transcript advanced): input = previous envelope JSON + render of lines `> coveredEndSeq`; instruction = merge (append/supersede, refresh `agentBrief`/`currentState`, extend coverage).
 - **Deterministic guards after parse** (code, not model): coverage extends monotonically; on delta, every previous `decisions[].statement` still present unless its status became `superseded`; all `sourceRefs` fall inside covered range. Guard failure → one retry with the violation named; second failure → fall back to a full (non-delta) run; then `failed`.
-- **Oversize input:** if the compaction render exceeds the model budget even stripped, v1 **fails with a clear error** (`transcript_too_large_for_single_pass`). Map-reduce segmenting is Phase-4 work; the schema is already segment-ready (coverage + `sourceHash` + merge semantics), so adding it later is additive.
+- **Oversize input (sequential delta-fold):** when the whole render exceeds the model budget even stripped, the orchestrator splits the transcript into `SEGMENT_WINDOW_BUDGET_BYTES` windows on merged-unit boundaries (`segmentTranscript`) and folds them through the existing delta-merge contract: the first window is a full compaction, each later window a delta whose previous envelope is the prior step's result. Coverage stays anchored at the conversation start and extends monotonically to the last window, so the final envelope covers the whole transcript with the same guards, redaction, and rolling-artifact persistence as a single pass. This composes the delta primitive (§7.4's "segment-ready seam") rather than adding a parallel path — the only new code is the pure segmenter plus the fold loop. A delta refresh whose new-lines window is itself oversize folds only those new lines onto the existing envelope. A **lone message larger than the budget** cannot be split, so it still **fails** with `transcript_too_large_for_single_pass`.
 
 ### 7.4 Rolling envelope (segment-ready, not segment-heavy)
 
@@ -525,7 +525,9 @@ Server-backed cross-conversation read/compact APIs are a stronger capability tha
 | **4. Conversation compaction UX** | `SessionActionsMenu` actions, status chip, `ContextArtifactPanel` w/ drill-through, delta refresh path | 2 |
 | **5. Sharing surfaces** | `#`-ref enrichment (attrs/serializer/parser/badge), `cctl conversation compact / compaction get / list` | 2 |
 | **6. Evals** | harness + fixture corpus + model matrix incl. GPT-5.5/Codex; revisit §8 defaults | 2 |
-| **7. (Conditional)** | map-reduce segmenting for oversize transcripts; persisted segment kind; message/decision-level refs; cross-conversation Decisions log | evals/demand |
+| **7. (Conditional)** | persisted segment kind; message/decision-level refs; cross-conversation Decisions log | evals/demand |
+
+Sequential delta-fold for oversize transcripts (§7.3) is implemented — a whole-conversation render past the model budget is split into unit-aligned windows and folded through the delta-merge contract; a lone over-budget message still fails with `transcript_too_large_for_single_pass`.
 
 **First milestone (end of Phase 1):** an agent receiving a `#` ref can pull an outline and bounded windows of any conversation with exact coordinates — zero full-transcript reads, zero model cost.
 

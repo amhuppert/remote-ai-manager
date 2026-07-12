@@ -17,8 +17,11 @@ import {
   renderCompactTranscript,
   renderedTranscriptToMarkdown,
   renderOptionsSchema,
+  segmentTranscript,
   NORMALIZER_VERSION,
   type RenderOptions,
+  type RenderedTranscript,
+  type TranscriptSegment,
 } from "@/lib/conversations/transcript-render";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
@@ -57,12 +60,30 @@ const genLogger = createLogger("context-artifacts.generation");
 const auditLogger = createLogger("context-artifacts.audit");
 
 /**
- * Hard bound on the rendered (pre-redaction-size-equivalent) model input.
- * A compaction render that would exceed this even with tools summarized and
- * thinking stripped fails with `transcript_too_large_for_single_pass` (§7.3);
- * map-reduce segmenting is deferred Phase-4 work.
+ * Hard bound on a single compaction render (tools summarized, thinking
+ * stripped). A whole-conversation render past this is compacted with the
+ * sequential delta-fold path (docs/design/conversation-compaction/README.md
+ * §7.3): the transcript is split into `SEGMENT_WINDOW_BUDGET_BYTES` windows
+ * folded through the existing delta-merge contract. A single message that
+ * alone exceeds this budget still fails with
+ * `transcript_too_large_for_single_pass` — folding a lone unit cannot help.
  */
 export const COMPACTION_MODEL_BUDGET_BYTES = 600_000;
+
+/**
+ * Headroom reserved below the model budget for the previous-envelope JSON each
+ * delta fold step carries in its prompt, so a step's transcript window plus its
+ * carried envelope stays within the same envelope of safety as a single pass.
+ */
+const CARRIED_ENVELOPE_RESERVE_BYTES = 120_000;
+
+/**
+ * Per-segment transcript-render budget for the delta-fold path — kept below
+ * `COMPACTION_MODEL_BUDGET_BYTES` so a delta step's carried previous envelope
+ * fits alongside the segment's rendered lines.
+ */
+export const SEGMENT_WINDOW_BUDGET_BYTES =
+  COMPACTION_MODEL_BUDGET_BYTES - CARRIED_ENVELOPE_RESERVE_BYTES;
 
 export interface CompactionServiceDeps {
   executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
@@ -279,7 +300,35 @@ export function createCompactionService(
     expected: { startSeq: number; endSeq: number };
     sourceHash: string;
     inputBytes: number;
+    /** True when the render hit maxBytes; only tolerated on fold segments. */
+    truncated: boolean;
   }
+
+  /** Fully-resolved description of one model pass's render window + coverage. */
+  interface PassPrep {
+    mode: CompactionRunMode;
+    previousEnvelope: CompactionEnvelope | null;
+    /** Explicit seq window; null renders the whole transcript (or the message). */
+    window: { seqStart: number; seqEnd: number } | null;
+    expected: { startSeq: number; endSeq: number };
+    allowTruncation: boolean;
+  }
+
+  type ModelPassResult =
+    | { status: "ok"; envelope: CompactionEnvelope }
+    | { status: "schema"; detail: string }
+    | { status: "guard"; violations: string[] }
+    | { status: "model"; error: string };
+
+  type PassOutcome =
+    | {
+        ok: true;
+        envelope: CompactionEnvelope;
+        sourceHash: string;
+        inputBytes: number;
+        mode: CompactionRunMode;
+      }
+    | { ok: false; error: string };
 
   interface RunContext {
     input: TriggerCompactionInput;
@@ -298,62 +347,55 @@ export function createCompactionService(
     }
   }
 
-  function prepareRun(ctx: RunContext, mode: CompactionRunMode): PreparedRun {
-    const { input, plan, entries, maxSeq } = ctx;
-
+  function renderForSpec(ctx: RunContext, spec: PassPrep): RenderedTranscript {
+    const { input, entries, maxSeq } = ctx;
     const windowOptions: Record<string, unknown> = {};
     if (input.kind === "message_compaction") {
       windowOptions["message"] = input.messageIndex;
-    } else if (mode === "delta" && plan.previousEnvelope !== null) {
-      windowOptions["seqRange"] = [
-        plan.previousEnvelope.source.coveredEndSeq + 1,
-        maxSeq,
-      ];
+    } else if (spec.window !== null) {
+      windowOptions["seqRange"] = [spec.window.seqStart, spec.window.seqEnd];
     }
-
     const options: RenderOptions = renderOptionsSchema.parse({
       includeTools: "summary",
       includeThinking: false,
       maxBytes: COMPACTION_MODEL_BUDGET_BYTES,
       ...windowOptions,
     });
-    const rendered = renderCompactTranscript(
+    return renderCompactTranscript(
       { conversationId: input.conversationId, entries, maxSeq },
       options,
     );
-    if (rendered.truncated) throw new OversizeRenderError();
+  }
+
+  function prepareRun(ctx: RunContext, spec: PassPrep): PreparedRun {
+    const { input } = ctx;
+
+    const rendered = renderForSpec(ctx, spec);
+    if (rendered.truncated && !spec.allowTruncation) {
+      throw new OversizeRenderError();
+    }
 
     const redactedRendered = redactEnvelopeStrings(rendered);
     const markdown = renderedTranscriptToMarkdown(redactedRendered);
     const sourceHash = sha256(markdown);
 
-    const expected =
-      mode === "delta"
-        ? ctx.plan.expected
-        : input.kind === "message_compaction"
-          ? ctx.plan.expected
-          : {
-              startSeq: entries[0]?.seq ?? 0,
-              endSeq: lastRenderedSeq(entries, maxSeq),
-            };
-
     const sourceMeta: CompactionSourceMeta = {
       projectName: input.projectName,
       sessionName: input.sessionName,
       conversationId: input.conversationId,
-      coveredStartSeq: expected.startSeq,
-      coveredEndSeq: expected.endSeq,
+      coveredStartSeq: spec.expected.startSeq,
+      coveredEndSeq: spec.expected.endSeq,
       messageCount: rendered.totalMessages,
       sourceHash,
     };
 
     const prompt =
-      mode === "delta" && plan.previousEnvelope !== null
+      spec.mode === "delta" && spec.previousEnvelope !== null
         ? buildCompactionPrompt({
             mode: "delta",
             kind: input.kind,
             sourceMeta,
-            previousEnvelope: plan.previousEnvelope,
+            previousEnvelope: spec.previousEnvelope,
             deltaRenderedTranscript: redactedRendered,
           })
         : buildCompactionPrompt({
@@ -365,10 +407,450 @@ export function createCompactionService(
 
     return {
       prompt,
-      expected,
+      expected: spec.expected,
       sourceHash,
       inputBytes: Buffer.byteLength(prompt, "utf-8"),
+      truncated: rendered.truncated,
     };
+  }
+
+  /** The single-pass render window + coverage for the planned mode. */
+  function specFor(ctx: RunContext, mode: CompactionRunMode): PassPrep {
+    if (ctx.input.kind === "message_compaction") {
+      return {
+        mode: "full",
+        previousEnvelope: null,
+        window: null,
+        expected: ctx.plan.expected,
+        allowTruncation: false,
+      };
+    }
+    if (mode === "delta" && ctx.plan.previousEnvelope !== null) {
+      return {
+        mode: "delta",
+        previousEnvelope: ctx.plan.previousEnvelope,
+        window: {
+          seqStart: ctx.plan.previousEnvelope.source.coveredEndSeq + 1,
+          seqEnd: ctx.maxSeq,
+        },
+        expected: ctx.plan.expected,
+        allowTruncation: false,
+      };
+    }
+    return {
+      mode: "full",
+      previousEnvelope: null,
+      window: null,
+      expected: {
+        startSeq: ctx.entries[0]?.seq ?? 0,
+        endSeq: lastRenderedSeq(ctx.entries, ctx.maxSeq),
+      },
+      allowTruncation: false,
+    };
+  }
+
+  /** Append rejection feedback to a prompt for a retry attempt. */
+  function withFeedback(prompt: string, feedback: string | null): string {
+    if (feedback === null) return prompt;
+    return `${prompt}\n\n## Previous attempt rejected\n${feedback}\nRespond again with a single corrected JSON envelope.`;
+  }
+
+  const schemaFeedback = (detail: string): string =>
+    `Your previous response violated the output JSON schema: ${detail}`;
+
+  const guardFeedback = (violations: string[]): string =>
+    `Your previous response violated deterministic envelope guards:\n- ${violations.join("\n- ")}`;
+
+  /** One model call: execute → schema-parse → deterministic guards. No retry. */
+  async function attemptModelPass(
+    ctx: RunContext,
+    prompt: string,
+    mode: CompactionRunMode,
+    expected: { startSeq: number; endSeq: number },
+    previousEnvelope: CompactionEnvelope | null,
+  ): Promise<ModelPassResult> {
+    const { input, artifactId, config, model } = ctx;
+    const laneSessionName =
+      input.sessionName ?? PROJECT_CONVERSATION_SESSION_SENTINEL;
+    const result = await deps.executeTaskRun({
+      projectPath: input.projectPath,
+      sessionName: laneSessionName,
+      conversationId: `compaction-${artifactId}`,
+      kind: "task_run",
+      prompt,
+      outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
+      timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
+      modelId: model,
+      effort: config.effort,
+      actorInput: {
+        projectName: input.projectName,
+        sessionWorktreePath: input.projectPath,
+        // No ConversationState record exists for this synthetic lane, so the
+        // conversation-manager teardown must skip snapshot persistence and
+        // queue draining (else every run logs `snapshot_save_failed` +
+        // `queue.drain_failed` at error level).
+        transient: true,
+        conversation: {
+          createdAt: deps.now(),
+          forkedFrom: null,
+          role: null,
+          transcriptPath: null,
+          agentBackend: config.backend,
+          backendRef: null,
+          promptCount: 0,
+          debugMode: null,
+        },
+      },
+    });
+
+    if (result.kind === "error") {
+      return { status: "model", error: result.error };
+    }
+
+    const parsed =
+      result.kind === "structured"
+        ? compactionStructuredOutputSchema.safeParse(result.structuredOutput)
+        : null;
+    if (parsed === null || !parsed.success) {
+      const detail =
+        parsed === null
+          ? "the response contained no structured output"
+          : parsed.error.issues
+              .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+              .join("; ");
+      return { status: "schema", detail };
+    }
+
+    const guard = validateCompactionGuards(parsed.data, {
+      mode,
+      ...(mode === "delta" && previousEnvelope !== null
+        ? { previousEnvelope }
+        : {}),
+      expectedCoverage: expected,
+    });
+    if (!guard.ok) {
+      return { status: "guard", violations: guard.violations };
+    }
+    return { status: "ok", envelope: parsed.data };
+  }
+
+  /**
+   * Single-pass generation: one render of the whole planned window, with the
+   * schema/guard retry loop and the delta→full guard fallback (§7.3). Throws
+   * `OversizeRenderError` when the render exceeds the model budget so the caller
+   * can decide between the fold path and a hard failure.
+   */
+  async function runSinglePass(ctx: RunContext): Promise<PassOutcome> {
+    const preparedByMode = new Map<CompactionRunMode, PreparedRun>();
+    const prepared = (mode: CompactionRunMode): PreparedRun => {
+      const cached = preparedByMode.get(mode);
+      if (cached) return cached;
+      const fresh = prepareRun(ctx, specFor(ctx, mode));
+      preparedByMode.set(mode, fresh);
+      return fresh;
+    };
+
+    let mode = ctx.plan.mode;
+    let schemaRetryUsed = false;
+    let guardRetryUsed = false;
+    let feedback: string | null = null;
+
+    for (;;) {
+      const run = prepared(mode);
+      const attempt = await attemptModelPass(
+        ctx,
+        withFeedback(run.prompt, feedback),
+        mode,
+        run.expected,
+        mode === "delta" ? ctx.plan.previousEnvelope : null,
+      );
+
+      if (attempt.status === "model")
+        return { ok: false, error: attempt.error };
+
+      if (attempt.status === "schema") {
+        if (!schemaRetryUsed) {
+          schemaRetryUsed = true;
+          feedback = schemaFeedback(attempt.detail);
+          continue;
+        }
+        return {
+          ok: false,
+          error: `envelope failed schema validation after retry: ${attempt.detail}`,
+        };
+      }
+
+      if (attempt.status === "guard") {
+        genLogger.warn("artifact.delta.guard_failed", {
+          artifactId: ctx.artifactId,
+          conversationId: ctx.input.conversationId,
+          kind: ctx.input.kind,
+          mode,
+          violations: attempt.violations,
+        });
+        if (!guardRetryUsed) {
+          guardRetryUsed = true;
+          feedback = guardFeedback(attempt.violations);
+          continue;
+        }
+        if (mode === "delta") {
+          // Second delta guard failure → ONE full non-delta fallback run
+          // (§7.3); retries stay consumed so the fallback is single-shot.
+          mode = "full";
+          feedback = null;
+          continue;
+        }
+        return {
+          ok: false,
+          error: `envelope failed deterministic guards: ${attempt.violations.join("; ")}`,
+        };
+      }
+
+      return {
+        ok: true,
+        envelope: attempt.envelope,
+        sourceHash: run.sourceHash,
+        inputBytes: run.inputBytes,
+        mode,
+      };
+    }
+  }
+
+  /**
+   * Decide whether a conversation compaction must be folded. Returns the
+   * segments when the planned single-pass render is oversize AND splits into
+   * ≥2 unit-aligned windows; null otherwise (single pass, or a lone oversize
+   * message that folding cannot help).
+   */
+  function planFold(ctx: RunContext): TranscriptSegment[] | null {
+    if (ctx.input.kind !== "conversation_compaction") return null;
+    const spec = specFor(ctx, ctx.plan.mode);
+    const probe = renderForSpec(ctx, spec);
+    if (!probe.truncated) return null;
+
+    const segOptions = renderOptionsSchema.parse({
+      includeTools: "summary",
+      includeThinking: false,
+      maxBytes: COMPACTION_MODEL_BUDGET_BYTES,
+      ...(spec.window !== null
+        ? { seqRange: [spec.window.seqStart, spec.window.seqEnd] }
+        : {}),
+    });
+    const segments = segmentTranscript(
+      {
+        conversationId: ctx.input.conversationId,
+        entries: ctx.entries,
+        maxSeq: ctx.maxSeq,
+      },
+      segOptions,
+      SEGMENT_WINDOW_BUDGET_BYTES,
+    );
+    return segments.length >= 2 ? segments : null;
+  }
+
+  /** Retry loop for one fold step — schema + guard retries, no full fallback. */
+  async function runFoldStep(
+    ctx: RunContext,
+    prepared: PreparedRun,
+    mode: CompactionRunMode,
+    previousEnvelope: CompactionEnvelope | null,
+    segIndex: number,
+    segTotal: number,
+  ): Promise<
+    { ok: true; envelope: CompactionEnvelope } | { ok: false; error: string }
+  > {
+    let schemaRetryUsed = false;
+    let guardRetryUsed = false;
+    let feedback: string | null = null;
+
+    for (;;) {
+      const attempt = await attemptModelPass(
+        ctx,
+        withFeedback(prepared.prompt, feedback),
+        mode,
+        prepared.expected,
+        previousEnvelope,
+      );
+
+      if (attempt.status === "model")
+        return { ok: false, error: attempt.error };
+
+      if (attempt.status === "schema") {
+        if (!schemaRetryUsed) {
+          schemaRetryUsed = true;
+          feedback = schemaFeedback(attempt.detail);
+          continue;
+        }
+        return {
+          ok: false,
+          error: `envelope failed schema validation after retry: ${attempt.detail}`,
+        };
+      }
+
+      if (attempt.status === "guard") {
+        genLogger.warn("artifact.fold.guard_failed", {
+          artifactId: ctx.artifactId,
+          conversationId: ctx.input.conversationId,
+          segment: segIndex + 1,
+          of: segTotal,
+          mode,
+          violations: attempt.violations,
+        });
+        if (!guardRetryUsed) {
+          guardRetryUsed = true;
+          feedback = guardFeedback(attempt.violations);
+          continue;
+        }
+        return {
+          ok: false,
+          error: `envelope failed deterministic guards: ${attempt.violations.join("; ")}`,
+        };
+      }
+
+      return { ok: true, envelope: attempt.envelope };
+    }
+  }
+
+  /**
+   * Sequential delta-fold (§7.3): render each segment within budget and merge
+   * it into the running envelope — the first step is a full compaction (unless
+   * seeded by an existing artifact for a delta refresh), every later step is a
+   * delta whose previous envelope is the prior step's result. Coverage stays
+   * anchored at the conversation start and extends monotonically to each
+   * segment's end; the last step's envelope covers the whole transcript.
+   */
+  async function runFold(
+    ctx: RunContext,
+    segments: TranscriptSegment[],
+  ): Promise<PassOutcome> {
+    const seededPrevious =
+      ctx.plan.mode === "delta" ? ctx.plan.previousEnvelope : null;
+    const coverageStart =
+      seededPrevious !== null
+        ? seededPrevious.source.coveredStartSeq
+        : (ctx.entries[0]?.seq ?? 0);
+
+    genLogger.info("artifact.fold.started", {
+      artifactId: ctx.artifactId,
+      conversationId: ctx.input.conversationId,
+      mode: ctx.plan.mode,
+      segments: segments.length,
+      coverageStart,
+    });
+
+    let previous: CompactionEnvelope | null = seededPrevious;
+    let sourceHash = "";
+    let inputBytes = 0;
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]!;
+      const stepMode: CompactionRunMode = previous === null ? "full" : "delta";
+      const windowStart =
+        previous === null ? seg.seqStart : previous.source.coveredEndSeq + 1;
+      const prepared = prepareRun(ctx, {
+        mode: stepMode,
+        previousEnvelope: previous,
+        window: { seqStart: windowStart, seqEnd: seg.seqEnd },
+        expected: { startSeq: coverageStart, endSeq: seg.seqEnd },
+        allowTruncation: true,
+      });
+      const step = await runFoldStep(
+        ctx,
+        prepared,
+        stepMode,
+        previous,
+        i,
+        segments.length,
+      );
+      if (!step.ok) {
+        return {
+          ok: false,
+          error: `segment ${i + 1}/${segments.length}: ${step.error}`,
+        };
+      }
+      previous = step.envelope;
+      sourceHash = prepared.sourceHash;
+      inputBytes = prepared.inputBytes;
+      genLogger.info("artifact.fold.segment_completed", {
+        artifactId: ctx.artifactId,
+        conversationId: ctx.input.conversationId,
+        segment: i + 1,
+        of: segments.length,
+        coveredEndSeq: seg.seqEnd,
+      });
+    }
+
+    if (previous === null) {
+      return { ok: false, error: "segmentation produced no segments" };
+    }
+    return {
+      ok: true,
+      envelope: previous,
+      sourceHash,
+      inputBytes,
+      mode: ctx.plan.mode,
+    };
+  }
+
+  function persistSuccess(
+    ctx: RunContext,
+    outcome: {
+      envelope: CompactionEnvelope;
+      sourceHash: string;
+      inputBytes: number;
+      mode: CompactionRunMode;
+    },
+    startedAt: number,
+  ): ContextArtifactRow {
+    const redactedEnvelope = redactEnvelopeStrings(outcome.envelope);
+    const completedAt = deps.now();
+    const finalRow: ContextArtifactRow = {
+      ...ctx.baseRow,
+      coveredStartSeq: redactedEnvelope.source.coveredStartSeq,
+      coveredEndSeq: redactedEnvelope.source.coveredEndSeq,
+      sourceHash: outcome.sourceHash,
+      status: "complete",
+      error: null,
+      payload: redactedEnvelope,
+      updatedAt: completedAt,
+    };
+    // Per-column update, not upsert: a row deleted mid-generation must stay
+    // deleted, so the completion write no-ops (and skips the broadcast) when
+    // the row is gone.
+    const persisted = deps.repo.updateChangedColumns(ctx.artifactId, {
+      coveredStartSeq: finalRow.coveredStartSeq,
+      coveredEndSeq: finalRow.coveredEndSeq,
+      sourceHash: finalRow.sourceHash,
+      status: finalRow.status,
+      error: finalRow.error,
+      payload: finalRow.payload,
+      updatedAt: finalRow.updatedAt,
+    });
+    if (!persisted) {
+      genLogger.warn("artifact.generation.discarded_row_deleted", {
+        artifactId: ctx.artifactId,
+        conversationId: ctx.input.conversationId,
+        kind: ctx.input.kind,
+        durationMs: Date.now() - startedAt,
+      });
+      return finalRow;
+    }
+    deps.broadcast(statusEvent(ctx.input, ctx.artifactId, "complete"));
+    genLogger.info("artifact.generation.completed", {
+      artifactId: ctx.artifactId,
+      conversationId: ctx.input.conversationId,
+      kind: ctx.input.kind,
+      mode: outcome.mode,
+      model: ctx.model,
+      durationMs: Date.now() - startedAt,
+      inputBytes: outcome.inputBytes,
+      outputBytes: Buffer.byteLength(JSON.stringify(redactedEnvelope), "utf-8"),
+      coverage: {
+        startSeq: finalRow.coveredStartSeq,
+        endSeq: finalRow.coveredEndSeq,
+      },
+    });
+    return finalRow;
   }
 
   async function runGeneration(ctx: RunContext): Promise<ContextArtifactRow> {
@@ -410,174 +892,12 @@ export function createCompactionService(
     }
 
     try {
-      const preparedByMode = new Map<CompactionRunMode, PreparedRun>();
-      const prepared = (mode: CompactionRunMode): PreparedRun => {
-        const cached = preparedByMode.get(mode);
-        if (cached) return cached;
-        const fresh = prepareRun(ctx, mode);
-        preparedByMode.set(mode, fresh);
-        return fresh;
-      };
-
-      let mode = ctx.plan.mode;
-      let schemaRetryUsed = false;
-      let guardRetryUsed = false;
-      let feedback: string | null = null;
-
-      for (;;) {
-        const run = prepared(mode);
-        const prompt =
-          feedback === null
-            ? run.prompt
-            : `${run.prompt}\n\n## Previous attempt rejected\n${feedback}\nRespond again with a single corrected JSON envelope.`;
-
-        const laneSessionName =
-          input.sessionName ?? PROJECT_CONVERSATION_SESSION_SENTINEL;
-        const result = await deps.executeTaskRun({
-          projectPath: input.projectPath,
-          sessionName: laneSessionName,
-          conversationId: `compaction-${artifactId}`,
-          kind: "task_run",
-          prompt,
-          outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
-          timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
-          modelId: model,
-          effort: config.effort,
-          actorInput: {
-            projectName: input.projectName,
-            sessionWorktreePath: input.projectPath,
-            // No ConversationState record exists for this synthetic lane, so
-            // the conversation-manager teardown must skip snapshot
-            // persistence and queue draining (else every run logs
-            // `snapshot_save_failed` + `queue.drain_failed` at error level).
-            transient: true,
-            conversation: {
-              createdAt: deps.now(),
-              forkedFrom: null,
-              role: null,
-              transcriptPath: null,
-              agentBackend: config.backend,
-              backendRef: null,
-              promptCount: 0,
-              debugMode: null,
-            },
-          },
-        });
-
-        if (result.kind === "error") {
-          return failRun(result.error);
-        }
-
-        const parsed =
-          result.kind === "structured"
-            ? compactionStructuredOutputSchema.safeParse(
-                result.structuredOutput,
-              )
-            : null;
-
-        if (parsed === null || !parsed.success) {
-          const detail =
-            parsed === null
-              ? "the response contained no structured output"
-              : parsed.error.issues
-                  .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-                  .join("; ");
-          if (!schemaRetryUsed) {
-            schemaRetryUsed = true;
-            feedback = `Your previous response violated the output JSON schema: ${detail}`;
-            continue;
-          }
-          return failRun(
-            `envelope failed schema validation after retry: ${detail}`,
-          );
-        }
-
-        const guard = validateCompactionGuards(parsed.data, {
-          mode,
-          ...(mode === "delta" && ctx.plan.previousEnvelope !== null
-            ? { previousEnvelope: ctx.plan.previousEnvelope }
-            : {}),
-          expectedCoverage: run.expected,
-        });
-
-        if (!guard.ok) {
-          genLogger.warn("artifact.delta.guard_failed", {
-            artifactId,
-            conversationId: input.conversationId,
-            kind: input.kind,
-            mode,
-            violations: guard.violations,
-          });
-          if (!guardRetryUsed) {
-            guardRetryUsed = true;
-            feedback = `Your previous response violated deterministic envelope guards:\n- ${guard.violations.join("\n- ")}`;
-            continue;
-          }
-          if (mode === "delta") {
-            // Second delta guard failure → ONE full non-delta fallback run
-            // (§7.3); retries stay consumed so the fallback is single-shot.
-            mode = "full";
-            feedback = null;
-            continue;
-          }
-          return failRun(
-            `envelope failed deterministic guards: ${guard.violations.join("; ")}`,
-          );
-        }
-
-        const redactedEnvelope = redactEnvelopeStrings(parsed.data);
-        const completedAt = deps.now();
-        const finalRow: ContextArtifactRow = {
-          ...ctx.baseRow,
-          coveredStartSeq: redactedEnvelope.source.coveredStartSeq,
-          coveredEndSeq: redactedEnvelope.source.coveredEndSeq,
-          sourceHash: run.sourceHash,
-          status: "complete",
-          error: null,
-          payload: redactedEnvelope,
-          updatedAt: completedAt,
-        };
-        // Per-column update, not upsert: a row deleted mid-generation must
-        // stay deleted, so the completion write no-ops (and skips the
-        // broadcast) when the row is gone.
-        const persisted = deps.repo.updateChangedColumns(artifactId, {
-          coveredStartSeq: finalRow.coveredStartSeq,
-          coveredEndSeq: finalRow.coveredEndSeq,
-          sourceHash: finalRow.sourceHash,
-          status: finalRow.status,
-          error: finalRow.error,
-          payload: finalRow.payload,
-          updatedAt: finalRow.updatedAt,
-        });
-        if (!persisted) {
-          genLogger.warn("artifact.generation.discarded_row_deleted", {
-            artifactId,
-            conversationId: input.conversationId,
-            kind: input.kind,
-            durationMs: Date.now() - startedAt,
-          });
-          return finalRow;
-        }
-        deps.broadcast(statusEvent(input, artifactId, "complete"));
-        genLogger.info("artifact.generation.completed", {
-          artifactId,
-          conversationId: input.conversationId,
-          kind: input.kind,
-          mode,
-          model,
-          durationMs: Date.now() - startedAt,
-          inputBytes: run.inputBytes,
-          outputBytes: Buffer.byteLength(
-            JSON.stringify(redactedEnvelope),
-            "utf-8",
-          ),
-          coverage: {
-            startSeq: finalRow.coveredStartSeq,
-            endSeq: finalRow.coveredEndSeq,
-          },
-        });
-        return finalRow;
-      }
+      const segments = planFold(ctx);
+      const outcome = segments
+        ? await runFold(ctx, segments)
+        : await runSinglePass(ctx);
+      if (!outcome.ok) return failRun(outcome.error);
+      return persistSuccess(ctx, outcome, startedAt);
     } catch (err) {
       if (err instanceof OversizeRenderError) {
         return failRun("transcript_too_large_for_single_pass");

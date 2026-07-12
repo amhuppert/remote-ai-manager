@@ -911,6 +911,198 @@ describe("createCompactionService — audit logging", () => {
   });
 });
 
+describe("createCompactionService — delta-fold (large conversations)", () => {
+  // Four alternating-role messages, each large enough that the whole render
+  // exceeds the single-pass budget but two fit within one segment window
+  // (SEGMENT_WINDOW_BUDGET_BYTES) → two fold segments.
+  function oversizeEntries(): TranscriptEntriesResult {
+    const body = "a".repeat(200_000);
+    return {
+      entries: [
+        makeEntry(0, "user", body),
+        makeEntry(1, "assistant", body),
+        makeEntry(2, "user", body),
+        makeEntry(3, "assistant", body),
+      ],
+      maxSeq: 3,
+    };
+  }
+
+  /** Read the previous-envelope decisions a delta prompt carries forward. */
+  function previousDecisions(prompt: string): CompactionEnvelope["decisions"] {
+    const marker = "## Previous compaction envelope\n```json\n";
+    const start = prompt.indexOf(marker);
+    if (start === -1) return [];
+    const jsonStart = start + marker.length;
+    const jsonEnd = prompt.indexOf("\n```", jsonStart);
+    const prev = JSON.parse(
+      prompt.slice(jsonStart, jsonEnd),
+    ) as CompactionEnvelope;
+    return prev.decisions;
+  }
+
+  it("folds an oversize conversation into one complete artifact covering everything", async () => {
+    const service = echoService(oversizeEntries());
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    const row = await result.completion;
+
+    // One full step then one delta step — never a single oversize pass.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("Delta update rules");
+    expect(prompts[1]).toContain("Delta update rules");
+    expect(prompts[1]).toContain("## Previous compaction envelope");
+
+    expect(row.status).toBe("complete");
+    const reloaded = repo.findById(result.artifactId);
+    expect(reloaded?.status).toBe("complete");
+    expect(reloaded?.coveredStartSeq).toBe(0);
+    expect(reloaded?.coveredEndSeq).toBe(3);
+    expect(reloaded?.payload?.source.coveredEndSeq).toBe(3);
+    expect(reloaded?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(events.map((e) => ("status" in e ? e.status : null))).toEqual([
+      "pending",
+      "complete",
+    ]);
+  });
+
+  it("carries decisions forward across fold steps and rejects a step that drops one", async () => {
+    const withDecision = {
+      decisions: [
+        {
+          statement: "adopt the fold approach",
+          status: "accepted" as const,
+          sourceRefs: [
+            { messageIndex: 0, messageId: "entry-0", seqStart: 0, seqEnd: 0 },
+          ],
+        },
+      ],
+    };
+    let deltaAttempts = 0;
+    const service = makeService(async (input) => {
+      const isDelta = input.prompt.includes("## Previous compaction envelope");
+      if (!isDelta) {
+        return structuredResult(envelopeFromPrompt(input.prompt, withDecision));
+      }
+      deltaAttempts += 1;
+      // First delta attempt drops the prior decision (guard violation); the
+      // retry carries it forward.
+      if (deltaAttempts === 1) {
+        return structuredResult(envelopeFromPrompt(input.prompt));
+      }
+      return structuredResult(envelopeFromPrompt(input.prompt, withDecision));
+    }, oversizeEntries());
+
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    const row = await result.completion;
+
+    // full + delta-attempt-1 (dropped) + delta-attempt-2 (corrected).
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]).toContain("## Previous attempt rejected");
+    expect(prompts[2]).toContain("previous decision was dropped");
+
+    expect(row.status).toBe("complete");
+    const reloaded = repo.findById(result.artifactId);
+    expect(reloaded?.coveredEndSeq).toBe(3);
+    expect(reloaded?.payload?.decisions.map((d) => d.statement)).toContain(
+      "adopt the fold approach",
+    );
+
+    const foldGuardFailures = logSpies.warn.mock.calls.filter(
+      ([event]) => event === "artifact.fold.guard_failed",
+    );
+    expect(foldGuardFailures.length).toBeGreaterThanOrEqual(1);
+    expect(foldGuardFailures[0]?.[1]).toMatchObject({ segment: 2, of: 2 });
+  });
+
+  it("fails naming the segment when a fold step errors, leaving prior coverage intact", async () => {
+    const service = makeService(async (input) => {
+      if (input.prompt.includes("## Previous compaction envelope")) {
+        return {
+          kind: "error",
+          error: "segment backend exploded",
+          aborted: false,
+          usage: USAGE,
+          backendRef: null,
+        };
+      }
+      return structuredResult(envelopeFromPrompt(input.prompt));
+    }, oversizeEntries());
+
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    const row = await result.completion;
+
+    expect(row.status).toBe("failed");
+    expect(row.error).toContain("segment 2/2");
+    expect(row.error).toContain("segment backend exploded");
+    expect(repo.findById(result.artifactId)?.status).toBe("failed");
+  });
+
+  it("folds only the new lines when refreshing a large delta onto an existing artifact", async () => {
+    repo.upsert(makeCompleteRow({ coveredStartSeq: 0, coveredEndSeq: 1 }));
+    const body = "a".repeat(200_000);
+    const entries: TranscriptEntriesResult = {
+      entries: [
+        makeEntry(0, "user", "first question"),
+        makeEntry(1, "assistant", "first answer"),
+        makeEntry(2, "user", body),
+        makeEntry(3, "assistant", body),
+        makeEntry(4, "user", body),
+        makeEntry(5, "assistant", body),
+      ],
+      maxSeq: 5,
+    };
+    // A model that faithfully carries forward whatever the previous envelope
+    // holds, so every delta fold step preserves the seeded decision.
+    const service = makeService(
+      async (input) =>
+        structuredResult(
+          envelopeFromPrompt(input.prompt, {
+            decisions: previousDecisions(input.prompt),
+          }),
+        ),
+      entries,
+    );
+
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    expect(result.artifactId).toBe("existing-artifact");
+    const row = await result.completion;
+
+    // Both fold steps are deltas seeded from the existing artifact; the first
+    // renders only the new lines, never the already-covered seq 0–1.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("Delta update rules");
+    expect(prompts[0]).not.toContain("first question");
+
+    expect(row.status).toBe("complete");
+    const reloaded = repo.findById("existing-artifact");
+    expect(reloaded?.coveredStartSeq).toBe(0);
+    expect(reloaded?.coveredEndSeq).toBe(5);
+    expect(reloaded?.payload?.decisions.map((d) => d.statement)).toContain(
+      "use sqlite",
+    );
+  });
+
+  it("still fails a lone message larger than the budget — folding cannot help", async () => {
+    const service = echoService({
+      entries: [
+        makeEntry(0, "user", "x".repeat(COMPACTION_MODEL_BUDGET_BYTES + 100)),
+      ],
+      maxSeq: 0,
+    });
+    const result = await service.trigger(makeTriggerInput());
+    if (result.outcome !== "started") throw new Error("expected started");
+    const row = await result.completion;
+
+    expect(prompts).toHaveLength(0);
+    expect(row.status).toBe("failed");
+    expect(row.error).toBe("transcript_too_large_for_single_pass");
+  });
+});
+
 describe("createCompactionService — trailing tool_result coverage", () => {
   it("extends full-run expected coverage over a trailing tool_result entry so refs to its rendered lines pass guards", async () => {
     const trailingToolResult: TranscriptEntryWithSeq = {

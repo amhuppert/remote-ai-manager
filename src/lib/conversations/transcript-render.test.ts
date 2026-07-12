@@ -9,6 +9,7 @@ import {
   renderCompactTranscript,
   renderedTranscriptToMarkdown,
   groupTranscriptEntries,
+  segmentTranscript,
   type RenderOptions,
 } from "./transcript-render";
 import type { MessageContentBlock } from "./schemas";
@@ -864,5 +865,108 @@ describe("tool_result entry folding and rendering", () => {
     } finally {
       await rm(TEST_DIR, { recursive: true, force: true });
     }
+  });
+});
+
+// ==========================================================================
+// segmentTranscript — budget-bounded, unit-boundary segmentation (fold input)
+// ==========================================================================
+
+describe("segmentTranscript", () => {
+  function segment(
+    entries: TranscriptEntryWithSeq[],
+    windowBudgetBytes: number,
+    overrides: z.input<typeof renderOptionsSchema> = {},
+  ) {
+    const last = entries[entries.length - 1];
+    return segmentTranscript(
+      { conversationId: "conv-seg", entries, maxSeq: last ? last.seq : -1 },
+      options(overrides),
+      windowBudgetBytes,
+    );
+  }
+
+  // Four alternating-role text units (same role would merge into one unit).
+  function alternatingUnits(textLength: number): TranscriptEntryWithSeq[] {
+    const body = "a".repeat(textLength);
+    return [
+      entry(0, "user", [text(body)]),
+      entry(1, "assistant", [text(body)]),
+      entry(2, "user", [text(body)]),
+      entry(3, "assistant", [text(body)]),
+    ];
+  }
+
+  it("returns one segment covering everything when the whole transcript fits", () => {
+    const segments = segment(alternatingUnits(1000), 1_000_000);
+    expect(segments).toEqual([{ seqStart: 0, seqEnd: 3 }]);
+  });
+
+  it("packs consecutive units into contiguous segments under the budget", () => {
+    // Each unit ≈ 1006 bytes; a 2500-byte budget fits two per segment.
+    const segments = segment(alternatingUnits(1000), 2500);
+    expect(segments).toEqual([
+      { seqStart: 0, seqEnd: 1 },
+      { seqStart: 2, seqEnd: 3 },
+    ]);
+  });
+
+  it("cuts only on unit boundaries — one unit per segment when none pair up", () => {
+    const segments = segment(alternatingUnits(1000), 1500);
+    expect(segments).toEqual([
+      { seqStart: 0, seqEnd: 0 },
+      { seqStart: 1, seqEnd: 1 },
+      { seqStart: 2, seqEnd: 2 },
+      { seqStart: 3, seqEnd: 3 },
+    ]);
+  });
+
+  it("isolates a lone over-budget unit into its own segment", () => {
+    const entries = [
+      entry(0, "user", [text("hi")]),
+      entry(1, "assistant", [text("a".repeat(5000))]),
+      entry(2, "user", [text("bye")]),
+    ];
+    expect(segment(entries, 2500)).toEqual([
+      { seqStart: 0, seqEnd: 0 },
+      { seqStart: 1, seqEnd: 1 },
+      { seqStart: 2, seqEnd: 2 },
+    ]);
+  });
+
+  it("segments only the seqRange window (delta input)", () => {
+    expect(
+      segment(alternatingUnits(1000), 1_000_000, { seqRange: [2, 3] }),
+    ).toEqual([{ seqStart: 2, seqEnd: 3 }]);
+    expect(segment(alternatingUnits(1000), 1500, { seqRange: [2, 3] })).toEqual(
+      [
+        { seqStart: 2, seqEnd: 2 },
+        { seqStart: 3, seqEnd: 3 },
+      ],
+    );
+  });
+
+  it("extends the final segment over a trailing tool_result folded into its unit", () => {
+    const entries: TranscriptEntryWithSeq[] = [
+      entry(0, "user", [text("question")]),
+      entry(1, "assistant", [text("answer")]),
+      {
+        kind: "tool_result",
+        seq: 2,
+        entryId: null,
+        timestamp: "2024-01-01T00:00:00Z",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "output" },
+        ],
+      },
+    ];
+    expect(segment(entries, 1_000_000)).toEqual([{ seqStart: 0, seqEnd: 2 }]);
+  });
+
+  it("returns no segments for an empty window", () => {
+    expect(segment([], 1000)).toEqual([]);
+    expect(
+      segment(alternatingUnits(1000), 1000, { seqRange: [99, 100] }),
+    ).toEqual([]);
   });
 });

@@ -400,6 +400,91 @@ function selectWindow(
   return { selected, excluded };
 }
 
+/** Render one unit's parts into `[s<seq>] <line>` lines with their seqs. */
+function renderUnitLines(
+  parts: UnitPart[],
+  options: RenderOptions,
+  omissions: MutableOmissions,
+): { lines: string[]; lineSeqs: number[] } {
+  const lines: string[] = [];
+  const lineSeqs: number[] = [];
+  for (const part of parts) {
+    for (const block of part.content) {
+      for (const line of renderBlockLines(block, options, omissions)) {
+        lines.push(`[s${part.seq}] ${line}`);
+        lineSeqs.push(part.seq);
+      }
+    }
+  }
+  return { lines, lineSeqs };
+}
+
+/** Byte cost of a unit's rendered lines, matching the truncation accounting. */
+function unitByteCost(lines: string[]): number {
+  return lines.reduce((sum, line) => sum + byteLength(line) + 1, 0);
+}
+
+export interface TranscriptSegment {
+  seqStart: number;
+  seqEnd: number;
+}
+
+/**
+ * Partition the (windowed) transcript into ordered, contiguous seq segments
+ * whose rendered size stays within `windowBudgetBytes`, for map-reduce
+ * ("delta-fold") compaction of transcripts too large for a single pass
+ * (docs/design/conversation-compaction/README.md §7.3).
+ *
+ * Cuts fall only on merged-unit boundaries — a segment never splits a logical
+ * message — so each segment's seq span aligns with the delta-merge contract
+ * (coverage extends monotonically; sourceRefs stay inside the covered range).
+ * A single unit larger than the budget becomes its own (over-budget) segment
+ * rather than being dropped; the caller renders it with the renderer's
+ * intra-unit truncation as graceful degradation. Byte accounting reuses the
+ * exact per-unit rendering `renderCompactTranscript` uses, so a segment packed
+ * under the budget renders without truncation.
+ */
+export function segmentTranscript(
+  input: RenderTranscriptInput,
+  options: RenderOptions,
+  windowBudgetBytes: number,
+): TranscriptSegment[] {
+  const allUnits = groupTranscriptEntries(input.entries);
+  const { selected } = selectWindow(allUnits, options);
+
+  const segments: TranscriptSegment[] = [];
+  let current: { seqStart: number; seqEnd: number; bytes: number } | null =
+    null;
+
+  for (const { parts } of selected) {
+    const firstPart = parts[0];
+    const lastPart = parts[parts.length - 1];
+    if (!firstPart || !lastPart) continue;
+    const { lines } = renderUnitLines(parts, options, {
+      thinkingOmitted: 0,
+      toolResultBytesElided: 0,
+    });
+    const cost = unitByteCost(lines);
+
+    if (current === null) {
+      current = { seqStart: firstPart.seq, seqEnd: lastPart.seq, bytes: cost };
+      continue;
+    }
+    if (current.bytes + cost > windowBudgetBytes) {
+      segments.push({ seqStart: current.seqStart, seqEnd: current.seqEnd });
+      current = { seqStart: firstPart.seq, seqEnd: lastPart.seq, bytes: cost };
+      continue;
+    }
+    current.seqEnd = lastPart.seq;
+    current.bytes += cost;
+  }
+
+  if (current !== null) {
+    segments.push({ seqStart: current.seqStart, seqEnd: current.seqEnd });
+  }
+  return segments;
+}
+
 /**
  * Render entry records into the compact transcript shape. Pure — options must
  * already be validated via `renderOptionsSchema`. `options.format` is
@@ -444,21 +529,9 @@ export function renderCompactTranscript(
       thinkingOmitted: 0,
       toolResultBytesElided: 0,
     };
-    const lines: string[] = [];
-    const lineSeqs: number[] = [];
-    for (const part of parts) {
-      for (const block of part.content) {
-        for (const line of renderBlockLines(block, options, unitOmissions)) {
-          lines.push(`[s${part.seq}] ${line}`);
-          lineSeqs.push(part.seq);
-        }
-      }
-    }
+    const { lines, lineSeqs } = renderUnitLines(parts, options, unitOmissions);
 
-    const unitBytes = lines.reduce(
-      (sum, line) => sum + byteLength(line) + 1,
-      0,
-    );
+    const unitBytes = unitByteCost(lines);
     const firstPart = unit.parts[0];
     const lastPart = unit.parts[unit.parts.length - 1];
     const ref = {
