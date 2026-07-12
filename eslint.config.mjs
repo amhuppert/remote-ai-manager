@@ -97,6 +97,7 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/FileAutocomplete.tsx",
   "src/components/FileAutocompleteList.tsx",
   "src/components/ConversationAutocompleteList.tsx",
+  "src/components/TicketAutocompleteList.tsx",
   "src/components/DevServerDrawer.tsx",
   "src/features/session/conversation/DevServersButton.tsx",
   // Stage B-5b agent-capability globals.css chrome slices (drawer shell, MCP panel,

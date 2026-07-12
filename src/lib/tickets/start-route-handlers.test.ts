@@ -116,7 +116,12 @@ describe("POST /api/projects/:name/tickets/:number/start", () => {
     const { handlers, calls } = makeHandlers();
 
     const response = await handlers.startPOST(
-      request({ mode: "agent" }),
+      request({
+        mode: "agent",
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+      }),
       context(),
     );
 
@@ -125,7 +130,14 @@ describe("POST /api/projects/:name/tickets/:number/start", () => {
       JSON.parse(JSON.stringify(sampleOutput)),
     );
     expect(calls).toEqual([
-      { projectName: PROJECT_NAME, number: 12, mode: "agent" },
+      {
+        projectName: PROJECT_NAME,
+        number: 12,
+        mode: "agent",
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+      },
     ]);
   });
 

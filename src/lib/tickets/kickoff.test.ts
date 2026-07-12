@@ -28,6 +28,9 @@ const KICKOFF: TicketKickoffInput = {
   conversationId: "conv-1",
   ticketIdentifier: "demo#12",
   prompt: "You are starting work on ticket demo#12: Fix the gate",
+  backend: "codex",
+  model: "gpt-5.6-sol",
+  reasoningEffort: "ultra",
 };
 
 interface Recorded {
@@ -78,7 +81,7 @@ describe("createTicketKickoffQueuer", () => {
     expect(recorded.notices).toEqual([]);
   });
 
-  it("queues the first turn on the configured default backend and reports queued before the turn settles", async () => {
+  it("queues the first turn with the selected backend, model, and reasoning effort", async () => {
     let settle!: (result: { dispatched: boolean }) => void;
     const turn = new Promise<{ dispatched: boolean }>((resolve) => {
       settle = resolve;
@@ -100,6 +103,8 @@ describe("createTicketKickoffQueuer", () => {
       session: SESSION,
       initialPrompt: KICKOFF.prompt,
       agent: "codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
     });
     settle({ dispatched: true });
   });

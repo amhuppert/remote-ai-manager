@@ -258,17 +258,26 @@ function makeService(overrides: Partial<TicketStartServiceDeps> = {}): {
 }
 
 describe("buildTicketSessionName", () => {
-  it("derives a deterministic name from number, title slug, and start ordinal", () => {
+  it("preserves the ticket title in the first session name", () => {
     expect(buildTicketSessionName(12, "Add durable Ticket context!", 1)).toBe(
-      "ticket-12-add-durable-ticket-context-1",
-    );
-    expect(buildTicketSessionName(12, "Add durable Ticket context!", 2)).toBe(
-      "ticket-12-add-durable-ticket-context-2",
+      "Ticket: Add durable Ticket context!",
     );
   });
 
-  it("falls back to a stable slug when the title has no usable characters", () => {
-    expect(buildTicketSessionName(3, "???", 1)).toBe("ticket-3-work-1");
+  it("adds a readable suffix for later starts of the same ticket", () => {
+    expect(buildTicketSessionName(12, "Add durable Ticket context!", 2)).toBe(
+      "Ticket: Add durable Ticket context! (2)",
+    );
+  });
+
+  it("keeps punctuation because it is valid in session names", () => {
+    expect(buildTicketSessionName(3, "???", 1)).toBe("Ticket: ???");
+  });
+
+  it("fits the readable name within the session-name limit", () => {
+    const name = buildTicketSessionName(3, "a".repeat(120), 2);
+    expect(name).toHaveLength(100);
+    expect(name).toMatch(/^Ticket: a+ \(2\)$/);
   });
 });
 
@@ -318,6 +327,9 @@ describe("start", () => {
       projectName: PROJECT_NAME,
       number: ticket.number,
       mode: "agent",
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
     });
 
     expect(result.ok).toBe(true);
@@ -346,6 +358,11 @@ describe("start", () => {
       },
     ]);
     expect(recorded.deletions).toEqual([]);
+    expect(recorded.kickoffs[0]?.input).toMatchObject({
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+    });
 
     const persisted = await repo.find(PROJECT_PATH, ticket.number);
     expect(persisted?.status).toBe("in_progress");

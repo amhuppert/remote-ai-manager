@@ -25,6 +25,7 @@ import {
   SlashCommand,
   SlashCommandMarker,
   TerminalHotkeys,
+  TicketMention,
   TicketMentionNode,
   type SerializedPromptDoc,
   type SlashCommandTrigger,
@@ -46,6 +47,11 @@ import {
   type ConversationMentionPopupHandle,
   type ConversationMentionSelection,
 } from "@/features/session/prompt/PromptEditorConversationMentionPopup";
+import {
+  PromptEditorTicketMentionPopup,
+  type TicketMentionPopupHandle,
+  type TicketMentionSelection,
+} from "@/features/session/prompt/PromptEditorTicketMentionPopup";
 
 export interface PromptEditorHandle {
   /** Serialize the current document to `{ prompt, images }`. */
@@ -110,6 +116,11 @@ interface FileSuggestionState {
 interface ConversationSuggestionState {
   query: string;
   command: (item: ConversationMentionSelection) => void;
+}
+
+interface TicketSuggestionState {
+  query: string;
+  command: (item: TicketMentionSelection) => void;
 }
 
 /**
@@ -279,9 +290,12 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     );
     const [conversationState, setConversationState] =
       useState<ConversationSuggestionState | null>(null);
+    const [ticketState, setTicketState] =
+      useState<TicketSuggestionState | null>(null);
     const slashPopupRef = useRef<SlashCommandPopupHandle>(null);
     const filePopupRef = useRef<FileMentionPopupHandle>(null);
     const conversationPopupRef = useRef<ConversationMentionPopupHandle>(null);
+    const ticketPopupRef = useRef<TicketMentionPopupHandle>(null);
 
     const editor = useEditor({
       immediatelyRender: true,
@@ -377,6 +391,30 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             },
             onKeyDown: ({ event }) =>
               conversationPopupRef.current?.handleKeyDown(event) ?? false,
+          }),
+        }),
+        TicketMention.configure({
+          items: () => [],
+          render: () => ({
+            onStart: (props) => {
+              setTicketState({
+                query: props.query,
+                command: props.command as (
+                  item: TicketMentionSelection,
+                ) => void,
+              });
+            },
+            onUpdate: (props) => {
+              setTicketState({
+                query: props.query,
+                command: props.command as (
+                  item: TicketMentionSelection,
+                ) => void,
+              });
+            },
+            onExit: () => setTicketState(null),
+            onKeyDown: ({ event }) =>
+              ticketPopupRef.current?.handleKeyDown(event) ?? false,
           }),
         }),
         TerminalHotkeys.configure({
@@ -486,6 +524,15 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             currentConversationId={conversationId}
             onSelect={(selection) => conversationState.command(selection)}
             onClose={() => setConversationState(null)}
+          />
+        ) : null}
+        {ticketState && projectName ? (
+          <PromptEditorTicketMentionPopup
+            ref={ticketPopupRef}
+            query={ticketState.query}
+            currentProjectName={projectName}
+            onSelect={(selection) => ticketState.command(selection)}
+            onClose={() => setTicketState(null)}
           />
         ) : null}
         <EditorContent

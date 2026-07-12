@@ -114,15 +114,15 @@
 
 - [x] 5.3 Implement start-work orchestration with all-or-nothing compensation
   - Keyed in-process lock serializes start and delete per ticket; a concurrent start receives a start-in-progress error; the active-link check names the live session; a stale active link on a reused session name reconciles and retries the insert once
-  - Order: immutable ticket/attachment snapshot → compaction ensure/refresh and re-snapshot → provision a normal session (deterministic name from number, title slug, start ordinal) → materialize and register → activate the charter → one final link-plus-status transaction (the sole automatic transition, to In Progress)
+  - Order: immutable ticket/attachment snapshot → compaction ensure/refresh and re-snapshot → provision a normal session (`Ticket: <title>`, with readable restart suffix and limit-only truncation) → materialize and register → activate the charter → one final link-plus-status transaction (the sole automatic transition, to In Progress)
   - Compaction failure aborts before provisioning; any post-provision failure compensates by deleting the session exactly once and leaves ticket status and links unchanged
   - Done when failure-path tests prove an active conflict provisions nothing, compensation runs exactly once, two concurrent starts yield one success plus one start-in-progress, and a restart after finish/delete preserves prior history
   - _Requirements: 2.2, 2.3, 2.4, 4.2, 4.3, 4.4, 4.7, 5.2_
   - _Depends: 5.1, 5.2_
 
 - [x] 5.4 Dispatch the kickoff and expose start over REST and CLI (integration)
-  - Agent mode queues the existing first-turn dispatcher only after the link transaction commits, with a kickoff prompt built from identifier, title, description, and the shared attachment index with retrieval commands; prepared mode runs no turn; a dispatch failure leaves a linked, usable session and is surfaced
-  - Start endpoint accepting the two modes with conflict/validation/failure semantics; a start subcommand joins the CLI group
+  - Agent mode queues the existing first-turn dispatcher only after the link transaction commits, with a kickoff prompt built from identifier, title, description, and the shared attachment index with retrieval commands plus the user's selected backend, model, and reasoning effort; prepared mode runs no turn; a dispatch failure leaves a linked, usable session and is surfaced
+  - Start endpoint accepting the two modes and kickoff configuration with conflict/validation/failure semantics; a start subcommand joins the CLI group with backend/model/effort flags
   - Done when an agent-mode start begins its first turn from the kickoff and a prepared-mode session stays idle until the user's first prompt
   - _Requirements: 4.1, 4.5, 4.6, 8.1_
   - _Depends: 3.3, 4.1_
@@ -161,6 +161,14 @@
   - _Requirements: 6.2, 6.4_
   - _Boundary: transcript ref rendering_
   - _Depends: 7.1_
+
+- [x] 7.4 Add ticket autocomplete to prompt inputs
+  - A dedicated `!` suggestion extension queries the global ticket list, searches title, identifier, and project, and ranks the current project's matches first
+  - The shared autocomplete shell renders identifier/title plus compact type, status, context-count, active-session, and project metadata with existing keyboard and mobile behavior
+  - Selecting a result inserts the existing removable TicketMentionNode and serializes the canonical ticket-reference XML
+  - Done when filter, popup, extension, component, and Storybook tests cover selection, cross-project results, loading, empty, error, and mobile states
+  - _Requirements: 6.5_
+  - _Depends: 7.1, 9.1_
 
 - [x] 8. Slash-command ticket creation
 - [x] 8.1 (P) Create tickets from conversation context via the ticket command
@@ -233,7 +241,7 @@
 
 - [x] 10.6 Build the create and start dialogs
   - Create: project and work-type selects (pre-filled from project entry; type defaults to Feature), required title, optional markdown description; validation on submit; pending locks inputs with Cancel enabled; failure preserves input and persists nothing; success reports the identifier and nudges adding context
-  - Start: agent/prepared radio choice with a provisioning pending state; the active-session conflict surfaces before the dialog as an alert naming the session; success closes with status In Progress and the session visible as active
+  - Start: agent/prepared radio choice with backend/model/reasoning selectors for agent mode and a provisioning pending state; the active-session conflict surfaces before the dialog as an alert naming the session; success closes with status In Progress and the session visible as active
   - CreateTicketDialog mounts behind a New-ticket trigger on the global and project-prefiltered ticket views; StartTicketDialog mounts behind the detail header's Start action
   - Done when stories cover validation, pending, failure-preserves-input, and success for create, and the start conflict path names the active session
   - _Requirements: 1.1, 1.4, 4.1, 4.3, 9.7_

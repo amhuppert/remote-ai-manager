@@ -36,4 +36,9 @@ export type {
   ConversationMentionExtensionOptions,
   ConversationMentionItem,
 } from "./conversation-mention-extension";
+export { TicketMention } from "./ticket-mention-extension";
+export type {
+  TicketMentionExtensionOptions,
+  TicketMentionItem,
+} from "./ticket-mention-extension";
 export { TerminalHotkeys } from "./terminal-hotkeys-extension";

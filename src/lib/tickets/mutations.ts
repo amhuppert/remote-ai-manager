@@ -13,9 +13,11 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
 
 import { ApiCallError } from "@/lib/api/errors";
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AddTicketAttachmentServiceInput } from "./attachment-service";
 import { resetDeletedTicketCaches } from "./cache-lifecycle";
 import {
@@ -1005,20 +1007,30 @@ export interface StartTicketVars {
   projectName: string;
   number: number;
   mode: TicketStartMode;
+  backend?: AgentBackendId;
+  model?: string;
+  reasoningEffort?: EffortLevel;
 }
 
 export function useStartTicketMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ projectName, number, mode }: StartTicketVars) =>
+    mutationFn: ({
+      projectName,
+      number,
+      mode,
+      backend,
+      model,
+      reasoningEffort,
+    }: StartTicketVars) =>
       mutationFetch(
         `${ticketUrl(projectName, number)}/start`,
         "start-ticket",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode }),
+          body: JSON.stringify({ mode, backend, model, reasoningEffort }),
         },
         startTicketOutputSchema,
       ),

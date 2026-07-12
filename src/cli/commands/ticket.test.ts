@@ -1452,10 +1452,22 @@ describe("cctl ticket start", () => {
     initialPromptQueued: true,
   };
 
-  it("POSTs the mode to the start endpoint and reports the session", async () => {
+  it("POSTs the selected kickoff configuration and reports the session", async () => {
     const host = makeHost(() => jsonResponse(startOutput));
     const result = await runCli(
-      ["ticket", "start", "12", "--mode", "agent"],
+      [
+        "ticket",
+        "start",
+        "12",
+        "--mode",
+        "agent",
+        "--backend",
+        "codex",
+        "--model",
+        "gpt-5.6-sol",
+        "--effort",
+        "ultra",
+      ],
       baseEnv,
       host,
     );
@@ -1465,7 +1477,12 @@ describe("cctl ticket start", () => {
     const req = host.requests[0];
     expect(req?.url).toContain("/api/projects/cc/tickets/12/start");
     expect(req?.init.method).toBe("POST");
-    expect(JSON.parse(String(req?.init.body))).toEqual({ mode: "agent" });
+    expect(JSON.parse(String(req?.init.body))).toEqual({
+      mode: "agent",
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+    });
     expect(result.stdout).toContain("cc#12");
     expect(result.stdout).toContain("ticket-12-fix-the-flaky-gate-1");
     expect(result.stdout).toContain("agent");

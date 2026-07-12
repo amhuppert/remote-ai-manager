@@ -71,6 +71,7 @@
         "src/components/FileAutocomplete.tsx",
         "src/components/FileAutocompleteList.tsx",
         "src/components/ConversationAutocompleteList.tsx",
+        "src/components/TicketAutocompleteList.tsx",
         "src/components/DevServerDrawer.tsx",
         "src/features/session/conversation/DevServersButton.tsx",
         "src/components/agent-capabilities/**/*.{ts,tsx}",

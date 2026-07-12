@@ -76,6 +76,8 @@ The Ticket System gives Command Center a durable place to capture upcoming work 
 5. When work is started in agent-immediate mode, the Ticket System shall begin the session's first agent turn with a kickoff prompt built from the ticket's title, description, and attachment summaries.
 6. When work is started in prepared mode, the Ticket System shall run no agent turn until the user sends the first prompt.
 7. If session provisioning fails, the Ticket System shall report the failure and leave the ticket's status and session links unchanged.
+8. When work is started in agent-immediate mode, the start dialog shall allow the user to choose the agent backend, backend model, and supported reasoning effort for the kickoff turn.
+9. When the Ticket System creates a session for a ticket, its default session name shall be `Ticket: ` followed by the ticket title as written; if the same ticket is started again or the name exceeds session constraints, the Ticket System shall apply only the readable suffixing or truncation needed to produce an available valid session name.
 
 ### Requirement 5: Context Materialization in the Ticket Session
 **Objective:** As an agent working a ticket's session, I want the ticket's context delivered as a durable index plus retrievable content, so that I can work without re-gathering context.
@@ -96,6 +98,7 @@ The Ticket System gives Command Center a durable place to capture upcoming work 
 2. When ticket-reference text is pasted into the prompt input, the Command Center UI shall render it as a ticket-reference chip consistent with existing conversation-reference chips.
 3. When a ticket-reference chip is removed from the prompt input before sending, the Command Center UI shall exclude that reference from the sent prompt.
 4. When a prompt containing a ticket reference is delivered, the Ticket System shall enable the receiving agent to resolve the reference to the ticket's details and attachment index, regardless of which project or session the conversation belongs to.
+5. When a user types `!` at the beginning of a word in a prompt input, Command Center shall offer matching tickets from every project, rank the current project's tickets first, and insert the selected result as a removable ticket-reference chip.
 
 ### Requirement 7: Slash-Command Ticket Creation
 **Objective:** As a Command Center user in a project or session conversation, I want a slash command that turns accumulated conversation context into a ticket, so that capture is effortless at the moment the context exists.

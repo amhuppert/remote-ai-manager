@@ -1,7 +1,12 @@
 import { z } from "zod";
+import {
+  effortLevelSchema,
+  type EffortLevel,
+} from "@/lib/agent-backends/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import { createLogger } from "@/lib/logging";
-import { sanitizeBranchName } from "@/lib/sessions/branch-name";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   projectNameFromPath,
   TicketSessionNotLinkableError,
@@ -47,6 +52,9 @@ export const startTicketServiceInputSchema = z.object({
   projectName: z.string().min(1),
   number: z.number().int().positive(),
   mode: ticketStartModeSchema,
+  backend: agentBackendSchema.optional(),
+  model: z.string().trim().min(1).max(100).optional(),
+  reasoningEffort: effortLevelSchema.optional(),
 });
 export type StartTicketServiceInput = z.input<
   typeof startTicketServiceInputSchema
@@ -88,6 +96,9 @@ export interface TicketKickoffInput {
   /** Names the ticket in the user-visible dispatch-failure notice. */
   ticketIdentifier: string;
   prompt: string;
+  backend?: AgentBackendId;
+  model?: string;
+  reasoningEffort?: EffortLevel;
 }
 
 export interface TicketStartServiceDeps {
@@ -155,19 +166,24 @@ export interface TicketStartServiceDeps {
 // Helpers
 // ============================================================
 
-const SLUG_BUDGET = 40;
-const FALLBACK_SLUG = "work";
+const SESSION_NAME_LIMIT = 100;
+const TICKET_SESSION_PREFIX = "Ticket: ";
 
-/** Deterministic, restart-safe session name: number + title slug + ordinal. */
+/** Human-readable, restart-safe session name derived from the ticket title. */
 export function buildTicketSessionName(
-  number: number,
+  _number: number,
   title: string,
   ordinal: number,
 ): string {
-  const slug =
-    sanitizeBranchName(title).slice(0, SLUG_BUDGET).replace(/-$/, "") ||
-    FALLBACK_SLUG;
-  return `ticket-${number}-${slug}-${ordinal}`;
+  const suffix = ordinal === 1 ? "" : ` (${ordinal})`;
+  const titleBudget =
+    SESSION_NAME_LIMIT - TICKET_SESSION_PREFIX.length - suffix.length;
+  let preservedTitle = title.slice(0, titleBudget);
+  const lastCodeUnit = preservedTitle.charCodeAt(preservedTitle.length - 1);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
+    preservedTitle = preservedTitle.slice(0, -1);
+  }
+  return `${TICKET_SESSION_PREFIX}${preservedTitle}${suffix}`;
 }
 
 /**
@@ -553,6 +569,11 @@ export function createTicketStartService(
     projectName: string,
     number: number,
     mode: TicketStartMode,
+    kickoffConfig: {
+      backend?: AgentBackendId;
+      model?: string;
+      reasoningEffort?: EffortLevel;
+    },
     bindTicketId: (ticketId: string) => void,
   ): Promise<TicketResult<StartTicketOutput>> {
     // The lock-entry snapshot: field/attachment CRUD stays lock-free, so this
@@ -737,6 +758,7 @@ export function createTicketStartService(
           conversationId: provisioned.conversationId,
           ticketIdentifier: identifier,
           prompt,
+          ...kickoffConfig,
         });
       } catch (error) {
         logger.error("start.kickoff_failed", {
@@ -799,7 +821,8 @@ export function createTicketStartService(
           issues: toTicketValidationIssues(parsed.error),
         });
       }
-      const { projectName, number, mode } = parsed.data;
+      const { projectName, number, mode, backend, model, reasoningEffort } =
+        parsed.data;
       const projectPath = await deps.resolveProjectPath(projectName);
       if (projectPath === null) {
         return fail({
@@ -829,6 +852,7 @@ export function createTicketStartService(
             projectName,
             number,
             mode,
+            { backend, model, reasoningEffort },
             (id) => hold.bindTicketId(id),
           );
         } finally {

@@ -61,6 +61,9 @@ export function createTicketStartRouteHandlers(
       const parsed = startTicketServiceInputSchema.safeParse({
         ...identity,
         mode: body["mode"],
+        backend: body["backend"],
+        model: body["model"],
+        reasoningEffort: body["reasoningEffort"],
       });
       if (!parsed.success) {
         return validationFailedResponse(toTicketValidationIssues(parsed.error));
@@ -70,6 +73,9 @@ export function createTicketStartRouteHandlers(
         projectName: parsed.data.projectName,
         number: parsed.data.number,
         mode: parsed.data.mode,
+        backend: parsed.data.backend,
+        model: parsed.data.model,
+        reasoningEffort: parsed.data.reasoningEffort,
       });
       return ticketResponse(await deps.getStartService().start(parsed.data));
     },

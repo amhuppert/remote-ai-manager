@@ -240,7 +240,7 @@ sequenceDiagram
     participant Align as AlignmentService
     participant Prompt as FirstTurnDispatcher
 
-    Caller->>Start: start ticket and mode
+    Caller->>Start: start ticket, mode, and kickoff configuration
     Start->>Start: acquire ticket start lock
     Start->>Repo: load ticket and derive active session
     alt active session exists
@@ -270,8 +270,8 @@ Flow decisions:
 - The ticket is untouched until the final link-and-status transaction (2.2, 4.2). Any failure after provisioning but before that transaction invokes exact-incarnation compensation once. Compensation verifies the session's captured creation time, worktree path, and branch before removing its worktree, state, and provisioned branch; ordinary user-driven session deletion continues to preserve branches. A cleanup failure is reported and leaves the incarnation occupied so a retry cannot target its artifacts. The ticket's status and links are unchanged (4.7 and stricter).
 - The lock covers start and delete only. Field/attachment CRUD proceeds lock-free; the start operation materializes strictly from its entry snapshot, and later edits are legitimate post-start drift visible in the per-turn block (3.4, 5.5). Attachment removal defers physical blob reclamation while a start may hold the blob (lock-aware cleanup).
 - Concurrent start of the same ticket receives `start_in_progress`; concurrent start against a stale active link on a reused session name reconciles the conflicting link (demote with `replaced`/`deleted`) and retries the insert once — if the conflicting session is genuinely live, the standard active-conflict error names it.
-- Session names are deterministic and restart-safe: ticket number + title slug + start ordinal. Start scans forward from the history-derived ordinal to the first unoccupied session name, so a finished/replaced incarnation or failed compensation cannot poison every retry.
-- Immediate mode queues the existing first-turn dispatcher only after the link transaction commits, so the first turn already sees the live ticket block; prepared mode calls no prompt function (4.5, 4.6). A first-turn dispatch failure leaves a linked, usable prepared session and is surfaced, never rolled back.
+- Session names preserve the ticket title: the first name is `Ticket: <title>`, while later starts append a readable ordinal such as ` (2)`. The title is truncated only when needed to stay within the 100-character session-name limit. Start scans forward from the history-derived ordinal to the first unoccupied name, so a finished/replaced incarnation or failed compensation cannot poison every retry.
+- Immediate mode carries the user's selected backend, model, and supported reasoning effort into the existing first-turn dispatcher after the link transaction commits, so the first turn already sees the live ticket block and runs with the requested configuration; prepared mode calls no prompt function (4.5, 4.6). A first-turn dispatch failure leaves a linked, usable prepared session and is surfaced, never rolled back.
 
 ### Slash-Command Creation
 
@@ -356,6 +356,7 @@ refresh: cctl ticket get command-center#12
 | 6.2 | Paste renders chip | ref-paste extension + TicketMentionNode | Prompt editor |
 | 6.3 | Chip removal excludes ref | Serializer emits only present atoms | Prompt editor |
 | 6.4 | Agent resolves ref anywhere | `read-command` with `project#n`; global resolution | `cctl ticket get` |
+| 6.5 | Ticket autocomplete | `!` suggestion extension + global ticket query | TicketMentionNode insertion |
 | 7.1 | Immediate creation, no approval | slash-command adapter, one transaction | /ticket flow |
 | 7.2 | Derive fields from context + hint | Awaited task run with resumed backendRef (+ bounded fallback) | /ticket flow |
 | 7.3 | Auto-attach originating conversation | Same-transaction conversation attachment + snapshot | /ticket flow |
@@ -500,7 +501,13 @@ Covered by the Start Work flow above. Contract:
 ```typescript
 type TicketStartMode = "agent" | "prepared";
 
-interface StartTicketInput { identity: TicketIdentity; mode: TicketStartMode; }
+interface StartTicketInput {
+  identity: TicketIdentity;
+  mode: TicketStartMode;
+  backend?: "claude" | "codex";
+  model?: string;
+  reasoningEffort?: EffortLevel;
+}
 
 interface StartTicketOutput {
   ticket: TicketDetail;
@@ -560,6 +567,8 @@ Deterministic, read-only, complete-index rendering per the Live Ticket Context f
 
 The parser ignores fenced code, validates required attributes, and leaves malformed tags as plain text (6.2). The Tiptap atom stores validated attributes, displays identifier plus truncated title, serializes back in canonical attribute order, and disappears from the outgoing prompt when deleted (6.3). Resolution is agent-side via the embedded globally-valid `read-command` (6.4). Refs carry display identity and commands — never project paths, snapshot keys, notes, or content.
 
+Typing `!` at a word boundary opens the ticket autocomplete above the prompt input. It reuses the shared autocomplete shell and keyboard contract, searches title, `project#number`, and project name across the global ticket list, and ranks the current project's tickets first. Rows show identifier and title over compact type, status, context-count, active-session, and project metadata. Selection inserts the same `TicketMentionNode` used by pasted references, so serialization and removal stay canonical (6.5).
+
 ### HTTP API
 
 | Method | Endpoint | Purpose | Success | Errors |
@@ -612,7 +621,7 @@ Frames stay under the 1–2 KB target; the schema excludes `_sentAt` (envelope s
 - **TicketList**: dense rows on the grid `3px 160px 1fr 118px 128px 64px 220px 92px 44px` (rail · id · title · type · status · CTX · session · updated · kebab); the "CTX" column renders `attachmentCount` as paperclip + count, tertiary when 0 (signals an un-enriched ticket); kebab `DropdownMenu` = Open / Copy reference / Delete….
 - **TicketBoard** (9.3, 9.4): five `bg-base` column wells over the `bg-void` shell; `bg-surface` cards (mono id, 2-line clamped title, type badge, attachment count, active-session dot); card kebab carries a `DropdownMenuRadioGroup` "Move to" — the guaranteed non-drag status path.
 - **TicketDetailPage** (`/tickets/[projectName]/[number]`; 1.8, 9.6): header (identity + status pill + type badge + actions: Copy reference, Start work, Delete behind `AlertDialog`) over a **main + 340px rail** grid — the attachment index keeps ~72ch width as the hero; the rail carries Fields + Session history. `TicketEditor`: click-to-edit title (Enter/Esc, "saving…" spinner tail), description textarea + Save/Cancel rendered via `MarkdownContent`. `AttachmentIndex` entries lead with the **description** (body font, primary), then kind chip + mono metadata + View/Edit/Remove text actions, with expand-in-place preview on `bg-void`. `AttachmentDialog`: `SegmentedControl` kind picker + per-kind form + required description (submit disabled while empty).
-- **StartTicketDialog** (4.1, 4.3, 9.7): `RadioGroup` agent/prepared; pending confirm "Provisioning…" with `Spinner` (Cancel stays enabled until the link transaction commits); the active-session conflict surfaces **pre-dialog** as an `AlertDialog` naming the session — not a disabled button — so the reason is discoverable.
+- **StartTicketDialog** (4.1, 4.3, 4.8, 9.7): `RadioGroup` agent/prepared; agent mode exposes backend, model, and supported reasoning-effort selectors while prepared mode hides them; pending confirm "Provisioning…" with `Spinner` (Cancel stays enabled until the link transaction commits); the active-session conflict surfaces **pre-dialog** as an `AlertDialog` naming the session — not a disabled button — so the reason is discoverable.
 - **CreateTicketDialog** (1.1; screen `06`): Project + Work type `Select`s side by side (project pre-filled from a project-page entry; type defaults to Feature), required Title, optional markdown description; validation on submit (`FormError`); pending locks inputs but keeps Cancel enabled; failure persists nothing (the counter increments only on commit) and preserves input; success reports the identifier and nudges "Add context" on the new dossier.
 - **Chips** (6.1–6.3): `TicketMentionChip`/`TicketRefLinkChip` are a byte-level copy of the ConversationMentionChip recipe (`bg-raised`, `border-default`, `rounded-md`, mono 0.78rem, × with red hover) with a ticket glyph replacing the `#` sigil; the read-side chip drops × and gains a cyan hover ring + navigation. `CopyTicketReferenceButton`: ghost mono button, "Copied ✓" for 1.6s.
 - **Session indicators** (10.1, 10.2): `SessionRow` pill after the session name and a `SessionInfoStrip` chip in the identity cluster — active = `border-cyan-dim` + `--cc-cyan-a08` bg + cyan text; ended = `border-subtle` + `bg-raised` + tertiary — for active **and** historical links; the join requires exact equality between `sessions.created_at` and `ticket_sessions.session_created_at`; click navigates to the detail route. `/ticket` appears in the slash popup as one more `AutocompleteOption` with a `command` badge.

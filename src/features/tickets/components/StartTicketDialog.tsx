@@ -3,6 +3,9 @@
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import BackendToggle from "@/components/BackendToggle";
+import ModelSelector from "@/components/ModelSelector";
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,11 +25,23 @@ import { FormError, FormGroup } from "@/components/ui/FormField";
 import { RadioGroup, RadioGroupOption } from "@/components/ui/RadioGroup";
 import { Spinner } from "@/components/ui/Spinner";
 import { useDialogRequestGeneration } from "@/hooks/use-dialog-request-generation";
+import {
+  getDefaultModelForBackend,
+  getEffortLevelsForBackend,
+  type EffortLevel,
+} from "@/lib/agent-backends/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { useStartTicketMutation } from "@/lib/tickets/mutations";
 import type { TicketStartMode } from "@/lib/tickets/schemas";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 
 import FieldGroupLabel from "./FieldGroupLabel";
+
+function defaultEffort(backend: AgentBackendId, model: string): EffortLevel {
+  const levels = getEffortLevelsForBackend(backend, model);
+  if (levels.includes("high")) return "high";
+  return levels[levels.length - 1] ?? "high";
+}
 
 export interface StartTicketDialogProps {
   projectName: string;
@@ -43,6 +58,11 @@ export default function StartTicketDialog({
 }: StartTicketDialogProps): React.JSX.Element {
   const router = useRouter();
   const [mode, setMode] = useState<TicketStartMode>("agent");
+  const [backend, setBackend] = useState<AgentBackendId>("claude");
+  const [model, setModel] = useState(() => getDefaultModelForBackend("claude"));
+  const [reasoningEffort, setReasoningEffort] = useState<EffortLevel>(() =>
+    defaultEffort("claude", model),
+  );
   const [error, setError] = useState<string | null>(null);
   const [preparedSessionName, setPreparedSessionName] = useState<string | null>(
     null,
@@ -67,6 +87,10 @@ export default function StartTicketDialog({
     if (!nextOpen) {
       requestGeneration.invalidate();
       setMode("agent");
+      const defaultModel = getDefaultModelForBackend("claude");
+      setBackend("claude");
+      setModel(defaultModel);
+      setReasoningEffort(defaultEffort("claude", defaultModel));
       setError(null);
       setPreparedSessionName(null);
     }
@@ -76,8 +100,22 @@ export default function StartTicketDialog({
   const submit = () => {
     setError(null);
     const generation = requestGeneration.capture();
+    const effortLevels = getEffortLevelsForBackend(backend, model);
     startMutation.mutate(
-      { projectName, number, mode },
+      {
+        projectName,
+        number,
+        mode,
+        ...(mode === "agent"
+          ? {
+              backend,
+              model,
+              ...(effortLevels.includes(reasoningEffort)
+                ? { reasoningEffort }
+                : {}),
+            }
+          : {}),
+      },
       {
         onSuccess: (output) => {
           if (!requestGeneration.isCurrent(generation)) return;
@@ -97,6 +135,21 @@ export default function StartTicketDialog({
         },
       },
     );
+  };
+
+  const changeBackend = (nextBackend: AgentBackendId) => {
+    const nextModel = getDefaultModelForBackend(nextBackend);
+    setBackend(nextBackend);
+    setModel(nextModel);
+    setReasoningEffort(defaultEffort(nextBackend, nextModel));
+  };
+
+  const changeModel = (nextModel: string) => {
+    const levels = getEffortLevelsForBackend(backend, nextModel);
+    setModel(nextModel);
+    if (!levels.includes(reasoningEffort)) {
+      setReasoningEffort(defaultEffort(backend, nextModel));
+    }
   };
 
   const openPreparedSession = () => {
@@ -156,6 +209,49 @@ export default function StartTicketDialog({
                 />
               </RadioGroup>
             </FormGroup>
+
+            {mode === "agent" && (
+              <FormGroup>
+                <FieldGroupLabel>Kickoff agent</FieldGroupLabel>
+                <div className="flex flex-wrap items-end gap-lg">
+                  <div className="flex flex-col gap-2xs">
+                    <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                      Backend
+                    </span>
+                    <BackendToggle
+                      value={backend}
+                      onChange={changeBackend}
+                      disabled={pending}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2xs">
+                    <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                      Model
+                    </span>
+                    <ModelSelector
+                      backend={backend}
+                      value={model}
+                      onChange={changeModel}
+                      disabled={pending}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2xs">
+                    <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                      Reasoning
+                    </span>
+                    <ReasoningLevelSelector
+                      value={reasoningEffort}
+                      onChange={setReasoningEffort}
+                      availableLevels={getEffortLevelsForBackend(
+                        backend,
+                        model,
+                      )}
+                      disabled={pending}
+                    />
+                  </div>
+                </div>
+              </FormGroup>
+            )}
 
             {error !== null && <FormError role="alert">{error}</FormError>}
 

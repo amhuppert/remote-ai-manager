@@ -220,7 +220,9 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     summary: "start work on a ticket in a new session",
     description:
       "Provision a ready-to-work session for the ticket: attachments and conversation summaries are materialized into the worktree, a ticket charter is activated, the session is linked, and the ticket moves to in_progress. --mode agent queues an immediate first agent turn built from the ticket; --mode prepared leaves the session idle until the user's first prompt. A ticket with an active linked session is rejected naming that session.",
-    usage: [`cctl ticket start ${REF_PLACEHOLDER} --mode <agent|prepared>`],
+    usage: [
+      `cctl ticket start ${REF_PLACEHOLDER} --mode <agent|prepared> [--backend <claude|codex> --model <model> --effort <level>]`,
+    ],
     flags: [
       {
         name: "mode",
@@ -229,10 +231,29 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         description:
           "required — agent begins working immediately; prepared waits for the user's first prompt",
       },
+      {
+        name: "backend",
+        kind: "value",
+        valuePlaceholder: "<claude|codex>",
+        description: "backend for the immediate kickoff turn",
+      },
+      {
+        name: "model",
+        kind: "value",
+        valuePlaceholder: "<model>",
+        description: "backend model for the immediate kickoff turn",
+      },
+      {
+        name: "effort",
+        kind: "value",
+        valuePlaceholder: "<minimal|low|medium|high|xhigh|max|ultra>",
+        description: "reasoning effort for the immediate kickoff turn",
+      },
     ],
     examples: [
       {
-        invocation: "cctl ticket start 12 --mode agent",
+        invocation:
+          "cctl ticket start 12 --mode agent --backend codex --model gpt-5.6-sol --effort ultra",
         explanation:
           "provisions the session and queues the kickoff turn from the ticket's title, description, and attachment index",
       },

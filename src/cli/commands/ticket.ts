@@ -1,5 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
+import { effortLevelSchema } from "@/lib/agent-backends/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   buildAttachmentIndex,
   renderAttachmentIndexLines,
@@ -769,6 +771,11 @@ async function runTicketStart(
   }
   const mode = enumFlagValue(values, "mode", ticketStartModeSchema, json);
   if (!mode.ok) return mode.result;
+  const backend = enumFlagValue(values, "backend", agentBackendSchema, json);
+  if (!backend.ok) return backend.result;
+  const effort = enumFlagValue(values, "effort", effortLevelSchema, json);
+  if (!effort.ok) return effort.result;
+  const model = values["model"];
 
   const resolved = await resolveTicketTarget(ref.ref, flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -781,7 +788,12 @@ async function runTicketStart(
     tokenSource,
     method: "POST",
     path: `${ticketPath(projectName, ref.ref.number)}/start`,
-    body: { mode: mode.value },
+    body: {
+      mode: mode.value,
+      ...(backend.value !== undefined ? { backend: backend.value } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(effort.value !== undefined ? { reasoningEffort: effort.value } : {}),
+    },
   });
   if (result.kind !== "ok") return failureFromRequest(result, json);
 

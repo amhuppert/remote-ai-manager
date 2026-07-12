@@ -125,6 +125,57 @@ describe("StartTicketDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("lets immediate starts choose a backend, model, and reasoning effort", async () => {
+    let requestBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          ticket: STARTED_TICKET,
+          sessionName: "Ticket: Harden ticket context",
+          conversationId: "conv-12",
+          initialPromptQueued: true,
+        });
+      },
+    );
+    renderDialog();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Codex" }));
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.click(
+      await screen.findByRole("option", { name: /GPT-5.6 Sol/ }),
+    );
+    await user.click(screen.getByTestId("effort-selector-trigger"));
+    await user.click(await screen.findByRole("option", { name: /Ultra/ }));
+    await user.click(screen.getByRole("button", { name: "Start work" }));
+
+    await waitFor(() =>
+      expect(requestBody).toEqual({
+        mode: "agent",
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+      }),
+    );
+  });
+
+  it("hides kickoff settings for a prepared session", async () => {
+    renderDialog();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: /Prepared session/ }));
+
+    expect(screen.queryByText("Backend")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("model-selector-trigger"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("effort-selector-trigger"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps an agent-start warning visible and links to the prepared session when kickoff was not queued", async () => {
     vi.stubGlobal("fetch", async () =>
       Response.json({

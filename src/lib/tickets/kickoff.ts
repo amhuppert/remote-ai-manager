@@ -22,8 +22,7 @@ export interface TicketKickoffQueuerDeps {
   ): Promise<{ dispatched: boolean }>;
   /**
    * The configured default single backend (`config.defaultAgentBackend`).
-   * Ticket start offers no backend choice, so the kickoff runs on it —
-   * hardcoding one would silently override a codex-default install.
+   * Used when a caller does not supply an explicit backend.
    */
   getDefaultAgentBackend(): Promise<AgentBackendId>;
   appendNotice(input: {
@@ -102,7 +101,7 @@ export function createTicketKickoffQueuer(
         });
         return false;
       }
-      const agent = await deps.getDefaultAgentBackend();
+      const agent = input.backend ?? (await deps.getDefaultAgentBackend());
       void deps
         .dispatchFirstTurn({
           projectPath: input.projectPath,
@@ -110,6 +109,8 @@ export function createTicketKickoffQueuer(
           session,
           initialPrompt: input.prompt,
           agent,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
         })
         .then(
           (result) => {
