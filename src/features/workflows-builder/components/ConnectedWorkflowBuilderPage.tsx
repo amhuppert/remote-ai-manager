@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import Topbar from "@/components/Topbar";
+import WorkRailMain from "@/components/WorkRailMain";
 import { formatWorkflowSaveError } from "@/features/workflows-builder/format-save-error";
 import {
   useScopedCreateWorkflowDefinitionMutation,
@@ -242,7 +243,10 @@ export default function ConnectedWorkflowBuilderPage({
               ]
         }
       />
-      <main className="min-h-0 w-full flex-1 overflow-hidden p-0 max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]">
+      <WorkRailMain
+        {...(projectName !== null ? { projectName } : {})}
+        contentClassName="flex flex-col overflow-hidden max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]"
+      >
         <div className="flex h-full min-h-0 flex-1 max-768:flex-col">
           <WorkflowDefinitionsSidebar
             title={isGlobal ? "Global Templates" : "Definitions"}
@@ -309,7 +313,7 @@ export default function ConnectedWorkflowBuilderPage({
             )}
           </div>
         </div>
-      </main>
+      </WorkRailMain>
       {isMobile && (
         <WorkflowMobileTabBar<BuilderMobilePanel>
           tabs={builderMobileTabs}

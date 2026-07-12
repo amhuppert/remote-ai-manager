@@ -6,15 +6,17 @@ import { mutationFetch } from "@/lib/api/fetcher";
 
 export { ApiCallError } from "@/lib/api/errors";
 
-export function useLandPreparedMergeMutation(
-  projectName: string,
-  sessionName: string,
-) {
+export interface PreparedMergeTarget {
+  projectName: string;
+  sessionName: string;
+}
+
+export function useLandPreparedMergeMutation() {
   const queryClient = useQueryClient();
   const addOrUpdateJob = useAddOrUpdateJob();
 
   return useMutation({
-    mutationFn: () =>
+    mutationFn: ({ projectName, sessionName }: PreparedMergeTarget) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge/land`,
         "land-prepared-merge",
@@ -24,7 +26,7 @@ export function useLandPreparedMergeMutation(
         },
         jobDispatchResponseSchema,
       ),
-    onSuccess: (data) => {
+    onSuccess: (data, { projectName, sessionName }) => {
       addOrUpdateJob({
         type: "job-status",
         jobType: data.jobType,
@@ -44,15 +46,12 @@ export function useLandPreparedMergeMutation(
   });
 }
 
-export function useDiscardPreparedMergeMutation(
-  projectName: string,
-  sessionName: string,
-) {
+export function useDiscardPreparedMergeMutation() {
   const queryClient = useQueryClient();
   const addOrUpdateJob = useAddOrUpdateJob();
 
   return useMutation({
-    mutationFn: () =>
+    mutationFn: ({ projectName, sessionName }: PreparedMergeTarget) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge/discard`,
         "discard-prepared-merge",
@@ -62,7 +61,7 @@ export function useDiscardPreparedMergeMutation(
         },
         jobDispatchResponseSchema,
       ),
-    onSuccess: (data) => {
+    onSuccess: (data, { projectName, sessionName }) => {
       addOrUpdateJob({
         type: "job-status",
         jobType: data.jobType,

@@ -35,7 +35,7 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/TddToggle.tsx",
   "src/components/CardContextMenu.tsx",
   "src/components/Topbar.tsx",
-  "src/components/NotificationsPanel.tsx",
+  "src/components/WorkRailMain.tsx",
   "src/components/ApprovalGatePanel.tsx",
   "src/components/ConfirmDialog.tsx",
   "src/components/ModelSelector.tsx",
@@ -93,8 +93,6 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/MergeToast.tsx",
   "src/components/InputNeededToast.tsx",
   "src/components/PromptErrorToast.tsx",
-  "src/components/NotificationsPanelContainer.tsx",
-  "src/components/GlobalActivePanelHotkey.tsx",
   "src/components/CommandAutocompleteList.tsx",
   "src/components/FileAutocomplete.tsx",
   "src/components/FileAutocompleteList.tsx",
@@ -139,7 +137,6 @@ const MIGRATED_UTILITY_FIRST = [
   // tokens.css/Toast.tsx edit outside this integration's ownership; tracked as a
   // remediation task (mint token, swap literal, then add Toast.tsx here + .prettierrc).
   "src/features/session/conversation/**/*.{ts,tsx}",
-  "src/components/LandPreparedMergeButton.tsx",
   "src/features/session/ConversationWorkspace.tsx",
   "src/app/projects/[name]/[session]/conflicts/page.tsx",
   // global-workflow-templates library + launch UI: authored utility-first against

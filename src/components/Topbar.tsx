@@ -10,12 +10,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
-import {
-  useUnifiedPanelOpen,
-  useToggleUnifiedPanel,
-} from "@/stores/unified-panel.store";
-import { useNotificationsQuery } from "@/lib/notifications/queries";
-import { useActiveJobs } from "@/stores/notification.store";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import {
   activeConversationHref,
@@ -55,17 +49,8 @@ export default function Topbar({
     getServerHydrationSnapshot,
   );
   const pathname = usePathname();
-  const panelOpen = useUnifiedPanelOpen();
-  const togglePanel = useToggleUnifiedPanel();
-  const { data: notificationsData } = useNotificationsQuery();
-  const activeJobs = useActiveJobs();
   const { data: activeConvosData } = useActiveConversationsQuery();
   const clientStateReady = useClientStateReady();
-  // Badge shows unread notification count + running jobs
-  const unreadCount = clientStateReady
-    ? (notificationsData?.unreadCount ?? 0)
-    : 0;
-  const badgeCount = unreadCount + (clientStateReady ? activeJobs.length : 0);
   const pinnedConversations = clientStateReady
     ? (activeConvosData?.conversations ?? []).filter(
         activeConversationNeedsAttention,
@@ -333,25 +318,6 @@ export default function Topbar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <div className="h-[24px] w-px shrink-0 bg-border-default" />
-        <button
-          className={cn(
-            "flex shrink-0 cursor-pointer items-center gap-[4px] rounded-sm border border-solid border-border-subtle bg-transparent px-[8px] py-[4px] text-[0.8rem] text-text-secondary transition-[background,border-color,color] duration-150 ease-[ease]",
-            panelOpen
-              ? "border-cyan bg-[var(--cc-cyan-a08)] text-cyan"
-              : "hover:bg-bg-elevated hover:text-text-primary",
-          )}
-          onClick={togglePanel}
-          title="Activity & Notifications"
-          type="button"
-        >
-          <span className="text-[0.85rem] leading-none">&#9776;</span>
-          {badgeCount > 0 && (
-            <span className="inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-[8px] bg-cyan px-[4px] font-mono text-[0.7rem] leading-none font-bold text-[var(--bg-base)]">
-              {badgeCount}
-            </span>
-          )}
-        </button>
         {page !== "detail" && (
           <div className="topbar-status-default">{globalStatus}</div>
         )}

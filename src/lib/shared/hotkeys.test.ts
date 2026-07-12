@@ -13,7 +13,6 @@ describe("HOTKEY_REGISTRY", () => {
       "firstMessage",
       "lastMessage",
       "toggleSidebar",
-      "toggleActivePanel",
       "toggleDevTools",
       "focusSidebarSearch",
       "nextFile",

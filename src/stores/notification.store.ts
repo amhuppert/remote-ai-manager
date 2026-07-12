@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { enableMapSet } from "immer";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
@@ -199,35 +198,6 @@ export const useNotificationStore = create<NotificationStore>()(
 export const useNotificationJobs = () => useNotificationStore((s) => s.jobs);
 export const useNotificationToastQueue = () =>
   useNotificationStore((s) => s.toastQueue);
-export const useActiveJobs = () => {
-  const jobs = useNotificationStore((s) => s.jobs);
-  return useMemo(
-    () =>
-      Array.from(jobs.values()).filter(
-        (j) =>
-          j.status === "running" ||
-          j.status === "conflicts" ||
-          j.status === "ready-to-land",
-      ),
-    [jobs],
-  );
-};
-
-export const useJobsBySession = (projectName: string, sessionName: string) => {
-  const jobs = useNotificationStore((s) => s.jobs);
-  return useMemo(
-    () =>
-      Array.from(jobs.values()).filter(
-        (j) =>
-          j.projectName === projectName &&
-          j.sessionName === sessionName &&
-          (j.status === "running" ||
-            j.status === "conflicts" ||
-            j.status === "ready-to-land"),
-      ),
-    [jobs, projectName, sessionName],
-  );
-};
 
 // ---------------------------------------------------------------------------
 // Action hooks

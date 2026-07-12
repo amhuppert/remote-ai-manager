@@ -35,14 +35,6 @@ vi.mock(
   async () => (await import("@/test/component-mocks")).nextNavigationMock,
 );
 
-vi.mock("@/stores/unified-panel.store", () => ({
-  useUnifiedPanelOpen: () => false,
-  useToggleUnifiedPanel: () => vi.fn(),
-}));
-vi.mock("@/stores/notification.store", () => ({
-  useActiveJobs: () => [],
-}));
-
 const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
   config: {
     baseDir: "/home/user/projects",

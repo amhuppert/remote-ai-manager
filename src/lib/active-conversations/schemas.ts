@@ -161,6 +161,13 @@ const activeCollaborationExecutionSchema = z.object({
   updatedAt: z.string(),
 });
 
+export type ActiveGraphWorkflowExecution = z.infer<
+  typeof activeGraphWorkflowExecutionSchema
+>;
+export type ActiveCollaborationExecution = z.infer<
+  typeof activeCollaborationExecutionSchema
+>;
+
 export const activeConversationsResponseSchema = z.object({
   conversations: z.array(activeConversationSchema),
   graphWorkflowExecutions: z

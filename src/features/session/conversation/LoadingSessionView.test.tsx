@@ -14,16 +14,6 @@ vi.mock(
   "next/navigation",
   async () => (await import("@/test/component-mocks")).nextNavigationMock,
 );
-vi.mock("@/stores/unified-panel.store", () => ({
-  useUnifiedPanelOpen: () => false,
-  useToggleUnifiedPanel: () => vi.fn(),
-}));
-vi.mock("@/lib/notifications/queries", () => ({
-  useNotificationsQuery: () => ({ data: undefined }),
-}));
-vi.mock("@/stores/notification.store", () => ({
-  useActiveJobs: () => [],
-}));
 
 describe("LoadingSessionView", () => {
   it("renders the loading empty state", () => {

@@ -64,7 +64,7 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}TddToggle.tsx`,
   `${path.sep}components${path.sep}CardContextMenu.tsx`,
   `${path.sep}components${path.sep}Topbar.tsx`,
-  `${path.sep}components${path.sep}NotificationsPanel.tsx`,
+  `${path.sep}components${path.sep}WorkRailMain.tsx`,
   `${path.sep}components${path.sep}ApprovalGatePanel.tsx`,
   // Stage B-5b agent-capability drawer-shell slice: the whole directory goes
   // utility-first as the cap-*/tabs/configurator/drawer/trigger families are
@@ -150,13 +150,6 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}MergeToast.tsx`,
   `${path.sep}components${path.sep}InputNeededToast.tsx`,
   `${path.sep}components${path.sep}PromptErrorToast.tsx`,
-  // Stage B-5a unified-panel + modal-feature-bits slice. The dead .unified-panel*
-  // region was deleted from globals.css (its consumer is the already-migrated
-  // .np-* NotificationsPanel); these two carry no legacy classes. The migrated
-  // modals BulkConfirmModal/CreateSessionModal already fall under the
-  // features/project-detail/components/ dir entry above.
-  `${path.sep}components${path.sep}NotificationsPanelContainer.tsx`,
-  `${path.sep}components${path.sep}GlobalActivePanelHotkey.tsx`,
   // Stage B-5a autocomplete slice: the .cmd-*/.file-*/.conversation-* autocomplete
   // regions were deleted from globals.css (only the shared cmdReveal keyframe
   // remains as preserved-CSS). The popup consumers fall under the
@@ -219,7 +212,6 @@ const UTILITY_FIRST_PATHS = [
   // wholesale are dir-scoped (their existing file-scoped entries above stay valid,
   // just now redundant); the shared globals-chrome consumers are file-scoped.
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}`,
-  `${path.sep}components${path.sep}LandPreparedMergeButton.tsx`,
   `${path.sep}components${path.sep}Toast.tsx`,
   `${path.sep}features${path.sep}session${path.sep}ConversationWorkspace.tsx`,
   `${path.sep}app${path.sep}projects${path.sep}[name]${path.sep}[session]${path.sep}conflicts${path.sep}page.tsx`,

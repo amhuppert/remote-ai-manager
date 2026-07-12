@@ -22,19 +22,10 @@ vi.mock(
 );
 
 // File-specific mocks
-vi.mock("@/stores/unified-panel.store", () => ({
-  useUnifiedPanelOpen: () => false,
-  useToggleUnifiedPanel: () => vi.fn(),
-}));
-
 vi.mock("@/lib/active-conversations/queries", () => ({
   useActiveConversationsQuery: () => ({
     data: queryMockState.activeConversationsData,
   }),
-}));
-
-vi.mock("@/lib/notifications/queries", () => ({
-  useNotificationsQuery: () => ({ data: undefined }),
 }));
 
 function makeSessionConversation(
@@ -178,11 +169,6 @@ describe("Topbar", () => {
       />,
     );
     expect(screen.queryByText("3 active")).toBeNull();
-  });
-
-  it("renders unified panel toggle button", () => {
-    render(<Topbar breadcrumbs={[]} page="projects" />);
-    expect(screen.getByTitle("Activity & Notifications")).toBeInTheDocument();
   });
 
   it("renders a global Tickets destination linking to /tickets (ticket-system Req 9.1)", () => {

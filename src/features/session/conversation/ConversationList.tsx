@@ -33,6 +33,7 @@ import {
   useToggleArchivedConversations,
 } from "@/stores/conversations.store";
 import Topbar from "@/components/Topbar";
+import WorkRailMain from "@/components/WorkRailMain";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
 import SessionTicketIndicator from "@/components/SessionTicketIndicator";
@@ -300,7 +301,7 @@ export default function ConversationList({
         }
       />
 
-      <main className="main">
+      <WorkRailMain projectName={projectName} sessionName={sessionName}>
         {isLoading ? (
           <EmptyState>
             <EmptyStateTitle>Loading conversations...</EmptyStateTitle>
@@ -539,7 +540,7 @@ export default function ConversationList({
             )}
           </div>
         )}
-      </main>
+      </WorkRailMain>
 
       <ConfirmDialog
         open={showDeleteConfirm}

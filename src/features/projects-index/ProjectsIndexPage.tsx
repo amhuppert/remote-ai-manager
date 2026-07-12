@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { cn } from "@/lib/ui/cn";
 import Topbar from "@/components/Topbar";
+import WorkRailMain from "@/components/WorkRailMain";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import {
@@ -229,7 +230,7 @@ export default function ProjectsIndexPage(): React.JSX.Element {
           ) : undefined
         }
       />
-      <main className="main">
+      <WorkRailMain>
         <div className="mb-2xl max-768:mb-lg">
           <h1 className="mb-sm font-display text-[2.4rem] leading-[1.1] font-extrabold tracking-[-0.03em] text-text-primary max-768:text-[1.6rem]">
             Ground{" "}
@@ -379,7 +380,7 @@ export default function ProjectsIndexPage(): React.JSX.Element {
             </EmptyStateDesc>
           </EmptyState>
         )}
-      </main>
+      </WorkRailMain>
       <ConfirmDialog
         open={deleteTarget !== null}
         title="Delete Project"

@@ -96,11 +96,6 @@ vi.mock("@/lib/sessions/queries", () => ({
   useBranchPrefixQuery: () => ({ data: undefined }),
 }));
 
-vi.mock("@/stores/unified-panel.store", () => ({
-  useUnifiedPanelOpen: () => false,
-  useToggleUnifiedPanel: () => vi.fn(),
-}));
-
 const deleteMutateMock = vi.fn();
 vi.mock("@/lib/mcp/mutations", () => ({
   useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),

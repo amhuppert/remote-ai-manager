@@ -490,34 +490,6 @@ body:has([data-cc-modal-scrim]) .app *::after {
 }
 
 /* ============================================================
-   Notifications Panel (Activity)
-   ============================================================ */
-
-/* The .np-* rules are migrated to utilities/primitives in
-   src/components/NotificationsPanel.tsx. Only the two component-specific
-   keyframes remain (preserved-CSS per docs/tailwind-conventions.md §5; a
-   keyframe cannot be a utility); the migrated panel references them via
-   `animate-[np-backdrop-in_0.2s_ease]` / `animate-[np-slide-in_0.2s_ease]`. */
-
-@keyframes np-backdrop-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes np-slide-in {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-
-/* ============================================================
    Spinner
    ============================================================ */
 

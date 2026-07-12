@@ -7,7 +7,6 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/ui/cn";
 import type {
@@ -28,6 +27,13 @@ import {
 } from "@/lib/conversations/mutations";
 import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
 import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
+import { useNotificationsQuery } from "@/lib/notifications/queries";
+import { useDismissNotificationMutation } from "@/lib/notifications/mutations";
+import {
+  useLandPreparedMergeMutation,
+  useDiscardPreparedMergeMutation,
+} from "@/lib/git/mutations";
+import { useNotificationJobs } from "@/stores/notification.store";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -65,6 +71,18 @@ import {
 import PeekPopover, {
   type PeekApprovalGate,
 } from "@/features/session/sidebar/PeekPopover";
+import ActiveWorkSection from "@/features/session/sidebar/ActiveWorkSection";
+import type {
+  ActiveWorkAction,
+  ActiveWorkItem,
+  AttentionItem,
+} from "@/features/session/sidebar/active-work";
+import {
+  adaptCollaborations,
+  adaptGraphWorkflows,
+  adaptStoreJobs,
+  deriveNotificationOutcomes,
+} from "@/features/session/sidebar/active-work-adapters";
 import { usePeekReply } from "@/features/session/sidebar/use-peek-reply";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useClientStateReady } from "@/hooks/use-client-state-ready";
@@ -84,37 +102,6 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Status dot color for graph-workflow / collaboration items (legacy
-// `.sidebar-dot.<status>`).
-const SIDEBAR_DOT: Record<string, string> = {
-  running: "bg-cyan shadow-[0_0_4px_var(--color-cyan)]",
-  awaiting: "bg-green",
-  new: "bg-blue shadow-[0_0_4px_var(--color-blue)]",
-  waiting_for_input: "bg-amber shadow-[0_0_4px_var(--color-amber)]",
-};
-
-function sidebarDotClass(status: string): string {
-  return cn(
-    "mt-[5px] size-[6px] shrink-0 rounded-full bg-text-tertiary",
-    SIDEBAR_DOT[status],
-  );
-}
-
-// Active conversations list item (graph-workflow / collaboration link).
-const SIDEBAR_ITEM_CLASS =
-  "flex items-start gap-xs px-[12px] py-[10px] no-underline text-inherit border-y-0 border-r-0 border-l-2 border-solid border-transparent transition-[background-color,border-color] duration-100 ease-[ease] hover:bg-bg-elevated";
-
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 // ---------------------------------------------------------------------------
 // Row item (handles per-row long-press)
@@ -284,6 +271,74 @@ function ConversationSidebar({
     () =>
       clientStateReady ? (activeData?.activeCollaborationExecutions ?? []) : [],
     [activeData, clientStateReady],
+  );
+
+  // --- Active work (jobs + workflows + collabs + durable actionables) ---
+  const storeJobsMap = useNotificationJobs();
+  const storeJobs = useMemo(() => [...storeJobsMap.values()], [storeJobsMap]);
+  const { data: notificationsData } = useNotificationsQuery();
+  const notificationOutcomes = useMemo(
+    () =>
+      deriveNotificationOutcomes(
+        clientStateReady ? (notificationsData?.notifications ?? []) : [],
+        storeJobs,
+      ),
+    [clientStateReady, notificationsData, storeJobs],
+  );
+  const activeWorkItems = useMemo(
+    () => [
+      ...adaptStoreJobs(storeJobs),
+      ...adaptGraphWorkflows(activeGraphWorkflows),
+      ...adaptCollaborations(activeCollaborations),
+      ...notificationOutcomes.needsAction,
+    ],
+    [
+      storeJobs,
+      activeGraphWorkflows,
+      activeCollaborations,
+      notificationOutcomes,
+    ],
+  );
+  const attentionItems = notificationOutcomes.attention;
+
+  // Elapsed-time labels tick on a coarse clock; per-row precision below a
+  // minute is not needed in the rail.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const landMutation = useLandPreparedMergeMutation();
+  const discardMutation = useDiscardPreparedMergeMutation();
+  const dismissNotificationMutation = useDismissNotificationMutation();
+
+  const handleActiveWorkAction = useCallback(
+    (item: ActiveWorkItem, action: ActiveWorkAction) => {
+      if (action.kind === "land") {
+        landMutation.mutate({
+          projectName: item.projectName,
+          sessionName: item.sessionName,
+        });
+        return;
+      }
+      if (action.kind === "discard") {
+        discardMutation.mutate({
+          projectName: item.projectName,
+          sessionName: item.sessionName,
+        });
+        return;
+      }
+      router.push(item.href);
+    },
+    [landMutation, discardMutation, router],
+  );
+
+  const handleDismissAttention = useCallback(
+    (item: AttentionItem) => {
+      dismissNotificationMutation.mutate(item.id);
+    },
+    [dismissNotificationMutation],
   );
 
   // --- Mutations ---
@@ -1049,87 +1104,17 @@ function ConversationSidebar({
             </div>
 
             <div className="flex flex-1 flex-col gap-0 overflow-y-auto bg-bg-base pt-[8px] pb-[16px]">
-              {activeGraphWorkflows.length > 0 && (
-                <div className="flex flex-col">
-                  <div className="flex min-w-0 items-center gap-sm px-[12px] pt-[12px] pb-[4px] font-mono text-[0.7rem] leading-[1.2] font-semibold tracking-[0.12em] text-text-primary uppercase after:order-2 after:h-[1px] after:min-w-[16px] after:flex-1 after:[background-image:linear-gradient(to_right,var(--border-default),transparent)] after:content-['']">
-                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                      Graph Workflows
-                    </span>
-                    <span className="order-1 font-medium text-text-tertiary">
-                      {activeGraphWorkflows.length}
-                    </span>
-                  </div>
-                  {activeGraphWorkflows.map((gw) => (
-                    <Link
-                      key={gw.executionId}
-                      href={`/projects/${encodeURIComponent(gw.projectName)}/${encodeURIComponent(gw.sessionName)}/workflow`}
-                      className={SIDEBAR_ITEM_CLASS}
-                    >
-                      <span className={sidebarDotClass(gw.status)} />
-                      <div className="flex min-w-0 flex-1 flex-col gap-xs">
-                        <div className="flex min-w-0 items-baseline gap-xs">
-                          <div className="flex min-w-0 flex-1 items-center gap-[4px] overflow-hidden text-[0.78rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
-                            {gw.activeContextTitles.length > 0
-                              ? gw.activeContextTitles.join(" + ")
-                              : "Graph Workflow"}
-                          </div>
-                          <span className="shrink-0 font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
-                            {gw.completedContexts}/{gw.totalContexts}
-                          </span>
-                        </div>
-                        <span className="overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary">
-                          {gw.projectName} / {gw.sessionName}
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              )}
-              {activeCollaborations.length > 0 && (
-                <div className="flex flex-col">
-                  <div className="flex min-w-0 items-center gap-sm px-[12px] pt-[12px] pb-[4px] font-mono text-[0.7rem] leading-[1.2] font-semibold tracking-[0.12em] text-text-primary uppercase after:order-2 after:h-[1px] after:min-w-[16px] after:flex-1 after:[background-image:linear-gradient(to_right,var(--border-default),transparent)] after:content-['']">
-                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                      Collaborations
-                    </span>
-                    <span className="order-1 font-medium text-text-tertiary">
-                      {activeCollaborations.length}
-                    </span>
-                  </div>
-                  {activeCollaborations.map((collab) => {
-                    const href = collab.conversationId
-                      ? conversationsPageHref({
-                          conversationId: collab.conversationId,
-                        })
-                      : `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}`;
-                    return (
-                      <Link
-                        key={collab.workflowId}
-                        href={href}
-                        className={SIDEBAR_ITEM_CLASS}
-                      >
-                        <span className={sidebarDotClass(collab.status)} />
-                        <div className="flex min-w-0 flex-1 flex-col gap-xs">
-                          <div className="flex min-w-0 items-baseline gap-xs">
-                            <div className="flex min-w-0 flex-1 items-center gap-[4px] overflow-hidden text-[0.78rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
-                              Collaboration ({collab.status})
-                            </div>
-                            <span className="shrink-0 font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
-                              {formatRelativeTime(collab.updatedAt)}
-                            </span>
-                          </div>
-                          <span className="overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary">
-                            {collab.projectName} / {collab.sessionName}
-                          </span>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
+              <ActiveWorkSection
+                items={activeWorkItems}
+                attention={attentionItems}
+                nowMs={nowMs}
+                onAction={handleActiveWorkAction}
+                onDismissAttention={handleDismissAttention}
+              />
               {hasConversationResults
                 ? renderSections(sidebarSections)
-                : activeGraphWorkflows.length === 0 &&
-                  activeCollaborations.length === 0 && (
+                : activeWorkItems.length === 0 &&
+                  attentionItems.length === 0 && (
                     <div className="px-md py-lg text-center font-mono text-[0.72rem] leading-[1.6] text-text-tertiary">
                       {sidebarFilter
                         ? "No matches."

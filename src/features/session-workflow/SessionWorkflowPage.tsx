@@ -8,6 +8,7 @@ import {
   useGraphWorkflowHistoryQuery,
 } from "@/lib/workflows/queries";
 import Topbar from "@/components/Topbar";
+import WorkRailMain from "@/components/WorkRailMain";
 import {
   EmptyState,
   EmptyStateDesc,
@@ -64,7 +65,11 @@ export default function SessionWorkflowPage() {
         ]}
       />
 
-      <main className="min-h-0 w-full flex-1 overflow-hidden p-0 max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]">
+      <WorkRailMain
+        projectName={decodedProjectName}
+        sessionName={sessionName}
+        contentClassName="flex flex-col overflow-hidden max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]"
+      >
         {executionQuery.isPending ? (
           <EmptyState>
             <EmptyStateTitle>Loading workflow...</EmptyStateTitle>
@@ -93,7 +98,7 @@ export default function SessionWorkflowPage() {
             />
           </div>
         )}
-      </main>
+      </WorkRailMain>
       {isMobile && hasGraphWorkflow && (
         <WorkflowMobileTabBar<ExecutionMobilePanel>
           tabs={executionMobileTabs}

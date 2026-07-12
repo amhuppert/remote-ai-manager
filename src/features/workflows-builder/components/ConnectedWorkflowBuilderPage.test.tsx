@@ -18,6 +18,16 @@ vi.mock(
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+  }),
+  usePathname: () => "/projects/test-project/workflows",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 vi.mock("@/components/Topbar", () => ({
   default: () => <div data-testid="topbar" />,
 }));
@@ -99,7 +109,8 @@ vi.mock("@/lib/config/queries", () => ({
   }),
 }));
 
-vi.mock("@/lib/workflows/mutations", () => ({
+vi.mock("@/lib/workflows/mutations", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workflows/mutations")>()),
   useScopedCreateWorkflowDefinitionMutation: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
