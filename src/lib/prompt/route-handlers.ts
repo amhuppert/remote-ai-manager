@@ -10,6 +10,7 @@ import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/
 import {
   getSession as defaultGetSession,
   getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
+  clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches,
 } from "@/lib/state-store";
 import {
   getConversation as defaultGetConversation,
@@ -35,6 +36,7 @@ import {
   type CollaborationManager,
   CollaborationConversationNotFoundError,
   CollaborationSessionNotFoundError,
+  CollaborationStartConflictError,
 } from "@/lib/workflows/collaboration/manager";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -113,6 +115,12 @@ export interface PromptRouteDeps {
     conversationId: string,
     text: string | null,
   ): Promise<void>;
+  clearConversationPendingPromptTextIfMatches(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    expectedText: string,
+  ): Promise<boolean>;
 }
 
 const defaultDeps: PromptRouteDeps = {
@@ -124,6 +132,8 @@ const defaultDeps: PromptRouteDeps = {
   executePromptStream: defaultExecutePromptStream,
   getCollaborationManager: getDefaultCollaborationManager,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
+  clearConversationPendingPromptTextIfMatches:
+    defaultClearConversationPendingPromptTextIfMatches,
 };
 
 // ---------------------------------------------------------------------------
@@ -393,17 +403,6 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
           { status: 400 },
         );
       }
-      // The user is submitting their draft — clear the persisted pending
-      // prompt text atomically with the dispatch. Without this, the
-      // status→running SSE event triggers a session refetch that can race
-      // the client's fire-and-forget clear and resurrect the old draft on
-      // the next remount of the conversation page.
-      await deps.setConversationPendingPromptText(
-        projectPath,
-        sessionName,
-        conversationId,
-        null,
-      );
       try {
         const manager = deps.getCollaborationManager();
         const result = await manager.start({
@@ -418,9 +417,29 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
           ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
           ...(body.effort !== undefined ? { effort: body.effort } : {}),
+          ...(body.images?.length ? { images: body.images } : {}),
         });
+        try {
+          await deps.clearConversationPendingPromptTextIfMatches(
+            projectPath,
+            sessionName,
+            conversationId,
+            body.submittedPendingPromptText ?? body.prompt,
+          );
+        } catch (error) {
+          logger.warn("collaboration.pending_draft_clear_failed", {
+            projectPath,
+            sessionName,
+            conversationId,
+            workflowId: result.workflowId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         const statusUrl = `/api/projects/${encodeURIComponent(name)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
-        return NextResponse.json({ ...result, statusUrl }, { status: 202 });
+        return NextResponse.json(
+          { workflowId: result.workflowId, status: result.status, statusUrl },
+          { status: 202 },
+        );
       } catch (err) {
         if (err instanceof CollaborationSessionNotFoundError) {
           return NextResponse.json({ error: err.message } satisfies ApiError, {
@@ -432,6 +451,15 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             status: 404,
           });
         }
+        if (err instanceof CollaborationStartConflictError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_START_CONFLICT",
+            } satisfies ApiError,
+            { status: 409 },
+          );
+        }
         const message =
           err instanceof Error ? err.message : "Failed to start collaboration";
         return NextResponse.json({ error: message } satisfies ApiError, {
@@ -439,18 +467,6 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
         });
       }
     }
-
-    // The user is submitting their draft — clear the persisted pending
-    // prompt text atomically with the dispatch. Without this, the
-    // status→running SSE event triggers a session refetch that can race
-    // the client's fire-and-forget clear and resurrect the old draft on
-    // the next remount of the conversation page.
-    await deps.setConversationPendingPromptText(
-      projectPath,
-      sessionName,
-      conversationId,
-      null,
-    );
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -479,6 +495,14 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             {
               effort: body.effort,
               backend: body.backend,
+              onAccepted: async () => {
+                await deps.clearConversationPendingPromptTextIfMatches(
+                  projectPath,
+                  sessionName,
+                  conversationId,
+                  body.submittedPendingPromptText ?? body.prompt,
+                );
+              },
               ...(body.documentFeedback
                 ? { documentFeedback: body.documentFeedback }
                 : {}),

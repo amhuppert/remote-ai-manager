@@ -23,7 +23,7 @@ export interface UsePendingPromptPersistenceArgs {
 
 export interface UsePendingPromptPersistenceResult {
   handlePromptTextChange: (next: string) => void;
-  clearPersistedPendingPromptOnSubmit: () => void;
+  suppressPendingPromptAutosaveAfterSubmit: () => void;
 }
 
 export function usePendingPromptPersistence({
@@ -83,10 +83,10 @@ export function usePendingPromptPersistence({
     [updatePendingPromptMutate, promptTextRef],
   );
 
-  const clearPersistedPendingPromptOnSubmit = useCallback(() => {
+  const suppressPendingPromptAutosaveAfterSubmit = useCallback(() => {
     cancelPendingPromptDebounce();
-    persistPendingPromptText(null);
-  }, [cancelPendingPromptDebounce, persistPendingPromptText]);
+    lastPersistedPendingPromptRef.current = null;
+  }, [cancelPendingPromptDebounce]);
 
   // --- Reset hydration gate when switching conversations ---
   useEffect(() => {
@@ -196,6 +196,6 @@ export function usePendingPromptPersistence({
 
   return {
     handlePromptTextChange,
-    clearPersistedPendingPromptOnSubmit,
+    suppressPendingPromptAutosaveAfterSubmit,
   };
 }

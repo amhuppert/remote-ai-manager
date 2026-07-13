@@ -11,7 +11,10 @@ import {
   createPromptRouteHandlers,
   type PromptRouteDeps,
 } from "./route-handlers";
-import type { CollaborationManager } from "@/lib/workflows/collaboration/manager";
+import {
+  CollaborationStartConflictError,
+  type CollaborationManager,
+} from "@/lib/workflows/collaboration/manager";
 
 // ---------------------------------------------------------------------------
 // Mock deps (no vi.mock needed)
@@ -34,6 +37,9 @@ function createTestDeps(): PromptRouteDeps {
     executePromptStream: vi.fn().mockResolvedValue(undefined),
     getCollaborationManager: vi.fn().mockReturnValue(makeMockManager()),
     setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
+    clearConversationPendingPromptTextIfMatches: vi
+      .fn()
+      .mockResolvedValue(true),
   };
 }
 
@@ -296,9 +302,21 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
   });
 
   it("dispatches /collab prompt to collaboration manager.start with originating agent and config", async () => {
-    const startMock = vi
-      .fn()
-      .mockResolvedValue({ workflowId: "wf-77", status: "started" });
+    const startMock = vi.fn().mockResolvedValue({
+      workflowId: "wf-77",
+      status: "started",
+      transcript: {
+        brief: "redesign auth flow",
+        imageRefs: [
+          {
+            index: 0,
+            mediaType: "image/png",
+            path: "/private/transcripts/conv-1/images/0.png",
+            base64Data: "aW1hZ2UtMQ==",
+          },
+        ],
+      },
+    });
     const manager = makeMockManager({ start: startMock });
     vi.mocked(deps.getCollaborationManager).mockReturnValue(manager);
     vi.mocked(deps.getConversation).mockResolvedValue({
@@ -309,6 +327,18 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     const response = await handlers.conversationPOST(
       makeRequest({
         prompt: "/collab redesign auth flow",
+        images: [
+          {
+            attachmentId: "att-1",
+            mediaType: "image/png" as const,
+            base64Data: "aW1hZ2UtMQ==",
+          },
+          {
+            attachmentId: "att-2",
+            mediaType: "image/jpeg" as const,
+            base64Data: "aW1hZ2UtMg==",
+          },
+        ],
         collab: {
           negotiationRounds: 6,
           autonomousResolutionThreshold: "blocking",
@@ -322,6 +352,11 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     const body = await response.json();
     expect(body.workflowId).toBe("wf-77");
     expect(body.statusUrl).toContain("/collaboration/wf-77");
+    expect(Object.keys(body).sort()).toEqual([
+      "status",
+      "statusUrl",
+      "workflowId",
+    ]);
     expect(deps.executePromptStream).not.toHaveBeenCalled();
     expect(startMock).toHaveBeenCalledTimes(1);
     expect(startMock).toHaveBeenCalledWith(
@@ -332,6 +367,18 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
         brief: "redesign auth flow",
         negotiationRounds: 6,
         autonomousResolutionThreshold: "blocking",
+        images: [
+          {
+            attachmentId: "att-1",
+            mediaType: "image/png",
+            base64Data: "aW1hZ2UtMQ==",
+          },
+          {
+            attachmentId: "att-2",
+            mediaType: "image/jpeg",
+            base64Data: "aW1hZ2UtMg==",
+          },
+        ],
       }),
     );
   });
@@ -414,11 +461,48 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
   // history; if the server doesn't clear it atomically, SSE-driven session
   // refetches (triggered by the status→running transition) can re-hydrate
   // stale draft text into the input on the next navigation.
-  it("clears conversation pendingPromptText before dispatching to executePromptStream", async () => {
+  it("clears conversation pendingPromptText only after the actor accepts the prompt", async () => {
     vi.mocked(deps.getConversation).mockResolvedValue({
       ...testConversation,
       pendingPromptText: "draft about to be submitted",
     } as ConversationState);
+    vi.mocked(deps.executePromptStream).mockImplementation(async (...args) => {
+      expect(
+        deps.clearConversationPendingPromptTextIfMatches,
+      ).not.toHaveBeenCalled();
+      await args[7]?.onAccepted?.();
+      return {
+        conversationId: "conv-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const response = await handlers.conversationPOST(
+      makeRequest({
+        prompt: "draft about to be submitted",
+        submittedPendingPromptText: "  draft about to be submitted  ",
+      }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "test-session",
+      "conv-1",
+      "  draft about to be submitted  ",
+    );
+  });
+
+  it("preserves conversation pendingPromptText when prompt execution fails before acceptance", async () => {
+    vi.mocked(deps.executePromptStream).mockRejectedValue(
+      new Error("Actor creation failed"),
+    );
 
     const response = await handlers.conversationPOST(
       makeRequest({ prompt: "draft about to be submitted" }),
@@ -426,15 +510,13 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     );
 
     expect(response.status).toBe(200);
-    expect(deps.setConversationPendingPromptText).toHaveBeenCalledWith(
-      "/projects/my-project",
-      "test-session",
-      "conv-1",
-      null,
-    );
+    await response.text();
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).not.toHaveBeenCalled();
   });
 
-  it("clears conversation pendingPromptText before dispatching a /collab brief", async () => {
+  it("clears conversation pendingPromptText after accepting a /collab brief", async () => {
     const startMock = vi
       .fn()
       .mockResolvedValue({ workflowId: "wf-clear", status: "started" });
@@ -452,12 +534,81 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     );
 
     expect(response.status).toBe(202);
-    expect(deps.setConversationPendingPromptText).toHaveBeenCalledWith(
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).toHaveBeenCalledWith(
       "/projects/my-project",
       "test-session",
       "conv-1",
-      null,
+      "/collab investigate the regression",
     );
+  });
+
+  it("preserves a newer autosaved draft when an older submission is accepted", async () => {
+    let pendingPromptText = "newer draft";
+    vi.mocked(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).mockImplementation(
+      async (_project, _session, _conversation, expected) => {
+        if (pendingPromptText !== expected) return false;
+        pendingPromptText = "";
+        return true;
+      },
+    );
+    vi.mocked(deps.executePromptStream).mockImplementation(async (...args) => {
+      await args[7]?.onAccepted?.();
+      return {
+        conversationId: "conv-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "older submitted draft" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(pendingPromptText).toBe("newer draft");
+  });
+
+  it("preserves conversation pendingPromptText when /collab start fails", async () => {
+    const startMock = vi
+      .fn()
+      .mockRejectedValue(new Error("config unavailable"));
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(
+      makeMockManager({ start: startMock }),
+    );
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab investigate the regression" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(500);
+    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when another collaboration claims the conversation first", async () => {
+    const startMock = vi
+      .fn()
+      .mockRejectedValue(new CollaborationStartConflictError("conv-1"));
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(
+      makeMockManager({ start: startMock }),
+    );
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab investigate the regression" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "COLLABORATION_START_CONFLICT",
+    });
   });
 
   describe("approval-gate chat exception", () => {

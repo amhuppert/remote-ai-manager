@@ -1148,8 +1148,8 @@ function ConversationSidebar({
             if (onMobileClose) onMobileClose();
             closePeek();
           }}
-          onReplyText={(text) => {
-            peekReplyMutation.mutate(text);
+          onReplyText={(text, images) => {
+            peekReplyMutation.mutate({ text, images });
           }}
           isSendingReply={peekReplyMutation.isPending}
           onAnswerQuestion={(answers) => {

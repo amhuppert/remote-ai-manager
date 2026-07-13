@@ -20,6 +20,27 @@ function getRow(name: string): HTMLElement {
 }
 
 describe("ParameterDeclarationEditor", () => {
+  it("shows the explicit voice limitation for a global template", () => {
+    render(
+      <ParameterDeclarationEditor
+        parameters={[
+          {
+            type: "text",
+            name: "brief",
+            label: "Brief",
+            required: false,
+          },
+        ]}
+        onChange={vi.fn()}
+        voiceProjectName={null}
+      />,
+    );
+
+    expect(
+      screen.getByTitle("Voice input requires a project-scoped workflow"),
+    ).toBeDisabled();
+  });
+
   describe("empty state", () => {
     it("renders an Add parameter affordance and no rows when there are no declarations", () => {
       render(<ParameterDeclarationEditor parameters={[]} onChange={vi.fn()} />);

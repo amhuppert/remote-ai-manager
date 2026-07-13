@@ -48,14 +48,20 @@ interface CodexTaskTurn {
 interface CodexTaskThread {
   readonly id: string | null;
   run(
-    input: string,
+    input: CodexTaskInput,
     options?: { outputSchema?: unknown; signal?: AbortSignal },
   ): Promise<CodexTaskTurn>;
   runStreamed?(
-    input: string,
+    input: CodexTaskInput,
     options?: { outputSchema?: unknown; signal?: AbortSignal },
   ): Promise<{ events: AsyncIterable<unknown> }>;
 }
+
+type CodexTaskInput =
+  | string
+  | Array<
+      { type: "text"; text: string } | { type: "local_image"; path: string }
+    >;
 
 interface CodexTaskRunnerClient {
   startThread(options?: ThreadOptions): CodexTaskThread;
@@ -82,7 +88,7 @@ const defaultDeps: CodexTaskRunnerDeps = {
     (await readConfig()).codex?.pricing ?? null,
 };
 
-function buildPrompt(input: AgentTaskRequest): string {
+function buildPrompt(input: AgentTaskRequest): CodexTaskInput {
   const parts: string[] = [];
 
   if (input.systemInstructions?.length) {
@@ -95,7 +101,12 @@ function buildPrompt(input: AgentTaskRequest): string {
 
   parts.push(input.prompt);
 
-  return parts.join("\n\n");
+  const prompt = parts.join("\n\n");
+  if (!input.imagePaths?.length) return prompt;
+  return [
+    { type: "text", text: prompt },
+    ...input.imagePaths.map((path) => ({ type: "local_image" as const, path })),
+  ];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -110,7 +121,7 @@ function eventMessage(value: unknown): string | null {
 
 async function runCodexTurn(
   thread: CodexTaskThread,
-  prompt: string,
+  prompt: CodexTaskInput,
   options: { outputSchema?: unknown; signal?: AbortSignal },
 ): Promise<CodexTaskTurn> {
   if (typeof thread.runStreamed !== "function") {

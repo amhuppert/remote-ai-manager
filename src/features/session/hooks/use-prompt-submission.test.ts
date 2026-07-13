@@ -73,7 +73,10 @@ function makeEditorRef(serialized: {
 
 describe("usePromptSubmission", () => {
   it("returns the handler surface and dispatches /collab prompts via collaborationStartMutation", async () => {
-    const collabMutate = vi.fn();
+    const collabMutate = vi.fn(
+      (_input: unknown, options?: CollabMutateOptions) =>
+        options?.onSuccess?.(),
+    );
     const sendPrompt = vi.fn(async () => {});
     const queueMessage = vi.fn(async () => {});
     const clearCollabConfigDraft = vi.fn();
@@ -94,7 +97,7 @@ describe("usePromptSubmission", () => {
         editorRef,
         setPromptText: () => {},
         clearImages: () => {},
-        clearPersistedPendingPromptOnSubmit: clearPersisted,
+        suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
@@ -125,6 +128,7 @@ describe("usePromptSubmission", () => {
     const [vars] = collabMutate.mock.calls[0]!;
     expect(vars).toEqual({
       brief: "let's go",
+      submittedPendingPromptText: "/collab let's go",
       negotiationRounds: 2,
       autonomousResolutionThreshold: "minor",
       conversationId: "c",
@@ -153,7 +157,7 @@ describe("usePromptSubmission", () => {
         editorRef,
         setPromptText: () => {},
         clearImages: () => {},
-        clearPersistedPendingPromptOnSubmit: () => {},
+        suppressPendingPromptAutosaveAfterSubmit: () => {},
         effectiveCollabConfig: {
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
@@ -183,11 +187,29 @@ describe("usePromptSubmission", () => {
   it("defers clearing the persisted /collab draft until the mutation succeeds", async () => {
     const collabMutate = vi.fn();
     const clearPersisted = vi.fn();
+    const clearImages = vi.fn();
     const enqueuePromptErrorToast = vi.fn();
+    const images: ImagePayload[] = [
+      {
+        attachmentId: "inline",
+        mediaType: "image/png",
+        base64Data: "inline-data",
+        inlineMarkerIndex: 1,
+      },
+      {
+        attachmentId: "strip",
+        mediaType: "image/jpeg",
+        base64Data: "strip-data",
+      },
+    ];
+    const editor = makeEditorRef({
+      prompt: "/collab compare [Image #1]",
+      images,
+    });
 
     const { result } = renderHook(() => {
       const promptTextRef = useRef("/collab run validate gap");
-      const editorRef = useRef(null);
+      const editorRef = useRef(editor.current);
       return usePromptSubmission({
         projectName: "p",
         sessionName: "s",
@@ -198,8 +220,8 @@ describe("usePromptSubmission", () => {
         promptTextRef,
         editorRef,
         setPromptText: () => {},
-        clearImages: () => {},
-        clearPersistedPendingPromptOnSubmit: clearPersisted,
+        clearImages,
+        suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
@@ -222,6 +244,12 @@ describe("usePromptSubmission", () => {
     });
 
     expect(clearPersisted).not.toHaveBeenCalled();
+    expect(editor.clear).not.toHaveBeenCalled();
+    expect(clearImages).not.toHaveBeenCalled();
+    expect(collabMutate.mock.calls[0]?.[0]).toMatchObject({
+      brief: "compare [Image #1]",
+      images,
+    });
 
     const options = collabMutate.mock.calls[0]![1] as
       | CollabMutateOptions
@@ -234,18 +262,32 @@ describe("usePromptSubmission", () => {
     });
 
     expect(clearPersisted).toHaveBeenCalledTimes(1);
+    expect(editor.clear).toHaveBeenCalledTimes(1);
+    expect(clearImages).toHaveBeenCalledTimes(1);
     expect(enqueuePromptErrorToast).not.toHaveBeenCalled();
   });
 
-  it("on /collab mutation error, enqueues a prompt error toast, restores prompt text, and leaves the persisted draft intact", async () => {
+  it("on /collab mutation error, enqueues a prompt error toast and leaves the lossless draft intact", async () => {
     const collabMutate = vi.fn();
     const clearPersisted = vi.fn();
     const enqueuePromptErrorToast = vi.fn();
     const setPromptText = vi.fn();
+    const clearImages = vi.fn();
+    const editor = makeEditorRef({
+      prompt:
+        '/collab inspect <conversation-ref project="p" session="s" conversation="c2" />',
+      images: [
+        {
+          attachmentId: "strip",
+          mediaType: "image/png",
+          base64Data: "data",
+        },
+      ],
+    });
 
     const { result } = renderHook(() => {
       const promptTextRef = useRef("/collab run validate gap");
-      const editorRef = useRef(null);
+      const editorRef = useRef(editor.current);
       return usePromptSubmission({
         projectName: "p",
         sessionName: "s",
@@ -256,8 +298,8 @@ describe("usePromptSubmission", () => {
         promptTextRef,
         editorRef,
         setPromptText,
-        clearImages: () => {},
-        clearPersistedPendingPromptOnSubmit: clearPersisted,
+        clearImages,
+        suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
@@ -283,8 +325,6 @@ describe("usePromptSubmission", () => {
       | CollabMutateOptions
       | undefined;
     expect(options?.onError).toBeTypeOf("function");
-
-    setPromptText.mockClear();
 
     act(() => {
       options?.onError?.(new Error("Failed to start collaboration run"));
@@ -298,7 +338,68 @@ describe("usePromptSubmission", () => {
       conversationId: "c",
       error: "Failed to start collaboration run",
     });
-    expect(setPromptText).toHaveBeenCalledWith("/collab run validate gap");
+    expect(setPromptText).not.toHaveBeenCalled();
+    expect(editor.clear).not.toHaveBeenCalled();
+    expect(clearImages).not.toHaveBeenCalled();
+  });
+
+  it("does not clear edits made while a /collab start is pending", async () => {
+    const collabMutate = vi.fn();
+    const clearPersisted = vi.fn();
+    const clearImages = vi.fn();
+    const setPromptText = vi.fn();
+    let currentDocument = { prompt: "/collab first draft", images: [] };
+    const clear = vi.fn();
+    const editorRef = {
+      current: {
+        serialize: () => currentDocument,
+        clear,
+        focus: vi.fn(),
+        insertText: vi.fn(),
+        editor: null,
+      } satisfies PromptEditorHandle,
+    };
+    const promptTextRef = { current: currentDocument.prompt };
+    const { result } = renderHook(() =>
+      usePromptSubmission({
+        projectName: "p",
+        sessionName: "s",
+        conversationId: "c",
+        conversations: [],
+        sending: false,
+        pendingImages: [],
+        promptTextRef,
+        editorRef,
+        setPromptText,
+        clearImages,
+        suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
+        effectiveCollabConfig: {
+          negotiationRounds: 2,
+          autonomousResolutionThreshold: "minor",
+        },
+        clearCollabConfigDraft: vi.fn(),
+        messagesLength: 0,
+        selectedModel: "sonnet",
+        selectedEffort: "medium",
+        effortSupported: true,
+        selectedBackend: "claude",
+        sendPrompt: vi.fn(async () => {}),
+        queueMessage: vi.fn(async () => {}),
+        collaborationStartMutation: { mutate: collabMutate },
+        enqueuePromptErrorToast: vi.fn(),
+      }),
+    );
+
+    await act(async () => result.current.handleSendPrompt());
+    currentDocument = { prompt: "new text typed while pending", images: [] };
+    promptTextRef.current = currentDocument.prompt;
+    const options = collabMutate.mock.calls[0]![1] as CollabMutateOptions;
+    act(() => options.onSuccess?.());
+
+    expect(clear).not.toHaveBeenCalled();
+    expect(setPromptText).not.toHaveBeenCalled();
+    expect(clearImages).not.toHaveBeenCalled();
+    expect(clearPersisted).not.toHaveBeenCalled();
   });
 
   describe("queue behavior by backend capability", () => {
@@ -315,7 +416,7 @@ describe("usePromptSubmission", () => {
       conversations?: ConversationState[];
       queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
     }) {
-      const sendPrompt = vi.fn(async (_prompt: string) => {});
+      const sendPrompt = vi.fn(async (..._args: unknown[]) => {});
       const queueMessage = vi.fn(
         async (_text: string, _images?: ImagePayload[]) => {},
       );
@@ -338,7 +439,7 @@ describe("usePromptSubmission", () => {
           editorRef,
           setPromptText,
           clearImages,
-          clearPersistedPendingPromptOnSubmit: clearPersisted,
+          suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
           effectiveCollabConfig: {
             negotiationRounds: 2,
             autonomousResolutionThreshold: "minor",
@@ -374,7 +475,7 @@ describe("usePromptSubmission", () => {
       const h = renderQueueHook({
         sending: true,
         selectedBackend: "claude",
-        serialized: { prompt: "follow up", images: [] },
+        serialized: { prompt: "  follow up  ", images: [] },
       });
 
       await act(async () => {
@@ -382,7 +483,11 @@ describe("usePromptSubmission", () => {
       });
 
       expect(h.queueMessage).toHaveBeenCalledTimes(1);
-      expect(h.queueMessage).toHaveBeenCalledWith("follow up", undefined);
+      expect(h.queueMessage).toHaveBeenCalledWith(
+        "follow up",
+        undefined,
+        "  follow up  ",
+      );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
 
@@ -398,7 +503,7 @@ describe("usePromptSubmission", () => {
       });
 
       expect(h.queueMessage).toHaveBeenCalledTimes(1);
-      expect(h.queueMessage).toHaveBeenCalledWith("later", undefined);
+      expect(h.queueMessage).toHaveBeenCalledWith("later", undefined, "later");
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
 
@@ -426,6 +531,7 @@ describe("usePromptSubmission", () => {
       expect(h.queueMessage).toHaveBeenCalledWith(
         "follow up during drained turn",
         undefined,
+        "follow up during drained turn",
       );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
@@ -492,6 +598,7 @@ describe("usePromptSubmission", () => {
         text: "other busy",
         images: [],
         busyNames: ["Conversation 1"],
+        submittedPendingPromptText: "other busy",
       });
     });
 
@@ -499,7 +606,7 @@ describe("usePromptSubmission", () => {
       const h = renderQueueHook({
         sending: false,
         selectedBackend: "claude",
-        serialized: { prompt: "go now", images: [] },
+        serialized: { prompt: "  go now  ", images: [] },
       });
 
       await act(async () => {
@@ -508,6 +615,7 @@ describe("usePromptSubmission", () => {
 
       expect(h.sendPrompt).toHaveBeenCalledTimes(1);
       expect(h.sendPrompt.mock.calls[0]?.[0]).toBe("go now");
+      expect(h.sendPrompt.mock.calls[0]?.[6]).toBe("  go now  ");
       expect(h.queueMessage).not.toHaveBeenCalled();
     });
 
@@ -545,7 +653,11 @@ describe("usePromptSubmission", () => {
       });
 
       expect(h.queueMessage).toHaveBeenCalledTimes(1);
-      expect(h.queueMessage).toHaveBeenCalledWith("see this", [image]);
+      expect(h.queueMessage).toHaveBeenCalledWith(
+        "see this",
+        [image],
+        "see this",
+      );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
   });

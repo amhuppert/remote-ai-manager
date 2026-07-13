@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { streamingMutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import type { ImagePayload } from "@/lib/images/schemas";
 
 export interface PeekReplyLogger {
   info(message: string, fields: Record<string, unknown>): void;
@@ -21,6 +22,7 @@ export interface PeekReplyParams {
   sessionName: string;
   conversationId: string;
   text: string;
+  images?: ImagePayload[];
 }
 
 export interface UsePeekReplyParams {
@@ -51,6 +53,7 @@ export const createPeekReplySubmitter =
     sessionName,
     conversationId,
     text,
+    images,
   }: PeekReplyParams): Promise<unknown> => {
     const trimmed = text.trim();
     const url = promptUrl({ projectName, sessionName, conversationId });
@@ -66,7 +69,10 @@ export const createPeekReplySubmitter =
       const result = await deps.fetcher(url, "peek-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmed }),
+        body: JSON.stringify({
+          prompt: trimmed,
+          ...(images?.length ? { images } : {}),
+        }),
       });
       deps.logger.info("peek_reply.success", {
         projectName,
@@ -115,12 +121,13 @@ export function usePeekReply({
 
   return useMutation({
     mutationKey: peekReplyKeys.submit(projectName, sessionName, conversationId),
-    mutationFn: (text: string) =>
+    mutationFn: ({ text, images }: { text: string; images?: ImagePayload[] }) =>
       productionSubmitPeekReply({
         projectName,
         sessionName,
         conversationId,
         text,
+        images,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({

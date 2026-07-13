@@ -38,7 +38,7 @@ export interface UseSessionPageHandlersArgs {
   collaborationStartMutation: SubmissionArgs["collaborationStartMutation"];
   effectiveCollabConfig: CollabConfigDraft;
   clearCollabConfigDraft: SubmissionArgs["clearCollabConfigDraft"];
-  clearPersistedPendingPromptOnSubmit: SubmissionArgs["clearPersistedPendingPromptOnSubmit"];
+  suppressPendingPromptAutosaveAfterSubmit: SubmissionArgs["suppressPendingPromptAutosaveAfterSubmit"];
   enqueuePromptErrorToast: SubmissionArgs["enqueuePromptErrorToast"];
   onOpenConversation?: (target: { conversationId: string }) => void;
 }
@@ -63,7 +63,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     collaborationStartMutation,
     effectiveCollabConfig,
     clearCollabConfigDraft,
-    clearPersistedPendingPromptOnSubmit,
+    suppressPendingPromptAutosaveAfterSubmit,
     enqueuePromptErrorToast,
     onOpenConversation,
   } = args;
@@ -96,7 +96,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     editorRef: local.editorRef,
     setPromptText: local.setPromptText,
     clearImages: local.clearImages,
-    clearPersistedPendingPromptOnSubmit,
+    suppressPendingPromptAutosaveAfterSubmit,
     effectiveCollabConfig,
     clearCollabConfigDraft,
     messagesLength,
@@ -137,6 +137,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     projectName,
     promptTextRef: local.promptTextRef,
     editorRef: local.editorRef,
+    pendingImages: local.pendingImages,
     fireAndForgetRef: local.fireAndForgetRef,
     handleSendPrompt,
   });

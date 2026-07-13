@@ -125,21 +125,35 @@ export const bulkSessionsResponseSchema = z.object({
 });
 export type BulkSessionsResponse = z.infer<typeof bulkSessionsResponseSchema>;
 
-export const createSessionRequestSchema = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("normal"),
-    sessionName: z.string().trim().min(1),
-    tddEnabled: z.boolean().optional(),
-    parentSessionName: z.string().trim().min(1).optional(),
-  }),
-  z.object({
-    mode: z.literal("optimistic"),
-    instructions: z.string().trim().min(1),
-    images: z.array(imagePayloadSchema).max(5).optional(),
-    tddEnabled: z.boolean().optional(),
-    parentSessionName: z.string().trim().min(1).optional(),
-  }),
-]);
+export const createSessionRequestSchema = z
+  .discriminatedUnion("mode", [
+    z.object({
+      mode: z.literal("normal"),
+      sessionName: z.string().trim().min(1),
+      tddEnabled: z.boolean().optional(),
+      parentSessionName: z.string().trim().min(1).optional(),
+    }),
+    z.object({
+      mode: z.literal("optimistic"),
+      instructions: z.string().trim(),
+      images: z.array(imagePayloadSchema).max(5).optional(),
+      tddEnabled: z.boolean().optional(),
+      parentSessionName: z.string().trim().min(1).optional(),
+    }),
+  ])
+  .superRefine((request, context) => {
+    if (
+      request.mode === "optimistic" &&
+      !request.instructions &&
+      !request.images?.length
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["instructions"],
+        message: "Optimistic sessions require instructions or an image",
+      });
+    }
+  });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const sessionArchiveRequestSchema = z.object({

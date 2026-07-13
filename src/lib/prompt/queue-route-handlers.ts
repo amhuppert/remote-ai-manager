@@ -11,11 +11,11 @@ import {
   resolveProjectPath as defaultResolveProjectPath,
   getProjectDisplayName as defaultGetProjectDisplayName,
 } from "@/lib/projects/resolver";
-import { getSession as defaultGetSession } from "@/lib/state-store";
 import {
-  getConversation as defaultGetConversation,
-  setConversationPendingPromptText as defaultSetConversationPendingPromptText,
-} from "@/lib/conversations/service";
+  clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches,
+  getSession as defaultGetSession,
+} from "@/lib/state-store";
+import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import { queueMessage as defaultQueueMessage } from "@/lib/prompt/queue";
 import {
   toQueuedMessageView as defaultToQueuedMessageView,
@@ -75,12 +75,7 @@ export interface QueueRouteDeps {
   }>;
   queueCapabilityForBackend(backend: AgentBackendId): QueueCapability;
   toQueuedMessageView(entry: PendingQueuedMessage): QueuedMessageView;
-  setConversationPendingPromptText(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    text: string | null,
-  ): Promise<void>;
+  clearConversationPendingPromptTextIfMatches: typeof defaultClearConversationPendingPromptTextIfMatches;
   hasLiveConversationActor(
     projectPath: string,
     sessionName: string,
@@ -112,7 +107,8 @@ const defaultDeps: QueueRouteDeps = {
   queueMessage: defaultQueueMessage,
   queueCapabilityForBackend: defaultQueueCapabilityForBackend,
   toQueuedMessageView: defaultToQueuedMessageView,
-  setConversationPendingPromptText: defaultSetConversationPendingPromptText,
+  clearConversationPendingPromptTextIfMatches:
+    defaultClearConversationPendingPromptTextIfMatches,
   hasLiveConversationActor: defaultHasLiveConversationActor,
   ensureConversationActorAndDrain: defaultEnsureConversationActorAndDrain,
   recoverAbandonedDeliveries: (input) =>
@@ -230,15 +226,6 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       );
     }
 
-    // The user is submitting their draft via the queue path — clear the
-    // persisted pending prompt text so it isn't resurrected on remount.
-    await deps.setConversationPendingPromptText(
-      projectPath,
-      sessionName,
-      conversationId,
-      null,
-    );
-
     const result = await deps.queueMessage({
       projectPath,
       sessionName,
@@ -250,6 +237,32 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
         : {}),
       backend: conversation.agentBackend,
     });
+
+    if (parsed.data.submittedPendingPromptText !== undefined) {
+      try {
+        const cleared = await deps.clearConversationPendingPromptTextIfMatches(
+          projectPath,
+          sessionName,
+          conversationId,
+          parsed.data.submittedPendingPromptText,
+        );
+        logger.debug("queue.pending_draft_clear_completed", {
+          projectPath,
+          sessionName,
+          conversationId,
+          messageId: result.entry.id,
+          cleared,
+        });
+      } catch (error) {
+        logger.warn("queue.pending_draft_clear_failed", {
+          projectPath,
+          sessionName,
+          conversationId,
+          messageId: result.entry.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     // The running-status check above raced the turn's end: if the turn
     // finalized between that read and the enqueue commit, the idle-entry drain

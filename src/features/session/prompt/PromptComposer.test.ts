@@ -113,10 +113,17 @@ describe("computeSendButtonState", () => {
     ).toBe(false);
   });
 
-  it("disables when recording (the click should stop recording first)", () => {
+  it("keeps the primary action enabled while recording so it can finalize dictation", () => {
     expect(
       computeSendButtonState({ ...base, isRecording: true }).disabled,
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("disables submission while transcription is processing", () => {
+    expect(computeSendButtonState({ ...base, isProcessing: true })).toEqual({
+      disabled: true,
+      title: "Processing voice input…",
+    });
   });
 });
 

@@ -65,6 +65,7 @@ export function computeSendButtonState({
   backend,
   isReadOnly,
   isRecording,
+  isProcessing = false,
   queueCapabilityForBackend = defaultQueueCapabilityForBackend,
 }: {
   promptText: string;
@@ -81,6 +82,7 @@ export function computeSendButtonState({
   backend: AgentBackendId;
   isReadOnly: boolean;
   isRecording: boolean;
+  isProcessing?: boolean;
   queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
 }): SendButtonState {
   const sessionBusyNoConvo = sending && !conversationId;
@@ -94,6 +96,9 @@ export function computeSendButtonState({
   if (sessionBusyNoConvo) {
     return { disabled: true, title: "Session is busy" };
   }
+  if (isProcessing) {
+    return { disabled: true, title: "Processing voice input…" };
+  }
   if (queuingIntoRunningTurn) {
     const cap = queueCapabilityForBackend(backend);
     if (!cap.acceptsWhileRunning) {
@@ -106,10 +111,10 @@ export function computeSendButtonState({
       cap.deliveryTiming === "in_turn"
         ? "Queue for this turn"
         : "Queue for next turn";
-    return { disabled: noContent || isRecording, title };
+    return { disabled: noContent && !isRecording, title };
   }
   return {
-    disabled: noContent || isRecording,
+    disabled: noContent && !isRecording,
     title: "Send prompt",
   };
 }
@@ -305,8 +310,11 @@ export default function PromptComposer({
     (open: boolean) => setControlActive("capabilities-mobile", open),
     [setControlActive],
   );
+  const [hasSerializedContent, setHasSerializedContent] = useState(
+    promptText.trim() !== "" || pendingImages.length > 0,
+  );
   const { disabled: sendDisabled, title: sendTitle } = computeSendButtonState({
-    promptText,
+    promptText: hasSerializedContent ? "content" : promptText,
     pendingImageCount: pendingImages.length,
     sending,
     conversationRunning: activeConversation?.status === "running",
@@ -314,7 +322,15 @@ export default function PromptComposer({
     backend: selectedBackend,
     isReadOnly,
     isRecording,
+    isProcessing,
   });
+  const handlePrimaryAction = useCallback(() => {
+    if (isRecording || isProcessing) {
+      stopAndSubmit();
+      return;
+    }
+    onSendPrompt();
+  }, [isProcessing, isRecording, onSendPrompt, stopAndSubmit]);
   const cancellableEntries = selectCancellableQueueEntries(
     activeConversation?.pendingQueue ?? [],
   );
@@ -391,13 +407,12 @@ export default function PromptComposer({
               conversationId={conversationId}
               value={promptText}
               onChange={onPromptTextChange}
-              onSubmit={() => {
-                if (isRecording) {
-                  stopAndSubmit();
-                  return;
-                }
-                onSendPrompt();
-              }}
+              onDocumentChange={(document) =>
+                setHasSerializedContent(
+                  document.prompt.trim() !== "" || document.images.length > 0,
+                )
+              }
+              onSubmit={handlePrimaryAction}
               pendingImages={pendingImages}
               onAddImage={async (file) => {
                 const result = await addImage(file);
@@ -509,7 +524,7 @@ export default function PromptComposer({
             sendDisabled={sendDisabled}
             sendTitle={sendTitle}
             sendButtonInner={sendButtonInner}
-            onSendPrompt={onSendPrompt}
+            onSendPrompt={handlePrimaryAction}
             onModelOpenChange={onModelOpenChange}
             onEffortOpenChange={onEffortOpenChange}
             onCapabilitiesOpenChange={onCapabilitiesOpenChange}
@@ -570,7 +585,7 @@ export default function PromptComposer({
                 className={SEND_BUTTON_CLASS}
                 data-busy={sendBusy}
                 disabled={sendDisabled}
-                onClick={onSendPrompt}
+                onClick={handlePrimaryAction}
                 title={sendTitle}
               >
                 {sendButtonInner}

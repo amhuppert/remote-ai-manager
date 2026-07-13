@@ -37,9 +37,14 @@ export interface SendPromptHandle {
     images?: ImagePayload[],
     effort?: EffortLevel,
     backend?: AgentBackendId,
+    submittedPendingPromptText?: string,
   ) => Promise<void>;
   /** Queue a message into a running conversation. */
-  queue: (text: string, images?: ImagePayload[]) => Promise<void>;
+  queue: (
+    text: string,
+    images?: ImagePayload[],
+    submittedPendingPromptText?: string,
+  ) => Promise<void>;
   /** Abort the in-flight SSE stream (client-side only). */
   abortClient: () => void;
 }
@@ -81,6 +86,7 @@ export function useSendPrompt(
       images?: ImagePayload[],
       effort?: EffortLevel,
       backend?: AgentBackendId,
+      submittedPendingPromptText?: string,
     ) => {
       const trimmed = text.trim();
       const hasImages = images && images.length > 0;
@@ -141,6 +147,7 @@ export function useSendPrompt(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt: trimmed,
+            submittedPendingPromptText,
             modelId,
             effort,
             images: hasImages ? images : undefined,
@@ -294,7 +301,11 @@ export function useSendPrompt(
   );
 
   const queue = useCallback(
-    async (text: string, images?: ImagePayload[]) => {
+    async (
+      text: string,
+      images?: ImagePayload[],
+      submittedPendingPromptText?: string,
+    ) => {
       // No gate on the tab-local `sending` flag here: a running turn is not
       // always one this tab started (drained next-turn delivery, reload,
       // another client). The caller owns the queue-vs-send routing.
@@ -327,6 +338,7 @@ export function useSendPrompt(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             text: trimmed || undefined,
+            submittedPendingPromptText,
             images: hasImages ? images : undefined,
           }),
         });

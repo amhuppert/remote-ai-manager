@@ -130,9 +130,12 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
         // Mode-independent: every created session's first turn — for any
         // creation mode and any agent (claude / codex / dual race) — goes
         // through the shared readiness-gated dispatcher. A session with no
-        // initialPrompt stays idle.
+        // text or images stays idle.
         let initialPromptQueued = false;
-        if (proposed.initialPrompt !== undefined) {
+        if (
+          proposed.initialPrompt !== undefined ||
+          (proposed.images?.length ?? 0) > 0
+        ) {
           initialPromptQueued = true;
           logger.info("chat-spawning.first_turn_queued", {
             projectName,
@@ -148,7 +151,8 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
               projectPath,
               projectName,
               session,
-              initialPrompt: proposed.initialPrompt,
+              initialPrompt: proposed.initialPrompt ?? "",
+              images: proposed.images,
               agent: proposed.agent,
               model: proposed.model,
               reasoningEffort: proposed.reasoningEffort,
@@ -256,7 +260,13 @@ export function createSpawnSessionCreator(
 export function defaultChatSpawnDeps(): ChatSpawnDeps {
   const dispatcher = createFirstTurnDispatcher({
     executePromptStream: defaultExecutePromptStream,
-    startDualRace: async ({ projectPath, session, conversationId, brief }) => {
+    startDualRace: async ({
+      projectPath,
+      session,
+      conversationId,
+      brief,
+      images,
+    }) => {
       // Mirrors the /collab defaults the prompt route applies when a user starts
       // a dual race without explicit collaboration settings.
       await getDefaultCollaborationManager().start({
@@ -264,6 +274,7 @@ export function defaultChatSpawnDeps(): ChatSpawnDeps {
         sessionName: session.sessionName,
         conversationId,
         brief,
+        images,
         negotiationRounds: 3,
         autonomousResolutionThreshold: "major",
       });

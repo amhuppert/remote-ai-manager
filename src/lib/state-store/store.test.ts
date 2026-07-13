@@ -194,6 +194,41 @@ describe("setConversationPendingPromptText focused write", () => {
     expect(after?.pendingPromptText).toBeNull();
   });
 
+  it("clears only when the persisted draft still matches the submitted text", async () => {
+    await store.setConversationPendingPromptText(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "submitted draft",
+    );
+
+    expect(
+      await store.clearConversationPendingPromptTextIfMatches(
+        "/proj-a",
+        "alpha",
+        "conv-1",
+        "older draft",
+      ),
+    ).toBe(false);
+    expect(
+      (await store.getConversation("/proj-a", "alpha", "conv-1"))
+        ?.pendingPromptText,
+    ).toBe("submitted draft");
+
+    expect(
+      await store.clearConversationPendingPromptTextIfMatches(
+        "/proj-a",
+        "alpha",
+        "conv-1",
+        "submitted draft",
+      ),
+    ).toBe(true);
+    expect(
+      (await store.getConversation("/proj-a", "alpha", "conv-1"))
+        ?.pendingPromptText,
+    ).toBeNull();
+  });
+
   it("throws when the conversation does not exist", async () => {
     await expect(
       store.setConversationPendingPromptText(

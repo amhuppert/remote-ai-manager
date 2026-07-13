@@ -326,6 +326,7 @@ export interface PromptDeps {
     autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
     modelId?: string;
     effort?: string;
+    images?: ImagePayload[];
   }): Promise<{ workflowId: string }>;
 
   /**
@@ -353,7 +354,6 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
   const runtimeState =
     await import("@/lib/workflows/conversation/runtime-state");
   const collabModule = await import("@/lib/workflows/collaboration/manager");
-  const transcriptMod = await import("./transcript");
   _defaultPromptDeps = {
     getConversation,
     createConversation,
@@ -366,28 +366,6 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     detachPromptStream: manager.detachPromptStream,
     sendConversationEvent: manager.sendConversationEvent,
     async dispatchCollabStart(input) {
-      await transcriptMod.safeAppendTranscriptEntry(
-        input.conversationId,
-        {
-          timestamp: new Date().toISOString(),
-          type: "user",
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `/collab ${input.brief}`,
-            },
-          ],
-          ...(input.modelId !== undefined ? { model: input.modelId } : {}),
-          ...(input.effort !== undefined ? { effort: input.effort } : {}),
-        },
-        undefined,
-        undefined,
-        {
-          projectName: getProjectDisplayName(input.projectPath),
-          sessionName: input.sessionName,
-        },
-      );
       const collabManager = collabModule.getDefaultCollaborationManager();
       const startInput: Parameters<typeof collabManager.start>[0] = {
         projectPath: input.projectPath,
@@ -401,6 +379,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
           DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
         ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.images?.length ? { images: input.images } : {}),
       };
       const result = await collabManager.start(startInput);
       return { workflowId: result.workflowId };
@@ -487,6 +466,12 @@ export interface PromptStreamOptions {
   autonomous?: boolean;
   effort?: string;
   backend?: AgentBackendId;
+  /**
+   * Called once the prompt, command, or collaboration request has been
+   * accepted by its execution owner. Failures are logged without changing the
+   * accepted execution's outcome.
+   */
+  onAccepted?: () => void | Promise<void>;
   tooling?: ConversationToolingOverrides;
   /**
    * Graph-workflow lane identity. Set only by the implementer runner; threaded
@@ -558,6 +543,24 @@ export interface PromptStreamResult {
    * were in flight); absent otherwise.
    */
   backgroundWait?: BackgroundWaitSummary;
+}
+
+async function notifyPromptAccepted(
+  options: PromptStreamOptions | undefined,
+  sessionName: string,
+  conversationId: string,
+): Promise<void> {
+  if (!options?.onAccepted) return;
+
+  try {
+    await options.onAccepted();
+  } catch (error) {
+    logger.warn("prompt.acceptance_callback_failed", {
+      sessionName,
+      conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 interface CollabPromptConfig {
@@ -727,6 +730,7 @@ export async function executePromptStream(
         sessionName: session.sessionName,
         conversationId,
       });
+      await notifyPromptAccepted(options, session.sessionName, conversationId);
       const ticketFallback = ticketCommandFallbackMessage(outcome);
       if (ticketFallback !== null) {
         logger.warn("prompt.command_ticket_fallback", {
@@ -786,6 +790,7 @@ export async function executePromptStream(
       sessionName: session.sessionName,
       conversationId,
       briefLength: brief.length,
+      imageCount: images?.length ?? 0,
     });
     try {
       const result = await resolvedDeps.dispatchCollabStart({
@@ -804,7 +809,9 @@ export async function executePromptStream(
           : {}),
         ...(modelId !== undefined ? { modelId } : {}),
         ...(options?.effort !== undefined ? { effort: options.effort } : {}),
+        ...(images?.length ? { images } : {}),
       });
+      await notifyPromptAccepted(options, session.sessionName, conversationId);
       emit("collab-started", {
         workflowId: result.workflowId,
         conversationId,
@@ -973,6 +980,8 @@ export async function executePromptStream(
         error: errorMessage,
       };
     }
+
+    await notifyPromptAccepted(options, session.sessionName, conversationId);
 
     // Wait for the turn to complete: actor reaches idle, debug.*, or done
     await waitForTurnCompletion(actor);

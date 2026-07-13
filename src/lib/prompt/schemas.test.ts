@@ -45,6 +45,14 @@ describe("queueEnqueueRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("preserves the exact pending-prompt ownership token", () => {
+    const result = queueEnqueueRequestSchema.parse({
+      text: "hi",
+      submittedPendingPromptText: "  hi  ",
+    });
+    expect(result.submittedPendingPromptText).toBe("  hi  ");
+  });
+
   it("accepts an image-only body", () => {
     const result = queueEnqueueRequestSchema.safeParse({
       images: [sampleImage],
@@ -86,6 +94,15 @@ describe("queueEnqueueRequestSchema", () => {
 });
 
 describe("runPromptRequestSchema documentFeedback", () => {
+  it("preserves the exact pending-prompt ownership token while trimming the dispatched prompt", () => {
+    const result = runPromptRequestSchema.parse({
+      prompt: "  hi  ",
+      submittedPendingPromptText: "  hi  ",
+    });
+    expect(result.prompt).toBe("hi");
+    expect(result.submittedPendingPromptText).toBe("  hi  ");
+  });
+
   it("accepts a documentFeedback-only body with empty prompt", () => {
     const result = runPromptRequestSchema.safeParse({
       prompt: "",

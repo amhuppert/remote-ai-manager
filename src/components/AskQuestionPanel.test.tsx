@@ -100,6 +100,26 @@ describe("AskQuestionPanel", () => {
     });
   });
 
+  it("submits a clarifying note through the multiline primary chord", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AskQuestionPanel
+        questions={[makeQuestion()]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+    fireEvent.click(screen.getByText("SQLite"));
+    fireEvent.click(screen.getByText(/add a note/i));
+    const note = screen.getByRole("textbox", { name: /your note/i });
+    fireEvent.change(note, { target: { value: "gate behind a flag" } });
+    fireEvent.keyDown(note, { key: "Enter", ctrlKey: true });
+
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
   it("minimizes to a banner on Escape and restores when expanded", () => {
     render(
       <AskQuestionPanel
@@ -175,6 +195,26 @@ describe("AskQuestionPanel", () => {
     expect(
       screen.queryByPlaceholderText(/type your own answer/i),
     ).not.toBeNull();
+  });
+
+  it("preserves the submit chord in the Other single-line field", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AskQuestionPanel
+        questions={[makeQuestion()]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+    fireEvent.click(screen.getByText(/something else/i));
+    const input = screen.getByPlaceholderText(/type your own answer/i);
+    fireEvent.change(input, { target: { value: "Use Postgres" } });
+
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+
+    expect(onSubmit).toHaveBeenCalledOnce();
   });
 
   it("does not minimize on Escape while a text field is focused", () => {

@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import {
-  TerminalHotkeys,
-  findPrevWordStart,
   findNextWordEnd,
-} from "./terminal-hotkeys-extension";
+  findPreviousWordStart,
+} from "@/lib/multiline/shortcuts";
+import { TerminalHotkeys } from "./terminal-hotkeys-extension";
 
 // jsdom doesn't implement getClientRects/getBoundingClientRect on
 // contenteditable nodes; Tiptap occasionally calls them. Stub for tests.
@@ -37,34 +37,34 @@ beforeEach(() => {
   }
 });
 
-describe("findPrevWordStart (whitespace boundaries)", () => {
+describe("findPreviousWordStart (whitespace boundaries)", () => {
   it("returns 0 when offset is 0", () => {
-    expect(findPrevWordStart("hello world", 0)).toBe(0);
+    expect(findPreviousWordStart("hello world", 0)).toBe(0);
   });
 
   it("jumps past trailing whitespace and word characters", () => {
     // "hello world|" — cursor at end of "world" should land at start of "world"
-    expect(findPrevWordStart("hello world", 11)).toBe(6);
+    expect(findPreviousWordStart("hello world", 11)).toBe(6);
   });
 
   it("when cursor is right after a space, jumps to start of preceding word", () => {
     // "hello |world" — cursor at offset 6 (right after space) → start of "hello"
-    expect(findPrevWordStart("hello world", 6)).toBe(0);
+    expect(findPreviousWordStart("hello world", 6)).toBe(0);
   });
 
   it("treats only whitespace as boundary (punctuation stays in word)", () => {
     // "foo.bar baz|" — cursor at end → "baz" → 8; "foo.bar" treated as one word
-    expect(findPrevWordStart("foo.bar baz", 11)).toBe(8);
-    expect(findPrevWordStart("foo.bar baz", 8)).toBe(0);
+    expect(findPreviousWordStart("foo.bar baz", 11)).toBe(8);
+    expect(findPreviousWordStart("foo.bar baz", 8)).toBe(0);
   });
 
   it("when at start of word, jumps to start of previous word", () => {
-    expect(findPrevWordStart("alpha beta gamma", 11)).toBe(6);
+    expect(findPreviousWordStart("alpha beta gamma", 11)).toBe(6);
   });
 
   it("handles multiple whitespace characters", () => {
-    expect(findPrevWordStart("alpha   beta", 12)).toBe(8);
-    expect(findPrevWordStart("alpha   beta", 8)).toBe(0);
+    expect(findPreviousWordStart("alpha   beta", 12)).toBe(8);
+    expect(findPreviousWordStart("alpha   beta", 8)).toBe(0);
   });
 });
 

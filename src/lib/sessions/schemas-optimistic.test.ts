@@ -80,6 +80,22 @@ describe("createSessionRequestSchema — optimistic variant", () => {
     expect(result.success).toBe(false);
   });
 
+  it("should accept an image-only optimistic request", () => {
+    const result = createSessionRequestSchema.safeParse({
+      mode: "optimistic",
+      instructions: "",
+      images: [
+        {
+          attachmentId: "img-1",
+          mediaType: "image/png",
+          base64Data: "aGVsbG8=",
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("should reject optimistic request without instructions field", () => {
     const result = createSessionRequestSchema.safeParse({
       mode: "optimistic",

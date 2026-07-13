@@ -136,13 +136,13 @@ describe("ApprovalGatePanel", () => {
     expect(screen.getByText("⌘↵ submit · esc cancel")).toBeInTheDocument();
   });
 
-  it("submits the rejection on Cmd+Enter when the message is non-empty", () => {
+  it("submits the rejection on Ctrl+Enter when the message is non-empty", () => {
     const onReject = vi.fn();
     render(<ApprovalGatePanel {...defaultProps} onReject={onReject} />);
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     const textbox = screen.getByRole("textbox");
     fireEvent.change(textbox, { target: { value: "  Tighten the tests " } });
-    fireEvent.keyDown(textbox, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(textbox, { key: "Enter", ctrlKey: true });
     expect(onReject).toHaveBeenCalledWith("Tighten the tests");
   });
 

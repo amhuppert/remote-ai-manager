@@ -141,6 +141,36 @@ describe("executeAgentCall — backend selection", () => {
     expect(result.outcome.kind).toBe("completed");
   });
 
+  it("forwards request image refs to the conversation runtime", async () => {
+    const capture = { value: null as ConversationBackendTurnInput | null };
+    const runtime = makeConversationRuntime("claude", { capture });
+
+    await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        prompt: "inspect this image",
+        imageRefs: [
+          {
+            index: 1,
+            mediaType: "image/png",
+            path: "/images/first.png",
+            base64Data: "first",
+          },
+        ],
+      },
+      buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
+    );
+
+    expect(capture.value?.imageRefs).toEqual([
+      {
+        index: 1,
+        mediaType: "image/png",
+        path: "/images/first.png",
+        base64Data: "first",
+      },
+    ]);
+  });
+
   it("routes a task_run to the task runner for the requested backend", async () => {
     const capture = { value: null as AgentTaskRequest | null };
     const runner = makeTaskRunner("codex", { capture });

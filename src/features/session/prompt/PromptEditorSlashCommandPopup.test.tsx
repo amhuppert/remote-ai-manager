@@ -478,32 +478,30 @@ describe("PromptEditorSlashCommandPopup", () => {
 });
 
 describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
-  const SENTINEL = "__project__";
-
-  it("renders project-root commands when sessionName is the project sentinel", async () => {
+  it("renders project-root commands when no session exists", async () => {
     await act(async () => {
-      renderPopup({ sessionName: SENTINEL });
+      renderPopup({ sessionName: undefined });
     });
     expect(screen.getByText("/deploy")).toBeInTheDocument();
     expect(screen.queryByText("/review")).toBeNull();
   });
 
-  it("still renders the built-in commands at project scope", async () => {
+  it("hides session-only built-ins before a session exists", async () => {
     await act(async () => {
-      renderPopup({ sessionName: SENTINEL });
+      renderPopup({ sessionName: undefined });
     });
-    expect(screen.getByText("/collab")).toBeInTheDocument();
-    expect(screen.getByText("/commit")).toBeInTheDocument();
-    expect(screen.getByText("/ticket")).toBeInTheDocument();
+    expect(screen.queryByText("/collab")).toBeNull();
+    expect(screen.queryByText("/commit")).toBeNull();
+    expect(screen.queryByText("/ticket")).toBeNull();
   });
 
   it("does not fetch session-scoped commands at project scope", async () => {
     await act(async () => {
-      renderPopup({ sessionName: SENTINEL });
+      renderPopup({ sessionName: undefined });
     });
     expect(mockUseCommandsQuery).toHaveBeenCalledWith(
       "proj",
-      SENTINEL,
+      undefined,
       "claude",
       { enabled: false },
     );
@@ -514,7 +512,7 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
 
   it("filters capabilities via the project-scoped conversation cascade", async () => {
     await act(async () => {
-      renderPopup({ sessionName: SENTINEL, conversationId: "plc-1" });
+      renderPopup({ sessionName: undefined, conversationId: "plc-1" });
     });
     expect(mockUseAgentCapabilityViewQuery).toHaveBeenCalledWith(
       {
@@ -529,7 +527,7 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
 
   it("falls back to project-level capabilities before the first conversation exists", async () => {
     await act(async () => {
-      renderPopup({ sessionName: SENTINEL, conversationId: "" });
+      renderPopup({ sessionName: undefined, conversationId: undefined });
     });
     expect(mockUseAgentCapabilityViewQuery).toHaveBeenCalledWith(
       { level: "project", projectName: "proj" },

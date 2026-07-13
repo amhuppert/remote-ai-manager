@@ -5,6 +5,11 @@ import Link from "next/link";
 
 import { DocumentMarkdown } from "@/components/markdown/Markdown";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
@@ -628,6 +633,11 @@ function AttachmentEditForm({
     attachment.payload.kind === "note" ? attachment.payload.markdown : "",
   );
   const editMutation = useEditTicketAttachmentMutation();
+  const descriptionActionRef = useRef<MultilineInputActionHandle | null>(null);
+  const markdownActionRef = useRef<MultilineInputActionHandle | null>(null);
+  const [voiceBusyFields, setVoiceBusyFields] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const isNote = attachment.payload.kind === "note";
   const saveDisabled =
@@ -636,15 +646,23 @@ function AttachmentEditForm({
   const descriptionId = `attachment-description-${attachment.id}`;
   const markdownId = `attachment-markdown-${attachment.id}`;
 
-  const save = () => {
+  const save = (completed?: { description?: string; markdown?: string }) => {
+    const nextDescription = completed?.description ?? description;
+    const nextMarkdown = completed?.markdown ?? markdown;
+    if (
+      nextDescription.trim().length === 0 ||
+      (isNote && nextMarkdown.trim().length === 0)
+    ) {
+      return;
+    }
     onDone();
     void editMutation
       .mutateAsync({
         projectName,
         number,
         attachmentId: attachment.id,
-        description,
-        ...(isNote ? { markdown } : {}),
+        description: nextDescription,
+        ...(isNote ? { markdown: nextMarkdown } : {}),
       })
       .catch(() => {
         pushToast("Couldn't save the attachment — rolled back");
@@ -659,12 +677,23 @@ function AttachmentEditForm({
       >
         Description
       </label>
-      <textarea
+      <MultilineInput
         id={descriptionId}
         rows={2}
         required
         value={description}
-        onChange={(event) => setDescription(event.target.value)}
+        onValueChange={setDescription}
+        onPrimaryAction={(value) => save({ description: value })}
+        actionRef={descriptionActionRef}
+        onVoiceStateChange={(busy) =>
+          setVoiceBusyFields((previous) => {
+            const next = new Set(previous);
+            if (busy) next.add("description");
+            else next.delete("description");
+            return next;
+          })
+        }
+        voiceProjectName={projectName}
         className={ENTRY_TEXTAREA_CLASS}
       />
       {isNote && (
@@ -675,12 +704,23 @@ function AttachmentEditForm({
           >
             Markdown
           </label>
-          <textarea
+          <MultilineInput
             id={markdownId}
             rows={5}
             required
             value={markdown}
-            onChange={(event) => setMarkdown(event.target.value)}
+            onValueChange={setMarkdown}
+            onPrimaryAction={(value) => save({ markdown: value })}
+            actionRef={markdownActionRef}
+            onVoiceStateChange={(busy) =>
+              setVoiceBusyFields((previous) => {
+                const next = new Set(previous);
+                if (busy) next.add("markdown");
+                else next.delete("markdown");
+                return next;
+              })
+            }
+            voiceProjectName={projectName}
             className={ENTRY_TEXTAREA_CLASS}
           />
         </>
@@ -689,8 +729,13 @@ function AttachmentEditForm({
         <Button
           variant="primary"
           size="sm"
-          disabled={saveDisabled}
-          onClick={save}
+          disabled={saveDisabled && voiceBusyFields.size === 0}
+          onClick={() =>
+            runMultilinePrimaryAction(
+              [descriptionActionRef.current, markdownActionRef.current],
+              save,
+            )
+          }
         >
           Save
         </Button>

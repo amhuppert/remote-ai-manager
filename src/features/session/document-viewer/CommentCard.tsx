@@ -1,6 +1,10 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
+import {
+  MultilineInput,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { cn } from "@/lib/ui/cn";
 import { Button } from "@/components/ui/Button";
 import type { CommentStatus } from "@/lib/document-comments/schemas";
@@ -57,6 +61,8 @@ export default function CommentCard({
 }: CommentCardProps): React.JSX.Element {
   const [editing, setEditing] = useState(initiallyEditing);
   const [draft, setDraft] = useState(comment.note);
+  const [saveVoiceBusy, setSaveVoiceBusy] = useState(false);
+  const saveActionRef = useRef<MultilineInputActionHandle | null>(null);
 
   const startEditing = (): void => {
     setDraft(comment.note);
@@ -68,8 +74,8 @@ export default function CommentCard({
     setEditing(false);
   };
 
-  const save = (): void => {
-    const trimmed = draft.trim();
+  const save = (nextDraft = draft): void => {
+    const trimmed = nextDraft.trim();
     if (trimmed.length === 0) return;
     const changed = trimmed !== comment.note;
     // A sent comment whose text actually changed returns to pending (6.5).
@@ -121,10 +127,13 @@ export default function CommentCard({
       </blockquote>
 
       {editing ? (
-        <textarea
+        <MultilineInput
           autoFocus
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onValueChange={setDraft}
+          onPrimaryAction={save}
+          actionRef={saveActionRef}
+          onVoiceStateChange={setSaveVoiceBusy}
           aria-label="Edit comment note"
           rows={3}
           className="w-full resize-none rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-primary placeholder:text-text-tertiary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-1px]"
@@ -150,8 +159,8 @@ export default function CommentCard({
               variant="primary"
               size="sm"
               type="button"
-              disabled={!canSave}
-              onClick={save}
+              disabled={!canSave && !saveVoiceBusy}
+              onClick={() => saveActionRef.current?.primaryAction()}
             >
               Save
             </Button>

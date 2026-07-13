@@ -1,6 +1,10 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
+import {
+  MultilineInput,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 
 interface CommentPopoverProps {
@@ -27,6 +31,9 @@ export default function CommentPopover({
   onCancel,
 }: CommentPopoverProps): React.JSX.Element {
   const [note, setNote] = useState("");
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const sendActionRef = useRef<MultilineInputActionHandle | null>(null);
+  const primaryModeRef = useRef<"queue" | "send">("send");
   const trimmed = note.trim();
   const canSubmit = trimmed.length > 0;
 
@@ -45,10 +52,20 @@ export default function CommentPopover({
       <blockquote className="m-0 max-h-[88px] overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l-2 border-solid border-l-cyan bg-bg-raised px-[10px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-secondary">
         {quote}
       </blockquote>
-      <textarea
+      <MultilineInput
         autoFocus
         value={note}
-        onChange={(event) => setNote(event.target.value)}
+        onValueChange={setNote}
+        actionRef={sendActionRef}
+        onPrimaryAction={(nextNote) => {
+          const nextTrimmed = nextNote.trim();
+          if (!nextTrimmed) return;
+          const mode = primaryModeRef.current;
+          primaryModeRef.current = "send";
+          if (mode === "queue") onQueue(nextTrimmed);
+          else onSend(nextTrimmed);
+        }}
+        onVoiceStateChange={setVoiceBusy}
         placeholder="Add a comment…"
         aria-label="Comment note"
         rows={3}
@@ -62,8 +79,11 @@ export default function CommentPopover({
           variant="default"
           size="sm"
           type="button"
-          disabled={!canSubmit}
-          onClick={() => onQueue(trimmed)}
+          disabled={!canSubmit && !voiceBusy}
+          onClick={() => {
+            primaryModeRef.current = "queue";
+            sendActionRef.current?.primaryAction();
+          }}
         >
           Add comment
         </Button>
@@ -71,8 +91,11 @@ export default function CommentPopover({
           variant="primary"
           size="sm"
           type="button"
-          disabled={!canSubmit}
-          onClick={() => onSend(trimmed)}
+          disabled={!canSubmit && !voiceBusy}
+          onClick={() => {
+            primaryModeRef.current = "send";
+            sendActionRef.current?.primaryAction();
+          }}
         >
           Add &amp; send
         </Button>

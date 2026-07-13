@@ -1,7 +1,12 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 import {
   Dialog,
@@ -79,6 +84,11 @@ export default function AttachmentDialog({
   const [ticketNumber, setTicketNumber] = useState("");
   const [markdown, setMarkdown] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [voiceBusyFields, setVoiceBusyFields] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const markdownActionRef = useRef<MultilineInputActionHandle | null>(null);
+  const descriptionActionRef = useRef<MultilineInputActionHandle | null>(null);
   const addMutation = useAddTicketAttachmentMutation();
   const requestGeneration = useDialogRequestGeneration(open);
   const kindLabelId = useId();
@@ -95,6 +105,7 @@ export default function AttachmentDialog({
     setTicketNumber("");
     setMarkdown("");
     setError(null);
+    setVoiceBusyFields(new Set());
   };
 
   const close = (nextOpen: boolean) => {
@@ -130,11 +141,24 @@ export default function AttachmentDialog({
   const submitDisabled =
     description.trim().length === 0 || !kindComplete || addMutation.isPending;
 
-  const submit = () => {
+  const submit = (completed?: { description?: string; markdown?: string }) => {
+    const nextDescription = completed?.description ?? description;
+    const nextMarkdown = completed?.markdown ?? markdown;
+    const nextKindComplete = (() => {
+      if (kind === "note") return nextMarkdown.trim().length > 0;
+      return kindComplete;
+    })();
     setError(null);
+    if (
+      nextDescription.trim().length === 0 ||
+      !nextKindComplete ||
+      addMutation.isPending
+    ) {
+      return;
+    }
     if (kind === "file") {
       if (file === null) return;
-      onFileSubmit({ file, description });
+      onFileSubmit({ file, description: nextDescription });
       close(false);
       return;
     }
@@ -161,13 +185,13 @@ export default function AttachmentDialog({
             number: parsedNumber,
           };
         default:
-          return { kind: "note" as const, markdown };
+          return { kind: "note" as const, markdown: nextMarkdown };
       }
     })();
 
     const generation = requestGeneration.capture();
     addMutation.mutate(
-      { projectName, number, description, payload },
+      { projectName, number, description: nextDescription, payload },
       {
         onSuccess: () => {
           if (!requestGeneration.isCurrent(generation)) return;
@@ -186,6 +210,15 @@ export default function AttachmentDialog({
   };
 
   const pending = addMutation.isPending;
+  const updateVoiceBusy = (field: string, busy: boolean) => {
+    setVoiceBusyFields((previous) => {
+      const next = new Set(previous);
+      if (busy) next.add(field);
+      else next.delete(field);
+      return next;
+    });
+  };
+  const voiceBusy = voiceBusyFields.size > 0;
 
   return (
     <Dialog open={open} onOpenChange={close}>
@@ -281,13 +314,17 @@ export default function AttachmentDialog({
         {kind === "note" && (
           <FormGroup>
             <FormLabel htmlFor="attachment-dialog-markdown">Markdown</FormLabel>
-            <textarea
+            <MultilineInput
               id="attachment-dialog-markdown"
               rows={5}
               required
               value={markdown}
               disabled={pending}
-              onChange={(event) => setMarkdown(event.target.value)}
+              onValueChange={setMarkdown}
+              onPrimaryAction={(value) => submit({ markdown: value })}
+              actionRef={markdownActionRef}
+              onVoiceStateChange={(busy) => updateVoiceBusy("markdown", busy)}
+              voiceProjectName={projectName}
               placeholder="## Context…"
               className={FIELD_CLASS}
             />
@@ -298,13 +335,17 @@ export default function AttachmentDialog({
           <FormLabel htmlFor="attachment-dialog-description">
             Description
           </FormLabel>
-          <textarea
+          <MultilineInput
             id="attachment-dialog-description"
             rows={2}
             required
             value={description}
             disabled={pending}
-            onChange={(event) => setDescription(event.target.value)}
+            onValueChange={setDescription}
+            onPrimaryAction={(value) => submit({ description: value })}
+            actionRef={descriptionActionRef}
+            onVoiceStateChange={(busy) => updateVoiceBusy("description", busy)}
+            voiceProjectName={projectName}
             placeholder="What this contains and why it matters for the work"
             className={FIELD_CLASS}
           />
@@ -316,7 +357,16 @@ export default function AttachmentDialog({
           <Button variant="ghost" onClick={() => close(false)}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={submitDisabled} onClick={submit}>
+          <Button
+            variant="primary"
+            disabled={pending || (submitDisabled && !voiceBusy)}
+            onClick={() =>
+              runMultilinePrimaryAction(
+                [markdownActionRef.current, descriptionActionRef.current],
+                submit,
+              )
+            }
+          >
             {pending && <Spinner size="sm" tone="inherit" />}
             Attach
           </Button>

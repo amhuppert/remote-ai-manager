@@ -378,6 +378,25 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
+  async function clearConversationPendingPromptTextIfMatches(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    expectedText: string,
+  ): Promise<boolean> {
+    return mutateConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+      "conversation.pending_prompt.clear_if_matches",
+      (conversation) => {
+        if (conversation.pendingPromptText !== expectedText) return false;
+        conversation.pendingPromptText = null;
+        return true;
+      },
+    );
+  }
+
   /**
    * Mutate a session-less project conversation. Loads the project record, runs
    * the mutator, stamps `lastActivityAt`, and upserts via the project repo
@@ -551,6 +570,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     setSessionTddEnabled: setters.setSessionTddEnabled,
     setSessionFinished: setters.setSessionFinished,
     setConversationPendingPromptText: setters.setConversationPendingPromptText,
+    clearConversationPendingPromptTextIfMatches,
     createProjectConversation: setters.createProjectConversation,
     setProjectConversationArchived: setters.setProjectConversationArchived,
     setProjectConversationOpen: setters.setProjectConversationOpen,

@@ -53,6 +53,8 @@ export const setSessionFinished = defaultStore.setSessionFinished;
 export const setProjectArchived = defaultStore.setProjectArchived;
 export const setConversationPendingPromptText =
   defaultStore.setConversationPendingPromptText;
+export const clearConversationPendingPromptTextIfMatches =
+  defaultStore.clearConversationPendingPromptTextIfMatches;
 export const createProjectConversationRecord =
   defaultStore.createProjectConversation;
 export const setProjectConversationPendingPromptText =

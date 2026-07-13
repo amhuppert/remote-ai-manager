@@ -2,6 +2,11 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { DocumentMarkdown } from "@/components/markdown/Markdown";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -163,6 +168,7 @@ export function TicketDescriptionEditor({
   const [draft, setDraft] = useState("");
   const mutation = useUpdateTicketMutation();
   const editButtonId = useId();
+  const descriptionActionRef = useRef<MultilineInputActionHandle | null>(null);
   const requestFocusRestore = useFocusReturn(editing, editButtonId);
 
   const cancel = () => {
@@ -170,12 +176,17 @@ export function TicketDescriptionEditor({
     setEditing(false);
   };
 
-  const submit = () => {
+  const submit = (completedDraft?: string) => {
+    const nextDraft = completedDraft ?? draft;
     requestFocusRestore();
     setEditing(false);
-    if (draft === description) return;
+    if (nextDraft === description) return;
     void mutation
-      .mutateAsync({ projectName, number, fields: { description: draft } })
+      .mutateAsync({
+        projectName,
+        number,
+        fields: { description: nextDraft },
+      })
       .catch(() => {
         pushToast(
           `Couldn't save the description for ${ticketIdentifier({ projectName, number })} — rolled back`,
@@ -206,21 +217,33 @@ export function TicketDescriptionEditor({
       </div>
       {editing ? (
         <div className="flex flex-col gap-sm">
-          <textarea
+          <MultilineInput
             rows={6}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onValueChange={setDraft}
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
               event.preventDefault();
               cancel();
             }}
+            onPrimaryAction={submit}
+            actionRef={descriptionActionRef}
+            voiceProjectName={projectName}
             autoFocus
             aria-label="Ticket description"
             className="box-border w-full resize-y rounded-md border border-solid border-cyan-dim bg-bg-base px-[12px] py-[10px] font-mono text-[0.8rem] leading-[1.6] text-text-primary shadow-[0_0_0_2px_var(--color-cyan-glow)] outline-none"
           />
           <div className="flex items-center gap-sm">
-            <Button variant="primary" size="sm" onClick={submit}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() =>
+                runMultilinePrimaryAction(
+                  [descriptionActionRef.current],
+                  submit,
+                )
+              }
+            >
               Save
             </Button>
             <Button variant="ghost" size="sm" onClick={cancel}>

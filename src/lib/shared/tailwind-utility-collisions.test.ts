@@ -252,6 +252,10 @@ const UTILITY_FIRST_PATHS = [
   // + .prettierrc).
   `${path.sep}features${path.sep}tickets${path.sep}`,
   `${path.sep}components${path.sep}SessionTicketIndicator.tsx`,
+  // Shared multiline and rich-prompt controls are authored utility-first.
+  `${path.sep}components${path.sep}MultilineInput.tsx`,
+  `${path.sep}components${path.sep}MultilineInput.stories.tsx`,
+  `${path.sep}components${path.sep}rich-prompt${path.sep}`,
 ];
 
 function srcFiles(ext: string): string[] {

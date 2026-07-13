@@ -64,6 +64,35 @@ describe("useImageAttachments", () => {
     expect(harness.current.pendingImages[0]!.id).toBe(res!.attachment!.id);
   });
 
+  it("assigns a new attachment id after restored images", async () => {
+    const capture: {
+      latest: ReturnType<typeof useImageAttachments> | null;
+    } = { latest: null };
+    function Probe(): null {
+      const value = useImageAttachments([
+        {
+          attachmentId: "img-1",
+          mediaType: "image/png",
+          base64Data: "cmVzdG9yZWQ=",
+        },
+      ]);
+      useEffect(() => {
+        capture.latest = value;
+      });
+      return null;
+    }
+    render(<Probe />);
+
+    await act(async () => {
+      await capture.latest!.addImage(makePngFile("new.png"));
+    });
+
+    expect(capture.latest!.pendingImages.map((image) => image.id)).toEqual([
+      "img-1",
+      "img-2",
+    ]);
+  });
+
   it("addImage returns an error and a null attachment for unsupported mime types", async () => {
     const harness = setupHookHarness();
     const bad = new File(["nope"], "x.txt", { type: "text/plain" });
@@ -91,5 +120,27 @@ describe("useImageAttachments", () => {
     });
     expect(res!.attachment).toBeNull();
     expect(res!.error).toMatch(/Maximum/);
+  });
+
+  it("serializes concurrent additions in caller order and reserves the image limit", async () => {
+    const harness = setupHookHarness();
+    const files = Array.from({ length: 7 }, (_, index) =>
+      makePngFile(`image-${index + 1}.png`),
+    );
+    let results: AddImageResult[] = [];
+
+    await act(async () => {
+      results = await Promise.all(
+        files.map((file) => harness.current.addImage(file)),
+      );
+    });
+
+    expect(
+      harness.current.pendingImages.map((image) => image.fileName),
+    ).toEqual(files.slice(0, 5).map((file) => file.name));
+    expect(results.filter((result) => result.attachment)).toHaveLength(5);
+    expect(
+      results.slice(5).every((result) => result.error?.includes("Maximum")),
+    ).toBe(true);
   });
 });

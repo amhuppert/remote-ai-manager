@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { effortLevelSchema } from "@/lib/agent-backends/schemas";
+import { imagePayloadSchema } from "@/lib/images/schemas";
 
 /**
  * Agent selection for a proposed session. `dual` is the Claude+Codex race
@@ -32,6 +33,7 @@ export const proposedSessionSchema = z.object({
   agent: spawnAgentSchema,
   mode: spawnModeSchema,
   initialPrompt: z.string().trim().min(1).optional(),
+  images: z.array(imagePayloadSchema).max(5).optional(),
   // User-set in the spawn card (never agent-proposed). Apply to a single-backend
   // agent only — the `dual` race omits both and runs each participant at its
   // backend default. They drive the spawned session's first turn.

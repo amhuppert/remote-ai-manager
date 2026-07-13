@@ -1,6 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import {
+  MultilineInput,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { cn } from "@/lib/ui/cn";
 
 // Local button recipe: the legacy `.btn.btn-sm.<variant>` plus the panel-only
@@ -31,6 +35,7 @@ interface ApprovalGatePanelProps {
   isSubmitting: boolean;
   conversationBusy: boolean;
   executionSuspended: boolean;
+  voiceProjectName?: string;
   onApprove(): void;
   onReject(message: string): void;
 }
@@ -55,11 +60,14 @@ export default function ApprovalGatePanel({
   isSubmitting,
   conversationBusy,
   executionSuspended,
+  voiceProjectName,
   onApprove,
   onReject,
 }: ApprovalGatePanelProps) {
   const [rejecting, setRejecting] = useState(false);
   const [message, setMessage] = useState("");
+  const [rejectVoiceBusy, setRejectVoiceBusy] = useState(false);
+  const rejectActionRef = useRef<MultilineInputActionHandle | null>(null);
 
   const actionsDisabled = isSubmitting || conversationBusy;
   const trimmedMessage = message.trim();
@@ -76,13 +84,13 @@ export default function ApprovalGatePanel({
     setMessage("");
   };
 
+  const submitReject = (nextMessage = message) => {
+    const trimmed = nextMessage.trim();
+    if (actionsDisabled || trimmed === "") return;
+    onReject(trimmed);
+  };
+
   const handleRejectKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      if (actionsDisabled || trimmedMessage === "") return;
-      onReject(trimmedMessage);
-      return;
-    }
     if (e.key === "Escape") {
       e.preventDefault();
       if (isSubmitting) return;
@@ -158,22 +166,28 @@ export default function ApprovalGatePanel({
 
       {rejecting && (
         <div className="flex flex-col gap-sm">
-          <textarea
+          <MultilineInput
             className="w-full resize-y rounded-md border border-solid border-border-default bg-bg-surface px-md py-sm font-mono text-[0.78rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary focus:border-red-dim focus:shadow-[0_0_0_2px_var(--red-glow)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Rejection feedback"
             placeholder="Explain what needs to change..."
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onValueChange={setMessage}
             onKeyDown={handleRejectKeyDown}
-            disabled={isSubmitting}
+            onPrimaryAction={submitReject}
+            actionRef={rejectActionRef}
+            onVoiceStateChange={setRejectVoiceBusy}
+            voiceProjectName={voiceProjectName}
+            disabled={actionsDisabled}
             autoFocus
             rows={3}
           />
           <div className="flex shrink-0 items-center gap-sm">
             <button
               className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.danger)}
-              disabled={actionsDisabled || trimmedMessage === ""}
-              onClick={() => onReject(trimmedMessage)}
+              disabled={
+                actionsDisabled || (trimmedMessage === "" && !rejectVoiceBusy)
+              }
+              onClick={() => rejectActionRef.current?.primaryAction()}
             >
               Submit rejection
             </button>

@@ -390,6 +390,7 @@ export function createCollaborationProductionCallAgent(
     }
     return callOnLane({
       ...request,
+      imageRefs: undefined,
       prompt: COLLABORATION_FORMAT_TURN_INSTRUCTION,
     });
   };

@@ -79,6 +79,7 @@ export async function runInitialDraftsPhase(
       flowAgent: "agent_one",
       backend: backendForAgent("agent_one"),
       prompt: agentOneInitialPrompt,
+      imageRefs: input.imageRefs,
       writeCapability: "artifact_only",
     }),
     callPrimitive({
@@ -87,6 +88,7 @@ export async function runInitialDraftsPhase(
       flowAgent: "agent_two",
       backend: backendForAgent("agent_two"),
       prompt: agentTwoInitialPrompt,
+      imageRefs: input.imageRefs,
       writeCapability: "artifact_only",
     }),
   ]);

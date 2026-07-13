@@ -61,6 +61,7 @@ export const voiceRecorderMock = {
     isAvailable: false,
     toggleRecording: vi.fn(),
     stopRecording: vi.fn(),
+    cancelRecording: vi.fn(),
   })),
 };
 

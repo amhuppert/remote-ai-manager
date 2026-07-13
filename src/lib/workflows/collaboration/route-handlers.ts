@@ -23,19 +23,12 @@ import {
   type ProjectResolver,
 } from "@/lib/projects/resolver";
 import {
+  clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches,
   getSession as defaultGetSession,
-  mutateConversation as defaultMutateConversation,
 } from "@/lib/state-store";
 import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations/service";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import {
-  getTranscriptPath as defaultGetTranscriptPath,
-  safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
-  type TranscriptBroadcastMeta,
-  type TranscriptEntry,
-} from "@/lib/prompt/transcript";
 import type { ApiError } from "@/lib/api/errors";
-import type { ConversationState } from "@/lib/conversations/schemas";
 import {
   collaborationResumeRequestSchema,
   collaborationStartRequestSchema,
@@ -46,6 +39,7 @@ import {
   CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
   CollaborationSessionNotFoundError,
+  CollaborationStartConflictError,
   CollaborationWorkflowNotFoundError,
   getDefaultCollaborationManager,
   type CollaborationManager,
@@ -61,41 +55,8 @@ export interface CollaborationRouteDeps {
   resolveProjectPath: ProjectResolver["resolveProjectPath"];
   manager: CollaborationManager;
   getSession: typeof defaultGetSession;
+  clearConversationPendingPromptTextIfMatches: typeof defaultClearConversationPendingPromptTextIfMatches;
   readArtifactFile: (absolutePath: string) => Promise<string>;
-  /**
-   * Persists the user's `/collab <brief>` prompt as a user transcript entry
-   * before the manager begins the run. This is what lets the conversation
-   * timeline (and the inline `CollabPassage` anchor logic) render the start
-   * passage in the position the user submitted it from. Defaults to
-   * `safeAppendTranscriptEntry` from `@/lib/prompt/transcript`; tests override.
-   */
-  appendTranscriptEntry: (
-    conversationId: string,
-    entry: TranscriptEntry,
-    meta?: TranscriptBroadcastMeta,
-  ) => Promise<unknown>;
-  /**
-   * Resolves the canonical transcript file path for a conversation. Used to
-   * stamp `transcriptPath` on conversations that were /collab-started before
-   * any normal prompt has run, so the conversation no longer appears with a
-   * `null` transcriptPath in lists/active surfaces. Defaults to
-   * `getTranscriptPath` from `@/lib/prompt/transcript`; tests override.
-   */
-  getTranscriptPath: (conversationId: string) => Promise<string>;
-  /**
-   * Mutates a conversation entry in session state under the durable lock.
-   * Called from START to flip a `new` conversation to a started state with a
-   * stamped transcriptPath, incremented promptCount, and refreshed
-   * lastActivityAt. Defaults to `mutateConversation` from `@/lib/state-store`; tests
-   * override.
-   */
-  mutateConversation: <T = void>(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    label: string,
-    mutate: (conversation: ConversationState) => T | Promise<T>,
-  ) => Promise<T>;
   /**
    * Adopts the user's currently-selected backend onto the conversation before
    * the manager picks Agent One. Mirrors `executePromptStream`'s adoption: a
@@ -118,18 +79,9 @@ const defaultDeps: CollaborationRouteDeps = {
     return getDefaultCollaborationManager();
   },
   getSession: defaultGetSession,
+  clearConversationPendingPromptTextIfMatches:
+    defaultClearConversationPendingPromptTextIfMatches,
   readArtifactFile: (absolutePath) => readFile(absolutePath, "utf-8"),
-  appendTranscriptEntry: (conversationId, entry, meta) =>
-    defaultSafeAppendTranscriptEntry(
-      conversationId,
-      entry,
-      undefined,
-      undefined,
-      meta,
-    ),
-  getTranscriptPath: (conversationId) =>
-    defaultGetTranscriptPath(conversationId),
-  mutateConversation: defaultMutateConversation,
   setConversationBackend: defaultSetConversationBackend,
 };
 
@@ -257,6 +209,11 @@ const COLLABORATION_ARTIFACT_TYPES = [
 ] as const;
 type CollaborationArtifactType = (typeof COLLABORATION_ARTIFACT_TYPES)[number];
 
+const collaborationRouteStartRequestSchema =
+  collaborationStartRequestSchema.extend({
+    submittedPendingPromptText: z.string().optional(),
+  });
+
 function isCollaborationArtifactType(
   value: string,
 ): value is CollaborationArtifactType {
@@ -329,7 +286,7 @@ export function createCollaborationRouteHandlers(
         );
       }
 
-      const parsed = collaborationStartRequestSchema.safeParse(body);
+      const parsed = collaborationRouteStartRequestSchema.safeParse(body);
       if (!parsed.success) {
         return buildValidationErrorResponse(parsed.error);
       }
@@ -371,67 +328,43 @@ export function createCollaborationRouteHandlers(
       }
 
       try {
-        // Stamp the composer's model/effort like executePromptForMachine's
-        // user entry: the last-used composer restore and the assistant-row
-        // metadata propagation both read them off the latest user entry.
-        await deps.appendTranscriptEntry(
-          parsed.data.conversationId,
-          {
-            timestamp: new Date().toISOString(),
-            type: "user",
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `/collab ${parsed.data.brief}`,
-              },
-            ],
-            ...(parsed.data.modelId !== undefined
-              ? { model: parsed.data.modelId }
-              : {}),
-            ...(parsed.data.effort !== undefined
-              ? { effort: parsed.data.effort }
-              : {}),
-          },
-          {
-            projectName: sessionResolution.projectName,
-            sessionName: sessionResolution.sessionName,
-          },
-        );
+        const { submittedPendingPromptText, ...startRequest } = parsed.data;
         const result = await deps.manager.start({
           projectPath: sessionResolution.projectPath,
           sessionName: sessionResolution.sessionName,
-          ...parsed.data,
+          ...startRequest,
         });
-        try {
-          const stampedTranscriptPath = await deps.getTranscriptPath(
-            parsed.data.conversationId,
-          );
-          await deps.mutateConversation(
-            sessionResolution.projectPath,
-            sessionResolution.sessionName,
-            parsed.data.conversationId,
-            "collab.start",
-            (conversation) => {
-              if (conversation.transcriptPath === null) {
-                conversation.transcriptPath = stampedTranscriptPath;
-              }
-              if (conversation.status === "new") {
-                conversation.status = "running";
-              }
-              conversation.promptCount = (conversation.promptCount ?? 0) + 1;
-              conversation.lastActivityAt = new Date().toISOString();
-            },
-          );
-        } catch (mutationErr) {
-          logger.warn("collaboration.route.start_metadata_sync_failed", {
-            workflowId: result.workflowId,
-            conversationId: parsed.data.conversationId,
-            error: getErrorMessage(mutationErr),
-          });
+        if (submittedPendingPromptText !== undefined) {
+          try {
+            const cleared =
+              await deps.clearConversationPendingPromptTextIfMatches(
+                sessionResolution.projectPath,
+                sessionResolution.sessionName,
+                parsed.data.conversationId,
+                submittedPendingPromptText,
+              );
+            logger.debug("collaboration.pending_draft_clear_completed", {
+              projectPath: sessionResolution.projectPath,
+              sessionName: sessionResolution.sessionName,
+              conversationId: parsed.data.conversationId,
+              workflowId: result.workflowId,
+              cleared,
+            });
+          } catch (error) {
+            logger.warn("collaboration.pending_draft_clear_failed", {
+              projectPath: sessionResolution.projectPath,
+              sessionName: sessionResolution.sessionName,
+              conversationId: parsed.data.conversationId,
+              workflowId: result.workflowId,
+              error: getErrorMessage(error),
+            });
+          }
         }
         const statusUrl = `/api/projects/${encodeURIComponent(sessionResolution.projectName)}/sessions/${encodeURIComponent(sessionResolution.sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
-        return NextResponse.json({ ...result, statusUrl }, { status: 202 });
+        return NextResponse.json(
+          { workflowId: result.workflowId, status: result.status, statusUrl },
+          { status: 202 },
+        );
       } catch (err) {
         if (err instanceof CollaborationSessionNotFoundError) {
           return NextResponse.json({ error: err.message } satisfies ApiError, {
@@ -442,6 +375,15 @@ export function createCollaborationRouteHandlers(
           return NextResponse.json({ error: err.message } satisfies ApiError, {
             status: 404,
           });
+        }
+        if (err instanceof CollaborationStartConflictError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_START_CONFLICT",
+            } satisfies ApiError,
+            { status: 409 },
+          );
         }
         logger.error("collaboration.route.start_failed", {
           error: getErrorMessage(err),

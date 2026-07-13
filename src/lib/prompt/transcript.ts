@@ -163,6 +163,7 @@ export function _resetTranscriptDepsForTesting(): void {
 // in place — `copyTranscriptUpTo` writes to a different target.
 const LAST_SEQ_CACHE_MAX = 500;
 const lastSeqCache = new Map<string, number>();
+const idempotentAppendLocks = new Map<string, Promise<void>>();
 
 export function _resetLastSeqCacheForTesting(): void {
   lastSeqCache.clear();
@@ -272,6 +273,40 @@ export async function appendTranscriptEntry(
       },
     });
     activeDeps.broadcast(event);
+  }
+}
+
+export async function appendTranscriptEntryOnce(
+  conversationId: string,
+  entry: TranscriptEntry & { id: string },
+  configDir?: string,
+  meta?: TranscriptBroadcastMeta,
+): Promise<void> {
+  const filePath = await getTranscriptPath(conversationId, configDir);
+  const previous = idempotentAppendLocks.get(filePath) ?? Promise.resolve();
+  const current = previous.then(async () => {
+    if (existsSync(filePath)) {
+      const raw = await readFile(filePath, "utf-8");
+      const alreadyAppended = raw.split("\n").some((line) => {
+        if (line.trim() === "") return false;
+        try {
+          return (JSON.parse(line) as { id?: unknown }).id === entry.id;
+        } catch {
+          return false;
+        }
+      });
+      if (alreadyAppended) return;
+    }
+    await appendTranscriptEntry(conversationId, entry, configDir, meta);
+  });
+  const settled = current.catch(() => undefined);
+  idempotentAppendLocks.set(filePath, settled);
+  try {
+    await current;
+  } finally {
+    if (idempotentAppendLocks.get(filePath) === settled) {
+      idempotentAppendLocks.delete(filePath);
+    }
   }
 }
 

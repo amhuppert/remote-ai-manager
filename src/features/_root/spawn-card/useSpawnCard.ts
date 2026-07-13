@@ -16,6 +16,8 @@ import {
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 
 /**
  * A proposed session in editable form. The branch is intentionally absent — CC
@@ -31,6 +33,7 @@ export interface EditableSession {
   agent: SpawnAgent;
   mode: SpawnMode;
   initialPrompt: string;
+  images?: ImagePayload[];
   /**
    * Backend model + reasoning effort for the spawned session's first turn.
    * Always held (defaulted from the agent's backend) so the controls bind
@@ -93,6 +96,7 @@ export function toEditableSessions(proposal: SpawnProposal): EditableSession[] {
       agent: s.agent,
       mode: s.mode,
       initialPrompt: s.initialPrompt ?? "",
+      images: s.images ?? [],
       model: s.model ?? defaults.model,
       reasoningEffort: s.reasoningEffort ?? defaults.reasoningEffort,
       included: true,
@@ -153,6 +157,44 @@ export function setSessionIncluded(
   return sessions.map((s, i) => (i === index ? { ...s, included } : s));
 }
 
+export function setSessionImages(
+  sessions: EditableSession[],
+  index: number,
+  images: ImagePayload[],
+): EditableSession[] {
+  const current = sessions[index]?.images ?? [];
+  const unchanged =
+    current.length === images.length &&
+    current.every((image, imageIndex) => {
+      const next = images[imageIndex];
+      return (
+        next !== undefined &&
+        image.attachmentId === next.attachmentId &&
+        image.mediaType === next.mediaType &&
+        image.base64Data === next.base64Data &&
+        image.inlineMarkerIndex === next.inlineMarkerIndex
+      );
+    });
+  if (unchanged) return sessions;
+  return sessions.map((session, currentIndex) =>
+    currentIndex === index ? { ...session, images } : session,
+  );
+}
+
+export function applyPromptDocument(
+  sessions: EditableSession[],
+  index: number,
+  document: SerializedPromptDoc,
+): EditableSession[] {
+  const withPrompt = updateEditableSession(
+    sessions,
+    index,
+    "initialPrompt",
+    document.prompt,
+  );
+  return setSessionImages(withPrompt, index, document.images);
+}
+
 /**
  * Map edited rows back to a submit-ready proposal (pure). Only included
  * sessions are emitted. Trims text; an empty `initialPrompt` becomes absent (the
@@ -179,6 +221,7 @@ export function toSpawnProposal(sessions: EditableSession[]): SpawnProposal {
           agent: s.agent,
           mode: s.mode,
           ...(initialPrompt.length > 0 ? { initialPrompt } : {}),
+          ...(s.images && s.images.length > 0 ? { images: s.images } : {}),
           ...(backend !== null ? { model: s.model } : {}),
           ...(emitsEffort ? { reasoningEffort: s.reasoningEffort } : {}),
         };
@@ -217,10 +260,13 @@ export interface UseSpawnCardResult {
   draft: EditableSession[];
   updateField: (index: number, field: EditableField, value: string) => void;
   setIncluded: (index: number, included: boolean) => void;
+  setImages: (index: number, images: ImagePayload[]) => void;
+  setPromptDocument(index: number, document: SerializedPromptDoc): void;
   includedCount: number;
   expanded: Record<number, boolean>;
   toggleExpanded: (index: number) => void;
   submit: () => void;
+  submitPromptDocument(index: number, document: SerializedPromptDoc): void;
   isPending: boolean;
   isError: boolean;
   result: SpawnResult | undefined;
@@ -251,16 +297,43 @@ export function useSpawnCard(input: UseSpawnCardInput): UseSpawnCardResult {
     setDraft((prev) => setSessionIncluded(prev, index, included));
   }, []);
 
+  const setImages = useCallback((index: number, images: ImagePayload[]) => {
+    setDraft((prev) => setSessionImages(prev, index, images));
+  }, []);
+
+  const setPromptDocument = useCallback(
+    (index: number, document: SerializedPromptDoc) => {
+      setDraft((prev) => applyPromptDocument(prev, index, document));
+    },
+    [],
+  );
+
   const toggleEditing = useCallback(() => setEditing((e) => !e), []);
 
   const toggleExpanded = useCallback((index: number) => {
     setExpanded((prev) => ({ ...prev, [index]: !prev[index] }));
   }, []);
 
+  const submitDraft = useCallback(
+    (nextDraft: EditableSession[]) => {
+      mutation.mutate(toSpawnProposal(nextDraft));
+      setEditing(false);
+    },
+    [mutation],
+  );
+
   const submit = useCallback(() => {
-    mutation.mutate(toSpawnProposal(draft));
-    setEditing(false);
-  }, [draft, mutation]);
+    submitDraft(draft);
+  }, [draft, submitDraft]);
+
+  const submitPromptDocument = useCallback(
+    (index: number, document: SerializedPromptDoc) => {
+      const nextDraft = applyPromptDocument(draft, index, document);
+      setDraft(nextDraft);
+      submitDraft(nextDraft);
+    },
+    [draft, submitDraft],
+  );
 
   const includedCount = draft.filter((s) => s.included).length;
 
@@ -270,10 +343,13 @@ export function useSpawnCard(input: UseSpawnCardInput): UseSpawnCardResult {
     draft,
     updateField,
     setIncluded,
+    setImages,
+    setPromptDocument,
     includedCount,
     expanded,
     toggleExpanded,
     submit,
+    submitPromptDocument,
     isPending: mutation.isPending,
     isError: mutation.isError,
     result: mutation.data,

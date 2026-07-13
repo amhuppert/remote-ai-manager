@@ -65,7 +65,7 @@ const passageBorder: Record<CollaborationAgent, string> = {
 interface CollabPauseHandlers {
   drafts: Record<string, string>;
   onDraftChange: (questionId: string, value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (answerOverrides?: Record<string, string>) => void;
   isSubmitting: boolean;
 }
 

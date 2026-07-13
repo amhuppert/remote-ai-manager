@@ -49,6 +49,54 @@ describe("proposedSessionSchema", () => {
     }
   });
 
+  it("keeps ordered images with their initial prompt", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "Add login",
+      agent: "claude",
+      mode: "normal",
+      initialPrompt: "Use the screenshot as the reference",
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "one",
+        },
+        {
+          attachmentId: "second",
+          mediaType: "image/jpeg",
+          base64Data: "two",
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.images?.map((image) => image.attachmentId)).toEqual([
+        "first",
+        "second",
+      ]);
+    }
+  });
+
+  it("accepts images as the complete initial turn", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "Add login",
+      agent: "claude",
+      mode: "normal",
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "one",
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.initialPrompt).toBeUndefined();
+      expect(result.data.images).toHaveLength(1);
+    }
+  });
+
   it("rejects an out-of-range agent", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",

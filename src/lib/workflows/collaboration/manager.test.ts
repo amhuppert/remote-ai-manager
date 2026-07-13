@@ -11,10 +11,16 @@
  * No `vi.mock`. All deps are injected via `createCollaborationManager`.
  */
 import { describe, it, expect } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import {
+  createCollaborationStartPersister,
   createCollaborationManager,
+  prepareCollaborationInitialImages,
   createInMemoryCollaborationStopRegistry,
+  CollaborationStartConflictError,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
   CollaborationNotPausedError,
@@ -25,6 +31,7 @@ import {
   type CollaborationManagerDeps,
   type CollaborationStopRegistry,
 } from "./manager";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type { CollaborationArtifact } from "./types";
@@ -37,9 +44,15 @@ import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/
 import { createWorkflowEnvelopeRepository } from "@/lib/workflows/primitives/workflow-envelope-repository";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { PublishScopedStatusEventInput } from "@/lib/workflows/primitives/default-session-status-bus";
 import { makeFinalAnswer } from "./test-fixtures";
+import { buildCollaborationUserTranscriptEntry } from "./transcript";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import { createStateStore } from "@/lib/state-store/store";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
 
 function buildEnvelope(
   overrides: Partial<WorkflowEnvelope> = {},
@@ -63,12 +76,97 @@ function makeStubSliceDeps(): AsymmetricCollaborationSliceDeps {
   return {} as AsymmetricCollaborationSliceDeps;
 }
 
+describe("collaboration start persistence", () => {
+  function makeConversation(): ConversationState {
+    return {
+      id: "conv-1",
+      name: "Conversation",
+      status: "awaiting",
+      promptCount: 4,
+      transcriptPath: null,
+      lastActivityAt: "2026-07-13T12:00:00.000Z",
+    } as ConversationState;
+  }
+
+  it("rejects a stale concurrent start before appending its transcript", async () => {
+    const conversation = makeConversation();
+    const appendedIds: string[] = [];
+    const persist = createCollaborationStartPersister({
+      getTranscriptPath: async () => "/tmp/conv-1.jsonl",
+      appendTranscriptEntryOnce: async (_conversationId, entry) => {
+        appendedIds.push(entry.id);
+      },
+      mutateConversation: async (
+        _project,
+        _session,
+        _conversation,
+        _label,
+        mutate,
+      ) => mutate(conversation),
+      now: () => "2026-07-13T13:00:00.000Z",
+    });
+    const input = {
+      projectPath: "/p",
+      sessionName: "s",
+      conversationId: "conv-1",
+      expectedPromptCount: 4,
+      brief: "design X",
+      imageRefs: [],
+    };
+
+    await persist({ ...input, workflowId: "wf-1" });
+    await expect(
+      persist({ ...input, workflowId: "wf-2" }),
+    ).rejects.toBeInstanceOf(CollaborationStartConflictError);
+
+    expect(appendedIds).toEqual(["collab-start:wf-1"]);
+    expect(conversation.promptCount).toBe(5);
+    expect(conversation.status).toBe("running");
+  });
+
+  it("compensates the conversation claim when transcript persistence fails", async () => {
+    const conversation = makeConversation();
+    const persist = createCollaborationStartPersister({
+      getTranscriptPath: async () => "/tmp/conv-1.jsonl",
+      appendTranscriptEntryOnce: async () => {
+        throw new Error("disk full");
+      },
+      mutateConversation: async (
+        _project,
+        _session,
+        _conversation,
+        _label,
+        mutate,
+      ) => mutate(conversation),
+      now: () => "2026-07-13T13:00:00.000Z",
+    });
+
+    await expect(
+      persist({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-1",
+        conversationId: "conv-1",
+        expectedPromptCount: 4,
+        brief: "design X",
+        imageRefs: [],
+      }),
+    ).rejects.toThrow("disk full");
+
+    expect(conversation.promptCount).toBe(4);
+    expect(conversation.status).toBe("awaiting");
+    expect(conversation.transcriptPath).toBeNull();
+    expect(conversation.lastActivityAt).toBe("2026-07-13T12:00:00.000Z");
+  });
+});
+
 interface ScriptedDepsOptions {
   resolveSessionResult?: { worktreePath: string } | null | "throw";
   resolveConversationResult?:
     | {
         agentBackend: AgentBackendId;
         backendRef?: AgentSessionRef | null;
+        promptCount?: number;
       }
     | null
     | "throw";
@@ -81,6 +179,7 @@ interface ScriptedDepsOptions {
   sliceDepsOverride?: AsymmetricCollaborationSliceDeps;
   resolveCodexModelConfigResult?: { model: string; reasoningEffort?: string };
   resolveClaudeModelConfigResult?: { model: string; reasoningEffort?: string };
+  persistStartError?: Error;
   /**
    * In-memory stand-in for the durable artifacts sidecar keyed by workflowId.
    * The manager's `getEnvelope`/`listActive`/`listAll` read from here to
@@ -117,6 +216,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   dispatchedPushes: Array<
     Parameters<CollaborationManagerDeps["dispatchPush"]>[0]
   >;
+  persistedStarts: Array<
+    Parameters<CollaborationManagerDeps["persistStart"]>[0]
+  >;
   envelopeStore: ReturnType<typeof createInMemoryWorkflowEnvelopeStore>;
   runSliceCompletion: Promise<void>;
   stopRegistry: CollaborationStopRegistry;
@@ -146,6 +248,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   const dispatchedPushes: Array<
     Parameters<CollaborationManagerDeps["dispatchPush"]>[0]
   > = [];
+  const persistedStarts: Array<
+    Parameters<CollaborationManagerDeps["persistStart"]>[0]
+  > = [];
   let resolveCompletion: () => void = () => undefined;
   const runSliceCompletion = new Promise<void>((resolve) => {
     resolveCompletion = resolve;
@@ -174,12 +279,43 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         throw new Error("synthetic resolveConversation failure");
       }
       if (options.resolveConversationResult === null) return null;
-      return (
-        options.resolveConversationResult ?? {
-          agentBackend: "claude",
-          backendRef: null,
-        }
+      const result = options.resolveConversationResult ?? {
+        agentBackend: "claude",
+        backendRef: null,
+        promptCount: 0,
+      };
+      return { ...result, promptCount: result.promptCount ?? 0 };
+    },
+    prepareInitialImages: async ({
+      conversationId,
+      workflowId,
+      brief,
+      images,
+    }) => {
+      const assembled = assembleUserContentBlocks({
+        promptText: brief,
+        images,
+        startIndex: 0,
+      });
+      const imagesById = new Map(
+        images.map((image) => [image.attachmentId, image]),
       );
+      return {
+        brief: assembled.rewrittenPromptText,
+        imageRefs: assembled.assignments.map((assignment) => {
+          const image = imagesById.get(assignment.attachmentId)!;
+          return {
+            index: assignment.serverIndex,
+            mediaType: image.mediaType,
+            path: `/tmp/${conversationId}/${workflowId}/${assignment.serverIndex}`,
+            base64Data: image.base64Data,
+          };
+        }),
+      };
+    },
+    persistStart: async (input) => {
+      persistedStarts.push(input);
+      if (options.persistStartError) throw options.persistStartError;
     },
     stopRegistry,
     createDeps: () => options.sliceDepsOverride ?? makeStubSliceDeps(),
@@ -240,6 +376,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     buildCallAgentCalls,
     publishedStatuses,
     dispatchedPushes,
+    persistedStarts,
     envelopeStore,
     runSliceCompletion,
     stopRegistry,
@@ -380,6 +517,295 @@ describe("createCollaborationManager.start", () => {
       conversationId: "conv-1",
     });
     expect(call.input.stopSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("persists ordered start images before forwarding their refs to the initial slice", async () => {
+    const { deps, runSliceCalls, runSliceCompletion, persistedStarts } =
+      buildScriptedDeps();
+    const manager = createCollaborationManager(deps);
+
+    const result = await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design from the images",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "one",
+        },
+        {
+          attachmentId: "second",
+          mediaType: "image/jpeg",
+          base64Data: "two",
+        },
+      ],
+    });
+
+    await runSliceCompletion;
+
+    expect(runSliceCalls[0]?.input.imageRefs).toEqual([
+      {
+        index: 0,
+        mediaType: "image/png",
+        path: "/tmp/conv-1/wf-1/0",
+        base64Data: "one",
+      },
+      {
+        index: 1,
+        mediaType: "image/jpeg",
+        path: "/tmp/conv-1/wf-1/1",
+        base64Data: "two",
+      },
+    ]);
+    expect(result).toEqual({ workflowId: "wf-1", status: "started" });
+    expect(persistedStarts).toEqual([
+      expect.objectContaining({
+        workflowId: "wf-1",
+        conversationId: "conv-1",
+        brief: "design from the images",
+        expectedPromptCount: 0,
+        imageRefs: [
+          {
+            index: 0,
+            mediaType: "image/png",
+            path: "/tmp/conv-1/wf-1/0",
+            base64Data: "one",
+          },
+          {
+            index: 1,
+            mediaType: "image/jpeg",
+            path: "/tmp/conv-1/wf-1/1",
+            base64Data: "two",
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it("does not schedule the slice when durable start persistence fails", async () => {
+    const { deps, runSliceCalls, persistedStarts } = buildScriptedDeps({
+      persistStartError: new Error("disk full"),
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toThrow("disk full");
+
+    expect(persistedStarts).toHaveLength(1);
+    expect(runSliceCalls).toHaveLength(0);
+  });
+
+  it("keeps the accepted collaboration image isolated from a concurrent losing start", async () => {
+    const configDir = await mkdtemp(
+      path.join(tmpdir(), "cc-collaboration-image-race-"),
+    );
+    const db = _createTestDb({ inMemory: true });
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+    const projectPath = "/projects/example";
+    const sessionName = "sess-1";
+    const conversationId = "conv-1";
+    const transcriptEntries: Array<
+      ReturnType<typeof buildCollaborationUserTranscriptEntry> & { id: string }
+    > = [];
+    try {
+      await store.getOrCreateProject(projectPath);
+      await store.mutateState("seed", (state) => {
+        state.projects[projectPath]!.sessions[sessionName] =
+          sessionStateSchema.parse({
+            sessionName,
+            worktreePath: "/tmp/sess-1",
+            branchName: "cc/sess-1",
+            createdAt: "2026-07-13T12:00:00.000Z",
+            lastActivityAt: "2026-07-13T12:00:00.000Z",
+            conversations: [
+              {
+                id: conversationId,
+                transcriptPath: null,
+                status: "new",
+                promptCount: 0,
+                createdAt: "2026-07-13T12:00:00.000Z",
+                lastActivityAt: "2026-07-13T12:00:00.000Z",
+                agentBackend: "claude",
+              },
+            ],
+          });
+      });
+
+      const { deps, runSliceCalls } = buildScriptedDeps();
+      deps.resolveConversation = async () => {
+        const conversation = await store.getConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+        );
+        return conversation
+          ? {
+              agentBackend: conversation.agentBackend,
+              backendRef: conversation.backendRef,
+              promptCount: conversation.promptCount,
+            }
+          : null;
+      };
+      const bytesByWorkflow = new Map<string, string>();
+      let preparedCount = 0;
+      let releasePrepared: () => void = () => undefined;
+      const bothPrepared = new Promise<void>((resolve) => {
+        releasePrepared = resolve;
+      });
+      deps.prepareInitialImages = async (input) => {
+        bytesByWorkflow.set(
+          input.workflowId,
+          input.images[0]?.base64Data ?? "",
+        );
+        const prepared = await prepareCollaborationInitialImages(
+          input,
+          configDir,
+        );
+        preparedCount += 1;
+        if (preparedCount === 2) releasePrepared();
+        await bothPrepared;
+        return prepared;
+      };
+      deps.persistStart = createCollaborationStartPersister({
+        getTranscriptPath: async () =>
+          path.join(configDir, "transcripts", `${conversationId}.jsonl`),
+        appendTranscriptEntryOnce: async (_id, entry) => {
+          transcriptEntries.push(entry);
+        },
+        mutateConversation: store.mutateConversation,
+        now: () => "2026-07-13T13:00:00.000Z",
+      });
+      const manager = createCollaborationManager(deps);
+      const start = (base64Data: string) =>
+        manager.start({
+          projectPath,
+          sessionName,
+          brief: "compare [Image #1]",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId,
+          images: [
+            {
+              attachmentId: crypto.randomUUID(),
+              mediaType: "image/png",
+              base64Data,
+              inlineMarkerIndex: 1,
+            },
+          ],
+        });
+      const outcomes = await Promise.allSettled([
+        start(Buffer.from("request-a").toString("base64")),
+        start(Buffer.from("request-b").toString("base64")),
+      ]);
+
+      const accepted = outcomes.find(
+        (
+          outcome,
+        ): outcome is PromiseFulfilledResult<{
+          workflowId: string;
+          status: "started";
+        }> => outcome.status === "fulfilled",
+      );
+      const rejected = outcomes.find(
+        (outcome): outcome is PromiseRejectedResult =>
+          outcome.status === "rejected",
+      );
+      expect(accepted).toBeDefined();
+      expect(rejected?.reason).toBeInstanceOf(CollaborationStartConflictError);
+      expect(transcriptEntries).toHaveLength(1);
+      expect(runSliceCalls).toHaveLength(1);
+
+      const acceptedWorkflowId = accepted!.value.workflowId;
+      const acceptedBytes = bytesByWorkflow.get(acceptedWorkflowId);
+      const transcriptEntry = transcriptEntries[0];
+      if (!transcriptEntry || !Array.isArray(transcriptEntry.content)) {
+        throw new Error("accepted transcript entry missing");
+      }
+      const transcriptImage = transcriptEntry.content.find(
+        (block) => block.type === "image_ref",
+      );
+      expect(transcriptImage?.type).toBe("image_ref");
+      if (!transcriptImage || transcriptImage.type !== "image_ref") {
+        throw new Error("accepted transcript image ref missing");
+      }
+      expect(
+        (await readFile(transcriptImage.imagePath)).toString("base64"),
+      ).toBe(acceptedBytes);
+      expect(runSliceCalls[0]?.input.imageRefs?.[0]).toMatchObject({
+        path: transcriptImage.imagePath,
+        base64Data: acceptedBytes,
+      });
+    } finally {
+      db.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not persist a start when fallible runtime preparation fails", async () => {
+    const { deps, runSliceCalls, persistedStarts } = buildScriptedDeps();
+    deps.resolveCodexModelConfig = async () => {
+      throw new Error("config unavailable");
+    };
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toThrow("config unavailable");
+
+    expect(persistedStarts).toHaveLength(0);
+    expect(runSliceCalls).toHaveLength(0);
+  });
+
+  it("keeps inline markers associated when a strip image precedes an inline image", async () => {
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps();
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "compare [Image #1]",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      images: [
+        {
+          attachmentId: "strip",
+          mediaType: "image/png",
+          base64Data: "strip-data",
+        },
+        {
+          attachmentId: "inline",
+          mediaType: "image/jpeg",
+          base64Data: "inline-data",
+          inlineMarkerIndex: 1,
+        },
+      ],
+    });
+
+    await runSliceCompletion;
+    expect(runSliceCalls[0]?.input.brief).toBe("compare [Image #0]");
+    expect(
+      runSliceCalls[0]?.input.imageRefs?.map((image) => image.base64Data),
+    ).toEqual(["inline-data", "strip-data"]);
   });
 
   it("uses claude as the primary agent backend when the conversation backend is claude", async () => {

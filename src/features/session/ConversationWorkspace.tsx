@@ -205,7 +205,7 @@ export default function ConversationWorkspace({
     lastUsedEffort: lastUserTurnAgentSettings.effort,
   });
 
-  const { handlePromptTextChange, clearPersistedPendingPromptOnSubmit } =
+  const { handlePromptTextChange, suppressPendingPromptAutosaveAfterSubmit } =
     usePendingPromptPersistence({
       projectName,
       sessionName,
@@ -326,7 +326,7 @@ export default function ConversationWorkspace({
     collaborationStartMutation,
     effectiveCollabConfig,
     clearCollabConfigDraft,
-    clearPersistedPendingPromptOnSubmit,
+    suppressPendingPromptAutosaveAfterSubmit,
     enqueuePromptErrorToast,
     onOpenConversation,
   });

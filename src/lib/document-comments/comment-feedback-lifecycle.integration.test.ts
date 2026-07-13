@@ -579,6 +579,23 @@ describe("document comment + feedback lifecycle (real store)", () => {
       executePromptStream: vi.fn(),
       getCollaborationManager: () => ({}) as unknown as CollaborationManager,
       setConversationPendingPromptText: async () => {},
+      clearConversationPendingPromptTextIfMatches: async (
+        projectPath,
+        sessionName,
+        conversationId,
+        expectedText,
+      ) =>
+        fx.store.mutateConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+          "test.pending.clear_if_matches",
+          (conversation) => {
+            if (conversation.pendingPromptText !== expectedText) return false;
+            conversation.pendingPromptText = null;
+            return true;
+          },
+        ),
     };
     const handlers = createPromptRouteHandlers(promptDeps);
 

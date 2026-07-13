@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { MultilineInput } from "@/components/MultilineInput";
 import {
   Dialog,
   DialogClose,
@@ -26,6 +27,8 @@ export interface InspectorFocusSheetProps {
   value: string;
   onChange(next: string): void;
   textareaId?: string;
+  onPrimaryAction?: (force?: boolean) => void;
+  voiceProjectName?: string | null;
 }
 
 export default function InspectorFocusSheet({
@@ -36,6 +39,8 @@ export default function InspectorFocusSheet({
   value,
   onChange,
   textareaId,
+  onPrimaryAction,
+  voiceProjectName,
 }: InspectorFocusSheetProps): React.JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -56,13 +61,18 @@ export default function InspectorFocusSheet({
         <DialogTitle layoutClassName="min-w-0 truncate">
           {contextTitle}
         </DialogTitle>
-        <textarea
+        <MultilineInput
           autoFocus
           id={textareaId}
           aria-label={fieldLabel}
           className="box-border h-[46vh] min-h-[320px] w-full resize-none rounded-md border border-solid border-border-default bg-bg-base px-lg py-md font-mono text-[0.85rem] leading-[1.7] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]"
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onValueChange={onChange}
+          onPrimaryAction={(next) => {
+            onChange(next);
+            onPrimaryAction?.(true);
+          }}
+          voiceProjectName={voiceProjectName}
         />
         <footer className="mt-md flex items-center gap-sm">
           <span className="font-mono text-[0.7rem] text-text-tertiary">

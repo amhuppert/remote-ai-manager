@@ -158,9 +158,37 @@ describe("PeekPopover", () => {
     await user.keyboard("Status?");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    expect(onReplyText).toHaveBeenCalledWith("Status?");
+    expect(onReplyText).toHaveBeenCalledWith("Status?", []);
     expect(onClose).not.toHaveBeenCalled();
     expect(editor).toHaveTextContent("");
+  });
+
+  it("enables and sends a conversation-reference-only reply", async () => {
+    vi.useRealTimers();
+    const onReplyText = vi.fn();
+    renderPeek({ onReplyText });
+    const reference =
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+      'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
+      'conversation-id="conv-2" conversation-name="Refactor parser" ' +
+      'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +
+      'status="running" last-activity-at="2026-06-01T12:00:00Z" ' +
+      'compact-status="none" read-command="cctl conversation read conv-2 --outline" />';
+    const editor = document.querySelector(".ProseMirror") as HTMLElement;
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        items: [],
+        files: [],
+        types: ["text/plain"],
+        getData: (type: string) => (type === "text/plain" ? reference : ""),
+      },
+    });
+
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    expect(onReplyText).toHaveBeenCalledWith(reference, []);
   });
 
   it("shows a sending state on the reply button while the reply is in flight", () => {
@@ -169,6 +197,10 @@ describe("PeekPopover", () => {
     const sendButton = screen.getByRole("button", { name: /sending/i });
     expect(sendButton).toBeDisabled();
     expect(sendButton.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByLabelText("Reply text")).toHaveAttribute(
+      "contenteditable",
+      "false",
+    );
   });
 
   it("uses the shared Tiptap prompt editor for free-text replies", () => {
@@ -225,11 +257,13 @@ describe("PeekPopover", () => {
     }
     vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
 
+    const user = userEvent.setup();
     renderPeek();
 
     const editor = screen.getByLabelText("Reply text");
     await screen.findByTitle("Voice input");
-    fireEvent.keyDown(editor, { key: "v", altKey: true });
+    await user.click(editor);
+    fireEvent.keyDown(document, { key: "v", code: "KeyV", altKey: true });
 
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledTimes(1);

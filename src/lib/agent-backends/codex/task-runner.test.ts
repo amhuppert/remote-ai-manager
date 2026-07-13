@@ -143,6 +143,21 @@ describe("CodexTaskRunner", () => {
     );
   });
 
+  it("forwards persistent image paths as Codex local_image input", async () => {
+    await runner.run(
+      makeRequest({ imagePaths: ["/images/first.png", "/images/second.jpg"] }),
+    );
+
+    expect(runMock).toHaveBeenCalledWith(
+      [
+        { type: "text", text: "Do the thing" },
+        { type: "local_image", path: "/images/first.png" },
+        { type: "local_image", path: "/images/second.jpg" },
+      ],
+      expect.any(Object),
+    );
+  });
+
   it("fails fast when reasoning effort is invalid", async () => {
     const result = await runner.run(makeRequest({ reasoningEffort: "turbo" }));
 

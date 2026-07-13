@@ -78,14 +78,24 @@ describe("useSendPrompt — send()", () => {
     const sse =
       'event: content\ndata: {"type":"text","text":"partial answer"}\n\n' +
       "event: done\ndata: {}\n\n";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(sse, { status: 200 }),
-    );
+    let requestBody: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(sse, { status: 200 });
+    });
 
     const { result } = renderQueueHook();
 
     await act(async () => {
-      await result.current.send("hi", 0, "fable", undefined, "max", "claude");
+      await result.current.send(
+        "hi",
+        0,
+        "fable",
+        undefined,
+        "max",
+        "claude",
+        "  hi  ",
+      );
     });
 
     const messages = inFlight().optimisticMessages;
@@ -99,6 +109,7 @@ describe("useSendPrompt — send()", () => {
       model: "fable",
       effort: "max",
     });
+    expect(requestBody?.submittedPendingPromptText).toBe("  hi  ");
   });
 });
 
@@ -241,13 +252,18 @@ describe("useSendPrompt — queue()", () => {
     const { result } = renderQueueHook();
 
     await act(async () => {
-      await result.current.queue("hi", [image]);
+      await result.current.queue("hi", [image], "  hi  ");
     });
 
     expect(bodies).toHaveLength(1);
-    const body = bodies[0] as { text?: string; images?: ImagePayload[] };
+    const body = bodies[0] as {
+      text?: string;
+      images?: ImagePayload[];
+      submittedPendingPromptText?: string;
+    };
     expect(body.text).toBe("hi");
     expect(body.images).toEqual([image]);
+    expect(body.submittedPendingPromptText).toBe("  hi  ");
   });
 
   it("posts to the queue endpoint even when this tab's sending flag is false", async () => {

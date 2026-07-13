@@ -116,6 +116,54 @@ describe("createPeekReplySubmitter", () => {
     ]);
   });
 
+  it("forwards ordered rich-prompt images to the targeted conversation", async () => {
+    const calls: RequestInit[] = [];
+    const submitPeekReply = createPeekReplySubmitter({
+      async fetcher(_url, _traceLabel, options) {
+        calls.push(options);
+        return { ok: true };
+      },
+      logger: noopLogger,
+    });
+
+    await submitPeekReply({
+      projectName: "Project One",
+      sessionName: "Session One",
+      conversationId: "conv-one",
+      text: "Compare these",
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "first-data",
+        },
+        {
+          attachmentId: "second",
+          mediaType: "image/jpeg",
+          base64Data: "second-data",
+        },
+      ],
+    });
+
+    expect(calls[0]?.body).toBe(
+      JSON.stringify({
+        prompt: "Compare these",
+        images: [
+          {
+            attachmentId: "first",
+            mediaType: "image/png",
+            base64Data: "first-data",
+          },
+          {
+            attachmentId: "second",
+            mediaType: "image/jpeg",
+            base64Data: "second-data",
+          },
+        ],
+      }),
+    );
+  });
+
   it("rejects with the ApiCallError raised by the fetcher", async () => {
     const error = new ApiCallError("Conversation is busy", "CONVERSATION_BUSY");
     const submitPeekReply = createPeekReplySubmitter({
@@ -167,9 +215,9 @@ describe("usePeekReply", () => {
       { wrapper: wrapperFor(client) },
     );
 
-    await expect(result.current.mutateAsync("hello")).resolves.toEqual({
-      ok: true,
-    });
+    await expect(
+      result.current.mutateAsync({ text: "hello" }),
+    ).resolves.toEqual({ ok: true });
 
     await waitFor(() => {
       expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);

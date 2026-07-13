@@ -1,6 +1,12 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { cn } from "@/lib/ui/cn";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import type {
   CollaborationArtifactDisagreement,
   CollaborationUserQuestion,
@@ -22,7 +28,7 @@ interface AwaitingProps {
   questions: CollaborationUserQuestion[];
   drafts: Record<string, string>;
   onDraftChange: (questionId: string, value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (answerOverrides?: Record<string, string>) => void;
   isSubmitting: boolean;
 }
 
@@ -140,6 +146,12 @@ export default function CollabOpenConflictsCard(
   props: CollabOpenConflictsCardProps,
 ): React.JSX.Element {
   const lookup = disagreementById(props.disagreements);
+  const [voiceBusyQuestions, setVoiceBusyQuestions] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const answerActionRefs = useRef<
+    Map<string, MultilineInputActionHandle | null>
+  >(new Map());
 
   if (props.mode === "answered") {
     return (
@@ -194,7 +206,9 @@ export default function CollabOpenConflictsCard(
     );
   }
 
-  const canSubmit = !props.isSubmitting && hasAtLeastOneAnswer(props.drafts);
+  const voiceBusy = voiceBusyQuestions.size > 0;
+  const canSubmit =
+    !props.isSubmitting && (hasAtLeastOneAnswer(props.drafts) || voiceBusy);
   return (
     <section
       className={cardClass}
@@ -223,12 +237,25 @@ export default function CollabOpenConflictsCard(
                 <label className="sr-only" htmlFor={`collab-answer-${q.id}`}>
                   Answer for {q.id}
                 </label>
-                <textarea
+                <MultilineInput
                   id={`collab-answer-${q.id}`}
                   className="min-h-[80px] w-full resize-y rounded-sm border border-solid border-border-default bg-bg-base p-sm font-mono text-[0.82rem] text-text-primary focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-1 max-768:min-h-[100px]"
                   value={value}
-                  onChange={(event) =>
-                    props.onDraftChange(q.id, event.target.value)
+                  onValueChange={(value) => props.onDraftChange(q.id, value)}
+                  onPrimaryAction={(completedValue) => {
+                    if (canSubmit) props.onSubmit({ [q.id]: completedValue });
+                  }}
+                  actionRef={(handle) => {
+                    if (handle) answerActionRefs.current.set(q.id, handle);
+                    else answerActionRefs.current.delete(q.id);
+                  }}
+                  onVoiceStateChange={(busy) =>
+                    setVoiceBusyQuestions((previous) => {
+                      const next = new Set(previous);
+                      if (busy) next.add(q.id);
+                      else next.delete(q.id);
+                      return next;
+                    })
                   }
                   placeholder="Your answer (free-form)…"
                   disabled={props.isSubmitting}
@@ -242,7 +269,12 @@ export default function CollabOpenConflictsCard(
         <button
           type="button"
           className="cursor-pointer rounded-sm border border-solid border-cyan bg-cyan px-[16px] py-[8px] font-mono text-[0.78rem] font-semibold text-text-inverse disabled:cursor-not-allowed disabled:opacity-50 max-768:min-h-[var(--touch-target-min)] max-768:w-full"
-          onClick={props.onSubmit}
+          onClick={() =>
+            runMultilinePrimaryAction(
+              answerActionRefs.current.values(),
+              props.onSubmit,
+            )
+          }
           disabled={!canSubmit}
         >
           {props.isSubmitting ? "Submitting…" : "Send answers"}

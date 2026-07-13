@@ -9,6 +9,7 @@ interface VoiceRecordButtonProps {
   isAvailable: boolean;
   toggleRecording: () => void;
   disabled?: boolean;
+  unavailableReason?: string;
 }
 
 function formatTime(seconds: number): string {
@@ -36,10 +37,19 @@ export function VoiceRecordButton({
   isAvailable,
   toggleRecording,
   disabled = false,
+  unavailableReason,
 }: VoiceRecordButtonProps) {
-  if (!isAvailable) return null;
+  if (!isAvailable && !unavailableReason) return null;
 
-  const isDisabled = disabled || isProcessing;
+  const isDisabled = disabled || isProcessing || !isAvailable;
+  const accessibleLabel =
+    unavailableReason && !isAvailable
+      ? unavailableReason
+      : isRecording
+        ? "Stop recording"
+        : isProcessing
+          ? "Processing voice input"
+          : "Voice input";
 
   return (
     <button
@@ -48,19 +58,20 @@ export function VoiceRecordButton({
       data-recording={isRecording}
       onClick={toggleRecording}
       disabled={isDisabled}
-      title={
-        isRecording
-          ? "Stop recording"
-          : isProcessing
-            ? "Processing..."
-            : "Voice input"
-      }
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
     >
       {isProcessing ? (
-        <span className="spinner" />
+        <span className="spinner" aria-hidden="true" />
       ) : isRecording ? (
         <>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 18 18"
+            fill="none"
+            aria-hidden="true"
+          >
             <rect
               x="3"
               y="3"
@@ -71,7 +82,10 @@ export function VoiceRecordButton({
             />
           </svg>
           {elapsedTime > 0 && (
-            <span className="absolute top-[-6px] right-[-6px] rounded-sm bg-red px-[4px] py-[2px] font-mono text-[0.7rem] leading-none whitespace-nowrap text-white">
+            <span
+              className="absolute top-[-6px] right-[-6px] rounded-sm bg-red px-[4px] py-[2px] font-mono text-[0.7rem] leading-none whitespace-nowrap text-white"
+              aria-hidden="true"
+            >
               {formatTime(elapsedTime)}
             </span>
           )}
@@ -86,6 +100,7 @@ export function VoiceRecordButton({
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
+          aria-hidden="true"
         >
           <rect x="9" y="1" width="6" height="12" rx="3" />
           <path d="M5 10a7 7 0 0 0 14 0" />

@@ -163,9 +163,11 @@ async function executeConversationTurn(
     ...(resolution.sessionInstructions !== undefined
       ? { sessionInstructions: [...resolution.sessionInstructions] }
       : {}),
-    ...(resolution.imageRefs !== undefined
-      ? { imageRefs: resolution.imageRefs }
-      : {}),
+    ...(effectiveRequest.imageRefs !== undefined
+      ? { imageRefs: effectiveRequest.imageRefs }
+      : resolution.imageRefs !== undefined
+        ? { imageRefs: resolution.imageRefs }
+        : {}),
     ...(resolution.onEvent !== undefined
       ? { onEvent: resolution.onEvent }
       : {}),
@@ -231,6 +233,9 @@ async function executeTaskRun(
       ? { artifacts: resolution.artifacts }
       : {}),
     ...(resolution.signal !== undefined ? { signal: resolution.signal } : {}),
+    ...(request.imageRefs !== undefined
+      ? { imagePaths: request.imageRefs.map((ref) => ref.path) }
+      : {}),
   });
 
   return applyStructuredOutputGate(request, dispatchResult, deps);

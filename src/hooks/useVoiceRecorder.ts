@@ -5,6 +5,7 @@ import { tracedFetch } from "@/lib/shared/traced-fetch";
 
 interface UseVoiceRecorderOptions {
   projectName: string;
+  enabled?: boolean;
   maxDuration?: number;
   getContext?: () => string;
   onResult: (text: string) => void;
@@ -18,6 +19,7 @@ interface UseVoiceRecorderReturn {
   isAvailable: boolean;
   toggleRecording: () => void;
   stopRecording: () => void;
+  cancelRecording: () => void;
 }
 
 type RecordingState = "idle" | "recording" | "processing";
@@ -39,6 +41,7 @@ export function useVoiceRecorder(
 ): UseVoiceRecorderReturn {
   const {
     projectName,
+    enabled = true,
     maxDuration = 300,
     getContext,
     onResult,
@@ -59,6 +62,10 @@ export function useVoiceRecorder(
   const startTimeRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const healthIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const generationRef = useRef(0);
+  const mountedRef = useRef(false);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   // Stable callback refs
   const onResultRef = useRef(onResult);
@@ -75,13 +82,47 @@ export function useVoiceRecorder(
     try {
       const response = await fetch("/api/voice/health");
       const data = (await response.json()) as { available: boolean };
-      setIsAvailable(data.available);
+      if (mountedRef.current && enabledRef.current) {
+        setIsAvailable(data.available);
+      }
     } catch {
-      setIsAvailable(false);
+      if (mountedRef.current && enabledRef.current) setIsAvailable(false);
+    }
+  }, []);
+
+  const cancelRecording = useCallback(() => {
+    generationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+    timerRef.current = null;
+    maxDurationTimerRef.current = null;
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    mediaRecorderRef.current = null;
+    chunksRef.current = [];
+    if (streamRef.current) {
+      for (const track of streamRef.current.getTracks()) track.stop();
+      streamRef.current = null;
+    }
+    if (mountedRef.current) {
+      setState("idle");
+      setElapsedTime(0);
     }
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsAvailable(false);
+      cancelRecording();
+      return;
+    }
     checkHealth();
     healthIntervalRef.current = setInterval(checkHealth, HEALTH_CHECK_INTERVAL);
     return () => {
@@ -89,29 +130,21 @@ export function useVoiceRecorder(
         clearInterval(healthIntervalRef.current);
       }
     };
-  }, [checkHealth]);
+  }, [cancelRecording, checkHealth, enabled]);
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (mediaRecorderRef.current?.state === "recording") {
-        mediaRecorderRef.current.stop();
-      }
-      if (streamRef.current) {
-        for (const track of streamRef.current.getTracks()) {
-          track.stop();
-        }
-      }
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (maxDurationTimerRef.current)
-        clearTimeout(maxDurationTimerRef.current);
-      if (abortControllerRef.current) abortControllerRef.current.abort();
+      mountedRef.current = false;
+      cancelRecording();
     };
-  }, []);
+  }, [cancelRecording]);
 
   const stopAndProcess = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
     if (!recorder || recorder.state !== "recording") return;
+    const generation = generationRef.current;
 
     // Clear timers
     if (timerRef.current) {
@@ -156,12 +189,20 @@ export function useVoiceRecorder(
           streamRef.current = null;
         }
 
+        if (generation !== generationRef.current || !enabledRef.current) {
+          chunksRef.current = [];
+          resolve();
+          return;
+        }
+
         const chunks = chunksRef.current;
         chunksRef.current = [];
 
         if (chunks.length === 0) {
-          setState("idle");
-          setElapsedTime(0);
+          if (mountedRef.current) {
+            setState("idle");
+            setElapsedTime(0);
+          }
           onErrorRef.current("No audio recorded");
           resolve();
           return;
@@ -170,8 +211,10 @@ export function useVoiceRecorder(
         const mimeType = recorder.mimeType || "audio/webm";
         const blob = new Blob(chunks, { type: mimeType });
 
-        setState("processing");
-        setElapsedTime(0);
+        if (mountedRef.current) {
+          setState("processing");
+          setElapsedTime(0);
+        }
 
         // Send to transcription API
         const controller = new AbortController();
@@ -205,10 +248,22 @@ export function useVoiceRecorder(
             const data = (await response.json().catch(() => null)) as {
               error?: string;
             } | null;
-            onErrorRef.current(data?.error ?? "Transcription failed");
+            if (
+              generation === generationRef.current &&
+              enabledRef.current &&
+              mountedRef.current
+            ) {
+              onErrorRef.current(data?.error ?? "Transcription failed");
+            }
           } else {
             const data = (await response.json()) as { text: string };
-            onResultRef.current(data.text);
+            if (
+              generation === generationRef.current &&
+              enabledRef.current &&
+              mountedRef.current
+            ) {
+              onResultRef.current(data.text);
+            }
           }
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
@@ -216,11 +271,19 @@ export function useVoiceRecorder(
           } else {
             const message =
               err instanceof Error ? err.message : "Transcription failed";
-            onErrorRef.current(message);
+            if (
+              generation === generationRef.current &&
+              enabledRef.current &&
+              mountedRef.current
+            ) {
+              onErrorRef.current(message);
+            }
           }
         } finally {
           abortControllerRef.current = null;
-          setState("idle");
+          if (generation === generationRef.current && mountedRef.current) {
+            setState("idle");
+          }
         }
 
         resolve();
@@ -237,6 +300,7 @@ export function useVoiceRecorder(
   }, [state, stopAndProcess]);
 
   const toggleRecording = useCallback(async () => {
+    if (!enabled) return;
     if (state === "processing") return;
 
     if (state === "recording") {
@@ -245,6 +309,8 @@ export function useVoiceRecorder(
     }
 
     // Start recording
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
     try {
       if (typeof navigator === "undefined" || !navigator.mediaDevices) {
         onErrorRef.current(
@@ -253,6 +319,14 @@ export function useVoiceRecorder(
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (
+        generation !== generationRef.current ||
+        !enabledRef.current ||
+        !mountedRef.current
+      ) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
       streamRef.current = stream;
 
       const mimeType = negotiateMimeType();
@@ -276,8 +350,10 @@ export function useVoiceRecorder(
       // delivered as one chunk when we stop.
       recorder.start();
       startTimeRef.current = Date.now();
-      setState("recording");
-      setElapsedTime(0);
+      if (mountedRef.current) {
+        setState("recording");
+        setElapsedTime(0);
+      }
 
       // Elapsed time timer
       timerRef.current = setInterval(() => {
@@ -289,9 +365,15 @@ export function useVoiceRecorder(
         stopAndProcess();
       }, maxDuration * 1000);
     } catch {
-      onErrorRef.current("Microphone access denied");
+      if (
+        generation === generationRef.current &&
+        enabledRef.current &&
+        mountedRef.current
+      ) {
+        onErrorRef.current("Microphone access denied");
+      }
     }
-  }, [state, maxDuration, stopAndProcess]);
+  }, [enabled, state, maxDuration, stopAndProcess]);
 
   return {
     isRecording: state === "recording",
@@ -300,5 +382,6 @@ export function useVoiceRecorder(
     isAvailable,
     toggleRecording,
     stopRecording,
+    cancelRecording,
   };
 }

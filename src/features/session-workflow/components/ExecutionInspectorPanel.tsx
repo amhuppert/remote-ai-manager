@@ -1,6 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import {
   TabsContent,
   TabsList,
@@ -898,10 +903,42 @@ function DetailView({
   const [editInstructions, setEditInstructions] = useState("");
   const [addTitle, setAddTitle] = useState("");
   const [addInstructions, setAddInstructions] = useState("");
+  const [addVoiceBusy, setAddVoiceBusy] = useState(false);
+  const addInstructionsActionRef = useRef<MultilineInputActionHandle | null>(
+    null,
+  );
+  const editInstructionsActionRefs = useRef<
+    Map<string, MultilineInputActionHandle | null>
+  >(new Map());
+  const addInstructionsId = useId();
+  const editInstructionsId = useId();
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [sheetField, setSheetField] = useState<
     "description" | "acceptanceCriteria" | null
   >(null);
+
+  const saveTaskEdits = (taskId: string, completedInstructions?: string) => {
+    if (isMutating) return;
+    onUpdateTask(taskId, {
+      title: editTitle,
+      instructions: completedInstructions ?? editInstructions,
+    });
+    setExpandedTaskId(null);
+  };
+
+  const addTask = (completedInstructions?: string) => {
+    const nextInstructions = completedInstructions ?? addInstructions;
+    if (
+      isMutating ||
+      addTitle.trim().length === 0 ||
+      nextInstructions.trim().length === 0
+    ) {
+      return;
+    }
+    onAddTask(contextId, addTitle, nextInstructions);
+    setAddTitle("");
+    setAddInstructions("");
+  };
 
   const context = execution.workingDefinition.executionContexts.find(
     (ctx) => ctx.id === contextId,
@@ -1216,31 +1253,52 @@ function DetailView({
                               />
                             </div>
                             <div className="mb-[10px]">
-                              <span className="mb-1 block text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
+                              <label
+                                htmlFor={`${editInstructionsId}-${task.id}`}
+                                className="mb-1 block text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase"
+                              >
                                 Edit Instructions
-                              </span>
-                              <textarea
+                              </label>
+                              <MultilineInput
+                                id={`${editInstructionsId}-${task.id}`}
                                 className={cn(
                                   wbTaskDetailInput,
                                   wbTaskDetailTextarea,
                                 )}
                                 rows={3}
                                 value={editInstructions}
-                                onChange={(e) =>
-                                  setEditInstructions(e.target.value)
+                                onValueChange={setEditInstructions}
+                                onPrimaryAction={(instructions) =>
+                                  saveTaskEdits(task.id, instructions)
                                 }
+                                actionRef={(handle) => {
+                                  if (handle) {
+                                    editInstructionsActionRefs.current.set(
+                                      task.id,
+                                      handle,
+                                    );
+                                  } else {
+                                    editInstructionsActionRefs.current.delete(
+                                      task.id,
+                                    );
+                                  }
+                                }}
+                                disabled={isMutating}
                               />
                             </div>
                             <div className="mt-2 flex gap-[6px] border-t border-border-dim pt-2">
                               <button
                                 className={cn(wbBtn, wbBtnXs, wbBtnPrimary)}
-                                onClick={() => {
-                                  onUpdateTask(task.id, {
-                                    title: editTitle,
-                                    instructions: editInstructions,
-                                  });
-                                  setExpandedTaskId(null);
-                                }}
+                                onClick={() =>
+                                  runMultilinePrimaryAction(
+                                    [
+                                      editInstructionsActionRefs.current.get(
+                                        task.id,
+                                      ),
+                                    ],
+                                    () => saveTaskEdits(task.id),
+                                  )
+                                }
                                 disabled={isMutating}
                                 type="button"
                               >
@@ -1298,29 +1356,37 @@ function DetailView({
                     placeholder="Task title"
                   />
                 </label>
-                <label className="mb-md">
-                  <span className="mb-xs block text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                <div className="mb-md">
+                  <label
+                    className="mb-xs block text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
+                    htmlFor={addInstructionsId}
+                  >
                     Instructions
-                  </span>
-                  <textarea
+                  </label>
+                  <MultilineInput
+                    id={addInstructionsId}
                     className={cn(wbFieldInput, wbFieldTextarea)}
                     rows={3}
                     value={addInstructions}
-                    onChange={(e) => setAddInstructions(e.target.value)}
+                    onValueChange={setAddInstructions}
+                    onPrimaryAction={addTask}
+                    actionRef={addInstructionsActionRef}
+                    onVoiceStateChange={setAddVoiceBusy}
                     placeholder="Task instructions"
                   />
-                </label>
+                </div>
                 <button
                   className={cn(wbBtn, wbBtnSm, wbBtnPrimary)}
-                  onClick={() => {
-                    onAddTask(contextId, addTitle, addInstructions);
-                    setAddTitle("");
-                    setAddInstructions("");
-                  }}
+                  onClick={() =>
+                    runMultilinePrimaryAction(
+                      [addInstructionsActionRef.current],
+                      addTask,
+                    )
+                  }
                   disabled={
                     isMutating ||
                     addTitle.trim().length === 0 ||
-                    addInstructions.trim().length === 0
+                    (addInstructions.trim().length === 0 && !addVoiceBusy)
                   }
                   type="button"
                 >

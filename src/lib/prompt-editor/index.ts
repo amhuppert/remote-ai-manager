@@ -27,6 +27,7 @@ export { RefPasteHandler } from "./ref-paste-extension";
 export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
 export type { SerializedPromptDoc } from "./serializer";
+export { deserializePromptDoc } from "./deserializer";
 export { ImagePasteHandler } from "./paste-handler-extension";
 export { SlashCommand } from "./slash-command-extension";
 export type { SlashCommandTrigger } from "./slash-command-extension";

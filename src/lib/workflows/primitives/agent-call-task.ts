@@ -39,6 +39,7 @@ export interface DispatchTaskRunDeps {
   workingDirectory: string;
   modelId?: string;
   reasoningEffort?: string;
+  imagePaths?: readonly string[];
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
@@ -93,6 +94,7 @@ export async function dispatchTaskRun(
   const taskRequest: AgentTaskRequest = {
     workingDirectory: deps.workingDirectory,
     prompt: request.prompt,
+    ...(deps.imagePaths !== undefined ? { imagePaths: deps.imagePaths } : {}),
     autonomous: deps.autonomous ?? true,
     timeoutMs,
     ...(request.systemInstructions

@@ -99,4 +99,25 @@ describe("MergeConflictsPage submit pending feedback", () => {
       screen.getByRole("button", { name: /fix with claude/i }),
     ).toBeEnabled();
   });
+
+  it("submits rejected-conflict guidance through the multiline primary chord", async () => {
+    const onFixApproved = vi.fn();
+    render(<MergeConflictsPage {...baseProps} onFixApproved={onFixApproved} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /reject this resolution/i }),
+    );
+    const guidance = screen.getByRole("textbox", {
+      name: "Guidance for Claude",
+    });
+    await userEvent.type(guidance, "Keep both branches");
+    await userEvent.type(guidance, "{Control>}{Enter}{/Control}");
+
+    expect(onFixApproved).toHaveBeenCalledWith([
+      expect.objectContaining({
+        file: "src/a.ts",
+        decision: "rejected",
+        feedback: "Keep both branches",
+      }),
+    ]);
+  });
 });

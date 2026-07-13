@@ -8,6 +8,8 @@ import type { AgentTranscriptEntry } from "./transcript";
 export interface AgentTaskRequest {
   workingDirectory: string;
   prompt: string;
+  /** Persistent image files forwarded to backends that accept local images. */
+  imagePaths?: readonly string[];
   systemInstructions?: string[];
   modelId?: string;
   reasoningEffort?: string;

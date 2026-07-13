@@ -6,18 +6,22 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export function useCommandsQuery(
   projectName: string,
-  sessionName: string,
+  sessionName: string | undefined,
   backend: AgentBackendId = "claude",
   options?: { enabled?: boolean },
 ) {
   return useQuery({
     queryKey: commandKeys.list(projectName, sessionName, backend),
-    queryFn: () =>
-      apiFetch(
+    queryFn: () => {
+      if (sessionName === undefined) {
+        throw new Error("sessionName is required for session commands");
+      }
+      return apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands?backend=${encodeURIComponent(backend)}`,
         commandsResponseSchema,
-      ),
-    enabled: options?.enabled,
+      );
+    },
+    enabled: options?.enabled ?? sessionName !== undefined,
   });
 }
 

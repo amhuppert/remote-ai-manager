@@ -1,6 +1,10 @@
 import { Extension } from "@tiptap/core";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
+import {
+  findNextWordEnd,
+  findPreviousWordStart,
+} from "@/lib/multiline/shortcuts";
 
 export interface TerminalHotkeysOptions {
   /**
@@ -60,45 +64,6 @@ export const TerminalHotkeys = Extension.create<TerminalHotkeysOptions>({
   },
 });
 
-/**
- * Find the start position of the previous word, scanning backward from
- * `offset`. Skips trailing whitespace then word characters until the next
- * whitespace boundary. Whitespace is the only word boundary (readline
- * semantics — punctuation is part of the word).
- *
- * Returns 0 if no word is found before `offset`.
- */
-export function findPrevWordStart(text: string, offset: number): number {
-  let i = clamp(offset, 0, text.length);
-  while (i > 0 && isWhitespace(text[i - 1]!)) i--;
-  while (i > 0 && !isWhitespace(text[i - 1]!)) i--;
-  return i;
-}
-
-/**
- * Find the end position of the next word, scanning forward from `offset`.
- * Skips leading whitespace then word characters until the next whitespace
- * boundary. Whitespace is the only word boundary (readline semantics).
- *
- * Returns `text.length` if no word is found after `offset`.
- */
-export function findNextWordEnd(text: string, offset: number): number {
-  let i = clamp(offset, 0, text.length);
-  while (i < text.length && isWhitespace(text[i]!)) i++;
-  while (i < text.length && !isWhitespace(text[i]!)) i++;
-  return i;
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  if (n < lo) return lo;
-  if (n > hi) return hi;
-  return n;
-}
-
-function isWhitespace(ch: string): boolean {
-  return /\s/.test(ch);
-}
-
 function moveToLineStart(editor: Editor): boolean {
   const { state } = editor;
   const { $head } = state.selection;
@@ -135,7 +100,7 @@ function killToLineEnd(editor: Editor): boolean {
 
 function moveWordBackward(editor: Editor): boolean {
   const ctx = blockContext(editor);
-  const newOffset = findPrevWordStart(ctx.text, ctx.offset);
+  const newOffset = findPreviousWordStart(ctx.text, ctx.offset);
   if (newOffset === ctx.offset) return true;
   return setCursor(editor, ctx.blockStart + newOffset);
 }
@@ -149,7 +114,7 @@ function moveWordForward(editor: Editor): boolean {
 
 function deleteWordBackward(editor: Editor): boolean {
   const ctx = blockContext(editor);
-  const newOffset = findPrevWordStart(ctx.text, ctx.offset);
+  const newOffset = findPreviousWordStart(ctx.text, ctx.offset);
   if (newOffset === ctx.offset) return true;
   const { state } = editor;
   editor.view.dispatch(

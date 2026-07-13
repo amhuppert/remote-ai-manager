@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, renderHook } from "@testing-library/react";
+import { act, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { useRef } from "react";
 
@@ -66,6 +66,7 @@ describe("useVoiceWiring", () => {
       isAvailable: true,
       toggleRecording: vi.fn(),
       stopRecording: vi.fn(),
+      cancelRecording: vi.fn(),
     })) as typeof useVoiceRecorder);
 
     renderHook(() => {
@@ -85,13 +86,66 @@ describe("useVoiceWiring", () => {
     expect(vi.mocked(useAppHotkey)).toHaveBeenCalledWith(
       "voiceToggle",
       expect.any(Function),
-      { enabled: false },
+      { enabled: false, keepActiveInOverlay: true },
     );
+  });
+
+  it("enables the voice hotkey only while its prompt editor has focus", () => {
+    vi.mocked(useAppHotkey).mockClear();
+    vi.mocked(useVoiceRecorder).mockImplementation((() => ({
+      isRecording: false,
+      isProcessing: false,
+      elapsedTime: 0,
+      isAvailable: true,
+      toggleRecording: vi.fn(),
+      stopRecording: vi.fn(),
+      cancelRecording: vi.fn(),
+    })) as typeof useVoiceRecorder);
+    const editorElement = document.createElement("div");
+    const input = document.createElement("textarea");
+    editorElement.append(input);
+    document.body.append(editorElement);
+
+    try {
+      renderHook(() => {
+        const promptTextRef = useRef("");
+        const editorRef = useRef({
+          editor: { view: { dom: editorElement } },
+          insertText: vi.fn(),
+          focus: vi.fn(),
+        });
+        const fireAndForgetRef = useRef(false);
+        return useVoiceWiring({
+          projectName: "p",
+          promptTextRef,
+          editorRef: editorRef as never,
+          fireAndForgetRef,
+          handleSendPrompt: async () => {},
+        });
+      });
+
+      expect(vi.mocked(useAppHotkey)).toHaveBeenLastCalledWith(
+        "voiceToggle",
+        expect.any(Function),
+        { enabled: false, keepActiveInOverlay: true },
+      );
+
+      fireEvent.focusIn(input);
+
+      expect(vi.mocked(useAppHotkey)).toHaveBeenLastCalledWith(
+        "voiceToggle",
+        expect.any(Function),
+        { enabled: true, keepActiveInOverlay: true },
+      );
+    } finally {
+      editorElement.remove();
+    }
   });
 
   it("stopAndSubmit stops the recording and causes the voice result to be auto-submitted", async () => {
     let capturedOnResult: ((text: string) => void) | undefined;
     const toggleRecording = vi.fn();
+    const stopRecording = vi.fn();
 
     vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
       onResult: (text: string) => void;
@@ -103,7 +157,8 @@ describe("useVoiceWiring", () => {
         elapsedTime: 0,
         isAvailable: true,
         toggleRecording,
-        stopRecording: vi.fn(),
+        stopRecording,
+        cancelRecording: vi.fn(),
       };
     }) as typeof useVoiceRecorder);
 
@@ -135,13 +190,14 @@ describe("useVoiceWiring", () => {
       result.current.wiring.stopAndSubmit();
     });
 
-    expect(toggleRecording).toHaveBeenCalledTimes(1);
+    expect(stopRecording).toHaveBeenCalledTimes(1);
+    expect(toggleRecording).not.toHaveBeenCalled();
 
     await act(async () => {
       capturedOnResult!("transcribed");
     });
 
-    expect(handleSendPrompt).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(handleSendPrompt).toHaveBeenCalledTimes(1));
   });
 
   it("surfaces a voice error as a toast so dropped recordings are not lost silently", async () => {
@@ -159,6 +215,7 @@ describe("useVoiceWiring", () => {
         isAvailable: true,
         toggleRecording: vi.fn(),
         stopRecording: vi.fn(),
+        cancelRecording: vi.fn(),
       };
     }) as typeof useVoiceRecorder);
 
@@ -192,6 +249,7 @@ describe("useVoiceWiring", () => {
       isAvailable: true,
       toggleRecording,
       stopRecording: vi.fn(),
+      cancelRecording: vi.fn(),
     })) as typeof useVoiceRecorder);
 
     const handleSendPrompt = vi.fn(async () => {});

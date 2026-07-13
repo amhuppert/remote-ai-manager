@@ -199,9 +199,9 @@ describe("PromptEditorFileMentionPopup", () => {
 });
 
 describe("PromptEditorFileMentionPopup (project-level conversations)", () => {
-  it("scans the project root when sessionName is the project sentinel", async () => {
+  it("scans the project root when no session exists", async () => {
     await act(async () => {
-      renderPopup({ sessionName: "__project__" });
+      renderPopup({ sessionName: undefined });
     });
     expect(mockUseProjectFilesQuery).toHaveBeenCalledWith({
       projectName: "proj",

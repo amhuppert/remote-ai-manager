@@ -33,6 +33,7 @@
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import { pauseForHumanApproval } from "@/lib/workflows/primitives/human-approval-gate";
 import type {
   AgentCallRequest,
@@ -93,6 +94,7 @@ const COLLABORATION_SCOPE = "collaboration";
 export interface AsymmetricCollaborationSliceInput {
   workflowId: string;
   brief: string;
+  imageRefs?: readonly ConversationImageRef[];
   worktreePath: string;
   /**
    * Stable scheduling key shared by every lane execution that touches the

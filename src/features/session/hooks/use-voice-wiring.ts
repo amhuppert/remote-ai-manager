@@ -1,19 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, type MutableRefObject } from "react";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-import { useAppHotkey } from "@/hooks/useAppHotkey";
-import { pushToast } from "@/stores/toast.store";
+import { useCallback, useEffect, useState, type MutableRefObject } from "react";
+import { useMultilineVoice } from "@/hooks/use-multiline-voice";
 import {
   useStartRecording,
   useStopRecording,
 } from "@/stores/session-detail.store";
 import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import type { ImageAttachment } from "@/hooks/use-image-attachments";
 
 export interface UseVoiceWiringArgs {
   projectName: string;
   promptTextRef: MutableRefObject<string>;
   editorRef: MutableRefObject<PromptEditorHandle | null>;
+  pendingImages?: ImageAttachment[];
   fireAndForgetRef: MutableRefObject<boolean>;
   handleSendPrompt: () => Promise<void>;
   hotkeyEnabled?: boolean;
@@ -36,77 +36,80 @@ export function useVoiceWiring({
   projectName,
   promptTextRef,
   editorRef,
+  pendingImages = [],
   fireAndForgetRef,
   handleSendPrompt,
   hotkeyEnabled = true,
 }: UseVoiceWiringArgs): UseVoiceWiringResult {
   const startRecording = useStartRecording();
   const stopRecording = useStopRecording();
+  const [isEditorFocused, setIsEditorFocused] = useState(false);
 
-  const handleVoiceResult = useCallback(
-    (text: string) => {
-      const insertion = promptTextRef.current.trim() ? `\n${text}` : text;
-      editorRef.current?.insertText(insertion);
-      requestAnimationFrame(() => editorRef.current?.focus());
+  useEffect(() => {
+    const isPromptEditorTarget = (target: EventTarget | null) => {
+      const editorElement = editorRef.current?.editor?.view.dom;
+      return target instanceof Node && editorElement?.contains(target);
+    };
+    const syncFocus = (target: EventTarget | null) => {
+      setIsEditorFocused(isPromptEditorTarget(target) ?? false);
+    };
+    const handleFocusIn = (event: FocusEvent) => syncFocus(event.target);
+    const handleFocusOut = () => {
+      requestAnimationFrame(() => syncFocus(document.activeElement));
+    };
 
-      if (fireAndForgetRef.current) {
-        fireAndForgetRef.current = false;
-        void handleSendPrompt();
-      }
+    syncFocus(document.activeElement);
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("focusout", handleFocusOut);
+    return () => {
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("focusout", handleFocusOut);
+    };
+  }, [editorRef]);
+
+  const voice = useMultilineVoice({
+    projectName,
+    valueRef: promptTextRef,
+    getContext: () =>
+      editorRef.current?.serialize(pendingImages).prompt ??
+      promptTextRef.current,
+    insertText: (text) => editorRef.current?.insertText(text),
+    focus: () => editorRef.current?.focus(),
+    isFocused: isEditorFocused,
+    hotkeyEnabled,
+    onStopAndSubmit: () => {
+      fireAndForgetRef.current = false;
+      void handleSendPrompt();
     },
-    [handleSendPrompt, editorRef, fireAndForgetRef, promptTextRef],
-  );
-
-  const handleVoiceError = useCallback(
-    (error: string) => {
-      // Surface the failure: a dictation that fails (e.g. "No audio recorded",
-      // a too-short clip, or a voice-server error) must never be lost silently —
-      // swallowing it here was why dropped recordings looked like nothing
-      // happened at all.
-      pushToast(error);
+    onError: () => {
       fireAndForgetRef.current = false;
     },
-    [fireAndForgetRef],
-  );
-
-  const getContext = useCallback(() => promptTextRef.current, [promptTextRef]);
+  });
 
   const {
     isRecording,
     isProcessing,
     elapsedTime,
     isAvailable: voiceAvailable,
-    toggleRecording,
-  } = useVoiceRecorder({
-    projectName,
-    getContext,
-    onResult: handleVoiceResult,
-    onError: handleVoiceError,
-  });
+  } = voice;
 
   useEffect(() => {
     if (isRecording) startRecording();
     else stopRecording();
   }, [isRecording, startRecording, stopRecording]);
 
-  useAppHotkey(
-    "voiceToggle",
-    () => {
-      if (!isRecording && !isProcessing) {
-        fireAndForgetRef.current = false;
-      }
-      void toggleRecording();
-    },
-    {
-      enabled: hotkeyEnabled && voiceAvailable && !isProcessing,
-    },
-  );
+  const toggleRecording = useCallback(() => {
+    if (!isRecording && !isProcessing) {
+      fireAndForgetRef.current = false;
+    }
+    voice.toggleRecording();
+  }, [fireAndForgetRef, isProcessing, isRecording, voice]);
 
   const stopAndSubmit = useCallback(() => {
-    if (!isRecording) return;
+    if (!isRecording && !isProcessing) return;
     fireAndForgetRef.current = true;
-    void toggleRecording();
-  }, [isRecording, toggleRecording, fireAndForgetRef]);
+    voice.stopAndSubmit();
+  }, [fireAndForgetRef, isProcessing, isRecording, voice]);
 
   return {
     isRecording,

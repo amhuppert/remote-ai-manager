@@ -145,7 +145,7 @@ export function createSessionRouteHandlers(
       return NextResponse.json(
         {
           error:
-            "Invalid request: unsupported creation mode (expected 'normal' or 'optimistic'); 'normal' requires sessionName, 'optimistic' requires instructions",
+            "Invalid request: unsupported creation mode (expected 'normal' or 'optimistic'); 'normal' requires sessionName, 'optimistic' requires instructions or an image",
         } satisfies ApiError,
         { status: 400 },
       );

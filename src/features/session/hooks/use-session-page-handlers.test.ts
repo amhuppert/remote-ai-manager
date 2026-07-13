@@ -66,7 +66,7 @@ describe("useSessionPageHandlers", () => {
             autonomousResolutionThreshold: "minor",
           },
           clearCollabConfigDraft: () => {},
-          clearPersistedPendingPromptOnSubmit: () => {},
+          suppressPendingPromptAutosaveAfterSubmit: () => {},
           enqueuePromptErrorToast: () => {},
         });
       },

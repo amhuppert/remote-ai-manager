@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/Button";
+import { MultilineInput } from "@/components/MultilineInput";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { FormError, FormHint } from "@/components/ui/FormField";
 import { IconButton } from "@/components/ui/IconButton";
@@ -45,6 +46,8 @@ export interface ParameterDeclarationEditorProps {
    * prominent alert banner.
    */
   saveError?: string | null;
+  onPrimaryAction?: (force?: boolean) => void;
+  voiceProjectName?: string | null;
 }
 
 function emptyDeclaration(): ParameterDeclaration {
@@ -96,6 +99,8 @@ export default function ParameterDeclarationEditor({
   parameters,
   onChange,
   saveError,
+  onPrimaryAction,
+  voiceProjectName,
 }: ParameterDeclarationEditorProps): React.JSX.Element {
   const dupes = duplicateNames(parameters);
 
@@ -238,14 +243,19 @@ export default function ParameterDeclarationEditor({
                   Default
                 </label>
                 {param.type === "text" ? (
-                  <textarea
+                  <MultilineInput
                     id={`${fieldId}-default`}
                     rows={2}
                     className={cn(FIELD_INPUT, FIELD_TEXTAREA)}
                     value={param.default ?? ""}
-                    onChange={(event) =>
-                      updateAt(index, applyDefault(param, event.target.value))
+                    onValueChange={(value) =>
+                      updateAt(index, applyDefault(param, value))
                     }
+                    onPrimaryAction={(value) => {
+                      updateAt(index, applyDefault(param, value));
+                      onPrimaryAction?.(true);
+                    }}
+                    voiceProjectName={voiceProjectName}
                   />
                 ) : (
                   <input

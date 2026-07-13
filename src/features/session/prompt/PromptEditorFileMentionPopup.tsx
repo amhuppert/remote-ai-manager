@@ -15,7 +15,6 @@ import {
 } from "@/components/FileAutocompleteList";
 import { useProjectFilesQuery } from "@/lib/files/queries";
 import { filterAndScoreFiles } from "@/lib/files/file-autocomplete-filter";
-import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { isMarkdownPath } from "@/lib/documents/path";
 import { useOpenDocument } from "@/stores/session-detail.store";
 
@@ -34,7 +33,7 @@ export interface FileMentionPopupProps {
   /** Text typed after `@` (without the leading `@`). */
   query: string;
   projectName: string;
-  sessionName: string;
+  sessionName?: string;
   /** Insert the chosen file into the editor at the trigger range. */
   onSelect: (selection: FileMentionSelection) => void;
   /** Dismiss the popup (Escape). Host should clear its suggestion state. */
@@ -57,7 +56,7 @@ export const PromptEditorFileMentionPopup = forwardRef<
   ref,
 ) {
   const openDocument = useOpenDocument();
-  const projectLevel = isProjectSentinel(sessionName);
+  const projectLevel = sessionName === undefined;
   // Project-level conversations (the `__project__` sentinel) scan the project
   // root; sessions scan their own worktree.
   const filesQuery = useProjectFilesQuery(

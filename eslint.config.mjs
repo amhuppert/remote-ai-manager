@@ -161,6 +161,10 @@ const MIGRATED_UTILITY_FIRST = [
   // override and the tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
   "src/features/tickets/**/*.{ts,tsx}",
   "src/components/SessionTicketIndicator.tsx",
+  // Shared multiline and rich-prompt controls are authored utility-first.
+  "src/components/MultilineInput.tsx",
+  "src/components/MultilineInput.stories.tsx",
+  "src/components/rich-prompt/**/*.{ts,tsx}",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

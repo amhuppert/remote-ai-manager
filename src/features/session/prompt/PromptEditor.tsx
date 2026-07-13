@@ -15,6 +15,7 @@ import {
   ArgumentHint,
   ConversationMention,
   ConversationMentionNode,
+  deserializePromptDoc,
   FileMention,
   FileMentionNode,
   ImageMarker,
@@ -67,9 +68,12 @@ export interface PromptEditorHandle {
 }
 
 export interface PromptEditorProps {
-  conversationId: string;
+  id?: string;
+  conversationId?: string;
   value: string;
+  initialDocument?: SerializedPromptDoc;
   onChange: (text: string) => void;
+  onDocumentChange?: (document: SerializedPromptDoc) => void;
   onSubmit: () => void;
   pendingImages: ImageAttachment[];
   onAddImage: (file: File) => Promise<ImageAttachment | null>;
@@ -245,10 +249,14 @@ function notifyInlineMarkersIfChanged(
 export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
   function PromptEditor(props, ref) {
     const {
+      id,
       conversationId,
       value,
+      initialDocument,
       onChange,
+      onDocumentChange,
       onSubmit,
+      pendingImages,
       onAddImage,
       onRemoveImage,
       cumulativeImageCount,
@@ -269,7 +277,13 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     const onSubmitRef = useRef(onSubmit);
     onSubmitRef.current = onSubmit;
     const onChangeRef = useRef(onChange);
-    onChangeRef.current = onChange;
+    const onDocumentChangeRef = useRef(onDocumentChange);
+    const pendingImagesRef = useRef(pendingImages);
+    useEffect(() => {
+      onChangeRef.current = onChange;
+      onDocumentChangeRef.current = onDocumentChange;
+      pendingImagesRef.current = pendingImages;
+    }, [onChange, onDocumentChange, pendingImages]);
     const onAddImageRef = useRef(onAddImage);
     onAddImageRef.current = onAddImage;
     const cumulativeRef = useRef(cumulativeImageCount);
@@ -421,17 +435,24 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
           onSubmit: () => onSubmitRef.current(),
         }),
       ],
-      content: value,
+      content: initialDocument ? deserializePromptDoc(initialDocument) : value,
       editorProps: {
         attributes: {
           class: "prompt-editor__content-inner",
           "data-testid": "prompt-input",
+          ...(id ? { id } : {}),
           ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
         },
       },
       onUpdate: ({ editor: ed }) => {
         compactInlineIndices(ed, cumulativeRef.current);
         onChangeRef.current(ed.getText());
+        onDocumentChangeRef.current?.(
+          serializePromptDoc({
+            doc: ed.state.doc,
+            attachments: pendingImagesRef.current,
+          }),
+        );
         notifyInlineMarkersIfChanged(
           ed,
           lastMarkerIdsRef,
@@ -480,7 +501,12 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         },
         insertText(text) {
           if (!editor) return;
-          editor.chain().focus().insertContent(text).run();
+          editor
+            .chain()
+            .focus()
+            .setTextSelection(editor.state.selection.head)
+            .insertContent(text)
+            .run();
         },
         get editor() {
           return editor;
@@ -491,7 +517,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
 
     return (
       <div className="relative" title={title}>
-        {slashState && projectName && sessionName ? (
+        {slashState && projectName ? (
           <PromptEditorSlashCommandPopup
             ref={slashPopupRef}
             query={slashState.query}
@@ -506,7 +532,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             onClose={() => setSlashState(null)}
           />
         ) : null}
-        {fileState && projectName && sessionName ? (
+        {fileState && projectName ? (
           <PromptEditorFileMentionPopup
             ref={filePopupRef}
             query={fileState.query}
@@ -521,7 +547,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             ref={conversationPopupRef}
             query={conversationState.query}
             currentProjectName={projectName}
-            currentConversationId={conversationId}
+            currentConversationId={conversationId ?? null}
             onSelect={(selection) => conversationState.command(selection)}
             onClose={() => setConversationState(null)}
           />

@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { createCollaborationRouteHandlers } from "./route-handlers";
 import {
+  CollaborationStartConflictError,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
   CollaborationNotPausedError,
@@ -20,8 +21,6 @@ import {
   type CollaborationManager,
 } from "./manager";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
-import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 
 function buildEnvelope(
   overrides: Partial<WorkflowEnvelope> = {},
@@ -39,7 +38,10 @@ function buildEnvelope(
 }
 
 interface ScriptedManagerOptions {
-  startResult?: { workflowId: string; status: "started" };
+  startResult?: {
+    workflowId: string;
+    status: "started";
+  };
   startError?: Error;
   listResult?: WorkflowEnvelope[];
   listError?: Error;
@@ -66,10 +68,14 @@ function buildScriptedManager(options: ScriptedManagerOptions = {}): {
     start: vi.fn(
       async (
         input: Parameters<CollaborationManager["start"]>[0],
-      ): Promise<{ workflowId: string; status: "started" }> => {
+      ): ReturnType<CollaborationManager["start"]> => {
         startCalls.push(input);
         if (options.startError) throw options.startError;
-        return options.startResult ?? { workflowId: "wf-1", status: "started" };
+        const result = options.startResult ?? {
+          workflowId: "wf-1",
+          status: "started",
+        };
+        return result;
       },
     ),
     listActive: vi.fn(
@@ -380,15 +386,11 @@ describe("collaboration route handlers — START", () => {
     });
   });
 
-  it("persists the /collab user prompt to the transcript before invoking the manager", async () => {
+  it("delegates the durable start to the manager before returning", async () => {
     const { manager, startCalls } = buildScriptedManager({
       startResult: { workflowId: "wf-xyz", status: "started" },
     });
     const order: string[] = [];
-    const appendTranscriptEntry = vi.fn(async (...args) => {
-      order.push("transcript");
-      return args;
-    });
     const wrappedManager: CollaborationManager = {
       ...manager,
       start: vi.fn(async (input) => {
@@ -400,7 +402,6 @@ describe("collaboration route handlers — START", () => {
     const handlers = createCollaborationRouteHandlers({
       resolveProjectPath: async () => "/projects/example",
       manager: wrappedManager,
-      appendTranscriptEntry,
     });
 
     const response = await handlers.START(
@@ -417,33 +418,68 @@ describe("collaboration route handlers — START", () => {
     );
 
     expect(response.status).toBe(202);
-    expect(appendTranscriptEntry).toHaveBeenCalledTimes(1);
-    const [convId, entry, meta] = appendTranscriptEntry.mock.calls[0]!;
-    expect(convId).toBe("conv-trans");
-    expect(entry).toMatchObject({
-      type: "user",
-      role: "user",
-      content: [{ type: "text", text: "/collab investigate flaky test" }],
-    });
-    expect(meta).toEqual({ projectName: "example", sessionName: "sess-1" });
-    expect(order).toEqual(["transcript", "manager.start"]);
+    expect(order).toEqual(["manager.start"]);
     expect(startCalls).toHaveLength(1);
-    // No model/effort in the request → the entry stays unstamped, matching
-    // the pre-existing behavior for older clients.
-    expect(entry).not.toHaveProperty("model");
-    expect(entry).not.toHaveProperty("effort");
   });
 
-  it("stamps the /collab transcript entry with the request model/effort and forwards them to the manager", async () => {
+  it("forwards ordered image payloads to the manager", async () => {
     const { manager, startCalls } = buildScriptedManager({
-      startResult: { workflowId: "wf-stamp", status: "started" },
+      startResult: { workflowId: "wf-images", status: "started" },
     });
-    const appendTranscriptEntry = vi.fn(async (...args) => args);
-
     const handlers = createCollaborationRouteHandlers({
       resolveProjectPath: async () => "/projects/example",
       manager,
-      appendTranscriptEntry,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "compare [Image #1]",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-images",
+          images: [
+            {
+              attachmentId: "strip",
+              mediaType: "image/png",
+              base64Data: "strip-data",
+            },
+            {
+              attachmentId: "inline",
+              mediaType: "image/jpeg",
+              base64Data: "inline-data",
+              inlineMarkerIndex: 1,
+            },
+          ],
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startCalls[0]?.images).toEqual([
+      {
+        attachmentId: "strip",
+        mediaType: "image/png",
+        base64Data: "strip-data",
+      },
+      {
+        attachmentId: "inline",
+        mediaType: "image/jpeg",
+        base64Data: "inline-data",
+        inlineMarkerIndex: 1,
+      },
+    ]);
+  });
+
+  it("forwards the request model and effort to the manager", async () => {
+    const { manager, startCalls } = buildScriptedManager({
+      startResult: { workflowId: "wf-stamp", status: "started" },
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
     });
 
     const response = await handlers.START(
@@ -462,82 +498,11 @@ describe("collaboration route handlers — START", () => {
     );
 
     expect(response.status).toBe(202);
-    expect(appendTranscriptEntry).toHaveBeenCalledTimes(1);
-    const [, entry] = appendTranscriptEntry.mock.calls[0]!;
-    expect(entry).toMatchObject({
-      type: "user",
-      role: "user",
-      model: "fable",
-      effort: "max",
-    });
     expect(startCalls).toHaveLength(1);
     expect(startCalls[0]).toMatchObject({
       modelId: "fable",
       effort: "max",
     });
-  });
-
-  it("updates conversation metadata so a fresh /collab-started conversation leaves the new status with a transcriptPath (verified by reload through the real store)", async () => {
-    const { manager, startCalls } = buildScriptedManager({
-      startResult: { workflowId: "wf-meta", status: "started" },
-    });
-
-    const projectPath = "/projects/example";
-    const sessionName = "sess-1";
-    const conversationId = "conv-meta";
-
-    const fixture = createPersistenceFixture();
-    try {
-      fixture.seedProject(projectPath);
-      fixture.seedSession(projectPath, sessionName);
-      await fixture.seedConversation(
-        projectPath,
-        sessionName,
-        conversationStateSchema.parse({
-          id: conversationId,
-          transcriptPath: null,
-          status: "new",
-          promptCount: 0,
-          createdAt: "2026-04-28T09:00:00.000Z",
-          lastActivityAt: "2026-04-28T09:00:00.000Z",
-        }),
-      );
-
-      const handlers = createCollaborationRouteHandlers({
-        resolveProjectPath: async () => projectPath,
-        manager,
-        getTranscriptPath: async (id) => `/transcripts/${id}.jsonl`,
-        mutateConversation: fixture.deps.mutateConversation,
-      });
-
-      const response = await handlers.START(
-        new Request("http://test/collab", {
-          method: "POST",
-          body: JSON.stringify({
-            brief: "kick off a new design",
-            negotiationRounds: 3,
-            autonomousResolutionThreshold: "major",
-            conversationId,
-          }),
-        }),
-        buildContext("example", sessionName),
-      );
-
-      expect(response.status).toBe(202);
-      expect(startCalls).toHaveLength(1);
-
-      const reloaded = await fixture.deps.getConversation(
-        projectPath,
-        sessionName,
-        conversationId,
-      );
-      expect(reloaded).not.toBeNull();
-      expect(reloaded!.transcriptPath).toBe("/transcripts/conv-meta.jsonl");
-      expect(reloaded!.status).not.toBe("new");
-      expect(reloaded!.promptCount).toBeGreaterThan(0);
-    } finally {
-      fixture.close();
-    }
   });
 
   it("returns 500 when the manager throws an unexpected error", async () => {
@@ -563,6 +528,34 @@ describe("collaboration route handlers — START", () => {
     );
 
     expect(response.status).toBe(500);
+  });
+
+  it("returns 409 when another start claims the conversation first", async () => {
+    const { manager } = buildScriptedManager({
+      startError: new CollaborationStartConflictError("conv-1"),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Y",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "COLLABORATION_START_CONFLICT",
+    });
   });
 
   it("decodes URL-encoded session names", async () => {

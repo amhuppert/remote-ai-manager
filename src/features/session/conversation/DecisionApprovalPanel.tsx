@@ -1,6 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/ui/cn";
 import { useResolveDecisionsMutation } from "@/lib/session-alignment/mutations";
@@ -61,6 +66,9 @@ export function DecisionApprovalPanelView({
       batch.proposals.map((p) => [p.id, { approve: true, feedback: "" }]),
     ),
   );
+  const feedbackActionRefs = useRef<
+    Map<string, MultilineInputActionHandle | null>
+  >(new Map());
 
   const setApprove = (id: string, approve: boolean) =>
     setResolutions((prev) => ({
@@ -74,11 +82,15 @@ export function DecisionApprovalPanelView({
       [id]: { ...(prev[id] ?? { approve: true, feedback: "" }), feedback },
     }));
 
-  const handleSubmit = () => {
+  const handleSubmit = (feedbackOverride?: { id: string; value: string }) => {
+    if (isSubmitting) return;
     const payload: DecisionResolution[] = batch.proposals.map((p) => {
       const r = resolutions[p.id] ?? { approve: true, feedback: "" };
       if (r.approve) return { proposalId: p.id, approve: true };
-      const feedback = r.feedback.trim();
+      const feedback =
+        feedbackOverride?.id === p.id
+          ? feedbackOverride.value.trim()
+          : r.feedback.trim();
       return feedback
         ? { proposalId: p.id, approve: false, feedback }
         : { proposalId: p.id, approve: false };
@@ -147,10 +159,15 @@ export function DecisionApprovalPanelView({
                 </button>
               </div>
               {!r.approve && (
-                <textarea
+                <MultilineInput
                   aria-label={`Reason for rejecting: ${p.statement}`}
                   value={r.feedback}
-                  onChange={(e) => setFeedback(p.id, e.target.value)}
+                  onValueChange={(value) => setFeedback(p.id, value)}
+                  onPrimaryAction={(value) => handleSubmit({ id: p.id, value })}
+                  actionRef={(handle) => {
+                    if (handle) feedbackActionRefs.current.set(p.id, handle);
+                    else feedbackActionRefs.current.delete(p.id);
+                  }}
                   disabled={isSubmitting}
                   placeholder="Explain what needs to change… (optional)"
                   className={feedbackClass}
@@ -167,7 +184,12 @@ export function DecisionApprovalPanelView({
           variant="primary"
           size="sm"
           touch
-          onClick={handleSubmit}
+          onClick={() =>
+            runMultilinePrimaryAction(
+              feedbackActionRefs.current.values(),
+              handleSubmit,
+            )
+          }
           loading={isSubmitting}
         >
           {isSubmitting ? "Submitting…" : "Submit decisions"}

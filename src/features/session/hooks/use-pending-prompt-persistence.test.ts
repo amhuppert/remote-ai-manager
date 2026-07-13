@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 // Minimal smoke test for colocation criterion; deep behavior is covered by integration via ConversationWorkspace.
-import { renderHook } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
-import React from "react";
-import { useRef } from "react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import React, { useRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { usePendingPromptPersistence } from "./use-pending-prompt-persistence";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import { createStateStore } from "@/lib/state-store/store";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { createPendingPromptRouteHandlers } from "@/lib/prompt/route-handlers";
 
 function wrapper(client: QueryClient) {
   const Wrapper = ({ children }: { children: React.ReactNode }) =>
@@ -15,7 +20,12 @@ function wrapper(client: QueryClient) {
 }
 
 describe("usePendingPromptPersistence", () => {
-  it("returns handlePromptTextChange and clearPersistedPendingPromptOnSubmit callbacks", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns handlePromptTextChange and submit autosave suppression callbacks", () => {
     const client = new QueryClient({
       defaultOptions: {
         mutations: { retry: false },
@@ -40,8 +50,108 @@ describe("usePendingPromptPersistence", () => {
       { wrapper: wrapper(client) },
     );
     expect(typeof result.current.handlePromptTextChange).toBe("function");
-    expect(typeof result.current.clearPersistedPendingPromptOnSubmit).toBe(
+    expect(typeof result.current.suppressPendingPromptAutosaveAfterSubmit).toBe(
       "function",
     );
+  });
+
+  it("does not persist null after an accepted submit clears the local editor", async () => {
+    const db = _createTestDb({ inMemory: true });
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+    const projectPath = "/projects/p";
+    await store.getOrCreateProject(projectPath);
+    await store.mutateState("seed", (state) => {
+      state.projects[projectPath]!.sessions.s = sessionStateSchema.parse({
+        sessionName: "s",
+        worktreePath: "/tmp/s",
+        branchName: "cc/s",
+        createdAt: "2026-07-13T12:00:00.000Z",
+        lastActivityAt: "2026-07-13T12:00:00.000Z",
+        conversations: [
+          {
+            id: "c",
+            transcriptPath: null,
+            status: "new",
+            promptCount: 0,
+            createdAt: "2026-07-13T12:00:00.000Z",
+            lastActivityAt: "2026-07-13T12:00:00.000Z",
+            pendingPromptText: "submitted draft",
+          },
+        ],
+      });
+    });
+    const pendingHandlers = createPendingPromptRouteHandlers({
+      resolveProjectPath: async () => projectPath,
+      getSession: store.getSession,
+      setConversationPendingPromptText: store.setConversationPendingPromptText,
+    });
+    const fetchSpy = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) =>
+        pendingHandlers.POST(
+          new Request(new URL(String(input), "http://test"), init),
+          {
+            params: Promise.resolve({
+              name: "p",
+              session: "s",
+              conversationId: "c",
+            }),
+          },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const client = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false },
+      },
+    });
+    const activeConversation = (await store.getConversation(
+      projectPath,
+      "s",
+      "c",
+    )) as ConversationState;
+    const { result, unmount } = renderHook(
+      () => {
+        const [promptText, setPromptText] = useState("");
+        const promptTextRef = useRef(promptText);
+        promptTextRef.current = promptText;
+        const editorRef = useRef(null);
+        const persistence = usePendingPromptPersistence({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          activeConversation,
+          promptText,
+          setPromptText,
+          promptTextRef,
+          editorRef,
+        });
+        return { ...persistence, promptText, setPromptText };
+      },
+      { wrapper: wrapper(client) },
+    );
+
+    await waitFor(() =>
+      expect(result.current.promptText).toBe("submitted draft"),
+    );
+    await store.setConversationPendingPromptText(
+      projectPath,
+      "s",
+      "c",
+      "newer draft from another client",
+    );
+    vi.useFakeTimers();
+    act(() => {
+      result.current.suppressPendingPromptAutosaveAfterSubmit();
+      result.current.setPromptText("");
+    });
+    await act(async () => vi.runAllTimersAsync());
+    unmount();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(
+      (await store.getConversation(projectPath, "s", "c"))?.pendingPromptText,
+    ).toBe("newer draft from another client");
+    db.close();
   });
 });

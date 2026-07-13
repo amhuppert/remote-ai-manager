@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 import {
   Dialog,
@@ -78,6 +83,7 @@ export default function CreateTicketDialog({
   const [issues, setIssues] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<TicketDetail | null>(null);
+  const descriptionActionRef = useRef<MultilineInputActionHandle | null>(null);
 
   // Re-arm the form each time the dialog opens: the pre-filled project tracks
   // the entry the user opened it from, and a previous success/failure never
@@ -129,7 +135,8 @@ export default function CreateTicketDialog({
       : null,
   ].filter((id): id is string => id !== null);
 
-  const submit = () => {
+  const submit = (completedDescription?: string) => {
+    const nextDescription = completedDescription ?? description;
     const nextIssues: string[] = [];
     if (projectName.length === 0) nextIssues.push("Choose an owning project.");
     if (title.trim().length === 0) nextIssues.push("Title is required.");
@@ -146,7 +153,10 @@ export default function CreateTicketDialog({
 
     const generation = requestGeneration.capture();
     createMutation.mutate(
-      { projectName, input: { title: title.trim(), description, workType } },
+      {
+        projectName,
+        input: { title: title.trim(), description: nextDescription, workType },
+      },
       {
         onSuccess: (detail) => {
           if (!requestGeneration.isCurrent(generation)) return;
@@ -335,12 +345,15 @@ export default function CreateTicketDialog({
               <FormLabel htmlFor="create-ticket-description">
                 Description — markdown, optional
               </FormLabel>
-              <textarea
+              <MultilineInput
                 id="create-ticket-description"
                 rows={5}
                 value={description}
                 disabled={pending}
-                onChange={(event) => setDescription(event.target.value)}
+                onValueChange={setDescription}
+                onPrimaryAction={submit}
+                actionRef={descriptionActionRef}
+                voiceProjectName={projectName || undefined}
                 placeholder="## Problem…"
                 className={FIELD_CLASS}
               />
@@ -355,7 +368,12 @@ export default function CreateTicketDialog({
               <Button
                 variant="primary"
                 disabled={pending || projectDiscoveryBlocksSubmit}
-                onClick={submit}
+                onClick={() =>
+                  runMultilinePrimaryAction(
+                    [descriptionActionRef.current],
+                    submit,
+                  )
+                }
               >
                 {pending && <Spinner size="sm" tone="inherit" />}
                 Create ticket

@@ -10,6 +10,7 @@ import {
 } from "@/features/session/prompt/PromptEditor";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 
 const {
   mockUseCommandsQuery,
@@ -366,6 +367,60 @@ describe("PromptEditor", () => {
     expect(container.querySelector(".ProseMirror")).not.toBeNull();
   });
 
+  it("hydrates an initial canonical document with references and inline images", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const conversationRef =
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+      'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
+      'conversation-id="conv-1" conversation-name="Refactor parser" ' +
+      'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +
+      'status="running" last-activity-at="2026-06-01T12:00:00Z" ' +
+      'compact-status="none" read-command="cctl conversation read conv-1 --outline" />';
+    const initialDocument: SerializedPromptDoc = {
+      prompt: `${conversationRef}\n[Image #1]\nplain tail`,
+      images: [
+        {
+          attachmentId: "inline-1",
+          mediaType: "image/png",
+          base64Data: "aW5saW5l",
+          inlineMarkerIndex: 1,
+        },
+        {
+          attachmentId: "strip-1",
+          mediaType: "image/png",
+          base64Data: "c3RyaXA=",
+        },
+      ],
+    };
+    const attachments: ImageAttachment[] = initialDocument.images.map(
+      (image, index) => ({
+        id: image.attachmentId,
+        fileName: `image-${index + 1}`,
+        mediaType: image.mediaType,
+        base64Data: image.base64Data,
+        previewUrl: `data:${image.mediaType};base64,${image.base64Data}`,
+        sizeBytes: 0,
+      }),
+    );
+
+    render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-current"
+        value={initialDocument.prompt}
+        initialDocument={initialDocument}
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={attachments}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    expect(ref.current!.serialize(attachments)).toEqual(initialDocument);
+  });
+
   it("exposes a clear() method on the imperative handle", () => {
     const ref = createRef<PromptEditorHandle>();
     render(
@@ -386,6 +441,30 @@ describe("PromptEditor", () => {
     });
     const result = ref.current!.serialize([]);
     expect(result.prompt).toBe("");
+  });
+
+  it("inserts dictated text at the active selection edge without replacing the selection", () => {
+    const ref = createRef<PromptEditorHandle>();
+    render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value="alpha beta"
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    act(() => {
+      ref.current!.editor!.commands.setTextSelection({ from: 1, to: 6 });
+      ref.current!.insertText(" dictated");
+    });
+
+    expect(ref.current!.serialize([]).prompt).toBe("alpha dictated beta");
   });
 
   it("invokes onInlineMarkersChange with attachment ids when chips are inserted", async () => {

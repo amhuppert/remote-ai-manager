@@ -53,7 +53,7 @@ export interface ConversationMentionSelection {
 export interface ConversationMentionPopupProps {
   query: string;
   currentProjectName: string;
-  currentConversationId: string;
+  currentConversationId: string | null;
   onSelect: (selection: ConversationMentionSelection) => void;
   /** Dismiss the popup (Escape). Host should clear its suggestion state. */
   onClose?: () => void;

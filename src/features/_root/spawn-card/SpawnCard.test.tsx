@@ -11,6 +11,9 @@ import {
 import SpawnCard, { ValidSpawnCard, eligibleTargetBranches } from "./SpawnCard";
 import { validateProposal } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal, SpawnResult } from "@/lib/chat-spawning/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
+import { buildMessageRefXml } from "@/lib/conversations/message-ref";
+import { buildTicketRefXml } from "@/lib/tickets/references";
 
 // Radix focuses items / captures the pointer on open; jsdom implements neither.
 Element.prototype.scrollIntoView = () => {};
@@ -244,6 +247,196 @@ describe("SpawnCard", () => {
     };
     expect(sentBody.sessions).toHaveLength(1);
     expect(sentBody.sessions[0]!.name).toBe("beta");
+  });
+
+  it("submits every row's current canonical reference document from the card action", async () => {
+    const captured: { body?: string } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        captured.body = init?.body as string;
+        return Response.json({ created: [], failed: [] });
+      }),
+    );
+    const conversationRef =
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+      'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
+      'conversation-id="conv-1" conversation-name="Refactor parser" ' +
+      'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +
+      'status="running" last-activity-at="2026-06-01T12:00:00Z" ' +
+      'compact-status="none" read-command="cctl conversation read conv-1 --outline" />';
+    const messageRef =
+      '<message-ref project-name="my-app" session-name="main" ' +
+      'conversation-id="conv-2" conversation-name="Fix flake" ' +
+      'message-index="7" role="assistant" compacted="false" ' +
+      'read-command="cctl conversation read conv-2 --message 7" />';
+    const paste = (element: HTMLElement, text: string) =>
+      fireEvent.paste(element, {
+        clipboardData: {
+          items: [],
+          files: [],
+          types: ["text/plain"],
+          getData: (type: string) => (type === "text/plain" ? text : ""),
+        },
+      });
+
+    const { container } = renderValid(multi);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editors = container.querySelectorAll(".ProseMirror");
+    paste(editors[0] as HTMLElement, conversationRef);
+    paste(editors[1] as HTMLElement, messageRef);
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create 2 sessions" }));
+
+    await waitFor(() => expect(captured.body).toBeDefined());
+    const sent = JSON.parse(captured.body ?? "{}") as {
+      sessions: Array<{ initialPrompt?: string }>;
+    };
+    expect(sent.sessions[0]?.initialPrompt).toBe(conversationRef);
+    expect(sent.sessions[1]?.initialPrompt).toBe(messageRef);
+  });
+
+  it("preserves inline and strip images through Done and Edit", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:spawn-image");
+    URL.revokeObjectURL = vi.fn();
+    const captured: { body?: string } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        captured.body = init?.body as string;
+        return Response.json({ created: [], failed: [] });
+      }),
+    );
+    const { container } = renderValid(single);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editor = container.querySelector(".ProseMirror") as HTMLElement;
+    const inline = new File(["inline"], "inline.png", { type: "image/png" });
+    fireEvent.paste(editor, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: inline.type,
+            getAsFile: () => inline,
+          },
+        ],
+        files: [inline],
+        types: [],
+        getData: () => "",
+      },
+    });
+    await waitFor(() =>
+      expect(container.querySelector("[data-attachment-id]")).not.toBeNull(),
+    );
+
+    const fileInput = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const strip = new File(["strip"], "strip.png", { type: "image/png" });
+    fireEvent.change(fileInput, { target: { files: [strip] } });
+    await waitFor(() => expect(screen.getByTitle("Remove image")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create 1 session" }));
+
+    await waitFor(() => expect(captured.body).toBeDefined());
+    const sent = JSON.parse(captured.body ?? "{}") as {
+      sessions: Array<{ initialPrompt?: string; images?: ImagePayload[] }>;
+    };
+    expect(sent.sessions[0]?.initialPrompt).toContain("[Image #1]");
+    expect(sent.sessions[0]?.images).toEqual([
+      expect.objectContaining({ inlineMarkerIndex: 1 }),
+      expect.not.objectContaining({ inlineMarkerIndex: expect.anything() }),
+    ]);
+  });
+
+  it("preserves proposal-provided references and image placement on first edit", async () => {
+    URL.revokeObjectURL = vi.fn();
+    const conversationRef =
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+      'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
+      'conversation-id="conv-1" conversation-name="Refactor parser" ' +
+      'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +
+      'status="running" last-activity-at="2026-06-01T12:00:00Z" ' +
+      'compact-status="none" read-command="cctl conversation read conv-1 --outline" />';
+    const messageRef = buildMessageRefXml({
+      projectName: "my-app",
+      sessionName: "main",
+      conversationId: "conv-1",
+      conversationName: "Refactor parser",
+      messageIndex: 4,
+      role: "assistant",
+      timestamp: null,
+      model: null,
+      compaction: null,
+    });
+    const ticketRef = buildTicketRefXml({
+      projectName: "my-app",
+      ticketNumber: 7,
+      title: "Preserve canonical prompt",
+    });
+    const extraTicketRef = buildTicketRefXml({
+      projectName: "my-app",
+      ticketNumber: 8,
+      title: "Trigger first edit update",
+    });
+    const images: ImagePayload[] = [
+      {
+        attachmentId: "inline-1",
+        mediaType: "image/png",
+        base64Data: "aW5saW5l",
+        inlineMarkerIndex: 1,
+      },
+      {
+        attachmentId: "strip-1",
+        mediaType: "image/png",
+        base64Data: "c3RyaXA=",
+      },
+    ];
+    const proposal = asProposal({
+      sessions: [
+        {
+          name: "hydrated",
+          agent: "claude",
+          mode: "normal",
+          initialPrompt: `${conversationRef}\n${messageRef}\n${ticketRef}\n[Image #1]`,
+          images,
+        },
+      ],
+    });
+    const captured: { body?: string } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        captured.body = init?.body as string;
+        return Response.json({ created: [], failed: [] });
+      }),
+    );
+    const { container } = renderValid(proposal);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editor = container.querySelector(".ProseMirror") as HTMLElement;
+    fireEvent.paste(editor, {
+      clipboardData: {
+        items: [],
+        files: [],
+        types: ["text/plain"],
+        getData: (type: string) =>
+          type === "text/plain" ? extraTicketRef : "",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create 1 session" }));
+
+    await waitFor(() => expect(captured.body).toBeDefined());
+    const sent = JSON.parse(captured.body ?? "{}") as {
+      sessions: Array<{ initialPrompt?: string; images?: ImagePayload[] }>;
+    };
+    expect(sent.sessions[0]?.initialPrompt).toContain(conversationRef);
+    expect(sent.sessions[0]?.initialPrompt).toContain(messageRef);
+    expect(sent.sessions[0]?.initialPrompt).toContain(ticketRef);
+    expect(sent.sessions[0]?.initialPrompt).toContain(extraTicketRef);
+    expect(sent.sessions[0]?.images).toEqual(images);
   });
 
   it("renders passive spawned-session status after creation without drive controls", async () => {

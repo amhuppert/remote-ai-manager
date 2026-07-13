@@ -7,6 +7,7 @@ import { agentBackendSchema } from "@/lib/shared/schemas";
 export const runPromptRequestSchema = z
   .object({
     prompt: z.string().trim(),
+    submittedPendingPromptText: z.string().optional(),
     modelId: z.string().trim().min(1).optional(),
     effort: z.string().trim().min(1).optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
@@ -40,6 +41,7 @@ export const pendingPromptRequestSchema = z.object({
 export const queueEnqueueRequestSchema = z
   .object({
     text: z.string().optional(),
+    submittedPendingPromptText: z.string().optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
     documentFeedback: documentFeedbackPayloadSchema.optional(),
   })

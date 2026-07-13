@@ -303,6 +303,7 @@ export default function ConnectedWorkflowBuilderPage({
                 onOpenWorkflowSettings={() => setActiveTab("workflow")}
                 isMobile={isMobile}
                 onAutoSwitchPanel={autoSwitchPanel}
+                voiceProjectName={projectName}
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">

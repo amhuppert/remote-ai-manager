@@ -41,6 +41,13 @@ export const laneWriteCapabilitySchema = z.enum([
 ]);
 export type LaneWriteCapability = z.infer<typeof laneWriteCapabilitySchema>;
 
+const conversationImageRefSchema = z.object({
+  index: z.number().int().nonnegative(),
+  mediaType: z.string().min(1),
+  path: z.string().min(1),
+  base64Data: z.string().min(1),
+});
+
 const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(
   (value) =>
     typeof value === "object" &&
@@ -68,6 +75,7 @@ const baseRequestFields = {
   // validation happens at the runner.
   modelId: z.string().min(1).optional(),
   reasoningEffort: z.string().min(1).optional(),
+  imageRefs: z.array(conversationImageRefSchema).max(5).optional(),
 } as const;
 
 export const agentCallRequestSchema = z.discriminatedUnion("kind", [

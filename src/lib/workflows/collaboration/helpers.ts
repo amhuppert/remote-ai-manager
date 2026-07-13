@@ -21,6 +21,7 @@ import type {
   AsymmetricCollaborationSliceInput,
 } from "./envelope";
 import type { BuiltCollaborationPrompt } from "./prompt-builders";
+import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type {
   CollaborationAgent,
   CollaborationAgentArtifactPhase,
@@ -184,6 +185,7 @@ export interface CallPrimitiveContext {
   flowAgent: CollaborationFlowAgent;
   backend: CollaborationAgent;
   prompt: BuiltCollaborationPrompt;
+  imageRefs?: readonly ConversationImageRef[];
   /**
    * Defaults to `write_capable`. Use `read_only` for planning calls that
    * emit structured output without modifying the worktree, and
@@ -202,7 +204,7 @@ export type CallPrimitiveOutcome =
 export async function callPrimitive(
   ctx: CallPrimitiveContext,
 ): Promise<CallPrimitiveOutcome> {
-  const { input, deps, backend, prompt } = ctx;
+  const { input, deps, backend, prompt, imageRefs } = ctx;
   const writeCapability = ctx.writeCapability ?? "write_capable";
   const laneRef = { workflowId: input.workflowId, laneId: backend };
   const request: AgentCallRequest =
@@ -214,6 +216,7 @@ export async function callPrimitive(
           laneRef,
           writeCapability,
           outputSchema: prompt.outputSchema,
+          ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
         }
       : {
           kind: "task_run",
@@ -222,6 +225,7 @@ export async function callPrimitive(
           laneRef,
           writeCapability,
           outputSchema: prompt.outputSchema,
+          ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
         };
 
   let result: AgentCallResult;

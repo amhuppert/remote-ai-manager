@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyPromptDocument,
+  setSessionImages,
   toEditableSessions,
   updateEditableSession,
   setSessionIncluded,
@@ -130,6 +132,48 @@ describe("setSessionIncluded", () => {
     expect(next[1]!.included).toBe(false);
     expect(rows[1]!.included).toBe(true); // original untouched
     expect(next[0]).toEqual(rows[0]); // other rows unchanged
+  });
+});
+
+describe("applyPromptDocument", () => {
+  it("uses the submitted rich prompt document instead of waiting for image state effects", () => {
+    const rows = toEditableSessions(proposal);
+    const next = applyPromptDocument(rows, 0, {
+      prompt: "Compare [Image #1] and [Image #2]",
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "first-data",
+        },
+        {
+          attachmentId: "second",
+          mediaType: "image/jpeg",
+          base64Data: "second-data",
+        },
+      ],
+    });
+
+    expect(next[0]).toMatchObject({
+      initialPrompt: "Compare [Image #1] and [Image #2]",
+      images: [{ attachmentId: "first" }, { attachmentId: "second" }],
+    });
+    expect(rows[0]!.images).toEqual([]);
+  });
+});
+
+describe("setSessionImages", () => {
+  it("preserves state identity when the serialized image payload is unchanged", () => {
+    const images = [
+      {
+        attachmentId: "image-1",
+        mediaType: "image/png" as const,
+        base64Data: "aW1hZ2U=",
+      },
+    ];
+    const rows = [editable({ images })];
+
+    expect(setSessionImages(rows, 0, [...images])).toBe(rows);
   });
 });
 

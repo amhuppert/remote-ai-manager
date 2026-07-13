@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -9,7 +9,7 @@ import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
 import type { ProposalValidation } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { DerivedSessionStatus } from "@/lib/sessions/schemas";
-import SpawnCardRow from "./SpawnCardRow";
+import SpawnCardRow, { type SpawnCardRowHandle } from "./SpawnCardRow";
 import { useSpawnCard } from "./useSpawnCard";
 
 export interface SpawnedSessionStatus {
@@ -179,6 +179,15 @@ export function ValidSpawnCard({
   const created = card.result?.created ?? [];
   const failed = card.result?.failed ?? [];
   const submitted = card.result !== undefined;
+  const rowRefs = useRef<Array<SpawnCardRowHandle | null>>([]);
+  const handleCreate = () => {
+    const voiceRow = rowRefs.current.find((row) => row?.isVoiceBusy());
+    if (voiceRow) {
+      voiceRow.primaryAction();
+      return;
+    }
+    card.submit();
+  };
 
   return (
     <section
@@ -199,7 +208,11 @@ export function ValidSpawnCard({
       <div className="flex flex-col gap-sm">
         {card.draft.map((session, i) => (
           <SpawnCardRow
+            ref={(node) => {
+              rowRefs.current[i] = node;
+            }}
             key={i}
+            projectName={projectName}
             index={i}
             session={session}
             editing={card.editing}
@@ -208,6 +221,11 @@ export function ValidSpawnCard({
             expanded={!!card.expanded[i]}
             onFieldChange={card.updateField}
             onIncludedChange={card.setIncluded}
+            onImagesChange={card.setImages}
+            onDocumentChange={card.setPromptDocument}
+            onPrimaryAction={(document) =>
+              card.submitPromptDocument(i, document)
+            }
             onToggleExpanded={card.toggleExpanded}
           />
         ))}
@@ -225,7 +243,7 @@ export function ValidSpawnCard({
             <Button
               variant="primary"
               size="sm"
-              onClick={card.submit}
+              onClick={handleCreate}
               disabled={card.isPending || n === 0}
             >
               {card.isPending ? "Creating…" : createLabel}

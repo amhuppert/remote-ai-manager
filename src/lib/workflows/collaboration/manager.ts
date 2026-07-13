@@ -44,7 +44,10 @@ import {
   type LaneService,
 } from "@/lib/workflows/primitives/lane-service";
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
-import { getSession as defaultGetSession } from "@/lib/state-store";
+import {
+  getSession as defaultGetSession,
+  mutateConversation as defaultMutateConversation,
+} from "@/lib/state-store";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -53,6 +56,13 @@ import {
   type AgentSessionRef,
 } from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
+import {
+  getNextImageIndex,
+  saveWorkflowTranscriptImage,
+} from "@/lib/images/transcript-images";
+import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import {
   collaborationArtifactSchema,
   collaborationAutonomousResolutionThresholdSchema,
@@ -65,6 +75,12 @@ import {
   publishScopedStatusEvent,
   type PublishScopedStatusEventInput,
 } from "@/lib/workflows/primitives/default-session-status-bus";
+import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
+import {
+  appendTranscriptEntryOnce,
+  getTranscriptPath,
+} from "@/lib/prompt/transcript";
+import { buildCollaborationUserTranscriptEntry } from "./transcript";
 
 function extractConversationIdFromEnvelope(
   envelope: WorkflowEnvelope,
@@ -178,6 +194,7 @@ export const collaborationStartRequestSchema = z.object({
   // and direct API callers keep working.
   modelId: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
+  images: z.array(imagePayloadSchema).max(5).optional(),
 });
 type CollaborationStartRequest = z.infer<
   typeof collaborationStartRequestSchema
@@ -224,12 +241,202 @@ interface CollaborationManagerSessionResolution {
 
 interface CollaborationManagerConversationResolution {
   agentBackend: AgentBackendId;
+  promptCount: number;
   /**
    * The conversation's stored backend session ref. The manager forwards
    * this onto the slice as `priorBackendRef` so Agent One's first turn can
    * resume the originating conversation's backend session.
    */
   backendRef?: AgentSessionRef | null;
+}
+
+interface CollaborationStartPersistenceInput {
+  projectPath: string;
+  sessionName: string;
+  workflowId: string;
+  conversationId: string;
+  expectedPromptCount: number;
+  brief: string;
+  imageRefs: readonly ConversationImageRef[];
+  modelId?: string;
+  effort?: string;
+}
+
+interface CollaborationStartPersisterDeps {
+  getTranscriptPath(conversationId: string): Promise<string>;
+  appendTranscriptEntryOnce(
+    conversationId: string,
+    entry: ReturnType<typeof buildCollaborationUserTranscriptEntry> & {
+      id: string;
+    },
+    projectContext?: {
+      projectName: string;
+      sessionName: string;
+    },
+  ): Promise<void>;
+  mutateConversation<T>(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    label: string,
+    mutate: (conversation: ConversationState) => T | Promise<T>,
+  ): Promise<T>;
+  now(): string;
+}
+
+export class CollaborationStartConflictError extends Error {
+  constructor(public readonly conversationId: string) {
+    super(
+      `Conversation "${conversationId}" is no longer idle for this collaboration start`,
+    );
+    this.name = "CollaborationStartConflictError";
+  }
+}
+
+export function createCollaborationStartPersister(
+  deps: CollaborationStartPersisterDeps,
+): (input: CollaborationStartPersistenceInput) => Promise<void> {
+  return async (input) => {
+    const transcriptPath = await deps.getTranscriptPath(input.conversationId);
+    const timestamp = deps.now();
+    const priorState = await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "collab.start.claim",
+      (conversation) => {
+        const isIdle =
+          conversation.status === "new" || conversation.status === "awaiting";
+        if (conversation.promptCount !== input.expectedPromptCount || !isIdle) {
+          throw new CollaborationStartConflictError(input.conversationId);
+        }
+        const prior = {
+          promptCount: conversation.promptCount,
+          status: conversation.status,
+          transcriptPath: conversation.transcriptPath,
+          lastActivityAt: conversation.lastActivityAt,
+        };
+        conversation.promptCount += 1;
+        conversation.status = "running";
+        if (conversation.transcriptPath === null) {
+          conversation.transcriptPath = transcriptPath;
+        }
+        conversation.lastActivityAt = timestamp;
+        return prior;
+      },
+    );
+
+    try {
+      await deps.appendTranscriptEntryOnce(
+        input.conversationId,
+        buildCollaborationUserTranscriptEntry({
+          id: `collab-start:${input.workflowId}`,
+          timestamp,
+          brief: input.brief,
+          imageRefs: input.imageRefs,
+          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+          ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        }) as ReturnType<typeof buildCollaborationUserTranscriptEntry> & {
+          id: string;
+        },
+        {
+          projectName: path.basename(input.projectPath),
+          sessionName: input.sessionName,
+        },
+      );
+    } catch (error) {
+      try {
+        await deps.mutateConversation(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+          "collab.start.compensate",
+          (conversation) => {
+            const claimStillOwned =
+              conversation.promptCount === input.expectedPromptCount + 1 &&
+              conversation.status === "running";
+            if (!claimStillOwned) {
+              logger.error("collaboration.manager.start_compensation_skipped", {
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                workflowId: input.workflowId,
+                conversationId: input.conversationId,
+                promptCount: conversation.promptCount,
+                status: conversation.status,
+              });
+              return;
+            }
+            conversation.promptCount = priorState.promptCount;
+            conversation.status = priorState.status;
+            conversation.transcriptPath = priorState.transcriptPath;
+            conversation.lastActivityAt = priorState.lastActivityAt;
+          },
+        );
+      } catch (compensationError) {
+        logger.error("collaboration.manager.start_compensation_failed", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          workflowId: input.workflowId,
+          conversationId: input.conversationId,
+          error: getErrorMessage(compensationError),
+        });
+      }
+      throw error;
+    }
+
+    logger.info("collaboration.manager.start_persisted", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
+      imageCount: input.imageRefs.length,
+    });
+  };
+}
+
+export async function prepareCollaborationInitialImages(
+  input: {
+    conversationId: string;
+    workflowId: string;
+    brief: string;
+    images: readonly ImagePayload[];
+  },
+  configDir?: string,
+): Promise<{ brief: string; imageRefs: ConversationImageRef[] }> {
+  const startIndex = await getNextImageIndex(input.conversationId, configDir);
+  const assembled = assembleUserContentBlocks({
+    promptText: input.brief,
+    images: input.images,
+    startIndex,
+  });
+  const imagesById = new Map(
+    input.images.map((image) => [image.attachmentId, image]),
+  );
+  const refs: ConversationImageRef[] = [];
+  for (const assignment of assembled.assignments) {
+    const image = imagesById.get(assignment.attachmentId);
+    if (!image) continue;
+    const path = await saveWorkflowTranscriptImage(
+      input.conversationId,
+      input.workflowId,
+      assignment.serverIndex,
+      image.mediaType,
+      image.base64Data,
+      configDir,
+    );
+    refs.push({
+      index: assignment.serverIndex,
+      mediaType: image.mediaType,
+      path,
+      base64Data: image.base64Data,
+    });
+  }
+  logger.debug("collaboration.manager.initial_images_prepared", {
+    conversationId: input.conversationId,
+    imageCount: refs.length,
+    startIndex,
+  });
+  return { brief: assembled.rewrittenPromptText, imageRefs: refs };
 }
 
 export interface CollaborationManagerDeps {
@@ -255,6 +462,25 @@ export interface CollaborationManagerDeps {
     sessionName: string;
     conversationId: string;
   }): Promise<CollaborationManagerConversationResolution | null>;
+
+  prepareInitialImages(input: {
+    conversationId: string;
+    workflowId: string;
+    brief: string;
+    images: readonly ImagePayload[];
+  }): Promise<{ brief: string; imageRefs: ConversationImageRef[] }>;
+
+  persistStart(input: {
+    projectPath: string;
+    sessionName: string;
+    workflowId: string;
+    conversationId: string;
+    expectedPromptCount: number;
+    brief: string;
+    imageRefs: readonly ConversationImageRef[];
+    modelId?: string;
+    effort?: string;
+  }): Promise<void>;
 
   /**
    * Tracks abort signals for in-flight collaboration runs so a stop request
@@ -463,8 +689,25 @@ const defaultDeps: CollaborationManagerDeps = {
       input.conversationId,
     );
     if (!conv) return null;
-    return { agentBackend: conv.agentBackend, backendRef: conv.backendRef };
+    return {
+      agentBackend: conv.agentBackend,
+      backendRef: conv.backendRef,
+      promptCount: conv.promptCount ?? 0,
+    };
   },
+  prepareInitialImages: prepareCollaborationInitialImages,
+  persistStart: createCollaborationStartPersister({
+    getTranscriptPath,
+    appendTranscriptEntryOnce: (conversationId, entry, projectContext) =>
+      appendTranscriptEntryOnce(
+        conversationId,
+        entry,
+        undefined,
+        projectContext,
+      ),
+    mutateConversation: defaultMutateConversation,
+    now: () => new Date().toISOString(),
+  }),
   stopRegistry: defaultStopRegistry,
   createDeps(input) {
     return createCollaborationDeps({
@@ -667,6 +910,7 @@ export function createCollaborationManager(
         conversationId: input.conversationId,
         modelId: input.modelId,
         effort: input.effort,
+        images: input.images,
       });
 
       const session = await deps.resolveSession({
@@ -693,9 +937,19 @@ export function createCollaborationManager(
         );
       }
 
+      const workflowId = deps.newWorkflowId();
+      const preparedImages = parsed.images?.length
+        ? await deps.prepareInitialImages({
+            conversationId: parsed.conversationId,
+            workflowId,
+            brief: parsed.brief,
+            images: parsed.images,
+          })
+        : { brief: parsed.brief, imageRefs: [] };
+      const { brief, imageRefs } = preparedImages;
+
       const primaryAgentBackend: AgentBackendId = conversation.agentBackend;
 
-      const workflowId = deps.newWorkflowId();
       const sessionKey = `${input.projectPath}::${input.sessionName}`;
 
       const laneService = deps.buildLaneService({
@@ -764,7 +1018,7 @@ export function createCollaborationManager(
 
       const sliceInput: AsymmetricCollaborationSliceInput = {
         workflowId,
-        brief: parsed.brief,
+        brief,
         worktreePath: session.worktreePath,
         sessionKey,
         primaryAgentBackend,
@@ -773,8 +1027,26 @@ export function createCollaborationManager(
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
         conversationId: parsed.conversationId,
         priorBackendRef: conversation.backendRef ?? undefined,
+        imageRefs,
         stopSignal: stopController.signal,
       };
+
+      try {
+        await deps.persistStart({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          workflowId,
+          conversationId: parsed.conversationId,
+          expectedPromptCount: conversation.promptCount,
+          brief,
+          imageRefs,
+          ...(parsed.modelId !== undefined ? { modelId: parsed.modelId } : {}),
+          ...(parsed.effort !== undefined ? { effort: parsed.effort } : {}),
+        });
+      } catch (error) {
+        deps.stopRegistry.release(workflowId);
+        throw error;
+      }
 
       logger.info("collaboration.manager.start", {
         projectPath: input.projectPath,
@@ -791,10 +1063,11 @@ export function createCollaborationManager(
         codexEffort: agentModelSettings.codex.effort ?? null,
         conversationId: parsed.conversationId,
         priorBackendRefBackend: conversation.backendRef?.backend ?? null,
+        imageCount: imageRefs.length,
       });
 
-      void deps
-        .runSlice(sliceInput, sliceDeps)
+      void Promise.resolve()
+        .then(() => deps.runSlice(sliceInput, sliceDeps))
         .then((result) => {
           logger.info("collaboration.manager.slice_finished", {
             projectPath: input.projectPath,

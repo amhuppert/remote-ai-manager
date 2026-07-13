@@ -1,6 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import type {
   AskQuestionAnswer,
   AskQuestionItem,
@@ -53,6 +65,7 @@ interface AskQuestionPanelProps {
   agent?: AgentBackendId;
   /** Container-driven: swaps the rail for a chip pager and grows touch targets. */
   compact?: boolean;
+  voiceProjectName?: string;
 }
 
 const EMPTY_DRAFT: AnswerDraft = {
@@ -298,6 +311,10 @@ function QuestionCard({
   onOtherText,
   onNote,
   onNoteToggle,
+  onPrimaryAction,
+  actionRef,
+  onVoiceStateChange,
+  voiceProjectName,
 }: {
   question: AskQuestionItem;
   index: number;
@@ -310,8 +327,13 @@ function QuestionCard({
   onOtherText: (value: string) => void;
   onNote: (value: string) => void;
   onNoteToggle: () => void;
+  onPrimaryAction: (value: string) => void;
+  actionRef: React.Ref<MultilineInputActionHandle>;
+  onVoiceStateChange: (busy: boolean) => void;
+  voiceProjectName?: string;
 }) {
   const otherSelected = draft.selected.includes(OTHER_SENTINEL);
+  const noteId = useId();
   return (
     <div className="max-w-[720px] group-data-[compact=true]/aq:max-w-none">
       <div className="mb-sm flex flex-wrap items-center gap-[10px]">
@@ -404,18 +426,23 @@ function QuestionCard({
         <div className="mt-md">
           {draft.noteOpen ? (
             <div className="mt-[8px]">
-              <div className={noteLabelClass}>
+              <label className={noteLabelClass} htmlFor={noteId}>
                 Your note{" "}
                 <span className="font-normal opacity-60">
                   · sent with your selection
                 </span>
-              </div>
-              <textarea
+              </label>
+              <MultilineInput
+                id={noteId}
                 className={noteTextareaClass}
                 placeholder="e.g. 'Go with SQLite, but gate it behind a flag for the first release.'"
                 value={draft.note}
                 autoFocus
-                onChange={(e) => onNote(e.target.value)}
+                onValueChange={onNote}
+                onPrimaryAction={onPrimaryAction}
+                actionRef={actionRef}
+                onVoiceStateChange={onVoiceStateChange}
+                voiceProjectName={voiceProjectName}
               />
             </div>
           ) : (
@@ -497,6 +524,7 @@ export default function AskQuestionPanel({
   onSubmit,
   agent = "claude",
   compact = false,
+  voiceProjectName,
 }: AskQuestionPanelProps) {
   const showKbd = !compact;
   const [view, setView] = useState<"max" | "banner">("max");
@@ -506,6 +534,8 @@ export default function AskQuestionPanel({
   );
   const [search, setSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [noteVoiceBusy, setNoteVoiceBusy] = useState(false);
+  const noteActionRef = useRef<MultilineInputActionHandle | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const bannerAnswerRef = useRef<HTMLButtonElement>(null);
 
@@ -547,17 +577,33 @@ export default function AskQuestionPanel({
     [patch, active, questions.length, onNavigate],
   );
 
-  const doSubmit = useCallback(() => {
-    if (submitting) return;
-    const result = onSubmit(questionId, buildAnswerPayload(questions, drafts));
-    if (result instanceof Promise) {
-      setSubmitting(true);
-      result.then(
-        () => setSubmitting(false),
-        () => setSubmitting(false),
+  const doSubmit = useCallback(
+    (completedNote?: string) => {
+      if (submitting) return;
+      const submittedDrafts =
+        completedNote === undefined
+          ? drafts
+          : {
+              ...drafts,
+              [activeKey]: {
+                ...draftFor(activeKey),
+                note: completedNote,
+              },
+            };
+      const result = onSubmit(
+        questionId,
+        buildAnswerPayload(questions, submittedDrafts),
       );
-    }
-  }, [onSubmit, questionId, questions, drafts, submitting]);
+      if (result instanceof Promise) {
+        setSubmitting(true);
+        result.then(
+          () => setSubmitting(false),
+          () => setSubmitting(false),
+        );
+      }
+    },
+    [activeKey, draftFor, drafts, onSubmit, questionId, questions, submitting],
+  );
 
   // Keyboard answering — desktop, maximized only; suppressed while typing.
   useEffect(() => {
@@ -566,15 +612,15 @@ export default function AskQuestionPanel({
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName.toLowerCase();
       const typing = tag === "input" || tag === "textarea";
+      if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        if (tag === "textarea") return;
         if (progress.canSubmit) {
           e.preventDefault();
           doSubmit();
         }
         return;
       }
-      // While typing, only the submit chord above is honored; every other
-      // shortcut (Escape, 1–9, ↑↓/jk) must fall through as plain text input.
       if (typing) return;
       if (e.key === "Escape") {
         setView("banner");
@@ -696,7 +742,7 @@ export default function AskQuestionPanel({
                 )}
                 disabled={submitting}
                 aria-busy={submitting || undefined}
-                onClick={doSubmit}
+                onClick={() => doSubmit()}
               >
                 {submitting ? (
                   <>
@@ -876,6 +922,12 @@ export default function AskQuestionPanel({
                   onNoteToggle={() =>
                     patch(activeKey, (d) => ({ ...d, noteOpen: true }))
                   }
+                  onPrimaryAction={(value) => {
+                    if (progress.canSubmit) doSubmit(value);
+                  }}
+                  actionRef={noteActionRef}
+                  onVoiceStateChange={setNoteVoiceBusy}
+                  voiceProjectName={voiceProjectName}
                 />
               </div>
             </div>
@@ -909,9 +961,11 @@ export default function AskQuestionPanel({
               <button
                 type="button"
                 className={submitClass}
-                disabled={!progress.canSubmit || submitting}
+                disabled={submitting || (!progress.canSubmit && !noteVoiceBusy)}
                 aria-busy={submitting || undefined}
-                onClick={doSubmit}
+                onClick={() =>
+                  runMultilinePrimaryAction([noteActionRef.current], doSubmit)
+                }
               >
                 {submitting ? (
                   <>

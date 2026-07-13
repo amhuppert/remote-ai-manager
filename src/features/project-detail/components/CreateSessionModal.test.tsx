@@ -1,29 +1,22 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, fireEvent, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
+import { screen, fireEvent, act, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
 import CreateSessionModal from "./CreateSessionModal";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-import { useAppHotkey } from "@/hooks/useAppHotkey";
-import { useImageAttachments } from "@/hooks/use-image-attachments";
 
 // Shared mocks
 vi.mock(
   "next/navigation",
   async () => (await import("@/test/component-mocks")).nextNavigationMock,
-);
-vi.mock(
-  "@/hooks/useVoiceRecorder",
-  async () => (await import("@/test/component-mocks")).voiceRecorderMock,
-);
-vi.mock(
-  "@/hooks/useAppHotkey",
-  async () => (await import("@/test/component-mocks")).appHotkeyMock,
-);
-vi.mock(
-  "@/components/VoiceRecordButton",
-  async () => (await import("@/test/component-mocks")).voiceRecordButtonMock,
 );
 
 // File-specific mocks
@@ -33,54 +26,40 @@ vi.mock("@/lib/sessions/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: mutateMock, isPending: false }),
 }));
 
-const addImageMock = vi
-  .fn()
-  .mockResolvedValue({ attachment: null, error: null });
-const removeImageMock = vi.fn();
-const clearImagesMock = vi.fn();
-
-vi.mock("@/hooks/use-image-attachments", () => ({
-  useImageAttachments: vi.fn(() => ({
-    pendingImages: [],
-    addImage: addImageMock,
-    removeImage: removeImageMock,
-    clearImages: clearImagesMock,
-    isAtLimit: false,
-  })),
-}));
-
-vi.mock("@/components/ImageAttachmentPreview", () => ({
-  default: ({
-    images,
-    onRemove,
-  }: {
-    images: { id: string; fileName: string }[];
-    onRemove: (id: string) => void;
-  }) =>
-    images.length > 0 ? (
-      <div data-testid="image-preview">
-        {images.map((img) => (
-          <button key={img.id} onClick={() => onRemove(img.id)}>
-            Remove {img.fileName}
-          </button>
-        ))}
-      </div>
-    ) : null,
-}));
-
 const defaultProps = {
   projectName: "my-project",
   open: true,
   onClose: vi.fn(),
 };
 
+beforeAll(() => {
+  document.elementFromPoint = () => document.body;
+  Range.prototype.getClientRects = () =>
+    ({
+      length: 0,
+      item: () => null,
+      [Symbol.iterator]: function* () {},
+    }) as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.useFakeTimers();
 });
 
 afterEach(() => {
-  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 /** Switch modal to Optimistic mode by clicking the Optimistic button */
@@ -88,12 +67,25 @@ function switchToOptimisticMode() {
   fireEvent.click(screen.getByText("Optimistic"));
 }
 
+function getPromptInput(): HTMLElement {
+  return screen.getByTestId("prompt-input");
+}
+
+async function enterPrompt(text: string): Promise<void> {
+  const user = userEvent.setup();
+  const editor = getPromptInput();
+  await user.click(editor);
+  await user.type(editor, text);
+}
+
 describe("CreateSessionModal", () => {
   it("renders modal with normal mode by default", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     expect(screen.getByText("New Session")).toBeInTheDocument();
     expect(screen.getByText("Session name")).toBeInTheDocument();
-    expect(screen.getByText("Create Session")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create Session" }),
+    ).toBeInTheDocument();
   });
 
   it("offers exactly two creation modes: Normal and Optimistic", () => {
@@ -115,11 +107,10 @@ describe("CreateSessionModal", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("auto-focuses name input in normal mode", () => {
+  it("auto-focuses name input in normal mode", async () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    vi.advanceTimersByTime(150);
     const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
-    expect(document.activeElement).toBe(input);
+    await waitFor(() => expect(document.activeElement).toBe(input));
   });
 
   it("shows branch hint in normal mode", () => {
@@ -131,7 +122,7 @@ describe("CreateSessionModal", () => {
 
   it("disables create button when name is empty in normal mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const createBtn = screen.getByText("Create Session");
+    const createBtn = screen.getByRole("button", { name: "Create Session" });
     expect(createBtn.hasAttribute("disabled")).toBe(true);
   });
 
@@ -139,7 +130,7 @@ describe("CreateSessionModal", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
     fireEvent.change(input, { target: { value: "My Session" } });
-    const createBtn = screen.getByText("Create Session");
+    const createBtn = screen.getByRole("button", { name: "Create Session" });
     expect(createBtn.hasAttribute("disabled")).toBe(false);
   });
 
@@ -178,15 +169,21 @@ describe("CreateSessionModal", () => {
       expect(screen.getByText("Optimistic")).toBeInTheDocument();
     });
 
-    it("switches to optimistic mode and shows instructions textarea", () => {
+    it("switches to optimistic mode and shows the rich instructions editor", () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
       expect(screen.getByText("What should Claude do?")).toBeInTheDocument();
-      expect(
-        screen.getByPlaceholderText(
-          "e.g. Fix the typo in the login page header",
-        ),
-      ).toBeInTheDocument();
+      expect(getPromptInput()).toBeInTheDocument();
+    });
+
+    it("associates the instructions label with the rich editor", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+
+      expect(getPromptInput()).toHaveAttribute(
+        "id",
+        "session-instructions-input",
+      );
     });
 
     it("shows optimistic-specific form hint", () => {
@@ -199,42 +196,39 @@ describe("CreateSessionModal", () => {
       ).toBeInTheDocument();
     });
 
-    it("auto-focuses textarea in optimistic mode", () => {
+    it("auto-focuses the rich editor in optimistic mode", async () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      vi.advanceTimersByTime(150);
-      const textarea = screen.getByPlaceholderText(
-        "e.g. Fix the typo in the login page header",
+      await waitFor(() =>
+        expect(document.activeElement).toBe(getPromptInput()),
       );
-      expect(document.activeElement).toBe(textarea);
     });
 
-    it("enables create button when instructions have content", () => {
+    it("enables create button when instructions have content", async () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      const textarea = screen.getByPlaceholderText(
-        "e.g. Fix the typo in the login page header",
-      );
-      fireEvent.change(textarea, { target: { value: "Fix the bug" } });
-      const createBtn = screen.getByText("Create Session");
+      await enterPrompt("Fix the bug");
+      const createBtn = screen.getByRole("button", { name: "Create Session" });
       expect(createBtn.hasAttribute("disabled")).toBe(false);
     });
 
     it("disables create button when instructions are empty", () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      const createBtn = screen.getByText("Create Session");
+      const createBtn = screen.getByRole("button", { name: "Create Session" });
       expect(createBtn.hasAttribute("disabled")).toBe(true);
     });
 
-    it("submits instructions on Enter key", () => {
+    it("keeps plain Enter in the editor and submits on Ctrl+Enter", async () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      const textarea = screen.getByPlaceholderText(
-        "e.g. Fix the typo in the login page header",
-      );
-      fireEvent.change(textarea, { target: { value: "Fix the login bug" } });
-      fireEvent.keyDown(textarea, { key: "Enter" });
+      await enterPrompt("Fix the login bug");
+      const editor = getPromptInput();
+      fireEvent.keyDown(editor, { key: "Enter" });
+
+      expect(mutateMock).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
 
       expect(mutateMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -246,25 +240,19 @@ describe("CreateSessionModal", () => {
       );
     });
 
-    it("allows multiline with Shift+Enter in optimistic mode", () => {
+    it("allows multiline with Shift+Enter in optimistic mode", async () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      const textarea = screen.getByPlaceholderText(
-        "e.g. Fix the typo in the login page header",
-      );
-      fireEvent.change(textarea, { target: { value: "line 1" } });
-      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+      await enterPrompt("line 1");
+      fireEvent.keyDown(getPromptInput(), { key: "Enter", shiftKey: true });
       expect(mutateMock).not.toHaveBeenCalled();
     });
 
-    it("closes dialog without navigation after successful optimistic creation", () => {
+    it("closes dialog without navigation after successful optimistic creation", async () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      const textarea = screen.getByPlaceholderText(
-        "e.g. Fix the typo in the login page header",
-      );
-      fireEvent.change(textarea, { target: { value: "Fix the bug" } });
-      fireEvent.keyDown(textarea, { key: "Enter" });
+      await enterPrompt("Fix the bug");
+      fireEvent.keyDown(getPromptInput(), { key: "Enter", ctrlKey: true });
 
       // Simulate successful creation
       const onSuccess = mutateMock.mock.calls[0]?.[1]?.onSuccess;
@@ -279,105 +267,6 @@ describe("CreateSessionModal", () => {
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
 
-    describe("stop-and-submit gesture (Enter while recording)", () => {
-      /**
-       * Helper: build a useVoiceRecorder mock whose `isRecording` flips to false
-       * when `toggleRecording` is invoked, mirroring real recorder behavior so
-       * that downstream re-renders see the updated state.
-       */
-      function installRecordingMock(): {
-        capturedOnResult: () => ((text: string) => void) | undefined;
-        toggleRecording: ReturnType<typeof vi.fn>;
-      } {
-        let onResult: ((text: string) => void) | undefined;
-        let recording = true;
-        const toggleRecording = vi.fn(() => {
-          recording = false;
-        });
-        vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
-          onResult: (text: string) => void;
-        }) => {
-          onResult = opts.onResult;
-          return {
-            isRecording: recording,
-            isProcessing: false,
-            elapsedTime: 0,
-            isAvailable: true,
-            toggleRecording,
-            stopRecording: vi.fn(),
-          };
-        }) as typeof useVoiceRecorder);
-        return { capturedOnResult: () => onResult, toggleRecording };
-      }
-
-      afterEach(() => {
-        // Restore the default mock so subsequent tests don't inherit isRecording: true
-        vi.mocked(useVoiceRecorder).mockImplementation(() => ({
-          isRecording: false,
-          isProcessing: false,
-          elapsedTime: 0,
-          isAvailable: false,
-          toggleRecording: vi.fn(),
-          stopRecording: vi.fn(),
-        }));
-      });
-
-      it("auto-creates session when Enter is pressed while recording in optimistic mode", () => {
-        const { capturedOnResult, toggleRecording } = installRecordingMock();
-
-        renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        switchToOptimisticMode();
-
-        const textarea = screen.getByPlaceholderText(
-          "e.g. Fix the typo in the login page header",
-        );
-        act(() => {
-          fireEvent.keyDown(textarea, { key: "Enter" });
-        });
-
-        expect(toggleRecording).toHaveBeenCalledTimes(1);
-        expect(mutateMock).not.toHaveBeenCalled();
-
-        const onResult = capturedOnResult();
-        expect(onResult).toBeDefined();
-        act(() => {
-          onResult!("Fix the login bug");
-        });
-
-        expect(mutateMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            mode: "optimistic",
-            instructions: "Fix the login bug",
-            tddEnabled: true,
-          }),
-          expect.objectContaining({ onSuccess: expect.any(Function) }),
-        );
-      });
-
-      it("Alt+V to stop recording does NOT auto-create the session (only Enter does)", () => {
-        const { capturedOnResult } = installRecordingMock();
-
-        vi.mocked(useAppHotkey).mockClear();
-
-        renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        switchToOptimisticMode();
-
-        const vtCall = vi
-          .mocked(useAppHotkey)
-          .mock.calls.find(([id]) => id === "voiceToggle");
-        expect(vtCall).toBeDefined();
-        act(() => {
-          vtCall![1]({} as KeyboardEvent);
-        });
-
-        act(() => {
-          capturedOnResult()!("Fix the login bug");
-        });
-
-        expect(mutateMock).not.toHaveBeenCalled();
-      });
-    });
-
     describe("image support", () => {
       it("renders attach image button in optimistic mode", () => {
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
@@ -385,166 +274,41 @@ describe("CreateSessionModal", () => {
         expect(screen.getByTitle("Attach image")).toBeInTheDocument();
       });
 
-      it("does NOT render attach image button in normal mode", () => {
+      it("hides the attach image button in normal mode", () => {
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        expect(screen.queryByTitle("Attach image")).toBeNull();
+        expect(screen.getByTitle("Attach image")).not.toBeVisible();
       });
 
-      it("calls addImage when an image is pasted in optimistic mode", async () => {
+      it("retains the rich draft when toggling to normal mode and back", async () => {
+        URL.createObjectURL = vi.fn(() => "blob:optimistic-draft");
+        URL.revokeObjectURL = vi.fn();
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
         switchToOptimisticMode();
-        const textarea = screen.getByPlaceholderText(
-          "e.g. Fix the typo in the login page header",
-        );
-
-        const file = new File(["fake-image"], "screenshot.png", {
-          type: "image/png",
-        });
-        const pasteEvent = new Event("paste", { bubbles: true });
-        Object.defineProperty(pasteEvent, "clipboardData", {
-          value: {
-            items: [
-              {
-                type: "image/png",
-                getAsFile: () => file,
-              },
+        await enterPrompt("Use the reference image");
+        const fileInput = document.querySelector(
+          'input[type="file"]',
+        ) as HTMLInputElement;
+        fireEvent.change(fileInput, {
+          target: {
+            files: [
+              new File(["image"], "reference.png", { type: "image/png" }),
             ],
           },
         });
+        expect(await screen.findByAltText("reference.png")).toBeVisible();
 
-        fireEvent(textarea, pasteEvent);
+        fireEvent.click(screen.getByRole("button", { name: "Normal" }));
+        fireEvent.click(screen.getByRole("button", { name: "Optimistic" }));
+        fireEvent.click(screen.getByRole("button", { name: "Create Session" }));
 
-        expect(addImageMock).toHaveBeenCalledWith(file);
-      });
-
-      it("enables submit with images even when text is empty", () => {
-        vi.mocked(useImageAttachments).mockReturnValue({
-          pendingImages: [
-            {
-              id: "img-1",
-              fileName: "test.png",
-              mediaType: "image/png",
-              base64Data: "abc123",
-              previewUrl: "blob:test",
-              sizeBytes: 1000,
-            },
-          ],
-          addImage: addImageMock,
-          removeImage: removeImageMock,
-          clearImages: clearImagesMock,
-          isAtLimit: false,
-        });
-
-        renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        switchToOptimisticMode();
-        const createBtn = screen.getByText("Create Session");
-        expect(createBtn.hasAttribute("disabled")).toBe(false);
-      });
-
-      it("includes images in mutation payload when submitting", () => {
-        vi.mocked(useImageAttachments).mockReturnValue({
-          pendingImages: [
-            {
-              id: "img-1",
-              fileName: "test.png",
-              mediaType: "image/png",
-              base64Data: "abc123",
-              previewUrl: "blob:test",
-              sizeBytes: 1000,
-            },
-          ],
-          addImage: addImageMock,
-          removeImage: removeImageMock,
-          clearImages: clearImagesMock,
-          isAtLimit: false,
-        });
-
-        renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        switchToOptimisticMode();
-        const textarea = screen.getByPlaceholderText(
-          "e.g. Fix the typo in the login page header",
-        );
-        fireEvent.change(textarea, {
-          target: { value: "Fix with this screenshot" },
-        });
-        fireEvent.keyDown(textarea, { key: "Enter" });
-
+        await waitFor(() => expect(mutateMock).toHaveBeenCalledOnce());
         expect(mutateMock).toHaveBeenCalledWith(
-          {
-            mode: "optimistic",
-            instructions: "Fix with this screenshot",
-            images: [
-              {
-                attachmentId: "img-1",
-                mediaType: "image/png",
-                base64Data: "abc123",
-              },
-            ],
-            tddEnabled: true,
-          },
-          expect.objectContaining({ onSuccess: expect.any(Function) }),
+          expect.objectContaining({
+            instructions: "Use the reference image",
+            images: [expect.objectContaining({ mediaType: "image/png" })],
+          }),
+          expect.anything(),
         );
-      });
-
-      it("renders ImageAttachmentPreview when images are pending", () => {
-        vi.mocked(useImageAttachments).mockReturnValue({
-          pendingImages: [
-            {
-              id: "img-1",
-              fileName: "test.png",
-              mediaType: "image/png",
-              base64Data: "abc123",
-              previewUrl: "blob:test",
-              sizeBytes: 1000,
-            },
-          ],
-          addImage: addImageMock,
-          removeImage: removeImageMock,
-          clearImages: clearImagesMock,
-          isAtLimit: false,
-        });
-
-        renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        switchToOptimisticMode();
-        expect(screen.getByTestId("image-preview")).toBeInTheDocument();
-      });
-
-      it("clears images when dialog reopens", () => {
-        const { rerender } = renderWithQuery(
-          <CreateSessionModal {...defaultProps} open={true} />,
-        );
-        switchToOptimisticMode();
-
-        // Close — rerender needs explicit QueryClientProvider since
-        // renderWithQuery doesn't use testing-library's wrapper option
-        rerender(
-          <QueryClientProvider
-            client={
-              new QueryClient({
-                defaultOptions: { queries: { retry: false } },
-              })
-            }
-          >
-            <CreateSessionModal {...defaultProps} open={false} />
-          </QueryClientProvider>,
-        );
-
-        clearImagesMock.mockClear();
-
-        // Reopen
-        rerender(
-          <QueryClientProvider
-            client={
-              new QueryClient({
-                defaultOptions: { queries: { retry: false } },
-              })
-            }
-          >
-            <CreateSessionModal {...defaultProps} open={true} />
-          </QueryClientProvider>,
-        );
-
-        expect(clearImagesMock).toHaveBeenCalled();
       });
     });
   });

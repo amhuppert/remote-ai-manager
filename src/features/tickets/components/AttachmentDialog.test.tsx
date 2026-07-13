@@ -40,6 +40,12 @@ function installFetch(
       const body =
         typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       requests.push({ method, url: url.pathname, body });
+      if (url.pathname === "/api/voice/health") {
+        return Response.json({ available: true });
+      }
+      if (url.pathname === "/api/voice/transcribe") {
+        return Response.json({ text: "Dictated markdown" });
+      }
       if (
         method === "POST" &&
         url.pathname === "/api/projects/command-center/tickets/12/attachments"
@@ -312,6 +318,89 @@ afterEach(() => {
 });
 
 describe("AttachmentDialog", () => {
+  it("shows voice input when project context comes from a ticket route", async () => {
+    installFetch();
+    renderDialog();
+
+    expect(await screen.findByTitle("Voice input")).toBeVisible();
+  });
+
+  it("routes the visible Attach action through active dictation", async () => {
+    class Recorder {
+      static isTypeSupported(): boolean {
+        return true;
+      }
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start(): void {
+        this.state = "recording";
+      }
+      stop(): void {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["audio"]) } as BlobEvent);
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal("MediaRecorder", Recorder);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }),
+      },
+    });
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const requests = installFetch();
+    renderDialog();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Note" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Description" }),
+      "Voice note",
+    );
+    await user.click((await screen.findAllByTitle("Voice input"))[0]!);
+    vi.spyOn(Date, "now").mockReturnValue(2_000);
+    await user.click(screen.getByRole("button", { name: "Attach" }));
+
+    await waitFor(() =>
+      expect(
+        requests.find(
+          (request) =>
+            request.method === "POST" &&
+            request.url ===
+              "/api/projects/command-center/tickets/12/attachments",
+        )?.body,
+      ).toMatchObject({
+        description: "Voice note",
+        payload: { kind: "note", markdown: "Dictated markdown" },
+      }),
+    );
+  });
+
+  it("does not let the multiline submit chord bypass required fields", async () => {
+    const requests = installFetch();
+    renderDialog();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Note" }));
+    const markdown = await screen.findByLabelText("Markdown");
+    await user.type(markdown, "Useful context");
+    await user.type(markdown, "{Control>}{Enter}{/Control}");
+    expect(
+      requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(0);
+
+    await user.type(screen.getByLabelText("Description"), "Why this matters");
+    await user.type(markdown, "{Control>}{Enter}{/Control}");
+    await waitFor(() =>
+      expect(
+        requests.filter((request) => request.method === "POST"),
+      ).toHaveLength(1),
+    );
+  });
+
   it("programmatically identifies every field required by the selected attachment kind", async () => {
     installFetch();
     renderDialog();

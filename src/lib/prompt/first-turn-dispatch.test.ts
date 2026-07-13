@@ -134,6 +134,39 @@ describe("createFirstTurnDispatcher", () => {
     expect(call[7]).toEqual({ backend: "codex", effort: "high" }); // options
   });
 
+  it("delivers ordered image payloads with the first turn", async () => {
+    const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
+    await dispatchFirstTurn({
+      ...input("claude", "Use these images"),
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "one",
+        },
+        {
+          attachmentId: "second",
+          mediaType: "image/jpeg",
+          base64Data: "two",
+        },
+      ],
+    });
+    const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
+      .calls[0]!;
+    expect(call[6]).toEqual([
+      {
+        attachmentId: "first",
+        mediaType: "image/png",
+        base64Data: "one",
+      },
+      {
+        attachmentId: "second",
+        mediaType: "image/jpeg",
+        base64Data: "two",
+      },
+    ]);
+  });
+
   it("omits the effort option when no reasoning effort is supplied", async () => {
     const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
     await dispatchFirstTurn({ ...input("claude", "go"), model: "opus" });
@@ -173,16 +206,61 @@ describe("createFirstTurnDispatcher", () => {
     expect(deps.executePromptStream).not.toHaveBeenCalled();
   });
 
-  it("seeds a dual race exactly once with the initialPrompt as the brief", async () => {
+  it("seeds a dual race exactly once with its brief and ordered images", async () => {
     const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
-    const result = await dispatchFirstTurn(input("dual", "shared brief"));
+    const result = await dispatchFirstTurn({
+      ...input("dual", "shared brief"),
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "one",
+        },
+        {
+          attachmentId: "second",
+          mediaType: "image/jpeg",
+          base64Data: "two",
+        },
+      ],
+    });
     expect(result).toEqual({ dispatched: true });
     expect(deps.startDualRace).toHaveBeenCalledTimes(1);
     const call = (deps.startDualRace as ReturnType<typeof vi.fn>).mock
       .calls[0]![0];
     expect(call.brief).toBe("shared brief");
     expect(call.conversationId).toBe(CONVERSATION_ID);
+    expect(call.images).toEqual([
+      {
+        attachmentId: "first",
+        mediaType: "image/png",
+        base64Data: "one",
+      },
+      {
+        attachmentId: "second",
+        mediaType: "image/jpeg",
+        base64Data: "two",
+      },
+    ]);
     expect(deps.executePromptStream).not.toHaveBeenCalled();
+  });
+
+  it("gives an image-only dual race a stable nonempty brief", async () => {
+    const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
+    const result = await dispatchFirstTurn({
+      ...input("dual", ""),
+      images: [
+        {
+          attachmentId: "first",
+          mediaType: "image/png",
+          base64Data: "one",
+        },
+      ],
+    });
+
+    expect(result).toEqual({ dispatched: true });
+    expect(deps.startDualRace).toHaveBeenCalledWith(
+      expect.objectContaining({ brief: "Attached image." }),
+    );
   });
 
   it("logs and drops on dispatch error without throwing or re-dispatching", async () => {

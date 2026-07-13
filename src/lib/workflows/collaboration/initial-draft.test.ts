@@ -232,6 +232,14 @@ describe("runInitialDraftsPhase", () => {
       },
       workingDir,
     );
+    harness.input.imageRefs = [
+      {
+        index: 1,
+        mediaType: "image/png",
+        path: "/tmp/input.png",
+        base64Data: "image-data",
+      },
+    ];
 
     const outcome = await runInitialDraftsPhase({
       input: harness.input,
@@ -252,6 +260,14 @@ describe("runInitialDraftsPhase", () => {
     expect(backends).toEqual(["claude", "codex"]);
     for (const req of harness.receivedRequests) {
       expect(req.writeCapability).toBe("artifact_only");
+      expect(req.imageRefs).toEqual([
+        {
+          index: 1,
+          mediaType: "image/png",
+          path: "/tmp/input.png",
+          base64Data: "image-data",
+        },
+      ]);
     }
   });
 

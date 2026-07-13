@@ -1,5 +1,6 @@
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { getConfigDirPath } from "../config/loader";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
@@ -71,6 +72,22 @@ export async function saveTranscriptImage(
   const buffer = Buffer.from(base64Data, "base64");
   await writeFile(filePath, buffer);
 
+  return filePath;
+}
+
+export async function saveWorkflowTranscriptImage(
+  conversationId: string,
+  workflowId: string,
+  index: number,
+  mediaType: string,
+  base64Data: string,
+  configDir?: string,
+): Promise<string> {
+  const dir = await ensureImagesDir(conversationId, configDir);
+  const ext = mediaTypeToExt(mediaType);
+  const workflowKey = createHash("sha256").update(workflowId).digest("hex");
+  const filePath = path.join(dir, `${index}-${workflowKey}.${ext}`);
+  await writeFile(filePath, Buffer.from(base64Data, "base64"));
   return filePath;
 }
 

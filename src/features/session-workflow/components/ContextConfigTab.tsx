@@ -1,6 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import {
+  MultilineInput,
+  MultilinePrimaryActionScope,
+  useMultilinePrimaryActionRegistry,
+} from "@/components/MultilineInput";
 import {
   CircuitBreakerEditor,
   CollaborationEditor,
@@ -419,6 +424,9 @@ export default function ContextConfigTab({
   editConflict = false,
   saveSucceeded = false,
 }: ContextConfigTabProps): React.JSX.Element | null {
+  const descriptionId = useId();
+  const acceptanceCriteriaId = useId();
+  const multilineActions = useMultilinePrimaryActionRegistry();
   const context = execution.workingDefinition.executionContexts.find(
     (candidate) => candidate.id === contextId,
   );
@@ -480,9 +488,18 @@ export default function ContextConfigTab({
     setDraft((prev) => (prev ? { ...prev, ...next } : prev));
   }
 
-  function handleSave() {
-    if (!onSaveContextConfig || !pendingOp) return;
-    onSaveContextConfig([pendingOp]);
+  function handleSave(completed?: Partial<ConfigDraft>) {
+    if (!onSaveContextConfig || !draft || !seedBase || isSaving || readOnly) {
+      return;
+    }
+    const submittedDraft = completed ? { ...draft, ...completed } : draft;
+    const submittedOp = diffToUpdateContextOp(
+      contextId,
+      submittedDraft,
+      seedBase,
+    );
+    if (!submittedOp) return;
+    onSaveContextConfig([submittedOp]);
   }
 
   const showResume =
@@ -493,312 +510,335 @@ export default function ContextConfigTab({
     onResumeExecution != null;
 
   return (
-    <div
-      className="flex flex-col gap-md"
-      data-testid="context-config-tab"
-      data-scope="config"
-      data-affordance={affordance.mode}
-    >
-      {affordance.mode === "frozen" && (
-        <div
-          className="flex items-center gap-[8px] rounded-md border border-solid border-border-subtle bg-bg-raised px-[12px] py-[8px] text-[0.72rem] text-text-secondary"
-          data-testid="config-affordance-frozen"
-        >
-          <span aria-hidden="true">🔒</span>
-          <span>This context has completed — its configuration is frozen.</span>
-        </div>
-      )}
-
-      {affordance.mode === "read-only" && (
-        <div
-          className="rounded-md border border-solid border-border-subtle bg-bg-raised px-[12px] py-[8px] text-[0.72rem] text-text-secondary"
-          data-testid="config-affordance-readonly"
-        >
-          {READ_ONLY_REASON_TEXT[affordance.reason]}
-        </div>
-      )}
-
-      {affordance.mode === "pause-to-edit" && (
-        <div
-          className="flex flex-wrap items-center gap-[10px] rounded-md border border-solid border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] px-[12px] py-[8px] text-[0.72rem] text-amber"
-          data-testid="config-affordance-pause-to-edit"
-        >
-          <span className="min-w-0 flex-1">
-            This context is in progress. Pause the workflow to edit it.
-          </span>
-          <button
-            type="button"
-            className={cn(btn, btnDefault)}
-            onClick={() => onPauseExecution?.()}
-            disabled={isPausing || onPauseExecution == null}
-          >
-            {isPausing ? "Pausing…" : "Pause to edit"}
-          </button>
-        </div>
-      )}
-
-      {editConflict && (
-        <div
-          className="rounded-md border border-solid border-[var(--cc-red-a25)] bg-[var(--cc-red-a10)] px-[12px] py-[8px] text-[0.72rem] text-red"
-          data-testid="config-affordance-conflict"
-        >
-          The execution changed since you started editing. Review your changes
-          and retry.
-        </div>
-      )}
-
-      <section className="flex flex-col gap-sm" data-section="prose">
-        <ConfigBlock testId="config-block-prose" label="Context">
-          <div className="flex flex-col gap-sm">
-            <label>
-              <span className={PROSE_LABEL}>Title</span>
-              <input
-                className={PROSE_INPUT}
-                value={draft.title}
-                onChange={(e) => patch({ title: e.target.value })}
-                disabled={readOnly}
-                aria-label="Context title"
-              />
-            </label>
-            <label>
-              <span className={PROSE_LABEL}>Description</span>
-              <textarea
-                className={cn(PROSE_INPUT, PROSE_TEXTAREA)}
-                rows={3}
-                value={draft.description}
-                onChange={(e) => patch({ description: e.target.value })}
-                disabled={readOnly}
-                aria-label="Context description"
-              />
-            </label>
-            <label>
-              <span className={PROSE_LABEL}>Acceptance criteria</span>
-              <textarea
-                className={cn(PROSE_INPUT, PROSE_TEXTAREA)}
-                rows={3}
-                value={draft.acceptanceCriteria}
-                onChange={(e) => patch({ acceptanceCriteria: e.target.value })}
-                disabled={readOnly}
-                aria-label="Context acceptance criteria"
-              />
-            </label>
-          </div>
-        </ConfigBlock>
-      </section>
-
-      <section className="flex flex-col gap-sm" data-section="agents">
-        <ConfigBlock testId="config-block-implementer" label="Implementer">
-          <ImplementerEditor
-            value={draft.implementer}
-            onChange={(next) => patch({ implementer: next })}
-            readOnly={readOnly}
-          />
-        </ConfigBlock>
-
-        <ConfigBlock
-          testId="config-block-context-validator"
-          label="Context validator"
-          headerRight={
-            <ToggleControl
-              value={draft.contextValidator?.enabled ?? false}
-              onChange={(next) => {
-                const current = draft.contextValidator;
-                if (current) {
-                  // Preserve the resolved config (type/model/continuity/…) and
-                  // flip only `enabled` — a non-null validator with
-                  // `enabled:false` is a distinct, valid resolved state.
-                  patch({ contextValidator: { ...current, enabled: next } });
-                } else if (next) {
-                  // No validator resolved — seed a concrete one to enable it.
-                  patch({ contextValidator: DEFAULT_CONTEXT_VALIDATOR });
-                }
-              }}
-              disabled={readOnly}
-              ariaLabel="Context validator enabled"
-            />
-          }
-        >
-          {draft.contextValidator === null ? (
-            <p className={BLOCK_TEXT}>Off — no validator for this context.</p>
-          ) : (
-            <ContextValidatorEditor
-              value={draft.contextValidator}
-              onChange={(next) => patch({ contextValidator: next })}
-              readOnly={readOnly}
-            />
-          )}
-        </ConfigBlock>
-
-        {draft.collaboration ? (
-          <ConfigBlock
-            testId="config-block-collaboration"
-            label="Collaboration"
-          >
-            <CollaborationEditor
-              value={draft.collaboration}
-              onChange={(next) => patch({ collaboration: next })}
-              readOnly={readOnly}
-            />
-          </ConfigBlock>
-        ) : null}
-      </section>
-
-      <section className="flex flex-col gap-sm" data-section="quality-gates">
-        <GateBlock
-          testId="config-block-script-validator"
-          label="Script validator"
-          description="Runs the project's preMergeCommand before agent validation."
-          enabled={draft.scriptValidator}
-          disabled={readOnly}
-          ariaLabel="Script validator enabled"
-          onChange={(next) => patch({ scriptValidator: next })}
-        />
-        <GateBlock
-          testId="config-block-human-approval-gate"
-          label="Human approval gate"
-          description="Parks for your review before merge after validators pass."
-          enabled={draft.humanApprovalGate}
-          disabled={readOnly}
-          ariaLabel="Human approval gate enabled"
-          onChange={(next) => patch({ humanApprovalGate: next })}
-        />
-        <GateBlock
-          testId="config-block-ask-user-questions"
-          label="Ask user questions"
-          description="Lets the agents ask you questions at decision points."
-          enabled={draft.askUserQuestions}
-          disabled={readOnly}
-          ariaLabel="Ask user questions enabled"
-          onChange={(next) => patch({ askUserQuestions: next })}
-        />
-        <GateBlock
-          testId="config-block-mutability"
-          label="Agent task add"
-          description="Lets agents add tasks to this context during execution."
-          enabled={draft.mutability}
-          disabled={readOnly}
-          ariaLabel="Allow agent task add"
-          onChange={(next) => patch({ mutability: next })}
-        />
-      </section>
-
-      <section className="flex flex-col gap-sm" data-section="execution-policy">
-        <ConfigBlock
-          testId="config-block-iteration-policy"
-          label="Iteration policy"
-          headerRight={
-            <span
-              className="font-mono text-[0.72rem] text-text-secondary"
-              data-testid="config-iteration-count"
-            >
-              {iterationCount} / {maxIterations}
-            </span>
-          }
-        >
-          <IterationPolicyEditor
-            value={draft.iterationPolicy}
-            onChange={(next) => patch({ iterationPolicy: next })}
-            readOnly={readOnly}
-          />
-        </ConfigBlock>
-
-        <ConfigBlock
-          testId="config-block-circuit-breaker"
-          label="Circuit breaker"
-        >
-          <CircuitBreakerEditor
-            value={draft.circuitBreaker}
-            onChange={(next) => patch({ circuitBreaker: next })}
-            readOnly={readOnly}
-          />
-        </ConfigBlock>
-      </section>
-
-      {contextState ? (
-        <section data-section="runtime">
-          <div className="mb-sm border-b border-solid border-border-dim pb-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-            Runtime
-          </div>
+    <MultilinePrimaryActionScope registry={multilineActions}>
+      <div
+        className="flex flex-col gap-md"
+        data-testid="context-config-tab"
+        data-scope="config"
+        data-affordance={affordance.mode}
+      >
+        {affordance.mode === "frozen" && (
           <div
-            className="flex flex-col gap-[6px]"
-            data-testid="context-runtime"
+            className="flex items-center gap-[8px] rounded-md border border-solid border-border-subtle bg-bg-raised px-[12px] py-[8px] text-[0.72rem] text-text-secondary"
+            data-testid="config-affordance-frozen"
           >
-            <RuntimeRow
-              label="Isolation"
-              value={contextState.isolation}
-              testId="runtime-isolation"
-            />
-            <RuntimeRow
-              label="Worktree"
-              value={contextState.worktreePath}
-              testId="runtime-worktree-path"
-            />
-            <RuntimeRow
-              label="Branch"
-              value={contextState.branchName}
-              testId="runtime-branch"
-            />
-            <RuntimeRow
-              label="Merge"
-              value={contextState.mergeStatus}
-              testId="runtime-merge-status"
-            />
-            <RuntimeRow
-              label="Cleanup"
-              value={contextState.cleanupStatus}
-              testId="runtime-cleanup-status"
-            />
-            <RuntimeRow
-              label="Lane"
-              value={contextState.laneId}
-              testId="runtime-lane"
-            />
-            <RuntimeRow
-              label="Join"
-              value={contextState.joinId}
-              testId="runtime-join"
-            />
-            <RuntimeRow
-              label="Batch"
-              value={contextState.batchId}
-              testId="runtime-batch"
-            />
-            {contextState.lastMergeError ? (
-              <RuntimeRow
-                label="Merge error"
-                value={contextState.lastMergeError}
-                testId="runtime-last-merge-error"
-              />
-            ) : null}
+            <span aria-hidden="true">🔒</span>
+            <span>
+              This context has completed — its configuration is frozen.
+            </span>
           </div>
-        </section>
-      ) : null}
+        )}
 
-      {editable && onSaveContextConfig && (
-        <div
-          className="sticky bottom-0 flex items-center gap-[8px] border-t border-solid border-border-dim bg-bg-surface py-sm"
-          data-testid="config-save-bar"
-        >
-          <button
-            type="button"
-            className={cn(btn, btnPrimary)}
-            onClick={handleSave}
-            disabled={!dirty || isSaving}
+        {affordance.mode === "read-only" && (
+          <div
+            className="rounded-md border border-solid border-border-subtle bg-bg-raised px-[12px] py-[8px] text-[0.72rem] text-text-secondary"
+            data-testid="config-affordance-readonly"
           >
-            {isSaving ? "Saving…" : "Save changes"}
-          </button>
-          {showResume && (
+            {READ_ONLY_REASON_TEXT[affordance.reason]}
+          </div>
+        )}
+
+        {affordance.mode === "pause-to-edit" && (
+          <div
+            className="flex flex-wrap items-center gap-[10px] rounded-md border border-solid border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] px-[12px] py-[8px] text-[0.72rem] text-amber"
+            data-testid="config-affordance-pause-to-edit"
+          >
+            <span className="min-w-0 flex-1">
+              This context is in progress. Pause the workflow to edit it.
+            </span>
             <button
               type="button"
               className={cn(btn, btnDefault)}
-              onClick={() => onResumeExecution?.()}
-              disabled={isResuming}
+              onClick={() => onPauseExecution?.()}
+              disabled={isPausing || onPauseExecution == null}
             >
-              {isResuming ? "Resuming…" : "Resume workflow"}
+              {isPausing ? "Pausing…" : "Pause to edit"}
             </button>
-          )}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+
+        {editConflict && (
+          <div
+            className="rounded-md border border-solid border-[var(--cc-red-a25)] bg-[var(--cc-red-a10)] px-[12px] py-[8px] text-[0.72rem] text-red"
+            data-testid="config-affordance-conflict"
+          >
+            The execution changed since you started editing. Review your changes
+            and retry.
+          </div>
+        )}
+
+        <section className="flex flex-col gap-sm" data-section="prose">
+          <ConfigBlock testId="config-block-prose" label="Context">
+            <div className="flex flex-col gap-sm">
+              <label>
+                <span className={PROSE_LABEL}>Title</span>
+                <input
+                  className={PROSE_INPUT}
+                  value={draft.title}
+                  onChange={(e) => patch({ title: e.target.value })}
+                  disabled={readOnly}
+                  aria-label="Context title"
+                />
+              </label>
+              <div>
+                <label className={PROSE_LABEL} htmlFor={descriptionId}>
+                  Description
+                </label>
+                <MultilineInput
+                  id={descriptionId}
+                  className={cn(PROSE_INPUT, PROSE_TEXTAREA)}
+                  rows={3}
+                  value={draft.description}
+                  onValueChange={(description) => patch({ description })}
+                  disabled={readOnly}
+                  aria-label="Context description"
+                  onPrimaryAction={(description) => {
+                    patch({ description });
+                    handleSave({ description });
+                  }}
+                />
+              </div>
+              <div>
+                <label className={PROSE_LABEL} htmlFor={acceptanceCriteriaId}>
+                  Acceptance criteria
+                </label>
+                <MultilineInput
+                  id={acceptanceCriteriaId}
+                  className={cn(PROSE_INPUT, PROSE_TEXTAREA)}
+                  rows={3}
+                  value={draft.acceptanceCriteria}
+                  onValueChange={(acceptanceCriteria) =>
+                    patch({ acceptanceCriteria })
+                  }
+                  disabled={readOnly}
+                  aria-label="Context acceptance criteria"
+                  onPrimaryAction={(acceptanceCriteria) => {
+                    patch({ acceptanceCriteria });
+                    handleSave({ acceptanceCriteria });
+                  }}
+                />
+              </div>
+            </div>
+          </ConfigBlock>
+        </section>
+
+        <section className="flex flex-col gap-sm" data-section="agents">
+          <ConfigBlock testId="config-block-implementer" label="Implementer">
+            <ImplementerEditor
+              value={draft.implementer}
+              onChange={(next) => patch({ implementer: next })}
+              readOnly={readOnly}
+            />
+          </ConfigBlock>
+
+          <ConfigBlock
+            testId="config-block-context-validator"
+            label="Context validator"
+            headerRight={
+              <ToggleControl
+                value={draft.contextValidator?.enabled ?? false}
+                onChange={(next) => {
+                  const current = draft.contextValidator;
+                  if (current) {
+                    // Preserve the resolved config (type/model/continuity/…) and
+                    // flip only `enabled` — a non-null validator with
+                    // `enabled:false` is a distinct, valid resolved state.
+                    patch({ contextValidator: { ...current, enabled: next } });
+                  } else if (next) {
+                    // No validator resolved — seed a concrete one to enable it.
+                    patch({ contextValidator: DEFAULT_CONTEXT_VALIDATOR });
+                  }
+                }}
+                disabled={readOnly}
+                ariaLabel="Context validator enabled"
+              />
+            }
+          >
+            {draft.contextValidator === null ? (
+              <p className={BLOCK_TEXT}>Off — no validator for this context.</p>
+            ) : (
+              <ContextValidatorEditor
+                value={draft.contextValidator}
+                onChange={(next) => patch({ contextValidator: next })}
+                readOnly={readOnly}
+              />
+            )}
+          </ConfigBlock>
+
+          {draft.collaboration ? (
+            <ConfigBlock
+              testId="config-block-collaboration"
+              label="Collaboration"
+            >
+              <CollaborationEditor
+                value={draft.collaboration}
+                onChange={(next) => patch({ collaboration: next })}
+                readOnly={readOnly}
+              />
+            </ConfigBlock>
+          ) : null}
+        </section>
+
+        <section className="flex flex-col gap-sm" data-section="quality-gates">
+          <GateBlock
+            testId="config-block-script-validator"
+            label="Script validator"
+            description="Runs the project's preMergeCommand before agent validation."
+            enabled={draft.scriptValidator}
+            disabled={readOnly}
+            ariaLabel="Script validator enabled"
+            onChange={(next) => patch({ scriptValidator: next })}
+          />
+          <GateBlock
+            testId="config-block-human-approval-gate"
+            label="Human approval gate"
+            description="Parks for your review before merge after validators pass."
+            enabled={draft.humanApprovalGate}
+            disabled={readOnly}
+            ariaLabel="Human approval gate enabled"
+            onChange={(next) => patch({ humanApprovalGate: next })}
+          />
+          <GateBlock
+            testId="config-block-ask-user-questions"
+            label="Ask user questions"
+            description="Lets the agents ask you questions at decision points."
+            enabled={draft.askUserQuestions}
+            disabled={readOnly}
+            ariaLabel="Ask user questions enabled"
+            onChange={(next) => patch({ askUserQuestions: next })}
+          />
+          <GateBlock
+            testId="config-block-mutability"
+            label="Agent task add"
+            description="Lets agents add tasks to this context during execution."
+            enabled={draft.mutability}
+            disabled={readOnly}
+            ariaLabel="Allow agent task add"
+            onChange={(next) => patch({ mutability: next })}
+          />
+        </section>
+
+        <section
+          className="flex flex-col gap-sm"
+          data-section="execution-policy"
+        >
+          <ConfigBlock
+            testId="config-block-iteration-policy"
+            label="Iteration policy"
+            headerRight={
+              <span
+                className="font-mono text-[0.72rem] text-text-secondary"
+                data-testid="config-iteration-count"
+              >
+                {iterationCount} / {maxIterations}
+              </span>
+            }
+          >
+            <IterationPolicyEditor
+              value={draft.iterationPolicy}
+              onChange={(next) => patch({ iterationPolicy: next })}
+              readOnly={readOnly}
+            />
+          </ConfigBlock>
+
+          <ConfigBlock
+            testId="config-block-circuit-breaker"
+            label="Circuit breaker"
+          >
+            <CircuitBreakerEditor
+              value={draft.circuitBreaker}
+              onChange={(next) => patch({ circuitBreaker: next })}
+              readOnly={readOnly}
+            />
+          </ConfigBlock>
+        </section>
+
+        {contextState ? (
+          <section data-section="runtime">
+            <div className="mb-sm border-b border-solid border-border-dim pb-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+              Runtime
+            </div>
+            <div
+              className="flex flex-col gap-[6px]"
+              data-testid="context-runtime"
+            >
+              <RuntimeRow
+                label="Isolation"
+                value={contextState.isolation}
+                testId="runtime-isolation"
+              />
+              <RuntimeRow
+                label="Worktree"
+                value={contextState.worktreePath}
+                testId="runtime-worktree-path"
+              />
+              <RuntimeRow
+                label="Branch"
+                value={contextState.branchName}
+                testId="runtime-branch"
+              />
+              <RuntimeRow
+                label="Merge"
+                value={contextState.mergeStatus}
+                testId="runtime-merge-status"
+              />
+              <RuntimeRow
+                label="Cleanup"
+                value={contextState.cleanupStatus}
+                testId="runtime-cleanup-status"
+              />
+              <RuntimeRow
+                label="Lane"
+                value={contextState.laneId}
+                testId="runtime-lane"
+              />
+              <RuntimeRow
+                label="Join"
+                value={contextState.joinId}
+                testId="runtime-join"
+              />
+              <RuntimeRow
+                label="Batch"
+                value={contextState.batchId}
+                testId="runtime-batch"
+              />
+              {contextState.lastMergeError ? (
+                <RuntimeRow
+                  label="Merge error"
+                  value={contextState.lastMergeError}
+                  testId="runtime-last-merge-error"
+                />
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {editable && onSaveContextConfig && (
+          <div
+            className="sticky bottom-0 flex items-center gap-[8px] border-t border-solid border-border-dim bg-bg-surface py-sm"
+            data-testid="config-save-bar"
+          >
+            <button
+              type="button"
+              className={cn(btn, btnPrimary)}
+              onClick={() => multilineActions.primaryAction(handleSave)}
+              disabled={isSaving || (!dirty && !multilineActions.voiceBusy)}
+            >
+              {isSaving ? "Saving…" : "Save changes"}
+            </button>
+            {showResume && (
+              <button
+                type="button"
+                className={cn(btn, btnDefault)}
+                onClick={() => onResumeExecution?.()}
+                disabled={isResuming}
+              >
+                {isResuming ? "Resuming…" : "Resume workflow"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </MultilinePrimaryActionScope>
   );
 }

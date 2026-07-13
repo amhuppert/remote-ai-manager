@@ -579,6 +579,29 @@ describe("executePromptStream (facade)", () => {
     );
   });
 
+  it("notifies the caller only after SUBMIT_PROMPT is accepted", async () => {
+    const onAccepted = vi.fn();
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello Claude",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { onAccepted },
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalled();
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(deps.sendConversationEvent).mock.invocationCallOrder[0],
+    ).toBeLessThan(onAccepted.mock.invocationCallOrder[0]!);
+  });
+
   it("emits done event on successful completion", async () => {
     deps = createTestDeps();
     const events: Array<[string, unknown]> = [];
@@ -645,6 +668,7 @@ describe("executePromptStream (facade)", () => {
     const emit = (event: string, data: unknown) => events.push([event, data]);
     const executor = createPromptExecutor(deps);
 
+    const onAccepted = vi.fn();
     const result = await withTimeout(
       executor.executePromptStream(
         "/projects/repo",
@@ -652,6 +676,9 @@ describe("executePromptStream (facade)", () => {
         "Hello",
         emit,
         "conv-123",
+        undefined,
+        undefined,
+        { onAccepted },
       ),
       1000,
     );
@@ -660,11 +687,13 @@ describe("executePromptStream (facade)", () => {
     expect(result.error).toBeTruthy();
     expect(events.find(([e]) => e === "error")).toBeTruthy();
     expect(events.find(([e]) => e === "done")).toBeTruthy();
+    expect(onAccepted).not.toHaveBeenCalled();
     // The SSE stream is still torn down on the fail-fast path.
     expect(deps.detachPromptStream).toHaveBeenCalled();
   });
 
   it("detaches stream even when an error occurs", async () => {
+    const onAccepted = vi.fn();
     deps = createTestDeps({
       ensureConversationActor: vi
         .fn()
@@ -680,8 +709,12 @@ describe("executePromptStream (facade)", () => {
         "Hello",
         vi.fn(),
         "conv-123",
+        undefined,
+        undefined,
+        { onAccepted },
       ),
     ).rejects.toThrow("Actor creation failed");
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it("forwards tooling to deps.setTooling after actor creation", async () => {
@@ -1291,6 +1324,7 @@ describe("executePromptStream (facade)", () => {
   });
 
   it("throws ModelEffortValidationError when factory validation fails", async () => {
+    const onAccepted = vi.fn();
     const validateFn = vi.fn(() => {
       throw new Error("Invalid model for codex");
     });
@@ -1310,8 +1344,11 @@ describe("executePromptStream (facade)", () => {
         vi.fn(),
         "conv-123",
         "invalid-model",
+        undefined,
+        { onAccepted },
       ),
     ).rejects.toThrow(ModelEffortValidationError);
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it("skips validation when factory has no validateModelAndEffort", async () => {
@@ -1395,6 +1432,42 @@ describe("/collab prompt interception", () => {
       );
       expect(deps.sendConversationEvent).not.toHaveBeenCalled();
       expect(result.conversationId).toBe("conv-123");
+    });
+
+    it("forwards ordered images through the session-level /collab dispatcher", async () => {
+      const dispatchCollabStart = vi
+        .fn()
+        .mockResolvedValue({ workflowId: "wf-images" });
+      deps = createTestDeps({ dispatchCollabStart });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+      const images = [
+        {
+          attachmentId: "strip",
+          mediaType: "image/png" as const,
+          base64Data: "strip-data",
+        },
+        {
+          attachmentId: "inline",
+          mediaType: "image/jpeg" as const,
+          base64Data: "inline-data",
+          inlineMarkerIndex: 1,
+        },
+      ];
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab compare [Image #1]",
+        vi.fn(),
+        "conv-123",
+        undefined,
+        images,
+      );
+
+      expect(dispatchCollabStart).toHaveBeenCalledWith(
+        expect.objectContaining({ images }),
+      );
     });
 
     it("creates a conversation when /collab arrives without conversationId", async () => {

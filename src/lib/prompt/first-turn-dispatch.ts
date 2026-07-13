@@ -2,6 +2,7 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { SpawnAgent } from "@/lib/chat-spawning/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
 import type { executePromptStream } from "./sdk-driver";
 
 const logger = createLogger("prompt.first-turn-dispatch");
@@ -16,6 +17,7 @@ export interface DispatchFirstTurnInput {
   session: SessionState;
   /** The first user turn to send; `null` ⇒ the session stays idle (no-op). */
   initialPrompt: string | null;
+  images?: ImagePayload[];
   agent: SpawnAgent;
   /**
    * Backend model + reasoning effort for this first turn. Set only for a
@@ -38,6 +40,7 @@ export interface FirstTurnDispatcherDeps {
     session: SessionState;
     conversationId: string;
     brief: string;
+    images?: ImagePayload[];
   }): Promise<void>;
   isConversationBusy(
     projectPath: string,
@@ -95,11 +98,18 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
 
     try {
       if (agent === "dual") {
+        const brief =
+          initialPrompt.trim().length > 0
+            ? initialPrompt
+            : input.images?.length === 1
+              ? "Attached image."
+              : "Attached images.";
         await deps.startDualRace({
           projectPath,
           session,
           conversationId,
-          brief: initialPrompt,
+          brief,
+          images: input.images,
         });
       } else {
         // `agent` is narrowed to "claude" | "codex" here — both are valid
@@ -112,7 +122,7 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
           noopEmit,
           conversationId,
           input.model,
-          undefined,
+          input.images,
           {
             backend: agent,
             ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),

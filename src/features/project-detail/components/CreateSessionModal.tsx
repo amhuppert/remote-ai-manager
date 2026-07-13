@@ -2,18 +2,15 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import {
+  RichPromptInput,
+  type RichPromptInputHandle,
+} from "@/components/rich-prompt/RichPromptInput";
 import { useCreateSessionMutation } from "@/lib/sessions/mutations";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
 import { sanitizeBranchName } from "@/lib/sessions/branch-name";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-import { useAppHotkey } from "@/hooks/useAppHotkey";
-import { VoiceRecordButton } from "@/components/VoiceRecordButton";
-import { FileAutocomplete } from "@/components/FileAutocomplete";
 import BranchSelector from "@/components/BranchSelector";
-import { useImageAttachments } from "@/hooks/use-image-attachments";
-import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
-import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import { useBranchFromParent } from "@/stores/sessions.store";
 import TddToggle from "@/components/TddToggle";
 import { Button } from "@/components/ui/Button";
@@ -29,18 +26,17 @@ import {
   FormHint,
   FormError,
 } from "@/components/ui/FormField";
-import type { ImagePayload } from "@/lib/images/schemas";
 import type {
-  SessionCreationMode,
   CreateSessionRequest,
+  SessionCreationMode,
 } from "@/lib/sessions/schemas";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 
-// The `formInputBase` appearance the `FormInput` primitive owns, applied inline:
-// the two `.form-input` consumers here are a ref'd `<input>` (autofocus) and a
-// `<textarea rows={6}>`, neither of which the input-only, non-ref-forwarding
-// `FormInput` primitive can render. The string is the primitive's recipe verbatim
-// (the merged effective `.form-input` cascade: 9px/12px padding, 0.82rem, hover
-// border-strong, focus cyan + glow ring, placeholder text-tertiary).
+// The `formInputBase` appearance the `FormInput` primitive owns, applied to the
+// ref-forwarded session-name input. The string is the primitive's recipe
+// verbatim (the merged effective `.form-input` cascade: 9px/12px padding,
+// 0.82rem, hover border-strong, focus cyan + glow ring, placeholder
+// text-tertiary).
 const FORM_INPUT_CLASS =
   "w-full rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] " +
   "font-mono text-[0.82rem] text-text-primary outline-0 " +
@@ -76,18 +72,10 @@ export default function CreateSessionModal({
   );
   const [sessionName, setSessionName] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [cursorPosition, setCursorPosition] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<RichPromptInputHandle>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const instructionsRef = useRef(instructions);
-  const fireAndForgetRef = useRef(false);
-  const autoSubmitPendingRef = useRef(false);
-  useEffect(() => {
-    instructionsRef.current = instructions;
-  });
 
   const createMutation = useCreateSessionMutation(projectName);
 
@@ -115,67 +103,6 @@ export default function CreateSessionModal({
     return parent?.branchName ?? null;
   }, [parentSessionName, sessionsQuery.data]);
 
-  // File autocomplete for the optimistic-mode instructions textarea.
-  const fileAutocomplete = useFileAutocomplete({
-    projectName,
-    text: instructions,
-    cursorPosition,
-    disabled: mode === "normal" || createMutation.isPending,
-    onTextChange: setInstructions,
-  });
-
-  const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
-    useImageAttachments();
-
-  // Voice context is the optimistic-mode instructions text.
-  const getVoiceContext = useCallback(() => instructionsRef.current, []);
-
-  const {
-    isRecording,
-    isProcessing,
-    elapsedTime,
-    isAvailable: voiceAvailable,
-    toggleRecording,
-  } = useVoiceRecorder({
-    projectName,
-    getContext: getVoiceContext,
-    onResult: (text) => {
-      const newInstructions = instructionsRef.current
-        ? instructionsRef.current + "\n" + text
-        : text;
-      setInstructions(newInstructions);
-      instructionsRef.current = newInstructions;
-
-      if (fireAndForgetRef.current) {
-        fireAndForgetRef.current = false;
-        autoSubmitPendingRef.current = true;
-      }
-    },
-    onError: (err) => {
-      setError(err);
-      fireAndForgetRef.current = false;
-      autoSubmitPendingRef.current = false;
-    },
-  });
-
-  // Voice mode is available for optimistic mode.
-  const voiceEnabled = mode === "optimistic";
-
-  // Alt+V hotkey to toggle voice recording while modal is open (optimistic mode)
-  useAppHotkey(
-    "voiceToggle",
-    () => {
-      if (!isRecording && !isProcessing) {
-        fireAndForgetRef.current = false;
-      }
-      void toggleRecording();
-    },
-    {
-      enabled: open && voiceEnabled && voiceAvailable && !isProcessing,
-      keepActiveInOverlay: true,
-    },
-  );
-
   // Reset state when modal opens (state-during-render pattern)
   const [prevOpen, setPrevOpen] = useState(false);
   if (open !== prevOpen) {
@@ -186,9 +113,6 @@ export default function CreateSessionModal({
       setMode("normal");
       setParentSessionName(branchFromParent);
       setError(null);
-      clearImages();
-      fireAndForgetRef.current = false;
-      autoSubmitPendingRef.current = false;
     }
   }
 
@@ -199,7 +123,7 @@ export default function CreateSessionModal({
     if (mode === "normal") {
       nameInputRef.current?.focus();
     } else {
-      textareaRef.current?.focus();
+      promptRef.current?.focus();
     }
   }, [mode]);
 
@@ -210,48 +134,17 @@ export default function CreateSessionModal({
     }
   }, [open, focusActiveField]);
 
-  const hasImages = pendingImages.length > 0;
   const canSubmit =
     !createMutation.isPending &&
-    !isRecording &&
-    (mode === "normal"
-      ? sessionName.trim().length > 0
-      : instructions.trim().length > 0 || hasImages);
+    mode === "normal" &&
+    sessionName.trim().length > 0;
 
-  const handleSubmit = () => {
-    if (!canSubmit) return;
-    setError(null);
-
-    const imagePayloads: ImagePayload[] = hasImages
-      ? pendingImages.map((img) => ({
-          attachmentId: img.id,
-          mediaType: img.mediaType as ImagePayload["mediaType"],
-          base64Data: img.base64Data,
-        }))
-      : [];
-
-    const params: CreateSessionRequest =
-      mode === "normal"
-        ? {
-            mode: "normal",
-            sessionName: sessionName.trim(),
-            tddEnabled,
-            parentSessionName: parentSessionName ?? undefined,
-          }
-        : {
-            mode: "optimistic",
-            instructions: instructions.trim(),
-            images: imagePayloads.length > 0 ? imagePayloads : undefined,
-            tddEnabled,
-            parentSessionName: parentSessionName ?? undefined,
-          };
-
+  const submitRequest = (params: CreateSessionRequest, optimistic: boolean) => {
     createMutation.mutate(params, {
       onSuccess: (session) => {
         onClose();
 
-        // Optimistic mode: fire-and-forget — close dialog without navigation
-        if (mode === "optimistic") return;
+        if (optimistic) return;
 
         const conversationId = session.conversations[0]?.id;
         const url = conversationId
@@ -266,14 +159,39 @@ export default function CreateSessionModal({
     });
   };
 
-  // Auto-submit after fire-and-forget voice result
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs every render; ref guard prevents repeated calls
-  useEffect(() => {
-    if (autoSubmitPendingRef.current && canSubmit) {
-      autoSubmitPendingRef.current = false;
-      handleSubmit();
+  const createSession = (
+    mode: SessionCreationMode,
+    document?: SerializedPromptDoc,
+  ) => {
+    if (mode === "normal") {
+      if (!canSubmit) return;
+      setError(null);
+      submitRequest(
+        {
+          mode: "normal",
+          sessionName: sessionName.trim(),
+          tddEnabled,
+          parentSessionName: parentSessionName ?? undefined,
+        },
+        false,
+      );
+      return;
     }
-  });
+    if (document === undefined) return;
+    setError(null);
+    submitRequest(
+      {
+        mode: "optimistic",
+        instructions: document.prompt.trim(),
+        images: document.images.length > 0 ? document.images : undefined,
+        tddEnabled,
+        parentSessionName: parentSessionName ?? undefined,
+      },
+      true,
+    );
+  };
+
+  const handleSubmit = () => createSession("normal");
 
   const mergeTargetLabel = selectedParentBranch ?? "main";
   const textareaHint = `Claude will complete this task and merge the result into ${mergeTargetLabel}`;
@@ -351,7 +269,7 @@ export default function CreateSessionModal({
             </>
           )}
 
-          {mode === "normal" ? (
+          {mode === "normal" && (
             <>
               <FormLabel htmlFor="session-name-input" layoutClassName="mt-sm">
                 Session name
@@ -396,140 +314,36 @@ export default function CreateSessionModal({
                 )}
               </FormHint>
             </>
-          ) : (
-            <>
-              <FormLabel
-                htmlFor="session-instructions-input"
-                layoutClassName="mt-sm"
-              >
-                What should Claude do?
-              </FormLabel>
-              <div style={{ position: "relative" }}>
-                <FileAutocomplete
-                  ref={fileAutocomplete.autocompleteRef}
-                  items={fileAutocomplete.items}
-                  visible={fileAutocomplete.visible}
-                  loading={fileAutocomplete.loading}
-                  error={fileAutocomplete.error}
-                  totalCount={fileAutocomplete.totalCount}
-                  truncated={fileAutocomplete.truncated}
-                  sourceLabel="From project root"
-                  onSelect={fileAutocomplete.onSelect}
-                  onClose={fileAutocomplete.onClose}
-                />
-                <textarea
-                  ref={textareaRef}
-                  id="session-instructions-input"
-                  className={FORM_INPUT_CLASS}
-                  rows={6}
-                  placeholder="e.g. Fix the typo in the login page header"
-                  value={instructions}
-                  onChange={(e) => {
-                    setInstructions(e.target.value);
-                    setCursorPosition(e.target.selectionStart);
-                    setError(null);
-                  }}
-                  onSelect={(e) => {
-                    setCursorPosition(
-                      (e.target as HTMLTextAreaElement).selectionStart,
-                    );
-                  }}
-                  onPaste={(e) => {
-                    const items = e.clipboardData.items;
-                    for (const item of items) {
-                      if (item.type.startsWith("image/")) {
-                        e.preventDefault();
-                        const file = item.getAsFile();
-                        if (file) {
-                          void addImage(file).then((result) => {
-                            if (result.error) setError(result.error);
-                          });
-                        }
-                        return;
-                      }
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (
-                      fileAutocomplete.autocompleteRef.current?.handleKeyDown(e)
-                    ) {
-                      return;
-                    }
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (isRecording) {
-                        fireAndForgetRef.current = true;
-                        toggleRecording();
-                      } else {
-                        handleSubmit();
-                      }
-                    }
-                  }}
-                />
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const files = e.target.files;
-                    if (!files) return;
-                    for (const file of files) {
-                      void addImage(file).then((result) => {
-                        if (result.error) setError(result.error);
-                      });
-                    }
-                    e.target.value = "";
-                  }}
-                />
-                <ImageAttachmentPreview
-                  images={pendingImages}
-                  onRemove={removeImage}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    right: "0.5rem",
-                    bottom: "0.5rem",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.25rem",
-                  }}
-                >
-                  <button
-                    className="attachment-btn"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isAtLimit || createMutation.isPending}
-                    title="Attach image"
-                    type="button"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
-                  </button>
-                  <VoiceRecordButton
-                    isRecording={isRecording}
-                    isProcessing={isProcessing}
-                    elapsedTime={elapsedTime}
-                    isAvailable={voiceAvailable}
-                    toggleRecording={toggleRecording}
-                    disabled={createMutation.isPending}
-                  />
-                </div>
-              </div>
-              <FormHint>{textareaHint}</FormHint>
-            </>
           )}
+          <div
+            style={{ display: mode === "optimistic" ? "contents" : "none" }}
+            hidden={mode !== "optimistic"}
+            aria-hidden={mode !== "optimistic" || undefined}
+          >
+            <FormLabel
+              htmlFor="session-instructions-input"
+              layoutClassName="mt-sm"
+            >
+              What should Claude do?
+            </FormLabel>
+            <RichPromptInput
+              ref={promptRef}
+              id="session-instructions-input"
+              capabilityContext={{ projectName }}
+              value={instructions}
+              onValueChange={(value) => {
+                setInstructions(value);
+                setError(null);
+              }}
+              onSubmit={(document) => createSession("optimistic", document)}
+              ariaLabel="What should Claude do?"
+              placeholder="e.g. Fix the typo in the login page header"
+              submitLabel="Create Session"
+              disabled={createMutation.isPending || mode !== "optimistic"}
+              onError={setError}
+            />
+            <FormHint>{textareaHint}</FormHint>
+          </div>
           {error && <FormError>{error}</FormError>}
           <TddToggle
             enabled={tddEnabled}
@@ -546,15 +360,17 @@ export default function CreateSessionModal({
           >
             Cancel
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            touch
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-          >
-            {createMutation.isPending ? "Creating..." : "Create Session"}
-          </Button>
+          {mode === "normal" && (
+            <Button
+              variant="primary"
+              size="sm"
+              touch
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+            >
+              {createMutation.isPending ? "Creating..." : "Create Session"}
+            </Button>
+          )}
         </DialogActions>
       </DialogContent>
     </Dialog>

@@ -1,6 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import type { ConflictDecisionInput, ConflictEntry } from "@/lib/jobs/schemas";
 import { Spinner } from "@/components/ui/Spinner";
 
@@ -25,14 +30,23 @@ export default function JoinConflictRecoveryCard({
   const [feedbackByFile, setFeedbackByFile] = useState<Record<string, string>>(
     {},
   );
+  const feedbackActionRefs = useRef<
+    Map<string, MultilineInputActionHandle | null>
+  >(new Map());
 
   const analysisByFile = new Map(
     (analysis ?? []).map((entry) => [entry.file, entry]),
   );
 
-  const handleRetry = () => {
+  const handleRetry = (feedbackOverride?: { file: string; value: string }) => {
     const guidance: ConflictDecisionInput[] = conflictFiles
-      .map((file) => ({ file, feedback: (feedbackByFile[file] ?? "").trim() }))
+      .map((file) => ({
+        file,
+        feedback:
+          feedbackOverride?.file === file
+            ? feedbackOverride.value.trim()
+            : (feedbackByFile[file] ?? "").trim(),
+      }))
       .filter((entry) => entry.feedback.length > 0)
       .map((entry) => ({
         file: entry.file,
@@ -61,17 +75,22 @@ export default function JoinConflictRecoveryCard({
                   </p>
                 </div>
               )}
-              <textarea
+              <MultilineInput
                 aria-label={`Guidance for ${file}`}
                 className="min-h-[32px] w-full resize-y rounded-sm border border-border-default bg-bg-surface p-[6px] font-[inherit] text-[0.72rem] text-text-primary placeholder:text-text-tertiary"
                 placeholder="Optional guidance for the resolver (e.g. which side wins, how to combine)"
                 value={feedbackByFile[file] ?? ""}
-                onChange={(event) =>
+                onValueChange={(value) =>
                   setFeedbackByFile((prev) => ({
                     ...prev,
-                    [file]: event.target.value,
+                    [file]: value,
                   }))
                 }
+                onPrimaryAction={(value) => handleRetry({ file, value })}
+                actionRef={(handle) => {
+                  if (handle) feedbackActionRefs.current.set(file, handle);
+                  else feedbackActionRefs.current.delete(file);
+                }}
                 disabled={disabled}
               />
             </li>
@@ -82,7 +101,12 @@ export default function JoinConflictRecoveryCard({
         <button
           type="button"
           className="inline-flex h-[24px] cursor-pointer items-center justify-center gap-[6px] rounded-sm border border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a12)] px-[10px] py-[3px] text-[0.7rem] font-medium whitespace-nowrap text-cyan transition-all duration-150 hover:bg-[var(--cc-cyan-a20)] disabled:cursor-not-allowed disabled:opacity-60"
-          onClick={handleRetry}
+          onClick={() =>
+            runMultilinePrimaryAction(
+              feedbackActionRefs.current.values(),
+              handleRetry,
+            )
+          }
           disabled={disabled}
           aria-busy={isRetrying || undefined}
         >

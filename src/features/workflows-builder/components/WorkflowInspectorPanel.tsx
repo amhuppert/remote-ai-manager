@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CompactMarkdown } from "@/components/markdown/Markdown";
+import {
+  MultilineInput,
+  MultilinePrimaryActionScope,
+  useMultilinePrimaryActionRegistry,
+} from "@/components/MultilineInput";
 import {
   TabsContent,
   TabsList,
@@ -117,6 +122,7 @@ interface WorkflowInspectorPanelProps {
   globalDefaults?: WorkflowDefaults;
   activeTab?: InspectorTab;
   onTabChange?: (tab: InspectorTab) => void;
+  voiceProjectName?: string | null;
 }
 
 export type InspectorTab = "workflow" | "context";
@@ -581,6 +587,7 @@ export default function WorkflowInspectorPanel({
   globalDefaults,
   activeTab: controlledActiveTab,
   onTabChange,
+  voiceProjectName,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
   const defaults = globalDefaults ?? SEEDED_DEFAULTS;
   const draftDefinition = _useGraphWorkflowBuilderStore(
@@ -608,7 +615,15 @@ export default function WorkflowInspectorPanel({
 
   const [internalActiveTab, setInternalActiveTab] =
     useState<InspectorTab>("workflow");
+  const multilineActions = useMultilinePrimaryActionRegistry();
   const activeTab = controlledActiveTab ?? internalActiveTab;
+  const handleSave = useCallback(
+    (force = false) => {
+      if ((!dirty && !force) || saving) return;
+      void onSave();
+    },
+    [dirty, onSave, saving],
+  );
 
   function setActiveTab(tab: InspectorTab) {
     if (onTabChange) onTabChange(tab);
@@ -669,169 +684,182 @@ export default function WorkflowInspectorPanel({
       : null;
 
   return (
-    <aside className={WB_INSPECTOR_CLASS}>
-      <TabsRoot
-        value={tabValue}
-        onValueChange={(value) => setActiveTab(value as InspectorTab)}
-        layoutClassName="[display:contents]"
-      >
-        <header className="flex min-h-[44px] items-center gap-sm border-b border-solid border-border-dim px-md py-[12px]">
-          <TabsList
-            aria-label="Inspector scope"
-            layoutClassName="shrink-0 min-w-0 overflow-hidden"
-          >
-            <TabsTrigger value="workflow" layoutClassName="shrink-0">
-              Workflow
-            </TabsTrigger>
-            <TabsTrigger
-              value="context"
-              disabled={!contextTabEnabled}
-              title={
-                contextTabEnabled ? undefined : "Select a context in the graph"
-              }
-              layoutClassName="min-w-0 overflow-hidden text-ellipsis"
+    <MultilinePrimaryActionScope registry={multilineActions}>
+      <aside className={WB_INSPECTOR_CLASS}>
+        <TabsRoot
+          value={tabValue}
+          onValueChange={(value) => setActiveTab(value as InspectorTab)}
+          layoutClassName="[display:contents]"
+        >
+          <header className="flex min-h-[44px] items-center gap-sm border-b border-solid border-border-dim px-md py-[12px]">
+            <TabsList
+              aria-label="Inspector scope"
+              layoutClassName="shrink-0 min-w-0 overflow-hidden"
             >
-              Context
-            </TabsTrigger>
-          </TabsList>
-          <div className="min-w-0 flex-1 overflow-hidden text-[0.78rem] font-semibold text-ellipsis whitespace-nowrap text-text-primary">
-            {tabValue === "context" && selectedContext
-              ? selectedContext.title
-              : null}
-          </div>
-          <button
-            className={cn(
-              WB_BTN_BASE,
-              WB_BTN_SM,
-              "flex-shrink-0",
-              dirty ? WB_BTN_PRIMARY : WB_BTN_DEFAULT,
-            )}
-            disabled={!dirty || saving}
-            onClick={() => void onSave()}
-            title={
-              validationErrors.length > 0
-                ? `${validationErrors.length} validation issue${validationErrors.length === 1 ? "" : "s"} present`
-                : undefined
-            }
-            type="button"
-          >
-            {saving ? "Saving..." : dirty ? "Save" : "Saved"}
-          </button>
-        </header>
+              <TabsTrigger value="workflow" layoutClassName="shrink-0">
+                Workflow
+              </TabsTrigger>
+              <TabsTrigger
+                value="context"
+                disabled={!contextTabEnabled}
+                title={
+                  contextTabEnabled
+                    ? undefined
+                    : "Select a context in the graph"
+                }
+                layoutClassName="min-w-0 overflow-hidden text-ellipsis"
+              >
+                Context
+              </TabsTrigger>
+            </TabsList>
+            <div className="min-w-0 flex-1 overflow-hidden text-[0.78rem] font-semibold text-ellipsis whitespace-nowrap text-text-primary">
+              {tabValue === "context" && selectedContext
+                ? selectedContext.title
+                : null}
+            </div>
+            <button
+              className={cn(
+                WB_BTN_BASE,
+                WB_BTN_SM,
+                "flex-shrink-0",
+                dirty ? WB_BTN_PRIMARY : WB_BTN_DEFAULT,
+              )}
+              disabled={saving || (!dirty && !multilineActions.voiceBusy)}
+              onClick={() => multilineActions.primaryAction(handleSave)}
+              title={
+                validationErrors.length > 0
+                  ? `${validationErrors.length} validation issue${validationErrors.length === 1 ? "" : "s"} present`
+                  : undefined
+              }
+              type="button"
+            >
+              {saving ? "Saving..." : dirty ? "Save" : "Saved"}
+            </button>
+          </header>
 
-        {stripCascade ? <ResolvedSetupStrip cascade={stripCascade} /> : null}
+          {stripCascade ? <ResolvedSetupStrip cascade={stripCascade} /> : null}
 
-        <div className="wb-inspector-body flex-1 overflow-y-auto p-lg">
-          <TabsContent value="workflow">
-            <WorkflowTabBody
-              workflowConfig={workflowConfig}
-              globalDefaults={defaults}
-              parameters={draftDefinition.parameters}
-              parameterSaveError={parameterSaveError(validationErrors)}
-              onParametersChange={(next) => {
-                updateDefinition({ ...draftDefinition, parameters: next });
-              }}
-              onSetOverride={(block, value) => {
-                updateDefinition(
-                  setWorkflowConfigOverride(draftDefinition, block, value),
-                );
-              }}
-              onClearOverride={(block) => {
-                updateDefinition(
-                  clearWorkflowConfigOverride(draftDefinition, block),
-                );
-              }}
-            />
-          </TabsContent>
-          {selectedContext ? (
-            <TabsContent value="context">
-              <ContextTabBody
-                context={selectedContext}
-                tasks={selectedContextTasks}
-                validationErrors={validationErrors}
+          <div className="wb-inspector-body flex-1 overflow-y-auto p-lg">
+            <TabsContent value="workflow">
+              <WorkflowTabBody
                 workflowConfig={workflowConfig}
                 globalDefaults={defaults}
-                selectedTaskId={selectedTaskId}
-                onUpdateContext={(updates) => {
+                parameters={draftDefinition.parameters}
+                parameterSaveError={parameterSaveError(validationErrors)}
+                onParametersChange={(next) => {
+                  updateDefinition({ ...draftDefinition, parameters: next });
+                }}
+                onPrimaryAction={handleSave}
+                voiceProjectName={voiceProjectName}
+                onSetOverride={(block, value) => {
                   updateDefinition(
-                    updateExecutionContext(
-                      draftDefinition,
-                      selectedContext.id,
-                      updates,
-                    ),
+                    setWorkflowConfigOverride(draftDefinition, block, value),
                   );
                 }}
-                onSetContextOverride={(block, value) => {
+                onClearOverride={(block) => {
                   updateDefinition(
-                    setContextBlockOverride(
-                      draftDefinition,
-                      selectedContext.id,
-                      block,
-                      value,
-                    ),
+                    clearWorkflowConfigOverride(draftDefinition, block),
                   );
                 }}
-                onClearContextOverride={(block) => {
-                  updateDefinition(
-                    clearContextBlockOverride(
-                      draftDefinition,
-                      selectedContext.id,
-                      block,
-                    ),
-                  );
-                }}
-                onDisableValidator={() => {
-                  updateDefinition(
-                    disableContextValidator(
-                      draftDefinition,
-                      selectedContext.id,
-                    ),
-                  );
-                }}
-                onEnableValidator={() => {
-                  updateDefinition(
-                    enableContextValidator(draftDefinition, selectedContext.id),
-                  );
-                }}
-                onAddTask={() => {
-                  const result = addTaskToContext(
-                    draftDefinition,
-                    selectedContext.id,
-                  );
-                  updateDefinition(result.definition);
-                  setSelectedTaskId(result.taskId);
-                }}
-                onUpdateTask={(taskId, updates) => {
-                  updateDefinition(
-                    updateTask(draftDefinition, taskId, updates),
-                  );
-                }}
-                onRemoveTask={(taskId) => {
-                  updateDefinition(
-                    removeTask(draftDefinition, selectedContext.id, taskId),
-                  );
-                  setSelectedTaskId(null);
-                }}
-                onMoveTask={(taskId, direction) => {
-                  updateDefinition(
-                    moveTaskWithinContext(
-                      draftDefinition,
-                      selectedContext.id,
-                      taskId,
-                      direction,
-                    ),
-                  );
-                }}
-                onSelectTask={(taskId) => {
-                  setSelectedTaskId(selectedTaskId === taskId ? null : taskId);
-                }}
-                onDelete={() => onDelete(selectedContext.id)}
               />
             </TabsContent>
-          ) : null}
-        </div>
-      </TabsRoot>
-    </aside>
+            {selectedContext ? (
+              <TabsContent value="context">
+                <ContextTabBody
+                  context={selectedContext}
+                  tasks={selectedContextTasks}
+                  validationErrors={validationErrors}
+                  workflowConfig={workflowConfig}
+                  globalDefaults={defaults}
+                  selectedTaskId={selectedTaskId}
+                  onUpdateContext={(updates) => {
+                    updateDefinition(
+                      updateExecutionContext(
+                        draftDefinition,
+                        selectedContext.id,
+                        updates,
+                      ),
+                    );
+                  }}
+                  onSetContextOverride={(block, value) => {
+                    updateDefinition(
+                      setContextBlockOverride(
+                        draftDefinition,
+                        selectedContext.id,
+                        block,
+                        value,
+                      ),
+                    );
+                  }}
+                  onClearContextOverride={(block) => {
+                    updateDefinition(
+                      clearContextBlockOverride(
+                        draftDefinition,
+                        selectedContext.id,
+                        block,
+                      ),
+                    );
+                  }}
+                  onDisableValidator={() => {
+                    updateDefinition(
+                      disableContextValidator(
+                        draftDefinition,
+                        selectedContext.id,
+                      ),
+                    );
+                  }}
+                  onEnableValidator={() => {
+                    updateDefinition(
+                      enableContextValidator(
+                        draftDefinition,
+                        selectedContext.id,
+                      ),
+                    );
+                  }}
+                  onAddTask={() => {
+                    const result = addTaskToContext(
+                      draftDefinition,
+                      selectedContext.id,
+                    );
+                    updateDefinition(result.definition);
+                    setSelectedTaskId(result.taskId);
+                  }}
+                  onUpdateTask={(taskId, updates) => {
+                    updateDefinition(
+                      updateTask(draftDefinition, taskId, updates),
+                    );
+                  }}
+                  onRemoveTask={(taskId) => {
+                    updateDefinition(
+                      removeTask(draftDefinition, selectedContext.id, taskId),
+                    );
+                    setSelectedTaskId(null);
+                  }}
+                  onMoveTask={(taskId, direction) => {
+                    updateDefinition(
+                      moveTaskWithinContext(
+                        draftDefinition,
+                        selectedContext.id,
+                        taskId,
+                        direction,
+                      ),
+                    );
+                  }}
+                  onSelectTask={(taskId) => {
+                    setSelectedTaskId(
+                      selectedTaskId === taskId ? null : taskId,
+                    );
+                  }}
+                  onDelete={() => onDelete(selectedContext.id)}
+                  onPrimaryAction={handleSave}
+                  voiceProjectName={voiceProjectName}
+                />
+              </TabsContent>
+            ) : null}
+          </div>
+        </TabsRoot>
+      </aside>
+    </MultilinePrimaryActionScope>
   );
 }
 
@@ -841,6 +869,8 @@ function WorkflowTabBody({
   parameters,
   parameterSaveError,
   onParametersChange,
+  onPrimaryAction,
+  voiceProjectName,
   onSetOverride,
   onClearOverride,
 }: {
@@ -849,6 +879,8 @@ function WorkflowTabBody({
   parameters: ParameterDeclaration[];
   parameterSaveError: string | null;
   onParametersChange: (next: ParameterDeclaration[]) => void;
+  onPrimaryAction: (force?: boolean) => void;
+  voiceProjectName?: string | null;
   onSetOverride: <K extends keyof WorkflowConfigOverride>(
     block: K,
     value: NonNullable<WorkflowConfigOverride[K]>,
@@ -869,6 +901,8 @@ function WorkflowTabBody({
           parameters={parameters}
           onChange={onParametersChange}
           saveError={parameterSaveError}
+          onPrimaryAction={onPrimaryAction}
+          voiceProjectName={voiceProjectName}
         />
       </section>
 
@@ -1074,6 +1108,8 @@ function ContextTabBody({
   onMoveTask,
   onSelectTask,
   onDelete,
+  onPrimaryAction,
+  voiceProjectName,
 }: {
   context: GraphWorkflowExecutionContextDefinition;
   tasks: GraphWorkflowTaskDefinition[];
@@ -1100,6 +1136,8 @@ function ContextTabBody({
   onMoveTask: (taskId: string, direction: "up" | "down") => void;
   onSelectTask: (taskId: string) => void;
   onDelete: () => void;
+  onPrimaryAction: (force?: boolean) => void;
+  voiceProjectName?: string | null;
 }): React.JSX.Element {
   const cascade = computeContextCascade(
     context,
@@ -1378,6 +1416,8 @@ function ContextTabBody({
             ? "context-acceptance-criteria"
             : "context-description"
         }
+        onPrimaryAction={onPrimaryAction}
+        voiceProjectName={voiceProjectName}
       />
 
       <section className="mb-xl" data-section="tasks">
@@ -1480,18 +1520,21 @@ function ContextTabBody({
                         >
                           Instructions <RequiredMark />
                         </label>
-                        <textarea
+                        <MultilineInput
                           className={cn(
                             WB_TASK_INPUT,
                             "mb-[2px] min-h-[56px] resize-y",
                             instrError && WB_FIELD_INVALID,
                           )}
                           id={`task-instructions-${task.id}`}
-                          onChange={(event) =>
-                            onUpdateTask(task.id, {
-                              instructions: event.target.value,
-                            })
+                          onValueChange={(instructions) =>
+                            onUpdateTask(task.id, { instructions })
                           }
+                          onPrimaryAction={(instructions) => {
+                            onUpdateTask(task.id, { instructions });
+                            onPrimaryAction(true);
+                          }}
+                          voiceProjectName={voiceProjectName}
                           value={task.instructions}
                         />
                         <FieldError error={instrError} />

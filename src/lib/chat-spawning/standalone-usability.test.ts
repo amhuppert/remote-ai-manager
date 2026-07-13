@@ -100,6 +100,62 @@ describe("chat-spawning usable without the cockpit UI", () => {
       "alpha",
     ]);
   });
+
+  it("delivers an image-only dual proposal to the collaboration boundary with a valid brief", async () => {
+    const validation = validateProposal({
+      sessions: [
+        {
+          name: "image-race",
+          agent: "dual",
+          mode: "normal",
+          images: [
+            {
+              attachmentId: "image-1",
+              mediaType: "image/png",
+              base64Data: "one",
+            },
+          ],
+        },
+      ],
+    });
+    expect(validation.kind).toBe("valid");
+    if (validation.kind !== "valid") return;
+
+    const startDualRace = vi.fn().mockImplementation(async ({ brief }) => {
+      if (brief.trim().length === 0) throw new Error("brief required");
+    });
+    const dispatcher = createFirstTurnDispatcher({
+      executePromptStream: vi.fn(),
+      startDualRace,
+      isConversationBusy: vi.fn().mockReturnValue(false),
+    });
+    const service = createChatSpawnService({
+      createSession: vi
+        .fn()
+        .mockImplementation(async ({ proposed }) => makeSession(proposed.name)),
+      resolveCommittedHeadBase: vi.fn().mockResolvedValue("HEADSHA"),
+      setSessionSpawnedFrom: vi.fn().mockResolvedValue(undefined),
+      addPlcSpawnedSessionIds: vi.fn().mockResolvedValue(undefined),
+      dispatchFirstTurn: dispatcher.dispatchFirstTurn,
+      broadcast: vi.fn(),
+    });
+
+    const result = await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: validation.proposal,
+    });
+    await vi.waitFor(() => expect(startDualRace).toHaveBeenCalledTimes(1));
+
+    expect(result.created[0]?.initialPromptQueued).toBe(true);
+    expect(startDualRace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        brief: "Attached image.",
+        images: validation.proposal.sessions[0]?.images,
+      }),
+    );
+  });
 });
 
 describe("chat-spawning backend primitives do not depend on the cockpit/UI", () => {

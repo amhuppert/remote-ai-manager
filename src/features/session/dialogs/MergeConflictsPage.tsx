@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId, useRef, type Ref } from "react";
+import {
+  MultilineInput,
+  runMultilinePrimaryAction,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import { cn } from "@/lib/ui/cn";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
@@ -139,6 +144,9 @@ function ConflictReviewCard({
   onApprove,
   onReject,
   onFeedbackChange,
+  onPrimaryAction,
+  actionRef,
+  projectName,
 }: {
   conflict: ConflictEntry;
   index: number;
@@ -146,8 +154,12 @@ function ConflictReviewCard({
   onApprove: () => void;
   onReject: () => void;
   onFeedbackChange: (feedback: string) => void;
+  onPrimaryAction: (value: string) => void;
+  actionRef: Ref<MultilineInputActionHandle>;
+  projectName: string;
 }) {
   const [expanded, setExpanded] = useState(state.decision !== "approved");
+  const feedbackId = useId();
 
   const handleApprove = useCallback(() => {
     onApprove();
@@ -255,10 +267,14 @@ function ConflictReviewCard({
 
           {state.decision === "rejected" && (
             <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle pt-sm">
-              <label className="mb-xs block font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-red uppercase">
+              <label
+                htmlFor={feedbackId}
+                className="mb-xs block font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-red uppercase"
+              >
                 Guidance for Claude
               </label>
-              <textarea
+              <MultilineInput
+                id={feedbackId}
                 // `.form-input` (globals.css:7991) loads after dialogs.css's
                 // `@import`, so at equal specificity its `font-size:0.82rem`
                 // overrides `.cr-feedback-input{font-size:0.75rem}` — the
@@ -267,7 +283,10 @@ function ConflictReviewCard({
                 rows={2}
                 placeholder="Explain how this conflict should be resolved instead..."
                 value={state.feedback}
-                onChange={(e) => onFeedbackChange(e.target.value)}
+                onValueChange={onFeedbackChange}
+                onPrimaryAction={onPrimaryAction}
+                actionRef={actionRef}
+                voiceProjectName={projectName}
               />
             </div>
           )}
@@ -299,6 +318,9 @@ export default function MergeConflictsPage({
   const [submitAction, setSubmitAction] = useState<
     "acceptAll" | "fixApproved" | null
   >(null);
+  const feedbackActionRefs = useRef<
+    Map<number, MultilineInputActionHandle | null>
+  >(new Map());
 
   const handleApprove = useCallback((index: number) => {
     setDecisions((prev) =>
@@ -349,16 +371,28 @@ export default function MergeConflictsPage({
     onAcceptAll?.();
   }, [onAcceptAll]);
 
-  const handleFixApproved = useCallback(() => {
-    setSubmitAction("fixApproved");
-    onFixApproved?.(
-      conflicts.map((c, i) => ({
-        file: c.file,
-        decision: decisions[i]?.decision ?? "pending",
-        feedback: decisions[i]?.feedback ?? "",
-      })),
-    );
-  }, [onFixApproved, conflicts, decisions]);
+  const handleFixApproved = useCallback(
+    (feedbackOverride?: { index: number; value: string }) => {
+      if (
+        isSubmitting ||
+        !decisions.some((decision) => decision.decision !== "pending")
+      ) {
+        return;
+      }
+      setSubmitAction("fixApproved");
+      onFixApproved?.(
+        conflicts.map((c, i) => ({
+          file: c.file,
+          decision: decisions[i]?.decision ?? "pending",
+          feedback:
+            feedbackOverride?.index === i
+              ? feedbackOverride.value
+              : (decisions[i]?.feedback ?? ""),
+        })),
+      );
+    },
+    [onFixApproved, conflicts, decisions, isSubmitting],
+  );
 
   const approvedCount = decisions.filter(
     (d) => d.decision === "approved",
@@ -460,6 +494,12 @@ export default function MergeConflictsPage({
             onApprove={() => handleApprove(i)}
             onReject={() => handleReject(i)}
             onFeedbackChange={(fb) => handleFeedbackChange(i, fb)}
+            onPrimaryAction={(value) => handleFixApproved({ index: i, value })}
+            actionRef={(handle) => {
+              if (handle) feedbackActionRefs.current.set(i, handle);
+              else feedbackActionRefs.current.delete(i);
+            }}
+            projectName={projectName}
           />
         ))}
       </div>
@@ -490,7 +530,12 @@ export default function MergeConflictsPage({
             touch
             loading={isSubmitting && submitAction === "fixApproved"}
             disabled={!hasAnyDecision || isSubmitting}
-            onClick={handleFixApproved}
+            onClick={() =>
+              runMultilinePrimaryAction(
+                feedbackActionRefs.current.values(),
+                handleFixApproved,
+              )
+            }
           >
             {isSubmitting && submitAction === "fixApproved"
               ? "Submitting…"

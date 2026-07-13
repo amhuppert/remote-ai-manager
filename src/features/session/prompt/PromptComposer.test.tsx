@@ -121,6 +121,29 @@ describe("PromptComposer composer-focus wiring", () => {
     useSessionDetailStore.getState().resetStore();
   });
 
+  it("routes the visible send action through active dictation", () => {
+    const props = makeProps();
+    props.promptText = "draft";
+    props.isRecording = true;
+    renderWithQuery(<PromptComposer {...props} />);
+
+    fireEvent.click(screen.getByTestId("prompt-send"));
+
+    expect(props.stopAndSubmit).toHaveBeenCalledOnce();
+    expect(props.onSendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("disables the visible send action while transcription is processing", () => {
+    const props = makeProps();
+    props.promptText = "draft";
+    props.isProcessing = true;
+    renderWithQuery(<PromptComposer {...props} />);
+
+    expect(screen.getByTestId("prompt-send")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("prompt-send"));
+    expect(props.onSendPrompt).not.toHaveBeenCalled();
+  });
+
   it("sets composerFocused when focus enters the region and clears it when focus leaves", () => {
     const { container } = renderWithQuery(<PromptComposer {...makeProps()} />);
     expect(composerFocused()).toBe(false);

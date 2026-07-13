@@ -27,7 +27,6 @@ import {
   useAgentCapabilityViewQuery,
   type AgentCapabilityScope,
 } from "@/hooks/use-agent-capabilities";
-import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
@@ -90,14 +89,14 @@ export interface SlashCommandPopupProps {
   /** Trigger character that initiated the suggestion (e.g. "/" or "$"). */
   triggerChar: string;
   projectName: string;
-  sessionName: string;
+  sessionName?: string;
   /**
    * The conversation this popup belongs to. Used to filter the catalog by CC's
    * effective capability config — items disabled at any cascade layer (global
    * through conversation) are hidden so users can't pick commands the agent
    * will reject.
    */
-  conversationId: string;
+  conversationId?: string;
   backend?: AgentBackendId;
   /**
    * Graph-workflow lane conversations (the composer mounts for them while an
@@ -138,11 +137,10 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   },
   ref,
 ) {
-  // Project-level conversations address the otherwise session-keyed APIs via
-  // the `__project__` sentinel; commands are then discovered from the project
-  // root rather than a session worktree, and capabilities cascade through the
-  // project-scoped conversation layer.
-  const projectScoped = isProjectSentinel(sessionName);
+  // Project-level prompts discover commands from the project root rather than
+  // a session worktree, and capabilities cascade through the project-scoped
+  // conversation layer when a conversation exists.
+  const projectScoped = sessionName === undefined;
   const sessionCommandsQuery = useCommandsQuery(
     projectName,
     sessionName,
@@ -169,12 +167,15 @@ export const PromptEditorSlashCommandPopup = forwardRef<
           }
         : { level: "project", projectName };
     }
-    return {
-      level: "conversation",
-      projectName,
-      sessionName,
-      conversationId,
-    };
+    if (conversationId) {
+      return {
+        level: "conversation",
+        projectName,
+        sessionName,
+        conversationId,
+      };
+    }
+    return { level: "session", projectName, sessionName };
   }, [projectScoped, projectName, sessionName, conversationId]);
   const pluginsCascade =
     backend === "codex" ? "codex-plugins" : "claude-plugins";
@@ -191,9 +192,11 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   const isCodexSkillMode = backend === "codex" && triggerChar === "$";
 
   const items = useMemo<CommandItem[]>(() => {
-    const availableBuiltIns = isWorkflowManagedConversation
-      ? BUILT_IN_CLAUDE_COMMANDS.filter((i) => i.name !== "/ticket")
-      : BUILT_IN_CLAUDE_COMMANDS;
+    const availableBuiltIns = projectScoped
+      ? []
+      : isWorkflowManagedConversation
+        ? BUILT_IN_CLAUDE_COMMANDS.filter((i) => i.name !== "/ticket")
+        : BUILT_IN_CLAUDE_COMMANDS;
     const fetched = commandsQuery.data?.items ?? [];
     const filtered = filterDisabledCommandItems(
       fetched,
@@ -216,6 +219,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     backend,
     isCodexSkillMode,
     isWorkflowManagedConversation,
+    projectScoped,
   ]);
 
   const scored = useMemo<ScoredItem[]>(() => {

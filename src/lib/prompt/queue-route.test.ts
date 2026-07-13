@@ -129,7 +129,9 @@ function createTestDeps(
       .mockResolvedValue({ entry, deliveryTiming: "in_turn" as const }),
     queueCapabilityForBackend: vi.fn().mockReturnValue(inTurnCapability),
     toQueuedMessageView: vi.fn((e: PendingQueuedMessage) => makeView(e)),
-    setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
+    clearConversationPendingPromptTextIfMatches: vi
+      .fn()
+      .mockResolvedValue(true),
     hasLiveConversationActor: vi.fn().mockReturnValue(true),
     ensureConversationActorAndDrain: vi.fn().mockResolvedValue(undefined),
     recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
@@ -326,7 +328,9 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     const body = await response.json();
     expect(body.code).toBe("NON_INTERACTIVE_CONVERSATION");
     expect(deps.queueMessage).not.toHaveBeenCalled();
-    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).not.toHaveBeenCalled();
   });
 
   it("returns 409 NOT_RUNNING when the conversation is not running", async () => {
@@ -343,7 +347,9 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     const body = await response.json();
     expect(body.code).toBe("NOT_RUNNING");
     expect(deps.queueMessage).not.toHaveBeenCalled();
-    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).not.toHaveBeenCalled();
     expect(deps.ensureConversationActorAndDrain).not.toHaveBeenCalled();
   });
 
@@ -361,7 +367,9 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     const body = await response.json();
     expect(body.code).toBe("UNSUPPORTED_BACKEND");
     expect(deps.queueMessage).not.toHaveBeenCalled();
-    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).not.toHaveBeenCalled();
   });
 
   it("returns the queued view and deliveryTiming from the queueMessage result", async () => {
@@ -420,19 +428,30 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     expect(body.queued).toBe(true);
   });
 
-  it("clears conversation pendingPromptText before queueing", async () => {
+  it("clears only the exact submitted pending prompt after queueing", async () => {
     const response = await handlers.POST(
-      makeRequest({ text: "queued draft" }),
+      makeRequest({
+        text: "queued draft",
+        submittedPendingPromptText: "  queued draft  ",
+      }),
       makeParams(),
     );
 
     expect(response.status).toBe(200);
-    expect(deps.setConversationPendingPromptText).toHaveBeenCalledWith(
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).toHaveBeenCalledWith(
       "/projects/my-project",
       "test-session",
       "conv-123",
-      null,
+      "  queued draft  ",
     );
+    const enqueueOrder = vi.mocked(deps.queueMessage).mock
+      .invocationCallOrder[0]!;
+    const clearOrder = vi.mocked(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).mock.invocationCallOrder[0]!;
+    expect(clearOrder).toBeGreaterThan(enqueueOrder);
   });
 });
 

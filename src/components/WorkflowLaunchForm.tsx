@@ -1,8 +1,12 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState, type Ref } from "react";
 import type { ParameterDeclaration } from "@/lib/workflows/schemas";
 import { Button } from "@/components/ui/Button";
+import {
+  MultilineInput,
+  type MultilineInputActionHandle,
+} from "@/components/MultilineInput";
 import {
   FormError,
   FormGroup,
@@ -123,6 +127,9 @@ function ParameterField({
   fieldId,
   errorId,
   onChange,
+  onPrimaryAction,
+  actionRef,
+  disabled,
 }: {
   parameter: ParameterDeclaration;
   value: string;
@@ -131,6 +138,9 @@ function ParameterField({
   fieldId: string;
   errorId: string;
   onChange: (value: string) => void;
+  onPrimaryAction(value: string): void;
+  actionRef: Ref<MultilineInputActionHandle>;
+  disabled: boolean;
 }): React.JSX.Element {
   const invalid = showError && error !== null;
   const describedBy = invalid ? errorId : undefined;
@@ -149,13 +159,16 @@ function ParameterField({
         />
       )}
       {parameter.type === "text" && (
-        <textarea
+        <MultilineInput
           id={fieldId}
           className={textareaClassName}
           value={value}
           aria-invalid={invalid}
           aria-describedby={describedBy}
-          onChange={(e) => onChange(e.target.value)}
+          onValueChange={onChange}
+          onPrimaryAction={onPrimaryAction}
+          actionRef={actionRef}
+          disabled={disabled}
         />
       )}
       {parameter.type === "enum" && (
@@ -197,20 +210,38 @@ export default function WorkflowLaunchForm({
   // touched, so a freshly opened form does not shout about empty required fields.
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const fieldActionRefs = useRef<
+    Record<string, MultilineInputActionHandle | null>
+  >({});
 
   const errors = computeErrors(parameters, values);
-  const hasErrors = Object.keys(errors).length > 0;
 
   function handleChange(name: string, value: string): void {
     setValues((prev) => ({ ...prev, [name]: value }));
     setTouched((prev) => ({ ...prev, [name]: true }));
   }
 
+  function launch(nextValues = values): void {
+    if (isLaunching) return;
+    setSubmitAttempted(true);
+    if (Object.keys(computeErrors(parameters, nextValues)).length > 0) return;
+    onLaunch(buildSubmitValues(parameters, nextValues));
+  }
+
+  function runPrimaryAction(): void {
+    const activeVoice = Object.values(fieldActionRefs.current).find((action) =>
+      action?.isVoiceBusy(),
+    );
+    if (activeVoice) {
+      activeVoice.primaryAction();
+      return;
+    }
+    launch();
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    setSubmitAttempted(true);
-    if (hasErrors) return;
-    onLaunch(buildSubmitValues(parameters, values));
+    runPrimaryAction();
   }
 
   // The launch control stays enabled while validation errors exist so that
@@ -242,6 +273,13 @@ export default function WorkflowLaunchForm({
             fieldId={fieldId}
             errorId={errorId}
             onChange={(value) => handleChange(parameter.name, value)}
+            onPrimaryAction={(value) =>
+              launch({ ...values, [parameter.name]: value })
+            }
+            actionRef={(action) => {
+              fieldActionRefs.current[parameter.name] = action;
+            }}
+            disabled={isLaunching}
           />
         );
       })}

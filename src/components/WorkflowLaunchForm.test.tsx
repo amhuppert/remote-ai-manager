@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ParameterDeclaration } from "@/lib/workflows/schemas";
 import WorkflowLaunchForm from "@/components/WorkflowLaunchForm";
@@ -105,6 +105,26 @@ describe("WorkflowLaunchForm", () => {
     );
     // The Radix Select trigger shows the selected option's label.
     expect(screen.getByLabelText("Mode").textContent).toContain("focus");
+  });
+
+  it("keeps plain Enter multiline and launches only on Ctrl+Enter", () => {
+    const onLaunch = vi.fn();
+    render(
+      <WorkflowLaunchForm
+        parameters={[
+          { type: "text", name: "brief", label: "Brief", required: true },
+        ]}
+        onLaunch={onLaunch}
+      />,
+    );
+    const input = screen.getByLabelText("Brief");
+    fireEvent.change(input, { target: { value: "line one" } });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onLaunch).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(onLaunch).toHaveBeenCalledWith({ brief: "line one" });
   });
 
   it("blocks launch and surfaces a missing-required error when a required value is empty (R7.4)", async () => {
@@ -225,10 +245,27 @@ describe("WorkflowLaunchForm", () => {
   });
 
   it("disables the launch control while launching (R7.7)", () => {
+    const onLaunch = vi.fn();
     render(
-      <WorkflowLaunchForm parameters={[]} onLaunch={vi.fn()} isLaunching />,
+      <WorkflowLaunchForm
+        parameters={[
+          {
+            type: "text",
+            name: "brief",
+            label: "Brief",
+            required: false,
+          },
+        ]}
+        onLaunch={onLaunch}
+        isLaunching
+      />,
     );
     expect(launchButton()).toBeDisabled();
+    fireEvent.keyDown(screen.getByLabelText("Brief"), {
+      key: "Enter",
+      ctrlKey: true,
+    });
+    expect(onLaunch).not.toHaveBeenCalled();
   });
 
   it("does not submit a value for an unfilled optional parameter that has no default", async () => {

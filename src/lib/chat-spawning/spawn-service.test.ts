@@ -151,10 +151,83 @@ describe("createChatSpawnService.createFromProposal", () => {
       },
     });
     const call = (deps.dispatchFirstTurn as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0];
+      .calls[0]![0] as Parameters<ChatSpawnDeps["dispatchFirstTurn"]>[0];
     expect(call.model).toBe("gpt-5.4");
     expect(call.reasoningEffort).toBe("high");
   });
+
+  it("forwards ordered proposed images to the dispatcher", async () => {
+    const deps = makeDeps();
+    const service = createChatSpawnService(deps);
+    await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: {
+        sessions: [
+          proposed({
+            name: "alpha",
+            initialPrompt: "Use these images",
+            images: [
+              {
+                attachmentId: "first",
+                mediaType: "image/png",
+                base64Data: "one",
+              },
+              {
+                attachmentId: "second",
+                mediaType: "image/jpeg",
+                base64Data: "two",
+              },
+            ],
+          }),
+        ],
+      },
+    });
+    const call = (deps.dispatchFirstTurn as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Parameters<ChatSpawnDeps["dispatchFirstTurn"]>[0];
+    expect(call.images?.map((image) => image.attachmentId)).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it.each(["claude", "codex", "dual"] as const)(
+    "dispatches an image-only first turn for %s",
+    async (agent) => {
+      const deps = makeDeps();
+      const service = createChatSpawnService(deps);
+      const result = await service.createFromProposal({
+        projectPath: "/repo",
+        projectName: "repo",
+        conversationId: "plc-1",
+        proposal: {
+          sessions: [
+            proposed({
+              name: "alpha",
+              agent,
+              images: [
+                {
+                  attachmentId: "only-image",
+                  mediaType: "image/png",
+                  base64Data: "aW1hZ2U=",
+                },
+              ],
+            }),
+          ],
+        },
+      });
+
+      expect(deps.dispatchFirstTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          initialPrompt: "",
+          agent,
+          images: [expect.objectContaining({ attachmentId: "only-image" })],
+        }),
+      );
+      expect(result.created[0]?.initialPromptQueued).toBe(true);
+    },
+  );
 
   it("routes a dual proposal's first turn through the dispatcher", async () => {
     const deps = makeDeps();

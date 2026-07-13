@@ -100,13 +100,15 @@ export function useCollabRowRenderer({
                       q,
                       value,
                     ),
-                  onSubmit: () => {
+                  onSubmit: (answerOverrides) => {
                     const resumeToken =
                       collabEnvelopeForConversation.pause!.resumeToken;
                     const userAnswers: Record<string, string> = {};
-                    for (const [k, v] of Object.entries(
-                      collabUserAnswerDrafts,
-                    )) {
+                    const submittedDrafts = {
+                      ...collabUserAnswerDrafts,
+                      ...answerOverrides,
+                    };
+                    for (const [k, v] of Object.entries(submittedDrafts)) {
                       if (typeof v === "string" && v.trim().length > 0) {
                         userAnswers[k] = v.trim();
                       }

@@ -46,6 +46,7 @@ interface WorkflowBuilderEditorProps {
   onOpenWorkflowSettings?: () => void;
   isMobile?: boolean;
   onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
+  voiceProjectName?: string | null;
 }
 
 export default function WorkflowBuilderEditor(
@@ -75,6 +76,7 @@ function WorkflowBuilderEditorInner({
   onOpenWorkflowSettings,
   isMobile,
   onAutoSwitchPanel,
+  voiceProjectName,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
   const { getNodes } = useReactFlow();
   const draftDefinition = _useGraphWorkflowBuilderStore(
@@ -228,6 +230,7 @@ function WorkflowBuilderEditorInner({
           globalDefaults={globalDefaults}
           activeTab={activeTab}
           onTabChange={onTabChange}
+          voiceProjectName={voiceProjectName}
         />
       </div>
     </div>

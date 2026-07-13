@@ -2,6 +2,8 @@
 
 import {
   useCallback,
+  useEffect,
+  useRef,
   useState,
   type Dispatch,
   type MutableRefObject,
@@ -13,6 +15,7 @@ import {
   type QueueCapability,
 } from "@/lib/agent-backends/capabilities-descriptor";
 import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
@@ -27,6 +30,26 @@ function stripCollabPrefix(text: string): string {
   if (text === "/collab") return "";
   if (text.startsWith("/collab ")) return text.slice("/collab ".length);
   return text;
+}
+
+function samePromptDocument(
+  left: SerializedPromptDoc,
+  right: SerializedPromptDoc,
+): boolean {
+  return (
+    left.prompt === right.prompt &&
+    left.images.length === right.images.length &&
+    left.images.every((image, index) => {
+      const other = right.images[index];
+      return (
+        other !== undefined &&
+        image.attachmentId === other.attachmentId &&
+        image.mediaType === other.mediaType &&
+        image.base64Data === other.base64Data &&
+        image.inlineMarkerIndex === other.inlineMarkerIndex
+      );
+    })
+  );
 }
 
 interface CollabConfig {
@@ -45,7 +68,7 @@ export interface UsePromptSubmissionArgs {
   editorRef: MutableRefObject<PromptEditorHandle | null>;
   setPromptText: Dispatch<SetStateAction<string>>;
   clearImages: () => void;
-  clearPersistedPendingPromptOnSubmit: () => void;
+  suppressPendingPromptAutosaveAfterSubmit: () => void;
   effectiveCollabConfig: CollabConfig;
   clearCollabConfigDraft: (
     project: string,
@@ -64,19 +87,26 @@ export interface UsePromptSubmissionArgs {
     images: ImagePayload[] | undefined,
     effort: EffortLevel | undefined,
     backend: AgentBackendId,
+    submittedPendingPromptText?: string,
   ) => Promise<void>;
-  queueMessage: (text: string, images?: ImagePayload[]) => Promise<void>;
+  queueMessage: (
+    text: string,
+    images?: ImagePayload[],
+    submittedPendingPromptText?: string,
+  ) => Promise<void>;
   queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
   collaborationStartMutation: {
     mutate: (
       input: {
         brief: string;
+        submittedPendingPromptText: string;
         negotiationRounds: number;
         autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
         conversationId: string;
         backend?: AgentBackendId;
         modelId?: string;
         effort?: string;
+        images?: ImagePayload[];
       },
       options?: {
         onSuccess?: () => void;
@@ -101,6 +131,7 @@ export interface UsePromptSubmissionResult {
     text: string;
     images: ImagePayload[];
     busyNames: string[];
+    submittedPendingPromptText: string;
   } | null;
 }
 
@@ -115,7 +146,7 @@ export function usePromptSubmission({
   editorRef,
   setPromptText,
   clearImages,
-  clearPersistedPendingPromptOnSubmit,
+  suppressPendingPromptAutosaveAfterSubmit,
   effectiveCollabConfig,
   clearCollabConfigDraft,
   messagesLength,
@@ -134,13 +165,20 @@ export function usePromptSubmission({
       text: string;
       images: ImagePayload[];
       busyNames: string[];
+      submittedPendingPromptText: string;
     } | null>(null);
+  const pendingImagesRef = useRef(pendingImages);
+  useEffect(() => {
+    pendingImagesRef.current = pendingImages;
+  }, [pendingImages]);
 
   const dispatchPrompt = useCallback(
-    async (text: string, images: ImagePayload[]) => {
-      // Clear the persisted pendingPromptText BEFORE invoking the agent so a
-      // slow agent response can't resurrect stale input on reload.
-      clearPersistedPendingPromptOnSubmit();
+    async (
+      text: string,
+      images: ImagePayload[],
+      submittedPendingPromptText: string,
+    ) => {
+      suppressPendingPromptAutosaveAfterSubmit();
       editorRef.current?.clear();
       setPromptText("");
       clearImages();
@@ -151,6 +189,7 @@ export function usePromptSubmission({
         images.length > 0 ? images : undefined,
         effortSupported ? selectedEffort : undefined,
         selectedBackend,
+        submittedPendingPromptText,
       );
     },
     [
@@ -161,7 +200,7 @@ export function usePromptSubmission({
       selectedEffort,
       selectedBackend,
       clearImages,
-      clearPersistedPendingPromptOnSubmit,
+      suppressPendingPromptAutosaveAfterSubmit,
       editorRef,
       setPromptText,
     ],
@@ -179,13 +218,11 @@ export function usePromptSubmission({
     if (hasCollabPrefix(trimmedPrompt)) {
       const brief = stripCollabPrefix(trimmedPrompt).trim();
       if (!brief) return;
-      const originalPromptText = trimmedPrompt;
       const collabConversationId = conversationId;
-      editorRef.current?.clear();
-      setPromptText("");
       collaborationStartMutation.mutate(
         {
           brief,
+          submittedPendingPromptText: serialized.prompt,
           negotiationRounds: effectiveCollabConfig.negotiationRounds,
           autonomousResolutionThreshold:
             effectiveCollabConfig.autonomousResolutionThreshold,
@@ -193,10 +230,19 @@ export function usePromptSubmission({
           backend: selectedBackend,
           modelId: selectedModel,
           ...(effortSupported ? { effort: selectedEffort } : {}),
+          ...(hasImages ? { images: serialized.images } : {}),
         },
         {
           onSuccess: () => {
-            clearPersistedPendingPromptOnSubmit();
+            const currentDocument = editorRef.current?.serialize(
+              pendingImagesRef.current,
+            ) ?? { prompt: promptTextRef.current, images: [] };
+            if (!samePromptDocument(currentDocument, serialized)) return;
+            suppressPendingPromptAutosaveAfterSubmit();
+            editorRef.current?.clear();
+            setPromptText("");
+            clearImages();
+            clearCollabConfigDraft(projectName, sessionName, conversationId);
           },
           onError: (err) => {
             const message =
@@ -209,15 +255,9 @@ export function usePromptSubmission({
               conversationId: collabConversationId,
               error: message,
             });
-            setPromptText(originalPromptText);
-            const editorInstance = editorRef.current?.editor;
-            if (editorInstance) {
-              editorInstance.commands.setContent(originalPromptText);
-            }
           },
         },
       );
-      clearCollabConfigDraft(projectName, sessionName, conversationId);
       return;
     }
 
@@ -240,13 +280,14 @@ export function usePromptSubmission({
       // the composer gates this case so it is normally unreachable.
       if (!capability.acceptsWhileRunning) return;
 
-      clearPersistedPendingPromptOnSubmit();
+      suppressPendingPromptAutosaveAfterSubmit();
       editorRef.current?.clear();
       setPromptText("");
       clearImages();
       await queueMessage(
         trimmedPrompt,
         imagePayloads.length > 0 ? imagePayloads : undefined,
+        serialized.prompt,
       );
       return;
     }
@@ -265,11 +306,12 @@ export function usePromptSubmission({
         text: trimmedPrompt,
         images: imagePayloads,
         busyNames: busyOthers.map((c, i) => c.name ?? `Conversation ${i + 1}`),
+        submittedPendingPromptText: serialized.prompt,
       });
       return;
     }
 
-    await dispatchPrompt(trimmedPrompt, imagePayloads);
+    await dispatchPrompt(trimmedPrompt, imagePayloads, serialized.prompt);
   }, [
     sending,
     conversationId,
@@ -292,15 +334,16 @@ export function usePromptSubmission({
     sessionName,
     conversations,
     dispatchPrompt,
-    clearPersistedPendingPromptOnSubmit,
+    suppressPendingPromptAutosaveAfterSubmit,
     enqueuePromptErrorToast,
   ]);
 
   const handleConcurrentConfirm = useCallback(() => {
     if (!pendingConcurrentSubmission) return;
-    const { text, images } = pendingConcurrentSubmission;
+    const { text, images, submittedPendingPromptText } =
+      pendingConcurrentSubmission;
     setPendingConcurrentSubmission(null);
-    void dispatchPrompt(text, images);
+    void dispatchPrompt(text, images, submittedPendingPromptText);
   }, [pendingConcurrentSubmission, dispatchPrompt]);
 
   const cancelConcurrentSubmission = useCallback(() => {

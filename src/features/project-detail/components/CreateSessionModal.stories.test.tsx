@@ -23,6 +23,7 @@ vi.mock("@/hooks/useVoiceRecorder", () => ({
     isAvailable: false,
     toggleRecording: vi.fn(),
     stopRecording: vi.fn(),
+    cancelRecording: vi.fn(),
   }),
 }));
 
@@ -39,7 +40,9 @@ describe("CreateSessionModal stories", () => {
     await Default.run();
     expect(screen.getByText("New Session")).toBeInTheDocument();
     expect(screen.getByLabelText("Session name")).toBeInTheDocument();
-    expect(screen.getByText("Create Session")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create Session" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
 

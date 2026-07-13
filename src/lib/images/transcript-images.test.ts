@@ -5,6 +5,7 @@ import path from "node:path";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import {
   saveTranscriptImage,
+  saveWorkflowTranscriptImage,
   readTranscriptImage,
   externalizeImageBlocks,
   resolveImageRefs,
@@ -105,6 +106,35 @@ describe("saveTranscriptImage", () => {
     expect(jpg).toMatch(/[/\\]1\.jpg$/);
     expect(gif).toMatch(/[/\\]2\.gif$/);
     expect(webp).toMatch(/[/\\]3\.webp$/);
+  });
+});
+
+describe("saveWorkflowTranscriptImage", () => {
+  it("keeps concurrent workflow bytes isolated at the same conversation index", async () => {
+    const winnerBytes = Buffer.from("winner").toString("base64");
+    const loserBytes = Buffer.from("loser").toString("base64");
+    const [winnerPath, loserPath] = await Promise.all([
+      saveWorkflowTranscriptImage(
+        "conv-race",
+        "workflow-winner",
+        1,
+        "image/png",
+        winnerBytes,
+        TEST_DIR,
+      ),
+      saveWorkflowTranscriptImage(
+        "conv-race",
+        "workflow-loser",
+        1,
+        "image/png",
+        loserBytes,
+        TEST_DIR,
+      ),
+    ]);
+
+    expect(winnerPath).not.toBe(loserPath);
+    expect((await readFile(winnerPath)).toString("base64")).toBe(winnerBytes);
+    expect((await readFile(loserPath)).toString("base64")).toBe(loserBytes);
   });
 });
 

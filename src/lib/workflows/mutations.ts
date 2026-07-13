@@ -20,6 +20,7 @@ import {
 } from "@/lib/collaboration/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
 import type {
   WorkflowDefinitionRecord,
   WorkflowLiveEditOperation,
@@ -421,12 +422,14 @@ export function useCollaborationStartMutation(
   return useMutation({
     mutationFn: (params: {
       brief: string;
+      submittedPendingPromptText: string;
       negotiationRounds: number;
       autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
       conversationId: string;
       backend?: AgentBackendId;
       modelId?: string;
       effort?: string;
+      images?: ImagePayload[];
     }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration`,

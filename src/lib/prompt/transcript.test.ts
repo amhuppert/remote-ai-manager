@@ -11,6 +11,7 @@ import {
   _resetTranscriptReadCacheForTesting,
   _resetTranscriptEntriesCacheForTesting,
   appendTranscriptEntry,
+  appendTranscriptEntryOnce,
   appendNotice,
   getTranscriptPath,
   parseCommandContent,
@@ -88,6 +89,26 @@ describe("appendTranscriptEntry", () => {
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0]!).role).toBe("user");
     expect(JSON.parse(lines[1]!).role).toBe("assistant");
+  });
+
+  it("appends a stable entry id only once across concurrent retries", async () => {
+    const entry = {
+      id: "collab-start:conv-once:0",
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "user",
+      role: "user" as const,
+      content: [{ type: "text" as const, text: "/collab design X" }],
+    };
+
+    await Promise.all([
+      appendTranscriptEntryOnce("conv-once", entry, TEST_DIR),
+      appendTranscriptEntryOnce("conv-once", entry, TEST_DIR),
+    ]);
+
+    const filePath = path.join(TEST_DIR, "transcripts", "conv-once.jsonl");
+    const lines = (await readFile(filePath, "utf-8")).trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!).id).toBe(entry.id);
   });
 
   it("stores non-display entries (system, result) without role", async () => {
