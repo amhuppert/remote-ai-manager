@@ -8,6 +8,7 @@ import type {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import {
   ArrowUpIcon,
   CheckIcon,
@@ -24,15 +25,12 @@ import {
   computeProgress,
   initDraftMap,
   isAnswered,
-  parseContext,
   questionKey,
   statusOfQuestion,
   summaryOfQuestion,
   toggleOption,
   type AnswerDraft,
-  type ContextBlock,
   type DraftMap,
-  type InlineSpan,
   type QuestionStatus,
 } from "@/components/ask-question-logic";
 
@@ -173,54 +171,6 @@ function ProgressBar({
   );
 }
 
-function InlineSpans({ spans }: { spans: InlineSpan[] }) {
-  return (
-    <>
-      {spans.map((span, i) => {
-        if (span.kind === "code")
-          return (
-            <code
-              key={i}
-              className="rounded-sm bg-bg-raised px-[5px] py-[1px] font-mono text-[0.8em] text-[color:var(--aq-accent)]"
-            >
-              {span.text}
-            </code>
-          );
-        if (span.kind === "bold")
-          return (
-            <strong key={i} className="font-semibold text-text-primary">
-              {span.text}
-            </strong>
-          );
-        return <span key={i}>{span.text}</span>;
-      })}
-    </>
-  );
-}
-
-function ContextBody({ text }: { text: string }) {
-  const blocks: ContextBlock[] = useMemo(() => parseContext(text), [text]);
-  return (
-    <>
-      {blocks.map((block, i) =>
-        block.kind === "p" ? (
-          <p key={i} className="mb-[0.5em] last:mb-0">
-            <InlineSpans spans={block.spans} />
-          </p>
-        ) : (
-          <ul key={i} className="my-[0.3em] pl-[1.1em]">
-            {block.items.map((item, j) => (
-              <li key={j} className="mb-[0.25em]">
-                <InlineSpans spans={item} />
-              </li>
-            ))}
-          </ul>
-        ),
-      )}
-    </>
-  );
-}
-
 function ContextDisclosure({
   question,
   open,
@@ -250,8 +200,8 @@ function ContextDisclosure({
         </span>
       </button>
       {open && (
-        <div className="pr-md pb-md pl-[calc(var(--space-md)+22px)] text-[0.84rem] leading-[1.62] text-text-secondary">
-          <ContextBody text={question.context} />
+        <div className="pr-md pb-md pl-[calc(var(--space-md)+22px)]">
+          <CompactMarkdown content={question.context} />
         </div>
       )}
     </div>

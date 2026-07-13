@@ -41,6 +41,7 @@ const srcDir = path.join(repoRoot, "src");
  */
 const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}ui${path.sep}`,
+  `${path.sep}components${path.sep}markdown${path.sep}`,
   // Pilot slice (design task 5.1): ProjectCard is fully utility-first.
   `${path.sep}features${path.sep}projects-index${path.sep}components${path.sep}ProjectCard.tsx`,
   // Stage B-1 feature waves: each surface migrated wholesale to utilities +

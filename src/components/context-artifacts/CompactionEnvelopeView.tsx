@@ -10,7 +10,7 @@ import {
 import { disclosureChevron } from "@/components/ui/disclosure-recipe";
 import { Button } from "@/components/ui/Button";
 import { ChevronDownIcon } from "@/components/icons";
-import ArtifactMarkdown from "./ArtifactMarkdown";
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
 import type {
   AnchoredNote,
   CommandEntry,
@@ -408,7 +408,7 @@ export default function CompactionEnvelopeView({
               className="flex flex-col gap-[10px]"
             >
               <SectionHeading label="Agent brief" />
-              <ArtifactMarkdown content={envelope.agentBrief} />
+              <DocumentMarkdown content={envelope.agentBrief} />
             </section>
 
             <section

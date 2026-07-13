@@ -4,6 +4,7 @@
       "comment": "Tailwind class-sorting is scoped to MIGRATED, utility-first surfaces only. Applying prettier-plugin-tailwindcss repo-wide would mangle CC's pervasive legacy `${cond ? ' suffix' : ''}` conditional-className idiom (the plugin trims the significant join space). Append a path here as each feature wave migrates to utilities — same spirit as the utility-collisions allowlist and the CSS ratchet.",
       "files": [
         "src/components/ui/**/*.{ts,tsx}",
+        "src/components/markdown/**/*.{ts,tsx}",
         "src/features/projects-index/components/ProjectCard.tsx",
         "src/features/projects-index/ProjectsIndexPage.tsx",
         "src/features/config/**/*.{ts,tsx}",

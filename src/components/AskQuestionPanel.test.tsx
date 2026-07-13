@@ -248,3 +248,107 @@ describe("AskQuestionPanel", () => {
     expect(onNavigate).toHaveBeenCalledWith(1);
   });
 });
+
+describe("AskQuestionPanel context disclosure (canonical Markdown)", () => {
+  // GFM constructs (strikethrough, links, tables) plus raw HTML — none of which
+  // the removed markdown-lite parser could produce or neutralize.
+  const RICH_CONTEXT = [
+    "Uses ~~legacy~~ **canonical** rendering. See [the design](https://example.com/design).",
+    "",
+    "| Store | TTL |",
+    "| --- | --- |",
+    "| Redis | yes |",
+    "",
+    '<button data-injected onclick="alert(1)">danger</button>',
+  ].join("\n");
+
+  function compactRoot(container: HTMLElement): HTMLElement | null {
+    return container.querySelector<HTMLElement>(
+      '[data-markdown-intent="compact"]',
+    );
+  }
+
+  function renderWithContext(context = RICH_CONTEXT) {
+    return render(
+      <AskQuestionPanel
+        questions={[makeQuestion({ context })]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+  }
+
+  it("renders the context through the compact canonical adapter with full GFM", async () => {
+    const { container } = renderWithContext();
+
+    await waitFor(() => expect(compactRoot(container)).not.toBeNull());
+
+    // Strikethrough, bold, and safe links — GFM the markdown-lite parser lacked.
+    expect(screen.getByText("legacy").tagName).toBe("DEL");
+    expect(screen.getByText("canonical").tagName).toBe("STRONG");
+    const link = screen.getByRole("link", { name: "the design" });
+    expect(link).toHaveAttribute("href", "https://example.com/design");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+
+    // A GFM table renders as a real, accessible table.
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Store" }),
+    ).toBeInTheDocument();
+  });
+
+  it("displays raw HTML in the context as text and never executes it", async () => {
+    const { container } = renderWithContext();
+    await waitFor(() => expect(compactRoot(container)).not.toBeNull());
+
+    expect(container.querySelector("button[data-injected]")).toBeNull();
+    expect(compactRoot(container)?.textContent).toContain(
+      "<button data-injected",
+    );
+  });
+
+  it("keeps the disclosure host-owned: toggling hides then re-reveals the canonical body", async () => {
+    const { container } = renderWithContext();
+    const toggle = screen.getByRole("button", { name: /context/i });
+
+    // Open by default.
+    await waitFor(() => expect(compactRoot(container)).not.toBeNull());
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(compactRoot(container)).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(compactRoot(container)).not.toBeNull());
+  });
+
+  it("preserves option selection and answer serialization when a context is present", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AskQuestionPanel
+        questions={[makeQuestion({ context: RICH_CONTEXT })]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("SQLite"));
+    fireEvent.click(screen.getByRole("button", { name: /^send/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith("batch-1", {
+      storage: {
+        selected: ["SQLite"],
+        note: null,
+        skipped: false,
+        question: "Which store?",
+      },
+    });
+  });
+});

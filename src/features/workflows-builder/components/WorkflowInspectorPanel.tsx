@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import {
   TabsContent,
   TabsList,
@@ -70,10 +70,6 @@ import {
   implementerChipLabel,
   validatorChipLabel,
 } from "@/components/workflow-config/InspectorChips";
-
-const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
-  ssr: false,
-});
 
 const WB_INSPECTOR_CLASS =
   "flex w-[500px] min-w-[500px] flex-col overflow-hidden border-l border-solid border-border-subtle bg-bg-surface max-1180:w-[420px] max-1180:min-w-[420px] max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-l-0 max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden";
@@ -282,9 +278,7 @@ function MarkdownReadView({
       }}
     >
       {value.trim() ? (
-        <div className="wb-markdown-inline">
-          <MarkdownContent content={value} />
-        </div>
+        <CompactMarkdown content={value} />
       ) : (
         <span className="text-text-tertiary">{placeholder}</span>
       )}

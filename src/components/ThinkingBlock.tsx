@@ -2,21 +2,7 @@
 
 import { useState, memo } from "react";
 import { cn } from "@/lib/ui/cn";
-import LazyMarkdownContent from "./LazyMarkdownContent";
-
-// Markdown styling for the reasoning body, scoped to this aside so it reads as
-// the dimmer "inner voice" (italic body prose, secondary color) rather than the
-// primary answer. Block spacing is restored explicitly because the base reset
-// zeroes all margins/padding. Inline code follows the design's code-span spec;
-// the `[&_pre_code]` resets undo that pill treatment inside fenced blocks.
-const THINKING_MARKDOWN = cn(
-  "[&_p]:m-0 [&_p+p]:mt-[0.6em]",
-  "[&_ul]:my-[0.5em] [&_ul]:list-disc [&_ul]:pl-[1.3em] [&_ol]:my-[0.5em] [&_ol]:list-decimal [&_ol]:pl-[1.3em] [&_li]:mt-[0.2em] [&_li]:marker:text-text-tertiary",
-  "[&_strong]:font-semibold [&_strong]:text-text-primary",
-  "[&_a]:text-cyan-dim hover:[&_a]:underline",
-  "[&_code]:rounded-sm [&_code]:border [&_code]:border-border-subtle [&_code]:bg-bg-surface [&_code]:px-[5px] [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.82em] [&_code]:not-italic [&_code]:text-cyan-dim",
-  "[&_pre]:my-[0.5em] [&_pre]:not-italic [&_pre_code]:border-0 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit",
-);
+import { MessageMarkdown } from "@/components/markdown/Markdown";
 
 interface Props {
   /** The model's reasoning summary. Empty when `redacted`. */
@@ -149,13 +135,8 @@ export default memo(function ThinkingBlock({
         </span>
       </button>
       {expanded && (
-        <div
-          className={cn(
-            "pt-sm pb-[2px] font-body text-[0.85rem] leading-[1.66] text-text-secondary italic",
-            THINKING_MARKDOWN,
-          )}
-        >
-          {text && <LazyMarkdownContent content={text} />}
+        <div className="pt-sm pb-[2px] font-body text-[0.85rem] leading-[1.66] text-text-secondary italic">
+          {text && <MessageMarkdown content={text} />}
           {redactedCount > 0 && (
             <div className="mt-sm flex items-center gap-[7px] font-mono opacity-70">
               <span className="inline-flex shrink-0 text-text-tertiary">

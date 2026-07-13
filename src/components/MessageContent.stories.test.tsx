@@ -13,7 +13,7 @@ const { TextOnly, WithToolUse, MultipleBlocks, ToolUseWithoutInput } =
 describe("MessageContent stories", () => {
   it("TextOnly renders markdown text", async () => {
     await TextOnly.run();
-    // MarkdownContent is loaded via next/dynamic — wait for first paint.
+    // The canonical Markdown adapter defers its renderer — wait for first paint.
     expect(
       await screen.findByText(/refactor the authentication module/),
     ).toBeInTheDocument();

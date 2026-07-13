@@ -74,75 +74,6 @@
   color: var(--text-primary);
 }
 
-.message-content code {
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  background: var(--bg-raised);
-  padding: 2px 6px;
-  border-radius: 3px;
-  color: var(--cyan);
-}
-
-.message-content pre {
-  margin-top: var(--space-sm);
-  background: var(--bg-base);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-md);
-  overflow-x: auto;
-}
-
-.message-content pre code {
-  background: none;
-  padding: 0;
-  font-size: 0.8rem;
-  line-height: 1.55;
-  color: var(--text-primary);
-}
-
-/* Code block copy button */
-.code-block-wrapper {
-  position: relative;
-}
-
-.code-block-copy-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity 0.12s ease,
-    background 0.12s ease,
-    color 0.12s ease;
-  z-index: 2;
-}
-
-.code-block-wrapper:hover .code-block-copy-btn {
-  opacity: 1;
-}
-
-.code-block-copy-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  border-color: var(--border-default);
-}
-
-.code-block-copy-btn--copied {
-  color: var(--green);
-  opacity: 1;
-}
-
 /* Mermaid diagrams */
 .mermaid-diagram {
   margin: 0 0 1em;
@@ -477,20 +408,13 @@
 }
 
 /* ============================================================
-   Right Pane (diff + markdown viewer wrapper)
+   Right Pane (diff panel positioning)
    ============================================================ */
 
 /* RightPane.tsx is utility-first; `right-pane`/`right-pane-body` survive only as
-   structural hooks for the descendant rules below, which position the non-owned
-   DiffPanel (`.sidebar-diff-panel`, session.css) and the preserved markdown
-   viewer from outside. */
+   structural hooks for the descendant rule below, which positions the non-owned
+   DiffPanel (`.sidebar-diff-panel`, session.css) from outside. */
 .right-pane-body > .sidebar-diff-panel {
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-
-.right-pane-body > .markdown-viewer {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
@@ -498,24 +422,6 @@
 .right-pane .sidebar-diff-panel {
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   border-top: none;
-}
-
-/* ============================================================
-   Spec Browser
-   ============================================================ */
-
-.spec-browser-content .markdown-viewer {
-  flex: 1;
-  min-height: 0;
-}
-
-/* ============================================================
-   Docs Panel
-   ============================================================ */
-
-.docs-panel-content .markdown-viewer {
-  flex: 1;
-  min-height: 0;
 }
 
 /* ============================================================
@@ -563,11 +469,7 @@
    Collab — preserved residuals. The authored collab chrome was
    migrated to Tailwind utilities in
    src/features/session/conversation/collab/**; what remains here is
-   NOT convertible to utilities (docs/tailwind-conventions.md §5):
-   the pinned-top portal target (authored by ConversationPanel), the
-   navigation-pulse keyframe + its reduced-motion block, rendered
-   markdown output (react-markdown generated DOM), and the
-   resolved-meta inline-code size scope.
+   NOT convertible to utilities (docs/tailwind-conventions.md §5).
    ============================================================ */
 
 /* Retained because a remaining out-of-scope consumer still uses `.collab-passage`:
@@ -616,57 +518,6 @@
     outline: 2px solid var(--cyan);
     outline-offset: 2px;
   }
-}
-
-.collab-markdown-text > :first-child {
-  margin-top: 0;
-}
-
-.collab-markdown-text > :last-child {
-  margin-bottom: 0;
-}
-
-.collab-markdown-text > p {
-  margin: 0;
-}
-
-.collab-markdown-text > p + p {
-  margin-top: var(--space-sm);
-}
-
-.collab-markdown-text > ul,
-.collab-markdown-text > ol {
-  margin: var(--space-xs) 0;
-  padding-left: 1.25em;
-}
-
-.collab-markdown-text > ul > li + li,
-.collab-markdown-text > ol > li + li {
-  margin-top: 2px;
-}
-
-.collab-markdown-text code {
-  font-family: var(--font-mono);
-  font-size: 0.82em;
-  background: var(--bg-raised);
-  padding: 1px 5px;
-  border-radius: 3px;
-  color: var(--cyan);
-}
-
-.collab-markdown-text pre {
-  margin: var(--space-sm) 0;
-}
-
-.collab-markdown-text pre code {
-  background: none;
-  padding: 0;
-  color: inherit;
-  font-size: inherit;
-}
-
-.collab-resolution-decision-card-resolved-meta .collab-markdown-text code {
-  font-size: 0.95em;
 }
 
 /* Session-filter chip (sidebar filters row) */

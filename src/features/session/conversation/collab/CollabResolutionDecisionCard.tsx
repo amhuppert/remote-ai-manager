@@ -200,11 +200,7 @@ export default function CollabResolutionDecisionCard({
                     className="min-w-0 flex-auto"
                   />
                 </div>
-                {/* `collab-resolution-decision-card-resolved-meta` is kept ONLY
-                    as a generated-content scope: it has no own-element rule left
-                    in conversation.css, just the preserved descendant rule that
-                    sizes inline code inside this rationale's markdown. */}
-                <div className="collab-resolution-decision-card-resolved-meta flex flex-wrap items-baseline gap-x-[4px] gap-y-0 font-mono text-[0.7rem] text-text-secondary">
+                <div className="flex flex-wrap items-baseline gap-x-[4px] gap-y-0 font-mono text-[0.7rem] text-text-secondary">
                   <span className="shrink-0">
                     {item.resolved_autonomously ? "auto" : "manual"} ·
                   </span>{" "}

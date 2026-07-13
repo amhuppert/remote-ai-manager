@@ -9,8 +9,6 @@ import {
   initDraftMap,
   isAnswered,
   isResolved,
-  parseContext,
-  parseInline,
   questionKey,
   statusOfQuestion,
   summaryOfQuestion,
@@ -258,37 +256,5 @@ describe("buildAnswerPayload", () => {
     const payload = buildAnswerPayload(questions, drafts);
     expect(Object.keys(payload)).toEqual(["0", "1"]);
     expect(payload["0"]?.selected).toEqual(["SQLite"]);
-  });
-});
-
-describe("parseInline", () => {
-  it("splits bold and code runs from plain text", () => {
-    expect(parseInline("a **b** c `d` e")).toEqual([
-      { kind: "text", text: "a " },
-      { kind: "bold", text: "b" },
-      { kind: "text", text: " c " },
-      { kind: "code", text: "d" },
-      { kind: "text", text: " e" },
-    ]);
-  });
-  it("returns a single text span when there is no markup", () => {
-    expect(parseInline("plain")).toEqual([{ kind: "text", text: "plain" }]);
-  });
-});
-
-describe("parseContext", () => {
-  it("groups consecutive bullet lines into a list and keeps paragraphs", () => {
-    const blocks = parseContext("Intro line\n- one\n- two\nOutro");
-    expect(blocks).toEqual([
-      { kind: "p", spans: [{ kind: "text", text: "Intro line" }] },
-      {
-        kind: "ul",
-        items: [
-          [{ kind: "text", text: "one" }],
-          [{ kind: "text", text: "two" }],
-        ],
-      },
-      { kind: "p", spans: [{ kind: "text", text: "Outro" }] },
-    ]);
   });
 });

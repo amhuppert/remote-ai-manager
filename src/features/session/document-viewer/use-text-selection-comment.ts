@@ -40,7 +40,10 @@ export function useTextSelectionComment(
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
 
   useEffect(() => {
-    const onPointerUp = (): void => {
+    // A selection completes on pointer release (mouse/touch) OR key release
+    // (keyboard, e.g. Shift+Arrow) — keyboard selections never fire a pointer
+    // event, so both must arm the affordance.
+    const onSelectionComplete = (): void => {
       const contentEl = contentRef.current;
       if (!contentEl || content == null) return;
       const selection = window.getSelection();
@@ -66,8 +69,12 @@ export function useTextSelectionComment(
       );
     };
 
-    document.addEventListener("pointerup", onPointerUp);
-    return () => document.removeEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointerup", onSelectionComplete);
+    document.addEventListener("keyup", onSelectionComplete);
+    return () => {
+      document.removeEventListener("pointerup", onSelectionComplete);
+      document.removeEventListener("keyup", onSelectionComplete);
+    };
   }, [contentRef, content]);
 
   const clear = useCallback((): void => {

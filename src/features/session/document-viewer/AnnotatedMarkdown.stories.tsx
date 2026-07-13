@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import type {
   CommentStatus,
   DocumentComment,
@@ -8,6 +9,58 @@ import AnnotatedMarkdown, {
   type CreateCommentInput,
 } from "./AnnotatedMarkdown";
 import type { ResolvedComment } from "./types";
+
+/**
+ * Programmatically select `quote` within the rendered document and complete the
+ * selection the way a real user would — on pointer release (mouse/touch) or key
+ * release (keyboard). Used by the interaction plays to exercise the affordance.
+ */
+// The document renderer is deferred (lazy chunk + recogito), so first paint can
+// take a few seconds on a cold Storybook — give the interaction waits ample room.
+const PLAY_TIMEOUT = 15000;
+
+async function selectPassage(
+  root: HTMLElement,
+  quote: string,
+  complete: "pointerup" | "keyup",
+): Promise<void> {
+  const paragraph = await waitFor(
+    () => {
+      const el = Array.from(root.querySelectorAll("p")).find((node) =>
+        node.textContent?.includes(quote),
+      );
+      if (!el) throw new Error(`passage not rendered yet: ${quote}`);
+      return el;
+    },
+    { timeout: PLAY_TIMEOUT },
+  );
+  const textNode = Array.from(paragraph.childNodes).find(
+    (node): node is Text =>
+      node.nodeType === Node.TEXT_NODE &&
+      (node.textContent ?? "").includes(quote),
+  );
+  if (!textNode) throw new Error(`no text node for: ${quote}`);
+  const offset = (textNode.textContent ?? "").indexOf(quote);
+
+  const range = document.createRange();
+  range.setStart(textNode, offset);
+  range.setEnd(textNode, offset + quote.length);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+
+  if (complete === "pointerup") {
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  } else {
+    document.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "ArrowRight",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+  }
+}
 
 const meta = {
   title: "Session/DocumentViewer/AnnotatedMarkdown",
@@ -167,13 +220,51 @@ export const PendingAndSent: Story = {
     isLoading: false,
     comments: DOC_A_COMMENTS,
   },
+  // Gutter geometry: the anchored comments each paint one marker, and every
+  // marker sits fully left of the document text — the reserved inset keeps the
+  // 50px gutter clear of the canonical body so pins never overlap the prose.
+  play: async ({ canvasElement }) => {
+    const viewport = await waitFor(
+      () => {
+        const el = canvasElement.querySelector<HTMLElement>(
+          "[data-markdown-viewport]",
+        );
+        if (!el) throw new Error("viewport not rendered");
+        return el;
+      },
+      { timeout: PLAY_TIMEOUT },
+    );
+
+    const pins = await waitFor(
+      () => {
+        const found = within(viewport).getAllByRole("button", {
+          name: /on this passage$/,
+        });
+        // two anchored blocks (the stale comment paints no marker)
+        if (found.length !== 2) throw new Error("gutter not measured yet");
+        return found;
+      },
+      { timeout: PLAY_TIMEOUT },
+    );
+
+    const textLeft = Math.min(
+      ...Array.from(viewport.querySelectorAll("p")).map(
+        (p) => p.getBoundingClientRect().left,
+      ),
+    );
+    for (const pin of pins) {
+      await expect(pin.getBoundingClientRect().right).toBeLessThanOrEqual(
+        textLeft + 1,
+      );
+    }
+  },
 };
 
 /**
  * A document taller than its bounded host: the body must scroll WITHIN the
- * viewer (the `AnnotatedMarkdown` container is the scroll ancestor; the
- * `.r6o-annotatable` wrapper and `.markdown-viewer` stay content-height and move
- * inside it so recogito can track scroll) rather than overflowing the host.
+ * viewer (the `MarkdownViewport` is the scroll ancestor; the `.r6o-annotatable`
+ * wrapper and the source-mapped document root stay content-height and move inside
+ * it so recogito can track scroll) rather than overflowing the host.
  */
 const LONG_DOC = [
   "# Long Document",
@@ -262,6 +353,50 @@ export const SelectionCreateFlow: Story = {
           onCreateComment={setCreated}
         />
       </>
+    );
+  },
+  // Selection → comment for BOTH input modalities: a keyboard-completed selection
+  // (keyup) reveals the affordance, and a pointer-completed selection carries
+  // through to a queued comment.
+  play: async ({ canvasElement }) => {
+    const body = within(document.body);
+
+    // Keyboard selection completes on key release, never firing a pointer event.
+    await selectPassage(canvasElement, "agent-produced markdown", "keyup");
+    await body.findByRole(
+      "button",
+      { name: "Comment" },
+      { timeout: PLAY_TIMEOUT },
+    );
+
+    // Dismiss the affordance (outside pointerdown), then drive the pointer path.
+    document.body.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true }),
+    );
+    await waitFor(() =>
+      expect(body.queryByRole("button", { name: "Comment" })).toBeNull(),
+    );
+
+    await selectPassage(canvasElement, "selection commenting", "pointerup");
+    await userEvent.click(
+      await body.findByRole(
+        "button",
+        { name: "Comment" },
+        { timeout: PLAY_TIMEOUT },
+      ),
+    );
+    await userEvent.type(
+      await body.findByLabelText("Comment note"),
+      "Clarify what counts as agent-produced.",
+    );
+    const add = body.getByRole("button", { name: "Add comment" });
+    await expect(add).toBeEnabled();
+    await userEvent.click(add);
+
+    await waitFor(() =>
+      expect(within(canvasElement).getByTestId("created")).toHaveTextContent(
+        '"send":false',
+      ),
     );
   },
 };

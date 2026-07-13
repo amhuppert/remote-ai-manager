@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import CollabResolutionDecisionCard from "@/features/session/conversation/collab/CollabResolutionDecisionCard";
 
 const BASE_PROPS = {
@@ -74,5 +74,26 @@ describe("CollabResolutionDecisionCard", () => {
     const failed = container.querySelector("[data-next-action]");
     expect(failed?.getAttribute("data-next-action")).toBe("fail");
     expect(failed?.textContent ?? "").toContain("Failed");
+  });
+
+  it("renders the rationale narrative through the compact canonical adapter", async () => {
+    const { container } = render(
+      <CollabResolutionDecisionCard
+        {...BASE_PROPS}
+        defaultOpen
+        round={1}
+        next_action="continue_negotiation"
+        trajectory={[3]}
+        rationale="Resolved via ~~old~~ **new** consensus."
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-markdown-intent="compact"]'),
+      ).not.toBeNull(),
+    );
+    expect(screen.getByText("new").tagName).toBe("STRONG");
+    expect(container.querySelector(".collab-markdown-text")).toBeNull();
   });
 });

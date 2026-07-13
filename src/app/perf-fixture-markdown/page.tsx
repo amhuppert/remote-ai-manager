@@ -1,10 +1,6 @@
 "use client";
 
-import dynamic from "next/dynamic";
-
-const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
-  ssr: false,
-});
+import { MessageMarkdown } from "@/components/markdown/Markdown";
 
 const content = `# Per-language prism chunk verification fixture
 
@@ -44,7 +40,7 @@ export default function PerfFixtureMarkdownPage(): React.JSX.Element {
         minHeight: "100vh",
       }}
     >
-      <MarkdownContent content={content} />
+      <MessageMarkdown content={content} />
     </div>
   );
 }

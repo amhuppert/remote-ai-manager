@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 
-import MarkdownContent from "@/components/MarkdownContent";
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
@@ -552,9 +552,7 @@ function ResolvedContent({
             {" · captured "}
             {formatRelativeTime(resolved.capturedAt)}
           </span>
-          <div className="text-[0.8rem] leading-[1.6] text-text-primary">
-            <MarkdownContent content={resolved.markdown} />
-          </div>
+          <DocumentMarkdown content={resolved.markdown} />
         </div>
       );
     case "session":
@@ -601,11 +599,7 @@ function ResolvedContent({
         </div>
       );
     case "note":
-      return (
-        <div className="text-[0.8rem] leading-[1.6] text-text-primary">
-          <MarkdownContent content={resolved.markdown} />
-        </div>
-      );
+      return <DocumentMarkdown content={resolved.markdown} />;
   }
 }
 

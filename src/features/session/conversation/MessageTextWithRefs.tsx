@@ -9,13 +9,13 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { TicketRefAttrs } from "@/lib/tickets/schemas";
 import { segmentTextByRefs } from "@/lib/conversations/ref-segments";
-import DefaultMarkdownContent from "@/components/LazyMarkdownContent";
+import { MessageMarkdown } from "@/components/markdown/Markdown";
 import DefaultConversationLinkChip from "./ConversationLinkChip";
 import DefaultMessageRefLinkChip from "./MessageRefLinkChip";
 import DefaultTicketRefLinkChip from "./TicketRefLinkChip";
 
 export interface MessageTextWithRefsDeps {
-  MarkdownContent: React.ComponentType<{ content: string }>;
+  MessageMarkdown: React.ComponentType<{ content: string }>;
   ConversationLinkChip: React.ComponentType<{ attrs: ConversationRefAttrs }>;
   MessageRefChip: React.ComponentType<{ attrs: MessageRefAttrs }>;
   TicketRefChip: React.ComponentType<{ attrs: TicketRefAttrs }>;
@@ -33,7 +33,7 @@ export function createMessageTextWithRefs(
   }: MessageTextWithRefsProps): React.JSX.Element {
     const segments = segmentTextByRefs(text);
     if (!segments.some((segment) => segment.type !== "text")) {
-      return <deps.MarkdownContent content={text} />;
+      return <deps.MessageMarkdown content={text} />;
     }
 
     return (
@@ -50,7 +50,7 @@ export function createMessageTextWithRefs(
           if (segment.type === "ticket-ref") {
             return <deps.TicketRefChip key={index} attrs={segment.attrs} />;
           }
-          return <deps.MarkdownContent key={index} content={segment.text} />;
+          return <deps.MessageMarkdown key={index} content={segment.text} />;
         })}
       </>
     );
@@ -58,7 +58,7 @@ export function createMessageTextWithRefs(
 }
 
 export const MessageTextWithRefs = createMessageTextWithRefs({
-  MarkdownContent: DefaultMarkdownContent,
+  MessageMarkdown,
   ConversationLinkChip: DefaultConversationLinkChip,
   MessageRefChip: DefaultMessageRefLinkChip,
   TicketRefChip: DefaultTicketRefLinkChip,

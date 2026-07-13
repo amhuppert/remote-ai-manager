@@ -16,6 +16,7 @@ import tailwindGuardrails from "./eslint-rules/tailwind-guardrails.mjs";
 // and the .prettierrc class-sort overrides).
 const MIGRATED_UTILITY_FIRST = [
   "src/components/ui/**/*.{ts,tsx}",
+  "src/components/markdown/**/*.{ts,tsx}",
   "src/features/projects-index/components/ProjectCard.tsx",
   "src/features/projects-index/ProjectsIndexPage.tsx",
   // Stage B-1 migrated feature surfaces.

@@ -92,8 +92,9 @@ export default function RecogitoAnnotator({
           scroller (fixed rect) or wraps an inner scroller, its rect never
           changes and only the annotations visible at the initial scroll position
           ever paint (the rest show a gutter pin but no highlight). The scroll
-          lives on `AnnotatedMarkdown`'s container; this wrapper and the inner
-          `.markdown-viewer` stay content-height (no `overflow`/`flex-1`).
+          lives on `AnnotatedMarkdown`'s `MarkdownViewport`; this wrapper and the
+          inner source-mapped document root stay content-height (no
+          `overflow`/`flex-1`).
 
           Display-only configuration:
           - `annotatingEnabled={false}`: selection→comment is driven by our own

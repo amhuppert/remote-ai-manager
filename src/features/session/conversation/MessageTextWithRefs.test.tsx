@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type {
   ConversationRefAttrs,
   MessageRefAttrs,
 } from "@/lib/conversations/schemas";
 import type { TicketRefAttrs } from "@/lib/tickets/schemas";
-import { createMessageTextWithRefs } from "./MessageTextWithRefs";
+import MessageTextWithRefs, {
+  createMessageTextWithRefs,
+} from "./MessageTextWithRefs";
 
 function MarkdownStub({ content }: { content: string }): React.JSX.Element {
   return <span data-testid="md">{content}</span>;
@@ -49,7 +51,7 @@ function TicketChipStub({
 }
 
 const Component = createMessageTextWithRefs({
-  MarkdownContent: MarkdownStub,
+  MessageMarkdown: MarkdownStub,
   ConversationLinkChip: ChipStub,
   MessageRefChip: MsgChipStub,
   TicketRefChip: TicketChipStub,
@@ -80,7 +82,7 @@ function makeRef(overrides: Record<string, string> = {}): string {
 }
 
 describe("MessageTextWithRefs", () => {
-  it("renders plain text through MarkdownContent when no refs are present", () => {
+  it("renders plain text through MessageMarkdown when no refs are present", () => {
     const { container, getAllByTestId } = render(
       <Component text="just some plain text" />,
     );
@@ -239,5 +241,63 @@ describe("MessageTextWithRefs", () => {
     expect(joined).toContain(badRef);
     expect(joined).toContain("hello");
     expect(joined).toContain("world");
+  });
+});
+
+// The production-wired default renders ordinary text segments through the
+// canonical message adapter (`[data-markdown-intent="message"]`), not a
+// caller-local Markdown loader.
+describe("MessageTextWithRefs — canonical message adapter", () => {
+  function markdownRoots(container: HTMLElement): HTMLElement[] {
+    return Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-markdown-intent="message"]',
+      ),
+    );
+  }
+
+  it("renders plain text through the canonical message adapter", async () => {
+    const { container } = render(
+      <MessageTextWithRefs text="Ship **the migration** now." />,
+    );
+
+    await waitFor(() => {
+      expect(markdownRoots(container)).toHaveLength(1);
+    });
+    const strong = await screen.findByText("the migration");
+    expect(strong.tagName).toBe("STRONG");
+    expect(strong.closest('[data-markdown-intent="message"]')).not.toBeNull();
+  });
+
+  it("segments a conversation-ref into canonical text around an interactive chip in order", async () => {
+    const ref = makeRef({
+      "conversation-id": "conv-1",
+      "conversation-name": "Refactor",
+    });
+    const { container } = render(
+      <MessageTextWithRefs text={`before ${ref} after`} />,
+    );
+
+    // The chip stays an interactive link even though the surrounding prose is
+    // now canonical Markdown.
+    const chip = await screen.findByRole("link", { name: /Refactor/ });
+    expect(chip).toHaveAttribute("href");
+
+    await waitFor(() => {
+      expect(markdownRoots(container)).toHaveLength(2);
+    });
+    const [beforeRoot, afterRoot] = markdownRoots(container);
+    expect(beforeRoot?.textContent).toContain("before");
+    expect(afterRoot?.textContent).toContain("after");
+
+    // Document order: canonical text, then chip, then canonical text.
+    expect(
+      beforeRoot!.compareDocumentPosition(chip) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      chip.compareDocumentPosition(afterRoot!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
   });
 });

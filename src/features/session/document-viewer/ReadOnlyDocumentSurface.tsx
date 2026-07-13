@@ -1,10 +1,7 @@
 "use client";
 
-import MarkdownViewer from "@/components/MarkdownViewer";
-import {
-  markdownViewerComponents,
-  rehypeStampSourcePosition,
-} from "./markdown-components";
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
+import MarkdownViewport from "@/components/markdown/MarkdownViewport";
 import type { DocumentContentErrorKind } from "@/lib/documents/queries";
 
 export default function ReadOnlyDocumentSurface({
@@ -30,11 +27,8 @@ export default function ReadOnlyDocumentSurface({
     );
   }
   return (
-    <MarkdownViewer
-      content={content}
-      isLoading={isLoading}
-      components={markdownViewerComponents}
-      rehypePlugins={[rehypeStampSourcePosition]}
-    />
+    <MarkdownViewport isLoading={isLoading}>
+      {content === null ? null : <DocumentMarkdown content={content} />}
+    </MarkdownViewport>
   );
 }

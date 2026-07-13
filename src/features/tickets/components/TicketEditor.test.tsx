@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TicketDetail } from "@/lib/tickets/schemas";
-import { TicketTitleEditor } from "./TicketEditor";
+import { TicketDescriptionEditor, TicketTitleEditor } from "./TicketEditor";
 
 const DETAIL: TicketDetail = {
   id: "ticket-1",
@@ -79,5 +79,92 @@ describe("TicketTitleEditor mutation feedback", () => {
       );
       await Promise.resolve();
     });
+  });
+});
+
+function renderDescriptionEditor(description: string) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <TicketDescriptionEditor
+        projectName="alpha"
+        number={1}
+        description={description}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("TicketDescriptionEditor preview", () => {
+  it("renders the description through the canonical document adapter", async () => {
+    renderDescriptionEditor("## Rollout plan\n\nShip the migration.");
+
+    const heading = await screen.findByRole("heading", {
+      name: "Rollout plan",
+    });
+    expect(heading.tagName).toBe("H2");
+    // DocumentMarkdown stamps a document-intent root; this pins that the host
+    // renders through the canonical document adapter.
+    expect(heading.closest("[data-markdown-intent='document']")).not.toBeNull();
+    // Raw markdown markers must not leak into the rendered output.
+    expect(screen.queryByText(/## Rollout plan/)).not.toBeInTheDocument();
+  });
+
+  it("swaps the preview for a textarea on Edit and restores it on Cancel", async () => {
+    renderDescriptionEditor("## Rollout plan\n\nShip the migration.");
+    const user = userEvent.setup();
+
+    await screen.findByRole("heading", { name: "Rollout plan" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const textarea = screen.getByRole("textbox", {
+      name: "Ticket description",
+    });
+    expect(textarea).toHaveValue("## Rollout plan\n\nShip the migration.");
+    expect(
+      screen.queryByRole("heading", { name: "Rollout plan" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Rollout plan" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Ticket description" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("persists an edited description through the update mutation on Save", async () => {
+    const patchBodies: string[] = [];
+    vi.stubGlobal("fetch", (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== "PATCH") throw new Error("Unexpected request");
+      patchBodies.push(String(init.body));
+      return Promise.resolve(
+        Response.json({ ...DETAIL, description: "Rewritten." }),
+      );
+    });
+    renderDescriptionEditor("## Rollout plan\n\nShip the migration.");
+    const user = userEvent.setup();
+
+    await screen.findByRole("heading", { name: "Rollout plan" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const textarea = screen.getByRole("textbox", {
+      name: "Ticket description",
+    });
+    await user.clear(textarea);
+    await user.type(textarea, "Rewritten.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).toContain("Rewritten.");
+    expect(
+      screen.queryByRole("textbox", { name: "Ticket description" }),
+    ).not.toBeInTheDocument();
   });
 });

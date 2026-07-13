@@ -9,8 +9,8 @@ import type { ResolvedComment } from "../types";
  * (`@recogito/react-text-annotator` → `@annotorious/react` → its `openseadragon`
  * peer) touches browser-only globals at module load, so it is pulled in via
  * `next/dynamic` with `ssr: false`: the server bundle never references it and the
- * client lazily loads the chunk after hydration. Mirrors the
- * `MarkdownViewer` → `MermaidDiagram` client-only dynamic-import pattern.
+ * client lazily loads the chunk after hydration. Mirrors the canonical Markdown
+ * module's client-only dynamic-import pattern for its Mermaid dispatch.
  */
 const RecogitoAnnotator = dynamic(() => import("./RecogitoAnnotator"), {
   ssr: false,

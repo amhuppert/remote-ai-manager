@@ -129,8 +129,11 @@ describe("AttachmentIndex stories", () => {
     await NotePreview.run();
 
     // The play function clicked View on the note entry — resolve renders.
-    await waitFor(() =>
-      expect(screen.getByText("keep keyboard nav")).toBeInTheDocument(),
+    // The note body renders through the deferred markdown adapter, whose dynamic
+    // import can exceed the default 1s waitFor budget under full-suite load.
+    await waitFor(
+      () => expect(screen.getByText("keep keyboard nav")).toBeInTheDocument(),
+      { timeout: 15000 },
     );
 
     // Collapse: the same action toggles the preview away.
@@ -145,10 +148,12 @@ describe("AttachmentIndex stories", () => {
     await AllKinds.run();
     const entry = await findEntry(FILE_DESCRIPTION);
     fireEvent.click(within(entry).getByRole("button", { name: "View" }));
-    await waitFor(() =>
-      expect(
-        screen.getByText(/GET \/api\/tickets returns the lean list/),
-      ).toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(/GET \/api\/tickets returns the lean list/),
+        ).toBeInTheDocument(),
+      { timeout: 15000 },
     );
   });
 

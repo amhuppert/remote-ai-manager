@@ -15,20 +15,28 @@ describe("CompactionEnvelopeView", () => {
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
-  it("renders the agent brief split into paragraphs on blank lines", () => {
+  it("renders the agent brief split into paragraphs on blank lines", async () => {
     const envelope = {
       ...buildMaximalEnvelope(),
       agentBrief: "First paragraph of the brief.\n\nSecond paragraph.",
     };
     render(<CompactionEnvelopeView envelope={envelope} />);
-    const first = screen.getByText("First paragraph of the brief.");
-    const second = screen.getByText("Second paragraph.");
+    // The agent brief renders through the deferred DocumentMarkdown adapter,
+    // whose dynamic import can exceed the default 1s findBy budget under load.
+    const first = await screen.findByText(
+      "First paragraph of the brief.",
+      undefined,
+      {
+        timeout: 15000,
+      },
+    );
+    const second = await screen.findByText("Second paragraph.");
     expect(first.tagName).toBe("P");
     expect(second.tagName).toBe("P");
     expect(first).not.toBe(second);
   });
 
-  it("renders markdown in the agent brief (headings, inline code, lists)", () => {
+  it("renders the agent brief through the canonical document adapter", async () => {
     const envelope = {
       ...buildMaximalEnvelope(),
       agentBrief:
@@ -36,23 +44,30 @@ describe("CompactionEnvelopeView", () => {
         "Persisted through `repo.ts`.\n\n- one\n- two",
     };
     render(<CompactionEnvelopeView envelope={envelope} />);
-    expect(screen.getByRole("heading", { name: "What shipped" }).tagName).toBe(
-      "H3",
+    const heading = await screen.findByRole(
+      "heading",
+      { name: "What shipped" },
+      { timeout: 15000 },
     );
+    expect(heading.tagName).toBe("H3");
+    // The canonical DocumentMarkdown adapter stamps a document-intent root.
+    expect(heading.closest("[data-markdown-intent='document']")).not.toBeNull();
     expect(screen.getByText("repo.ts").tagName).toBe("CODE");
     expect(screen.getByText("one").closest("li")).not.toBeNull();
     // Raw markdown markers must not leak into the rendered output.
     expect(screen.queryByText(/### What shipped/)).not.toBeInTheDocument();
   });
 
-  it("lets the agent brief fill the container width without a prose cap", () => {
+  it("lets the agent brief fill the container width without a prose cap", async () => {
     const envelope = {
       ...buildMaximalEnvelope(),
       agentBrief: "First paragraph of the brief.\n\nSecond paragraph.",
     };
     render(<CompactionEnvelopeView envelope={envelope} />);
-    const briefContainer = screen.getByText(
-      "First paragraph of the brief.",
+    const briefContainer = (
+      await screen.findByText("First paragraph of the brief.", undefined, {
+        timeout: 15000,
+      })
     ).parentElement!;
     expect(briefContainer.className).not.toMatch(/max-w-\[\d+ch\]/);
   });

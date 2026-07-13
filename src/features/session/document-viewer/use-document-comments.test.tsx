@@ -3,15 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useRef } from "react";
 import { render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import MarkdownViewer from "@/components/MarkdownViewer";
+import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
 import type {
   DocumentComment,
   DocumentRef,
 } from "@/lib/document-comments/schemas";
-import {
-  markdownViewerComponents,
-  rehypeStampSourcePosition,
-} from "./markdown-components";
 import { findCommentBlock, blockAnnotatableText } from "./anchor-dom";
 import {
   resolveComments,
@@ -61,21 +57,23 @@ function comment(
   };
 }
 
-function renderDoc(): HTMLElement {
-  const { container } = render(
-    <MarkdownViewer
-      content={DOC}
-      isLoading={false}
-      components={markdownViewerComponents}
-      rehypePlugins={[rehypeStampSourcePosition]}
-    />,
+/**
+ * Render the canonical source-mapped document adapter and wait for it to stamp
+ * blocks (its renderer is deferred), so the pure re-anchor helpers run against
+ * the same rendered DOM the annotated surface produces.
+ */
+async function renderDoc(): Promise<HTMLElement> {
+  const { container } = render(<SourceMappedDocumentMarkdown content={DOC} />);
+  await waitFor(
+    () => expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
+    { timeout: 15000 },
   );
   return container;
 }
 
 describe("resolveComments", () => {
-  it("anchors a comment whose quote still matches at its stored offsets", () => {
-    const container = renderDoc();
+  it("anchors a comment whose quote still matches at its stored offsets", async () => {
+    const container = await renderDoc();
     const block = findCommentBlock(container, comment({ id: "a" }).anchor)!;
     const text = blockAnnotatableText(block);
     const charStart = text.indexOf("quotable passage");
@@ -99,8 +97,8 @@ describe("resolveComments", () => {
     });
   });
 
-  it("marks a comment stale when its quote is gone from the document", () => {
-    const container = renderDoc();
+  it("marks a comment stale when its quote is gone from the document", async () => {
+    const container = await renderDoc();
     const [resolved] = resolveComments(
       [
         comment({
@@ -117,8 +115,8 @@ describe("resolveComments", () => {
     expect(resolved?.reanchor.status).toBe("stale");
   });
 
-  it("marks a comment stale when its block no longer exists", () => {
-    const container = renderDoc();
+  it("marks a comment stale when its block no longer exists", async () => {
+    const container = await renderDoc();
     const [resolved] = resolveComments(
       [
         comment({
@@ -131,11 +129,11 @@ describe("resolveComments", () => {
     expect(resolved?.stale).toBe(true);
   });
 
-  it("re-anchors to the live offset when the passage shifted within its block", () => {
+  it("re-anchors to the live offset when the passage shifted within its block", async () => {
     // Stored offsets are wrong (point at the start of the block) but the quote
     // is present nearby — re-anchoring must report the CURRENT rendered offset,
     // not the stored one, so the highlight lands on the real passage.
-    const container = renderDoc();
+    const container = await renderDoc();
     const [resolved] = resolveComments(
       [
         comment({
@@ -165,6 +163,42 @@ describe("resolveComments", () => {
 
 // ── Hook ────────────────────────────────────────────────────────────────────
 
+/**
+ * Drives the hook over a ref'd container whose stamped block only appears AFTER
+ * the initial render — mirroring the canonical renderer, which defers its real
+ * DOM behind a fallback and stamps blocks a tick later. The hook must re-anchor
+ * when those blocks appear, so a comment resolved before the render finishes
+ * does not stay permanently stale.
+ */
+function DeferredRenderHarness({
+  onState,
+  rendered,
+}: {
+  onState: (state: DocumentCommentsState) => void;
+  rendered: boolean;
+}): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  const state = useDocumentComments({
+    docRef: DOC_REF,
+    content: DOC,
+    contentRef: ref,
+  });
+  onState(state);
+  return (
+    <div ref={ref}>
+      {rendered ? (
+        <p
+          data-cc-line="5"
+          data-cc-section="section-two"
+          data-cc-heading="Section Two"
+        >
+          Body of section two has a quotable passage inside it.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function makeClient(): QueryClient {
   return new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -179,9 +213,11 @@ const DOC_REF: DocumentRef = {
 };
 
 /**
- * Renders the real markdown into a ref'd container and drives the hook over it,
- * exposing the latest hook state via `onState` so assertions read resolved,
- * re-anchored output (not a hand-rolled fake).
+ * Renders the real (deferred) source-mapped document into a ref'd container and
+ * drives the hook over it, exposing the latest hook state via `onState` so
+ * assertions read resolved, re-anchored output (not a hand-rolled fake). Because
+ * the canonical renderer stamps blocks asynchronously, this also exercises that
+ * the hook re-anchors once the rendered DOM appears.
  */
 function HookHarness({
   docRef,
@@ -199,14 +235,7 @@ function HookHarness({
   onState(state);
   return (
     <div ref={ref}>
-      {docRef ? (
-        <MarkdownViewer
-          content={DOC}
-          isLoading={false}
-          components={markdownViewerComponents}
-          rehypePlugins={[rehypeStampSourcePosition]}
-        />
-      ) : null}
+      {docRef ? <SourceMappedDocumentMarkdown content={DOC} /> : null}
     </div>
   );
 }
@@ -262,9 +291,13 @@ describe("useDocumentComments", () => {
       ]),
     );
 
-    const byId = new Map(latest!.comments.map((c) => [c.id, c]));
-    expect(byId.get("anchored")?.stale).toBe(false);
-    expect(byId.get("stale")?.stale).toBe(true);
+    // The anchored comment must resolve non-stale once the deferred renderer has
+    // stamped the block — the hook re-anchors when the rendered DOM appears.
+    await waitFor(() => {
+      const byId = new Map(latest!.comments.map((c) => [c.id, c]));
+      expect(byId.get("anchored")?.stale).toBe(false);
+      expect(byId.get("stale")?.stale).toBe(true);
+    });
   });
 
   it("splits out pending comments and groups anchored comments by block", async () => {
@@ -292,6 +325,36 @@ describe("useDocumentComments", () => {
     expect(latest?.anchoredGroups[0]?.count).toBe(2);
     // any pending in the block → the group reads pending
     expect(latest?.anchoredGroups[0]?.status).toBe("pending");
+  });
+
+  it("re-anchors comments when the deferred render stamps blocks after mount", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse([comment({ id: "anchored", status: "pending" })]),
+    );
+
+    let latest: DocumentCommentsState | undefined;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={makeClient()}>
+        {children}
+      </QueryClientProvider>
+    );
+    const { rerender } = render(
+      <DeferredRenderHarness rendered={false} onState={(s) => (latest = s)} />,
+      { wrapper },
+    );
+
+    // Comment loads while the block is not yet stamped → resolves stale.
+    await waitFor(() => expect(latest?.commentCount).toBe(1));
+    await waitFor(() => expect(latest?.comments[0]?.stale).toBe(true));
+
+    // The deferred renderer stamps the block — the hook must re-anchor without
+    // any change to the comments query or content props.
+    rerender(
+      <DeferredRenderHarness rendered={true} onState={(s) => (latest = s)} />,
+    );
+
+    await waitFor(() => expect(latest?.comments[0]?.stale).toBe(false));
+    expect(latest?.anchoredGroups).toHaveLength(1);
   });
 
   it("reports zero comments and never fetches when no document is active", async () => {

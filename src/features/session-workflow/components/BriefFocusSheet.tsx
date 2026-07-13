@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import {
@@ -11,10 +10,7 @@ import {
 } from "@/components/ui/Dialog";
 import { IconButton } from "@/components/ui/IconButton";
 import { CloseIcon } from "@/components/icons";
-
-const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
-  ssr: false,
-});
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
 
 // Large centered read view for the execution inspector's long-form Markdown
 // brief fields (description, acceptance criteria). The execution page renders
@@ -57,8 +53,8 @@ export default function BriefFocusSheet({
         <DialogTitle layoutClassName="min-w-0 truncate">
           {contextTitle}
         </DialogTitle>
-        <div className="wb-markdown-inline mt-md box-border max-h-[60vh] min-h-[200px] overflow-y-auto rounded-md border border-solid border-border-default bg-bg-base px-lg py-md text-[0.82rem] leading-[1.6] text-text-primary">
-          <MarkdownContent content={content} />
+        <div className="mt-md box-border max-h-[60vh] min-h-[200px] overflow-y-auto rounded-md border border-solid border-border-default bg-bg-base">
+          <DocumentMarkdown content={content} />
         </div>
         <footer className="mt-md flex items-center">
           <DialogClose asChild>

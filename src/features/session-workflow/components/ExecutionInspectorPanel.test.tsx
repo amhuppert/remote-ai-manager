@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -83,7 +89,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
       />,
     );
 
-    // MarkdownContent is loaded via next/dynamic — wait for it to mount.
+    // The canonical Markdown adapter defers its renderer — wait for it to mount.
     // Cold-load of the dynamic chunk can exceed the 1000ms default timeout
     // under parallel test-suite load.
     const codeEl = await screen.findByText("bunx vitest run", undefined, {
@@ -123,6 +129,45 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
 
     const codeEl = await screen.findByText("handleSubmit");
     expect(codeEl.closest("code")).toBeTruthy();
+  });
+
+  it("routes summary and issue descriptions through the compact canonical adapter", async () => {
+    const { execution, events } = makeExecutionWithHistory([
+      makeValidationEvent({
+        pass: false,
+        summary: "Uses ~~legacy~~ **canonical** rendering",
+        issues: [
+          {
+            taskId: "task-1",
+            title: "Missing coverage",
+            description: "No test for the ~~old~~ path",
+          },
+        ],
+        sessionRef: {
+          engine: "claude",
+          lane: "context_validator",
+          conversationId: "conv-canonical",
+        },
+      }),
+    ]);
+
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    // GFM strikethrough proves it flows through the canonical renderer.
+    const del = await screen.findByText("legacy", undefined, {
+      timeout: 15000,
+    });
+    expect(del.tagName).toBe("DEL");
+    expect(del.closest('[data-markdown-intent="compact"]')).not.toBeNull();
+    // Migrated inspector fields no longer lean on the generated-descendant hook.
+    expect(container.querySelector(".wb-markdown-inline")).toBeNull();
   });
 });
 
@@ -345,12 +390,22 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
       />,
     );
 
-    expect(
-      await screen.findByText("Everything checks out."),
-    ).toBeInTheDocument();
+    // The plain-text response first paints in the adapter's streaming
+    // fallback, which is then swapped for the loaded canonical root. Poll until
+    // the text lands inside that root so we never assert on the detached
+    // fallback node (cold chunk load can exceed the 1000ms default).
+    await waitFor(
+      () =>
+        expect(
+          screen
+            .getByText("Everything checks out.")
+            .closest('[data-markdown-intent="compact"]'),
+        ).not.toBeNull(),
+      { timeout: 15000 },
+    );
   });
 
-  it("parses JSON codex response and renders summary as markdown instead of raw JSON", () => {
+  it("parses JSON codex response and renders summary as markdown instead of raw JSON", async () => {
     const jsonResponse = JSON.stringify({
       pass: true,
       summary: "Validated with `bunx vitest run` command. All 23 tests passed.",
@@ -381,15 +436,18 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
       />,
     );
 
+    // Summary text should be rendered (markdown strips backticks into <code>);
+    // the canonical adapter loads its renderer behind one dynamic import.
+    const codeEl = await screen.findByText("bunx vitest run", undefined, {
+      timeout: 15000,
+    });
+    expect(codeEl.closest("code")).toBeTruthy();
+    expect(screen.getByText(/All 23 tests passed/)).toBeInTheDocument();
     // Raw JSON must NOT appear
     expect(screen.queryByText(jsonResponse)).not.toBeInTheDocument();
-    // Summary text should be rendered (markdown strips backticks into <code>)
-    expect(screen.getByText(/All 23 tests passed/)).toBeInTheDocument();
-    // Inline code from backticks should be rendered as <code>
-    expect(screen.getByText("bunx vitest run").closest("code")).toBeTruthy();
   });
 
-  it("renders issues from parsed codex response JSON", () => {
+  it("renders issues from parsed codex response JSON", async () => {
     const jsonResponse = JSON.stringify({
       pass: false,
       summary: "Found issues in implementation",
@@ -432,12 +490,16 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     // Issue titles rendered
     expect(screen.getByText("Missing test coverage")).toBeInTheDocument();
     expect(screen.getByText("Type error")).toBeInTheDocument();
-    // Issue descriptions rendered with markdown (backtick code)
-    expect(screen.getByText("handleSubmit").closest("code")).toBeTruthy();
+    // Issue descriptions rendered with markdown (backtick code) once the
+    // canonical adapter's renderer resolves behind its dynamic import.
+    const codeEl = await screen.findByText("handleSubmit", undefined, {
+      timeout: 15000,
+    });
+    expect(codeEl.closest("code")).toBeTruthy();
     expect(screen.getByText("processData").closest("code")).toBeTruthy();
   });
 
-  it("renders non-JSON codex response as markdown", () => {
+  it("renders non-JSON codex response as markdown", async () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
@@ -463,8 +525,12 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
       />,
     );
 
-    // Inline code from backticks should be rendered as <code>
-    expect(screen.getByText("vitest").closest("code")).toBeTruthy();
+    // Inline code from backticks should be rendered as <code> once the
+    // canonical adapter's renderer resolves behind its dynamic import.
+    const codeEl = await screen.findByText("vitest", undefined, {
+      timeout: 15000,
+    });
+    expect(codeEl.closest("code")).toBeTruthy();
   });
 });
 

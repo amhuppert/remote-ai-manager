@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import {
   TabsContent,
   TabsList,
@@ -69,8 +68,7 @@ const wbValidationIssue =
   "py-1 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-border-dim";
 const wbValidationIssueTitle =
   "text-[0.72rem] font-semibold text-text-primary leading-[1.3]";
-const wbValidationIssueDesc =
-  "text-[0.7rem] text-text-tertiary leading-[1.4] mt-px";
+const wbValidationIssueDesc = "mt-px";
 
 const graphNodeBadgeBase =
   "text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-1 px-[10px] rounded-[20px] whitespace-nowrap shrink-0 mt-[2px]";
@@ -99,9 +97,7 @@ const wbTaskDetailInput =
   "w-full bg-bg-base border border-border-default rounded-sm text-text-primary text-[0.75rem] py-[7px] px-[10px] outline-none transition-[border-color] duration-150 box-border focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]";
 const wbTaskDetailTextarea = "resize-y min-h-[56px] mb-[2px]";
 
-const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
-  ssr: false,
-});
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CollapsibleText from "@/components/CollapsibleText";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
@@ -178,8 +174,8 @@ function MarkdownReadView({
         }
       }}
     >
-      <div className="wb-markdown-inline max-h-[220px] overflow-hidden">
-        <MarkdownContent content={value} />
+      <div className="max-h-[220px] overflow-hidden">
+        <CompactMarkdown content={value} />
       </div>
     </div>
   );
@@ -527,9 +523,7 @@ function CodexArtifactSection({
         <CollapsibleText maxCollapsedHeight={120}>
           {parsed ? (
             <>
-              <div className="wb-markdown-inline text-[0.72rem] leading-[1.45] break-words text-text-secondary">
-                <MarkdownContent content={parsed.summary} />
-              </div>
+              <CompactMarkdown content={parsed.summary} />
               {parsed.issues.length > 0 && (
                 <div className={wbValidationBody}>
                   <div className={wbValidationSectionLabel}>
@@ -541,13 +535,8 @@ function CodexArtifactSection({
                         <div className={wbValidationIssueTitle}>
                           {issue.title}
                         </div>
-                        <div
-                          className={cn(
-                            wbValidationIssueDesc,
-                            "wb-markdown-inline",
-                          )}
-                        >
-                          <MarkdownContent content={issue.description} />
+                        <div className={wbValidationIssueDesc}>
+                          <CompactMarkdown content={issue.description} />
                         </div>
                       </li>
                     ))}
@@ -556,9 +545,7 @@ function CodexArtifactSection({
               )}
             </>
           ) : (
-            <div className="wb-markdown-inline text-[0.72rem] leading-[1.45] break-words text-text-secondary">
-              <MarkdownContent content={reviewArtifact.response} />
-            </div>
+            <CompactMarkdown content={reviewArtifact.response} />
           )}
         </CollapsibleText>
       )}
@@ -603,9 +590,9 @@ function ValidationCard({
               : "bg-red",
           )}
         />
-        <span className="wb-markdown-inline min-w-0 flex-1 leading-[1.4] text-text-secondary">
-          <MarkdownContent content={event.summary} />
-        </span>
+        <div className="min-w-0 flex-1">
+          <CompactMarkdown content={event.summary} />
+        </div>
         <span className="shrink-0 text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {formatTimestamp(event.occurredAt)}
         </span>
@@ -660,10 +647,8 @@ function ValidationCard({
               {event.issues.map((issue, idx) => (
                 <li key={idx} className={wbValidationIssue}>
                   <div className={wbValidationIssueTitle}>{issue.title}</div>
-                  <div
-                    className={cn(wbValidationIssueDesc, "wb-markdown-inline")}
-                  >
-                    <MarkdownContent content={issue.description} />
+                  <div className={wbValidationIssueDesc}>
+                    <CompactMarkdown content={issue.description} />
                   </div>
                 </li>
               ))}
@@ -1205,9 +1190,7 @@ function DetailView({
                             Instructions
                           </span>
                           <CollapsibleText maxCollapsedHeight={100}>
-                            <div className="wb-markdown-inline">
-                              <MarkdownContent content={task.instructions} />
-                            </div>
+                            <CompactMarkdown content={task.instructions} />
                           </CollapsibleText>
                         </div>
                         {taskState?.failureMessage && (

@@ -9,7 +9,8 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/Accordion";
-import MarkdownViewer from "@/components/MarkdownViewer";
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
+import MarkdownViewport from "@/components/markdown/MarkdownViewport";
 import DocumentSurface from "@/features/session/document-viewer/DocumentSurface";
 import type { DocumentRef } from "@/lib/document-comments/schemas";
 import { useKiroDocTreeQuery, useKiroDocFileQuery } from "@/lib/kiro/queries";
@@ -199,11 +200,14 @@ export function SpecBrowserView({
         )}
         <div className="spec-browser-content flex min-h-0 flex-1 flex-col">
           {contentSlot ?? (
-            <MarkdownViewer
-              content={fileContent ?? null}
+            <MarkdownViewport
               isLoading={isFileLoading}
               emptyMessage="File not found."
-            />
+            >
+              {fileContent == null ? null : (
+                <DocumentMarkdown content={fileContent} />
+              )}
+            </MarkdownViewport>
           )}
         </div>
       </div>

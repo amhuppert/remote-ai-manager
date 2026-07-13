@@ -8,19 +8,20 @@ import {
   CC_SECTION_ATTR,
   resolveBlockMeta,
   resolveSelectionBlock,
-} from "./markdown-components";
+} from "@/components/markdown/markdown-source-map";
 import type { ResolvedComment } from "./types";
 
 /**
  * Pure DOM helpers that bridge a stored single-block comment anchor to the live
- * rendered markdown: locate the block element by its source-position stamp and
- * build a DOM Range for the passage. No recogito here — the recogito-specific
- * selector conversion sits in the client-only annotator module — so these stay
- * unit-testable in jsdom.
+ * rendered markdown: locate the block element by its source-position stamp
+ * (stamped by the canonical source-mapped document adapter) and build a DOM Range
+ * for the passage. No recogito here — the recogito-specific selector conversion
+ * sits in the client-only annotator module — so these stay unit-testable in
+ * jsdom.
  *
- * Offsets are counted over the block's ANNOTATABLE text only (descendants of
- * `.not-annotatable`, e.g. the decorative chevron, are skipped), matching the
- * text model the annotator and selection-derivation use.
+ * Offsets are counted over the block's ANNOTATABLE text only (descendants marked
+ * `.not-annotatable` are skipped), matching the text model the annotator and
+ * selection-derivation use.
  */
 
 const NOT_ANNOTATABLE_SELECTOR = ".not-annotatable";
@@ -51,9 +52,9 @@ function isAnnotatable(node: Node): boolean {
 
 /**
  * The block's annotatable text: every text node in document order, skipping
- * `.not-annotatable` descendants (the decorative chevron). This is the exact
- * text model the stored anchor offsets and `tryReanchorExact` operate over, so
- * it is what re-anchoring re-reads from the live DOM.
+ * `.not-annotatable` descendants. This is the exact text model the stored anchor
+ * offsets and `tryReanchorExact` operate over, so it is what re-anchoring
+ * re-reads from the live DOM.
  */
 export function blockAnnotatableText(block: HTMLElement): string {
   const walker = block.ownerDocument.createTreeWalker(

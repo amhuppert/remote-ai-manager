@@ -131,8 +131,8 @@ export const askQuestionItemSchema = z.object({
   question: z.string(),
   header: z.string().optional(),
   // Free prose expanding on the question (implications & trade-offs). Rendered
-  // in the panel's context disclosure with a markdown-lite subset (**bold**,
-  // `code`, and "- " bullet lines).
+  // in the panel's context disclosure through the canonical `CompactMarkdown`
+  // adapter (full GitHub Flavored Markdown; raw HTML shown as text).
   context: z.string().optional(),
   options: z.array(askQuestionOptionSchema),
   multiSelect: z.boolean().default(false),

@@ -185,7 +185,7 @@ describe("MessageContent — thinking block", () => {
 
     // Markdown renders to semantic elements (not literal **/`` text). The
     // markdown renderer is lazy-loaded, so allow for the dynamic import under
-    // parallel-suite load (mirrors MarkdownContent.test.tsx's 5s budget).
+    // parallel-suite load (mirrors the canonical Markdown adapter's deferred-render budget).
     const strong = await screen.findByText(
       "the selector",
       {},

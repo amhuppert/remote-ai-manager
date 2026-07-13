@@ -1,12 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
-import MarkdownViewer from "@/components/MarkdownViewer";
+import { render, waitFor } from "@testing-library/react";
+import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
-import {
-  markdownViewerComponents,
-  rehypeStampSourcePosition,
-} from "./markdown-components";
 import {
   blockAnnotatableText,
   deriveAnchorFromSelection,
@@ -66,20 +62,22 @@ function resolved(
   return { ...c, reanchor, stale: reanchor.status === "stale" };
 }
 
-function renderDoc() {
-  return render(
-    <MarkdownViewer
-      content={DOC}
-      isLoading={false}
-      components={markdownViewerComponents}
-      rehypePlugins={[rehypeStampSourcePosition]}
-    />,
+/**
+ * Render the canonical source-mapped document adapter and wait for it to stamp
+ * blocks (its renderer is deferred), so the anchor helpers run against the exact
+ * DOM the annotated surface produces.
+ */
+async function renderDoc(): Promise<HTMLElement> {
+  const { container } = render(<SourceMappedDocumentMarkdown content={DOC} />);
+  await waitFor(() =>
+    expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
   );
+  return container;
 }
 
 describe("findCommentBlock", () => {
-  it("finds the stamped block matching an anchor's line + section", () => {
-    const { container } = renderDoc();
+  it("finds the stamped block matching an anchor's line + section", async () => {
+    const container = await renderDoc();
     const anchor = baseComment({}).anchor;
     const block = findCommentBlock(container, anchor);
     expect(block).not.toBeNull();
@@ -87,8 +85,8 @@ describe("findCommentBlock", () => {
     expect(block?.textContent).toContain("quotable passage");
   });
 
-  it("returns null when no block matches", () => {
-    const { container } = renderDoc();
+  it("returns null when no block matches", async () => {
+    const container = await renderDoc();
     const block = findCommentBlock(container, {
       ...baseComment({}).anchor,
       line: 999,
@@ -98,8 +96,8 @@ describe("findCommentBlock", () => {
 });
 
 describe("rangeFromBlockOffsets", () => {
-  it("builds a range whose text equals the passage at the given offsets", () => {
-    const { container } = renderDoc();
+  it("builds a range whose text equals the passage at the given offsets", async () => {
+    const container = await renderDoc();
     const block = findCommentBlock(container, baseComment({}).anchor)!;
     // "quotable" begins at offset 26 of "Body of section two has a quotable passage inside it."
     const text = block.textContent ?? "";
@@ -110,8 +108,8 @@ describe("rangeFromBlockOffsets", () => {
     expect(range?.toString()).toBe("quotable");
   });
 
-  it("returns null for out-of-bounds offsets", () => {
-    const { container } = renderDoc();
+  it("returns null for out-of-bounds offsets", async () => {
+    const container = await renderDoc();
     const block = findCommentBlock(container, baseComment({}).anchor)!;
     expect(rangeFromBlockOffsets(block, 0, 100000)).toBeNull();
   });
@@ -191,20 +189,17 @@ const SEL_DOC = [
   "", // 9
 ].join("\n");
 
-function renderSelDoc() {
-  return render(
-    <MarkdownViewer
-      content={SEL_DOC}
-      isLoading={false}
-      components={markdownViewerComponents}
-      rehypePlugins={[rehypeStampSourcePosition]}
-    />,
+async function renderSelDoc(): Promise<HTMLElement> {
+  const { container } = render(
+    <SourceMappedDocumentMarkdown content={SEL_DOC} />,
   );
+  await waitFor(() => expect(container.querySelector("ul li")).not.toBeNull());
+  return container;
 }
 
 describe("blockAnnotatableText", () => {
-  it("returns a paragraph's full text", () => {
-    const { container } = renderSelDoc();
+  it("returns a paragraph's full text", async () => {
+    const container = await renderSelDoc();
     const block = findCommentBlock(container, {
       line: 5,
       sectionId: "section-two",
@@ -214,19 +209,16 @@ describe("blockAnnotatableText", () => {
     );
   });
 
-  it("excludes the decorative chevron from a bullet's text", () => {
-    const { container } = renderSelDoc();
+  it("returns a list item's text (the disc marker is a CSS pseudo, not text)", async () => {
+    const container = await renderSelDoc();
     const li = container.querySelector("ul li") as HTMLElement;
-    expect(li.textContent).toContain("›");
-    const text = blockAnnotatableText(li);
-    expect(text.includes("›")).toBe(false);
-    expect(text).toBe("alpha beta gamma item");
+    expect(blockAnnotatableText(li)).toBe("alpha beta gamma item");
   });
 });
 
 describe("selectionOffsetsInBlock", () => {
-  it("round-trips offsets built by rangeFromBlockOffsets", () => {
-    const { container } = renderSelDoc();
+  it("round-trips offsets built by rangeFromBlockOffsets", async () => {
+    const container = await renderSelDoc();
     const block = findCommentBlock(container, {
       line: 5,
       sectionId: "section-two",
@@ -241,23 +233,19 @@ describe("selectionOffsetsInBlock", () => {
     expect(offsets?.blockText.slice(start, end)).toBe("quotable passage");
   });
 
-  it("excludes the decorative chevron from a bullet's annotatable text", () => {
-    const { container } = renderSelDoc();
+  it("maps a list item's offsets over its plain text", async () => {
+    const container = await renderSelDoc();
     const li = container.querySelector("ul li") as HTMLElement;
-    // The li's full text content includes the chevron glyph...
-    expect(li.textContent).toContain("›");
-    // ...but the annotatable block text used for offsets does not.
     const range = rangeFromBlockOffsets(li, 0, "alpha".length)!;
     const offsets = selectionOffsetsInBlock(li, range);
-    expect(offsets?.blockText.startsWith("alpha beta gamma")).toBe(true);
-    expect(offsets?.blockText.includes("›")).toBe(false);
+    expect(offsets?.blockText).toBe("alpha beta gamma item");
     expect(offsets?.blockText.slice(0, 5)).toBe("alpha");
   });
 });
 
 describe("deriveAnchorFromSelection", () => {
-  it("derives a single-block anchor with the exact quote, heading, and line", () => {
-    const { container } = renderSelDoc();
+  it("derives a single-block anchor with the exact quote, heading, and line", async () => {
+    const container = await renderSelDoc();
     const block = findCommentBlock(container, {
       line: 5,
       sectionId: "section-two",
@@ -278,8 +266,8 @@ describe("deriveAnchorFromSelection", () => {
     expect(anchor?.docRevision).toMatch(/.+/);
   });
 
-  it("rejects a selection spanning more than one block (returns null)", () => {
-    const { container } = renderSelDoc();
+  it("rejects a selection spanning more than one block (returns null)", async () => {
+    const container = await renderSelDoc();
     const items = container.querySelectorAll("ul li");
     const range = document.createRange();
     range.selectNodeContents(items[0]!);
@@ -287,8 +275,8 @@ describe("deriveAnchorFromSelection", () => {
     expect(deriveAnchorFromSelection(range, SEL_DOC)).toBeNull();
   });
 
-  it("rejects a collapsed (empty) selection", () => {
-    const { container } = renderSelDoc();
+  it("rejects a collapsed (empty) selection", async () => {
+    const container = await renderSelDoc();
     const block = findCommentBlock(container, {
       line: 5,
       sectionId: "section-two",

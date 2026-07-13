@@ -77,7 +77,7 @@ const OWNERS: readonly OwnerSpec[] = [
       "one-off",
     ],
     residual:
-      "PRESERVED: scrollbar styling (`::-webkit-scrollbar*`); tooltip/modal/toast/notification-panel portal positioning (`.tooltip-portal`, `.modal-overlay`, `.np-backdrop`); rendered-markdown output (`.markdown-content`/`.markdown-viewer`/`.markdown-fallback`); the global `@keyframes` library. The leaf-recipe swap wave deleted every consumer-free canonical recipe (`.btn-icon`, `.btn-toggle*`, `.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-toast`); the recipes still present (`.btn*`, `.btn-icon-only*`, `.cc-tabs`/`.cc-tab*`, `.status-dot*`, `.modal*`) each retain ≥1 escape-hatched prod consumer and are tracked above the preserved floor for a follow-up remediation wave (see `.cc/graph-workflow-docs/integration-retained-recipes.md`).",
+      "PRESERVED: scrollbar styling (`::-webkit-scrollbar*`); tooltip/modal/toast/notification-panel portal positioning (`.tooltip-portal`, `.modal-overlay`, `.np-backdrop`); the global `@keyframes` library. All Markdown rendering is owned by the canonical Markdown module, so the former global `.markdown-content`/`.markdown-viewer`/`.markdown-fallback` output/shell rules are gone. The leaf-recipe swap wave deleted every consumer-free canonical recipe (`.btn-icon`, `.btn-toggle*`, `.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-toast`); the recipes still present (`.btn*`, `.btn-icon-only*`, `.cc-tabs`/`.cc-tab*`, `.status-dot*`, `.modal*`) each retain ≥1 escape-hatched prod consumer and are tracked above the preserved floor for a follow-up remediation wave (see `.cc/graph-workflow-docs/integration-retained-recipes.md`).",
   },
   {
     path: "src/features/_root/styles/index.css",

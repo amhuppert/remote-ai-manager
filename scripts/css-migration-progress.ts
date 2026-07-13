@@ -93,20 +93,20 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
   {
     path: "src/app/globals.css",
     preserved: true,
-    floor: 66,
-    note: "Scrollbars + rendered-markdown output + the 21-keyframe global library + tooltip/modal/toast portal positioning stay forever (catalog residual).",
+    floor: 26,
+    note: "Scrollbars + the 21-keyframe global library + tooltip/modal/toast portal positioning stay forever (catalog residual). All Markdown rendering — output, document shell, and loading fallback — is owned by the canonical Markdown module.",
   },
   {
     path: "src/components/workflow-graph/workflow-graph.css",
     preserved: true,
-    floor: 58,
-    note: "React Flow vendor DOM + own scrollbars + 7 graph keyframes + the `.wb-markdown-inline*` rendered-markdown output (preserved per R6) stay bespoke forever; the JSX-authored chrome was migrated to utilities (Stage B 9.1 / B-6 graph-builder). Floor is the actual post-migration preserved residual (58), corrected up from the earlier conservative 33 which omitted the ~25 `.wb-markdown-inline*` selectors.",
+    floor: 33,
+    note: "React Flow vendor DOM + own scrollbars + 7 graph keyframes stay bespoke forever; the JSX-authored chrome was migrated to utilities (Stage B 9.1 / B-6 graph-builder). Compact rendered Markdown is owned by the canonical Markdown module, so the former `.wb-markdown-inline*` residual (~25 selectors) is gone and the floor returns to 33.",
   },
   {
     path: "src/features/_root/styles/conversation.css",
     preserved: true,
-    floor: 39,
-    note: "Tiptap `.ProseMirror` + Mermaid/markdown output + scrollbar + prefers-reduced-motion + AskQuestion overlay + rainbow keyframes stay forever.",
+    floor: 31,
+    note: "Tiptap `.ProseMirror` + Mermaid diagram output (`.mermaid-diagram*`, emitted by the canonical module's Mermaid dispatch) + structural `.message-content` container + scrollbar + prefers-reduced-motion + AskQuestion overlay + rainbow keyframes stay forever. Generated Markdown output is owned by the canonical Markdown module.",
   },
   {
     path: "src/features/_root/styles/reset.css",

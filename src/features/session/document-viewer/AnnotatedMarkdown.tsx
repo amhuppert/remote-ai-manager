@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -8,16 +9,13 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import MarkdownViewer from "@/components/MarkdownViewer";
+import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
+import MarkdownViewport from "@/components/markdown/MarkdownViewport";
 import type {
   CommentAnchor,
   CommentStatus,
   DocumentRef,
 } from "@/lib/document-comments/schemas";
-import {
-  markdownViewerComponents,
-  rehypeStampSourcePosition,
-} from "./markdown-components";
 import { findCommentBlock, groupAnchoredComments } from "./anchor-dom";
 import CommentGutterPin from "./CommentGutterPin";
 import CommentPopover from "./CommentPopover";
@@ -63,18 +61,22 @@ interface GutterPin {
 /**
  * Measures the vertical position of each anchored comment's block within the
  * scroll container and renders a left-gutter marker there. Lives inside the
- * scroll container (passed as `MarkdownViewer`'s overlay) so markers track their
- * passage on scroll. Re-measures on comment/content change and on resize.
+ * scroll container (passed as `MarkdownViewport`'s overlay) so markers track
+ * their passage on scroll. Re-measures on comment/content change and on resize.
  */
 function CommentGutter({
   comments,
   content,
   contentRef,
+  renderTick,
   onOpenComment,
 }: {
   comments: ResolvedComment[];
   content: string | null;
   contentRef: RefObject<HTMLDivElement | null>;
+  /** Bumps when the deferred document root mounts, so measurement re-runs against
+   *  the stamped DOM rather than the not-yet-rendered fallback. */
+  renderTick: number;
   onOpenComment?: (commentId: string) => void;
 }): React.JSX.Element | null {
   const [pins, setPins] = useState<GutterPin[]>([]);
@@ -82,7 +84,9 @@ function CommentGutter({
   useLayoutEffect(() => {
     const measure = (): void => {
       const contentEl = contentRef.current;
-      const scrollEl = contentEl?.closest<HTMLElement>(".markdown-viewer");
+      const scrollEl = contentEl?.closest<HTMLElement>(
+        "[data-markdown-viewport]",
+      );
       if (!contentEl || !scrollEl) {
         setPins([]);
         return;
@@ -120,7 +124,7 @@ function CommentGutter({
     const observer = new ResizeObserver(measure);
     observer.observe(contentEl);
     return () => observer.disconnect();
-  }, [comments, content, contentRef]);
+  }, [comments, content, contentRef, renderTick]);
 
   if (pins.length === 0) return null;
 
@@ -248,11 +252,47 @@ function SelectionCommentLayer({
 }
 
 /**
- * Comment-enabled markdown renderer shared by the Docs and Specs surfaces:
- * MarkdownViewer (prototype styling + chevron + source-position stamping) with
- * the recogito annotation overlay painting status-styled highlights and a
- * left-gutter marker per anchored comment. Keyed by `docRef.docPath` so the
- * annotator fully re-syncs when the open document changes.
+ * Reserves the left gutter that holds the comment pins. Ordinary documents
+ * reserve no annotation space, so the annotation host adds this inset on top of
+ * the canonical document adapter's own left padding — sized so the document text
+ * always begins at the 50px gutter overlay's right edge and never under the pins.
+ *
+ * The canonical adapter pads px-xl (24px) at desktop and px-md (12px) below 640px,
+ * so the inset compensates at the SAME breakpoint (26px+24px = 50px, 38px+12px =
+ * 50px). Without the responsive step the text would begin at 38px on narrow
+ * viewports — inside the 50px gutter — and overlap the pins.
+ */
+const GUTTER_INSET = "pl-[26px] max-640:pl-[38px]";
+
+/**
+ * The browser-only recogito annotator boundary, swappable for tests. The
+ * annotator paints via the CSS Custom Highlight API and cannot mount under jsdom,
+ * so component tests inject a passthrough that renders the annotatable subtree
+ * directly — exercising the viewport composition, gutter, deferred sync, and
+ * selection without the highlight engine. Production always uses the real
+ * boundary.
+ */
+type AnnotatorBoundary = typeof RecogitoAnnotatorBoundary;
+
+let annotatorBoundary: AnnotatorBoundary = RecogitoAnnotatorBoundary;
+
+export function _setAnnotatorBoundaryForTesting(
+  boundary: AnnotatorBoundary,
+): void {
+  annotatorBoundary = boundary;
+}
+
+export function _resetAnnotatorBoundaryForTesting(): void {
+  annotatorBoundary = RecogitoAnnotatorBoundary;
+}
+
+/**
+ * Comment-enabled markdown renderer shared by the Docs and Specs surfaces: the
+ * canonical `MarkdownViewport` + `SourceMappedDocumentMarkdown` (document
+ * typography + source-position metadata) with the recogito annotation overlay
+ * painting status-styled highlights and a left-gutter marker per anchored
+ * comment. Keyed by `docRef.docPath` so the annotator fully re-syncs when the
+ * open document changes.
  */
 export default function AnnotatedMarkdown({
   docRef,
@@ -263,39 +303,58 @@ export default function AnnotatedMarkdown({
   onCreateComment,
 }: AnnotatedMarkdownProps): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null);
+  const [renderTick, setRenderTick] = useState(0);
   const { draft, clear } = useTextSelectionComment(contentRef, content);
+  const AnnotatorBoundary = annotatorBoundary;
+
+  // The source-mapped document renders behind a deferred boundary (its renderer
+  // loads after a fallback), so its root — and the stamped blocks the gutter and
+  // annotator anchor to — mount a tick after this component first renders. This
+  // callback ref captures that mount and bumps `renderTick` so gutter measurement
+  // and highlight sync re-run against the real DOM instead of the fallback.
+  const attachContentRef = useCallback((node: HTMLDivElement | null) => {
+    contentRef.current = node;
+    if (node) setRenderTick((tick) => tick + 1);
+  }, []);
 
   return (
-    // This is the document's scroll container. recogito tracks scroll by
-    // re-reading its annotatable wrapper's bounding rect, which only changes when
-    // that wrapper MOVES — so the scroll must live on an ANCESTOR of the wrapper
-    // (here), not on the wrapper or an inner element, or only the comments
-    // visible at the initial scroll position ever highlight. The inner
-    // `.r6o-annotatable` and `.markdown-viewer` stay content-height and move
-    // inside this scroller (which also keeps the document from overflowing the
-    // pending-comments tray below it).
-    <div key={docRef.docPath} className="min-h-0 flex-1 overflow-y-auto">
-      <RecogitoAnnotatorBoundary
-        comments={comments}
-        onOpenComment={onOpenComment}
-        syncSignal={content}
+    <div key={docRef.docPath} className="flex min-h-0 flex-1 flex-col">
+      {/* MarkdownViewport is the document's scroll container. recogito tracks
+          scroll by re-reading its annotatable wrapper's bounding rect, which only
+          changes when that wrapper MOVES — so the scroll must live on an ANCESTOR
+          of the wrapper (the viewport), not on the wrapper or an inner element, or
+          only the comments visible at the initial scroll position ever highlight.
+          The inner `.r6o-annotatable` and the source-mapped document root stay
+          content-height and move inside this scroller. The gutter markers render
+          as the viewport's overlay so they share its positioning context and
+          scroll with the content. */}
+      <MarkdownViewport
+        isLoading={isLoading}
+        overlay={
+          <CommentGutter
+            comments={comments}
+            content={content}
+            contentRef={contentRef}
+            renderTick={renderTick}
+            onOpenComment={onOpenComment}
+          />
+        }
       >
-        <MarkdownViewer
-          content={content}
-          isLoading={isLoading}
-          contentRef={contentRef}
-          components={markdownViewerComponents}
-          rehypePlugins={[rehypeStampSourcePosition]}
-          overlay={
-            <CommentGutter
+        {content === null ? null : (
+          <div className={GUTTER_INSET}>
+            <AnnotatorBoundary
               comments={comments}
-              content={content}
-              contentRef={contentRef}
               onOpenComment={onOpenComment}
-            />
-          }
-        />
-      </RecogitoAnnotatorBoundary>
+              syncSignal={`${content}#${renderTick}`}
+            >
+              <SourceMappedDocumentMarkdown
+                ref={attachContentRef}
+                content={content}
+              />
+            </AnnotatorBoundary>
+          </div>
+        )}
+      </MarkdownViewport>
       <SelectionCommentLayer
         draft={draft}
         clear={clear}

@@ -446,6 +446,25 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     ).not.toBeNull();
   });
 
+  it("renders the acceptance-criteria read view through the compact canonical adapter", async () => {
+    resetStore();
+    const definition = createWorkflowDefinition();
+    const ctx = definition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    );
+    if (ctx) ctx.acceptanceCriteria = "Ship ~~drafts~~ **canonical** rendering";
+    setupStore({ selectedContextId: "context-plan", definition });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    // GFM strikethrough — only the canonical renderer produces <del>.
+    const del = await screen.findByText("drafts", undefined, {
+      timeout: 15000,
+    });
+    expect(del.tagName).toBe("DEL");
+    expect(del.closest('[data-markdown-intent="compact"]')).not.toBeNull();
+    expect(container.querySelector(".wb-markdown-inline")).toBeNull();
+  });
+
   it("editing acceptance criteria through the focus sheet updates the store", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });

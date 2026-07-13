@@ -10,10 +10,19 @@
  * set before any test file imports config.ts (transitively via state-db).
  */
 import "@testing-library/jest-dom/vitest";
+import { configure } from "@testing-library/dom";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach } from "vitest";
+
+// Canonical Markdown surfaces render through a deferred (dynamic-import) adapter
+// that paints a `data-markdown-fallback` placeholder first, so `waitFor`/`findBy`
+// must survive the renderer's cold import. Under full-suite fork contention that
+// import routinely exceeds Testing Library's 1s async default, causing flaky
+// misses on the fallback. Raise the async-util budget well below the 15s
+// testTimeout so a genuine hang still fails the test, not the whole suite.
+configure({ asyncUtilTimeout: 10000 });
 
 const VITEST_TMP_PREFIX = path.join(os.tmpdir(), "cc-vitest-");
 if (!process.env["CC_CONFIG_DIR"]) {

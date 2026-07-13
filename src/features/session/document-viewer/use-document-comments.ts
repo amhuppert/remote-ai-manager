@@ -99,17 +99,34 @@ export function useDocumentComments({
   const [comments, setComments] = useState<ResolvedComment[]>([]);
 
   useLayoutEffect(() => {
-    const resolved = resolveComments(rawComments, contentRef.current);
-    setComments(resolved);
-    if (resolved.length > 0) {
-      const staleCount = resolved.filter((c) => c.stale).length;
-      logger.debug("document-comments.reanchor", {
-        docPath: docRef?.docPath,
-        total: resolved.length,
-        anchored: resolved.length - staleCount,
-        stale: staleCount,
-      });
-    }
+    const reanchor = (): void => {
+      const resolved = resolveComments(rawComments, contentRef.current);
+      setComments(resolved);
+      if (resolved.length > 0) {
+        const staleCount = resolved.filter((c) => c.stale).length;
+        logger.debug("document-comments.reanchor", {
+          docPath: docRef?.docPath,
+          total: resolved.length,
+          anchored: resolved.length - staleCount,
+          stale: staleCount,
+        });
+      }
+    };
+
+    reanchor();
+
+    // The canonical document renderer stamps blocks asynchronously (its renderer
+    // is loaded behind a deferred boundary and shows a fallback first), so the
+    // initial pass can run before any stamped block exists. Re-anchor whenever the
+    // rendered subtree changes so comments resolve against the stamped DOM as soon
+    // as it appears — and again on later in-place content swaps. Re-anchoring never
+    // mutates this subtree (the gutter/highlights live outside it), so this does
+    // not feed back into the observer.
+    const contentEl = contentRef.current;
+    if (!contentEl) return;
+    const observer = new MutationObserver(reanchor);
+    observer.observe(contentEl, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [rawComments, content, contentRef, docRef?.docPath]);
 
   const pendingComments = useMemo(

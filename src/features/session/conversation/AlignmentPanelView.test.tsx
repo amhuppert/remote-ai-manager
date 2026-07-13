@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AlignmentPanelView from "@/features/session/conversation/AlignmentPanelView";
 import type {
@@ -125,14 +125,14 @@ describe("AlignmentPanelView", () => {
     expect(screen.getByText(/no alignment/i)).toBeInTheDocument();
   });
 
-  it("renders the active charter content and last-updated metadata", () => {
+  it("renders the active charter content and last-updated metadata", async () => {
     const active = makeVersion({
       version: 3,
       content: "Mission: ship the alignment panel verbatim.",
       activatedAt: "2026-06-26T00:00:00.000Z",
       approver: "alex",
     });
-    render(
+    const { container } = render(
       <AlignmentPanelView
         state={makeState({ active, history: [active] })}
         isLoading={false}
@@ -140,6 +140,14 @@ describe("AlignmentPanelView", () => {
         onRollback={noop}
       />,
     );
+    // The charter is a long-form document surface: it renders through the
+    // canonical MarkdownViewport + document adapter, not a bespoke renderer.
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-markdown-intent="document"]'),
+      ).not.toBeNull();
+    });
+    expect(container.querySelector("[data-markdown-viewport]")).not.toBeNull();
     expect(
       screen.getByText(/Mission: ship the alignment panel verbatim\./),
     ).toBeInTheDocument();
@@ -161,7 +169,7 @@ describe("AlignmentPanelView", () => {
     expect(screen.queryByTestId("alignment-draft")).not.toBeInTheDocument();
   });
 
-  it("shows the draft section with its content only when a draft exists", () => {
+  it("shows the draft section with its content only when a draft exists", async () => {
     const active = makeVersion({ version: 1 });
     const draft = makeVersion({
       id: "draft-1",
@@ -178,9 +186,11 @@ describe("AlignmentPanelView", () => {
       />,
     );
     const draftSection = screen.getByTestId("alignment-draft");
-    expect(
-      within(draftSection).getByText(/Draft mission awaiting approval\./),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        within(draftSection).getByText(/Draft mission awaiting approval\./),
+      ).toBeInTheDocument();
+    });
   });
 
   it("lists version history newest-first", () => {

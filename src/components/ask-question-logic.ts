@@ -2,9 +2,10 @@
  * Pure, DOM-free logic for the AskUserQuestion panel.
  *
  * Extracted from the component so the answer-draft derivations (selection
- * toggling, progress/required gating, suggested defaults, the submit payload
- * transform, and the markdown-lite context parser) can be unit-tested directly
- * without rendering or mocking.
+ * toggling, progress/required gating, suggested defaults, and the submit
+ * payload transform) can be unit-tested directly without rendering or mocking.
+ * Question context prose renders through the canonical `CompactMarkdown`
+ * adapter, so no Markdown parsing lives here.
  */
 
 import type {
@@ -186,51 +187,4 @@ export function buildAnswerPayload(
     };
   });
   return answers;
-}
-
-// ---- markdown-lite context parser (`**bold**`, `` `code` ``, "- " bullets) ----
-
-export type InlineSpan =
-  | { kind: "text"; text: string }
-  | { kind: "code"; text: string }
-  | { kind: "bold"; text: string };
-
-export type ContextBlock =
-  | { kind: "p"; spans: InlineSpan[] }
-  | { kind: "ul"; items: InlineSpan[][] };
-
-export function parseInline(text: string): InlineSpan[] {
-  const out: InlineSpan[] = [];
-  let rest = text;
-  const re = /(`[^`]+`|\*\*[^*]+\*\*)/;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(rest)) !== null) {
-    const tok = m[0];
-    if (tok === undefined) break;
-    if (m.index > 0) out.push({ kind: "text", text: rest.slice(0, m.index) });
-    if (tok.startsWith("`")) out.push({ kind: "code", text: tok.slice(1, -1) });
-    else out.push({ kind: "bold", text: tok.slice(2, -2) });
-    rest = rest.slice(m.index + tok.length);
-  }
-  if (rest) out.push({ kind: "text", text: rest });
-  return out;
-}
-
-export function parseContext(text: string): ContextBlock[] {
-  const blocks: ContextBlock[] = [];
-  let bullets: InlineSpan[][] | null = null;
-  for (const line of text.split("\n")) {
-    if (line.trim().startsWith("- ")) {
-      if (!bullets) bullets = [];
-      bullets.push(parseInline(line.trim().slice(2)));
-      continue;
-    }
-    if (bullets) {
-      blocks.push({ kind: "ul", items: bullets });
-      bullets = null;
-    }
-    if (line.trim()) blocks.push({ kind: "p", spans: parseInline(line) });
-  }
-  if (bullets) blocks.push({ kind: "ul", items: bullets });
-  return blocks;
 }

@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
 import type { ResolvedComment } from "./types";
 import { jumpToComment } from "./DocumentSurface";
-import { CC_LINE_ATTR, CC_SECTION_ATTR } from "./markdown-components";
+import {
+  CC_LINE_ATTR,
+  CC_SECTION_ATTR,
+} from "@/components/markdown/markdown-source-map";
 
 function resolvedComment(): ResolvedComment {
   const base: DocumentComment = {

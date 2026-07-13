@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import MarkdownViewer from "@/components/MarkdownViewer";
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
+import MarkdownViewport from "@/components/markdown/MarkdownViewport";
 import { Button } from "@/components/ui/Button";
 import {
   SectionHeader,
@@ -63,7 +64,9 @@ function EmptyAlignment(): React.JSX.Element {
 function CharterMarkdown({ content }: { content: string }): React.JSX.Element {
   return (
     <div className="rounded-md border border-solid border-border-subtle bg-bg-base">
-      <MarkdownViewer content={content} isLoading={false} />
+      <MarkdownViewport>
+        <DocumentMarkdown content={content} />
+      </MarkdownViewport>
     </div>
   );
 }

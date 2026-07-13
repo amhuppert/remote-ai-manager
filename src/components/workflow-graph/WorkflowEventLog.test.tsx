@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect } from "vitest";
 import WorkflowEventLog from "./WorkflowEventLog";
@@ -7,6 +7,7 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowValidationResultEvent,
 } from "@/lib/workflows/schemas";
 function executionWithHistory(
   history: Array<Omit<GraphWorkflowExecutionEvent, "preReset">>,
@@ -306,5 +307,155 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
     expect(
       screen.getByText("merge conflicts in src/foo.ts"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("WorkflowEventLog canonical compact Markdown", () => {
+  function taskCompletedEntry(
+    occurredAt: string,
+    summary: string,
+  ): Omit<GraphWorkflowExecutionEvent, "preReset"> {
+    return {
+      occurredAt,
+      event: {
+        type: "graph-workflow-task-status",
+        ...EVENT_BASE,
+        contextId: "context-plan",
+        taskId: "task-plan-1",
+        status: "completed",
+        source: "agent",
+        order: 1,
+        summary,
+      },
+    };
+  }
+
+  function validationEntry(
+    occurredAt: string,
+    overrides: Partial<GraphWorkflowValidationResultEvent> = {},
+  ): Omit<GraphWorkflowExecutionEvent, "preReset"> {
+    return {
+      occurredAt,
+      event: {
+        type: "graph-workflow-validation-result",
+        ...EVENT_BASE,
+        contextId: "context-plan",
+        validatorType: "context",
+        pass: true,
+        summary: "All good",
+        issues: [],
+        reopenTaskIds: [],
+        ...overrides,
+      },
+    };
+  }
+
+  function compactRoots(container: HTMLElement): HTMLElement[] {
+    return Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-markdown-intent="compact"]',
+      ),
+    );
+  }
+
+  it("renders a completed task summary through the compact adapter with full GFM once expanded", async () => {
+    const { execution, events } = executionWithHistory([
+      taskCompletedEntry(
+        "2026-04-02T08:00:00.000Z",
+        "Uses ~~legacy~~ **canonical** rendering.",
+      ),
+    ]);
+
+    const { container } = render(
+      <WorkflowEventLog execution={execution} events={events} />,
+    );
+
+    await userEvent.setup().click(screen.getByText(/Task completed/));
+
+    await waitFor(() => expect(compactRoots(container).length).toBe(1));
+    // No migrated surface still leans on the generated-descendant CSS hook.
+    expect(container.querySelector(".wb-markdown-inline")).toBeNull();
+    expect(screen.getByText("legacy").tagName).toBe("DEL");
+    expect(screen.getByText("canonical").tagName).toBe("STRONG");
+  });
+
+  it("renders a validation summary and its issue descriptions through the compact adapter", async () => {
+    const { execution, events } = executionWithHistory([
+      validationEntry("2026-04-02T08:01:00.000Z", {
+        pass: false,
+        summary: "Blocked on `handleSubmit`",
+        issues: [
+          {
+            taskId: "task-plan-1",
+            title: "Missing coverage",
+            description: "No test for the ~~old~~ **new** path.",
+          },
+        ],
+      }),
+    ]);
+
+    const { container } = render(
+      <WorkflowEventLog execution={execution} events={events} />,
+    );
+
+    await userEvent.setup().click(screen.getByText(/Validation failed/));
+
+    // Summary (detail) + issue description both route through the adapter.
+    await waitFor(() => expect(compactRoots(container).length).toBe(2));
+    expect(container.querySelector(".wb-markdown-inline")).toBeNull();
+
+    const summaryCode = screen.getByText("handleSubmit");
+    expect(summaryCode.closest("code")).not.toBeNull();
+    const issue = screen.getByText("Missing coverage").closest("li");
+    expect(issue).not.toBeNull();
+    expect(within(issue as HTMLElement).getByText("new").tagName).toBe(
+      "STRONG",
+    );
+  });
+
+  it("scopes host issue-item styling to the host li and title, never leaking into generated Markdown descendants", async () => {
+    const { execution, events } = executionWithHistory([
+      validationEntry("2026-04-02T08:01:00.000Z", {
+        pass: false,
+        summary: "Blocked",
+        issues: [
+          {
+            taskId: "task-plan-1",
+            title: "Missing coverage",
+            description: "Steps:\n\n- add a **bold** case\n- cover the edge",
+          },
+        ],
+      }),
+    ]);
+
+    const { container } = render(
+      <WorkflowEventLog execution={execution} events={events} />,
+    );
+
+    await userEvent.setup().click(screen.getByText(/Validation failed/));
+
+    // Summary (detail) + issue description both route through the adapter.
+    await waitFor(() => expect(compactRoots(container).length).toBe(2));
+
+    // The issue description's Markdown list renders its own <li>/<strong>
+    // inside the canonical root — that is the generated content we must not style.
+    const issueRoot = compactRoots(container)[1] as HTMLElement;
+    expect(issueRoot.querySelectorAll("li").length).toBeGreaterThan(0);
+    expect(issueRoot.querySelector("strong")?.textContent).toBe("bold");
+
+    // The host list container must not reach into descendants, so no generated
+    // <li>/<strong> inside CompactMarkdown inherits host spacing/typography.
+    const hostList = screen.getByText("Missing coverage").closest("ul");
+    expect(hostList).not.toBeNull();
+    const hostListClass = hostList?.className ?? "";
+    expect(hostListClass).not.toMatch(/_li\]/);
+    expect(hostListClass).not.toMatch(/_strong\]/);
+
+    // Host-authored issue item + title carry their styling directly.
+    const hostItem = screen.getByText("Missing coverage").closest("li");
+    expect(hostItem?.className.length ?? 0).toBeGreaterThan(0);
+    const hostTitle = screen.getByText("Missing coverage");
+    expect(hostTitle.tagName).toBe("STRONG");
+    expect(hostTitle.className.length).toBeGreaterThan(0);
   });
 });

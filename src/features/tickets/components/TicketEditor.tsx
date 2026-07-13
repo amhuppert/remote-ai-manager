@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 
-import MarkdownContent from "@/components/MarkdownContent";
+import { DocumentMarkdown } from "@/components/markdown/Markdown";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useUpdateTicketMutation } from "@/lib/tickets/mutations";
@@ -232,8 +232,8 @@ export function TicketDescriptionEditor({
           </div>
         </div>
       ) : description.trim().length > 0 ? (
-        <div className="max-w-[72ch] text-[0.86rem] leading-[1.65] text-text-primary">
-          <MarkdownContent content={description} />
+        <div className="max-w-[72ch]">
+          <DocumentMarkdown content={description} />
         </div>
       ) : (
         <span className="font-mono text-[0.74rem] text-text-tertiary">

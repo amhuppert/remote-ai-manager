@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import type {
@@ -12,10 +11,7 @@ import CollabAgentModelMeta, {
   AGENT_LABEL,
 } from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
-
-const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
-  ssr: false,
-});
+import { MessageMarkdown } from "@/components/markdown/Markdown";
 
 export interface CollabFinalAnswerMessageProps {
   agent: CollaborationAgent;
@@ -101,7 +97,8 @@ export default function CollabFinalAnswerMessage({
     // 1:1 with the §8.2 ancestor-context variant so the override still applies
     // in-virtuoso and stays 12px standalone — zero visual change in both. The
     // shared rule itself is untouched (MessageRow owns `.message`).
-    // `.message-content` (shared generated-markdown hook) stays on the body.
+    // The canonical MessageMarkdown adapter owns the answer body's generated
+    // Markdown presentation.
     <article
       className={cn(
         "relative flex flex-col gap-sm rounded-md border border-l-2 border-solid border-border-subtle bg-bg-surface p-md [.conversation-virtuoso-item_&]:pb-[24px]",
@@ -123,9 +120,7 @@ export default function CollabFinalAnswerMessage({
         </span>
       </header>
 
-      <div className="message-content">
-        <MarkdownContent content={body} />
-      </div>
+      <MessageMarkdown content={body} />
       {loadFailed ? (
         <p className="m-0 font-mono text-[0.72rem] text-text-secondary">
           Full answer artifact could not be loaded.

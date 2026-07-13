@@ -2,11 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import dynamic from "next/dynamic";
-
-const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
-  ssr: false,
-});
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CollapsibleText from "@/components/CollapsibleText";
 import { cn } from "@/lib/ui/cn";
 import { formatGraphWorkflowHaltReason } from "./ContextHaltCard";
@@ -191,9 +187,7 @@ function normalizeEvent(
           dot: "task-completed",
           title: `Task completed · ${taskLookup.get(event.taskId) ?? event.taskId}`,
           detail: event.summary ? (
-            <div className="wb-markdown-inline">
-              <MarkdownContent content={event.summary} />
-            </div>
+            <CompactMarkdown content={event.summary} />
           ) : null,
           expandable: null,
         };
@@ -265,19 +259,17 @@ function normalizeEvent(
         dot: event.pass ? "pass" : "fail",
         title: `Validation ${event.pass ? "passed" : "failed"} · ${title}`,
         detail: event.summary ? (
-          <div className="wb-markdown-inline">
-            <MarkdownContent content={event.summary} />
-          </div>
+          <CompactMarkdown content={event.summary} />
         ) : null,
         expandable:
           event.issues.length > 0 ? (
             <ul className={eventIssuesClass}>
               {event.issues.map((issue, idx) => (
-                <li key={idx}>
-                  <strong>{issue.title}</strong>
-                  <div className="wb-markdown-inline">
-                    <MarkdownContent content={issue.description} />
-                  </div>
+                <li key={idx} className={eventIssueItemClass}>
+                  <strong className={eventIssueTitleClass}>
+                    {issue.title}
+                  </strong>
+                  <CompactMarkdown content={issue.description} />
                 </li>
               ))}
             </ul>
@@ -430,8 +422,13 @@ function normalizeEvent(
 const eventPreClass =
   "font-mono text-[0.7rem] bg-[var(--cc-graph-ink-a40)] border border-border-dim rounded-sm py-[6px] px-[8px] m-0 whitespace-pre-wrap break-words text-text-secondary max-h-[160px] overflow-auto";
 
-const eventIssuesClass =
-  "list-none p-0 m-0 flex flex-col gap-[8px] [&_li]:py-[6px] [&_li]:px-[8px] [&_li]:bg-[var(--cc-graph-ink-a40)] [&_li]:border [&_li]:border-border-dim [&_li]:rounded-sm [&_strong]:block [&_strong]:text-text-primary [&_strong]:text-[0.72rem] [&_strong]:font-semibold [&_strong]:mb-[2px]";
+const eventIssuesClass = "list-none p-0 m-0 flex flex-col gap-[8px]";
+
+const eventIssueItemClass =
+  "py-[6px] px-[8px] bg-[var(--cc-graph-ink-a40)] border border-border-dim rounded-sm";
+
+const eventIssueTitleClass =
+  "block text-text-primary text-[0.72rem] font-semibold mb-[2px]";
 
 const dotBaseClass = "w-[6px] h-[6px] rounded-full shrink-0";
 

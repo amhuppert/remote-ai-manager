@@ -246,14 +246,18 @@ describe("DevServerRegistry", () => {
         startMode: startMode(59803),
       });
 
-      await new Promise((r) => setTimeout(r, 200));
-
-      const server = registry.getServer({
+      const query = {
         projectPath: "/proj",
         sessionName: "s1",
         worktreePath: "/tmp",
         serverName: "fail-test",
-      });
+      };
+      let server = registry.getServer(query);
+      const deadline = Date.now() + 5000;
+      while (server?.status === "starting" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+        server = registry.getServer(query);
+      }
 
       expect(server!.status).toBe("error");
       expect(server!.errorMessage).toContain(

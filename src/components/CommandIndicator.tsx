@@ -1,12 +1,8 @@
 "use client";
 
 import { memo } from "react";
-import dynamic from "next/dynamic";
 import { cn } from "@/lib/ui/cn";
-
-const MarkdownContent = dynamic(() => import("./MarkdownContent"), {
-  ssr: false,
-});
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 
 interface Props {
   name: string;
@@ -42,9 +38,7 @@ export default memo(function CommandIndicator({
         )}
       >
         <span className={cn(commandName, "self-start")}>{name}</span>
-        <div className="command-indicator__body">
-          <MarkdownContent content={args} />
-        </div>
+        <CompactMarkdown content={args} />
       </div>
     );
   }

@@ -36,25 +36,6 @@ vi.mock(
 // Infrastructure mocks — JSDOM limitations only
 // ---------------------------------------------------------------------------
 
-// ESM-only markdown deps — lightweight stubs
-vi.mock("@/components/MarkdownContent", () => ({
-  default: ({ content }: { content: string }) => <span>{content}</span>,
-}));
-
-vi.mock("@/components/MarkdownViewer", () => ({
-  default: ({
-    content,
-    isLoading,
-  }: {
-    content: string | null;
-    isLoading: boolean;
-  }) => (
-    <div data-testid="markdown-viewer">
-      {isLoading ? "Loading..." : (content ?? "No content")}
-    </div>
-  ),
-}));
-
 const { virtuosoMockHandlers, virtuosoMockScrollToIndex } = vi.hoisted(() => ({
   virtuosoMockHandlers: {
     rangeChanged: undefined as
@@ -1241,7 +1222,7 @@ describe("ConversationWorkspace", () => {
 
       renderPage();
 
-      // MarkdownContent loads via next/dynamic — wait for first render.
+      // The canonical Markdown adapter defers its renderer — wait for first render.
       expect(await screen.findByText(finalAnswerText)).toBeInTheDocument();
       expect(
         await screen.findByText("Terminal final-answer manifest summary"),

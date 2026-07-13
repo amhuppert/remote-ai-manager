@@ -16,13 +16,13 @@ import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-sc
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 
 // `message`, the role modifier, `message-content`, and `message-iteration-badge`
-// are retained as structural / generated-content / test hooks — external slices
-// and tooling still target them and they are NOT this slice's to migrate:
-//   - `.message-content` (base typography + the `.message.notice .message-content`
-//     override + `.message-content code/pre` + the globals.css rendered-markdown
-//     `.message-content p/ul/h*/a/table/…`) is the PRESERVED markdown/code
-//     container (R6), shared with the collab slice's CollabFinalAnswerMessage —
-//     kept as scoped CSS, so the content div carries only the bare class.
+// are retained as structural / test hooks — external slices and tooling still
+// target them:
+//   - `.message-content` is a structural host hook: its base container
+//     typography + the `.message.notice .message-content` tone override +
+//     the session.css debug-mode ancestor selectors. Generated Markdown
+//     typography comes from the canonical MessageMarkdown adapter, so the
+//     content div carries only the bare class.
 //   - globals.css `.wb-transcript-body .message`.
 //   - session.css `[data-debug-mode] .message.assistant … .message-content`.
 //   - `.conversation-virtuoso-item .message` inter-row spacing (conversation.css,

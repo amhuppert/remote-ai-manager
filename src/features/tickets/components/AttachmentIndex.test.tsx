@@ -13,7 +13,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import { useTicketDetailQuery } from "@/lib/tickets/queries";
-import type { TicketDetail } from "@/lib/tickets/schemas";
+import type {
+  ResolvedAttachment,
+  TicketAttachment,
+  TicketDetail,
+} from "@/lib/tickets/schemas";
 import { useToastStoreForTesting } from "@/stores/toast.store";
 import AttachmentIndex from "./AttachmentIndex";
 
@@ -156,6 +160,139 @@ describe("AttachmentIndex mutation feedback", () => {
           .getState()
           .toasts.some((toast) => toast.message.includes("Couldn't save")),
       ).toBe(true),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Markdown preview surfaces — note and captured-conversation/compaction
+// content must render through the canonical DocumentMarkdown adapter while the
+// host keeps ownership of the expand/collapse controls and metadata labels.
+// ---------------------------------------------------------------------------
+
+const NOTE_ATTACHMENT: TicketAttachment = {
+  id: "note-1",
+  ticketId: "ticket-12",
+  description: "Failure report",
+  payload: { kind: "note", markdown: "## Failure recap\n\nStack trace body." },
+  createdAt: "2026-07-11T10:00:00.000Z",
+  updatedAt: "2026-07-11T10:00:00.000Z",
+};
+
+const CONVERSATION_ATTACHMENT: TicketAttachment = {
+  id: "conv-1",
+  ticketId: "ticket-12",
+  description: "Compaction snapshot",
+  payload: {
+    kind: "conversation",
+    projectPath: "/repos/command-center",
+    sessionName: "csm/design-collab",
+    conversationId: "conv-abc123",
+    snapshotKey: "ticket-content/ticket-12/conv-1/snapshot.md",
+    snapshotCapturedAt: "2026-07-11T10:00:00.000Z",
+  },
+  createdAt: "2026-07-11T10:00:00.000Z",
+  updatedAt: "2026-07-11T10:00:00.000Z",
+};
+
+const NOTE_RESOLVED: ResolvedAttachment = {
+  kind: "note",
+  attachment: NOTE_ATTACHMENT,
+  markdown: "## Failure recap\n\nStack trace body.",
+};
+
+const CONVERSATION_RESOLVED: ResolvedAttachment = {
+  kind: "conversation",
+  attachment: CONVERSATION_ATTACHMENT,
+  conversationId: "conv-abc123",
+  sessionName: "csm/design-collab",
+  source: "retained_compaction",
+  sourceAvailable: true,
+  markdown: "## Compaction recap\n\nDecisions captured at compaction time.",
+  capturedAt: "2026-07-11T10:00:00.000Z",
+  readCommands: [],
+};
+
+function renderPreviewIndex() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Infinity },
+      mutations: { retry: false },
+    },
+  });
+  queryClient.setQueryData(ticketKeys.detail("command-center", 12), {
+    ...DETAIL,
+    attachments: [NOTE_ATTACHMENT, CONVERSATION_ATTACHMENT],
+  });
+  queryClient.setQueryData(
+    ticketKeys.attachmentResolve("command-center", 12, NOTE_ATTACHMENT.id),
+    NOTE_RESOLVED,
+  );
+  queryClient.setQueryData(
+    ticketKeys.attachmentResolve(
+      "command-center",
+      12,
+      CONVERSATION_ATTACHMENT.id,
+    ),
+    CONVERSATION_RESOLVED,
+  );
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <CacheBackedIndex />
+    </QueryClientProvider>,
+  );
+}
+
+describe("AttachmentIndex markdown previews", () => {
+  it("renders a note preview through the canonical document adapter", async () => {
+    renderPreviewIndex();
+    const user = userEvent.setup();
+
+    const entry = await screen.findByRole("listitem", {
+      name: "Failure report",
+    });
+    await user.click(within(entry).getByRole("button", { name: "View" }));
+
+    const heading = await within(entry).findByRole("heading", {
+      name: "Failure recap",
+    });
+    expect(heading.tagName).toBe("H2");
+    expect(heading.closest("[data-markdown-intent='document']")).not.toBeNull();
+  });
+
+  it("renders a captured-conversation compaction preview through the document adapter and keeps the host label", async () => {
+    renderPreviewIndex();
+    const user = userEvent.setup();
+
+    const entry = await screen.findByRole("listitem", {
+      name: "Compaction snapshot",
+    });
+    await user.click(within(entry).getByRole("button", { name: "View" }));
+
+    const heading = await within(entry).findByRole("heading", {
+      name: "Compaction recap",
+    });
+    expect(heading.closest("[data-markdown-intent='document']")).not.toBeNull();
+    // The host owns the compaction provenance label alongside the adapter.
+    expect(within(entry).getByText(/retained compaction/)).toBeInTheDocument();
+  });
+
+  it("collapses the note preview when View is toggled again", async () => {
+    renderPreviewIndex();
+    const user = userEvent.setup();
+
+    const entry = await screen.findByRole("listitem", {
+      name: "Failure report",
+    });
+    const view = within(entry).getByRole("button", { name: "View" });
+    await user.click(view);
+    await within(entry).findByRole("heading", { name: "Failure recap" });
+
+    await user.click(view);
+    await waitFor(() =>
+      expect(
+        within(entry).queryByRole("heading", { name: "Failure recap" }),
+      ).not.toBeInTheDocument(),
     );
   });
 });
