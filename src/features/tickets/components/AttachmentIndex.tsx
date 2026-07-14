@@ -12,6 +12,7 @@ import {
 } from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import {
   useAddTicketAttachmentMutation,
@@ -63,7 +64,10 @@ const KIND_VISUALS: Record<
 };
 
 const ACTION_BUTTON_CLASS =
-  "inline-flex min-h-[24px] min-w-[24px] cursor-pointer items-center justify-center border-0 bg-transparent p-0 font-mono text-[0.7rem] font-medium text-text-tertiary hover:text-cyan";
+  "inline-flex min-h-[24px] min-w-[24px] cursor-pointer items-center justify-center border-0 bg-transparent p-0 font-mono text-[0.7rem] font-medium text-text-tertiary hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]";
+
+const ATTACHMENT_LINK_CLASS =
+  "inline-flex min-h-[24px] items-center gap-xs font-mono text-[0.7rem] font-medium text-text-secondary! no-underline hover:text-cyan! focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]";
 
 const CHIP_CLASS =
   "inline-flex items-center rounded-full bg-bg-raised px-[7px] py-px font-mono text-[0.64rem] font-semibold tracking-[0.06em] uppercase text-text-secondary";
@@ -341,9 +345,20 @@ function AttachmentEntry({
     <li
       aria-label={attachment.description}
       data-attachment-entry-id={attachment.id}
-      className="flex flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-base p-[12px]"
+      data-expanded={panel === "preview"}
+      className="flex flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-base p-md transition-colors hover:bg-bg-surface data-[expanded=true]:border-border-default"
     >
-      <div className="flex items-start gap-sm">
+      <button
+        type="button"
+        data-attachment-view={attachment.id}
+        data-expanded={panel === "preview"}
+        className="group flex min-h-[44px] w-full cursor-pointer items-start gap-sm rounded-sm border-0 bg-transparent p-0 text-left focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+        aria-expanded={panel === "preview"}
+        aria-controls={previewPanelId}
+        onClick={() =>
+          setPanel((current) => (current === "preview" ? null : "preview"))
+        }
+      >
         <span
           aria-hidden="true"
           className={cn(
@@ -353,50 +368,40 @@ function AttachmentEntry({
         >
           <KindIcon kind={attachment.payload.kind} />
         </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
-          <p className="m-0 text-[0.84rem] leading-[1.5] text-text-primary">
+        <span className="flex min-w-0 flex-1 flex-col gap-[6px]">
+          <span className="text-[0.84rem] leading-[1.5] text-text-primary">
             {attachment.description}
-          </p>
-          <div className="flex flex-wrap items-center gap-sm">
+          </span>
+          <span className="flex flex-wrap items-center gap-sm">
             <span className={CHIP_CLASS}>{visual.label}</span>
             <EntryMetadata attachment={attachment} />
-            <span className="ml-auto flex shrink-0 items-center gap-sm">
-              <button
-                type="button"
-                data-attachment-view={attachment.id}
-                className={ACTION_BUTTON_CLASS}
-                aria-expanded={panel === "preview"}
-                aria-controls={previewPanelId}
-                onClick={() =>
-                  setPanel((current) =>
-                    current === "preview" ? null : "preview",
-                  )
-                }
-              >
-                View
-              </button>
-              <button
-                ref={editButtonRef}
-                type="button"
-                className={ACTION_BUTTON_CLASS}
-                aria-expanded={panel === "edit"}
-                aria-controls={editPanelId}
-                onClick={() =>
-                  setPanel((current) => (current === "edit" ? null : "edit"))
-                }
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className={cn(ACTION_BUTTON_CLASS, "hover:text-red")}
-                onClick={() => setRemoveConfirmOpen(true)}
-              >
-                Remove
-              </button>
-            </span>
-          </div>
-        </div>
+          </span>
+        </span>
+        <ChevronDownIcon />
+      </button>
+      <div className="flex flex-wrap items-center gap-sm pl-2xl max-768:pl-0">
+        <AttachmentLink attachment={attachment} />
+        <span className="ml-auto flex shrink-0 items-center gap-sm">
+          <button
+            ref={editButtonRef}
+            type="button"
+            className={ACTION_BUTTON_CLASS}
+            aria-expanded={panel === "edit"}
+            aria-controls={editPanelId}
+            onClick={() =>
+              setPanel((current) => (current === "edit" ? null : "edit"))
+            }
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className={cn(ACTION_BUTTON_CLASS, "hover:text-red")}
+            onClick={() => setRemoveConfirmOpen(true)}
+          >
+            Remove
+          </button>
+        </span>
       </div>
       {panel === "preview" && (
         <AttachmentPreview
@@ -452,19 +457,8 @@ function EntryMetadata({
     case "session":
       return <span className={METADATA_CLASS}>{payload.sessionName}</span>;
     case "related_ticket": {
-      const parsed = parseTicketIdentifier(payload.identifierSnapshot);
-      if (parsed === null) {
-        return (
-          <span className={METADATA_CLASS}>{payload.identifierSnapshot}</span>
-        );
-      }
       return (
-        <Link
-          href={ticketDetailHref(parsed.projectName, parsed.ticketNumber)}
-          className="font-mono text-[0.68rem] text-text-secondary! no-underline hover:text-cyan!"
-        >
-          {payload.identifierSnapshot}
-        </Link>
+        <span className={METADATA_CLASS}>{payload.identifierSnapshot}</span>
       );
     }
     case "note":
@@ -474,6 +468,69 @@ function EntryMetadata({
         </span>
       );
   }
+}
+
+function AttachmentLink({
+  attachment,
+}: {
+  attachment: TicketAttachment;
+}): React.JSX.Element | null {
+  const payload = attachment.payload;
+  switch (payload.kind) {
+    case "conversation":
+      return (
+        <Link
+          href={conversationsPageHref({
+            conversationId: payload.conversationId,
+          })}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open conversation"
+          className={ATTACHMENT_LINK_CLASS}
+        >
+          Open conversation
+          <ExternalLinkIcon />
+        </Link>
+      );
+    case "session":
+      return (
+        <Link
+          href={sessionDetailHref(payload.projectPath, payload.sessionName)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open session"
+          className={ATTACHMENT_LINK_CLASS}
+        >
+          Open session
+          <ExternalLinkIcon />
+        </Link>
+      );
+    case "related_ticket": {
+      const parsed = parseTicketIdentifier(payload.identifierSnapshot);
+      if (parsed === null) return null;
+      return (
+        <Link
+          href={ticketDetailHref(parsed.projectName, parsed.ticketNumber)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open ticket"
+          className={ATTACHMENT_LINK_CLASS}
+        >
+          Open ticket
+          <ExternalLinkIcon />
+        </Link>
+      );
+    }
+    case "file":
+    case "note":
+      return null;
+  }
+}
+
+function sessionDetailHref(projectPath: string, sessionName: string): string {
+  const pathSegments = projectPath.split(/[\\/]/).filter(Boolean);
+  const projectName = pathSegments.at(-1) ?? projectPath;
+  return `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +644,8 @@ function ResolvedContent({
               resolved.ticket.projectName,
               resolved.ticket.number,
             )}
+            target="_blank"
+            rel="noopener noreferrer"
             className="font-mono text-[0.78rem] font-semibold text-text-primary! no-underline hover:text-cyan!"
           >
             {formatTicketIdentifier(
@@ -822,6 +881,47 @@ function FailedUploadEntry({
         </div>
       </div>
     </li>
+  );
+}
+
+function ChevronDownIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="mt-xs shrink-0 text-text-tertiary transition-transform duration-150 group-hover:text-text-primary group-data-[expanded=true]:rotate-180 motion-reduce:transition-none"
+    >
+      <path
+        d="M6 9 L12 15 L18 9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
+      />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M14 5 H19 V10 M19 5 L11 13 M19 13 V19 H5 V5 H11"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
+      />
+    </svg>
   );
 }
 

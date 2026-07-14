@@ -418,11 +418,15 @@ type Story = StoryObj<typeof meta>;
 // ---------------------------------------------------------------------------
 
 /**
- * Every attachment kind in one index — entries lead with the description over
- * a kind-tinted icon tile, kind chip, mono metadata, and View/Edit/Remove
- * actions. The ticket is CLOSED: attachment CRUD works in any status.
+ * Every attachment kind in one index — entries lead with a description-backed
+ * disclosure surface over kind metadata and content-aware navigation. The
+ * ticket is CLOSED: attachment CRUD works in any status.
  */
 export const AllKinds: Story = {
+  render: () => <IndexHarness detail={makeDetail()} />,
+};
+
+export const Default: Story = {
   render: () => <IndexHarness detail={makeDetail()} />,
 };
 
@@ -432,8 +436,8 @@ export const EmptyIndex: Story = {
 };
 
 /**
- * View expands the entry in place on the void surface — the note's markdown
- * renders without leaving the dossier.
+ * The row surface expands the entry in place on the void surface — the note's
+ * markdown renders without leaving the dossier.
  */
 export const NotePreview: Story = {
   render: () => <IndexHarness detail={makeDetail()} />,
@@ -441,7 +445,11 @@ export const NotePreview: Story = {
     const entry = await canvas.findByRole("listitem", {
       name: "Constraints agreed with maintainers before starting.",
     });
-    await userEvent.click(within(entry).getByRole("button", { name: "View" }));
+    await userEvent.click(
+      within(entry).getByRole("button", {
+        name: /Constraints agreed with maintainers before starting\./,
+      }),
+    );
   },
 };
 

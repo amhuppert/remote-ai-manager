@@ -251,7 +251,9 @@ describe("AttachmentIndex markdown previews", () => {
     const entry = await screen.findByRole("listitem", {
       name: "Failure report",
     });
-    await user.click(within(entry).getByRole("button", { name: "View" }));
+    await user.click(
+      within(entry).getByRole("button", { name: /Failure report/ }),
+    );
 
     const heading = await within(entry).findByRole("heading", {
       name: "Failure recap",
@@ -267,7 +269,9 @@ describe("AttachmentIndex markdown previews", () => {
     const entry = await screen.findByRole("listitem", {
       name: "Compaction snapshot",
     });
-    await user.click(within(entry).getByRole("button", { name: "View" }));
+    await user.click(
+      within(entry).getByRole("button", { name: /Compaction snapshot/ }),
+    );
 
     const heading = await within(entry).findByRole("heading", {
       name: "Compaction recap",
@@ -277,18 +281,20 @@ describe("AttachmentIndex markdown previews", () => {
     expect(within(entry).getByText(/retained compaction/)).toBeInTheDocument();
   });
 
-  it("collapses the note preview when View is toggled again", async () => {
+  it("collapses the note preview when the row surface is toggled again", async () => {
     renderPreviewIndex();
     const user = userEvent.setup();
 
     const entry = await screen.findByRole("listitem", {
       name: "Failure report",
     });
-    const view = within(entry).getByRole("button", { name: "View" });
-    await user.click(view);
+    const disclosure = within(entry).getByRole("button", {
+      name: /Failure report/,
+    });
+    await user.click(disclosure);
     await within(entry).findByRole("heading", { name: "Failure recap" });
 
-    await user.click(view);
+    await user.click(disclosure);
     await waitFor(() =>
       expect(
         within(entry).queryByRole("heading", { name: "Failure recap" }),

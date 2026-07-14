@@ -31,6 +31,12 @@ async function findEntry(name: string): Promise<HTMLElement> {
   return await screen.findByRole("listitem", { name });
 }
 
+function findDisclosure(entry: HTMLElement, description: string): HTMLElement {
+  return within(entry).getByRole("button", {
+    name: (accessibleName) => accessibleName.includes(description),
+  });
+}
+
 describe("AttachmentIndex stories", () => {
   it("AllKinds leads every entry with its description over kind chip, metadata, and actions", async () => {
     await AllKinds.run();
@@ -45,9 +51,7 @@ describe("AttachmentIndex stories", () => {
     for (const description of descriptions) {
       const entry = await findEntry(description);
       expect(within(entry).getByText(description)).toBeInTheDocument();
-      expect(
-        within(entry).getByRole("button", { name: "View" }),
-      ).toBeInTheDocument();
+      expect(findDisclosure(entry, description)).toBeInTheDocument();
       expect(
         within(entry).getByRole("button", { name: "Edit" }),
       ).toBeInTheDocument();
@@ -82,35 +86,66 @@ describe("AttachmentIndex stories", () => {
       "Parent epic tracking the dossier performance work.",
     );
     const link = within(entry).getByRole("link", {
-      name: /command-center#7/,
+      name: "Open ticket",
     });
     expect(link).toHaveAttribute("href", "/tickets/command-center/7");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("exposes attachment action targets and expanded panel state", async () => {
+  it("AllKinds links conversation and session entries to their Command Center routes in new tabs", async () => {
+    await AllKinds.run();
+
+    const conversationEntry = await findEntry(CONVERSATION_DESCRIPTION);
+    const conversationLink = within(conversationEntry).getByRole("link", {
+      name: "Open conversation",
+    });
+    expect(conversationLink).toHaveAttribute(
+      "href",
+      "/conversations?c=conv-42",
+    );
+    expect(conversationLink).toHaveAttribute("target", "_blank");
+    expect(conversationLink).toHaveAttribute("rel", "noopener noreferrer");
+
+    const sessionEntry = await findEntry(
+      "The spike session that produced the windowing prototype.",
+    );
+    const sessionLink = within(sessionEntry).getByRole("link", {
+      name: "Open session",
+    });
+    expect(sessionLink).toHaveAttribute(
+      "href",
+      "/projects/command-center/csm%2Fspike-virtualize",
+    );
+    expect(sessionLink).toHaveAttribute("target", "_blank");
+    expect(sessionLink).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("expands from the row surface while keeping attachment actions independent", async () => {
     await AllKinds.run();
     const entry = await findEntry(NOTE_DESCRIPTION);
-    const view = within(entry).getByRole("button", { name: "View" });
+    const disclosure = findDisclosure(entry, NOTE_DESCRIPTION);
     const edit = within(entry).getByRole("button", { name: "Edit" });
     const remove = within(entry).getByRole("button", { name: "Remove" });
 
-    for (const action of [view, edit, remove]) {
+    for (const action of [edit, remove]) {
       expect(action).toHaveClass("min-h-[24px]", "min-w-[24px]");
     }
 
-    expect(view).toHaveAttribute("aria-expanded", "false");
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(disclosure).toHaveAccessibleName(/note/);
     expect(edit).toHaveAttribute("aria-expanded", "false");
-    const previewId = view.getAttribute("aria-controls");
+    const previewId = disclosure.getAttribute("aria-controls");
     const editId = edit.getAttribute("aria-controls");
     expect(previewId).toBeTruthy();
     expect(editId).toBeTruthy();
 
-    fireEvent.click(view);
-    expect(view).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(document.getElementById(previewId!)).toBeInTheDocument();
 
     fireEvent.click(edit);
-    expect(view).toHaveAttribute("aria-expanded", "false");
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(edit).toHaveAttribute("aria-expanded", "true");
     expect(document.getElementById(previewId!)).not.toBeInTheDocument();
     expect(document.getElementById(editId!)).toBeInTheDocument();
@@ -128,7 +163,7 @@ describe("AttachmentIndex stories", () => {
   it("NotePreview expands the note's markdown in place and collapses again", async () => {
     await NotePreview.run();
 
-    // The play function clicked View on the note entry — resolve renders.
+    // The play function clicked the note row surface — resolve renders.
     // The note body renders through the deferred markdown adapter, whose dynamic
     // import can exceed the default 1s waitFor budget under full-suite load.
     await waitFor(
@@ -136,9 +171,9 @@ describe("AttachmentIndex stories", () => {
       { timeout: 15000 },
     );
 
-    // Collapse: the same action toggles the preview away.
+    // Collapse: the same row surface toggles the preview away.
     const entry = await findEntry(NOTE_DESCRIPTION);
-    fireEvent.click(within(entry).getByRole("button", { name: "View" }));
+    fireEvent.click(findDisclosure(entry, NOTE_DESCRIPTION));
     await waitFor(() =>
       expect(screen.queryByText("keep keyboard nav")).not.toBeInTheDocument(),
     );
@@ -147,7 +182,7 @@ describe("AttachmentIndex stories", () => {
   it("expands a file preview with its resolved utf8 content", async () => {
     await AllKinds.run();
     const entry = await findEntry(FILE_DESCRIPTION);
-    fireEvent.click(within(entry).getByRole("button", { name: "View" }));
+    fireEvent.click(findDisclosure(entry, FILE_DESCRIPTION));
     await waitFor(
       () =>
         expect(
@@ -289,7 +324,7 @@ describe("AttachmentIndex stories", () => {
     const nextEntry = await findEntry(CONVERSATION_DESCRIPTION);
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        within(nextEntry).getByRole("button", { name: "View" }),
+        findDisclosure(nextEntry, CONVERSATION_DESCRIPTION),
       ),
     );
   });
