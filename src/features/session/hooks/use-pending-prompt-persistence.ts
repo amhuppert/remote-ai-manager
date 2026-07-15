@@ -5,10 +5,12 @@ import {
   useUpdatePendingPromptTextMutation,
   sendPendingPromptBeacon,
 } from "@/lib/prompt/mutations";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 
 const DEBOUNCE_MS = 500;
+const logger = createClientLogger("pending-prompt-persistence");
 
 export interface UsePendingPromptPersistenceArgs {
   projectName: string;
@@ -39,6 +41,7 @@ export function usePendingPromptPersistence({
   const updatePendingPromptMutation = useUpdatePendingPromptTextMutation(
     projectName,
     sessionName,
+    conversationId,
   );
   const updatePendingPromptMutate = updatePendingPromptMutation.mutate;
   const hydratedConversationIdRef = useRef<string | null>(null);
@@ -85,8 +88,26 @@ export function usePendingPromptPersistence({
 
   const suppressPendingPromptAutosaveAfterSubmit = useCallback(() => {
     cancelPendingPromptDebounce();
+    const expectedText = lastPersistedPendingPromptRef.current;
     lastPersistedPendingPromptRef.current = null;
-  }, [cancelPendingPromptDebounce]);
+    updatePendingPromptMutate({
+      conversationId,
+      text: null,
+      ...(expectedText !== null ? { expectedText } : {}),
+    });
+    logger.debug("pending_prompt.submit_clear_requested", {
+      projectName,
+      sessionName,
+      conversationId,
+      compareAndClear: expectedText !== null,
+    });
+  }, [
+    cancelPendingPromptDebounce,
+    updatePendingPromptMutate,
+    conversationId,
+    projectName,
+    sessionName,
+  ]);
 
   // --- Reset hydration gate when switching conversations ---
   useEffect(() => {

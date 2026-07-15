@@ -48,17 +48,28 @@ export function sendPendingPromptBeacon(
 export function useUpdatePendingPromptTextMutation(
   projectName: string,
   sessionName: string,
+  scopeConversationId: string,
 ) {
   const queryClient = useQueryClient();
   const detailKey = sessionKeys.detail(projectName, sessionName);
 
   return useMutation({
+    scope: {
+      id: JSON.stringify([
+        "pending-prompt",
+        projectName,
+        sessionName,
+        scopeConversationId,
+      ]),
+    },
     mutationFn: ({
       conversationId,
       text,
+      expectedText,
     }: {
       conversationId: string;
       text: string | null;
+      expectedText?: string;
     }) =>
       mutationFetch(
         pendingPromptUrl(projectName, sessionName, conversationId),
@@ -66,7 +77,7 @@ export function useUpdatePendingPromptTextMutation(
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, expectedText }),
         },
       ),
     onMutate: async ({ conversationId, text }) => {

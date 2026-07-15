@@ -36,6 +36,7 @@ export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
 
 export const pendingPromptRequestSchema = z.object({
   text: z.string().nullable(),
+  expectedText: z.string().optional(),
 });
 
 export const queueEnqueueRequestSchema = z

@@ -55,7 +55,62 @@ describe("usePendingPromptPersistence", () => {
     );
   });
 
-  it("does not persist null after an accepted submit clears the local editor", async () => {
+  it("requests an immediate compare-and-clear when the prompt is submitted", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, updated: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const client = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false },
+      },
+    });
+    const activeConversation = {
+      id: "c",
+      pendingPromptText: "persisted draft",
+    } as ConversationState;
+    const { result } = renderHook(
+      () => {
+        const [promptText, setPromptText] = useState("");
+        const promptTextRef = useRef(promptText);
+        promptTextRef.current = promptText;
+        const editorRef = useRef(null);
+        const persistence = usePendingPromptPersistence({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          activeConversation,
+          promptText,
+          setPromptText,
+          promptTextRef,
+          editorRef,
+        });
+        return { ...persistence, promptText };
+      },
+      { wrapper: wrapper(client) },
+    );
+
+    await waitFor(() =>
+      expect(result.current.promptText).toBe("persisted draft"),
+    );
+    act(() => {
+      result.current.suppressPendingPromptAutosaveAfterSubmit();
+    });
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    const [url, request] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/conversations/c/pending-prompt");
+    expect(JSON.parse(String(request.body))).toEqual({
+      text: null,
+      expectedText: "persisted draft",
+    });
+  });
+
+  it("does not clear a newer draft after an accepted submit clears the local editor", async () => {
     const db = _createTestDb({ inMemory: true });
     const store = createStateStore({ db, writeQueue: createWriteQueue() });
     const projectPath = "/projects/p";
@@ -84,6 +139,8 @@ describe("usePendingPromptPersistence", () => {
       resolveProjectPath: async () => projectPath,
       getSession: store.getSession,
       setConversationPendingPromptText: store.setConversationPendingPromptText,
+      clearConversationPendingPromptTextIfMatches:
+        store.clearConversationPendingPromptTextIfMatches,
     });
     const fetchSpy = vi.fn(
       async (input: string | URL | Request, init?: RequestInit) =>
@@ -148,7 +205,11 @@ describe("usePendingPromptPersistence", () => {
     await act(async () => vi.runAllTimersAsync());
     unmount();
 
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      text: null,
+      expectedText: "submitted draft",
+    });
     expect(
       (await store.getConversation(projectPath, "s", "c"))?.pendingPromptText,
     ).toBe("newer draft from another client");

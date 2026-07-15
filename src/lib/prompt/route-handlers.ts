@@ -534,12 +534,20 @@ export interface PendingPromptRouteDeps {
     conversationId: string,
     text: string | null,
   ): Promise<void>;
+  clearConversationPendingPromptTextIfMatches(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    expectedText: string,
+  ): Promise<boolean>;
 }
 
 const defaultPendingDeps: PendingPromptRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
+  clearConversationPendingPromptTextIfMatches:
+    defaultClearConversationPendingPromptTextIfMatches,
 };
 
 export function createPendingPromptRouteHandlers(
@@ -566,7 +574,7 @@ export function createPendingPromptRouteHandlers(
       return notFound("Conversation not found");
     }
 
-    let body: { text: string | null };
+    let body: { text: string | null; expectedText?: string };
     try {
       body = pendingPromptRequestSchema.parse(await request.json());
     } catch {
@@ -577,18 +585,48 @@ export function createPendingPromptRouteHandlers(
     }
 
     try {
+      if (body.text === null && body.expectedText !== undefined) {
+        const updated = await deps.clearConversationPendingPromptTextIfMatches(
+          projectPath,
+          sessionName,
+          conversationId,
+          body.expectedText,
+        );
+        logger.debug("pending_prompt.compare_and_clear_completed", {
+          projectPath,
+          sessionName,
+          conversationId,
+          updated,
+        });
+        return NextResponse.json({ ok: true, updated });
+      }
+
       await deps.setConversationPendingPromptText(
         projectPath,
         sessionName,
         conversationId,
         body.text,
       );
-      return NextResponse.json({ ok: true });
+      logger.debug("pending_prompt.update_completed", {
+        projectPath,
+        sessionName,
+        conversationId,
+        cleared: body.text === null,
+        textLength: body.text?.length ?? 0,
+      });
+      return NextResponse.json({ ok: true, updated: true });
     } catch (err) {
       const message =
         err instanceof Error
           ? err.message
           : "Failed to update pending prompt text";
+      logger.warn("pending_prompt.update_failed", {
+        projectPath,
+        sessionName,
+        conversationId,
+        compareAndClear: body.text === null && body.expectedText !== undefined,
+        error: message,
+      });
       return NextResponse.json({ error: message } satisfies ApiError, {
         status: 500,
       });

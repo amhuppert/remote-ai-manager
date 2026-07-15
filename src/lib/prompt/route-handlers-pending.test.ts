@@ -77,6 +77,9 @@ function createTestDeps(
       .fn()
       .mockResolvedValue(makeSession([makeConvo({ id: "convo-1" })])),
     setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
+    clearConversationPendingPromptTextIfMatches: vi
+      .fn()
+      .mockResolvedValue(true),
     ...overrides,
   };
 }
@@ -150,6 +153,25 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
       "convo-1",
       null,
     );
+  });
+
+  it("clears only the pending prompt that matches the submitted draft", async () => {
+    const response = await handlers.POST(
+      makeRequest({ text: null, expectedText: "submitted draft" }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      deps.clearConversationPendingPromptTextIfMatches,
+    ).toHaveBeenCalledWith(
+      "/home/projects/test-proj",
+      "test",
+      "convo-1",
+      "submitted draft",
+    );
+    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual({ ok: true, updated: true });
   });
 
   it("accepts an empty string and persists it as-is", async () => {
