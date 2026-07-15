@@ -9,10 +9,8 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
 import type { SharedDocumentUpsertInput } from "@/lib/workflow-graph/shared-documents";
-import type {
-  GraphWorkflowHaltReason,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   type ExecutionLogger,
   getExecutionLogger as defaultGetExecutionLogger,

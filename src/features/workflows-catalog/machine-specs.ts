@@ -1,5 +1,5 @@
 /**
- * Reference data for the 5 XState machines orchestrating Command Center.
+ * Reference data for the 3 XState machines orchestrating Command Center.
  *
  * Structural fields (states, transitions, invokes, action/guard/actor names)
  * are auto-derived by introspecting the actual machine definitions. Hand-typed
@@ -7,7 +7,7 @@
  * canvas, and friendly labels for composite guards.
  *
  * **Server-only by convention.** The live machines transitively import
- * Node-only logging via `default-session-status-bus`, so any client bundle
+ * Node-only logging via the SSE publication module, so any client bundle
  * that pulled this in would fail Next.js's `node:fs` check. Server pages
  * compute the spec once and pass the JSON-serializable result down to
  * client components, which import types from `machine-spec-types.ts`.
@@ -32,8 +32,6 @@ import {
 import { conversationMachine } from "@/lib/workflows/conversation/machine";
 import { mergeMachine } from "@/lib/workflows/merge/machine";
 import { commitMachine } from "@/lib/workflows/commit/machine";
-import { optimisticMachine } from "@/lib/workflows/optimistic/machine";
-import { createRetryMachine } from "@/lib/workflows/retry-machine";
 
 // ============================================================
 // Metadata shape (hand-typed overlay)
@@ -82,7 +80,7 @@ const conversationMetadata: MachineMetadata = {
   tagline:
     "The full life of a conversation turn — prompt → SDK → ask question → finalize.",
   description:
-    "Manages the full conversation lifecycle: prompt submission, resource acquisition, SDK execution, AskUserQuestion handling, and metadata accumulation. The debug compound state layers a 6-phase debugging workflow on top of the same core loop.",
+    "Manages the full conversation lifecycle: prompt submission, resource acquisition, SDK execution, AskUserQuestion handling, and metadata accumulation. Debug mode is an attached workflow (src/lib/workflows/debug/): the flat debug state parks the conversation between debug turns while the phase lives in context.debugMode, and DEBUG_COMMAND events are applied by the debug workflow's pure reducer.",
   filePath: "src/lib/workflows/conversation/machine.ts",
   states: {
     idle: {
@@ -95,8 +93,21 @@ const conversationMetadata: MachineMetadata = {
           description: "User-initiated prompt arrives.",
         },
         {
-          event: "ENTER_DEBUG_MODE",
-          description: "Operator activates the debug workflow.",
+          event: "SUBMIT_TASK_RUN",
+          description:
+            "Workflow task claims the conversation for a single-shot task run.",
+        },
+        {
+          event: "DEBUG_COMMAND",
+          description:
+            "Operator activates the debug workflow (only the `enter` command is legal while debug mode is inactive); the always-transition then parks the conversation in the debug state.",
+        },
+        {
+          event: "always",
+          target: "debug",
+          description:
+            "An active debugMode (restored from input, or just entered) routes into the debug state.",
+          guardLabel: "debugMode.active",
         },
         {
           event: "EXTERNAL_TURN_STARTED",
@@ -173,53 +184,14 @@ const conversationMetadata: MachineMetadata = {
     },
     finalizingTurn: {
       description:
-        "Always-state with guarded transitions. Routes back to idle, to a specific debug phase, or loops the debug workflow based on context flags. Releases resources and persists the snapshot.",
+        "Always-state with guarded transitions. Routes back to idle, into the debug state, or to waitingForInput based on context flags. Releases resources and persists the snapshot.",
       events: [
         {
           event: "always",
-          target: "debug.awaitingReproduction",
-          guard: "isDebugHypothesizing",
-          description: "Debug: just delivered hypotheses → wait for repro.",
-        },
-        {
-          event: "always",
-          target: "debug.awaitingVerification",
-          guard:
-            "isDebugAnalyzing && lastTurnProducedStructuredOutput && analysisOutcomeIsFixApplied",
+          target: "debug",
           description:
-            "Evidence analysis applied a fix → wait for verification.",
-        },
-        {
-          event: "always",
-          target: "debug.awaitingReproduction",
-          guard:
-            "isDebugAnalyzing && lastTurnProducedStructuredOutput && analysisOutcomeIsMoreInstrumentation",
-          description:
-            "Evidence analysis recommended more instrumentation — re-arm reproduction.",
-        },
-        {
-          event: "always",
-          target: "debug.awaitingReproduction",
-          guard: "isDebugAwaitingReproduction",
-          description: "Follow-up prompt while awaiting repro.",
-        },
-        {
-          event: "always",
-          target: "debug.awaitingVerification",
-          guard: "isDebugAwaitingVerification",
-          description: "Follow-up prompt while awaiting verification.",
-        },
-        {
-          event: "always",
-          target: "idle",
-          guard: "isDebugCleanup && lastTurnProducedStructuredOutput",
-          description: "Debug cleanup completed → exit debug mode.",
-        },
-        {
-          event: "always",
-          target: "debug.error",
-          description:
-            "Phase-advancing turn failed (no structured output / SDK error). Preserves phase + activeTurn so the operator can RETRY_DEBUG_TURN.",
+            "Debug mode active: the attached debug workflow interprets the turn outcome (advance / follow-up / verify-cleanup / failed) via resolveDebugFinalization, then the conversation parks back in the debug state.",
+          guardLabel: "debugMode.active",
         },
         {
           event: "always",
@@ -261,91 +233,31 @@ const conversationMetadata: MachineMetadata = {
     debug: {
       status: "warning",
       description:
-        "A 6-phase debugging workflow layered on top of the conversation loop. Each SUBMIT_PROMPT bounces through acquiringResources → executing → finalizingTurn, then finalizingTurn's guards route back to the right phase here.",
+        "The attached debug workflow's parking state. The 6-phase debugging progression lives in context.debugMode (phase legality is the debug reducer's legality table, not machine topology). Each SUBMIT_PROMPT bounces through acquiringResources → executing → finalizingTurn, whose debug branch settles back here. No queue drain on entry: debug settle points must not auto-claim queued messages as debug turns.",
       events: [
-        {
-          event: "EXIT_DEBUG_MODE",
-          description: "Operator leaves debug mode.",
-        },
-        {
-          event: "SET_DEBUG_RECORDING",
-          description: "Toggle recording on the active debug log.",
-        },
-        {
-          event: "CLEAR_DEBUG_LOGS",
-          description: "Side-effect-only event handled by the API route.",
-        },
-      ],
-    },
-    "debug.hypothesizing": {
-      status: "initial",
-      description: "Generating hypotheses and instrumentation instructions.",
-      events: [
-        {
-          event: "SUBMIT_PROMPT",
-          description: "Operator submits hypothesis-generating prompt.",
-        },
-      ],
-    },
-    "debug.awaitingReproduction": {
-      status: "warning",
-      description:
-        "Instructions delivered; waiting for the operator to reproduce the bug and signal MARK_REPRODUCED.",
-      events: [
-        {
-          event: "MARK_REPRODUCED",
-          description: "Operator confirmed the bug was reproduced.",
-        },
-        {
-          event: "SUBMIT_PROMPT",
-          description: "Follow-up prompt while waiting.",
-        },
-      ],
-    },
-    "debug.analyzingEvidence": {
-      description:
-        "Analyzing collected logs/evidence. Output drives whether to fix or loop back for more instrumentation.",
-      events: [
-        { event: "SUBMIT_PROMPT", description: "Trigger the analysis turn." },
-      ],
-    },
-    "debug.awaitingVerification": {
-      status: "warning",
-      description:
-        "Fix delivered; waiting for the operator to verify the fix and signal MARK_FIX_VERIFIED.",
-      events: [
-        {
-          event: "MARK_FIX_VERIFIED",
-          description: "Operator confirmed the fix works.",
-        },
-        {
-          event: "SUBMIT_PROMPT",
-          description: "Follow-up prompt while waiting.",
-        },
-      ],
-    },
-    "debug.cleanupInstrumentation": {
-      status: "success",
-      description:
-        "Removing temporary instrumentation. The next finalizingTurn pass will exit debug mode entirely.",
-      events: [
-        { event: "SUBMIT_PROMPT", description: "Trigger the cleanup turn." },
-      ],
-    },
-    "debug.error": {
-      status: "warning",
-      description:
-        "Last phase-advancing turn failed (missing structured output or SDK error). Phase and activeTurn are preserved; RETRY_DEBUG_TURN re-runs the same prompt without UI replay.",
-      events: [
-        {
-          event: "RETRY_DEBUG_TURN",
-          description:
-            "Re-runs the failed turn against the preserved phase + activeTurn.",
-        },
         {
           event: "SUBMIT_PROMPT",
           description:
-            "Operator submits a fresh prompt instead of retrying the failed one.",
+            "Operator submits the next debug turn (phase-advancing prompt or follow-up); replaces a preserved failed turn.",
+        },
+        {
+          event: "DEBUG_COMMAND",
+          target: "acquiringResources",
+          description:
+            "retry_turn: re-runs the preserved failed turn against the same phase + structured-output schema.",
+          guardLabel: "retry_turn && lastTurnFailed && activeTurn",
+        },
+        {
+          event: "DEBUG_COMMAND",
+          description:
+            "Reducer-handled lifecycle command (exit, set_recording, phase marks, Strategy B reverts, async cleanup-verification outcomes). Illegal commands are refused by the legality guard, which keeps the adapter's 409 contract truthful.",
+        },
+        {
+          event: "always",
+          target: "idle",
+          description:
+            "Leaving debug mode (exit command, passed cleanup verification) clears debugMode; the conversation settles back to idle.",
+          guardLabel: "!debugMode.active",
         },
       ],
     },
@@ -357,28 +269,10 @@ const conversationMetadata: MachineMetadata = {
       "Streams a turn through the agent backend (Claude Agent SDK or Codex). ASK_QUESTION does not interrupt it — the invoke lives until the turn ends.",
     runTaskRun:
       "Executes a single-shot task_run turn via the shared AgentCall task-runner path. Non-streaming counterpart to executePrompt: awaits the full AgentCallResult, persists exactly one final assistant TranscriptMessage, broadcasts message-appended once, and surfaces a parsed structuredOutput when outputSchema is present.",
-    verifyCleanup:
-      "Cross-checks the agent's cleanup result against the persisted .debug/<conversationId>/instrumentation.json manifest. On a passing verification the manifest is deleted and the conversation exits debug mode; on failure the machine routes to debug.error with a remediation prompt so the agent can be re-run.",
   },
   guards: {
     isActiveTurnTaskRun:
       'True when activeTurn.kind === "task_run". Routes the executing compound state into the single-shot taskRun branch; otherwise the streaming conversationTurn branch is selected.',
-    isDebugModeActive: "True if debugMode is non-null and active.",
-    isDebugHypothesizing: 'True when debugMode.phase === "hypothesizing".',
-    isDebugAnalyzing: 'True when debugMode.phase === "analyzing_evidence".',
-    isDebugAwaitingReproduction:
-      'True when debugMode.phase === "awaiting_reproduction".',
-    isDebugAwaitingVerification:
-      'True when debugMode.phase === "awaiting_verification".',
-    isDebugCleanup: 'True when debugMode.phase === "cleanup_instrumentation".',
-    isDebugErrorRestore:
-      "True when debugMode.lastTurnFailed === true. Routes idle.always restoration into debug.error rather than the bare phase substate so that on actor rehydration (server restart) the error UX is preserved.",
-    lastTurnProducedStructuredOutput:
-      "True when the last turn finished without an error and produced a non-null structuredOutput. Phase advancement is gated on this so a missing structured response routes to debug.error instead of clobbering activeTurn.",
-    analysisOutcomeIsFixApplied:
-      'True when the analyzer\'s structured output parses and outcome === "fix_applied" (a fix was applied in the same turn).',
-    analysisOutcomeIsMoreInstrumentation:
-      'True when the analyzer\'s structured output parses and outcome === "more_instrumentation" (agent proposes additional hypotheses to chase).',
   },
   actions: {
     persistSnapshot: "Writes the conversation snapshot to disk (atomic).",
@@ -400,6 +294,20 @@ const conversationMetadata: MachineMetadata = {
       "Clears unread=false and broadcasts a conversation-unread SSE event at the start of a user-initiated turn (prompt submit or question answer). Skipped for workflow-managed roles.",
     drainPendingQueue:
       "On entry to the settled idle state, claims any durably-queued follow-up messages and dispatches them as the next coalesced turn. No-op for workflow roles and empty queues; provided by the conversation manager.",
+    cancelDebugCleanupVerification:
+      "Aborts cleanup verification for the current debug generation and clears its runtime handle when that generation exits.",
+    persistRestoredDebugGeneration:
+      "Persists the required generation assigned to an active legacy debug state during rehydration before cleanup verification can run.",
+    claimConversationTurn:
+      "Single owner of the SUBMIT_PROMPT turn claim (idle, waitingForInput, debug): stores the ActiveTurn, clears the pending question, the previous turn's result/error, and the debug failed-turn flag.",
+    claimTaskRun:
+      "SUBMIT_TASK_RUN counterpart of claimConversationTurn: stores the task_run ActiveTurn and clears the pending question and previous result/error.",
+    applyDebugCommandEffect:
+      "Applies a reducer-handled debug command (applyDebugCommand from the debug workflow module) and fires the side effects it selects (sync, status/debug-status broadcasts, persist).",
+    finalizeDebugTurn:
+      "Settles a turn that finalized while debug mode was active: applies turn accounting, adopts the debug workflow's finalization decision (advance / follow-up / verify-cleanup / failed), notifies the user only on a phase advance, and starts async cleanup verification when the cleanup turn produced a structured report.",
+    startDebugCleanupVerification:
+      "Fire-and-forget cleanup verification through the debug workflow module; the outcome re-enters the machine as a DEBUG_COMMAND (cleanup_verified / cleanup_verification_failed).",
   },
 };
 
@@ -566,10 +474,7 @@ const smartMergeMetadata: MachineMetadata = {
     casRetriesRemaining:
       "casAttempt < maxCasAttempts (default 3) AND entryMode === 'merge'. Land mode never re-prepares.",
   },
-  actions: {
-    onTerminal:
-      "Override via .provide() — fires push notifications, SSE broadcast, job-history write.",
-  },
+  actions: {},
 };
 
 // ============================================================
@@ -632,95 +537,6 @@ const smartCommitMetadata: MachineMetadata = {
     fixSucceeded: 'fixValidation returned status: "fixed".',
     hasFixRetriesRemaining: "fixAttempt < maxFixAttempts (default 2).",
     hasUncommittedChanges: "checkUncommitted returned hasChanges: true.",
-  },
-  actions: {
-    onTerminal: "Override via .provide() for SSE broadcast and job history.",
-  },
-};
-
-// ============================================================
-// Metadata: 4. Optimistic
-// ============================================================
-
-const optimisticMetadata: MachineMetadata = {
-  id: "optimistic",
-  name: "Optimistic",
-  machineId: "optimistic",
-  character: "linear",
-  tagline:
-    "Execute a prompt autonomously, then dispatch a merge — the simplest workflow.",
-  description:
-    "The reference implementation of the standard workflow shape: invoke an agent prompt, then dispatch a merge job, with a single shared failure terminal. Used to validate the composable-primitives pattern before applying it to more complex flows.",
-  filePath: "src/lib/workflows/optimistic/machine.ts",
-  states: {
-    executingPrompt: {
-      status: "initial",
-      description:
-        "Runs the user's instructions through the agent autonomously and captures the resulting conversationId.",
-    },
-    dispatchingMerge: {
-      description:
-        "Enqueues a Smart Merge job for the resulting branch and stores its jobId.",
-    },
-    completed: {
-      status: "success",
-      description: "Prompt finished and the merge job is queued.",
-    },
-    failed: {
-      status: "failure",
-      description:
-        "Either the prompt or the merge dispatch failed; notifyFailure was fired.",
-    },
-  },
-  actors: {
-    executePrompt:
-      "Runs the prompt against the agent backend autonomously and returns the conversationId.",
-    dispatchMerge: "Posts a Smart Merge job and returns its jobId.",
-  },
-  guards: {},
-  actions: {
-    notifyFailure:
-      "Stub action overridden via .provide() to send a push notification when the workflow fails.",
-  },
-};
-
-// ============================================================
-// Metadata: 5. Retry (factory)
-// ============================================================
-
-const retryMetadata: MachineMetadata = {
-  id: "retry",
-  name: "Retry",
-  machineId: "retry",
-  character: "factory · cycle",
-  tagline:
-    "Generic attempt → fix → reattempt cycle. A reusable child machine for any workflow.",
-  description:
-    "A generic factory: createRetryMachine<TWorkInput, TWorkOutput>() returns a 4-state machine that other workflows invoke. The work and fix actors are stubbed and provided via .provide(). The fix actor is optional — when not supplied, the machine retries directly.",
-  filePath: "src/lib/workflows/retry-machine.ts",
-  states: {
-    attempting: {
-      status: "initial",
-      description:
-        "Invokes the work actor and increments the attempts counter. Success → succeeded, failure with retries left → fixing, failure without retries → exhausted.",
-    },
-    fixing: {
-      status: "warning",
-      description:
-        "Optional corrective step between retries. Increments retriesUsed. Success loops back to attempting; failure exhausts.",
-    },
-    succeeded: { status: "success", description: "Work returned a result." },
-    exhausted: {
-      status: "failure",
-      description: "Retries exhausted or fix failed.",
-    },
-  },
-  actors: {
-    work: "The operation to attempt. Provided via .provide(). Throws on failure.",
-    fix: "Optional corrective step run between retries. Defaults to a no-op so retries proceed directly.",
-  },
-  guards: {
-    hasRetriesLeft: "retriesUsed < maxRetries.",
   },
   actions: {},
 };
@@ -846,15 +662,6 @@ const smartCommitSpec = buildSpec(
   smartCommitMetadata,
   introspectMachine(commitMachine),
 );
-const optimisticSpec = buildSpec(
-  optimisticMetadata,
-  introspectMachine(optimisticMachine),
-);
-// Retry is a factory; instantiate once with throwaway type params.
-const retrySpec = buildSpec(
-  retryMetadata,
-  introspectMachine(createRetryMachine<unknown, unknown>()),
-);
 
 // ============================================================
 // Registry
@@ -864,16 +671,12 @@ export const machineSpecs: ReadonlyArray<MachineSpec> = [
   conversationSpec,
   smartMergeSpec,
   smartCommitSpec,
-  optimisticSpec,
-  retrySpec,
 ];
 
 const specById: Record<MachineId, MachineSpec> = {
   conversation: conversationSpec,
   "smart-merge": smartMergeSpec,
   "smart-commit": smartCommitSpec,
-  optimistic: optimisticSpec,
-  retry: retrySpec,
 };
 
 export function getMachineSpec(id: MachineId): MachineSpec {

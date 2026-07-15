@@ -3,11 +3,11 @@ import type {
   AskQuestionAnswer,
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
-  GraphWorkflowSSEEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -62,18 +62,16 @@ function claudeLaneState(input: {
   return {
     lane: input.lane,
     contextId: input.contextId,
-    engine: "claude",
+    backend: "claude",
+    refKind: "conversation",
     ...(input.conversationId !== undefined
       ? { workflowConversationId: input.conversationId }
       : {}),
     sessionRef: {
-      engine: "claude",
-      lane: input.lane,
-      conversationId: input.conversationId ?? "conv-fallback",
+      backend: "claude",
+      ref: input.conversationId ?? "conv-fallback",
     },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    metrics: { rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: NOW,
   };
@@ -87,12 +85,12 @@ function codexLaneState(input: {
   return {
     lane: input.lane,
     contextId: input.contextId,
-    engine: "codex",
+    backend: "codex",
+    refKind: "backend",
     ...(input.conversationId !== undefined
       ? { workflowConversationId: input.conversationId }
       : {}),
-    lastTurnUsage: null,
-    rotateBeforeNextTurn: false,
+    metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: NOW,
   };

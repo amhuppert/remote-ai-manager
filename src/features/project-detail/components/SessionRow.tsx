@@ -12,9 +12,11 @@ import {
 } from "@/lib/sessions/mutations";
 import { useConfirmDeleteSession } from "@/stores/sessions.store";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
+import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { cn } from "@/lib/ui/cn";
 import SessionTicketIndicator from "@/components/SessionTicketIndicator";
 import TddToggle from "@/components/TddToggle";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { ChatIcon } from "@/components/icons";
 import BranchChip from "./BranchChip";
 import ModeDot from "./ModeDot";
@@ -48,17 +50,6 @@ const railColor: Record<RowStatus, string> = {
   idle: "bg-text-tertiary opacity-[0.25]",
   error: "bg-red opacity-100 shadow-[0_0_8px_var(--color-red-glow)]",
 };
-
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function SessionTddToggle({
   projectName,
@@ -199,18 +190,19 @@ export default function SessionRow({
         {formatRelativeTime(session.lastActivityAt)}
       </span>
       <div className="session-row-actions flex items-center gap-xs max-768:self-center max-768:[grid-area:actions]">
-        <Link
-          href={conversationsPageHref({
-            projectName,
-            sessionName: session.sessionName,
-          })}
-          className="relative flex size-[30px] items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.85rem] text-text-secondary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-768:size-[44px] max-768:min-h-[44px] max-768:min-w-[44px] max-768:text-[1rem] [&>svg]:size-[18px]"
-          aria-label="Open in Conversations"
-          data-tooltip="Open in Conversations"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ChatIcon size={14} />
-        </Link>
+        <WithTooltip label="Open in Conversations">
+          <Link
+            href={conversationsPageHref({
+              projectName,
+              sessionName: session.sessionName,
+            })}
+            className="relative flex size-[30px] items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.85rem] text-text-secondary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-768:size-[44px] max-768:min-h-[44px] max-768:min-w-[44px] max-768:text-[1rem] [&>svg]:size-[18px]"
+            aria-label="Open in Conversations"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ChatIcon size={14} />
+          </Link>
+        </WithTooltip>
         <SessionTddToggle projectName={projectName} session={session} />
         <KebabMenu items={rowActions} />
       </div>

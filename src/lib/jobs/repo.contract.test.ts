@@ -9,7 +9,7 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { createJobRecord, updateJobRecord, getJobRecord } from "./repo";
+import { createJobsRepo, type JobsRepo } from "./repo";
 import {
   _createTestDb,
   _installTestDb,
@@ -19,8 +19,12 @@ import { jobRecordSchema } from "./schemas";
 import type { JobRecord } from "./schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 
+let repo: JobsRepo;
+
 beforeEach(() => {
-  _installTestDb(_createTestDb({ inMemory: true }));
+  const db = _createTestDb({ inMemory: true });
+  _installTestDb(db);
+  repo = createJobsRepo(db);
 });
 
 afterEach(() => {
@@ -80,7 +84,7 @@ describe("job-records durability contract", () => {
         // createJobRecord only sets the create-time columns and inserts as
         // running; the terminal status and metadata reach their columns via
         // updateJobRecord, which also generates completedAt.
-        createJobRecord({
+        repo.createJobRecord({
           jobId: fixture.jobId,
           jobType: fixture.jobType,
           status: "running",
@@ -89,7 +93,7 @@ describe("job-records durability contract", () => {
           branchName: fixture.branchName,
           startedAt: fixture.startedAt,
         });
-        updateJobRecord(fixture.jobId, {
+        repo.updateJobRecord(fixture.jobId, {
           status: fixture.status,
           ...(fixture.mergeHash !== undefined
             ? { mergeHash: fixture.mergeHash }
@@ -107,7 +111,7 @@ describe("job-records durability contract", () => {
             ? { errorMessage: fixture.errorMessage }
             : {}),
         });
-        const expected = getJobRecord(fixture.jobId);
+        const expected = repo.getJobRecord(fixture.jobId);
         if (expected === null) {
           throw new Error(
             "job-records contract: getJobRecord returned null after create+update",
@@ -115,7 +119,7 @@ describe("job-records durability contract", () => {
         }
         return expected;
       },
-      reload: (expected) => getJobRecord(expected.jobId),
+      reload: (expected) => repo.getJobRecord(expected.jobId),
       fieldPolicies,
     });
   });

@@ -23,10 +23,6 @@ import type {
   MergeOutput,
 } from "./types";
 import type {
-  CheckUncommittedInput,
-  CheckUncommittedOutput,
-  CommitChangesInput,
-  CommitChangesOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -35,10 +31,6 @@ import type {
   ResolveConflictsOutput,
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
-  RunValidationInput,
-  RunValidationOutput,
-  FixValidationInput,
-  FixValidationOutput,
   PrepareActorInput,
   PrepareActorOutput,
   PublishActorInput,
@@ -47,26 +39,53 @@ import type {
   DiscardParkedRefOutput,
 } from "./actors";
 import {
-  checkUncommitted,
-  commitChangesActor,
   getCurrentBranchActor,
   mergeMain,
   resolveConflictsActor,
   analyzeConflictsActor,
-  runValidation,
-  fixValidation,
   prepareActor,
   publishActor,
   discardParkedRefActor,
 } from "./actors";
+import type {
+  CheckUncommittedInput,
+  CheckUncommittedOutput,
+  CommitChangesInput,
+  CommitChangesOutput,
+  RunValidationInput,
+  RunValidationOutput,
+  FixValidationInput,
+  FixValidationOutput,
+} from "../validation-fix/actors";
 import {
-  extractErrorMessage,
-  errorAssign,
-  isTimeoutError,
-  timeoutHaltMessage,
-} from "../utils";
+  checkUncommitted,
+  commitChangesActor,
+  runValidation,
+  fixValidation,
+} from "../validation-fix/actors";
+import { createValidationFixStates } from "../validation-fix/states";
+import { errorAssign } from "../utils";
 
 const SCHEMA_VERSION = 1;
+
+/**
+ * Shared validate → fix → check → commit-fix → revalidate fragment.
+ * Success routes to `preparing`; a validation-script timeout short-circuits
+ * to `failed`; only autoResolve merges dispatch the fix agent.
+ */
+const validationFixStates = createValidationFixStates<MergeContext>({
+  validateInput: (context) => ({
+    projectPath: context.projectPath,
+    worktreePath: context.worktreePath,
+    sessionName: context.sessionName,
+    branchName: context.branchName,
+    targetBranch: context.targetBranch,
+    timeoutMs: context.validationTimeoutMs,
+  }),
+  onValidated: { target: "preparing" },
+  onTimeout: { target: "failed" },
+  shouldAttemptFix: (context) => context.autoResolve,
+});
 
 /** Exported type alias so consumers can accept the machine or `.provide()` variants. */
 export type MergeMachineType = typeof mergeMachine;
@@ -140,16 +159,6 @@ export const mergeMachine = setup({
       const e = event as unknown as { output: AnalyzeConflictsOutput };
       return e.output.status === "analyzed";
     },
-    fixSucceeded: ({ event }) => {
-      const e = event as unknown as { output: FixValidationOutput };
-      return e.output.status === "fixed";
-    },
-    hasFixRetriesRemaining: ({ context }) =>
-      context.fixAttempt < context.maxFixAttempts,
-    validationTimedOut: ({ event }) => {
-      const e = event as unknown as { error?: unknown };
-      return isTimeoutError(e.error);
-    },
     prepareProducedConflicts: ({ event }) => {
       const e = event as unknown as { output: PrepareActorOutput };
       return e.output.status === "conflicts";
@@ -173,11 +182,6 @@ export const mergeMachine = setup({
     casRetriesRemaining: ({ context }) =>
       context.entryMode === "merge" &&
       context.casAttempt < context.maxCasAttempts,
-  },
-  actions: {
-    onTerminal: () => {
-      // Override via .provide() for notifications, SSE broadcast, etc.
-    },
   },
 }).createMachine({
   id: "smartMerge",
@@ -404,130 +408,8 @@ export const mergeMachine = setup({
       },
     },
 
-    validating: {
-      entry: assign({ phase: "validating" as const }),
-      invoke: {
-        src: "runValidation",
-        input: ({ context }) => ({
-          projectPath: context.projectPath,
-          worktreePath: context.worktreePath,
-          sessionName: context.sessionName,
-          branchName: context.branchName,
-          targetBranch: context.targetBranch,
-          timeoutMs: context.validationTimeoutMs,
-        }),
-        onDone: "preparing",
-        onError: [
-          {
-            guard: "validationTimedOut",
-            target: "failed",
-            actions: assign({
-              error: ({ event }) => timeoutHaltMessage(event.error),
-              completedAt: () => new Date().toISOString(),
-            }),
-          },
-          {
-            guard: "shouldAutoResolve",
-            actions: assign({
-              error: ({ event }) => extractErrorMessage(event.error),
-            }),
-            target: "fixingValidation",
-          },
-          { target: "failed", actions: errorAssign() },
-        ],
-      },
-    },
-
-    fixingValidation: {
-      entry: [
-        assign({ phase: "fixing-validation" as const }),
-        assign({ fixAttempt: ({ context }) => context.fixAttempt + 1 }),
-      ],
-      invoke: {
-        src: "fixValidation",
-        input: ({ context }) => ({
-          worktreePath: context.worktreePath,
-          validationOutput: context.error ?? "",
-          projectPath: context.projectPath,
-          sessionName: context.sessionName,
-          conversationId: context.conversationId ?? undefined,
-          branchName: context.branchName,
-          isRetry: context.fixAttempt > 1,
-        }),
-        onDone: [
-          { guard: "fixSucceeded", target: "checkingFixChanges" },
-          {
-            target: "failed",
-            actions: assign({
-              completedAt: () => new Date().toISOString(),
-            }),
-          },
-        ],
-        onError: { target: "failed", actions: errorAssign() },
-      },
-    },
-
-    checkingFixChanges: {
-      invoke: {
-        src: "checkUncommitted",
-        input: ({ context }) => ({ worktreePath: context.worktreePath }),
-        onDone: [
-          { guard: "hasUncommittedChanges", target: "committingFix" },
-          { target: "revalidating" },
-        ],
-        onError: { target: "committingFix" },
-      },
-    },
-
-    committingFix: {
-      invoke: {
-        src: "commitChanges",
-        input: ({ context }) => ({
-          worktreePath: context.worktreePath,
-          message: "auto-fix: validation errors",
-          skipHooks: true,
-        }),
-        onDone: "revalidating",
-        onError: { target: "failed", actions: errorAssign() },
-      },
-    },
-
-    revalidating: {
-      entry: assign({ phase: "re-validating" as const }),
-      invoke: {
-        src: "runValidation",
-        input: ({ context }) => ({
-          projectPath: context.projectPath,
-          worktreePath: context.worktreePath,
-          sessionName: context.sessionName,
-          branchName: context.branchName,
-          targetBranch: context.targetBranch,
-          timeoutMs: context.validationTimeoutMs,
-        }),
-        onDone: {
-          target: "preparing",
-          actions: assign({ error: null }),
-        },
-        onError: [
-          {
-            guard: "validationTimedOut",
-            target: "failed",
-            actions: assign({
-              error: ({ event }) => timeoutHaltMessage(event.error),
-              completedAt: () => new Date().toISOString(),
-            }),
-          },
-          {
-            guard: "hasFixRetriesRemaining",
-            actions: assign({
-              error: ({ event }) => extractErrorMessage(event.error),
-            }),
-            target: "fixingValidation",
-          },
-          { target: "failed", actions: errorAssign() },
-        ],
-      },
-    },
+    // Shared validate → fix → check → commit-fix → revalidate fragment
+    ...validationFixStates,
 
     preparing: {
       entry: assign({ phase: "preparing" as const }),
@@ -698,62 +580,47 @@ export const mergeMachine = setup({
 
     completed: {
       type: "final",
-      entry: [
-        assign({
-          finalStatus: "completed" as const,
-          phase: null,
-          completedAt: () => new Date().toISOString(),
-        }),
-        "onTerminal",
-      ],
+      entry: assign({
+        finalStatus: "completed" as const,
+        phase: null,
+        completedAt: () => new Date().toISOString(),
+      }),
     },
 
     failed: {
       type: "final",
-      entry: [
-        assign({
-          finalStatus: "failed" as const,
-          phase: null,
-          completedAt: () => new Date().toISOString(),
-        }),
-        "onTerminal",
-      ],
+      entry: assign({
+        finalStatus: "failed" as const,
+        phase: null,
+        completedAt: () => new Date().toISOString(),
+      }),
     },
 
     conflicts: {
       type: "final",
-      entry: [
-        assign({
-          finalStatus: "conflicts" as const,
-          phase: null,
-          completedAt: () => new Date().toISOString(),
-        }),
-        "onTerminal",
-      ],
+      entry: assign({
+        finalStatus: "conflicts" as const,
+        phase: null,
+        completedAt: () => new Date().toISOString(),
+      }),
     },
 
     readyToLand: {
       type: "final",
-      entry: [
-        assign({
-          finalStatus: "ready-to-land" as const,
-          phase: "awaiting-land" as const,
-          completedAt: () => new Date().toISOString(),
-        }),
-        "onTerminal",
-      ],
+      entry: assign({
+        finalStatus: "ready-to-land" as const,
+        phase: "awaiting-land" as const,
+        completedAt: () => new Date().toISOString(),
+      }),
     },
 
     discarded: {
       type: "final",
-      entry: [
-        assign({
-          finalStatus: "discarded" as const,
-          phase: null,
-          completedAt: () => new Date().toISOString(),
-        }),
-        "onTerminal",
-      ],
+      entry: assign({
+        finalStatus: "discarded" as const,
+        phase: null,
+        completedAt: () => new Date().toISOString(),
+      }),
     },
   },
   output: ({ context }) => ({

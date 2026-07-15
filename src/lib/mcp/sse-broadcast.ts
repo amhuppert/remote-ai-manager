@@ -16,7 +16,7 @@ import type {
   McpConfigRouteBroadcast,
   McpConfigRouteBroadcastPayload,
 } from "@/lib/mcp/config-route-handlers";
-import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
+import { publishEvent } from "@/lib/events/publication";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   McpConfigUpdatedEvent,
@@ -32,7 +32,7 @@ type EmitFn = (event: SSEEvent) => void;
  * without touching the shared SSE client set.
  */
 export function createMcpRouteBroadcast(
-  emit: EmitFn = defaultBroadcast,
+  emit: EmitFn = publishEvent,
 ): McpConfigRouteBroadcast {
   return (payload) => {
     const event = toSseEvent(payload);

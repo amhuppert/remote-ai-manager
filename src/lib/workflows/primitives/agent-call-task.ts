@@ -15,13 +15,16 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
+import { refValueForBackend } from "@/lib/agent-backends/continuity";
 import type {
   AgentTaskRunner,
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
+import type { AgentFailureWithContinuation } from "@/lib/agent-backends/errors";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,
@@ -29,6 +32,7 @@ import {
   type ArtifactRef,
   type BackendCapabilityView,
   type AgentCallUsageMetrics,
+  type NormalizedAgentCallFailureKind,
 } from "./agent-call-vocabulary";
 
 const defaultLogger = createLogger("workflows.primitives.agent-call.task");
@@ -53,6 +57,12 @@ export interface DispatchTaskRunDeps {
   /** External cancellation signal, forwarded to the runner so a live run can
    * be torn down (e.g. workflow abort cancelling a validator task-run). */
   signal?: AbortSignal;
+  /**
+   * Backend failure classifier for thrown runner errors (the registered
+   * descriptor's `errors.classify`). When absent, a thrown error normalizes
+   * to `backend_error`.
+   */
+  classifyFailure?(error: unknown): AgentFailureWithContinuation;
   logger?: Logger;
 }
 
@@ -136,19 +146,31 @@ export async function dispatchTaskRun(
   try {
     runResult = await deps.runner.run(taskRequest);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const decision = deps.classifyFailure?.(err);
+    const classification = decision?.failure;
+    const message = classification?.message ?? getErrorMessage(err);
     log.warn("agent_call.task.run_threw", {
       ...baseLogFields,
       outcome: "failed",
+      ...(classification !== undefined
+        ? { failureKind: classification.kind }
+        : {}),
       message,
     });
+    const resumeRefValue = refValueForBackend(deps.resumeRef, backend);
+    const continuationDisposition =
+      decision?.continuationDisposition ?? "retain";
     return buildFailureResult({
       backend,
       capabilityView: deps.capabilityView,
-      backendRef: null,
+      backendRef:
+        continuationDisposition === "clear" || resumeRefValue === undefined
+          ? null
+          : { backend, ref: resumeRefValue },
       artifacts: deps.artifacts,
-      failureKind: "backend_error",
+      failureKind: classification?.kind ?? "backend_error",
       message,
+      continuationDisposition,
     });
   }
 
@@ -168,6 +190,7 @@ export async function dispatchTaskRun(
       failureKind: "timeout",
       message: `task timed out after ${taskRequest.timeoutMs}ms`,
       usage,
+      continuationDisposition: runResult.continuationDisposition,
       ...(runResult.transcript !== undefined
         ? { transcript: runResult.transcript }
         : {}),
@@ -175,9 +198,21 @@ export async function dispatchTaskRun(
   }
 
   if (runResult.error) {
+    const classification = runResult.failure ?? {
+      kind: "backend_error" as const,
+      message: runResult.error,
+      retryable: false,
+    };
+    if (runResult.failure === null) {
+      log.error("agent_call.task.adapter_failure_contract_violated", {
+        ...baseLogFields,
+        message: runResult.error,
+      });
+    }
     log.warn("agent_call.task.runner_error", {
       ...baseLogFields,
       outcome: "failed",
+      failureKind: classification.kind,
       message: runResult.error,
     });
     return buildFailureResult({
@@ -185,9 +220,10 @@ export async function dispatchTaskRun(
       capabilityView: deps.capabilityView,
       backendRef: runResult.backendRef ?? null,
       artifacts: deps.artifacts,
-      failureKind: "backend_error",
+      failureKind: classification.kind,
       message: runResult.error,
       usage,
+      continuationDisposition: runResult.continuationDisposition,
       ...(runResult.transcript !== undefined
         ? { transcript: runResult.transcript }
         : {}),
@@ -215,6 +251,7 @@ export async function dispatchTaskRun(
         ? { transcript: runResult.transcript }
         : {}),
     },
+    continuationDisposition: runResult.continuationDisposition,
   };
 }
 
@@ -223,15 +260,11 @@ interface BuildFailureResultInput {
   capabilityView: BackendCapabilityView;
   backendRef: AgentCallResult["backendRef"];
   artifacts?: readonly ArtifactRef[];
-  failureKind:
-    | "timeout"
-    | "schema_validation"
-    | "backend_error"
-    | "aborted"
-    | "capability_unavailable";
+  failureKind: NormalizedAgentCallFailureKind;
   message: string;
   usage?: AgentCallUsageMetrics;
   transcript?: AgentTaskResult["transcript"];
+  continuationDisposition?: AgentCallResult["continuationDisposition"];
 }
 
 function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
@@ -252,6 +285,9 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
         message: input.message,
       },
     },
+    ...(input.continuationDisposition !== undefined
+      ? { continuationDisposition: input.continuationDisposition }
+      : {}),
   };
 }
 

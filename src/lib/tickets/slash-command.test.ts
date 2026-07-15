@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -41,6 +42,7 @@ import {
   FALLBACK_CONTEXT_BUDGET_BYTES,
   resolveTicketGeneration,
   TICKET_COMMAND_JSON_SCHEMA,
+  ticketCommandOutputSchema,
   type TicketCommandRunner,
   type TicketCommandRunnerDeps,
 } from "./slash-command";
@@ -69,6 +71,7 @@ function structuredResult(structuredOutput: unknown): TaskRunResult {
     text: "",
     usage: USAGE,
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -86,7 +89,7 @@ let events: SSEEvent[];
 let notices: AppendNoticeInput[];
 let taskRunInputs: ExecuteWorkflowTaskRunInput[];
 let taskRunResult: TaskRunResult;
-let backendRef: { backend: "claude"; sessionId: string } | null;
+let backendRef: { backend: "claude"; ref: string } | null;
 let liveCompaction: LiveCompaction | null;
 let transcriptEntries: TranscriptEntriesResult;
 let ensureResult: EnsureConversationCompactionResult;
@@ -108,7 +111,7 @@ beforeEach(async () => {
   notices = [];
   taskRunInputs = [];
   taskRunResult = structuredResult(VALID_OUTPUT);
-  backendRef = { backend: "claude", sessionId: "sdk-session" };
+  backendRef = { backend: "claude", ref: "sdk-session" };
   liveCompaction = null;
   transcriptEntries = { entries: [], maxSeq: -1 };
   ensureResult = {
@@ -142,8 +145,9 @@ beforeEach(async () => {
     async appendNotice(input) {
       notices.push(input);
     },
-    broadcast(event) {
+    publish(event) {
       events.push(event);
+      return { delivered: true };
     },
     now() {
       return "2026-07-10T00:00:01.000Z";
@@ -232,6 +236,7 @@ describe("resolveTicketGeneration", () => {
       aborted: false,
       usage: USAGE,
       backendRef: null,
+      continuationDisposition: "retain",
     });
     expect(resolved).toMatchObject({ ok: false });
     if (!resolved.ok) expect(resolved.reason).toContain("backend exploded");
@@ -243,6 +248,7 @@ describe("resolveTicketGeneration", () => {
       text: "just prose",
       usage: USAGE,
       backendRef: null,
+      continuationDisposition: "retain",
     });
     expect(resolved.ok).toBe(false);
   });
@@ -276,6 +282,28 @@ describe("resolveTicketGeneration", () => {
         description: "Retries fail.",
         workType: "bug",
       },
+    });
+  });
+});
+
+describe("ticket command structured-output schema", () => {
+  it("matches the canonical Zod contract without changing the established wire shape", () => {
+    const derivedSchema = z.toJSONSchema(ticketCommandOutputSchema);
+    delete derivedSchema.$schema;
+
+    expect(TICKET_COMMAND_JSON_SCHEMA).toEqual(derivedSchema);
+    expect(TICKET_COMMAND_JSON_SCHEMA).toEqual({
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        workType: {
+          type: "string",
+          enum: ["feature", "bug", "research", "tech_debt", "performance"],
+        },
+      },
+      required: ["title", "description", "workType"],
+      additionalProperties: false,
     });
   });
 });
@@ -608,6 +636,7 @@ describe("createTicketCommandRunner", () => {
       aborted: false,
       usage: USAGE,
       backendRef: null,
+      continuationDisposition: "retain",
     };
 
     const outcome = await runner.run(runInput());
@@ -626,6 +655,7 @@ describe("createTicketCommandRunner", () => {
       aborted: false,
       usage: USAGE,
       backendRef: null,
+      continuationDisposition: "retain",
     };
     deps.appendNotice = async () => {
       throw new Error("transcript unavailable");

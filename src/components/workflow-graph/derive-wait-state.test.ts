@@ -4,9 +4,11 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { deriveContextWaitState } from "./derive-wait-state";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 

@@ -12,12 +12,12 @@ import {
   workflowDefinitionsResponseSchema,
   workflowDefinitionGetResponseSchema,
 } from "@/lib/workflow-definitions/schemas";
+import { graphWorkflowExecutionEventsResponseSchema } from "@/lib/workflow-graph/event-schemas";
+import { graphWorkflowExecutionFullResponseSchema } from "@/lib/workflow-graph/schemas";
 import {
-  graphWorkflowExecutionEventsResponseSchema,
-  graphWorkflowExecutionFullResponseSchema,
   parameterDeclarationSchema,
   prerequisiteSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { collaborationListResponseSchema } from "@/lib/collaboration/schemas";
 import {
   workflowDefinitionScopeApi,

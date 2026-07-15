@@ -18,6 +18,7 @@ import {
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
 import { IconButton } from "@/components/ui/IconButton";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { ticketDetailHref as ticketDetailHrefFor } from "@/lib/tickets/hrefs";
 import { useDeleteTicketMutation } from "@/lib/tickets/mutations";
 import type { TicketListItem } from "@/lib/tickets/schemas";
@@ -292,15 +293,20 @@ export default function TicketList({
             </span>
             <span role="cell" className="min-w-0 max-768:sr-only">
               {item.activeSessionName !== null ? (
-                <span className="inline-flex max-w-full items-center gap-[6px] overflow-hidden rounded-full border border-solid border-border-subtle bg-bg-raised px-[9px] py-[2px] font-mono text-[0.7rem] font-medium whitespace-nowrap text-text-secondary">
-                  <span
-                    aria-hidden="true"
-                    className="h-[6px] w-[6px] shrink-0 [animation:pulse-dot_2.5s_ease_infinite] rounded-full bg-green shadow-[0_0_6px_var(--color-green-glow)] motion-reduce:[animation:none]"
-                  />
+                <StatusChip
+                  tone="neutral"
+                  icon={
+                    <span
+                      aria-hidden="true"
+                      className="h-[6px] w-[6px] shrink-0 [animation:pulse-dot_2.5s_ease_infinite] rounded-full bg-green shadow-[0_0_6px_var(--color-green-glow)] motion-reduce:[animation:none]"
+                    />
+                  }
+                  layoutClassName="max-w-full overflow-hidden"
+                >
                   <span className="overflow-hidden text-ellipsis">
                     {item.activeSessionName}
                   </span>
-                </span>
+                </StatusChip>
               ) : (
                 <span className="font-mono text-[0.72rem] text-text-tertiary">
                   —

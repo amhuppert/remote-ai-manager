@@ -1,4 +1,5 @@
 import type { ToolResultMetrics } from "@/lib/conversations/schemas";
+import { truncate } from "@/lib/shared/truncate";
 /**
  * Formatted tool use with separate name, context, metrics, and error parts.
  * Allows the UI to style the tool name distinctly from its context.
@@ -21,10 +22,6 @@ export interface FormatToolUseOptions {
   worktreePath?: string;
   /** Paired tool_result metadata (matched by tool_use.id ↔ tool_result.tool_use_id). */
   result?: { isError?: boolean; metrics?: ToolResultMetrics };
-}
-
-function truncate(s: string, maxLen: number): string {
-  return s.length > maxLen ? `${s.slice(0, maxLen)}...` : s;
 }
 
 function pluralize(n: number, singular: string, plural?: string): string {
@@ -157,7 +154,9 @@ export function formatToolUse(
       if (input["description"])
         return {
           name,
-          context: truncate(String(input["description"]), 50),
+          context: truncate(String(input["description"]), 50, {
+            ellipsis: "...",
+          }),
           ...base,
         };
       return { name, context: null, ...base };
@@ -172,13 +171,17 @@ export function formatToolUse(
     case "WebSearch":
       return {
         name,
-        context: input["query"] ? truncate(String(input["query"]), 60) : null,
+        context: input["query"]
+          ? truncate(String(input["query"]), 60, { ellipsis: "..." })
+          : null,
         ...base,
       };
     case "WebFetch":
       return {
         name,
-        context: input["url"] ? truncate(String(input["url"]), 60) : null,
+        context: input["url"]
+          ? truncate(String(input["url"]), 60, { ellipsis: "..." })
+          : null,
         ...base,
       };
     case "Skill":
@@ -202,7 +205,7 @@ export function formatToolUse(
       return {
         name,
         context: input["subject"]
-          ? truncate(String(input["subject"]), 50)
+          ? truncate(String(input["subject"]), 50, { ellipsis: "..." })
           : null,
         ...base,
       };

@@ -33,6 +33,7 @@ function structuredResult(structuredOutput: unknown): TaskRunResult {
     text: "",
     usage,
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -228,6 +229,7 @@ describe("resolveGeneratedMessage", () => {
       text: "Fix login",
       usage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain("text");
@@ -240,6 +242,7 @@ describe("resolveGeneratedMessage", () => {
       aborted: false,
       usage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain("backend exploded");
@@ -252,6 +255,7 @@ describe("resolveGeneratedMessage", () => {
       aborted: true,
       usage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain("aborted");

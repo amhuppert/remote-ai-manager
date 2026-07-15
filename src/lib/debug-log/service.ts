@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseJsonl } from "@/lib/shared/read-jsonl";
 import { debugInstrumentationManifestSchema } from "@/lib/debug-log/schemas";
 import type {
   DebugLogEntry,
@@ -96,22 +97,20 @@ export function getDebugLogStats(logFilePath: string): {
     throw err;
   }
 
-  const lines = content.trim().split("\n").filter(Boolean);
+  // entryCount counts every non-blank line (including any that fail to parse),
+  // so it is derived independently of the tolerant parse below.
+  const entryCount = content.trim().split("\n").filter(Boolean).length;
   const hypotheses = new Set<string>();
 
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line) as { hypothesisId?: string | null };
-      if (entry.hypothesisId) {
-        hypotheses.add(entry.hypothesisId);
-      }
-    } catch {
-      // Skip malformed lines
+  for (const parsed of parseJsonl(content)) {
+    const entry = parsed as { hypothesisId?: string | null };
+    if (entry.hypothesisId) {
+      hypotheses.add(entry.hypothesisId);
     }
   }
 
   return {
-    entryCount: lines.length,
+    entryCount,
     hypothesesSeen: Array.from(hypotheses),
   };
 }

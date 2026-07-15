@@ -108,6 +108,7 @@ function SourceMappedOverlayHost({ content }: { content: string }) {
       {markers.map((marker) => (
         <span
           key={`${marker.line}-${marker.heading}`}
+          data-status-chip-justified="source-line-marker"
           className="absolute right-sm flex h-[24px] min-w-[24px] items-center justify-center rounded-full border border-solid border-cyan-dim bg-bg-raised px-xs font-mono text-[0.7rem] font-semibold text-cyan shadow-[0_0_8px_var(--color-cyan-glow)]"
           style={{ top: marker.top }}
           title={`${marker.heading}, source line ${marker.line}`}

@@ -1,13 +1,16 @@
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
-  GraphWorkflowAgentValidatorConfig,
-  GraphWorkflowExecution,
-  GraphWorkflowResolvedContext,
+  GraphWorkflowValidationEventSessionRef,
   GraphWorkflowValidationReviewArtifact,
+} from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type {
+  GraphWorkflowResolvedContext,
   WorkflowValidatorIssue,
-} from "@/lib/workflows/schemas";
-import type { AgentSessionRef } from "@/lib/agent-backends/types";
+} from "@/lib/workflow-graph/definition-schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";
@@ -61,7 +64,7 @@ export type GraphWorkflowContextValidationOutcome =
       feedback: string;
       issues: WorkflowValidatorIssue[];
       reopenTaskIds: string[];
-      sessionRef?: AgentSessionRef | null;
+      sessionRef?: GraphWorkflowValidationEventSessionRef | null;
       reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
     }
   | {
@@ -70,14 +73,14 @@ export type GraphWorkflowContextValidationOutcome =
       feedback: string;
       issues: WorkflowValidatorIssue[];
       reopenTaskIds: string[];
-      sessionRef?: AgentSessionRef | null;
+      sessionRef?: GraphWorkflowValidationEventSessionRef | null;
       reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
     }
   | {
       kind: "infra_error";
       reason: "exception" | "unparseable" | "schema_mismatch";
       message: string;
-      engine: "claude" | "codex";
+      engine: AgentBackendId;
       sessionRef: null;
       reviewArtifact: null;
     }

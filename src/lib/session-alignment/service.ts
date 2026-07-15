@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { createLogger } from "@/lib/logging";
-import { broadcastEvent } from "@/lib/events/broadcast-event";
-import type { BroadcastFn } from "@/lib/events/broadcaster";
+import {
+  publishEventBestEffort,
+  type PublishFn,
+} from "@/lib/events/publication";
 
 import type { SessionAlignmentRepo } from "./repo";
 import type { CharterMirrorInput, CharterMirrorWriteResult } from "./mirror";
@@ -229,7 +231,7 @@ export interface SessionAlignmentServiceDeps {
   render: SessionAlignmentRenderDeps;
   mirror: SessionAlignmentMirrorDeps;
   /** Best-effort SSE broadcaster; failures are swallowed + logged, never thrown. */
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
   promptQueue: SessionAlignmentPromptQueueDeps;
   /** Loads the session's mode + worktree; null when the session does not exist. */
   loadSession(
@@ -323,8 +325,8 @@ export function createSessionAlignmentService(
     event: SessionAlignmentUpdatedEvent,
     context: Record<string, unknown>,
   ): void {
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       build: () => sessionAlignmentUpdatedEventSchema.parse(event),
       logger,
       failureEvent: "align.broadcast_failure",

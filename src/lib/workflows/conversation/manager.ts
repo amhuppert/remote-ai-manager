@@ -3,24 +3,24 @@
  *
  * Manages the lifecycle of conversation XState actors:
  *   - Creates actors with production implementations (.provide())
- *   - Tracks active actors in a globalThis-safe registry
- *   - Handles cleanup on terminal states
+ *   - Tracks active actors in a globalThis-safe registry (the machine is
+ *     long-lived with zero final states; actors leave the registry via
+ *     explicit stop, never via terminal output)
  *   - Provides event dispatch for API routes
  *   - Wires runtime state (sendToMachine, stream callbacks)
  *
- * Follows the standard workflow-manager pattern.
+ * Follows the standard workflow-manager pattern. Queue draining lives in
+ * `@/lib/conversations/message-queue-drain`, startup rehydration in
+ * `./rehydration`, and project-conversation notification policy in
+ * `@/lib/project-conversations/status-notifications`.
  */
 
-import { createActor, fromPromise, type Snapshot } from "xstate";
+import { createActor } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
 import type {
   ConversationContext,
   ConversationInput,
   ConversationEvent,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  ExecutePromptInput,
-  PromptActorResult,
 } from "./types";
 import {
   conversationRuntimeKey,
@@ -28,448 +28,38 @@ import {
   getConversationRuntime,
   cleanupConversationRuntime,
 } from "./runtime-state";
-import { persistConversationSnapshot } from "./persistence";
+import { persistSnapshotAfterTransition } from "./persistence";
 import {
   getRuntime as getRuntimeFromRegistry,
   unregisterRuntime,
 } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ManagerState } from "@/lib/projects/schemas";
 import {
-  PROJECT_CONVERSATION_SESSION_SENTINEL,
   conversationEventScopeFields,
   isProjectSentinel,
 } from "@/lib/conversations/project-conversation-scope";
 import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { ProjectConversationNotificationService } from "@/lib/notifications/project-conversation-service";
 import type {
   ForkedFrom,
   ConversationRole,
   ActiveTurnSource,
-  MessageContentBlock,
 } from "@/lib/conversations/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
-import type { ImagePayload } from "@/lib/images/schemas";
 import type { ActiveTurn } from "./types";
-import { messageQueueService } from "@/lib/conversations/message-queue-service";
-import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
-import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
-import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
-import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
-import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
-import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
+import {
+  drainConversationQueue,
+  getConversationQueueDeps,
+} from "@/lib/conversations/message-queue-drain";
+import { notifyProjectConversationStatusFromContext } from "@/lib/project-conversations/status-notifications";
+import { getErrorMessage } from "@/lib/shared/errors";
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+
 const logger = createLogger("conversation-manager");
-
-type ProjectConversationStatusNotificationDeps = {
-  getProjectConversation(
-    projectPath: string,
-    conversationId: string,
-  ): Promise<ConversationState | null>;
-  notificationService: ProjectConversationNotificationService;
-};
-
-let _projectConversationStatusNotificationDeps: ProjectConversationStatusNotificationDeps | null =
-  null;
-
-export function setProjectConversationStatusNotificationDepsForTesting(
-  deps: ProjectConversationStatusNotificationDeps,
-): void {
-  _projectConversationStatusNotificationDeps = deps;
-}
-
-export function _resetProjectConversationStatusNotificationDepsForTesting(): void {
-  _projectConversationStatusNotificationDeps = null;
-}
-
-// ============================================================
-// Conversation Queue Dependency Injection
-// ============================================================
-
-/**
- * Queue operations the drain action and startup recovery depend on. Method
- * syntax (bivariant) so production `messageQueueService` methods assign cleanly.
- * Tests inject fakes via {@link setConversationQueueDeps} instead of mocking the
- * internal queue-service module.
- */
-export interface ConversationQueueDeps {
-  claimNextTurnBatch(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): Promise<ClaimedQueuedBatch | null>;
-  markPending(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    ids: string[];
-    deliveryAttemptId: string;
-    error: string;
-  }): Promise<void>;
-  markDelivered(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    ids: string[];
-    deliveryAttemptId: string;
-  }): Promise<void>;
-  markFailed(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    ids: string[];
-    deliveryAttemptId: string;
-    error: string;
-  }): Promise<void>;
-  recoverAbandonedDeliveries(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): Promise<number>;
-  /**
-   * Run a queued `/commit` or `/merge` through the conversation command
-   * service with direct-path semantics: persist the user's command message to
-   * the transcript, then await the service run (req 8.3). Mirrors the prompt
-   * route's `dispatchConversationCommand` dep.
-   */
-  runConversationCommand(
-    input: ConversationCommandDispatchInput,
-  ): Promise<RunCommandOutcome>;
-}
-
-const defaultConversationQueueDeps: ConversationQueueDeps = {
-  claimNextTurnBatch: (input) => messageQueueService.claimNextTurnBatch(input),
-  markPending: (input) => messageQueueService.markPending(input),
-  markDelivered: (input) => messageQueueService.markDelivered(input),
-  markFailed: (input) => messageQueueService.markFailed(input),
-  recoverAbandonedDeliveries: (input) =>
-    messageQueueService.recoverAbandonedDeliveries(input),
-  runConversationCommand: (input) => dispatchConversationCommand(input),
-};
-
-let _conversationQueueDeps: ConversationQueueDeps | null = null;
-
-export function setConversationQueueDeps(deps: ConversationQueueDeps): void {
-  _conversationQueueDeps = deps;
-}
-
-export function _resetConversationQueueDepsForTesting(): void {
-  _conversationQueueDeps = null;
-}
-
-function getConversationQueueDeps(): ConversationQueueDeps {
-  return _conversationQueueDeps ?? defaultConversationQueueDeps;
-}
-
-// ============================================================
-// Drain helpers
-// ============================================================
-
-/**
- * Convert a claimed next-turn batch's coalesced content into the `promptText`
- * and `images` a `SUBMIT_PROMPT` carries. `text` blocks are newline-joined;
- * `image` blocks become strip images appended after text. `attachmentId` is a
- * synthetic within-turn correlation key (queued images carry no original id),
- * and no `inlineMarkerIndex` is set because queued images deliver as appended
- * strip images, not inline markers. A `document_feedback` block is surfaced as
- * `documentFeedback` (items merged across coalesced blocks) so the drained
- * `SUBMIT_PROMPT` re-emits it rather than dropping it; the actor re-derives the
- * agent-facing prose from those items. Other block types are dropped.
- * Pure: the input is not mutated.
- */
-export function queuedBatchToSubmitPrompt(
-  content: readonly MessageContentBlock[],
-): {
-  promptText: string;
-  images: ImagePayload[];
-  documentFeedback?: DocumentFeedbackPayload;
-} {
-  const promptText = content
-    .filter(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )
-    .map((block) => block.text)
-    .join("\n");
-
-  const images: ImagePayload[] = [];
-  for (const block of content) {
-    if (block.type !== "image") continue;
-    const mediaType = imagePayloadMediaTypeOrNull(block.mediaType);
-    if (!mediaType) continue;
-    images.push({
-      attachmentId: `queued-${images.length}`,
-      mediaType,
-      base64Data: block.base64Data,
-    });
-  }
-
-  const feedbackItems = content.flatMap((block) =>
-    block.type === "document_feedback" ? block.items : [],
-  );
-
-  return {
-    promptText,
-    images,
-    ...(feedbackItems.length > 0
-      ? { documentFeedback: { items: feedbackItems } }
-      : {}),
-  };
-}
-
-const IMAGE_PAYLOAD_MEDIA_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-] as const;
-
-type ImagePayloadMediaType = (typeof IMAGE_PAYLOAD_MEDIA_TYPES)[number];
-
-/**
- * Queue `image` blocks store `mediaType` as a free `string`, but `ImagePayload`
- * requires the narrowed `ImageMediaType` enum. Narrow against the known set so
- * the drain never forwards an unsupported media type. Returns null when the
- * stored value is not a recognized image payload media type.
- */
-function imagePayloadMediaTypeOrNull(
-  mediaType: string,
-): ImagePayloadMediaType | null {
-  return (IMAGE_PAYLOAD_MEDIA_TYPES as readonly string[]).includes(mediaType)
-    ? (mediaType as ImagePayloadMediaType)
-    : null;
-}
-
-/** Minimal actor-self surface the standalone drain needs: dispatch one event
- *  and test acceptance. Method syntax keeps the production actor ref assignable
- *  and lets tests pass a small fake. */
-export interface DrainSelf {
-  getSnapshot(): { can(event: ConversationEvent): boolean };
-  send(event: ConversationEvent): void;
-}
-
-/**
- * Run a claimed single-command batch through the command service with the same
- * `RunCommandInput` mapping as the direct prompt path (project-sentinel
- * sessions map to `sessionName: null` + `noticeSessionName`). The queue row is
- * marked `delivered` only after the run resolves. A service throw is a system
- * error — rejections and fallbacks resolve as outcomes — so the row is settled
- * terminally (`failed`, error recorded) rather than returned to `pending`,
- * which would retry a deterministic failure on every idle entry. Never throws.
- */
-async function runQueuedCommand(
-  batch: ClaimedQueuedBatch,
-  command: ParsedConversationCommand,
-  context: Pick<
-    ConversationContext,
-    "projectPath" | "sessionName" | "conversationId" | "projectName"
-  >,
-  deps: ConversationQueueDeps,
-): Promise<void> {
-  const { projectPath, projectName, sessionName, conversationId } = context;
-  const { promptText } = queuedBatchToSubmitPrompt(batch.content);
-  const hasSessionWorktree = !isProjectSentinel(sessionName);
-
-  logger.info("queue.drain_command_dispatched", {
-    conversationId,
-    sessionName,
-    command: command.command,
-    hintLength: command.hint.length,
-    messageIds: batch.messageIds,
-    deliveryAttemptId: batch.deliveryAttemptId,
-  });
-
-  try {
-    const outcome = await deps.runConversationCommand({
-      projectPath,
-      projectName,
-      sessionName: hasSessionWorktree ? sessionName : null,
-      ...(hasSessionWorktree ? {} : { noticeSessionName: sessionName }),
-      conversationId,
-      parsed: command,
-      rawText: promptText,
-    });
-    const ticketFallback = ticketCommandFallbackMessage(outcome);
-    if (ticketFallback !== null) {
-      await deps.markFailed({
-        projectPath,
-        sessionName,
-        conversationId,
-        ids: batch.messageIds,
-        deliveryAttemptId: batch.deliveryAttemptId,
-        error: ticketFallback,
-      });
-      logger.warn("queue.drain_command_ticket_fallback", {
-        conversationId,
-        sessionName,
-        command: command.command,
-        status: outcome.status,
-        messageIds: batch.messageIds,
-        deliveryAttemptId: batch.deliveryAttemptId,
-      });
-      return;
-    }
-    await deps.markDelivered({
-      projectPath,
-      sessionName,
-      conversationId,
-      ids: batch.messageIds,
-      deliveryAttemptId: batch.deliveryAttemptId,
-    });
-    logger.info("queue.drain_command_complete", {
-      conversationId,
-      sessionName,
-      command: command.command,
-      status: outcome.status,
-      messageIds: batch.messageIds,
-      deliveryAttemptId: batch.deliveryAttemptId,
-    });
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    logger.error("queue.drain_command_failed", {
-      conversationId,
-      sessionName,
-      command: command.command,
-      messageIds: batch.messageIds,
-      deliveryAttemptId: batch.deliveryAttemptId,
-      error,
-    });
-    try {
-      await deps.markFailed({
-        projectPath,
-        sessionName,
-        conversationId,
-        ids: batch.messageIds,
-        deliveryAttemptId: batch.deliveryAttemptId,
-        error,
-      });
-    } catch (markErr) {
-      logger.error("queue.drain_command_failed", {
-        conversationId,
-        sessionName,
-        phase: "mark_failed",
-        error: markErr instanceof Error ? markErr.message : String(markErr),
-      });
-    }
-  }
-}
-
-/**
- * Claim the next-turn batch and dispatch exactly one `SUBMIT_PROMPT` carrying
- * the queued-delivery metadata through the actor. No-op when the queue is
- * empty. A batch claimed as a single command row is routed to the command
- * service instead of `SUBMIT_PROMPT` (req 8.3); remaining entries drain on
- * later idle entries, preserving order. If the actor can no longer accept
- * `SUBMIT_PROMPT`, the claimed rows are returned to `pending` so a later
- * settle re-drains them. Fire-and-forget: any unexpected error is contained
- * and the rows are returned to `pending`.
- */
-export async function drainConversationQueue(
-  self: DrainSelf,
-  context: Pick<
-    ConversationContext,
-    | "projectPath"
-    | "sessionName"
-    | "conversationId"
-    | "projectName"
-    | "transient"
-  >,
-  deps: ConversationQueueDeps,
-): Promise<void> {
-  const { projectPath, sessionName, conversationId } = context;
-  // Transient lanes have no message-queue rows; claiming against the absent
-  // conversation record would throw and log `queue.drain_failed`.
-  if (context.transient === true) {
-    logger.debug("queue.drain_skipped_transient", {
-      conversationId,
-      sessionName,
-    });
-    return;
-  }
-  let batch: ClaimedQueuedBatch | null = null;
-  try {
-    batch = await deps.claimNextTurnBatch({
-      projectPath,
-      sessionName,
-      conversationId,
-    });
-    if (!batch) return;
-
-    if (batch.command) {
-      await runQueuedCommand(batch, batch.command, context, deps);
-      return;
-    }
-
-    const { promptText, images, documentFeedback } = queuedBatchToSubmitPrompt(
-      batch.content,
-    );
-
-    const event: ConversationEvent = {
-      type: "SUBMIT_PROMPT",
-      promptText,
-      ...(images.length ? { images } : {}),
-      ...(documentFeedback ? { documentFeedback } : {}),
-      streamId: `drain-${batch.deliveryAttemptId}`,
-      queuedDelivery: {
-        messageIds: batch.messageIds,
-        deliveryAttemptId: batch.deliveryAttemptId,
-      },
-    };
-
-    if (self.getSnapshot().can(event)) {
-      self.send(event);
-      logger.info("queue.drain_dispatched", {
-        conversationId,
-        sessionName,
-        messageIds: batch.messageIds,
-        deliveryAttemptId: batch.deliveryAttemptId,
-      });
-      return;
-    }
-
-    await deps.markPending({
-      projectPath,
-      sessionName,
-      conversationId,
-      ids: batch.messageIds,
-      deliveryAttemptId: batch.deliveryAttemptId,
-      error: "actor not accepting prompt",
-    });
-    logger.warn("queue.drain_returned_pending", {
-      conversationId,
-      sessionName,
-      messageIds: batch.messageIds,
-      deliveryAttemptId: batch.deliveryAttemptId,
-    });
-  } catch (err) {
-    logger.error("queue.drain_failed", {
-      conversationId,
-      sessionName,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    if (batch) {
-      try {
-        await deps.markPending({
-          projectPath,
-          sessionName,
-          conversationId,
-          ids: batch.messageIds,
-          deliveryAttemptId: batch.deliveryAttemptId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } catch (markErr) {
-        logger.error("queue.drain_failed", {
-          conversationId,
-          sessionName,
-          phase: "mark_pending",
-          error: markErr instanceof Error ? markErr.message : String(markErr),
-        });
-      }
-    }
-  }
-}
 
 export interface EnsureActorInputData {
   conversationScope?: "session" | "project";
@@ -492,6 +82,61 @@ export interface EnsureActorInputData {
     promptCount: number;
     debugMode: DebugModeState | null;
   };
+}
+
+/** Domain input for one user-facing conversation turn. Machine event names
+ * and actor state topology remain private to this lifecycle module. */
+export interface ConversationTurnRequest {
+  promptText: string;
+  images?: ImagePayload[];
+  backend: AgentBackendId;
+  modelId?: string;
+  effort?: string;
+  autonomous?: boolean;
+  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+  waitForBackgroundTasks?: boolean;
+  documentFeedback?: DocumentFeedbackPayload;
+  askUserQuestionsEnabled?: boolean;
+}
+
+/** Stable public projection of the completed turn. */
+export interface ConversationTurnProjection {
+  contextTokens: number | null;
+  contextWindowMax: number | null;
+  structuredOutput?: unknown;
+  aborted: boolean;
+  compacted: boolean;
+  abortReason?: "timeout" | "user" | "shutdown";
+  timeoutMs?: number;
+  error: string | null;
+  backgroundWait?: BackgroundWaitSummary;
+}
+
+export type ConversationTurnExecution =
+  | { status: "completed"; result: ConversationTurnProjection }
+  | {
+      status: "failed";
+      error: string;
+      result: ConversationTurnProjection;
+    }
+  | {
+      status: "rejected";
+      reason: "not_ready";
+      result: ConversationTurnProjection;
+    };
+
+export interface ExecuteConversationTurnInput {
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+  streamId: string;
+  emit(event: string, data: unknown): void;
+  turn: ConversationTurnRequest;
+  /**
+   * Called once the machine has accepted `SUBMIT_PROMPT`, before the turn is
+   * awaited. Must not throw — callers own their failure handling.
+   */
+  onAccepted?(): void | Promise<void>;
 }
 
 export interface EnsureConversationActorDeps {
@@ -558,7 +203,12 @@ async function defaultLoadActorInput(
 type MachineFactory = () => ReturnType<typeof createProvidedMachine>;
 let _machineFactory: MachineFactory | null = null;
 
-function getMachineFactory(): MachineFactory {
+/**
+ * Resolve the machine factory (test override or production `.provide()`).
+ * Exported for the rehydration module, which must restore actors onto the
+ * same machine the manager starts fresh actors with.
+ */
+export function getMachineFactory(): MachineFactory {
   return _machineFactory ?? createProvidedMachine;
 }
 
@@ -577,7 +227,12 @@ export function _resetMachineFactoryForTesting(): void {
 
 const GLOBAL_KEY = "__cc_conversation_actors" as const;
 
-function getActorRegistry(): Map<string, ConversationActorRef> {
+/**
+ * Manager-owned live-actor registry. Exposed for the rehydration module,
+ * which restores actors into the same registry; every other caller goes
+ * through `getConversationActor`/`hasLiveConversationActor`.
+ */
+export function getActorRegistry(): Map<string, ConversationActorRef> {
   const g = globalThis as unknown as Record<string, unknown>;
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = new Map<string, ConversationActorRef>();
@@ -586,7 +241,7 @@ function getActorRegistry(): Map<string, ConversationActorRef> {
 }
 
 // ============================================================
-// Machine Provider (injects production actors + actions)
+// Machine Provider (injects production actions)
 // ============================================================
 
 /**
@@ -638,150 +293,19 @@ export function applySyncDerivedFields(
       instructionsDelivered: context.debugMode.instructionsDelivered,
       phase: context.debugMode.phase,
       lastTurnFailed: context.debugMode.lastTurnFailed,
+      debugSessionId: context.debugMode.debugSessionId,
+      cleanupVerificationAttempt: context.debugMode.cleanupVerificationAttempt,
     };
   } else {
     c.debugMode = null;
   }
 }
 
-async function getProjectConversationStatusNotificationDeps(): Promise<ProjectConversationStatusNotificationDeps> {
-  if (_projectConversationStatusNotificationDeps) {
-    return _projectConversationStatusNotificationDeps;
-  }
-
-  const [
-    { getProjectConversation },
-    { createProjectConversationNotificationService },
-  ] = await Promise.all([
-    import("@/lib/state-store"),
-    import("@/lib/notifications/project-conversation-service"),
-  ]);
-
-  return {
-    getProjectConversation,
-    notificationService: createProjectConversationNotificationService(),
-  };
-}
-
-function isNotifiableProjectConversationStatus(
-  status: ConversationContext["status"],
-): status is "awaiting" | "waiting_for_input" {
-  return status === "awaiting" || status === "waiting_for_input";
-}
-
-function buildProjectConversationStatusTransitionKey(
-  context: ConversationContext,
-): string {
-  if (context.status === "waiting_for_input") {
-    return [
-      context.projectName,
-      context.conversationId,
-      context.status,
-      `prompt-${context.promptCount}`,
-      `question-${context.pendingQuestion?.questionId ?? "unknown"}`,
-    ].join(":");
-  }
-
-  return [
-    context.projectName,
-    context.conversationId,
-    context.status,
-    `prompt-${context.promptCount}`,
-    `turns-${context.totals.totalTurns ?? "unknown"}`,
-  ].join(":");
-}
-
-function buildProjectConversationErrorTransitionKey(
-  context: ConversationContext,
-  errorMessage: string,
-): string {
-  return [
-    context.projectName,
-    context.conversationId,
-    "error",
-    `prompt-${context.promptCount}`,
-    `turns-${context.totals.totalTurns ?? "unknown"}`,
-    encodeURIComponent(errorMessage),
-  ].join(":");
-}
-
-export async function notifyProjectConversationStatusFromContext(
-  context: ConversationContext,
-): Promise<void> {
-  if (!isProjectSentinel(context.sessionName)) return;
-
-  const errorMessage =
-    context.status === "awaiting"
-      ? (context.lastResult?.error ?? context.lastError)
-      : null;
-  if (!errorMessage && !isNotifiableProjectConversationStatus(context.status)) {
-    return;
-  }
-
-  const deps = await getProjectConversationStatusNotificationDeps();
-  const conversation = await deps.getProjectConversation(
-    context.projectPath,
-    context.conversationId,
-  );
-  const conversationName = conversation?.name ?? null;
-
-  if (errorMessage) {
-    deps.notificationService.handleProjectConversationError({
-      projectName: context.projectName,
-      conversationId: context.conversationId,
-      conversationName,
-      errorMessage,
-      transitionKey: buildProjectConversationErrorTransitionKey(
-        context,
-        errorMessage,
-      ),
-    });
-    return;
-  }
-
-  if (isNotifiableProjectConversationStatus(context.status)) {
-    deps.notificationService.handleProjectConversationStatus({
-      projectName: context.projectName,
-      conversationId: context.conversationId,
-      conversationName,
-      status: context.status,
-      transitionKey: buildProjectConversationStatusTransitionKey(context),
-    });
-  }
-}
-
 function createProvidedMachine() {
   return conversationMachine.provide({
-    actors: {
-      prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
-        async ({ input }) => {
-          const { prepareTurnForMachine } =
-            await import("./actor-implementations");
-          return prepareTurnForMachine(input);
-        },
-      ),
-      executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
-        async ({ input }) => {
-          const { executePromptForMachine } =
-            await import("./actor-implementations");
-          return executePromptForMachine(input);
-        },
-      ),
-    },
-
     actions: {
       persistSnapshot: ({ context, self }) => {
-        try {
-          const snapshot = self.getPersistedSnapshot();
-          persistConversationSnapshot(
-            context.projectPath,
-            context.sessionName,
-            context.conversationId,
-            snapshot as Snapshot<unknown>,
-          );
-        } catch {
-          // fire-and-forget — snapshot persistence should not halt the machine
-        }
+        persistSnapshotAfterTransition(context, self);
       },
 
       syncDerivedFields: ({ context }) => {
@@ -798,7 +322,7 @@ function createProvidedMachine() {
           } catch (err) {
             logger.warn("conversation-manager.sync_derived_failed", {
               conversationId: context.conversationId,
-              error: err instanceof Error ? err.message : String(err),
+              error: getErrorMessage(err),
             });
           }
         })();
@@ -824,16 +348,15 @@ function createProvidedMachine() {
                 projectPath: context.projectPath,
                 conversationId: context.conversationId,
                 status: context.status,
-                error: err instanceof Error ? err.message : String(err),
+                error: getErrorMessage(err),
               });
             },
           );
         }
 
         void (async () => {
-          const { publishSessionStatus } =
-            await import("@/lib/workflows/primitives/default-session-status-bus");
-          const outcome = publishSessionStatus({
+          const { publishEvent } = await import("@/lib/events/publication");
+          const outcome = publishEvent({
             type: "conversation-status",
             ...conversationEventScopeFields(
               context.projectName,
@@ -849,15 +372,19 @@ function createProvidedMachine() {
               error: outcome.error?.message,
             });
           }
-        })();
+        })().catch((err) => {
+          logger.warn("conversation-manager.broadcast_status_failed", {
+            conversationId: context.conversationId,
+            error: getErrorMessage(err),
+          });
+        });
       },
 
       broadcastAskQuestion: ({ context }) => {
         if (!context.pendingQuestion) return;
         void (async () => {
-          const { publishSessionStatus } =
-            await import("@/lib/workflows/primitives/default-session-status-bus");
-          const outcome = publishSessionStatus({
+          const { publishEvent } = await import("@/lib/events/publication");
+          const outcome = publishEvent({
             type: "ask-question",
             ...conversationEventScopeFields(
               context.projectName,
@@ -873,7 +400,12 @@ function createProvidedMachine() {
               error: outcome.error?.message,
             });
           }
-        })();
+        })().catch((err) => {
+          logger.warn("conversation-manager.broadcast_ask_failed", {
+            conversationId: context.conversationId,
+            error: getErrorMessage(err),
+          });
+        });
       },
 
       broadcastDebugModeStatus: ({ context }) => {
@@ -932,8 +464,7 @@ function createProvidedMachine() {
         void (async () => {
           try {
             const { mutateConversation } = await import("@/lib/state-store");
-            const { publishSessionStatus } =
-              await import("@/lib/workflows/primitives/default-session-status-bus");
+            const { publishEvent } = await import("@/lib/events/publication");
             const { markUnreadOnFinish } =
               await import("@/lib/conversations/mark-unread");
             await markUnreadOnFinish(
@@ -944,12 +475,12 @@ function createProvidedMachine() {
                 conversationId: context.conversationId,
                 role: context.role,
               },
-              { mutateConversation, publishSessionStatus },
+              { mutateConversation, publishSessionStatus: publishEvent },
             );
           } catch (err) {
             logger.warn("conversation-manager.mark_unread_failed", {
               conversationId: context.conversationId,
-              error: err instanceof Error ? err.message : String(err),
+              error: getErrorMessage(err),
             });
           }
         })();
@@ -959,8 +490,7 @@ function createProvidedMachine() {
         void (async () => {
           try {
             const { mutateConversation } = await import("@/lib/state-store");
-            const { publishSessionStatus } =
-              await import("@/lib/workflows/primitives/default-session-status-bus");
+            const { publishEvent } = await import("@/lib/events/publication");
             const { markReadOnUserTurnStart } =
               await import("@/lib/conversations/mark-unread");
             await markReadOnUserTurnStart(
@@ -971,12 +501,12 @@ function createProvidedMachine() {
                 conversationId: context.conversationId,
                 role: context.role,
               },
-              { mutateConversation, publishSessionStatus },
+              { mutateConversation, publishSessionStatus: publishEvent },
             );
           } catch (err) {
             logger.warn("conversation-manager.mark_read_failed", {
               conversationId: context.conversationId,
-              error: err instanceof Error ? err.message : String(err),
+              error: getErrorMessage(err),
             });
           }
         })();
@@ -1032,37 +562,10 @@ export function startConversationActor(
   // Wire sendToMachine callback so actor implementations can send events
   const runtime = getConversationRuntime(key);
   if (runtime) {
-    runtime.sendToMachine = (event: Record<string, unknown>) => {
-      actor.send(event as unknown as ConversationEvent);
+    runtime.sendToMachine = (event) => {
+      actor.send(event);
     };
   }
-
-  // Subscribe to state changes for terminal cleanup
-  actor.subscribe((snapshot) => {
-    if (snapshot.status === "done") {
-      logger.info("conversation-manager.actor_terminal", {
-        conversationId: input.conversationId,
-        status: snapshot.output?.status,
-      });
-
-      // Flush final snapshot immediately
-      try {
-        const persisted = actor.getPersistedSnapshot();
-        persistConversationSnapshot(
-          input.projectPath,
-          input.sessionName,
-          input.conversationId,
-          persisted as Snapshot<unknown>,
-          { immediate: true },
-        );
-      } catch {
-        // best effort
-      }
-
-      cleanupConversationRuntime(key);
-      getActorRegistry().delete(key);
-    }
-  });
 
   actor.start();
 
@@ -1106,9 +609,60 @@ export function hasLiveConversationActor(
  * counts: the asking turn already finalized, only the pending question remains,
  * so the actor is as safe to drain against or stop/recreate as an idle one.
  */
-function isActorSettled(actor: ConversationActorRef): boolean {
+export function isActorSettled(actor: ConversationActorRef): boolean {
   const value = actor.getSnapshot().value;
   return value === "idle" || value === "waitingForInput";
+}
+
+function isTurnBoundary(actor: ConversationActorRef): boolean {
+  const value = actor.getSnapshot().value;
+  return value === "idle" || value === "waitingForInput" || value === "debug";
+}
+
+function waitForTurnBoundary(actor: ConversationActorRef): Promise<void> {
+  const initial = actor.getSnapshot();
+  if (initial.status === "error") {
+    return Promise.reject(new Error("Conversation lifecycle errored"));
+  }
+  if (initial.status === "done" || isTurnBoundary(actor)) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const subscription = actor.subscribe((snapshot) => {
+      if (snapshot.status === "error") {
+        subscription.unsubscribe();
+        reject(new Error("Conversation lifecycle errored"));
+        return;
+      }
+      if (snapshot.status === "done" || isTurnBoundary(actor)) {
+        subscription.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+function projectTurnResult(
+  actor: ConversationActorRef,
+): ConversationTurnProjection {
+  const context = actor.getSnapshot().context;
+  const result = context.lastResult;
+  return {
+    contextTokens: context.totals.contextTokens,
+    contextWindowMax: context.totals.contextWindowMax,
+    structuredOutput: result?.structuredOutput,
+    aborted: result?.aborted ?? false,
+    compacted: result?.compacted ?? false,
+    ...(result?.abortReason !== undefined
+      ? { abortReason: result.abortReason }
+      : {}),
+    ...(result?.timeoutMs !== undefined ? { timeoutMs: result.timeoutMs } : {}),
+    error: result?.error ?? context.lastError,
+    ...(result?.backgroundWait !== undefined
+      ? { backgroundWait: result.backgroundWait }
+      : {}),
+  };
 }
 
 /**
@@ -1207,6 +761,110 @@ export async function ensureConversationActor(
     promptCount: data.conversation.promptCount,
     debugMode: data.conversation.debugMode,
   });
+}
+
+/** Ensure the lifecycle is ready without exposing its actor implementation. */
+export async function ensureConversationLifecycle(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  options?: {
+    executionTarget?: Pick<ExecutionTarget, "worktreePath">;
+    actorInput?: EnsureActorInputData;
+  },
+): Promise<void> {
+  await ensureConversationActor(
+    projectPath,
+    sessionName,
+    conversationId,
+    options,
+  );
+}
+
+/**
+ * Execute and await one conversation turn through the lifecycle module.
+ * Stream ownership, machine event translation, settlement detection, and
+ * result projection are intentionally hidden from prompt consumers.
+ */
+export async function executeConversationTurn(
+  input: ExecuteConversationTurnInput,
+): Promise<ConversationTurnExecution> {
+  const actor = getConversationActor(
+    input.projectPath,
+    input.sessionName,
+    input.conversationId,
+  );
+  if (!actor) {
+    throw new Error(
+      `Conversation lifecycle not found: ${input.conversationId}`,
+    );
+  }
+
+  attachPromptStream(
+    input.projectPath,
+    input.sessionName,
+    input.conversationId,
+    input.streamId,
+    input.emit,
+  );
+
+  try {
+    const event: Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }> = {
+      type: "SUBMIT_PROMPT",
+      promptText: input.turn.promptText,
+      images: input.turn.images,
+      backend: input.turn.backend,
+      modelId: input.turn.modelId,
+      effort: input.turn.effort,
+      autonomous: input.turn.autonomous,
+      streamId: input.streamId,
+      outputFormat: input.turn.outputFormat,
+      ...(input.turn.waitForBackgroundTasks
+        ? { waitForBackgroundTasks: true }
+        : {}),
+      ...(input.turn.documentFeedback
+        ? { documentFeedback: input.turn.documentFeedback }
+        : {}),
+      ...(input.turn.askUserQuestionsEnabled
+        ? { askUserQuestionsEnabled: true }
+        : {}),
+    };
+
+    if (!actor.getSnapshot().can(event)) {
+      logger.error("conversation-manager.turn_rejected", {
+        conversationId: input.conversationId,
+        sessionName: input.sessionName,
+        lifecycleState: actor.getSnapshot().value,
+      });
+      return {
+        status: "rejected",
+        reason: "not_ready",
+        result: projectTurnResult(actor),
+      };
+    }
+
+    actor.send(event);
+    await input.onAccepted?.();
+    try {
+      await waitForTurnBoundary(actor);
+      return { status: "completed", result: projectTurnResult(actor) };
+    } catch (err) {
+      const error = getErrorMessage(err);
+      logger.error("conversation-manager.turn_failed", {
+        conversationId: input.conversationId,
+        sessionName: input.sessionName,
+        error,
+      });
+      return { status: "failed", error, result: projectTurnResult(actor) };
+    }
+  } finally {
+    detachPromptStream(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      input.streamId,
+    );
+  }
 }
 
 /**
@@ -1338,311 +996,6 @@ export function stopConversationActor(
   actor.stop();
   cleanupConversationRuntime(key);
   getActorRegistry().delete(key);
-}
-
-/**
- * Decide whether a persisted conversation snapshot is worth restoring into a
- * live actor at startup.
- *
- * The only machine state that can meaningfully resume across a process
- * boundary is "waiting for a permission answer" — i.e. `pendingQuestion` is
- * set in context. A user can still answer that question after a restart, and
- * the actor needs to be live to receive the event.
- *
- * Every other snapshot shape (idle, executing.*, acquiringResources, debug.*,
- * externalExecuting, etc.) is non-resumable: the underlying invoked actor
- * (SDK stream, subprocess) is dead, so the in-machine state is stale. A fresh
- * actor created lazily by `ensureConversationActor` is functionally
- * equivalent — `applySyncDerivedFields` will overwrite any stale
- * `ConversationState.status` ("running"/"waiting_for_input") on the next
- * machine event.
- */
-export function shouldRehydrateSnapshot(snapshot: Snapshot<unknown>): boolean {
-  if (snapshot.status !== "active") return false;
-  const context = (snapshot as { context?: { pendingQuestion?: unknown } })
-    .context;
-  return context?.pendingQuestion != null;
-}
-
-interface RehydrateOneActorArgs {
-  key: string;
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  worktreePath: string;
-  conversation: {
-    id: string;
-    createdAt: string;
-    forkedFrom: ForkedFrom;
-    role: ConversationRole;
-    transcriptPath: string | null;
-    agentBackend: AgentBackendId;
-    backendRef: AgentSessionRef | null;
-    promptCount: number;
-  };
-  snapshot: Snapshot<unknown>;
-}
-
-/**
- * Restore one conversation actor from a validated, resumable persisted
- * snapshot. Abandoned-delivery recovery runs BEFORE `actor.start()` so a
- * `delivering` row orphaned by the previous process is reset to `pending` and
- * reclaimed by this actor's first drain. Recovery failure must not abort the
- * restore. Returns true when the actor started, false when restore failed.
- *
- * Exported so the recovery-before-start ordering is unit-testable with a fake
- * snapshot and injected queue deps, without driving the real state store.
- */
-export async function rehydrateOneConversationActor(
-  args: RehydrateOneActorArgs,
-): Promise<boolean> {
-  const { key, projectPath, projectName, sessionName, worktreePath } = args;
-  const { conversation, snapshot } = args;
-
-  try {
-    // Register runtime state
-    registerConversationRuntime(key, {
-      abortController: new AbortController(),
-    });
-
-    const machine = getMachineFactory()();
-    // XState v5 requires `input` even when restoring from snapshot.
-    // The snapshot already contains the full context, so input is
-    // only used for type satisfaction — it won't override the snapshot.
-    const actor = createActor(machine, {
-      input: {
-        projectPath,
-        projectName,
-        sessionName,
-        worktreePath,
-        conversationId: conversation.id,
-        createdAt: conversation.createdAt,
-        forkedFrom: conversation.forkedFrom,
-        role: conversation.role,
-        transcriptPath: conversation.transcriptPath,
-        agentBackend: conversation.agentBackend,
-        backendRef: conversation.backendRef,
-        promptCount: conversation.promptCount,
-      },
-      snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]>,
-    });
-
-    getActorRegistry().set(key, actor);
-
-    // Wire sendToMachine
-    const runtime = getConversationRuntime(key);
-    if (runtime) {
-      runtime.sendToMachine = (event: Record<string, unknown>) => {
-        actor.send(event as unknown as ConversationEvent);
-      };
-    }
-
-    // Terminal cleanup subscription
-    actor.subscribe((snap) => {
-      if (snap.status === "done") {
-        cleanupConversationRuntime(key);
-        getActorRegistry().delete(key);
-      }
-    });
-
-    // Recover abandoned `delivering` rows before the actor's first drain so a
-    // delivery attempt orphaned by the previous process is reset to `pending`
-    // and reclaimed by this actor. Recovery failure must not abort rehydrate.
-    try {
-      await getConversationQueueDeps().recoverAbandonedDeliveries({
-        projectPath,
-        sessionName,
-        conversationId: conversation.id,
-      });
-    } catch (err) {
-      logger.error("queue.recover_failed", {
-        conversationId: conversation.id,
-        sessionName,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    actor.start();
-
-    // A restored actor does not re-enter its state, so entry-action drains
-    // never fire for it. Drain explicitly when it woke settled (idle or
-    // waitingForInput) so rows enqueued before the restart — e.g. an answer
-    // POSTed moments before the crash — deliver without waiting for new input.
-    if (isActorSettled(actor)) {
-      void drainConversationQueue(
-        actor,
-        actor.getSnapshot().context,
-        getConversationQueueDeps(),
-      );
-    }
-
-    logger.info("conversation-manager.rehydrated", {
-      conversationId: conversation.id,
-      sessionName,
-      projectName,
-    });
-    return true;
-  } catch (err) {
-    logger.error("conversation-manager.rehydrate_failed", {
-      conversationId: conversation.id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    // Clean up partial registration
-    cleanupConversationRuntime(key);
-    getActorRegistry().delete(key);
-    return false;
-  }
-}
-
-/**
- * A conversation eligible for snapshot rehydration. Session conversations bind
- * to their owning session's worktree; session-less project conversations key on
- * the sentinel session name and bind to the project's repo-root worktree.
- */
-export interface RehydrationCandidate {
-  projectPath: string;
-  sessionName: string;
-  worktreePath: string;
-  conversation: ConversationState;
-}
-
-/**
- * Flatten session conversations and session-less project conversations into a
- * single rehydration candidate list. Pure — directly unit-testable.
- */
-export function collectRehydrationCandidates(
-  state: ManagerState,
-  projectConversations: ReadonlyArray<{
-    projectPath: string;
-    conversation: ConversationState;
-  }>,
-): RehydrationCandidate[] {
-  const candidates: RehydrationCandidate[] = [];
-  for (const [projectPath, project] of Object.entries(state.projects)) {
-    for (const [sessionName, session] of Object.entries(project.sessions)) {
-      for (const conversation of session.conversations) {
-        candidates.push({
-          projectPath,
-          sessionName,
-          worktreePath: session.worktreePath,
-          conversation,
-        });
-      }
-    }
-  }
-  for (const { projectPath, conversation } of projectConversations) {
-    candidates.push({
-      projectPath,
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
-      worktreePath: projectPath,
-      conversation,
-    });
-  }
-  return candidates;
-}
-
-export interface RehydrateConversationActorsDeps {
-  readState(): Promise<ManagerState>;
-  listAllProjectConversations(): Promise<
-    { projectPath: string; conversation: ConversationState }[]
-  >;
-  getProjectDisplayName(projectPath: string): string;
-  validateRestoredSnapshot(
-    raw: unknown,
-    conversationId: string,
-    expectedSchemaVersion: number,
-  ): Snapshot<unknown> | null;
-}
-
-async function defaultRehydrateDeps(): Promise<RehydrateConversationActorsDeps> {
-  const stateMod = await import("@/lib/state-store");
-  const { getProjectDisplayName } = await import("@/lib/projects/resolver");
-  const { validateRestoredSnapshot } = await import("./persistence");
-  return {
-    readState: stateMod.readState,
-    listAllProjectConversations: stateMod.listAllProjectConversations,
-    getProjectDisplayName,
-    validateRestoredSnapshot,
-  };
-}
-
-/**
- * Rehydrate conversation actors from persisted snapshots on startup — across
- * both session conversations and session-less project conversations.
- * Returns the number of actors rehydrated.
- */
-export async function rehydrateConversationActors(
-  deps?: RehydrateConversationActorsDeps,
-): Promise<number> {
-  const resolved = deps ?? (await defaultRehydrateDeps());
-  const [state, projectConversations] = await Promise.all([
-    resolved.readState(),
-    resolved.listAllProjectConversations(),
-  ]);
-
-  let count = 0;
-  let skippedNonResumable = 0;
-
-  for (const {
-    projectPath,
-    sessionName,
-    worktreePath,
-    conversation,
-  } of collectRehydrationCandidates(state, projectConversations)) {
-    if (!conversation.machineSnapshot) continue;
-
-    const snapshot = resolved.validateRestoredSnapshot(
-      conversation.machineSnapshot,
-      conversation.id,
-      1, // expected schema version
-    );
-
-    if (!snapshot) continue;
-
-    if (!shouldRehydrateSnapshot(snapshot)) {
-      skippedNonResumable++;
-      continue;
-    }
-
-    const key = conversationRuntimeKey(
-      projectPath,
-      sessionName,
-      conversation.id,
-    );
-
-    // Skip if already running
-    if (getActorRegistry().has(key)) continue;
-
-    const started = await rehydrateOneConversationActor({
-      key,
-      projectPath,
-      projectName: resolved.getProjectDisplayName(projectPath),
-      sessionName,
-      worktreePath,
-      conversation: {
-        id: conversation.id,
-        createdAt: conversation.createdAt,
-        forkedFrom: conversation.forkedFrom ?? null,
-        role: conversation.role ?? null,
-        transcriptPath: conversation.transcriptPath ?? null,
-        agentBackend: conversation.agentBackend ?? "claude",
-        backendRef: conversation.backendRef ?? null,
-        promptCount: conversation.promptCount ?? 0,
-      },
-      snapshot,
-    });
-
-    if (started) count++;
-  }
-
-  if (count > 0 || skippedNonResumable > 0) {
-    logger.info("conversation-manager.rehydration_complete", {
-      count,
-      skippedNonResumable,
-    });
-  }
-
-  return count;
 }
 
 /** Reset for testing — clears all actors and runtime state. */

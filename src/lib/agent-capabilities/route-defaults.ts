@@ -5,7 +5,7 @@ import {
   getProjectDisplayName,
   resolveProjectPath,
 } from "@/lib/projects/resolver";
-import { createStateManager } from "@/lib/state-store";
+import { getStateStore } from "@/lib/state-store";
 import {
   type AgentCapabilityCascadeKind,
   type AgentCapabilityCascadeLayer,
@@ -47,8 +47,9 @@ import {
   CapabilityRouteNotFoundError,
 } from "./route-handlers";
 import { redactAgentCapabilityText } from "./redaction";
+import { getErrorMessage } from "@/lib/shared/errors";
 
-const stateManager = createStateManager();
+const stateManager = getStateStore();
 const discoveryCache =
   createAgentCapabilityDiscoveryCache<AgentCapabilityInventory>();
 
@@ -275,7 +276,7 @@ async function discoverInventory(input: {
   } catch (err) {
     throw new CapabilityRouteDiscoveryError(
       `Failed to discover ${input.cascadeKind}: ${redactAgentCapabilityText(
-        err instanceof Error ? err.message : String(err),
+        getErrorMessage(err),
       )}`,
     );
   }

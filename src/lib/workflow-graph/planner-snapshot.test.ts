@@ -11,7 +11,7 @@
  * validationErrors). Any drift in the planner→draft contract surfaces here.
  */
 import { describe, expect, it } from "vitest";
-import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import {
   createDefaultPlannerRunner,
   createWorkflowPlannerService,
@@ -105,6 +105,7 @@ describe("planner workflow generation — fixture snapshot", () => {
           cachedInputTokens: null,
         },
         backendRef: null,
+        continuationDisposition: "retain",
       }),
       createPlannerDraftSubmission: () => ({ draftId: "snapshot-draft" }),
       consumePlannerDraft: () => FIXTURE_DRAFT,

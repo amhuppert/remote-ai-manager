@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import {
@@ -8,10 +17,16 @@ import {
   _createTestDb,
   _createTestDbAtPath,
   _resetForTesting,
+  _setStateDbBeforeLockedInitializationHookForTesting,
   truncateAllTables,
 } from "./state-db";
+import {
+  publishSchemaCompatibilityBarrier,
+  schemaCompatibilityBarrierPath,
+} from "./schema-compatibility";
 
 afterEach(() => {
+  _setStateDbBeforeLockedInitializationHookForTesting(null);
   _resetForTesting();
 });
 
@@ -337,6 +352,198 @@ describe("truncateAllTables", () => {
 });
 
 describe("state-db forward-only schema_migrations conflict policy", () => {
+  it("rechecks a barrier published after preflight under the initialization lock", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const bootstrap = new Database(dbPath);
+    bootstrap.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL
+      );
+    `);
+    bootstrap.close();
+
+    const futureVersion = KNOWN_SCHEMA_VERSION + 1;
+    _setStateDbBeforeLockedInitializationHookForTesting(() => {
+      writeFileSync(
+        schemaCompatibilityBarrierPath(dir, futureVersion),
+        JSON.stringify({ version: futureVersion }),
+      );
+    });
+
+    try {
+      expect(() => _createTestDbAtPath(dbPath)).toThrow(
+        /schema version|refus/i,
+      );
+
+      const probe = new Database(dbPath);
+      try {
+        const journalRows = probe.pragma("journal_mode") as Array<{
+          journal_mode: string;
+        }>;
+        expect(journalRows[0]?.journal_mode).toBe("delete");
+        const tables = probe
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .pluck()
+          .all();
+        expect(tables).toEqual(["schema_migrations"]);
+      } finally {
+        probe.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not change journal mode when a future version wins before the locked recheck", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const bootstrap = new Database(dbPath);
+    bootstrap.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL
+      );
+    `);
+    bootstrap.close();
+
+    _setStateDbBeforeLockedInitializationHookForTesting(() => {
+      const newer = new Database(dbPath);
+      newer
+        .prepare(
+          "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+        )
+        .run(KNOWN_SCHEMA_VERSION + 1, "newer build won startup race");
+      newer.close();
+    });
+
+    try {
+      expect(() => _createTestDbAtPath(dbPath)).toThrow(
+        /schema version|refus/i,
+      );
+
+      const probe = new Database(dbPath);
+      try {
+        const journalRows = probe.pragma("journal_mode") as Array<{
+          journal_mode: string;
+        }>;
+        expect(journalRows[0]?.journal_mode).toBe("delete");
+      } finally {
+        probe.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a future version committed only in WAL without changing any DB or sidecar bytes", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const workflowsDir = path.join(dir, "workflows");
+    const workflowPath = path.join(workflowsDir, "future-workflow.json");
+    mkdirSync(workflowsDir);
+    writeFileSync(workflowPath, '{"from":"future-build"}');
+
+    const futureVersion = KNOWN_SCHEMA_VERSION + 1;
+    const futureDb = new Database(dbPath);
+    futureDb.pragma("journal_mode = WAL");
+    futureDb.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    futureDb.pragma("wal_checkpoint(TRUNCATE)");
+    futureDb
+      .prepare(
+        "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+      )
+      .run(futureVersion, "future migration in WAL");
+    await publishSchemaCompatibilityBarrier(dir, futureVersion);
+
+    const snapshotBytes = (): Record<string, string> =>
+      Object.fromEntries(
+        readdirSync(dir)
+          .sort()
+          .filter((name) => name !== "workflows")
+          .map((name) => {
+            const bytes = readFileSync(path.join(dir, name));
+            return [name, createHash("sha256").update(bytes).digest("hex")];
+          }),
+      );
+
+    try {
+      expect(existsSync(`${dbPath}-wal`)).toBe(true);
+      expect(existsSync(`${dbPath}-shm`)).toBe(true);
+      expect(
+        existsSync(schemaCompatibilityBarrierPath(dir, futureVersion)),
+      ).toBe(true);
+      const before = snapshotBytes();
+
+      expect(() => _createTestDbAtPath(dbPath)).toThrow(
+        /schema version|refus/i,
+      );
+
+      expect(snapshotBytes()).toEqual(before);
+      expect(readFileSync(workflowPath, "utf-8")).toBe(
+        '{"from":"future-build"}',
+      );
+    } finally {
+      futureDb.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a future-version database before changing its schema, data, or workflow files", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const workflowsDir = path.join(dir, "workflows");
+    const workflowPath = path.join(workflowsDir, "future-workflow.json");
+    mkdirSync(workflowsDir);
+    writeFileSync(workflowPath, '{"from":"future-build"}');
+
+    const futureDb = new Database(dbPath);
+    futureDb.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schema_migrations (version, description)
+      VALUES (${KNOWN_SCHEMA_VERSION + 1}, 'future migration');
+    `);
+    futureDb.close();
+
+    try {
+      expect(() => _createTestDbAtPath(dbPath)).toThrow(
+        /schema version|refus/i,
+      );
+
+      const probe = new Database(dbPath);
+      try {
+        const tables = probe
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+          )
+          .all() as Array<{ name: string }>;
+        expect(tables.map((row) => row.name)).toEqual(["schema_migrations"]);
+        expect(
+          probe
+            .prepare("SELECT description FROM schema_migrations")
+            .pluck()
+            .all(),
+        ).toEqual(["future migration"]);
+      } finally {
+        probe.close();
+      }
+      expect(existsSync(workflowPath)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to open when schema_migrations records a version greater than KNOWN_SCHEMA_VERSION", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
     const dbPath = path.join(dir, "command-center.db");
@@ -394,5 +601,38 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
     } finally {
       probe.close();
     }
+  });
+});
+
+describe("state-db ref-shape cutover (schema version 1)", () => {
+  it("this build understands schema version 1 (the AgentSessionRef canonical cutover)", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(1);
+  });
+
+  it("opens a DB stamped at version 1 (this build) but refuses one stamped above it (an older build's DB advanced past this)", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+
+    const stamped = _createTestDbAtPath(dbPath);
+    stamped
+      .prepare(
+        "INSERT OR IGNORE INTO schema_migrations (version, description) VALUES (?, ?)",
+      )
+      .run(1, "AgentSessionRef canonical cutover");
+    stamped.close();
+
+    // A build that knows version 1 reopens cleanly.
+    const reopened = _createTestDbAtPath(dbPath);
+    expect(reopened.open).toBe(true);
+    reopened
+      .prepare(
+        "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+      )
+      .run(2, "a future breaking migration");
+    reopened.close();
+
+    // Now the recorded MAX(version) exceeds what this build knows (1), so the
+    // forward-only gate refuses to open — the cutover's whole point.
+    expect(() => _createTestDbAtPath(dbPath)).toThrow(/schema version|refus/i);
   });
 });

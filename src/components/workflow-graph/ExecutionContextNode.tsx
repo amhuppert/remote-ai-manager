@@ -14,6 +14,8 @@ import {
   getDisplayValidators,
 } from "./derive-graph";
 import type { ContextWaitState } from "./derive-wait-state";
+import { backendLabel, backendToneToken } from "@/lib/agent-backends/catalog";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 type WaitKind = ContextWaitState["kind"];
 
@@ -137,17 +139,21 @@ const VALIDATOR_PILL_VARIANT = {
     "border-dashed border-border-subtle bg-[var(--cc-graph-ink-a55)] normal-case italic tracking-normal text-text-tertiary",
   script:
     "border-border-default bg-[var(--cc-graph-ink-a55)] text-text-primary",
-  claude: "border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a06)] text-cyan",
-  codex: "border-[var(--cc-codex-violet-a35)] bg-violet-glow text-violet",
+  cyan: "border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a06)] text-cyan",
+  violet: "border-[var(--cc-codex-violet-a35)] bg-violet-glow text-violet",
   approval: "border-[var(--amber-dim)] bg-[var(--amber-glow)] text-amber",
 } as const;
+
+function agentPillToneClass(backend: AgentBackendId): string {
+  return backendToneToken(backend) === "violet"
+    ? VALIDATOR_PILL_VARIANT.violet
+    : VALIDATOR_PILL_VARIANT.cyan;
+}
 
 type ExecutionContextNodeType = Node<
   ExecutionContextNodeData,
   "executionContext"
 >;
-
-type AgentBackend = "claude" | "codex";
 
 function getStatusBadge(
   mode: "builder" | "execution",
@@ -250,7 +256,7 @@ function getProgressPercent(
 }
 
 type ValidatorInfo =
-  | { kind: "agent"; backend: AgentBackend }
+  | { kind: "agent"; backend: AgentBackendId }
   | { kind: "script" };
 
 function ValidatorPills({
@@ -298,14 +304,14 @@ function ValidatorPills({
                 key={`agent-${idx}`}
                 className={cn(
                   VALIDATOR_PILL_BASE,
-                  VALIDATOR_PILL_VARIANT[pill.backend],
+                  agentPillToneClass(pill.backend),
                 )}
-                title={`Agent validator: ${pill.backend === "codex" ? "Codex" : "Claude"}`}
+                title={`Agent validator: ${backendLabel(pill.backend)}`}
               >
                 <span className="text-[0.7rem] leading-none" aria-hidden="true">
                   ◆
                 </span>
-                {pill.backend === "codex" ? "Codex" : "Claude"}
+                {backendLabel(pill.backend)}
               </span>
             ),
           )
@@ -355,7 +361,7 @@ export default function ExecutionContextNode({
 
   const implementer =
     "implementer" in context ? context.implementer : undefined;
-  const implementerBackend: AgentBackend = implementer?.backend ?? "claude";
+  const implementerBackend: AgentBackendId = implementer?.backend ?? "claude";
 
   const validators = getDisplayValidators(context);
   const approvalGate = getDisplayApprovalGate(context);
@@ -408,13 +414,15 @@ export default function ExecutionContextNode({
           <div
             className={cn(
               "inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase",
-              implementerBackend === "codex" ? "text-violet" : "text-cyan",
+              backendToneToken(implementerBackend) === "violet"
+                ? "text-violet"
+                : "text-cyan",
             )}
           >
             <span className="text-[0.7rem] leading-none" aria-hidden="true">
               ◆
             </span>
-            {implementerBackend === "codex" ? "Codex" : "Claude"}
+            {backendLabel(implementerBackend)}
           </div>
         </div>
       </div>

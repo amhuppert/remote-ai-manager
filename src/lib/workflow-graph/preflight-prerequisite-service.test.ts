@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
-  workflowSemanticDefinitionSchema,
   type WorkflowPrerequisite,
   type WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+  workflowSemanticDefinitionSchema,
+} from "@/lib/workflow-graph/definition-schemas";
 
 import type { ProbeOutcome, PrerequisiteProbes } from "./prerequisite-probes";
 import { createPreflightPrerequisiteService } from "./preflight-prerequisite-service";

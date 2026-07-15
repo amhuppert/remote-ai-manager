@@ -7,13 +7,15 @@ import CollapsibleText from "@/components/CollapsibleText";
 import { cn } from "@/lib/ui/cn";
 import { formatGraphWorkflowHaltReason } from "./ContextHaltCard";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowLaneKind,
   GraphWorkflowMergeStatusValue,
-  GraphWorkflowContextStatus,
   GraphWorkflowSSEEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowLaneKind,
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 type EventDotKind =
   | "pass"
   | "fail"

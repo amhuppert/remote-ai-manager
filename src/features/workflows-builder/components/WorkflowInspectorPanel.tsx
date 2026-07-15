@@ -30,22 +30,24 @@ import {
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import type { CodexConfig } from "@/lib/agent-backends/schemas";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
+import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   ContextValidatorOverride,
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
-  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowHumanApprovalGateConfig,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowScriptValidatorConfig,
+} from "@/lib/workflow-graph/config-schemas";
+import type {
+  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
-  WorkflowCollaborationConfig,
   WorkflowConfigOverride,
   WorkflowGraphValidationError,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   resolveContextCollaboration,
   resolveWorkflowCollaboration,
@@ -55,7 +57,7 @@ import InspectorConfigBlock, {
 } from "./InspectorConfigBlock";
 import ParameterDeclarationEditor from "./ParameterDeclarationEditor";
 import { SectionLabel } from "@/components/ui/SectionHeader";
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import {
   CircuitBreakerEditor,
   CollaborationEditor,

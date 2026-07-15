@@ -1,14 +1,13 @@
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { ConversationToolingOverrides } from "./types";
 import type {
-  AgentBackendId,
-  AgentSessionRef,
-  ConversationBackendCapabilities,
-  ConversationToolingOverrides,
-} from "./types";
+  AgentFailureClassification,
+  ContinuationDisposition,
+} from "./errors";
 import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
 import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
-import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
-import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
+import type { AgentTranscriptEntry } from "./transcript";
 
 /**
  * Payload for `onBackgroundTasksLost`: the waitable background tasks that were
@@ -21,27 +20,6 @@ export interface BackgroundTasksLostInfo {
   /** Why the session died — e.g. "closed", "pump_completed", "pump_error". */
   reason: string;
 }
-
-/**
- * Result of a live capability-config apply attempt against a Claude
- * conversation runtime. Mirrors `ClaudeApplyPortResult` from the
- * capability apply service so the port can pass-through directly.
- */
-export type ClaudeCapabilityApplyResult =
-  | { status: "applied" }
-  | { status: "rejected"; error: string }
-  | { status: "skipped-turn-active" };
-
-/**
- * Result of pushing a refreshed capability-config payload into a live Codex
- * runtime between turns. Codex always rebuilds its `CodexOptions` per turn,
- * so the runtime only needs to store the new config; the next turn picks it
- * up automatically. Mirrors `CodexApplyPortResult` from the capability apply
- * service so the port can pass-through directly.
- */
-export type CodexCapabilityApplyResult =
-  | { status: "applied" }
-  | { status: "rejected"; error: string };
 
 /**
  * Server-side reference to an image already saved on disk under the
@@ -60,10 +38,17 @@ export interface ConversationImageRef {
   base64Data: string;
 }
 
+/**
+ * Neutral operational events a conversation runtime emits across the backend
+ * seam. Adapters interpret their provider's native frames into these; nothing
+ * above the seam sees a raw provider payload except the lossless
+ * `transcript_entry` envelope, which the caller records without reading into
+ * `entry.raw`.
+ */
 export type ConversationBackendEvent =
   | { type: "backend_init"; backendRef: AgentSessionRef }
   | { type: "content"; block: MessageContentBlock }
-  | { type: "provider_event"; payload: unknown }
+  | { type: "transcript_entry"; entry: AgentTranscriptEntry }
   | { type: "error"; message: string }
   | { type: "input_accepted" }
   | { type: "external_turn_started" }
@@ -128,7 +113,19 @@ export interface ConversationBackendTurnResult {
   aborted: boolean;
   /** True when the SDK auto-compacted the context at least once this turn. */
   compacted: boolean;
-  error: string | null;
+  /**
+   * Normalized classification of the turn's failure (via the backend's
+   * `AgentFailureClassifier`); null for a clean turn. Aborted turns report
+   * through `aborted`, not here.
+   */
+  failure: AgentFailureClassification | null;
+  /**
+   * Whether the persisted continuation ref for this conversation is still
+   * usable after this turn. The adapter decides from its provider's
+   * continuation semantics: "clear" forces the next turn to start fresh,
+   * "retain" keeps the last-known ref resumable.
+   */
+  continuationDisposition: ContinuationDisposition;
   /**
    * Summary of the bounded background-task wait this turn performed. Present
    * only when a wait actually occurred (the turn opted in and waitable tasks
@@ -158,7 +155,12 @@ export type ReadyResult =
 export interface ConversationBackendRuntime {
   readonly backend: AgentBackendId;
   readonly status: "alive" | "dead";
-  readonly capabilities: ConversationBackendCapabilities;
+  /**
+   * True while a caller-initiated turn is in flight. Backends whose runtime
+   * has no live turn state (per-turn process re-materialization) omit it;
+   * callers treat `undefined` as not-active.
+   */
+  readonly isTurnActive?: boolean;
   readonly modelId: string | undefined;
   readonly reasoningEffort: string | undefined;
   readonly outputFormat:
@@ -193,26 +195,6 @@ export interface ConversationBackendRuntime {
   prepareForTurnStart?(): Promise<ReadyResult>;
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
-  /**
-   * Live-apply a Claude capability configuration (skills/plugins/agents
-   * deltas) to the active runtime. Implemented by the Claude runtime to
-   * support idle-drain and after-mutation fanout from the capability apply
-   * service. Returns `skipped-turn-active` when a turn is in flight so the
-   * caller stages the change for idle-drain rather than interrupting.
-   */
-  applyClaudeCapabilityConfig?(
-    config: ClaudeRuntimeCapabilityConfig,
-  ): Promise<ClaudeCapabilityApplyResult>;
-  /**
-   * Replace the live Codex capability configuration the runtime will merge
-   * into the next turn's `CodexOptions.config`. Implemented by the Codex
-   * runtime so the capability apply service can promote `staged-next-turn`
-   * cascades into the running runtime before the upcoming turn ingests
-   * options. Returns `rejected` when the runtime is closed.
-   */
-  applyCodexCapabilityConfig?(
-    config: CodexRuntimeCapabilityConfig,
-  ): Promise<CodexCapabilityApplyResult>;
   supportedCommands?(): Promise<readonly { name: string }[]>;
   supportedAgents?(): Promise<readonly { name: string }[]>;
   /**
@@ -263,8 +245,9 @@ export interface ConversationBackendCreateInput {
   /**
    * Optional callback invoked by the backend runtime when SDK messages arrive
    * between caller-initiated turns — e.g. Claude Code's background-task
-   * auto-continuation. Emits `external_turn_started`, `provider_event`s, and
-   * `external_turn_completed` for each virtual turn.
+   * auto-continuation. Emits `external_turn_started`, the interpreted
+   * `content`/`transcript_entry` events, and `external_turn_completed` for
+   * each virtual turn.
    */
   onExternalTurnEvent?: (event: ConversationBackendEvent) => void;
   /**

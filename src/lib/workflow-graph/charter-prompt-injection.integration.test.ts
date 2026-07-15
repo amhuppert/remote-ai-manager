@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
 import type {
-  GraphWorkflowAgentValidatorConfig,
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
-  GraphWorkflowTaskState,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { renderCharterDigest } from "@/lib/workflow-graph/charter/render";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";

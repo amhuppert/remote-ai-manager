@@ -14,6 +14,8 @@
  * Correlate with server `cc-debug.log` via the shared `traceId`.
  */
 
+import { getErrorMessage } from "./errors";
+
 const SERVER_TIMING_TOTAL = /(?:^|,\s*)total;dur=(\d+(?:\.\d+)?)/;
 
 function parseServerMs(header: string | null): number | null {
@@ -86,7 +88,7 @@ export async function tracedFetch(
       method,
       url: pathname,
       totalMs,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     throw err;
   }

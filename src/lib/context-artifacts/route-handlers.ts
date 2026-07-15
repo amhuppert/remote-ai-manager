@@ -31,16 +31,16 @@ import { resolveSessionRoute } from "@/lib/conversations/route-resolution";
 import {
   resolveProjectOr404,
   jsonError,
+  notFound,
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { CALLER_CONVERSATION_HEADER } from "@/lib/conversations/read-route-handlers";
-import { broadcast } from "@/lib/events/broadcaster";
+import { publishEvent } from "@/lib/events/publication";
 import { readConfig } from "@/lib/config/loader";
 import { resolveCompactionConfig } from "@/lib/config/cascade";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { deriveFreshness, type ArtifactFreshness } from "./freshness";
@@ -95,7 +95,7 @@ function getDefaultService(): CompactionService {
         await readConfig(),
         await readRepoConfig(projectPath),
       ),
-    broadcast,
+    broadcast: publishEvent,
     now: () => new Date().toISOString(),
   });
   return _defaultService;
@@ -170,23 +170,11 @@ interface ArtifactTarget {
 }
 
 function conversationNotFound(): Response {
-  return NextResponse.json(
-    {
-      error: "Conversation not found",
-      code: "conversation_not_found",
-    } satisfies ApiError,
-    { status: 404 },
-  );
+  return notFound("Conversation not found", "conversation_not_found");
 }
 
 function artifactNotFound(): Response {
-  return NextResponse.json(
-    {
-      error: "Context artifact not found",
-      code: "artifact_not_found",
-    } satisfies ApiError,
-    { status: 404 },
-  );
+  return notFound("Context artifact not found", "artifact_not_found");
 }
 
 function invalidRequest(issues: { path: string; message: string }[]): Response {

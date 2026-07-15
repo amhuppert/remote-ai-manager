@@ -11,7 +11,8 @@ const baseProps = {
 };
 
 // The override-source indicator is rendered as role="img" with its meaning
-// carried by data-tooltip / aria-label (the visual color is a styling concern).
+// carried by aria-label (its accessible name; the WithTooltip hover label mirrors
+// it, and the visual color is a styling concern).
 function getDot(): HTMLElement {
   const dots = document.querySelectorAll('[role="img"]');
   expect(dots.length).toBe(1);
@@ -34,7 +35,7 @@ describe("WorkflowDefinitionsSidebar dot indicator", () => {
         ]}
       />,
     );
-    expect(getDot().getAttribute("data-tooltip")).toBe("All defaults");
+    expect(getDot().getAttribute("aria-label")).toBe("All defaults");
   });
 
   it("shows the 'All defaults' tooltip when workflowConfig/executionContexts are omitted entirely", () => {
@@ -44,7 +45,7 @@ describe("WorkflowDefinitionsSidebar dot indicator", () => {
         definitions={[{ id: "wf-1", name: "Bare", revision: 1 }]}
       />,
     );
-    expect(getDot().getAttribute("data-tooltip")).toBe("All defaults");
+    expect(getDot().getAttribute("aria-label")).toBe("All defaults");
   });
 
   it("shows the workflow-defaults tooltip when workflowConfig has keys and no per-context overrides", () => {
@@ -65,7 +66,7 @@ describe("WorkflowDefinitionsSidebar dot indicator", () => {
         ]}
       />,
     );
-    expect(getDot().getAttribute("data-tooltip")).toBe(
+    expect(getDot().getAttribute("aria-label")).toBe(
       "Custom workflow defaults (2 blocks overridden)",
     );
   });
@@ -92,7 +93,7 @@ describe("WorkflowDefinitionsSidebar dot indicator", () => {
         ]}
       />,
     );
-    expect(getDot().getAttribute("data-tooltip")).toBe(
+    expect(getDot().getAttribute("aria-label")).toBe(
       "Custom per-context config (2 contexts, 3 overrides total)",
     );
   });

@@ -8,7 +8,7 @@ import type {
   PortableMcpConfig,
   McpApplyResult,
 } from "@/lib/agent-backends/portable-mcp";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { dispatchConversationTurn } from "./agent-call-conversation";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 
@@ -37,7 +37,7 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
   const sendTurnCalls = { value: 0 };
 
   const baseResult: ConversationBackendTurnResult = {
-    backendRef: { backend: "claude", sessionId: "sess-1" } as AgentSessionRef,
+    backendRef: { backend: "claude", ref: "sess-1" } as AgentSessionRef,
     costUsd: 0.01,
     durationMs: 1234,
     numTurns: 1,
@@ -47,20 +47,13 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
     structuredOutput: undefined,
     aborted: false,
     compacted: false,
-    error: null,
+    failure: null,
+    continuationDisposition: "retain",
   };
 
   const runtime: ConversationBackendRuntime = {
     backend: "claude",
     status: "alive",
-    capabilities: {
-      queueWhileRunning: true,
-      askUserQuestion: true,
-      preciseFork: true,
-      portableMcpAtStart: true,
-      portableMcpBetweenTurns: true,
-      contextWindowMetrics: true,
-    },
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,
@@ -132,7 +125,7 @@ describe("dispatchConversationTurn", () => {
     expect(result.backend).toBe("claude");
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sess-1",
+      ref: "sess-1",
     });
     expect(result.outcome.kind).toBe("completed");
     expect(result.usage.contextTokens).toBe(5000);
@@ -249,7 +242,15 @@ describe("dispatchConversationTurn", () => {
 
   it("normalizes a backend error result while preserving backend identity", async () => {
     const { runtime } = makeStubRuntime({
-      result: { error: "stream closed", aborted: false, backendRef: null },
+      result: {
+        failure: {
+          kind: "backend_error",
+          message: "stream closed",
+          retryable: false,
+        },
+        aborted: false,
+        backendRef: null,
+      },
     });
 
     const result = await dispatchConversationTurn(
@@ -274,7 +275,7 @@ describe("dispatchConversationTurn", () => {
 
   it("normalizes an aborted result as the aborted failure kind", async () => {
     const { runtime } = makeStubRuntime({
-      result: { error: null, aborted: true, backendRef: null },
+      result: { failure: null, aborted: true, backendRef: null },
     });
 
     const result = await dispatchConversationTurn(
@@ -300,14 +301,6 @@ describe("dispatchConversationTurn", () => {
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      capabilities: {
-        queueWhileRunning: true,
-        askUserQuestion: true,
-        preciseFork: true,
-        portableMcpAtStart: true,
-        portableMcpBetweenTurns: true,
-        contextWindowMetrics: true,
-      },
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
@@ -396,7 +389,7 @@ describe("dispatchConversationTurn", () => {
       error: vi.fn(),
     };
     const { runtime } = makeStubRuntime({
-      result: { error: null, aborted: true, backendRef: null },
+      result: { failure: null, aborted: true, backendRef: null },
     });
 
     await dispatchConversationTurn(
@@ -436,7 +429,15 @@ describe("dispatchConversationTurn", () => {
       error: vi.fn(),
     };
     const { runtime } = makeStubRuntime({
-      result: { error: "stream closed", aborted: false, backendRef: null },
+      result: {
+        failure: {
+          kind: "backend_error",
+          message: "stream closed",
+          retryable: false,
+        },
+        aborted: false,
+        backendRef: null,
+      },
     });
 
     await dispatchConversationTurn(
@@ -511,5 +512,134 @@ describe("dispatchConversationTurn", () => {
         artifactKinds: ["design_doc"],
       }),
     );
+  });
+});
+
+describe("dispatchConversationTurn — widened result mapping", () => {
+  it("carries numTurns, contentBlocks, compacted, backgroundWait, and the adapter disposition on a completed turn", async () => {
+    const { runtime } = makeStubRuntime({
+      result: {
+        numTurns: 3,
+        contentBlocks: [{ type: "text", text: "answer" }],
+        compacted: true,
+        backgroundWait: {
+          waitedTaskIds: ["t1"],
+          settledTaskIds: ["t1"],
+          timedOut: false,
+          durationMs: 42,
+        },
+      },
+    });
+    const result = await dispatchConversationTurn(
+      { kind: "conversation_turn", prompt: "hi" },
+      {
+        runtime,
+        capabilityView: CAPABILITY_VIEW,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.numTurns).toBe(3);
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: "answer" },
+      ]);
+    }
+    expect(result.compacted).toBe(true);
+    expect(result.backgroundWait).toEqual({
+      waitedTaskIds: ["t1"],
+      settledTaskIds: ["t1"],
+      timedOut: false,
+      durationMs: 42,
+    });
+    expect(result.continuationDisposition).toBe("retain");
+  });
+
+  it("passes the adapter's failure kind and turn facts through on a reported failure", async () => {
+    const { runtime } = makeStubRuntime({
+      result: {
+        failure: {
+          kind: "stale_resume_ref",
+          message: "session gone",
+          retryable: true,
+        },
+        contentBlocks: [{ type: "text", text: "partial" }],
+        continuationDisposition: "clear",
+        backendRef: null,
+      },
+    });
+    const result = await dispatchConversationTurn(
+      { kind: "conversation_turn", prompt: "hi" },
+      {
+        runtime,
+        capabilityView: CAPABILITY_VIEW,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("stale_resume_ref");
+      expect(result.outcome.error.message).toBe("session gone");
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: "partial" },
+      ]);
+    }
+    expect(result.continuationDisposition).toBe("clear");
+    expect(result.usage).toMatchObject({ durationMs: 1234 });
+  });
+
+  it("normalizes a thrown sendTurn error through the injected classifier", async () => {
+    const { runtime } = makeStubRuntime();
+    runtime.sendTurn = async () => {
+      throw new Error("QuerySession ended before the turn completed");
+    };
+    const result = await dispatchConversationTurn(
+      { kind: "conversation_turn", prompt: "hi" },
+      {
+        runtime,
+        capabilityView: CAPABILITY_VIEW,
+        signal: new AbortController().signal,
+        classifyFailure: (error) => ({
+          failure: {
+            kind: "session_died",
+            message: error instanceof Error ? error.message : String(error),
+            retryable: false,
+          },
+          continuationDisposition: "retain",
+        }),
+      },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("session_died");
+      // No adapter turn result: partial content is absent, not empty.
+      expect(result.outcome.contentBlocks).toBeUndefined();
+    }
+    // precise_session strength retains the ref on a thrown failure.
+    expect(result.continuationDisposition).toBe("retain");
+  });
+
+  it("keeps aborted turns' partial facts on the failed outcome", async () => {
+    const { runtime } = makeStubRuntime({
+      result: {
+        aborted: true,
+        contentBlocks: [{ type: "text", text: "cut short" }],
+      },
+    });
+    const result = await dispatchConversationTurn(
+      { kind: "conversation_turn", prompt: "hi" },
+      {
+        runtime,
+        capabilityView: CAPABILITY_VIEW,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("aborted");
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: "cut short" },
+      ]);
+    }
   });
 });

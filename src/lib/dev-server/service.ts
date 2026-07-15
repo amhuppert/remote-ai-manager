@@ -22,6 +22,7 @@ import {
 import { createTailscaleService } from "../shared/tailscale";
 import { readConfig as readGlobalConfig } from "../config/loader";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { sleep } from "@/lib/shared/sleep";
 import type {
   DevServerConfig,
   DevServerStatus,
@@ -626,10 +627,6 @@ export function createDevServerService(
   return { list, ensure, stop, stopUnmanaged };
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function probeBackendReachableViaConnect(
   port: number,
 ): Promise<BackendReachableProbeResult> {
@@ -687,7 +684,7 @@ export const defaultDevServerServiceDeps: DevServerServiceDeps = {
   killListeningProcessForPort: registry.killListeningProcessForPort,
   selectPort: defaultPortSelectionService.selectPort,
   reconcileTailscaleServeOrphans: defaultReconcileTailscaleServeOrphans,
-  sleep: defaultSleep,
+  sleep,
   now: () => Date.now(),
 };
 

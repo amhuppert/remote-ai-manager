@@ -1,44 +1,33 @@
-import { cn } from "@/lib/ui/cn";
+import { Switch } from "@/components/ui/Switch";
 
+// Config-page on/off row: the shared Radix Switch primitive plus this domain's
+// ON/OFF caption. The switch's role/aria/keyboard/disabled behaviour lives in
+// the primitive; this wrapper owns the caption, the right-aligned row layout,
+// and the accessible naming. The visible ON/OFF caption is not a meaningful
+// name, so the field's descriptive label (passed by ConfigField's caller) names
+// the switch via aria-label. The <label> makes the whole row — switch and
+// caption — a single click target: a native label forwards presses to its one
+// labelable control (the Radix switch button).
 export function ConfigToggle({
+  label,
   value,
   onChange,
   disabled,
 }: {
+  label: string;
   value: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
 }) {
   return (
-    <div
-      className="ml-auto inline-flex w-fit items-center gap-sm font-mono text-[0.72rem] font-semibold tracking-[0.06em] text-text-secondary uppercase"
-      onClick={() => !disabled && onChange(!value)}
-      role="switch"
-      aria-checked={value}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (!disabled && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          onChange(!value);
-        }
-      }}
-    >
-      <div
-        className={cn(
-          "relative h-[18px] w-[34px] cursor-pointer rounded-full border border-solid transition-all duration-150 ease-[ease]",
-          value
-            ? "border-cyan bg-cyan shadow-[0_0_12px_var(--cyan-glow)]"
-            : "border-border-default bg-bg-base",
-        )}
-      >
-        <div
-          className={cn(
-            "absolute top-px left-px h-[14px] w-[14px] rounded-full transition-[transform,background] duration-150 ease-[ease]",
-            value ? "translate-x-[16px] bg-text-inverse" : "bg-text-tertiary",
-          )}
-        />
-      </div>
+    <label className="ml-auto inline-flex w-fit cursor-pointer items-center gap-sm font-mono text-[0.72rem] font-semibold tracking-[0.06em] text-text-secondary uppercase">
+      <Switch
+        aria-label={label}
+        checked={value}
+        onCheckedChange={onChange}
+        disabled={disabled}
+      />
       <span>{value ? "ON" : "OFF"}</span>
-    </div>
+    </label>
   );
 }

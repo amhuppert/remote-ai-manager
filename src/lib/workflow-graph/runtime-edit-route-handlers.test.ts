@@ -2,10 +2,8 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowSSEEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowExecution } from "./test-fixtures";

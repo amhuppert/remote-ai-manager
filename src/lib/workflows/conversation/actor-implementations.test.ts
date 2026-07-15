@@ -12,8 +12,7 @@ import type {
 } from "@/lib/agent-capabilities/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
-import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
-import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
+import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   _resetForTesting,
@@ -49,15 +48,7 @@ import {
   _resetActorDepsForTesting,
   shouldRecreateRuntime,
   buildEffectivePrompt,
-  processMessage,
-  mapErrorSubtype,
-  resolveBackendTurnSettings,
-  resolveTurnModelEffort,
-  resolveBackendTimeoutMs,
-  shouldBuildRuntimeSyntheticSeed,
 } from "./actor-implementations";
-import type { ActorConfig } from "./actor-implementations";
-import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { RunTaskRunInput } from "./types";
 import type {
@@ -65,7 +56,7 @@ import type {
   AgentTaskResult,
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
-import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
+import { makeUndeliveredPromptFailure } from "@/lib/agent-backends/testing/undelivered-prompt-fixture";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
 import {
@@ -153,6 +144,26 @@ function createMockDeps(
     ),
     getNextImageIndex: vi.fn(async () => 1),
     getConversationBackendFactory: vi.fn(() => mockFactory),
+    getConversationCapabilities: vi.fn(() => ({
+      queue: {
+        acceptsWhileRunning: true,
+        deliveryTiming: "in_turn" as const,
+      },
+      continuationStrength: "precise_session" as const,
+      fork: "native" as const,
+      structuredOutput: "backend_native" as const,
+      contextWindowMetrics: true,
+      nativeMidTurnAskUser: true,
+      externalTurns: true,
+      capabilityKinds: [
+        { kind: "skills" as const, applyTiming: "idle_live" as const },
+        { kind: "plugins" as const, applyTiming: "idle_live" as const },
+        {
+          kind: "agents" as const,
+          applyTiming: "next_conversation" as const,
+        },
+      ],
+    })),
     registerBackendRuntime: vi.fn(),
     unregisterBackendRuntime: vi.fn(),
     buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
@@ -185,8 +196,7 @@ function createMockDeps(
     ),
     applyCapabilityAtTurnStart: vi.fn(async () => ({})),
     applyCapabilityWhenIdle: vi.fn(async () => ({})),
-    composeClaudeCapabilityConfigForConversation: vi.fn(async () => undefined),
-    composeCodexCapabilityConfigForConversation: vi.fn(async () => undefined),
+    composeCapabilityConfigForConversation: vi.fn(async () => undefined),
     composeCapabilityConfigForProjectConversation: vi.fn(async () => undefined),
     composePortableMcpForConversation: vi.fn(
       async (args: {
@@ -543,6 +553,7 @@ describe("buildEffectivePrompt", () => {
       recording: true,
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
+      debugSessionId: "debug-session-1",
       hypotheses: [] as never[],
       reproductionSteps: [] as string[],
       instructionsDelivered: false,
@@ -618,6 +629,7 @@ describe("buildEffectivePrompt", () => {
   it("prepends debug instructions on first debug turn", () => {
     const debugMode = {
       active: true,
+      debugSessionId: "debug-session-prompt",
       recording: false,
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
@@ -648,6 +660,7 @@ describe("buildEffectivePrompt", () => {
   it("prepends phase context when instructions already delivered", () => {
     const debugMode = {
       active: true,
+      debugSessionId: "debug-session-phase",
       recording: false,
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
@@ -695,6 +708,7 @@ describe("buildEffectivePrompt", () => {
     ];
     const debugMode = {
       active: true,
+      debugSessionId: "debug-session-image",
       recording: false,
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
@@ -719,624 +733,6 @@ describe("buildEffectivePrompt", () => {
     const arr = result as Array<{ type: string; text?: string }>;
     expect(arr[0]!.type).toBe("text");
     expect(arr[0]!.text).toContain("<debug-mode>");
-  });
-});
-
-describe("mapErrorSubtype", () => {
-  it("maps error_max_turns", () => {
-    const result = mapErrorSubtype({
-      type: "result",
-      subtype: "error_max_turns",
-      num_turns: 50,
-      total_cost_usd: 1.0,
-      errors: [],
-    } as never);
-    expect(result).toContain("maximum turns");
-    expect(result).toContain("50");
-  });
-
-  it("maps error_max_budget_usd", () => {
-    const result = mapErrorSubtype({
-      type: "result",
-      subtype: "error_max_budget_usd",
-      num_turns: 10,
-      total_cost_usd: 5.5,
-      errors: [],
-    } as never);
-    expect(result).toContain("budget limit");
-    expect(result).toContain("$5.50");
-  });
-
-  it("maps error_during_execution with errors", () => {
-    const result = mapErrorSubtype({
-      type: "result",
-      subtype: "error_during_execution",
-      num_turns: 5,
-      total_cost_usd: 0.5,
-      errors: ["Something broke", "Another issue"],
-    } as never);
-    expect(result).toBe("Something broke; Another issue");
-  });
-
-  it("maps error_during_execution with empty errors", () => {
-    const result = mapErrorSubtype({
-      type: "result",
-      subtype: "error_during_execution",
-      num_turns: 5,
-      total_cost_usd: 0.5,
-      errors: [],
-    } as never);
-    expect(result).toBe("Error during execution");
-  });
-
-  it("maps error_max_structured_output_retries", () => {
-    const result = mapErrorSubtype({
-      type: "result",
-      subtype: "error_max_structured_output_retries",
-      num_turns: 3,
-      total_cost_usd: 0.3,
-      errors: [],
-    } as never);
-    expect(result).toContain("structured output retry limit");
-  });
-
-  it("maps unknown subtypes", () => {
-    const result = mapErrorSubtype({
-      type: "result",
-      subtype: "error_something_new",
-      num_turns: 1,
-      total_cost_usd: 0.1,
-      errors: [],
-    } as never);
-    expect(result).toBe("Unknown error");
-  });
-});
-
-// ===========================================================================
-// Unit tests: resolveBackendTurnSettings
-// ===========================================================================
-
-describe("resolveBackendTurnSettings", () => {
-  const baseConfig: ActorConfig = {
-    claudeTimeoutMs: 300_000,
-    maxTurns: 50,
-    idleQuerySessionTtlMs: 300_000,
-  };
-
-  it("returns Claude config.defaultModel when backend is claude", () => {
-    const config = { ...baseConfig, defaultModel: "opus" };
-    expect(resolveBackendTurnSettings("claude", config, null, null)).toEqual({
-      effectiveModel: "opus",
-      effectiveEffort: undefined,
-    });
-  });
-
-  it("returns explicit model over Claude default", () => {
-    const config = { ...baseConfig, defaultModel: "opus" };
-    expect(
-      resolveBackendTurnSettings("claude", config, "sonnet", null),
-    ).toEqual({ effectiveModel: "sonnet", effectiveEffort: undefined });
-  });
-
-  it("returns Claude defaultEffort when backend is claude", () => {
-    const config = {
-      ...baseConfig,
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-    expect(resolveBackendTurnSettings("claude", config, null, null)).toEqual({
-      effectiveModel: "opus",
-      effectiveEffort: "high",
-    });
-  });
-
-  it("returns Codex config defaults when backend is codex", () => {
-    const config = {
-      ...baseConfig,
-      codex: { model: "o3", reasoningEffort: "high" },
-    };
-    expect(resolveBackendTurnSettings("codex", config, null, null)).toEqual({
-      effectiveModel: "o3",
-      effectiveEffort: "high",
-    });
-  });
-
-  it("returns explicit over Codex defaults", () => {
-    const config = {
-      ...baseConfig,
-      codex: { model: "o3", reasoningEffort: "high" },
-    };
-    expect(resolveBackendTurnSettings("codex", config, "gpt-5", "low")).toEqual(
-      { effectiveModel: "gpt-5", effectiveEffort: "low" },
-    );
-  });
-
-  it("returns undefined for Codex when no config and no explicit", () => {
-    expect(resolveBackendTurnSettings("codex", baseConfig, null, null)).toEqual(
-      { effectiveModel: undefined, effectiveEffort: undefined },
-    );
-  });
-
-  it("does not fall back to Claude defaults for Codex backend", () => {
-    const config = { ...baseConfig, defaultModel: "opus" };
-    expect(resolveBackendTurnSettings("codex", config, null, null)).toEqual({
-      effectiveModel: undefined,
-      effectiveEffort: undefined,
-    });
-  });
-});
-
-// ===========================================================================
-// Unit tests: resolveTurnModelEffort
-// ===========================================================================
-
-describe("resolveTurnModelEffort", () => {
-  const baseConfig: ActorConfig = {
-    claudeTimeoutMs: 300_000,
-    maxTurns: 50,
-    idleQuerySessionTtlMs: 300_000,
-  };
-
-  const userTurn = (model?: string, effort?: string): TranscriptMessage => ({
-    role: "user",
-    content: [{ type: "text", text: "hi" }],
-    timestamp: null,
-    ...(model !== undefined ? { model } : {}),
-    ...(effort !== undefined ? { effort } : {}),
-  });
-
-  const assistantTurn = (): TranscriptMessage => ({
-    role: "assistant",
-    content: [{ type: "text", text: "ok" }],
-    timestamp: null,
-  });
-
-  it("continues with the conversation's last-used model/effort when the turn carries none", () => {
-    const config = {
-      ...baseConfig,
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-    expect(
-      resolveTurnModelEffort({
-        backend: "claude",
-        config,
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [userTurn("claude-haiku-4-5", "low")],
-      }),
-    ).toEqual({ effectiveModel: "claude-haiku-4-5", effectiveEffort: "low" });
-  });
-
-  it("prefers an explicit per-turn model/effort over the last-used values", () => {
-    const config = {
-      ...baseConfig,
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-    expect(
-      resolveTurnModelEffort({
-        backend: "claude",
-        config,
-        explicitModel: "sonnet",
-        explicitEffort: "medium",
-        priorMessages: [userTurn("claude-haiku-4-5", "low")],
-      }),
-    ).toEqual({ effectiveModel: "sonnet", effectiveEffort: "medium" });
-  });
-
-  it("falls back to config defaults when there is no prior user turn", () => {
-    const config = {
-      ...baseConfig,
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-    expect(
-      resolveTurnModelEffort({
-        backend: "claude",
-        config,
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [assistantTurn()],
-      }),
-    ).toEqual({ effectiveModel: "opus", effectiveEffort: "high" });
-  });
-
-  it("reads the most recent user turn, skipping later assistant rows", () => {
-    const config = {
-      ...baseConfig,
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-    expect(
-      resolveTurnModelEffort({
-        backend: "claude",
-        config,
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [
-          userTurn("opus", "high"),
-          assistantTurn(),
-          userTurn("claude-haiku-4-5", "low"),
-          assistantTurn(),
-        ],
-      }),
-    ).toEqual({ effectiveModel: "claude-haiku-4-5", effectiveEffort: "low" });
-  });
-
-  it("continues with the last-used Codex model/effort rather than the codex config defaults", () => {
-    const config = {
-      ...baseConfig,
-      codex: { model: "gpt-5-codex", reasoningEffort: "high" },
-    };
-    expect(
-      resolveTurnModelEffort({
-        backend: "codex",
-        config,
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [userTurn("gpt-5-codex-mini", "low")],
-      }),
-    ).toEqual({ effectiveModel: "gpt-5-codex-mini", effectiveEffort: "low" });
-  });
-
-  it("falls back to config default effort when the last user turn recorded a model but no effort", () => {
-    const config = {
-      ...baseConfig,
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-    expect(
-      resolveTurnModelEffort({
-        backend: "claude",
-        config,
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [userTurn("claude-haiku-4-5", undefined)],
-      }),
-    ).toEqual({ effectiveModel: "claude-haiku-4-5", effectiveEffort: "high" });
-  });
-});
-
-// ===========================================================================
-// Unit tests: resolveBackendTimeoutMs
-// ===========================================================================
-
-describe("resolveBackendTimeoutMs", () => {
-  const baseConfig: ActorConfig = {
-    claudeTimeoutMs: 300_000,
-    maxTurns: 50,
-    idleQuerySessionTtlMs: 300_000,
-  };
-
-  it("returns claudeTimeoutMs for claude backend", () => {
-    expect(resolveBackendTimeoutMs("claude", baseConfig)).toBe(300_000);
-  });
-
-  it("returns codex timeoutMs unchanged when configured", () => {
-    const config = { ...baseConfig, codex: { timeoutMs: 120_000 } };
-    expect(resolveBackendTimeoutMs("codex", config)).toBe(120_000);
-  });
-
-  it("returns 0 (no timeout) for codex when timeoutMs is empty", () => {
-    const config = { ...baseConfig, codex: {} };
-    expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
-  });
-
-  it("returns 0 (no timeout) when codex timeoutMs is null", () => {
-    const config = { ...baseConfig, codex: { timeoutMs: null } };
-    expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
-  });
-
-  it("returns 0 (no timeout) when codex config is undefined", () => {
-    expect(resolveBackendTimeoutMs("codex", baseConfig)).toBe(0);
-  });
-});
-
-// ===========================================================================
-// Unit tests: shouldBuildRuntimeSyntheticSeed
-// ===========================================================================
-
-describe("shouldBuildRuntimeSyntheticSeed", () => {
-  const forkedFromBase = {
-    sourceConversationId: "src",
-    messageIndex: 1,
-    sourceBackend: "claude",
-    sourceBackendRef: null,
-    forkLocator: null,
-    forkMode: null,
-  };
-
-  it("returns false for a new (non-forked) conversation", () => {
-    expect(
-      shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: null,
-        backendRef: null,
-        agentBackend: "codex",
-        transcriptPath: "/p.jsonl",
-      }),
-    ).toBe(false);
-  });
-
-  it("returns false for Claude native fork (backendRef populated)", () => {
-    expect(
-      shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: { ...forkedFromBase, forkMode: "native" },
-        backendRef: { backend: "claude", sessionId: "s" },
-        agentBackend: "claude",
-        transcriptPath: "/p.jsonl",
-      }),
-    ).toBe(false);
-  });
-
-  it("returns false for Claude synthetic fallback — seed already in pendingPromptText", () => {
-    expect(
-      shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: { ...forkedFromBase, forkMode: "synthetic" },
-        backendRef: null,
-        agentBackend: "claude",
-        transcriptPath: "/p.jsonl",
-      }),
-    ).toBe(false);
-  });
-
-  it("returns false for Claude case 3 (user fork at index 0)", () => {
-    expect(
-      shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: {
-          ...forkedFromBase,
-          messageIndex: 0,
-          sourceBackend: null,
-          sourceBackendRef: null,
-        },
-        backendRef: null,
-        agentBackend: "claude",
-        transcriptPath: null,
-      }),
-    ).toBe(false);
-  });
-
-  it("returns true for non-Claude fork with a transcript and no backendRef", () => {
-    expect(
-      shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: { ...forkedFromBase, sourceBackend: "codex" },
-        backendRef: null,
-        agentBackend: "codex",
-        transcriptPath: "/p.jsonl",
-      }),
-    ).toBe(true);
-  });
-
-  it("returns false for non-Claude case 3 (no transcript)", () => {
-    expect(
-      shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: {
-          ...forkedFromBase,
-          messageIndex: 0,
-          sourceBackend: null,
-          sourceBackendRef: null,
-        },
-        backendRef: null,
-        agentBackend: "codex",
-        transcriptPath: null,
-      }),
-    ).toBe(false);
-  });
-});
-
-describe("processMessage", () => {
-  it("handles system init message", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-
-    await processMessage(
-      { type: "system", subtype: "init", session_id: "sess-1" } as never,
-      "conv-1",
-      emit,
-      [],
-      appendEntry,
-    );
-
-    expect(emit).toHaveBeenCalledWith("init", { sessionId: "sess-1" });
-    expect(appendEntry).toHaveBeenCalledWith(
-      "conv-1",
-      expect.objectContaining({ type: "system" }),
-    );
-  });
-
-  it("handles assistant text messages", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-    const contentBlocks: unknown[] = [];
-
-    await processMessage(
-      {
-        type: "assistant",
-        uuid: "msg-1",
-        message: { content: [{ type: "text", text: "Hello!" }] },
-      } as never,
-      "conv-1",
-      emit,
-      contentBlocks as never,
-      appendEntry,
-    );
-
-    expect(emit).toHaveBeenCalledWith("content", {
-      type: "text",
-      text: "Hello!",
-    });
-    expect(contentBlocks).toHaveLength(1);
-    expect(appendEntry).toHaveBeenCalled();
-  });
-
-  it("handles assistant tool_use messages", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-    const contentBlocks: unknown[] = [];
-
-    await processMessage(
-      {
-        type: "assistant",
-        uuid: "msg-2",
-        message: {
-          content: [
-            { type: "tool_use", name: "ReadFile", input: { path: "/foo" } },
-          ],
-        },
-      } as never,
-      "conv-1",
-      emit,
-      contentBlocks as never,
-      appendEntry,
-    );
-
-    expect(emit).toHaveBeenCalledWith(
-      "content",
-      expect.objectContaining({ type: "tool_use", name: "ReadFile" }),
-    );
-    expect(contentBlocks).toHaveLength(1);
-  });
-
-  it("maps assistant thinking and redacted_thinking blocks into thinking content blocks", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-    const contentBlocks: unknown[] = [];
-
-    await processMessage(
-      {
-        type: "assistant",
-        uuid: "msg-think",
-        message: {
-          content: [
-            {
-              type: "thinking",
-              thinking: "Two candidates: a regression, or a stale selector.",
-              signature: "sig-abc",
-            },
-            { type: "redacted_thinking", data: "encrypted-blob" },
-            { type: "text", text: "The component is correct." },
-          ],
-        },
-      } as never,
-      "conv-1",
-      emit,
-      contentBlocks as never,
-      appendEntry,
-    );
-
-    // Reasoning is surfaced as distinct thinking blocks, in order, ahead of the
-    // answer — streamed live AND persisted to the transcript (not dropped).
-    expect(emit).toHaveBeenCalledWith("content", {
-      type: "thinking",
-      text: "Two candidates: a regression, or a stale selector.",
-    });
-    expect(emit).toHaveBeenCalledWith("content", {
-      type: "thinking",
-      text: "",
-      redacted: true,
-    });
-    expect(contentBlocks).toEqual([
-      {
-        type: "thinking",
-        text: "Two candidates: a regression, or a stale selector.",
-      },
-      { type: "thinking", text: "", redacted: true },
-      { type: "text", text: "The component is correct." },
-    ]);
-
-    expect(appendEntry).toHaveBeenCalledWith(
-      "conv-1",
-      expect.objectContaining({
-        role: "assistant",
-        content: [
-          {
-            type: "thinking",
-            text: "Two candidates: a regression, or a stale selector.",
-          },
-          { type: "thinking", text: "", redacted: true },
-          { type: "text", text: "The component is correct." },
-        ],
-      }),
-    );
-  });
-
-  it("handles result success", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-
-    await processMessage(
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "sess-1",
-        total_cost_usd: 0.05,
-        num_turns: 3,
-        result: null,
-      } as never,
-      "conv-1",
-      emit,
-      [],
-      appendEntry,
-    );
-
-    expect(emit).toHaveBeenCalledWith(
-      "result",
-      expect.objectContaining({
-        sessionId: "sess-1",
-        costUsd: 0.05,
-        numTurns: 3,
-      }),
-    );
-  });
-
-  it("handles result error", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-
-    await processMessage(
-      {
-        type: "result",
-        subtype: "error_during_execution",
-        num_turns: 1,
-        total_cost_usd: 0.01,
-        errors: ["Something failed"],
-      } as never,
-      "conv-1",
-      emit,
-      [],
-      appendEntry,
-    );
-
-    expect(emit).toHaveBeenCalledWith("error", {
-      message: "Something failed",
-    });
-  });
-
-  it("adds result text to contentBlocks when empty", async () => {
-    const emit = vi.fn();
-    const appendEntry = vi.fn(async () => {});
-    const contentBlocks: unknown[] = [];
-
-    await processMessage(
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "sess-1",
-        total_cost_usd: 0.01,
-        num_turns: 1,
-        result: "Final answer",
-      } as never,
-      "conv-1",
-      emit,
-      contentBlocks as never,
-      appendEntry,
-    );
-
-    expect(contentBlocks).toHaveLength(1);
-    expect(emit).toHaveBeenCalledWith("content", {
-      type: "text",
-      text: "Final answer",
-    });
   });
 });
 
@@ -1474,7 +870,7 @@ describe("executePromptForMachine", () => {
   let mockDeps: ActorImplementationDeps;
 
   const defaultTurnResult: ConversationBackendTurnResult = {
-    backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+    backendRef: { backend: "claude", ref: "sdk-session-1" },
     costUsd: 0.05,
     durationMs: 1500,
     numTurns: 3,
@@ -1483,7 +879,8 @@ describe("executePromptForMachine", () => {
     contentBlocks: [{ type: "text", text: "Hello!" }],
     aborted: false,
     compacted: false,
-    error: null,
+    failure: null,
+    continuationDisposition: "retain",
   };
 
   beforeEach(() => {
@@ -1523,7 +920,7 @@ describe("executePromptForMachine", () => {
     });
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sdk-session-1",
+      ref: "sdk-session-1",
     });
     expect(result.costUsd).toBe(0.05);
     expect(result.contentBlocks).toEqual([{ type: "text", text: "Hello!" }]);
@@ -1556,7 +953,7 @@ describe("executePromptForMachine", () => {
     });
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sdk-session-1",
+      ref: "sdk-session-1",
     });
   });
 
@@ -1675,7 +1072,7 @@ describe("executePromptForMachine", () => {
       mockFactory.createRuntime.mockResolvedValue(fresh);
 
       const input = makeExecutePromptInput({
-        backendRef: { backend: "claude", sessionId: "sdk-session-resume" },
+        backendRef: { backend: "claude", ref: "sdk-session-resume" },
       });
       const key = conversationRuntimeKey(
         input.projectPath,
@@ -1702,7 +1099,7 @@ describe("executePromptForMachine", () => {
       // Resume continuity: the recreated runtime resumes the same session.
       expect(mockFactory.createRuntime).toHaveBeenCalledWith(
         expect.objectContaining({
-          persistedRef: { backend: "claude", sessionId: "sdk-session-resume" },
+          persistedRef: { backend: "claude", ref: "sdk-session-resume" },
         }),
       );
     });
@@ -1769,20 +1166,17 @@ describe("executePromptForMachine", () => {
 
     mockSendTurn.mockImplementation(
       async (turnInput: ConversationBackendTurnInput) => {
-        // Simulate a provider_event with system init message
+        // Mid-turn backend_init, as the adapter emits on the SDK's system
+        // init message
         await turnInput.onEvent?.({
-          type: "provider_event",
-          payload: {
-            type: "system",
-            subtype: "init",
-            session_id: "new-sdk-session",
-          },
+          type: "backend_init",
+          backendRef: { backend: "claude" as const, ref: "new-sdk-session" },
         });
         return {
           ...defaultTurnResult,
           backendRef: {
             backend: "claude" as const,
-            sessionId: "new-sdk-session",
+            ref: "new-sdk-session",
           },
         };
       },
@@ -1793,7 +1187,7 @@ describe("executePromptForMachine", () => {
     expect(sendToMachine).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "BACKEND_INIT",
-        backendRef: { backend: "claude", sessionId: "new-sdk-session" },
+        backendRef: { backend: "claude", ref: "new-sdk-session" },
       }),
     );
   });
@@ -1860,6 +1254,7 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({
       debugMode: {
         active: true,
+        debugSessionId: "debug-session-output-format",
         recording: false,
         logFilePath: "/tmp/.debug/logs.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
@@ -2014,10 +1409,12 @@ describe("executePromptForMachine", () => {
     });
     staleSendTurn.mockImplementation(async () => {
       (staleRuntime as unknown as { status: string }).status = "dead";
-      const error = new Error("QuerySession died before prompt delivery");
-      (error as Error & { code?: string }).code =
-        QUERY_SESSION_ERROR_CODES.promptNotDelivered;
-      throw error;
+      // Faithful to production: the Claude adapter tags an undelivered-prompt
+      // rejection with the `promptNotDelivered` code, which both applies the
+      // neutral delivery-safety mark and makes the descriptor classifier return
+      // `retryable: true`. Retry requires BOTH facts, so the error must carry
+      // the code — not only the mark — exactly as the runtime produces it.
+      throw makeUndeliveredPromptFailure();
     });
 
     const freshSendTurn = vi.fn();
@@ -2026,7 +1423,7 @@ describe("executePromptForMachine", () => {
       ...defaultTurnResult,
       backendRef: {
         backend: "claude" as const,
-        sessionId: "sdk-session-retry",
+        ref: "sdk-session-retry",
       },
       contentBlocks: [{ type: "text" as const, text: "Recovered turn" }],
     });
@@ -2051,7 +1448,7 @@ describe("executePromptForMachine", () => {
     expect(freshSendTurn).toHaveBeenCalledTimes(1);
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sdk-session-retry",
+      ref: "sdk-session-retry",
     });
     expect(result.error).toBeNull();
     expect(result.contentBlocks).toEqual([
@@ -2342,7 +1739,7 @@ describe("executePromptForMachine", () => {
     });
     (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
-      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      backendRef: { backend: "codex" as const, ref: "thread-1" },
     });
     const applyMcpAtTurnStart = vi.fn(async () => ({
       conversationId: "conv-1",
@@ -2563,15 +1960,16 @@ describe("executePromptForMachine", () => {
   });
 
   it("seeds Claude capability config + persists runtime state for new runtimes", async () => {
-    const seededConfig: ClaudeRuntimeCapabilityConfig = {
-      enabledPlugins: {},
-      skillOverrides: { "skill-alpha": "on" },
-      disabledAgentNames: [],
-      agentSuppressionStrategy: {
-        kind: "permission-layer",
-        applyPoint: "next-conversation",
-        interceptedToolNames: ["Task"],
-      },
+    const seededCapabilities: ResolvedCapabilityCascade = {
+      backend: "claude",
+      kinds: [
+        {
+          kind: "skills",
+          items: [
+            { itemId: "skill-alpha", enabled: true, originLayer: "global" },
+          ],
+        },
+      ],
     };
     const seededRuntimeState: AgentCapabilityRuntimeApplicationState = {
       cascades: {
@@ -2581,9 +1979,9 @@ describe("executePromptForMachine", () => {
         },
       },
     };
-    const composeClaudeCapabilityConfigForConversation: ActorImplementationDeps["composeClaudeCapabilityConfigForConversation"] =
+    const composeCapabilityConfigForConversation: ActorImplementationDeps["composeCapabilityConfigForConversation"] =
       vi.fn(async () => ({
-        config: seededConfig,
+        capabilities: seededCapabilities,
         runtimeState: seededRuntimeState,
       }));
     let capturedSeed: AgentCapabilityRuntimeApplicationState | undefined;
@@ -2599,7 +1997,7 @@ describe("executePromptForMachine", () => {
       );
 
     mockDeps = createMockDeps({
-      composeClaudeCapabilityConfigForConversation,
+      composeCapabilityConfigForConversation,
       mutateConversation,
     });
     setActorDeps(mockDeps);
@@ -2616,16 +2014,14 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    expect(composeClaudeCapabilityConfigForConversation).toHaveBeenCalledTimes(
-      1,
-    );
+    expect(composeCapabilityConfigForConversation).toHaveBeenCalledTimes(1);
     const createCall = (
       mockFactory.createRuntime.mock.calls as unknown[][]
     )[0]![0] as Record<string, unknown>;
     const tooling = createCall["tooling"] as {
-      claudeCapabilityConfig?: ClaudeRuntimeCapabilityConfig;
+      capabilities?: ResolvedCapabilityCascade;
     };
-    expect(tooling.claudeCapabilityConfig).toBe(seededConfig);
+    expect(tooling.capabilities).toBe(seededCapabilities);
     expect(capturedSeed).toBe(seededRuntimeState);
     const labels = (
       mutateConversation as ReturnType<typeof vi.fn>
@@ -2639,14 +2035,20 @@ describe("executePromptForMachine", () => {
     });
     (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
-      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      backendRef: { backend: "codex" as const, ref: "thread-1" },
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
 
-    const seededConfig: CodexRuntimeCapabilityConfig = {
-      config: {
-        verifiedSkillConfig: { "skill-alpha": false },
-      } as unknown as CodexRuntimeCapabilityConfig["config"],
+    const seededCapabilities: ResolvedCapabilityCascade = {
+      backend: "codex",
+      kinds: [
+        {
+          kind: "skills",
+          items: [
+            { itemId: "skill-alpha", enabled: false, originLayer: "global" },
+          ],
+        },
+      ],
     };
     const seededRuntimeState: AgentCapabilityRuntimeApplicationState = {
       cascades: {
@@ -2657,9 +2059,9 @@ describe("executePromptForMachine", () => {
         },
       },
     };
-    const composeCodexCapabilityConfigForConversation: ActorImplementationDeps["composeCodexCapabilityConfigForConversation"] =
+    const composeCapabilityConfigForConversation: ActorImplementationDeps["composeCapabilityConfigForConversation"] =
       vi.fn(async () => ({
-        config: seededConfig,
+        capabilities: seededCapabilities,
         runtimeState: seededRuntimeState,
       }));
     const applyCapabilityAtTurnStart = vi.fn<
@@ -2667,7 +2069,7 @@ describe("executePromptForMachine", () => {
     >(async () => ({}));
 
     mockDeps = createMockDeps({
-      composeCodexCapabilityConfigForConversation,
+      composeCapabilityConfigForConversation,
       applyCapabilityAtTurnStart,
     });
     setActorDeps(mockDeps);
@@ -2684,9 +2086,7 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    expect(composeCodexCapabilityConfigForConversation).toHaveBeenCalledTimes(
-      1,
-    );
+    expect(composeCapabilityConfigForConversation).toHaveBeenCalledTimes(1);
     expect(applyCapabilityAtTurnStart).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
       projectName: "repo",
@@ -2705,9 +2105,7 @@ describe("executePromptForMachine", () => {
     const mutateConversation: ActorImplementationDeps["mutateConversation"] =
       vi.fn(async () => {});
     mockDeps = createMockDeps({
-      composeClaudeCapabilityConfigForConversation: vi.fn(
-        async () => undefined,
-      ),
+      composeCapabilityConfigForConversation: vi.fn(async () => undefined),
       mutateConversation,
     });
     setActorDeps(mockDeps);
@@ -2731,15 +2129,22 @@ describe("executePromptForMachine", () => {
   });
 
   it("seeds Claude project-conversation capability config from the project composer", async () => {
-    const seededConfig: ClaudeRuntimeCapabilityConfig = {
-      enabledPlugins: { "plugin-alpha": true },
-      skillOverrides: { "skill-alpha": "on" },
-      disabledAgentNames: [],
-      agentSuppressionStrategy: {
-        kind: "permission-layer",
-        applyPoint: "next-conversation",
-        interceptedToolNames: ["Task"],
-      },
+    const seededCapabilities: ResolvedCapabilityCascade = {
+      backend: "claude",
+      kinds: [
+        {
+          kind: "plugins",
+          items: [
+            { itemId: "plugin-alpha", enabled: true, originLayer: "global" },
+          ],
+        },
+        {
+          kind: "skills",
+          items: [
+            { itemId: "skill-alpha", enabled: true, originLayer: "global" },
+          ],
+        },
+      ],
     };
     const seededRuntimeState: AgentCapabilityRuntimeApplicationState = {
       cascades: {
@@ -2751,7 +2156,7 @@ describe("executePromptForMachine", () => {
     };
     const composeCapabilityConfigForProjectConversation = vi.fn(async () => ({
       backend: "claude" as const,
-      config: seededConfig,
+      capabilities: seededCapabilities,
       runtimeState: seededRuntimeState,
     }));
     let capturedSeed: AgentCapabilityRuntimeApplicationState | undefined;
@@ -2790,15 +2195,15 @@ describe("executePromptForMachine", () => {
       conversationId: "conv-1",
     });
     expect(
-      mockDeps.composeClaudeCapabilityConfigForConversation,
+      mockDeps.composeCapabilityConfigForConversation,
     ).not.toHaveBeenCalled();
     const createCall = (
       mockFactory.createRuntime.mock.calls as unknown[][]
     )[0]![0] as Record<string, unknown>;
     const tooling = createCall["tooling"] as {
-      claudeCapabilityConfig?: ClaudeRuntimeCapabilityConfig;
+      capabilities?: ResolvedCapabilityCascade;
     };
-    expect(tooling.claudeCapabilityConfig).toBe(seededConfig);
+    expect(tooling.capabilities).toBe(seededCapabilities);
     expect(capturedSeed).toBe(seededRuntimeState);
   });
 
@@ -2808,14 +2213,20 @@ describe("executePromptForMachine", () => {
     });
     (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
-      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      backendRef: { backend: "codex" as const, ref: "thread-1" },
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
 
-    const seededConfig: CodexRuntimeCapabilityConfig = {
-      config: {
-        verifiedSkillConfig: { "skill-alpha": false },
-      } as unknown as CodexRuntimeCapabilityConfig["config"],
+    const seededCapabilities: ResolvedCapabilityCascade = {
+      backend: "codex",
+      kinds: [
+        {
+          kind: "skills",
+          items: [
+            { itemId: "skill-alpha", enabled: false, originLayer: "global" },
+          ],
+        },
+      ],
     };
     const seededRuntimeState: AgentCapabilityRuntimeApplicationState = {
       cascades: {
@@ -2828,7 +2239,7 @@ describe("executePromptForMachine", () => {
     };
     const composeCapabilityConfigForProjectConversation = vi.fn(async () => ({
       backend: "codex" as const,
-      config: seededConfig,
+      capabilities: seededCapabilities,
       runtimeState: seededRuntimeState,
     }));
     const applyCapabilityAtTurnStart = vi.fn<
@@ -2857,9 +2268,9 @@ describe("executePromptForMachine", () => {
       mockFactory.createRuntime.mock.calls as unknown[][]
     )[0]![0] as Record<string, unknown>;
     const tooling = createCall["tooling"] as {
-      codexCapabilityConfig?: CodexRuntimeCapabilityConfig;
+      capabilities?: ResolvedCapabilityCascade;
     };
-    expect(tooling.codexCapabilityConfig).toBe(seededConfig);
+    expect(tooling.capabilities).toBe(seededCapabilities);
     expect(applyCapabilityAtTurnStart).toHaveBeenCalledWith({
       conversationScope: "project",
       projectPath: "/projects/repo",
@@ -2877,9 +2288,10 @@ describe("executePromptForMachine", () => {
   it("does not switch a project-conversation backend from the project composer result", async () => {
     const composeCapabilityConfigForProjectConversation = vi.fn(async () => ({
       backend: "codex" as const,
-      config: {
-        config: {},
-      } as CodexRuntimeCapabilityConfig,
+      capabilities: {
+        backend: "codex",
+        kinds: [],
+      } as ResolvedCapabilityCascade,
       runtimeState: { cascades: {} },
     }));
 
@@ -2907,7 +2319,7 @@ describe("executePromptForMachine", () => {
       mockFactory.createRuntime.mock.calls as unknown[][]
     )[0]![0] as Record<string, unknown>;
     expect(createCall["persistedRef"]).toBeNull();
-    expect(createCall["tooling"]).not.toHaveProperty("codexCapabilityConfig");
+    expect(createCall["tooling"]).not.toHaveProperty("capabilities");
   });
 
   it("emits a non-blocking diagnostic when project-conversation composition fails", async () => {
@@ -3027,6 +2439,7 @@ describe("executePromptForMachine", () => {
       promptText: "Help me debug this",
       debugMode: {
         active: true,
+        debugSessionId: "debug-session-first-turn",
         recording: false,
         logFilePath: "/tmp/.debug/logs.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
@@ -3065,6 +2478,7 @@ describe("executePromptForMachine", () => {
       promptText: "Help me debug this",
       debugMode: {
         active: true,
+        debugSessionId: "debug-session-absolute-manifest",
         recording: false,
         logFilePath: `${worktreePath}/.debug/${conversationId}/logs.jsonl`,
         enteredAt: "2024-01-01T00:00:00Z",
@@ -3298,7 +2712,7 @@ describe("executePromptForMachine", () => {
       async (turnInput: ConversationBackendTurnInput) => {
         await turnInput.onEvent({
           type: "backend_init",
-          backendRef: { backend: "codex" as const, threadId: "thread-1" },
+          backendRef: { backend: "codex" as const, ref: "thread-1" },
         });
         await turnInput.onEvent({
           type: "content",
@@ -3310,7 +2724,7 @@ describe("executePromptForMachine", () => {
         });
         return {
           ...defaultTurnResult,
-          backendRef: { backend: "codex" as const, threadId: "thread-1" },
+          backendRef: { backend: "codex" as const, ref: "thread-1" },
           contentBlocks: [
             { type: "text" as const, text: "Codex says hello" },
             { type: "thinking" as const, text: "Checking the implementation" },
@@ -3363,7 +2777,7 @@ describe("executePromptForMachine", () => {
         type: "result",
         raw: expect.objectContaining({
           backend: "codex",
-          backendRef: { backend: "codex", threadId: "thread-1" },
+          backendRef: { backend: "codex", ref: "thread-1" },
           aborted: false,
           error: null,
         }),
@@ -3372,6 +2786,70 @@ describe("executePromptForMachine", () => {
     expect(calls.indexOf(assistantEntries[0]!)).toBeLessThan(
       calls.indexOf(resultEntry!),
     );
+  });
+
+  it("persists transcript_entry frames verbatim without reading into the payload", async () => {
+    const noticeFrame = {
+      timestamp: "2026-07-12T10:00:00.000Z",
+      type: "assistant",
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "streamed" }],
+      uuid: "u-frame-1",
+    };
+    // A payload shape no real backend produces: proves byte-faithful
+    // passthrough of non-frame envelopes too.
+    const alienPayload = { type: "testfake_frame", marker: "m-42" };
+
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        await turnInput.onEvent({
+          type: "transcript_entry",
+          entry: {
+            seq: 0,
+            backend: "claude",
+            type: "assistant",
+            raw: noticeFrame,
+          },
+        });
+        await turnInput.onEvent({
+          type: "transcript_entry",
+          entry: {
+            seq: 1,
+            backend: "claude",
+            type: "testfake_frame",
+            raw: alienPayload,
+          },
+        });
+        return { ...defaultTurnResult };
+      },
+    );
+
+    const input = makeExecutePromptInput({ agentBackend: "claude" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
+    const frameAppend = calls.find(
+      ([, entry]) => (entry as { uuid?: string }).uuid === "u-frame-1",
+    );
+    expect(frameAppend).toBeDefined();
+    // Frame-shaped payloads are appended as the SAME object (byte-exact).
+    expect(frameAppend![1]).toBe(noticeFrame);
+
+    const alienAppend = calls.find(
+      ([, entry]) => (entry as { type?: string }).type === "testfake_frame",
+    );
+    expect(alienAppend).toBeDefined();
+    // Non-frame payloads are wrapped generically with the payload untouched.
+    expect((alienAppend![1] as { raw?: unknown }).raw).toBe(alienPayload);
   });
 
   it("does not write extra assistant transcript for Claude backends", async () => {
@@ -3400,7 +2878,7 @@ describe("executePromptForMachine", () => {
     });
     (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
-      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      backendRef: { backend: "codex" as const, ref: "thread-1" },
       contentBlocks: [],
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
@@ -3434,10 +2912,10 @@ describe("executePromptForMachine", () => {
     });
     (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
-      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      backendRef: { backend: "codex" as const, ref: "thread-1" },
       contentBlocks: [{ type: "text", text: "Partial Codex output" }],
       aborted: true,
-      error: null,
+      failure: null,
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
 
@@ -3466,7 +2944,7 @@ describe("executePromptForMachine", () => {
       expect.objectContaining({
         raw: expect.objectContaining({
           aborted: true,
-          backendRef: { backend: "codex", threadId: "thread-1" },
+          backendRef: { backend: "codex", ref: "thread-1" },
         }),
       }),
     );
@@ -3479,8 +2957,13 @@ describe("executePromptForMachine", () => {
     });
     (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
-      backendRef: { backend: "codex" as const, threadId: "thread-1" },
-      error: "Codex failed after streaming",
+      backendRef: { backend: "codex" as const, ref: "thread-1" },
+      failure: {
+        kind: "backend_error",
+        message: "Codex failed after streaming",
+        retryable: false,
+      },
+      continuationDisposition: "clear",
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
 
@@ -3519,8 +3002,13 @@ describe("executePromptForMachine", () => {
         });
         return {
           ...defaultTurnResult,
-          backendRef: { backend: "codex" as const, threadId: "thread-1" },
-          error: "Codex failed after streaming",
+          backendRef: { backend: "codex" as const, ref: "thread-1" },
+          failure: {
+            kind: "backend_error",
+            message: "Codex failed after streaming",
+            retryable: false,
+          },
+          continuationDisposition: "clear",
         };
       },
     );
@@ -4306,7 +3794,7 @@ describe("executePromptForMachine alignment injection", () => {
   let mockDeps: ActorImplementationDeps;
 
   const turnResult: ConversationBackendTurnResult = {
-    backendRef: { backend: "claude", sessionId: "sdk-session-align" },
+    backendRef: { backend: "claude", ref: "sdk-session-align" },
     costUsd: 0.01,
     durationMs: 100,
     numTurns: 1,
@@ -4315,7 +3803,8 @@ describe("executePromptForMachine alignment injection", () => {
     contentBlocks: [{ type: "text", text: "ok" }],
     aborted: false,
     compacted: false,
-    error: null,
+    failure: null,
+    continuationDisposition: "retain",
   };
 
   function makeSessionState(
@@ -4745,13 +4234,11 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       setActorDeps(mockDeps);
 
       // The continuity handle for the live session: the recreated runtime must
-      // resume it via persistedRef so conversation history is not lost. The
-      // backend ref is discriminated — Claude resumes by sessionId, Codex by
-      // threadId.
+      // resume it via persistedRef so conversation history is not lost.
       const continuityRef =
         backend === "claude"
-          ? ({ backend: "claude", sessionId: "sdk-claude-live" } as const)
-          : ({ backend: "codex", threadId: "thread-codex-live" } as const);
+          ? ({ backend: "claude", ref: "sdk-claude-live" } as const)
+          : ({ backend: "codex", ref: "thread-codex-live" } as const);
 
       // An already-running runtime whose instructions were baked at the PRIOR
       // charter version — the "baked once" state this regression guards against.
@@ -4773,7 +4260,8 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
         contentBlocks: [{ type: "text", text: "ok" }],
         aborted: false,
         compacted: false,
-        error: null,
+        failure: null,
+        continuationDisposition: "retain",
       } satisfies ConversationBackendTurnResult);
       const freshRuntime = createMockBackendRuntime({
         backend,
@@ -4878,7 +4366,7 @@ describe("executePromptForMachine pending agent notices", () => {
     _resetForTesting();
     vi.clearAllMocks();
     mockSendTurn.mockResolvedValue({
-      backendRef: { backend: "claude", sessionId: "sdk-session-notices" },
+      backendRef: { backend: "claude", ref: "sdk-session-notices" },
       costUsd: 0.01,
       durationMs: 100,
       numTurns: 1,
@@ -5090,6 +4578,8 @@ describe("runTaskRunTurnForMachine", () => {
         usage: null,
         error: null,
         timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
       };
     });
 
@@ -5145,6 +4635,8 @@ describe("runTaskRunTurnForMachine", () => {
       usage: { inputTokens: 100, outputTokens: 20 },
       error: null,
       timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
     }));
 
     mockDeps = createMockDeps({
@@ -5194,6 +4686,8 @@ describe("runTaskRunTurnForMachine", () => {
         usage: null,
         error: null,
         timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
       };
     });
 
@@ -5236,6 +4730,8 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: null,
       timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
     }));
 
     mockDeps = createMockDeps({
@@ -5284,6 +4780,12 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: "user aborted",
       timedOut: false,
+      failure: {
+        kind: "aborted",
+        message: "user aborted",
+        retryable: false,
+      },
+      continuationDisposition: "retain",
     }));
 
     const executeAgentCallSpy = vi.fn(async () => ({
@@ -5334,6 +4836,12 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: "backend error",
       timedOut: false,
+      failure: {
+        kind: "backend_error",
+        message: "backend error",
+        retryable: true,
+      },
+      continuationDisposition: "retain",
     }));
     const transcript = [
       {
@@ -5392,6 +4900,8 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: null,
       timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
     }));
 
     mockDeps = createMockDeps({
@@ -5425,6 +4935,8 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: null,
       timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
     }));
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
 
@@ -5446,7 +4958,14 @@ describe("runTaskRunTurnForMachine", () => {
       backend: "claude",
       writeCapability: "write_capable",
     });
-    expect(typeof facadeDeps.resolveTaskRunner).toBe("function");
+    // Semantic execution intent replaces the resolver callback: the facade
+    // resolves the runner itself (via the injected getTaskRunner seam).
+    expect(facadeDeps.resolveTaskRunner).toBeUndefined();
+    expect(facadeDeps.taskExecution).toMatchObject({
+      workingDirectory: "/projects/repo/.worktrees/test-session",
+      autonomous: true,
+    });
+    expect(typeof facadeDeps.getTaskRunner).toBe("function");
   });
 
   it("rebuilds and prepends the linked ticket block for every task_run turn", async () => {
@@ -5456,6 +4975,8 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: null,
       timedOut: false,
+      failure: null,
+      continuationDisposition: "retain" as const,
     }));
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     const getLiveTicketBlock = vi.fn(async () =>
@@ -5503,6 +5024,8 @@ describe("runTaskRunTurnForMachine", () => {
       usage: null,
       error: null,
       timedOut: false,
+      failure: null,
+      continuationDisposition: "retain" as const,
     }));
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     const getLiveTicketBlock = vi.fn(async () => {

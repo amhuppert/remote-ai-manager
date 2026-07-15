@@ -1,10 +1,10 @@
 import type { WorkflowDefaults } from "@/lib/config/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowResolvedContext,
-  ResolvedCollaborationConfig,
   WorkflowConfigOverride,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   coerceGlobalDefaults,
   resolveCollaborationConfigWithProvenance,

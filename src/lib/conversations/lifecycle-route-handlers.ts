@@ -31,9 +31,11 @@ import {
   renameConversationRequestSchema,
 } from "@/lib/conversations/schemas";
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
-import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
-import type { BroadcastFn } from "@/lib/events/broadcaster";
-import { broadcastEvent } from "@/lib/events/broadcast-event";
+import {
+  publishEvent,
+  publishEventBestEffort,
+  type PublishFn,
+} from "@/lib/events/publication";
 import { jsonError, parseJsonBody } from "@/lib/shared/route-resolution";
 import {
   resolveSessionRoute,
@@ -72,7 +74,7 @@ export interface ConversationRouteDeps {
     conversationId: string,
     archived: boolean,
   ): Promise<void>;
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
 }
 
 const defaultDeps: ConversationRouteDeps = {
@@ -82,7 +84,7 @@ const defaultDeps: ConversationRouteDeps = {
   createConversation: defaultCreateConversation,
   renameConversation: defaultRenameConversation,
   setConversationArchived: defaultSetConversationArchived,
-  broadcast: defaultBroadcast,
+  broadcast: publishEvent,
 };
 
 // ---------------------------------------------------------------------------
@@ -161,8 +163,8 @@ export function createConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "conversation_created.broadcast_failed",
       context: { projectName, sessionName, conversationId: conversation.id },
@@ -208,8 +210,8 @@ export function createConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "conversation_renamed.broadcast_failed",
       context: { projectName, sessionName, conversationId },
@@ -256,8 +258,8 @@ export function createConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "conversation_archived.broadcast_failed",
       context: { projectName, sessionName, conversationId },

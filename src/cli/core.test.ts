@@ -115,12 +115,12 @@ describe("cctl help", () => {
   });
 
   it("supports `cctl help <command>`", async () => {
-    const result = await runCli(["help", "codex"], {}, makeHost());
+    const result = await runCli(["help", "agent"], {}, makeHost());
     expect(result.exitCode).toBe(0);
-    // `codex` is a group node: its help is an index — the header plus one line
+    // `agent` is a group node: its help is an index — the header plus one line
     // per child subcommand.
-    expect(result.stdout).toContain("cctl codex —");
-    expect(result.stdout).toContain("codex run");
+    expect(result.stdout).toContain("cctl agent —");
+    expect(result.stdout).toContain("agent run");
   });
 
   it("still exits 2 for --help on an unknown command", async () => {
@@ -162,7 +162,7 @@ describe("cctl help", () => {
       "workflow",
       "charter",
       "decisions",
-      "codex",
+      "agent",
       "conversation",
       "doctor",
       "version",

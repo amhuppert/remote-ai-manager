@@ -7,6 +7,12 @@ import TddToggle from "./TddToggle";
 
 expect.extend(matchers);
 
+// Radix's tooltip trigger (compact variant) captures the pointer on press;
+// jsdom implements none of these.
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+
 describe("TddToggle", () => {
   it("exposes a switch role with an accessible name and aria-checked reflecting state", () => {
     const { rerender } = render(
@@ -74,9 +80,12 @@ describe("TddToggle", () => {
     const sw = screen.getByRole("switch", { name: /red-green tdd/i });
     expect(sw).toBeInTheDocument();
     expect(screen.getByText("TDD")).toBeInTheDocument();
-    // Tooltip affordance is preserved on the compact pill.
-    expect(
-      within(document.body).getByText("TDD").closest("[data-tooltip]"),
-    ).not.toBeNull();
+    // Tooltip affordance is preserved on the compact pill: the pill wrapper is a
+    // Radix tooltip trigger (stamped with its own data-state) rather than the
+    // legacy data-tooltip attribute.
+    const pill = within(document.body)
+      .getByText("TDD")
+      .closest("[data-on]") as HTMLElement;
+    expect(pill).toHaveAttribute("data-state");
   });
 });

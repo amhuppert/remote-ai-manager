@@ -6,8 +6,8 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import type PromptComposer from "@/features/session/prompt/PromptComposer";
-import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import type PromptComposer from "@/components/session/prompt/PromptComposer";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";

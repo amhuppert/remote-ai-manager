@@ -212,7 +212,7 @@ describe("agentCallResultSchema", () => {
   it("returns backend identity, optional metrics, artifacts, and a completed outcome", () => {
     const ok: AgentCallResult = agentCallResultSchema.parse({
       backend: "claude",
-      backendRef: { backend: "claude", sessionId: "sess-1" },
+      backendRef: { backend: "claude", ref: "sess-1" },
       capabilities: MIN_CAPABILITY_VIEW,
       usage: {
         inputTokens: 100,
@@ -254,7 +254,7 @@ describe("agentCallResultSchema", () => {
   it("represents a paused outcome with a resumeToken and pauseKind", () => {
     const paused = agentCallResultSchema.parse({
       backend: "claude",
-      backendRef: { backend: "claude", sessionId: "sess-1" },
+      backendRef: { backend: "claude", ref: "sess-1" },
       capabilities: MIN_CAPABILITY_VIEW,
       usage: {},
       artifacts: [],
@@ -338,5 +338,90 @@ describe("buildAgentCallLogFields", () => {
     expect(fields).not.toHaveProperty("laneId");
     expect(fields).not.toHaveProperty("outcome");
     expect(fields).not.toHaveProperty("artifactKinds");
+  });
+});
+
+describe("agentCallResultSchema — widened turn fields", () => {
+  const MIN_VIEW = {
+    backend: "claude" as const,
+    continuationStrength: "precise_session" as const,
+    structuredOutputEnforcement: "post_validation" as const,
+    mcpApplicationBoundary: "between_turns" as const,
+    contextMetricsAvailable: true,
+    nativeMidTurnAskUser: true,
+  };
+
+  it("accepts numTurns, contentBlocks, and parse on a completed outcome plus result-level turn facts", () => {
+    const result = agentCallResultSchema.parse({
+      backend: "claude",
+      backendRef: { backend: "claude", ref: "sess-1" },
+      capabilities: MIN_VIEW,
+      usage: {},
+      artifacts: [],
+      outcome: {
+        kind: "completed",
+        text: "done",
+        structuredOutput: { ok: true },
+        numTurns: 4,
+        contentBlocks: [{ type: "text", text: "done" }],
+        parse: { source: "fenced" },
+      },
+      continuationDisposition: "retain",
+      compacted: true,
+      backgroundWait: {
+        waitedTaskIds: ["t1"],
+        settledTaskIds: [],
+        timedOut: true,
+        durationMs: 100,
+      },
+    });
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.numTurns).toBe(4);
+      expect(result.outcome.parse).toEqual({ source: "fenced" });
+    }
+    expect(result.continuationDisposition).toBe("retain");
+    expect(result.compacted).toBe(true);
+  });
+
+  it("accepts partial contentBlocks and the extended failure kinds on a failed outcome", () => {
+    for (const failureKind of ["stale_resume_ref", "session_died"] as const) {
+      const result = agentCallResultSchema.parse({
+        backend: "claude",
+        backendRef: null,
+        capabilities: MIN_VIEW,
+        usage: {},
+        artifacts: [],
+        outcome: {
+          kind: "failed",
+          contentBlocks: [{ type: "text", text: "partial" }],
+          error: { failureKind, backend: "claude", message: "gone" },
+        },
+        continuationDisposition: "clear",
+      });
+      expect(result.outcome.kind).toBe("failed");
+      if (result.outcome.kind === "failed") {
+        expect(result.outcome.error.failureKind).toBe(failureKind);
+        expect(result.outcome.contentBlocks).toEqual([
+          { type: "text", text: "partial" },
+        ]);
+      }
+    }
+  });
+
+  it("rejects an unknown parse source", () => {
+    const parsed = agentCallResultSchema.safeParse({
+      backend: "claude",
+      backendRef: null,
+      capabilities: MIN_VIEW,
+      usage: {},
+      artifacts: [],
+      outcome: {
+        kind: "completed",
+        text: null,
+        parse: { source: "telepathy" },
+      },
+    });
+    expect(parsed.success).toBe(false);
   });
 });

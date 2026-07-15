@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type { ApiError } from "@/lib/api/errors";
 import type { GlobalConfig } from "@/lib/config/schemas";
-import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import {
-  workflowSemanticDefinitionSchema,
   graphWorkflowVisualLayoutSchema,
-} from "@/lib/workflows/schemas";
+  workflowSemanticDefinitionSchema,
+} from "@/lib/workflow-graph/definition-schemas";
 import { resolveWorkflowDefinition } from "./resolve-config";
 import {
   createWorkflowStorageService,
@@ -72,20 +73,6 @@ const defaultDeps: TemplateLibraryRouteDeps = {
     defaultStorage.delete({ kind: "global" }, workflowId),
 };
 
-async function resolveProjectOr404(
-  deps: TemplateLibraryRouteDeps,
-  name: string,
-): Promise<string | Response> {
-  const projectPath = await deps.resolveProjectPath(name);
-  if (projectPath) {
-    return projectPath;
-  }
-
-  return NextResponse.json({ error: "Project not found" } satisfies ApiError, {
-    status: 404,
-  });
-}
-
 function parseMutationBody(
   raw: unknown,
 ):
@@ -121,12 +108,10 @@ export function createTemplateLibraryRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
 
-    const items = await deps.list(projectPath);
+    const items = await deps.list(project.value);
     return NextResponse.json({ items });
   }
 
@@ -169,10 +154,7 @@ export function createTemplateLibraryRouteHandlers(
     const { workflowId = "" } = await context.params;
     const item = await deps.getGlobal(workflowId);
     if (!item) {
-      return NextResponse.json(
-        { error: "Template not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Template not found");
     }
 
     const globalConfig = await deps.readConfig();
@@ -229,10 +211,7 @@ export function createTemplateLibraryRouteHandlers(
     const { workflowId = "" } = await context.params;
     const deleted = await deps.deleteGlobal(workflowId);
     if (!deleted) {
-      return NextResponse.json(
-        { error: "Template not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Template not found");
     }
 
     return NextResponse.json({ ok: true });

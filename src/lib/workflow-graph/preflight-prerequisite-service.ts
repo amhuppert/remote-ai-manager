@@ -3,7 +3,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   WorkflowPrerequisite,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 import {
   createPrerequisiteProbes,

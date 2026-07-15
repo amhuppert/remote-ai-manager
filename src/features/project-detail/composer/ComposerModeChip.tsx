@@ -1,5 +1,6 @@
 import { cn } from "@/lib/ui/cn";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { backendLabel, backendToneToken } from "@/lib/agent-backends/catalog";
 import type { ComposerMode } from "./detect-composer-mode";
 
 export interface ComposerModeChipProps {
@@ -7,11 +8,6 @@ export interface ComposerModeChipProps {
   /** Selected agent — drives the chat-mode label and color (cyan/violet). */
   agent: AgentBackendId;
 }
-
-const AGENT_LABEL: Record<AgentBackendId, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
 
 const chipBase =
   "inline-flex items-center gap-2xs shrink-0 h-6 px-sm rounded-full border border-solid font-mono text-[0.72rem] font-medium whitespace-nowrap transition-[color,border-color,background] duration-150 ease-[ease]";
@@ -50,7 +46,11 @@ export default function ComposerModeChip({
 function toneFor(mode: ComposerMode, agent: AgentBackendId): ChipTone {
   if (mode === "filter") return "amber";
   if (mode === "command") return "violet";
-  return agent === "claude" ? "cyan" : "violet";
+  const tone = backendToneToken(agent);
+  if (tone !== "cyan" && tone !== "violet" && tone !== "amber") {
+    throw new Error(`Backend "${agent}" declares an unmapped tone: ${tone}`);
+  }
+  return tone;
 }
 
 function describe(
@@ -63,6 +63,6 @@ function describe(
   if (mode === "filter") {
     return { glyph: "⊟", label: null, aria: "Filter mode" };
   }
-  const name = AGENT_LABEL[agent];
+  const name = backendLabel(agent);
   return { glyph: "›", label: name, aria: `Chat mode — ${name}` };
 }

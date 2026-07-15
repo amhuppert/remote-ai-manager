@@ -1,20 +1,21 @@
 /**
  * Apply planner — pure disposition logic for a single cascade attempt.
  *
- * Given a cascade's metadata, the runtime state before the attempt, the
- * attempted hash + item set, and the current backend liveness signals, the
- * planner decides how the apply service must record the attempt:
+ * Given a cascade's neutral apply timing (from the backend descriptor's
+ * `capabilityKinds`), the runtime state before the attempt, the attempted
+ * hash + item set, and the current backend liveness signals, the planner
+ * decides how the apply service must record the attempt:
  *
  *   - `compositionSupport === "verification-gated"` → `unsupported`. The apply
  *     service must not call the backend port; the cascade is present so the UI
  *     can render diagnostics, but no runtime config is emittable yet.
- *   - `applySemantics === "next-conversation"` → `deferred-next-conversation`.
+ *   - `applyTiming === "next_conversation"` → `deferred-next-conversation`.
  *     The backend binding (e.g. Claude's `canUseTool`) is fixed at session
  *     creation, so a mutation against an active conversation can only stage.
- *   - `applySemantics === "next-turn"` → `staged-next-turn`. The backend
+ *   - `applyTiming === "next_turn"` → `staged-next-turn`. The backend
  *     rebuilds its options each turn; the apply service promotes the staged
  *     payload to `applied` at the next turn start.
- *   - `applySemantics === "idle-live-apply"` →
+ *   - `applyTiming === "idle_live"` →
  *       * `idle` mode: `try-live-apply` so the orchestrator can call the
  *         backend port and record `applied` / `rejected` based on the result.
  *       * `turn-active` mode: `staged-idle` so the apply service can drain on
@@ -22,14 +23,15 @@
  *
  * The planner is intentionally separated from the orchestrator so the
  * disposition table is exercised exhaustively by unit tests without spinning
- * up runtime ports or state stores.
+ * up runtime ports or state stores. It never branches on backend identity —
+ * every disposition is a read of the declared per-kind timing.
  *
  * Hash drift handling: when the attempted hash equals the previously applied
  * hash, the planner returns `idempotent-no-op` so the orchestrator can short-
  * circuit without writing pending state or calling the backend.
  */
 
-import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { CapabilityApplyTiming } from "@/lib/agent-backends/descriptor";
 import type {
   AgentCapabilityCascadeRuntimeState,
   AgentCapabilityMetadata,
@@ -45,6 +47,7 @@ export type ApplyTriggerMode =
 
 export interface PlanCascadeApplyInput {
   metadata: AgentCapabilityMetadata;
+  applyTiming: CapabilityApplyTiming;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
   attemptedHash: string;
   attemptedItemIds: readonly string[];
@@ -86,12 +89,12 @@ export function planCascadeApply(
     return { disposition: "idempotent-no-op" };
   }
 
-  switch (input.metadata.applySemantics) {
-    case "next-conversation":
+  switch (input.applyTiming) {
+    case "next_conversation":
       return { disposition: "deferred-next-conversation" };
-    case "next-turn":
+    case "next_turn":
       return { disposition: "staged-next-turn" };
-    case "idle-live-apply":
+    case "idle_live":
       if (input.triggerMode === "turn-active") {
         return { disposition: "staged-idle" };
       }
@@ -190,7 +193,7 @@ export type TurnStartCascadeApplyPlan =
     };
 
 export interface PlanTurnStartCascadeApplyInput {
-  backend: AgentBackendId;
+  applyTiming: CapabilityApplyTiming;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
   composed: ComposedCascadeAttempt | undefined;
 }
@@ -198,7 +201,7 @@ export interface PlanTurnStartCascadeApplyInput {
 export function planTurnStartCascadeApply(
   input: PlanTurnStartCascadeApplyInput,
 ): TurnStartCascadeApplyPlan {
-  const { backend, previous, composed } = input;
+  const { applyTiming, previous, composed } = input;
   if (!previous) {
     return {
       disposition: "idempotent-no-op",
@@ -215,12 +218,15 @@ export function planTurnStartCascadeApply(
   }
 
   const isStaged = previous.lastApplyStatus === "staged-next-turn";
-  const isCodexRetryableRejected =
-    backend === "codex" &&
+  // Next-turn cascades are the only ones whose rejected records retry at turn
+  // start — the backend re-ingests options at the turn boundary, so the
+  // pending payload gets a fresh chance without interrupting anything.
+  const isNextTurnRetryableRejected =
+    applyTiming === "next_turn" &&
     previous.lastApplyStatus === "rejected" &&
     previous.pendingHash !== undefined;
 
-  if (!isStaged && !isCodexRetryableRejected) {
+  if (!isStaged && !isNextTurnRetryableRejected) {
     return {
       disposition: "idempotent-no-op",
       stateAction: "preserve",
@@ -252,7 +258,9 @@ export function planTurnStartCascadeApply(
     };
   }
 
-  if (backend === "codex") {
+  if (applyTiming === "next_turn") {
+    // The staged payload must actually reach the runtime before the upcoming
+    // turn ingests options, so the orchestrator calls the apply port.
     return {
       disposition: "try-turn-start-apply",
       attemptedHash: composed.attemptedHash,
@@ -260,6 +268,8 @@ export function planTurnStartCascadeApply(
     };
   }
 
+  // Non-next-turn cascades staged at conversation start were already
+  // delivered at session creation; turn start merely promotes the record.
   return {
     disposition: "applied",
     attemptedHash: composed.attemptedHash,

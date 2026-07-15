@@ -3,8 +3,8 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
-} from "@/lib/workflows/schemas";
-import { createSessionGitLock } from "./session-git-lock";
+} from "@/lib/workflow-graph/schemas";
+import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createJoinRunner, type JoinRunnerMutateActive } from "./join-runner";
 import { createWorkflowExecution } from "./test-fixtures";
@@ -268,16 +268,14 @@ describe("join-runner", () => {
         implementer: {
           lane: "implementer",
           contextId: "context-source",
-          engine: "claude",
+          backend: "claude",
+          refKind: "conversation",
           workflowConversationId: "conv-source-implementer",
           sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-source-implementer",
+            backend: "claude",
+            ref: "conv-source-implementer",
           },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
+          metrics: { rotateBeforeNextTurn: false },
           limitEvaluation: "supported",
           lastUsedAt: t0,
         },

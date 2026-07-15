@@ -7,7 +7,8 @@
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type {
   ConversationStatus,
@@ -19,12 +20,12 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type {
-  DebugHypothesis,
-  DebugModePhase,
   DebugModeState,
+  RuntimeDebugModeState,
 } from "@/lib/debug-log/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { DebugCommand } from "@/lib/workflows/debug/commands";
 import type { DebugCleanupResultOutput } from "./debug-schemas";
 
 // ============================================================
@@ -94,14 +95,6 @@ export interface TaskRunActive {
   systemInstructions?: string;
   tooling?: PortableMcpConfig;
   timeoutMs?: number;
-  /**
-   * When true the AgentCall facade's post-dispatch structured-output gate is
-   * skipped for this turn. Callers that maintain their own response parser
-   * (e.g. the graph-workflow validator's text/raw-JSON/fenced-JSON fallback
-   * chain) opt in so a malformed structured payload does not erase the raw
-   * text the caller still needs.
-   */
-  skipStructuredOutputGate?: boolean;
   /** When set, persist this validated structured-output string field as the
    *  visible assistant text instead of the backend's schema transport text. */
   structuredOutputTextField?: string;
@@ -155,19 +148,9 @@ export interface ConversationContext {
   } | null;
 
   // Debug mode
-  debugMode: {
-    active: boolean;
-    recording: boolean;
-    logFilePath: string;
-    enteredAt: string;
-    hypotheses: DebugHypothesis[];
-    reproductionSteps: string[];
-    fixSummary: string | null;
-    verificationSteps: string[];
-    instructionsDelivered: boolean;
-    phase: DebugModePhase;
-    lastTurnFailed: boolean;
-  } | null;
+  debugMode: RuntimeDebugModeState | null;
+  /** True until a generated debug-session identity reaches durable state. */
+  debugGenerationNeedsPersistence?: boolean;
 
   // Accumulated totals
   totals: {
@@ -213,12 +196,9 @@ export type ConversationEvent =
       systemInstructions?: string;
       tooling?: PortableMcpConfig;
       timeoutMs?: number;
-      skipStructuredOutputGate?: boolean;
       structuredOutputTextField?: string;
       origin?: TranscriptMessageOrigin;
     }
-  | { type: "RESOURCES_ACQUIRED"; transcriptPath: string }
-  | { type: "RESOURCES_FAILED"; error: string }
   | { type: "BACKEND_INIT"; backendRef: AgentSessionRef }
   | { type: "ASK_QUESTION"; questionId: string; questions: AskQuestionItem[] }
   // Sent by the answer route when a pending question is consumed (answered)
@@ -228,16 +208,10 @@ export type ConversationEvent =
   | { type: "PROMPT_COMPLETED"; result: PromptActorResult }
   | { type: "PROMPT_FAILED"; error: string }
   | { type: "ABORT_TURN"; reason: "timeout" | "user" | "shutdown" }
-  | { type: "ENTER_DEBUG_MODE"; logFilePath: string }
-  | { type: "EXIT_DEBUG_MODE" }
-  | { type: "SET_DEBUG_RECORDING"; recording: boolean }
-  | { type: "MARK_REPRODUCED" }
-  | { type: "MARK_FIX_VERIFIED" }
-  | { type: "MARK_FIX_FAILED" }
-  | { type: "REVERT_TO_AWAITING_REPRODUCTION" }
-  | { type: "REVERT_TO_AWAITING_VERIFICATION" }
-  | { type: "RETRY_DEBUG_TURN" }
-  | { type: "CLEAR_DEBUG_LOGS" }
+  // The debug workflow's single machine entry point: the debug adapter maps
+  // its lifecycle methods onto commands, and the machine applies them with
+  // the pure reducer in `@/lib/workflows/debug/commands`.
+  | { type: "DEBUG_COMMAND"; command: DebugCommand }
   | { type: "EXTERNAL_TURN_STARTED" }
   | { type: "EXTERNAL_TURN_COMPLETED"; result: PromptActorResult };
 
@@ -264,16 +238,10 @@ export interface ConversationInput {
   /**
    * Persisted debug-mode state to restore when the actor is recreated for
    * an existing conversation (e.g. after a server restart). When `active`
-   * is true, the machine starts in the debug compound state at the
-   * substate matching `phase`, with context fields hydrated.
+   * is true, the machine settles into the debug state with context fields
+   * hydrated; the phase lives in `debugMode.phase`.
    */
   debugMode?: DebugModeState | null;
-}
-
-export interface ConversationOutput {
-  conversationId: string;
-  status: ConversationStatus;
-  error: string | null;
 }
 
 // ============================================================
@@ -313,6 +281,13 @@ export interface PromptActorResult {
   abortReason?: "timeout" | "user" | "shutdown";
   timeoutMs?: number;
   error: string | null;
+  /**
+   * Whether the machine may keep falling back to its prior `backendRef` when
+   * this turn surfaced none. Backend continuation policy (whether a failed
+   * turn invalidates the persisted ref) is decided where the turn executed by
+   * the adapter's turn result, never by backend identity in the machine.
+   */
+  continuationDisposition: ContinuationDisposition;
   /**
    * Summary of the bounded background-task wait this turn performed. Present
    * only when a wait actually occurred; absent for every other turn.
@@ -398,7 +373,6 @@ export interface RunTaskRunInput {
   systemInstructions?: string;
   tooling?: PortableMcpConfig;
   timeoutMs?: number;
-  skipStructuredOutputGate?: boolean;
   /** See {@link TaskRunActive.structuredOutputTextField}. */
   structuredOutputTextField?: string;
   /** Forwarded onto the appended assistant TranscriptMessage so workflow-driven

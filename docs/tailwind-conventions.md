@@ -36,7 +36,7 @@ wiring is recorded in `.cc/graph-workflow-docs/toolchain-integration-notes.md`.
 CC styles itself with a CSS-custom-property token system. Tailwind v4 is the
 **authoring mechanism** over those tokens, not a redesign. New and migrated UI is
 written as **utilities** (layout + appearance) plus a small set of **React
-primitives** (`Button`, `Badge`, `StatusDot`, `Tabs`, `SectionHeader`,
+primitives** (`Button`, `Badge`, `StatusChip`, `StatusDot`, `Tabs`, `SectionHeader`,
 `ModalShell`, `IconButton`, `EmptyState`, `FormField` — `src/components/ui/`)
 that own canonical recipes. State is
 expressed with `data-*` attributes mapped to **static class maps**. Tokens are
@@ -614,7 +614,7 @@ authoring any single-side border.
 
 - `cn()` helper → `src/lib/ui/cn.ts` (built in the primitives context).
 - Guardrail rules → `eslint-rules/tailwind-guardrails.mjs` (+ `.test.mjs`); §7.
-- Primitives → `src/components/ui/{Button,Badge,StatusDot,Tabs,SectionHeader,ModalShell,IconButton,EmptyState,FormField}.tsx` + stories.
+- Primitives → `src/components/ui/{Button,Badge,StatusChip,StatusDot,Tabs,SectionHeader,ModalShell,IconButton,EmptyState,FormField}.tsx` + stories. `StatusChip` owns tone-coded lifecycle/status pills; use `Badge` for categorical labels and `StatusDot` where only a compact indicator is required.
 - Stage B-1 shared-primitive survey (which recipes are primitives vs wave-local) → `.cc/graph-workflow-docs/shared-primitive-survey.md`.
 - `@theme` token surface → `src/features/_root/styles/theme.css` (alias + extract lanes; frozen `max-*` variants).
 - Cascade backstops → `src/lib/shared/tailwind-cascade-order.test.ts` (unlayered legacy beats layered utilities) + `tailwind-reset-cascade.test.ts` (reset is in `@layer base`, below utilities).

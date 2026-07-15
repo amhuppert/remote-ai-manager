@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
 import {
   claudeEffortLevelSchema,
   claudeModelSchema,
@@ -6,7 +7,6 @@ import {
   codexReasoningEffortSchema,
   effortLevelSchema,
   getCodexReasoningLevelsForModel,
-  getEffortLevelsForBackend,
   getEffortLevelsForModel,
   clampEffortToModel,
 } from "@/lib/agent-backends/schemas";

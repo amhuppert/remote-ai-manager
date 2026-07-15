@@ -1,49 +1,58 @@
-# Workflow Orchestration with XState
+# Workflow Orchestration
 
-Multi-step background workflows use XState v5. Existing machines: `optimistic/`, `merge/` (Smart Merge), `commit/`, `conversation/`. Graph workflows (`graph-workflow/`) use a custom execution loop, not XState. New XState workflows follow the patterns below.
+Command Center has three orchestration shapes. Pick by shape; do not invent a fourth (see P7 in `docs/reports/2026-07-12_consolidated-architecture-design-and-plan.md`):
+
+1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. One actor per conversation; owns the prompt-turn lifecycle, queue drain, and rehydration. Every agent turn flows through it — this is the spine.
+2. **Job machines** (XState v5, ephemeral) — `src/lib/workflows/merge/` (Smart Merge) and `src/lib/workflows/commit/` (Smart Commit), hosted by `src/lib/jobs/queue.ts`. Machine actors are not restart-durable by decision; the `BackgroundJob` registry records phases and outcomes.
+3. **Graph engine** (deterministic execution loop, NOT XState) — `src/lib/workflow-graph/`. Multi-context executions with loop-generation fencing at the persistence layer. Do not convert it to XState — the loop already has machine-grade guarantees plus fencing XState cannot provide.
+
+The imperative **collaboration slice** (`src/lib/workflows/collaboration/`) is not a fourth engine: `runAsymmetricCollaborationSlice` is a plain async composition of the shared primitives (lanes, WorkflowEnvelope, gates), hosted by a thin manager behind its HTTP route. It is precedent for composing primitives imperatively when no engine lifecycle is needed — not for building another orchestrator.
 
 ## Layout
 
 ```
 src/lib/workflows/
-├── types.ts                    # BaseWorkflowContext, shared types
-├── runtime-state.ts            # External registry for non-serializable data
-├── persistence.ts              # Debounced snapshot writes
-├── actions.ts                  # Reusable SSE/notification actions
-├── <workflow-name>/
-│   ├── types.ts                # Context, events, input, output
-│   ├── actors.ts               # fromPromise stubs (default impls)
-│   ├── machine.ts              # setup() → createMachine()
-│   ├── machine.test.ts         # Tests using .provide() overrides
-│   ├── actor-implementations.ts # Production logic (complex actors)
-│   └── workflow-manager.ts     # Actor lifecycle (long-running)
+├── types.ts                    # BaseWorkflowContext (shared context fields for the merge/commit job machines)
+├── utils.ts                    # extractErrorMessage, errorAssign, createTerminalStates
+├── conversation/               # the conversation-actor spine
+│   ├── machine.ts              # setup() → createMachine(); long-lived, zero final states by design
+│   ├── actors.ts               # fromPromise stubs (default impls lazy-import production logic)
+│   ├── actor-implementations.ts# production actor logic (AgentCall dispatch, pre/post-turn concerns)
+│   ├── manager.ts              # actor lifecycle: .provide() wiring, globalThis registry, event dispatch
+│   ├── persistence.ts          # debounced snapshot writes → ConversationState.machineSnapshot
+│   └── runtime-state.ts        # external registry for non-serializable runtime data
+├── merge/, commit/             # ephemeral job machines (types.ts, actors.ts, machine.ts)
+├── collaboration/              # collab-mode manager, lane callers, WorkflowEnvelope consumer
+├── primitives/                 # shared composable modules — see the adoption matrix below
+├── validation-fix.ts           # agent fix turns for pre-merge validation failures
+├── workflow-draft/             # planner draft registry (MCP side channel)
+└── schemas.ts, route-handlers.ts, queries.ts, mutations.ts, …  # graph workflow definition/config domain code
 ```
+
+There is **no root shared workflow tier**: snapshot persistence and runtime-state registries are owned per machine directory. `conversation/persistence.ts` and `conversation/runtime-state.ts` are the production patterns — when a new machine needs snapshot persistence or a runtime registry, copy the pattern into its own directory; do not import the conversation-specific modules and do not hunt for a shared module that does not exist.
 
 ## Machine anatomy
 
 ```typescript
 export const fooMachine = setup({
-  types: {} as { context: FooContext; events: FooEvent; input: FooInput; output: FooOutput; },
+  types: {} as { context: FooContext; events: FooEvent; input: FooInput },
   actors: { /* fromPromise stubs */ },
   guards: { /* pure boolean fns */ },
-  actions: { onTerminal: () => {} }, // stub, overridden via .provide()
 }).createMachine({
   id: "foo",
   context: ({ input }) => ({ _schemaVersion: 1, ...input, error: null }),
   initial: "firstState",
   states: { /* ... */ },
-  output: ({ context }) => ({ status: context.finalStatus, /* ... */ }),
 });
 ```
 
-Conventions:
-- `_schemaVersion` in context — enables snapshot migration on restore
-- `finalStatus` set in terminal-state entry, used by `output`
-- `onTerminal` action — overridden in production for cleanup
+- `_schemaVersion` in context — restore discards snapshots whose version mismatches.
+- The commit machine generates its final states with `createTerminalStates` (`workflows/utils.ts`); merge hand-defines its five terminal states because each carries per-state `finalStatus`/`phase`/`completedAt` assignments the helper's uniform template does not express. Reach for the helper when terminals are uniform.
+- The conversation machine has **zero final states by design** — the actor is long-lived; cleanup happens through the manager, not machine output. Its `ConversationContext` (`conversation/types.ts`) is independent of `BaseWorkflowContext`: it carries its own identity/lifecycle fields (`createdAt`, `lastActivityAt`, `status`) and has no `startedAt`/`completedAt`.
 
 ## Actor pattern: stubs + `.provide()`
 
-Actors are `fromPromise` stubs with default impls that lazy-import production logic:
+Actors are `fromPromise` stubs whose default impls lazy-import production logic:
 
 ```typescript
 // actors.ts
@@ -53,73 +62,36 @@ export const doWork = fromPromise<WorkOutput, WorkInput>(async ({ input }) => {
 });
 ```
 
-Production injects via `.provide()` at the call site:
-```typescript
-const machine = fooMachine.provide({
-  actors: { doWork: fromPromise(async ({ input }) => realImpl(input)) },
-  actions: { onTerminal: () => { /* cleanup */ } },
-});
-```
+Production injects via `.provide()` at the hosting site (`conversation/manager.ts` for the conversation actor; the job machines' `fromPromise` defaults already lazy-import production logic, so `jobs/queue.ts` starts them unprovided). Tests inject fakes via `.provide()` — **never `vi.mock()` for actors**:
 
-Tests inject mocks via `.provide()` — **no `vi.mock()` for actors**:
 ```typescript
 const testMachine = fooMachine.provide({
-  actors: { doWork: fromPromise(async () => ({ result: "mock" })) },
+  actors: { doWork: fromPromise(async () => ({ result: "fake" })) },
 });
 ```
 
-## Non-serializable state
+## Non-serializable state (`conversation/runtime-state.ts` pattern)
 
-Context must be JSON-serializable. AbortControllers, lock release fns, stream handles live in `runtime-state.ts`:
+Machine context must be JSON-serializable. AbortControllers, lock release fns, backend runtime handles, and stream emitters live in an external registry keyed by `${projectPath}::${sessionName}::${conversationId}`; the registry is a `globalThis` singleton (HMR-safe). Registered when the actor is created (handles attach per turn); conversation actors are long-lived with zero final states, so cleanup is explicit — `cleanupConversationRuntime` aborts in-flight work and releases locks when the actor is stopped (`stopConversationActor`, rebind, failed rehydrate).
 
-```typescript
-registerRuntime(key, { abortController: new AbortController() });
-const { abortController } = getRuntime(key);
-cleanupRuntime(key); // on terminal
-```
+## Snapshot persistence (`conversation/persistence.ts` pattern)
 
-Key format: `${projectPath}::${sessionName}`. Registry is `globalThis` singleton (HMR-safe).
+- Long-lived actors, no terminal state, so there is no terminal flush: the machine's `persistSnapshot` action fires on every durable transition and writes debounce 500 ms.
+- `persistSnapshotAfterTransition` defers the snapshot capture to a microtask — XState runs transition actions before the macrostep commits, so a synchronous `getPersistedSnapshot()` would persist the PREVIOUS state.
+- Restore validates `_schemaVersion` and returns `null` on mismatch (actor starts fresh).
+- Deps are injected via a setter (`setPersistenceDeps`) + `_resetForTesting` — the setter DI pattern from engineering-principles.
 
-## Terminal states
+## Job-machine hosting (`jobs/queue.ts` + `jobs/machine-host.ts`)
 
-```typescript
-completed: { type: "final", entry: [assign({ finalStatus: "completed" }), "onTerminal"] },
-failed:    { type: "final", entry: [assign({ finalStatus: "failed" }),    "onTerminal"] },
-```
-
-Output computed from context:
-```typescript
-output: ({ context }) => ({ status: context.finalStatus ?? "completed", error: context.error })
-```
+`machine-host.ts` owns the generic projection loop once — `dispatchMachineJob` (guard → register → actor → start under a `job:<type>` trace) and `createJobActorSubscription` (deduped phase diffs → status broadcasts, terminal output → job record). `queue.ts` supplies the host side (registry, session lock, broadcast, persistence) plus a per-job-type `JobSubscriptionConfig` (`phaseOf`/`mapOutput`); `graph-merge-runner.ts` reuses the phase-diff observer (`observePhaseTransitions`) for join breadcrumbs. Merge and commit jobs are **ephemeral by decision (plan D12)**: actors exist only in-process, no machine snapshot is persisted, a server restart does not rehydrate them; the durable record is the `BackgroundJob` row, and stale-job recovery closes out orphans rather than resuming them.
 
 ## Error handling
 
-Every actor invocation has `onError`:
-
-```typescript
-onError: {
-  target: "failed",
-  actions: assign({
-    error: ({ event }) => {
-      const err = event.error;
-      if (err instanceof Error) {
-        const parts = [err.message];
-        if ((err as Error & { gitOutput?: string }).gitOutput) parts.push((err as Error & { gitOutput?: string }).gitOutput!);
-        return parts.join("\n");
-      }
-      return String(err);
-    },
-    completedAt: () => new Date().toISOString(),
-  }),
-}
-```
-
-Handle `Error` and unknowns. Include `gitOutput` when present.
+Every actor invocation has `onError`. Use `errorAssign()` / `extractErrorMessage` from `workflows/utils.ts` (handles `Error`, `gitOutput`-carrying errors, and unknowns) rather than hand-rolling extraction.
 
 ## Guards
 
 - **Context guards**: `({ context }) => context.autoResolve`
-- **Event guards**: `({ event }) => (event as { output: T }).output.hasChanges`
 - **Priority via sequential `always`** (first true wins):
 
 ```typescript
@@ -133,34 +105,25 @@ evaluatingExit: {
 }
 ```
 
-## SSE broadcasting
+## Adoption matrix — shared concepts
 
-Shared factories in `actions.ts` use DI:
+One row per shared concept: where the canonical implementation lives, who actually consumes it in production, its status (`supported` = use it for new work; `experimental` = exists, unproven, do not build on without surfacing; `migration-only` = exists only to serve a planned migration), any competing path still alive, and the condition under which the competing path is deleted. Deletion conditions reference `docs/reports/2026-07-12_consolidated-architecture-design-and-plan.md` (“the plan”).
 
-```typescript
-// machine setup — stub
-actions: { broadcastStatus: () => {} }
-
-// .provide() — real
-actions: {
-  broadcastStatus: ({ context }) => {
-    broadcast({ type: "workflow-status", projectName: context.projectName, ... });
-  },
-}
-```
-
-Available: `broadcastWorkflowEvent`, `persistSnapshot`, `createNotificationAction`.
-
-## Persistence
-
-Long-running workflows debounce snapshots:
-
-```typescript
-persistWorkflowSnapshot(projectPath, sessionName, actor.getPersistedSnapshot());
-// 500ms debounce; immediate: true for terminal states
-```
-
-Schema version checked on restore — mismatched versions discarded.
+| Concept | Canonical module | Production consumers | Status | Competing path | Deletion condition |
+|---|---|---|---|---|---|
+| AgentCall (normalized agent execution) | `primitives/agent-call-facade.ts` + `agent-call-vocabulary.ts` (conversation + task-run adapters) | conversation actor (`conversation/actors.ts`, `actor-implementations.ts`, `execute-workflow-task-run.ts`); collaboration (`collaboration/agent-caller-production.ts`); graph (`workflow-graph/implementer-runner.ts`, `workflow-collaborator-caller.ts`); `shared/optimistic.ts` | supported | — | — |
+| Lane (agent continuity + scheduling) | `primitives/{lane-vocabulary,lane-service,lane-scheduler,lane-store}.ts`, composed by `primitives/workflow-agent-caller.ts` | Collaboration lanes; graph implementer/validator lanes via `LaneService` over the durable `workflow-graph/graph-lane-store.ts`, composed in `workflow-graph/lane-continuity.ts` | supported | — | — |
+| Typed SSE publication + lifecycle projection | `events/publication.ts` (`publishEvent`, `PublishFn`, `publishEventBestEffort`, `publishScopedStatus`) + private `events/{status-bus,lifecycle-projection}.ts` implementation | all server event publishers, including dev-server, graph, collaboration, conversation, jobs, notifications, prompts, and route modules | publication is supported; `subscribeLifecycle` remains **experimental** with zero production subscribers | raw `events/broadcaster` is restricted to `publication.ts` and the SSE transport | Keep the direct-import ratchet at zero. Land a production lifecycle subscriber or delete the dormant subscription/projection interface under the adopt-or-delete rule. |
+| ArtifactRegistry | `primitives/artifact-registry.ts` (+ `default-session-artifact-registry.ts`) | graph `shared-documents.ts`, `script-validator-runner.ts`, `charter/service.ts`; `agent-runs/` service + routes; conversation actor (focus memory) | supported | — | — |
+| WorkflowEnvelope (durable workflow lifecycle) | `primitives/workflow-envelope-{vocabulary,store,repository}.ts` + `recover-workflow-envelopes.ts` | Collaboration runs (restart discovery + recovery) | supported | `BackgroundJob`, `AgentRunRecord`, and `GraphWorkflowExecution` remain separate lifecycle vocabularies by decision | None now — four-way convergence explicitly deferred (plan D15) |
+| Gate result vocabulary | `primitives/gate-vocabulary.ts` (pass / fail / pause envelope) | Via the gates below | supported | — | — |
+| Human approval gate | `primitives/human-approval-gate.ts` | Collaboration envelopes (`collaboration/envelope.ts`, `workflow-envelope.ts`) | supported | `workflow-graph/approval-gate.ts` is graph-owned and deep by design — a sibling, not a competitor | — |
+| Circuit breaker | `primitives/circuit-breaker-gate.ts` (pure policy fn) | graph `execution-loop.ts`, `iteration-orchestrator.ts` | supported | — | — |
+| Context-limit gate | `primitives/context-limit-gate.ts` | `primitives/lane-service.ts`, graph `execution-tool-context.ts` + `lane-continuity.ts` | supported | — | — |
+| Structured-output gate | `primitives/structured-output-gate.ts` (schema validation) + `agent-backends/structured-output.ts` (shared candidate extraction) | `agent-call-facade.ts` (every dispatch with an `outputSchema`); `workflow-graph/validator-runner.ts`; `sessions/conflict-resolution.ts`; `agent-runs/service.ts` | supported | — | — |
+| Script-validation gate | `primitives/script-validation-gate.ts` (single `ScriptValidationOutcome` union) | graph script-validator remediation (`workflow-graph/iteration-orchestrator.ts`, `script-validator-runner.ts`); merge validation (`workflows/validation-fix/actors.ts`) | supported | — | — |
+| User-input gate (parked questions) | `workflow-graph/user-input-gate.ts` | graph loop, `validator-runner.ts`, conversations ask/answer routes | supported | — | — |
+| Config cascade | `workflow-graph/resolve-config.ts` | Every graph execution (see the cascade section below) | supported | — | — |
 
 ## Testing
 
@@ -169,15 +132,13 @@ Schema version checked on restore — mismatched versions discarded.
 function createTestMachine(overrides: Partial<ActorOverrides> = {}) {
   return fooMachine.provide({
     actors: { doWork: overrides.doWork ?? fromPromise(async () => defaultOutput) },
-    actions: { onTerminal: vi.fn() },
   });
 }
 
-// Terminal assertion
+// Terminal assertion (job machines)
 const actor = createActor(testMachine, { input });
 actor.start();
 const output = await toPromise(actor);
-expect(output.status).toBe("completed");
 
 // Guard testing
 actor.send({ type: "CONFIRM" });
@@ -206,15 +167,14 @@ const activeActors: AnyActorRef[] = [];
 afterEach(() => { for (const a of activeActors) { try { a.stop(); } catch {} } activeActors.length = 0; });
 ```
 
-## Adding a new workflow
+## Adding a new XState workflow
 
-1. Create `src/lib/workflows/<name>/` with `types.ts`, `actors.ts`, `machine.ts`, `machine.test.ts`
-2. Context extends `BaseWorkflowContext`, includes `_schemaVersion`, `finalStatus`, `error`
-3. `fromPromise` stubs in `actors.ts` with default impls
-4. Wire production `.provide()` at call site (or `workflow-manager.ts` for long-running)
-5. Use shared `actions.ts` factories for SSE
-6. AbortControllers/locks → `runtime-state.ts`
-7. Persistence → `persistence.ts`
+1. Create `src/lib/workflows/<name>/` with `types.ts`, `actors.ts`, `machine.ts`, `machine.test.ts`.
+2. An ephemeral job-style context extends `BaseWorkflowContext` (adds the `startedAt`/`completedAt` lifecycle stamps) and includes `_schemaVersion` and `error`. A long-lived actor defines its own independent context instead — see `ConversationContext`.
+3. `fromPromise` stubs in `actors.ts`; production `.provide()` at the hosting site.
+4. Publish a domain SSE event through `publishEvent`/an injected `PublishFn`, or use `publishScopedStatus` when the workflow itself owns a primitive lifecycle scope. Use `publishEventBestEffort` after an already-committed mutation; never import the raw broadcaster.
+5. Non-serializable runtime data goes in a per-machine registry following the `conversation/runtime-state.ts` pattern; snapshot persistence follows `conversation/persistence.ts`.
+6. Before building anything new, check the adoption matrix — if the concept exists, compose it; if a competing path tempts you, that is a migration to finish, not a precedent to follow.
 
 ---
 
@@ -300,7 +260,8 @@ mirrors the human approval gate:
   no auto-drain — and exactly one answer set is accepted per batch.
 - **Resume** — the loop (`execution-loop.ts`) polls the record, consumes the
   answers, and re-runs the lane with the asking conversation pinned
-  (`workflow-continuity-service.ts`; a scheduled context-window rotation
+  (`pinnedConversationId` in `lane-continuity.ts`, resolved by `LaneService`
+  over the durable `graph-lane-store.ts`; a scheduled context-window rotation
   outranks the pin and the answers ride the replacement conversation's first
   prompt). The resumed turn carries the standard `<cc-question-answers>` block
   and runs under normal iteration accounting.

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import {

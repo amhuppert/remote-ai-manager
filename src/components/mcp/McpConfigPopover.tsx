@@ -1,16 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { PopoverContent } from "@/components/ui/Popover";
 import McpServerList from "./McpServerList";
 import { pendingDot } from "./styles";
 import type { McpServerCardActions, McpServerView } from "./types";
 
 interface McpConfigPopoverProps {
-  /** Reference to the trigger button — used to anchor the popover. */
-  anchorRef: React.RefObject<HTMLElement | null>;
-  open: boolean;
   onClose(): void;
   /** Servers resolved at the conversation view level. */
   servers: McpServerView[];
@@ -21,73 +16,29 @@ interface McpConfigPopoverProps {
   pendingServerIds?: string[];
 }
 
+// The conversation-level MCP panel: an anchored, bottom-opening (`side="top"`)
+// right-aligned floating card. It composes `ui/Popover`'s `unstyled` variant so
+// it keeps its bespoke `p-0` full-bleed-header + scrollable flex-column box model
+// while Radix owns the collision-aware positioning, Escape/outside-click
+// dismissal, focus management, and `role="dialog"`/`aria-*` wiring — anchored to
+// the trigger owned by `McpConfigButton` (no manual `getBoundingClientRect`).
 export default function McpConfigPopover({
-  anchorRef,
-  open,
   onClose,
   servers,
   actions,
   hasPending,
   pendingServerIds,
-}: McpConfigPopoverProps): React.JSX.Element | null {
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<React.CSSProperties>({});
-
-  useLayoutEffect(() => {
-    if (!open || !anchorRef.current) return;
-    const rect = anchorRef.current.getBoundingClientRect();
-    const width = Math.min(480, window.innerWidth - 24);
-    const right = Math.max(12, window.innerWidth - rect.right);
-    setStyle({
-      position: "fixed",
-      bottom: window.innerHeight - rect.top + 8,
-      right,
-      width,
-      maxHeight: Math.min(640, window.innerHeight - 80),
-    });
-  }, [open, anchorRef]);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      const target = e.target as Node;
-      if (popoverRef.current?.contains(target)) return;
-      if (anchorRef.current?.contains(target)) return;
-      onClose();
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open, onClose, anchorRef]);
-
-  useOverlayScope(open);
-
-  // Migration deferred (overlay-consumer dispositions): this panel is
-  // externally anchored (its trigger is owned by `McpConfigButton` and passed in
-  // via `anchorRef`) and custom-positioned with `getBoundingClientRect`
-  // (bottom/right-anchored), with a bespoke `p-0` flex-column scrollable card —
-  // a full-bleed header + ≤640px full-screen variant the shipped `Popover`
-  // primitive's `PopoverContent` (padded canonical floating surface, trigger as a
-  // child) does not model. The manual outside-click/Escape/positioning stays.
-
+}: McpConfigPopoverProps): React.JSX.Element {
   const summary = summarise(servers);
   const pendingCount = pendingServerIds?.length ?? 0;
 
-  if (!open || typeof document === "undefined") return null;
-
-  const body = (
-    <div
-      ref={popoverRef}
-      className="z-menu flex flex-col overflow-hidden rounded-[8px] border border-solid border-border-subtle bg-bg-elevated shadow-[var(--cc-shadow-popover)] max-640:max-h-[calc(100vh-24px)]! max-640:w-[calc(100vw-16px)]!"
-      style={style}
-      role="dialog"
+  return (
+    <PopoverContent
+      unstyled
+      side="top"
+      align="end"
       aria-label="MCP configuration"
+      contentClassName="z-menu flex max-h-[min(640px,var(--radix-popover-content-available-height))] w-[min(480px,calc(100vw-24px))] flex-col overflow-hidden rounded-[8px] border border-solid border-border-subtle bg-bg-elevated shadow-[var(--cc-shadow-popover)] max-640:max-h-[calc(100vh-24px)]! max-640:w-[calc(100vw-16px)]!"
     >
       <header className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-surface px-md py-sm">
         <div className="flex min-w-0 flex-1 flex-col">
@@ -132,10 +83,8 @@ export default function McpConfigPopover({
           actions={actions}
         />
       </div>
-    </div>
+    </PopoverContent>
   );
-
-  return createPortal(body, document.body);
 }
 
 function summarise(servers: McpServerView[]): string {

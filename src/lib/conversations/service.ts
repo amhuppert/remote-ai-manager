@@ -1,13 +1,15 @@
 import crypto from "node:crypto";
-import { forkSession as sdkForkSession } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import {
+  DEFAULT_AGENT_BACKEND_ID,
+  type AgentBackendId,
+  type AgentSessionRef,
+} from "@/lib/shared/schemas";
 import type {
   ConversationState,
   ConversationRole,
   ForkedFrom,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   mutateSession as defaultMutateSession,
   createSessionConversation as defaultCreateSessionConversation,
@@ -24,16 +26,10 @@ import {
   findForkAnchorUuid,
   type CopyTranscriptMode,
 } from "../prompt/transcript";
-import { buildSyntheticForkSeed } from "../sessions/synthetic-fork-seed";
 import { getErrorMessage } from "../shared/errors";
-
-/** Subset of @anthropic-ai/claude-agent-sdk's forkSession API used at fork creation. */
-interface SdkForkSession {
-  (
-    sessionId: string,
-    options?: { dir?: string; upToMessageId?: string },
-  ): Promise<{ sessionId: string }>;
-}
+import { getBackendDescriptor } from "../agent-backends/registry";
+import type { BackendContinuityAdapter } from "../agent-backends/continuity";
+import { buildConversation } from "./build-conversation";
 
 /**
  * Typed error raised for client-correctable fork preconditions: missing
@@ -55,25 +51,24 @@ export class ForkValidationError extends Error {
 }
 
 /**
- * Typed error raised when fork creation cannot proceed because both the SDK
- * `forkSession()` call and the synthetic-seed fallback have failed. The API
- * route maps this to a 4xx — no conversation is created.
+ * Typed error raised when fork creation cannot proceed because the backend's
+ * continuity adapter produced no outcome (native fork and synthetic-seed
+ * fallback both failed). The API route maps this to a 4xx — no conversation
+ * is created.
  */
 export class ForkCreationError extends Error {
   readonly kind: "fork_failed";
   readonly cause?: unknown;
-  readonly syntheticFallbackError?: string;
 
   constructor(
     kind: "fork_failed",
     message: string,
-    options: { cause?: unknown; syntheticFallbackError?: string } = {},
+    options: { cause?: unknown } = {},
   ) {
     super(message);
     this.name = "ForkCreationError";
     this.kind = kind;
     this.cause = options.cause;
-    this.syntheticFallbackError = options.syntheticFallbackError;
   }
 }
 
@@ -96,8 +91,22 @@ export interface ConversationsDeps {
    * Test code injects an isolated directory here.
    */
   configDir?: string;
-  /** SDK forkSession injection point (tests substitute a fake). */
-  forkSession?: SdkForkSession;
+  /**
+   * Resolves the continuity adapter owning a backend's session lifecycle
+   * (fork at creation time). Tests substitute fakes; production resolves from
+   * the backend registry.
+   */
+  getContinuityAdapter?(backend: AgentBackendId): BackendContinuityAdapter;
+}
+
+function defaultGetContinuityAdapter(
+  backend: AgentBackendId,
+): BackendContinuityAdapter {
+  const conversation = getBackendDescriptor(backend).conversation;
+  if (!conversation) {
+    throw new Error(`Backend "${backend}" declares no conversation facet`);
+  }
+  return conversation.continuity;
 }
 
 const defaultConversationsDeps: ConversationsDeps = {
@@ -107,7 +116,7 @@ const defaultConversationsDeps: ConversationsDeps = {
   getConversation: defaultGetConversation,
   getSessionConversations: defaultGetSessionConversations,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
-  forkSession: sdkForkSession,
+  getContinuityAdapter: defaultGetContinuityAdapter,
 };
 
 // ============================================================
@@ -125,7 +134,7 @@ export function createConversationService(
     getSessionConversations,
     setConversationPendingPromptText: setPendingPromptTextDep,
     configDir,
-    forkSession = sdkForkSession,
+    getContinuityAdapter = defaultGetContinuityAdapter,
   } = deps;
 
   // ============================================================
@@ -141,43 +150,15 @@ export function createConversationService(
     const conversation = await createSessionConversation(
       projectPath,
       sessionName,
-      (sequenceNumber) => {
-        const now = new Date().toISOString();
-        const conv: ConversationState = {
+      (sequenceNumber) =>
+        buildConversation({
           id: crypto.randomUUID(),
           scope: "session",
           name: `${sessionName} ${sequenceNumber}`,
-          transcriptPath: null,
-          status: "new",
-          promptCount: 0,
-          createdAt: now,
-          lastActivityAt: now,
-          source: "cc",
-          summary: null,
-          archived: false,
-          totalCostUsd: null,
-          totalDurationMs: null,
-          totalTurns: null,
-          pendingQuestionId: null,
-          pendingQuestions: null,
-          pendingPromptText: null,
-          forkedFrom: null,
+          createdAt: new Date().toISOString(),
+          agentBackend: opts?.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
           role: opts?.role ?? null,
-          activeTurnSource: null,
-          contextTokens: null,
-          contextWindowMax: null,
-          debugMode: null,
-          machineSnapshot: null,
-          agentBackend: opts?.agentBackend ?? "claude",
-          backendRef: null,
-          unread: false,
-          lastSeenAlignmentVersion: null,
-          pendingAgentNotices: [],
-          pendingQueue: [],
-        };
-
-        return conv;
-      },
+        }),
     );
 
     logger.info("conversation.created", {
@@ -430,126 +411,78 @@ export function createConversationService(
       });
     }
 
-    // Eagerly materialize the Claude SDK fork so the new conversation owns
-    // a session file from the moment it's created (decoupling it from any
-    // later mutation of the source — auto-compaction, deletion, etc.).
-    // Cases 1 and 2 only; case 3 has no derived source ref.
-    //
-    // When forkSession() throws (e.g., the anchor UUID has been compacted
-    // away on disk), or when no anchor UUID could be located in the local
-    // transcript (legacy transcripts without uuid fields), fall back to a
-    // synthetic seed built from the local CC transcript and leave
-    // backendRef null so the next prompt creates a brand-new SDK session.
-    // Calling forkSession() without upToMessageId would silently fork from
-    // the latest source state — the visible transcript would be truncated
-    // but the SDK session would carry the full source history.
-    // If the synthetic seed can't be built either, surface a typed error —
-    // the fork must NOT be created in that case.
+    // Eagerly derive the new conversation's backend continuity from the
+    // owning adapter so the fork owns its session/seed from the moment it's
+    // created (decoupling it from any later mutation of the source —
+    // auto-compaction, deletion, etc.). Cases 1 and 2 only; case 3 has no
+    // derived source ref. The adapter normalizes the outcome:
+    // - native: an eagerly-forked backend session, persisted as backendRef.
+    // - synthetic_seed: a transcript-derived seed prepended to
+    //   pendingPromptText; backendRef stays null so the next prompt starts a
+    //   fresh backend session.
+    // - unsupported: the fork proceeds with no backend continuity at all.
+    // If the adapter can produce no outcome it throws, and the fork must NOT
+    // be created.
     let backendRef: AgentSessionRef | null = null;
     let forkMode: "native" | "synthetic" | null = null;
-    const needsSyntheticFallback =
-      derivedSourceRef !== null &&
-      derivedSourceRef.backend === "claude" &&
-      copyMode !== null &&
-      forkLocator === null;
 
-    if (
-      derivedSourceRef &&
-      derivedSourceRef.backend === "claude" &&
-      !needsSyntheticFallback
-    ) {
+    if (derivedSourceRef) {
+      const continuity = getContinuityAdapter(derivedSourceRef.backend);
+      let outcome: Awaited<ReturnType<BackendContinuityAdapter["fork"]>>;
       try {
-        const { sessionId: forkedSdkSessionId } = await forkSession(
-          derivedSourceRef.sessionId,
-          {
-            dir: projectPath,
-            upToMessageId: forkLocator!,
-          },
-        );
-        backendRef = { backend: "claude", sessionId: forkedSdkSessionId };
+        outcome = await continuity.fork(derivedSourceRef, {
+          projectPath,
+          anchorMessageId: forkLocator,
+          sourceTranscriptPath: source.transcriptPath,
+          messageIndex,
+        });
+      } catch (err) {
+        const reason = getErrorMessage(err);
+        logger.warn("conversation.fork.failed", {
+          projectPath,
+          sessionName,
+          sourceConversationId,
+          backend: derivedSourceRef.backend,
+          sourceSessionRef: derivedSourceRef.ref,
+          forkLocator,
+          reason,
+        });
+        throw new ForkCreationError("fork_failed", reason, { cause: err });
+      }
+
+      if (outcome.kind === "native") {
+        backendRef = outcome.ref;
         forkMode = "native";
         logger.info("conversation.fork.native", {
           projectPath,
           sessionName,
           sourceConversationId,
-          sourceSessionId: derivedSourceRef.sessionId,
+          sourceSessionRef: derivedSourceRef.ref,
           forkLocator,
-          forkedSdkSessionId,
+          forkedSessionRef: outcome.ref.ref,
         });
-      } catch (err) {
-        const reason = getErrorMessage(err);
-        logger.warn("conversation.fork.native_failed", {
-          projectPath,
-          sessionName,
-          sourceConversationId,
-          sourceSessionId: derivedSourceRef.sessionId,
-          forkLocator,
-          reason,
-        });
-
-        const seed = await buildSyntheticForkSeed(
-          source.transcriptPath,
-          messageIndex,
-        );
-        if (!seed) {
-          throw new ForkCreationError(
-            "fork_failed",
-            `Fork creation failed: SDK forkSession threw (${reason}) and the local transcript could not be read for synthetic fallback`,
-            {
-              cause: err,
-              syntheticFallbackError:
-                "buildSyntheticForkSeed returned null (transcript unreadable or empty)",
-            },
-          );
-        }
-
+      } else if (outcome.kind === "synthetic_seed") {
         pendingPromptText =
           pendingPromptText && pendingPromptText.length > 0
-            ? `${seed}\n\n---\n\n${pendingPromptText}`
-            : seed;
+            ? `${outcome.seed}\n\n---\n\n${pendingPromptText}`
+            : outcome.seed;
         forkMode = "synthetic";
-        logger.info("conversation.fork.synthetic_fallback", {
+        logger.info("conversation.fork.synthetic", {
           projectPath,
           sessionName,
           sourceConversationId,
-          sourceSessionId: derivedSourceRef.sessionId,
+          sourceSessionRef: derivedSourceRef.ref,
           forkLocator,
-          reason,
-          seedLength: seed.length,
+          seedLength: outcome.seed.length,
+        });
+      } else {
+        logger.warn("conversation.fork.unsupported", {
+          projectPath,
+          sessionName,
+          sourceConversationId,
+          backend: derivedSourceRef.backend,
         });
       }
-    } else if (
-      needsSyntheticFallback &&
-      derivedSourceRef &&
-      derivedSourceRef.backend === "claude"
-    ) {
-      const seed = await buildSyntheticForkSeed(
-        source.transcriptPath,
-        messageIndex,
-      );
-      if (!seed) {
-        throw new ForkCreationError(
-          "fork_failed",
-          "Fork creation failed: no fork anchor UUID in the local transcript and the synthetic seed could not be built",
-          {
-            syntheticFallbackError:
-              "buildSyntheticForkSeed returned null (transcript unreadable or empty)",
-          },
-        );
-      }
-
-      pendingPromptText =
-        pendingPromptText && pendingPromptText.length > 0
-          ? `${seed}\n\n---\n\n${pendingPromptText}`
-          : seed;
-      forkMode = "synthetic";
-      logger.info("conversation.fork.synthetic_no_anchor", {
-        projectPath,
-        sessionName,
-        sourceConversationId,
-        sourceSessionId: derivedSourceRef.sessionId,
-        seedLength: seed.length,
-      });
     }
 
     const forkedFrom: ForkedFrom = {
@@ -567,38 +500,17 @@ export function createConversationService(
       sessionName,
       "forkConversation",
       (sess) => {
-        const conversation: ConversationState = {
+        const conversation = buildConversation({
           id: newId,
           scope: "session",
           name: forkName,
-          transcriptPath,
-          status: "new",
-          promptCount: 0,
           createdAt: now,
-          lastActivityAt: now,
-          source: "cc",
-          summary: null,
-          archived: false,
-          totalCostUsd: null,
-          totalDurationMs: null,
-          totalTurns: null,
-          pendingQuestionId: null,
-          pendingQuestions: null,
+          agentBackend: source.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
+          transcriptPath,
           pendingPromptText,
           forkedFrom,
-          role: null,
-          activeTurnSource: null,
-          contextTokens: null,
-          contextWindowMax: null,
-          debugMode: null,
-          machineSnapshot: null,
-          agentBackend: source.agentBackend ?? "claude",
           backendRef,
-          unread: false,
-          lastSeenAlignmentVersion: null,
-          pendingAgentNotices: [],
-          pendingQueue: [],
-        };
+        });
 
         sess.conversations.push(conversation);
       },
@@ -640,38 +552,13 @@ export function createConversationService(
 
         const now = new Date().toISOString();
         const sequenceNumber = session.conversations.length + 1;
-        const newConvo: ConversationState = {
+        const newConvo = buildConversation({
           id: crypto.randomUUID(),
           scope: "session",
           name: `${sessionName} ${sequenceNumber}`,
-          transcriptPath: null,
-          status: "new",
-          promptCount: 0,
           createdAt: now,
-          lastActivityAt: now,
-          source: "cc",
-          summary: null,
-          archived: false,
-          totalCostUsd: null,
-          totalDurationMs: null,
-          totalTurns: null,
-          pendingQuestionId: null,
-          pendingQuestions: null,
-          pendingPromptText: null,
-          forkedFrom: null,
-          role: null,
-          activeTurnSource: null,
-          contextTokens: null,
-          contextWindowMax: null,
-          debugMode: null,
-          machineSnapshot: null,
-          agentBackend: "claude",
-          backendRef: null,
-          unread: false,
-          lastSeenAlignmentVersion: null,
-          pendingAgentNotices: [],
-          pendingQueue: [],
-        };
+          agentBackend: DEFAULT_AGENT_BACKEND_ID,
+        });
 
         session.conversations.push(newConvo);
 
@@ -717,12 +604,12 @@ export interface ForkConversationResult {
   conversationId: string;
   name: string;
   /**
-   * "native": the SDK forkSession() returned a forked session id eagerly,
-   *           so `backendRef` is populated and no synthetic seed is needed.
-   * "synthetic": SDK forkSession() failed; pendingPromptText carries a
-   *              synthetic seed and backendRef is null.
-   * null: case 3 (user fork at message index 0) — no source SDK continuity,
-   *       behaves like a brand-new conversation.
+   * "native": the continuity adapter eagerly forked a backend session, so
+   *           `backendRef` is populated and no synthetic seed is needed.
+   * "synthetic": pendingPromptText carries a transcript-derived seed and
+   *              backendRef is null.
+   * null: no backend continuity — case 3 (user fork at message index 0), or
+   *       a backend whose adapter reports fork as unsupported.
    */
   forkMode: "native" | "synthetic" | null;
 }

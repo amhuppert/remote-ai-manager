@@ -60,7 +60,7 @@ function setup(): Harness {
         return { ok: true, filePath: ".cc/session-alignment/charter.md" };
       },
     },
-    broadcast() {},
+    broadcast: () => ({ delivered: true }),
     promptQueue: { async enqueue() {} },
     loadSession(projectPath, sessionName) {
       return Promise.resolve(

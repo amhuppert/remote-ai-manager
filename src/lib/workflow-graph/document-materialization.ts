@@ -3,7 +3,7 @@ import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { renderCharterMarkdown } from "./charter/render";
 import type { SharedDocumentStore } from "./shared-document-store";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("graph-workflow-document-materialization");
 

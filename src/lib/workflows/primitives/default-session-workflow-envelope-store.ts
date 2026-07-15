@@ -10,7 +10,7 @@
  * session-state write queue automatically.
  *
  * The state-module accessors are resolved lazily through `require()` to mirror
- * the dynamic-import deferral pattern used in `default-session-status-bus.ts`
+ * the dynamic-import deferral pattern used in the SSE publication module
  * and `default-session-artifact-registry.ts`. This avoids bootstrapping the
  * state manager during module initialization and keeps test paths free to
  * inject their own implementations.

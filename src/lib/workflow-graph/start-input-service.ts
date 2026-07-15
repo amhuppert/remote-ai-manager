@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 
 import { buildLaunchInputSchema } from "./parameter-validation";
 

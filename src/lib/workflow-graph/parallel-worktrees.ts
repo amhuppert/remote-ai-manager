@@ -12,7 +12,9 @@ import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
-import type { PerRepoConfig } from "@/lib/config/schemas";
+import { readConfig as defaultReadGlobalConfig } from "@/lib/config/loader";
+import { resolveBranchPrefix } from "@/lib/config/cascade";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { parseDirtyPaths } from "@/lib/git/worktree";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 
@@ -65,6 +67,14 @@ export interface CleanupLaneInput {
   sessionName: string;
   sessionDir: string;
   contextId: string;
+  /**
+   * Lane branch recorded at provision time (persisted lane state). Cleanup
+   * prefers the worktree's actual branch when the worktree still exists; this
+   * value covers the worktree-already-gone case. Branch-prefix configuration
+   * is never consulted at cleanup time — it can change between provision and
+   * cleanup, which would target a branch the lane never lived on.
+   */
+  branchName?: string | null;
 }
 
 export interface ParallelWorktrees {
@@ -78,9 +88,11 @@ export interface ParallelWorktrees {
   /** Dispose a lane worktree. Identical disk-side semantics to dispose. */
   disposeLane(input: DisposeInput): Promise<DisposeResult>;
   /**
-   * Remove the lane worktree and lane branch derived from a lane/context id.
-   * A merged lane's content lives on the session branch, so both artifacts
-   * are disposable once the lane's contexts have merged.
+   * Remove the lane worktree and lane branch for a lane/context id. A merged
+   * lane's content lives on the session branch, so both artifacts are
+   * disposable once the lane's contexts have merged. The branch to delete is
+   * resolved from the live worktree (or the persisted `branchName`), never
+   * from the branch-prefix configuration.
    */
   cleanupLane(input: CleanupLaneInput): Promise<DisposeResult>;
 }
@@ -89,6 +101,7 @@ export interface ParallelWorktreesDeps {
   gitClient?: GitClient;
   existsSync?: (p: string) => boolean;
   readRepoConfig?(repoRoot: string): Promise<PerRepoConfig | null>;
+  readGlobalConfig?(): Promise<Pick<GlobalConfig, "branchPrefix">>;
   execFileAsync?: ExecFileAsync;
   buildChildEnv?(): NodeJS.ProcessEnv;
   logger?: Logger;
@@ -162,14 +175,31 @@ export function deriveLaneTargets(input: {
   projectPath: string;
   sessionDir: string;
   laneId: string;
+  branchPrefix: string;
 }): ProvisionResult {
-  const worktreePath = path.join(
+  const worktreePath = deriveLaneWorktreePath(input);
+  const unprefixed = `${input.sessionDir}-${input.laneId}`;
+  const branchName = input.branchPrefix
+    ? `${input.branchPrefix}/${unprefixed}`
+    : unprefixed;
+  return { worktreePath, branchName };
+}
+
+/**
+ * Compute the lane worktree path from lane identity alone. Unlike the branch
+ * name, the worktree path is independent of the branch-prefix configuration,
+ * so cleanup can derive it without consulting config.
+ */
+export function deriveLaneWorktreePath(input: {
+  projectPath: string;
+  sessionDir: string;
+  laneId: string;
+}): string {
+  return path.join(
     input.projectPath,
     ".worktrees",
     `${input.sessionDir}.${input.laneId}`,
   );
-  const branchName = `csm/${input.sessionDir}-${input.laneId}`;
-  return { worktreePath, branchName };
 }
 
 export function createParallelWorktrees(
@@ -178,6 +208,7 @@ export function createParallelWorktrees(
   const gitClient = deps.gitClient ?? defaultGitClient;
   const existsSync = deps.existsSync ?? defaultExistsSync;
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
+  const readGlobalConfig = deps.readGlobalConfig ?? defaultReadGlobalConfig;
   const execFileAsync = deps.execFileAsync ?? defaultExecFileAsync;
   const buildChildEnv = deps.buildChildEnv ?? defaultBuildChildEnv;
   const logger = deps.logger ?? defaultLogger;
@@ -185,6 +216,16 @@ export function createParallelWorktrees(
     deps.fastRemoveWorktree ?? defaultFastRemoveWorktree;
   const stopDevServersForWorktree =
     deps.stopDevServersForWorktree ?? defaultStopAllForWorktree;
+
+  async function resolveLaneBranchPrefix(projectPath: string): Promise<string> {
+    const [globalConfig, repoConfig] = await Promise.all([
+      readGlobalConfig(),
+      readRepoConfig(projectPath),
+    ]);
+    const branchPrefix = resolveBranchPrefix(globalConfig, repoConfig);
+    logger.debug("branch_prefix_resolved", { projectPath, branchPrefix });
+    return branchPrefix;
+  }
 
   async function getBranchForWorktree(
     projectPath: string,
@@ -218,6 +259,7 @@ export function createParallelWorktrees(
       projectPath: input.projectPath,
       sessionDir: input.sessionDir,
       laneId: input.laneId,
+      branchPrefix: await resolveLaneBranchPrefix(input.projectPath),
     });
     return timed(
       logger,
@@ -456,12 +498,9 @@ export function createParallelWorktrees(
         rolledBack: createdInputs.length,
         reason: getErrorMessage(err),
       });
-      for (const input of createdInputs) {
-        const targets = deriveLaneTargets({
-          projectPath: input.projectPath,
-          sessionDir: input.sessionDir,
-          laneId: input.laneId,
-        });
+      for (const [index, input] of createdInputs.entries()) {
+        const targets = created[index];
+        if (!targets) continue;
         await dispose({
           projectPath: input.projectPath,
           worktreePath: targets.worktreePath,
@@ -486,7 +525,22 @@ export function createParallelWorktrees(
     );
   }
 
+  /**
+   * Internal dispose target: unlike the public DisposeInput, the branch is
+   * nullable so lane cleanup can remove a worktree whose branch could not be
+   * resolved without guessing one from configuration.
+   */
+  interface DisposeTarget {
+    projectPath: string;
+    worktreePath: string;
+    branchName: string | null;
+  }
+
   async function dispose(input: DisposeInput): Promise<DisposeResult> {
+    return disposeTarget(input);
+  }
+
+  async function disposeTarget(input: DisposeTarget): Promise<DisposeResult> {
     return timed(
       logger,
       "worktree.remove",
@@ -499,7 +553,7 @@ export function createParallelWorktrees(
     );
   }
 
-  async function disposeImpl(input: DisposeInput): Promise<DisposeResult> {
+  async function disposeImpl(input: DisposeTarget): Promise<DisposeResult> {
     // Stop dev servers running in this worktree before removing it, so the
     // directory is never pruned out from under a live process. Best-effort:
     // a failed stop must not block worktree removal.
@@ -519,7 +573,7 @@ export function createParallelWorktrees(
       await fastRemoveWorktree({
         projectPath: input.projectPath,
         worktreePath: input.worktreePath,
-        branchName: input.branchName,
+        branchName: input.branchName ?? undefined,
       });
     } catch (err) {
       const reason = getErrorMessage(err);
@@ -543,31 +597,79 @@ export function createParallelWorktrees(
     return dispose(input);
   }
 
+  /**
+   * Resolve which branch a lane cleanup should delete. The worktree's actual
+   * branch (git ground truth) wins when the worktree still exists; otherwise
+   * the branch persisted at provision time is used. Configuration is
+   * intentionally not a fallback — the branch prefix is mutable, so a
+   * config-derived name can point at a branch the lane never lived on.
+   */
+  async function resolveLaneCleanupBranch(
+    input: CleanupLaneInput,
+    worktreePath: string,
+  ): Promise<{
+    branchName: string | null;
+    source: "worktree" | "persisted" | null;
+  }> {
+    if (existsSync(worktreePath)) {
+      const actual = await getBranchForWorktree(
+        input.projectPath,
+        worktreePath,
+      );
+      if (actual !== null) return { branchName: actual, source: "worktree" };
+    }
+    if (input.branchName != null && input.branchName !== "") {
+      return { branchName: input.branchName, source: "persisted" };
+    }
+    return { branchName: null, source: null };
+  }
+
   async function cleanupLane(input: CleanupLaneInput): Promise<DisposeResult> {
     validateLaneId(input.contextId);
-    const targets = deriveLaneTargets({
+    const worktreePath = deriveLaneWorktreePath({
       projectPath: input.projectPath,
       sessionDir: input.sessionDir,
       laneId: input.contextId,
     });
-    const result = await dispose({
+    const { branchName, source } = await resolveLaneCleanupBranch(
+      input,
+      worktreePath,
+    );
+    if (branchName === null) {
+      logger.warn("lane.cleanup_branch_unresolved", {
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        worktreePath,
+      });
+    } else {
+      logger.debug("lane.cleanup_branch_resolved", {
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        worktreePath,
+        branch: branchName,
+        source,
+      });
+    }
+    const result = await disposeTarget({
       projectPath: input.projectPath,
-      worktreePath: targets.worktreePath,
-      branchName: targets.branchName,
+      worktreePath,
+      branchName,
     });
     if (result.status === "removed") {
       logger.info("lane.cleaned", {
         sessionName: input.sessionName,
         contextId: input.contextId,
-        branch: targets.branchName,
-        worktreePath: targets.worktreePath,
+        branch: branchName,
+        branchSource: source,
+        worktreePath,
       });
     } else {
       logger.warn("lane.cleanup_failed", {
         sessionName: input.sessionName,
         contextId: input.contextId,
-        branch: targets.branchName,
-        worktreePath: targets.worktreePath,
+        branch: branchName,
+        branchSource: source,
+        worktreePath,
         reason: result.reason,
       });
     }

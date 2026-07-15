@@ -1,18 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createActor, fromPromise, type AnyActorRef } from "xstate";
 import { conversationMachine } from "./machine";
-import {
-  debugHypothesisOutputSchema,
-  debugEvidenceAnalysisOutputSchema,
-  debugCleanupResultSchema,
-} from "./debug-schemas";
+import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import type {
   ConversationInput,
   PrepareTurnInput,
   PrepareTurnOutput,
   ExecutePromptInput,
   PromptActorResult,
-  VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
 
@@ -65,6 +60,7 @@ function successResult(
     aborted: false,
     compacted: false,
     error: null,
+    continuationDisposition: "retain",
     // Non-null sentinel so the debug phase-advancement gate passes by
     // default. Tests that exercise the failure path override this with
     // `structuredOutput: undefined` (or set `error`).
@@ -90,64 +86,17 @@ function makeMockExecutePrompt(result?: Partial<PromptActorResult>) {
   });
 }
 
-/**
- * executePrompt mock that drives the full debug flow:
- *   hypothesizing → awaitingReproduction → analyzingEvidence → awaitingVerification
- *   → cleanupInstrumentation → verifyingCleanup
- *
- * Call 1 returns a hypothesis payload, call 2 returns an
- * outcome="fix_applied" evidence payload, calls 3+ return the configured
- * cleanup payload.
- */
-function makeDebugFlowExecutePrompt(cleanupResult: {
-  removedInstrumentation: boolean;
-  filesModified: string[];
-  grepVerificationPassed: boolean;
-  acknowledgesManifestDeletionContract: boolean;
-  notes: string;
-}) {
+/** executePrompt mock returning one queued result per call (the last result
+ *  repeats once the sequence is exhausted). */
+function makeSequencedExecutePrompt(
+  results: Array<Partial<PromptActorResult>>,
+) {
   let callCount = 0;
   return fromPromise<PromptActorResult, ExecutePromptInput>(async () => {
+    const result = results[Math.min(callCount, results.length - 1)] ?? {};
     callCount += 1;
-    if (callCount === 1) {
-      return successResult({
-        structuredOutput: {
-          hypotheses: [
-            { id: "H1", description: "A", instrumentationPlan: "Log" },
-            { id: "H2", description: "B", instrumentationPlan: "Log" },
-            { id: "H3", description: "C", instrumentationPlan: "Log" },
-          ],
-          reproductionSteps: ["Step 1", "Step 2"],
-        },
-      });
-    }
-    if (callCount === 2) {
-      return successResult({
-        structuredOutput: {
-          outcome: "fix_applied",
-          supportedHypotheses: ["H1"],
-          refutedHypotheses: [],
-          inconclusiveHypotheses: ["H2", "H3"],
-          evidenceSummary: "H1 confirmed.",
-          fixSummary: "Applied minimal fix.",
-          verificationSteps: ["Run failing test"],
-        },
-      });
-    }
-    return successResult({ structuredOutput: cleanupResult });
-  });
-}
-
-function makeMockVerifyCleanup(output: Partial<VerifyCleanupOutput> = {}) {
-  return fromPromise<VerifyCleanupOutput, VerifyCleanupInput>(async () => {
     await new Promise((r) => setTimeout(r, 0));
-    return {
-      ok: true,
-      failedConditions: [],
-      missingFiles: [],
-      remediationPrompt: null,
-      ...output,
-    };
+    return successResult(result);
   });
 }
 
@@ -156,25 +105,51 @@ function makeTestMachine(overrides?: {
   prepareTurn?: any;
   executePrompt?: any;
   runTaskRun?: any;
-  verifyCleanup?: any;
+  verifyCleanup?: () => Promise<VerifyCleanupOutput>;
   drainPendingQueue?: () => void;
+  persistSnapshot?: () => void;
+  syncDerivedFields?: () => void;
 }) {
   /* eslint-enable @typescript-eslint/no-explicit-any */
+  const fakeVerifyCleanup =
+    overrides?.verifyCleanup ??
+    (async (): Promise<VerifyCleanupOutput> => ({
+      ok: true,
+      failedConditions: [],
+      missingFiles: [],
+      remediationPrompt: null,
+    }));
   return conversationMachine.provide({
     actors: {
       prepareTurn: overrides?.prepareTurn ?? makeMockPrepareTurn(),
       executePrompt: overrides?.executePrompt ?? makeMockExecutePrompt(),
       ...(overrides?.runTaskRun ? { runTaskRun: overrides.runTaskRun } : {}),
-      verifyCleanup: overrides?.verifyCleanup ?? makeMockVerifyCleanup(),
     },
     actions: {
-      persistSnapshot: () => {},
-      syncDerivedFields: () => {},
+      persistSnapshot: overrides?.persistSnapshot ?? (() => {}),
+      syncDerivedFields: overrides?.syncDerivedFields ?? (() => {}),
       broadcastConversationStatus: () => {},
       broadcastAskQuestion: () => {},
       broadcastDebugModeStatus: () => {},
       releaseResources: () => {},
       dispatchPushNotification: () => {},
+      // Production wiring (real runner + reducer) with a fake verifier.
+      startDebugCleanupVerification: ({ context, self }) => {
+        void runDebugCleanupVerification(
+          {
+            worktreePath: context.worktreePath,
+            conversationId: context.conversationId,
+            structuredOutput: context.lastResult?.structuredOutput,
+            debugSessionId:
+              context.debugMode?.debugSessionId ?? "debug-session-test",
+            attempt: context.debugMode?.cleanupVerificationAttempt ?? 0,
+          },
+          { verifyCleanup: fakeVerifyCleanup },
+        ).then((command) => {
+          if (!command) return;
+          self.send({ type: "DEBUG_COMMAND", command });
+        });
+      },
       ...(overrides?.drainPendingQueue
         ? { drainPendingQueue: overrides.drainPendingQueue }
         : {}),
@@ -409,10 +384,14 @@ describe("conversationMachine", () => {
     });
 
     it("clears Codex backendRef when prompt returns with error", async () => {
+      // Equivalence pin: the codex adapter reports a failed turn with a
+      // "clear" disposition (its threadId is unrecoverable when `codex exec`
+      // exits non-zero) and the machine must drop the persisted ref.
       const machine = makeTestMachine({
         executePrompt: makeMockExecutePrompt({
           error: "Codex Exec exited with code 1: Reading prompt from stdin...",
           backendRef: null,
+          continuationDisposition: "clear",
         }),
       });
 
@@ -424,7 +403,7 @@ describe("conversationMachine", () => {
           agentBackend: "codex" as const,
           backendRef: {
             backend: "codex" as const,
-            threadId: "thread-dead",
+            ref: "thread-dead",
           },
         },
       });
@@ -445,10 +424,14 @@ describe("conversationMachine", () => {
     });
 
     it("preserves Claude backendRef when prompt returns with error and no fresher sessionId", async () => {
+      // Equivalence pin: the claude adapter reports failed turns with a
+      // "retain" disposition (session IDs are server-side at Anthropic and
+      // survive a transient QuerySession failure).
       const machine = makeTestMachine({
         executePrompt: makeMockExecutePrompt({
           error: "QuerySession closed while turn was in progress",
           backendRef: null,
+          continuationDisposition: "retain",
         }),
       });
 
@@ -458,7 +441,7 @@ describe("conversationMachine", () => {
           agentBackend: "claude" as const,
           backendRef: {
             backend: "claude" as const,
-            sessionId: "sess-abc-123",
+            ref: "sess-abc-123",
           },
         },
       });
@@ -479,15 +462,16 @@ describe("conversationMachine", () => {
       // earlier turns even though the transcript is intact.
       expect(snap.context.backendRef).toEqual({
         backend: "claude",
-        sessionId: "sess-abc-123",
+        ref: "sess-abc-123",
       });
     });
 
-    it("adopts fresher Claude sessionId from a failed turn over the prior one", async () => {
+    it("clears the ref on a 'clear' disposition regardless of backend identity", async () => {
       const machine = makeTestMachine({
         executePrompt: makeMockExecutePrompt({
-          error: "QuerySession ended before the turn completed",
-          backendRef: { backend: "claude", sessionId: "sess-xyz-789" },
+          error: "runtime reported the continuation unusable",
+          backendRef: null,
+          continuationDisposition: "clear",
         }),
       });
 
@@ -497,7 +481,176 @@ describe("conversationMachine", () => {
           agentBackend: "claude" as const,
           backendRef: {
             backend: "claude" as const,
-            sessionId: "sess-abc-123",
+            ref: "sess-abc-123",
+          },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().context.backendRef).toBeNull();
+    });
+
+    it("retains the prior ref on a 'retain' disposition even when a codex turn errored", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeMockExecutePrompt({
+          error: "schema validation failed after a completed turn",
+          backendRef: null,
+          continuationDisposition: "retain",
+        }),
+      });
+
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "codex" as const,
+          backendRef: {
+            backend: "codex" as const,
+            ref: "thread-live",
+          },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().context.backendRef).toEqual({
+        backend: "codex",
+        ref: "thread-live",
+      });
+    });
+
+    it("clears the prior ref when PROMPT_COMPLETED carries a 'clear' disposition", async () => {
+      // Direct completion event (manager-sent) must route through the same
+      // disposition resolver as the invoke onDone path.
+      const machine = makeTestMachine({
+        executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
+          () => new Promise(() => {}),
+        ),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "codex" as const,
+          backendRef: { backend: "codex" as const, ref: "thread-stale" },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "conversationTurn");
+
+      actor.send({
+        type: "PROMPT_COMPLETED",
+        result: successResult({
+          error: "resume failed",
+          backendRef: null,
+          continuationDisposition: "clear",
+        }),
+      });
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().context.backendRef).toBeNull();
+    });
+
+    it("clears the prior ref when EXTERNAL_TURN_COMPLETED carries a 'clear' disposition", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "codex" as const,
+          backendRef: { backend: "codex" as const, ref: "thread-stale" },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      await waitForState(actor, "externalExecuting");
+
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: successResult({
+          error: "external turn invalidated the continuation",
+          backendRef: null,
+          continuationDisposition: "clear",
+        }),
+      });
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().context.backendRef).toBeNull();
+    });
+
+    it("task-run completion follows the result's disposition, not the conversation backend", async () => {
+      const runTaskRun = fromPromise<PromptActorResult, unknown>(async () =>
+        successResult({
+          error: "task run failed",
+          backendRef: null,
+          structuredOutput: undefined,
+          continuationDisposition: "clear",
+        }),
+      );
+      const machine = makeTestMachine({ runTaskRun });
+
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "claude" as const,
+          backendRef: {
+            backend: "claude" as const,
+            ref: "sess-abc-123",
+          },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_TASK_RUN",
+        promptText: "run task",
+        backend: "codex",
+      });
+
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().context.backendRef).toBeNull();
+    });
+
+    it("adopts fresher Claude sessionId from a failed turn over the prior one", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeMockExecutePrompt({
+          error: "QuerySession ended before the turn completed",
+          backendRef: { backend: "claude", ref: "sess-xyz-789" },
+        }),
+      });
+
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "claude" as const,
+          backendRef: {
+            backend: "claude" as const,
+            ref: "sess-abc-123",
           },
         },
       });
@@ -514,7 +667,7 @@ describe("conversationMachine", () => {
 
       expect(actor.getSnapshot().context.backendRef).toEqual({
         backend: "claude",
-        sessionId: "sess-xyz-789",
+        ref: "sess-xyz-789",
       });
     });
   });
@@ -540,7 +693,6 @@ describe("conversationMachine", () => {
                 resolveTurn = resolve;
               }),
           ),
-          verifyCleanup: makeMockVerifyCleanup(),
         },
         actions: {
           persistSnapshot: spies.persistSnapshot,
@@ -568,12 +720,12 @@ describe("conversationMachine", () => {
 
       actor.send({
         type: "BACKEND_INIT",
-        backendRef: { backend: "claude", sessionId: "sdk-sess-live" },
+        backendRef: { backend: "claude", ref: "sdk-sess-live" },
       });
 
       expect(actor.getSnapshot().context.backendRef).toEqual({
         backend: "claude",
-        sessionId: "sdk-sess-live",
+        ref: "sdk-sess-live",
       });
       expect(spies.syncDerivedFields).toHaveBeenCalled();
       expect(spies.persistSnapshot).toHaveBeenCalled();
@@ -883,1581 +1035,401 @@ describe("conversationMachine", () => {
     });
   });
 
-  describe("debug mode", () => {
-    it("transitions to debug.hypothesizing on ENTER_DEBUG_MODE", () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
+  // Debug behavior itself (phase advancement, adapter contract, drain
+  // policy) is pinned by the external-interface parity suite in
+  // `@/lib/workflows/debug/debug-workflow-parity.test.ts` and the debug
+  // module's own unit tests. These tests cover only what the MACHINE
+  // contributes: the flat debug state, DEBUG_COMMAND legality via
+  // `snapshot.can()`, the finalize branch, retry re-entry, and restoration.
+  describe("debug workflow attachment", () => {
+    const HYPOTHESIS_PAYLOAD = {
+      hypotheses: [
+        { id: "H1", description: "A", instrumentationPlan: "Log" },
+        { id: "H2", description: "B", instrumentationPlan: "Log" },
+        { id: "H3", description: "C", instrumentationPlan: "Log" },
+      ],
+      reproductionSteps: ["Step 1", "Step 2"],
+    };
 
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
+    const CLEANUP_PAYLOAD = {
+      removedInstrumentation: true,
+      filesModified: ["src/a.ts"],
+      grepVerificationPassed: true,
+      acknowledgesManifestDeletionContract: true,
+      notes: "All probes removed.",
+    };
+
+    const CLEANUP_PHASE_INPUT: ConversationInput = {
+      ...defaultInput,
+      promptCount: 3,
+      debugMode: {
+        active: true,
+        recording: true,
+        logFilePath: "/tmp/logs.jsonl",
+        enteredAt: "2024-01-01T00:00:00Z",
+        hypotheses: [{ id: "H1", description: "A", instrumentationPlan: "L" }],
+        reproductionSteps: ["Step 1"],
+        fixSummary: "Applied minimal fix.",
+        verificationSteps: ["Run failing test"],
+        instructionsDelivered: true,
+        phase: "cleanup_instrumentation",
+        lastTurnFailed: false,
+        debugSessionId: "debug-session-restored",
+      },
+    };
+
+    function sendDebug(actor: AnyActorRef, command: Record<string, unknown>) {
+      actor.send({ type: "DEBUG_COMMAND", command } as never);
+    }
+
+    function enterDebug(actor: AnyActorRef) {
+      sendDebug(actor, {
+        kind: "enter",
+        logFilePath: "/tmp/logs.jsonl",
+        debugSessionId: "debug-session-entered",
       });
+    }
 
-      const snap = actor.getSnapshot();
-      expect(snap.value).toEqual({ debug: "hypothesizing" });
-      expect(snap.context.debugMode).not.toBeNull();
-      expect(snap.context.debugMode?.active).toBe(true);
-      expect(snap.context.debugMode?.phase).toBe("hypothesizing");
-      expect(snap.context.debugMode?.logFilePath).toBe(
-        "/tmp/.debug/logs.jsonl",
-      );
-    });
-
-    it("exits debug mode back to idle on EXIT_DEBUG_MODE", () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({ type: "EXIT_DEBUG_MODE" });
-
-      const snap = actor.getSnapshot();
-      expect(snap.value).toBe("idle");
-      expect(snap.context.debugMode).toBeNull();
-    });
-
-    it("fires syncDerivedFields, broadcastDebugModeStatus, and persistSnapshot on ENTER_DEBUG_MODE", () => {
-      const spies = {
-        syncDerivedFields: vi.fn(),
-        broadcastDebugModeStatus: vi.fn(),
-        persistSnapshot: vi.fn(),
-      };
-      const machine = conversationMachine.provide({
-        actors: {
-          prepareTurn: makeMockPrepareTurn(),
-          executePrompt: makeMockExecutePrompt(),
-        },
-        actions: {
-          persistSnapshot: spies.persistSnapshot,
-          syncDerivedFields: spies.syncDerivedFields,
-          broadcastConversationStatus: () => {},
-          broadcastAskQuestion: () => {},
-          broadcastDebugModeStatus: spies.broadcastDebugModeStatus,
-          releaseResources: () => {},
-          dispatchPushNotification: () => {},
-        },
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-
-      expect(spies.syncDerivedFields).toHaveBeenCalled();
-      expect(spies.broadcastDebugModeStatus).toHaveBeenCalled();
-      expect(spies.persistSnapshot).toHaveBeenCalled();
-    });
-
-    it("fires syncDerivedFields, broadcastDebugModeStatus, and persistSnapshot on EXIT_DEBUG_MODE", () => {
-      const spies = {
-        syncDerivedFields: vi.fn(),
-        broadcastDebugModeStatus: vi.fn(),
-        persistSnapshot: vi.fn(),
-      };
-      const machine = conversationMachine.provide({
-        actors: {
-          prepareTurn: makeMockPrepareTurn(),
-          executePrompt: makeMockExecutePrompt(),
-        },
-        actions: {
-          persistSnapshot: spies.persistSnapshot,
-          syncDerivedFields: spies.syncDerivedFields,
-          broadcastConversationStatus: () => {},
-          broadcastAskQuestion: () => {},
-          broadcastDebugModeStatus: spies.broadcastDebugModeStatus,
-          releaseResources: () => {},
-          dispatchPushNotification: () => {},
-        },
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-
-      // Reset spies after enter so we only check exit actions
-      spies.syncDerivedFields.mockClear();
-      spies.broadcastDebugModeStatus.mockClear();
-      spies.persistSnapshot.mockClear();
-
-      actor.send({ type: "EXIT_DEBUG_MODE" });
-
-      expect(spies.syncDerivedFields).toHaveBeenCalled();
-      expect(spies.broadcastDebugModeStatus).toHaveBeenCalled();
-      expect(spies.persistSnapshot).toHaveBeenCalled();
-    });
-
-    it("allows SET_DEBUG_RECORDING in any debug state", () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({ type: "SET_DEBUG_RECORDING", recording: true });
-
-      expect(actor.getSnapshot().context.debugMode?.recording).toBe(true);
-    });
-
-    it("fires syncDerivedFields on SET_DEBUG_RECORDING", () => {
-      const spies = {
-        syncDerivedFields: vi.fn(),
-      };
-      const machine = conversationMachine.provide({
-        actors: {
-          prepareTurn: makeMockPrepareTurn(),
-          executePrompt: makeMockExecutePrompt(),
-        },
-        actions: {
-          persistSnapshot: () => {},
-          syncDerivedFields: spies.syncDerivedFields,
-          broadcastConversationStatus: () => {},
-          broadcastAskQuestion: () => {},
-          broadcastDebugModeStatus: () => {},
-          releaseResources: () => {},
-          dispatchPushNotification: () => {},
-        },
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      spies.syncDerivedFields.mockClear();
-
-      actor.send({ type: "SET_DEBUG_RECORDING", recording: true });
-
-      expect(spies.syncDerivedFields).toHaveBeenCalled();
-    });
-
-    it("returns to awaitingReproduction after a follow-up prompt completes", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            hypotheses: [
-              { id: "H1", description: "A", instrumentationPlan: "Log A" },
-              { id: "H2", description: "B", instrumentationPlan: "Log B" },
-              { id: "H3", description: "C", instrumentationPlan: "Log C" },
-            ],
-            reproductionSteps: ["Step 1", "Step 2"],
-          },
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      // Enter debug → hypothesizing → submit → awaitingReproduction
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug this",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      // Submit a follow-up prompt from awaitingReproduction
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Can you also check X?",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      // Should still be in debug mode with same phase
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingReproduction",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
-      expect(actor.getSnapshot().context.debugMode?.active).toBe(true);
-    });
-
-    it("returns to awaitingVerification after a follow-up prompt completes", async () => {
-      let callCount = 0;
-      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
-        async () => {
-          callCount += 1;
-          if (callCount === 1) {
-            return successResult({
-              structuredOutput: {
-                hypotheses: [
-                  { id: "H1", description: "A", instrumentationPlan: "Log" },
-                  { id: "H2", description: "B", instrumentationPlan: "Log" },
-                  { id: "H3", description: "C", instrumentationPlan: "Log" },
-                ],
-                reproductionSteps: ["Step 1", "Step 2"],
-              },
-            });
+    function waitForContext(
+      actor: AnyActorRef,
+      pred: (context: Record<string, unknown>) => boolean,
+      timeoutMs = 3000,
+    ): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const contextOf = () =>
+          (actor.getSnapshot() as { context: Record<string, unknown> }).context;
+        const timer = setTimeout(
+          () => reject(new Error("Timed out waiting for context condition")),
+          timeoutMs,
+        );
+        if (pred(contextOf())) {
+          clearTimeout(timer);
+          resolve();
+          return;
+        }
+        const sub = actor.subscribe(() => {
+          if (pred(contextOf())) {
+            clearTimeout(timer);
+            sub.unsubscribe();
+            resolve();
           }
-          if (callCount === 2) {
-            return successResult({
-              structuredOutput: {
-                outcome: "fix_applied",
-                supportedHypotheses: ["H1"],
-                refutedHypotheses: [],
-                inconclusiveHypotheses: ["H2", "H3"],
-                evidenceSummary: "H1 confirmed.",
-                fixSummary: "Applied minimal fix.",
-                verificationSteps: ["Run failing test"],
-              },
-            });
-          }
-          return successResult();
-        },
-      );
-      const machine = makeTestMachine({ executePrompt });
-      const actor = createActor(machine, { input: defaultInput });
+        });
+      });
+    }
+
+    it("DEBUG_COMMAND enter moves idle to the debug state and initializes debugMode", () => {
+      const actor = createActor(makeTestMachine(), { input: defaultInput });
       activeActors.push(actor);
       actor.start();
 
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug this",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
+      enterDebug(actor);
 
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze evidence",
-        streamId: "s2",
+      expect(actor.getSnapshot().value).toBe("debug");
+      expect(actor.getSnapshot().context.debugMode).toMatchObject({
+        active: true,
+        recording: true,
+        logFilePath: "/tmp/logs.jsonl",
+        phase: "hypothesizing",
+        lastTurnFailed: false,
       });
-      await waitForState(actor, "awaitingVerification");
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "What about edge case?",
-        streamId: "s3",
-      });
-      await waitForState(actor, "awaitingVerification");
-
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingVerification",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_verification",
-      );
     });
 
-    it("exits to idle and clears debugMode after cleanup prompt completes", async () => {
-      let callCount = 0;
-      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
-        async () => {
-          callCount += 1;
-          if (callCount === 1) {
-            return successResult({
-              structuredOutput: {
-                hypotheses: [
-                  { id: "H1", description: "A", instrumentationPlan: "Log" },
-                  { id: "H2", description: "B", instrumentationPlan: "Log" },
-                  { id: "H3", description: "C", instrumentationPlan: "Log" },
-                ],
-                reproductionSteps: ["Step 1", "Step 2"],
-              },
-            });
-          }
-          if (callCount === 2) {
-            return successResult({
-              structuredOutput: {
-                outcome: "fix_applied",
-                supportedHypotheses: ["H1"],
-                refutedHypotheses: [],
-                inconclusiveHypotheses: ["H2", "H3"],
-                evidenceSummary: "H1 confirmed.",
-                fixSummary: "Applied minimal fix.",
-                verificationSteps: ["Run failing test"],
-              },
-            });
-          }
-          return successResult({
-            structuredOutput: {
-              removedInstrumentation: true,
-              filesModified: ["src/index.ts"],
-              grepVerificationPassed: true,
-              acknowledgesManifestDeletionContract: true,
-              notes: "Cleanup complete.",
-            },
-          });
-        },
+    it("DEBUG_COMMAND exit settles back to idle and resumes queue draining", () => {
+      const drainSpy = vi.fn();
+      const actor = createActor(
+        makeTestMachine({ drainPendingQueue: drainSpy }),
+        { input: defaultInput },
       );
-      const machine = makeTestMachine({ executePrompt });
-      const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
       actor.start();
+      expect(drainSpy).toHaveBeenCalledTimes(1);
 
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug this",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
+      enterDebug(actor);
+      expect(drainSpy).toHaveBeenCalledTimes(1);
 
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "cleanupInstrumentation",
-      });
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Clean up instrumentation",
-        streamId: "s3",
-      });
-      await waitForState(actor, "idle");
+      sendDebug(actor, { kind: "exit" });
 
       expect(actor.getSnapshot().value).toBe("idle");
       expect(actor.getSnapshot().context.debugMode).toBeNull();
+      expect(drainSpy).toHaveBeenCalledTimes(2);
     });
 
-    it("SUBMIT_PROMPT from every debug substate routes to acquiringResources via the lifted parent handler", async () => {
-      const phases = [
-        "hypothesizing",
-        "awaiting_reproduction",
-        "analyzing_evidence",
-        "awaiting_verification",
-        "cleanup_instrumentation",
-      ] as const;
+    it("snapshot.can() reflects the reducer legality table so the adapter's 409 contract holds", () => {
+      const actor = createActor(makeTestMachine(), { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
 
-      for (const phase of phases) {
-        const machine = makeTestMachine();
-        const actor = createActor(machine, {
-          input: {
-            ...defaultInput,
-            debugMode: {
-              active: true,
-              recording: true,
-              logFilePath: "/tmp/.debug/x.jsonl",
-              enteredAt: "2024-01-02T00:00:00Z",
-              hypotheses: [],
-              reproductionSteps: [],
-              instructionsDelivered: true,
-              phase,
-              fixSummary: null,
-              verificationSteps: [],
-              lastTurnFailed: false,
-            },
-          },
-        });
-        activeActors.push(actor);
-        actor.start();
+      const can = (command: Record<string, unknown>) =>
+        actor.getSnapshot().can({ type: "DEBUG_COMMAND", command } as never);
 
-        actor.send({
-          type: "SUBMIT_PROMPT",
-          promptText: "follow up",
-          streamId: `s-${phase}`,
-        });
-
-        expect(actor.getSnapshot().value).toBe("acquiringResources");
-        actor.stop();
-      }
-    });
-
-    it("SUBMIT_PROMPT from debug.error replaces the failed turn (lifted parent handler)", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: undefined,
-          error: "no schema match",
+      // Inactive: only enter is legal.
+      expect(can({ kind: "mark_reproduced" })).toBe(false);
+      expect(can({ kind: "exit" })).toBe(false);
+      expect(
+        can({
+          kind: "enter",
+          logFilePath: "/tmp/l.jsonl",
+          debugSessionId: "debug-session-can",
         }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
+      ).toBe(true);
 
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "error");
-      expect(actor.getSnapshot().value).toEqual({ debug: "error" });
+      enterDebug(actor);
 
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Try again with new context",
-        streamId: "s2",
-      });
-
-      expect(actor.getSnapshot().value).toBe("acquiringResources");
-    });
-
-    it("persists parsed hypotheses on context.debugMode after a hypothesizing turn", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            hypotheses: [
-              {
-                id: "H1",
-                description: "Token expiry",
-                instrumentationPlan: "Log token timestamps",
-              },
-              {
-                id: "H2",
-                description: "Race in dispatch",
-                instrumentationPlan: "Log dispatch order",
-              },
-              {
-                id: "H3",
-                description: "Stale cache",
-                instrumentationPlan: "Log cache hits",
-              },
-            ],
-            reproductionSteps: ["Step 1", "Step 2"],
-          },
+      // hypothesizing: phase marks for other phases are illegal; retry is
+      // illegal without a failed turn; re-enter is illegal while active.
+      expect(can({ kind: "mark_reproduced" })).toBe(false);
+      expect(can({ kind: "mark_fix_verified" })).toBe(false);
+      expect(can({ kind: "retry_turn" })).toBe(false);
+      expect(
+        can({
+          kind: "enter",
+          logFilePath: "/tmp/l.jsonl",
+          debugSessionId: "debug-session-can",
         }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Form hypotheses",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      const ctx = actor.getSnapshot().context;
-      expect(ctx.debugMode?.phase).toBe("awaiting_reproduction");
-      expect(ctx.debugMode?.hypotheses).toEqual([
-        {
-          id: "H1",
-          description: "Token expiry",
-          instrumentationPlan: "Log token timestamps",
-        },
-        {
-          id: "H2",
-          description: "Race in dispatch",
-          instrumentationPlan: "Log dispatch order",
-        },
-        {
-          id: "H3",
-          description: "Stale cache",
-          instrumentationPlan: "Log cache hits",
-        },
-      ]);
+      ).toBe(false);
+      expect(can({ kind: "set_recording", recording: false })).toBe(true);
+      expect(can({ kind: "exit" })).toBe(true);
     });
 
-    it("restores persisted hypotheses when the actor is recreated", () => {
-      const persistedHypotheses = [
-        { id: "H1", description: "A", instrumentationPlan: "Log A" },
-        { id: "H2", description: "B", instrumentationPlan: "Log B" },
-      ];
-      const machine = makeTestMachine();
-      const actor = createActor(machine, {
-        input: {
-          ...defaultInput,
-          debugMode: {
-            active: true,
-            recording: true,
-            logFilePath: "/tmp/.debug/logs.jsonl",
-            enteredAt: "2024-01-02T03:04:05Z",
-            hypotheses: persistedHypotheses,
-            reproductionSteps: [],
-            instructionsDelivered: true,
-            phase: "awaiting_reproduction",
-            fixSummary: null,
-            verificationSteps: [],
-            lastTurnFailed: false,
-          },
-        },
-      });
-      activeActors.push(actor);
-      actor.start();
-
-      const snap = actor.getSnapshot();
-      expect(snap.context.debugMode?.hypotheses).toEqual(persistedHypotheses);
-    });
-
-    it("routes cleanup turn to debug.error when verifyCleanup reports a failed gate", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeDebugFlowExecutePrompt({
-          removedInstrumentation: true,
-          filesModified: ["src/a.ts"],
-          grepVerificationPassed: true,
-          acknowledgesManifestDeletionContract: true,
-          notes: "done",
+    it("a debug turn runs the turn spine and finalizes back into the debug state with the phase advanced", async () => {
+      const actor = createActor(
+        makeTestMachine({
+          executePrompt: makeSequencedExecutePrompt([
+            { structuredOutput: HYPOTHESIS_PAYLOAD },
+          ]),
         }),
-        verifyCleanup: makeMockVerifyCleanup({
-          ok: false,
-          failedConditions: [],
-          missingFiles: ["src/b.ts"],
-          remediationPrompt:
-            "Cleanup verification failed. Re-open src/b.ts and remove probes.",
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
+        { input: defaultInput },
+      );
       activeActors.push(actor);
       actor.start();
+      enterDebug(actor);
 
       actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
         type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
+        promptText: "Investigate",
         streamId: "s1",
       });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-      await waitForState(actor, "cleanupInstrumentation");
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Cleanup",
-        streamId: "s3",
-      });
-
-      await waitForState(actor, "error");
-      const snap = actor.getSnapshot();
-      expect(snap.value).toEqual({ debug: "error" });
-      expect(snap.context.debugMode?.active).toBe(true);
-      expect(snap.context.debugMode?.phase).toBe("cleanup_instrumentation");
-      expect(snap.context.lastError).toContain("src/b.ts");
-    });
-
-    it("RETRY_DEBUG_TURN re-runs cleanup turn after a failed verifyingCleanup", async () => {
-      let verifyCallCount = 0;
-      const verifyCleanup = fromPromise<
-        VerifyCleanupOutput,
-        VerifyCleanupInput
-      >(async () => {
-        verifyCallCount += 1;
-        await new Promise((r) => setTimeout(r, 0));
-        if (verifyCallCount === 1) {
-          return {
-            ok: false,
-            failedConditions: [],
-            missingFiles: ["src/b.ts"],
-            remediationPrompt: "Re-open src/b.ts and remove probes.",
-          };
-        }
-        return {
-          ok: true,
-          failedConditions: [],
-          missingFiles: [],
-          remediationPrompt: null,
-        };
-      });
-
-      const machine = makeTestMachine({
-        executePrompt: makeDebugFlowExecutePrompt({
-          removedInstrumentation: true,
-          filesModified: ["src/a.ts"],
-          grepVerificationPassed: true,
-          acknowledgesManifestDeletionContract: true,
-          notes: "done",
-        }),
-        verifyCleanup,
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-      await waitForState(actor, "cleanupInstrumentation");
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Cleanup",
-        streamId: "s3",
-      });
-
-      await waitForState(actor, "error");
-      const errorActiveTurn = actor.getSnapshot().context.activeTurn;
-      expect(errorActiveTurn?.kind).toBe("conversation_turn");
-      if (errorActiveTurn?.kind === "conversation_turn") {
-        expect(errorActiveTurn.promptText).toBe("Cleanup");
-      }
-
-      actor.send({ type: "RETRY_DEBUG_TURN" });
-      await waitForState(actor, "idle");
-
-      expect(verifyCallCount).toBe(2);
-      expect(actor.getSnapshot().context.debugMode).toBeNull();
-    });
-
-    it("clears debugMode and exits to idle when verifyCleanup reports ok", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeDebugFlowExecutePrompt({
-          removedInstrumentation: true,
-          filesModified: ["src/a.ts"],
-          grepVerificationPassed: true,
-          acknowledgesManifestDeletionContract: true,
-          notes: "done",
-        }),
-        verifyCleanup: makeMockVerifyCleanup({ ok: true }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-      await waitForState(actor, "cleanupInstrumentation");
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Cleanup",
-        streamId: "s3",
-      });
-
-      await waitForState(actor, "idle");
-      const snap = actor.getSnapshot();
-      expect(snap.value).toBe("idle");
-      expect(snap.context.debugMode).toBeNull();
-    });
-
-    it("fires syncDerivedFields and persistSnapshot on MARK_REPRODUCED", async () => {
-      const spies = {
-        syncDerivedFields: vi.fn(),
-        persistSnapshot: vi.fn(),
-      };
-      const machine = conversationMachine.provide({
-        actors: {
-          prepareTurn: makeMockPrepareTurn(),
-          executePrompt: makeMockExecutePrompt({
-            structuredOutput: {
-              hypotheses: [
-                { id: "H1", description: "A", instrumentationPlan: "Log A" },
-                { id: "H2", description: "B", instrumentationPlan: "Log B" },
-                { id: "H3", description: "C", instrumentationPlan: "Log C" },
-              ],
-              reproductionSteps: ["Step 1"],
-            },
-          }),
-        },
-        actions: {
-          persistSnapshot: spies.persistSnapshot,
-          syncDerivedFields: spies.syncDerivedFields,
-          broadcastConversationStatus: () => {},
-          broadcastAskQuestion: () => {},
-          broadcastDebugModeStatus: () => {},
-          releaseResources: () => {},
-          dispatchPushNotification: () => {},
-        },
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      spies.syncDerivedFields.mockClear();
-      spies.persistSnapshot.mockClear();
-
-      actor.send({ type: "MARK_REPRODUCED" });
-
-      expect(spies.syncDerivedFields).toHaveBeenCalled();
-      expect(spies.persistSnapshot).toHaveBeenCalled();
-    });
-
-    it("fires syncDerivedFields and persistSnapshot on MARK_FIX_VERIFIED", async () => {
-      const spies = {
-        syncDerivedFields: vi.fn(),
-        persistSnapshot: vi.fn(),
-      };
-      const machine = conversationMachine.provide({
-        actors: {
-          prepareTurn: makeMockPrepareTurn(),
-          executePrompt: makeDebugFlowExecutePrompt({
-            removedInstrumentation: true,
-            filesModified: [],
-            grepVerificationPassed: true,
-            acknowledgesManifestDeletionContract: true,
-            notes: "",
-          }),
-        },
-        actions: {
-          persistSnapshot: spies.persistSnapshot,
-          syncDerivedFields: spies.syncDerivedFields,
-          broadcastConversationStatus: () => {},
-          broadcastAskQuestion: () => {},
-          broadcastDebugModeStatus: () => {},
-          releaseResources: () => {},
-          dispatchPushNotification: () => {},
-        },
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-
-      spies.syncDerivedFields.mockClear();
-      spies.persistSnapshot.mockClear();
-
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-
-      expect(spies.syncDerivedFields).toHaveBeenCalled();
-      expect(spies.persistSnapshot).toHaveBeenCalled();
-    });
-
-    it("loops back to debug.awaitingReproduction when evidence analysis recommends more_instrumentation", async () => {
-      let callCount = 0;
-      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
-        async () => {
-          await new Promise((r) => setTimeout(r, 0));
-          callCount++;
-          if (callCount === 1) {
-            return successResult({
-              structuredOutput: {
-                hypotheses: [
-                  {
-                    id: "H1",
-                    description: "A",
-                    instrumentationPlan: "Log",
-                  },
-                  {
-                    id: "H2",
-                    description: "B",
-                    instrumentationPlan: "Log",
-                  },
-                  {
-                    id: "H3",
-                    description: "C",
-                    instrumentationPlan: "Log",
-                  },
-                ],
-                reproductionSteps: ["Step 1", "Step 2"],
-              },
-            });
-          }
-          return successResult({
-            structuredOutput: {
-              outcome: "more_instrumentation",
-              supportedHypotheses: [],
-              refutedHypotheses: ["H1"],
-              inconclusiveHypotheses: ["H2", "H3"],
-              evidenceSummary: "Insufficient data",
-              hypotheses: [
-                {
-                  id: "H4",
-                  description: "Fresh idea",
-                  instrumentationPlan: "Log K",
-                },
-              ],
-              reproductionSteps: ["Open app", "Click again"],
-            },
-          });
-        },
+      await waitForContext(
+        actor,
+        (c) =>
+          (c.debugMode as { phase?: string } | null)?.phase ===
+          "awaiting_reproduction",
       );
 
-      const machine = makeTestMachine({ executePrompt });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug this",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      actor.send({ type: "MARK_REPRODUCED" });
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "analyzingEvidence",
-      });
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze logs",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingReproduction",
-      });
-      const ctx = actor.getSnapshot().context;
-      expect(ctx.debugMode?.phase).toBe("awaiting_reproduction");
-      expect(ctx.debugMode?.hypotheses).toEqual([
-        { id: "H4", description: "Fresh idea", instrumentationPlan: "Log K" },
-      ]);
-      expect(ctx.debugMode?.reproductionSteps).toEqual([
-        "Open app",
-        "Click again",
-      ]);
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("debug");
+      expect(snap.context.activeTurn).toBeNull();
+      expect(snap.context.promptCount).toBe(1);
+      expect(snap.context.status).toBe("awaiting");
+      expect(snap.context.totals.totalCostUsd).toBeCloseTo(0.01);
     });
 
-    it("runs full debug lifecycle: hypothesize → reproduce → analyze → fix → verify → cleanup", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            hypotheses: [
-              {
-                id: "H1",
-                description: "Race condition",
-                instrumentationPlan: "Add logs",
-              },
-              {
-                id: "H2",
-                description: "Null ref",
-                instrumentationPlan: "Add guards",
-              },
-              {
-                id: "H3",
-                description: "Stale cache",
-                instrumentationPlan: "Add timestamps",
-              },
-            ],
-            reproductionSteps: ["Open app", "Click button"],
-          },
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      // Enter debug
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
-      expect(actor.getSnapshot().value).toEqual({ debug: "hypothesizing" });
-
-      // Submit prompt for hypothesizing phase
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Debug this issue",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
-
-      // Mark reproduced → analyzing evidence
-      actor.send({ type: "MARK_REPRODUCED" });
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "analyzingEvidence",
-      });
-    });
-
-    it("wires the per-phase debug-schemas.ts outputFormat schema on every executePrompt invocation", async () => {
-      const capturedSchemas: Array<unknown> = [];
-      let callCount = 0;
-
+    it("a failed phase-advancing turn parks in debug with the turn preserved; retry_turn re-enters the spine", async () => {
+      const executedPrompts: string[] = [];
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
         async ({ input }) => {
-          capturedSchemas.push(input.outputFormat?.schema);
-          callCount += 1;
-          if (callCount === 1) {
-            return successResult({
-              structuredOutput: {
-                hypotheses: [
-                  { id: "H1", description: "A", instrumentationPlan: "Log" },
-                  { id: "H2", description: "B", instrumentationPlan: "Log" },
-                  { id: "H3", description: "C", instrumentationPlan: "Log" },
-                ],
-                reproductionSteps: ["Step 1", "Step 2"],
-              },
-            });
-          }
-          if (callCount === 2) {
-            return successResult({
-              structuredOutput: {
-                outcome: "fix_applied",
-                supportedHypotheses: ["H1"],
-                refutedHypotheses: [],
-                inconclusiveHypotheses: ["H2", "H3"],
-                evidenceSummary: "H1 is the cause.",
-                fixSummary: "Fixed H1.",
-                verificationSteps: ["Run test", "Inspect logs"],
-              },
-            });
-          }
-          return successResult({
-            structuredOutput: {
-              removedInstrumentation: true,
-              filesModified: ["src/index.ts"],
-              grepVerificationPassed: true,
-              acknowledgesManifestDeletionContract: true,
-              notes: "Cleanup complete.",
-            },
-          });
+          executedPrompts.push(input.promptText);
+          await new Promise((r) => setTimeout(r, 0));
+          return successResult(
+            executedPrompts.length === 1
+              ? { structuredOutput: undefined }
+              : { structuredOutput: HYPOTHESIS_PAYLOAD },
+          );
         },
       );
-
-      const machine = makeTestMachine({ executePrompt });
-      const actor = createActor(machine, { input: defaultInput });
+      const actor = createActor(makeTestMachine({ executePrompt }), {
+        input: defaultInput,
+      });
       activeActors.push(actor);
       actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/logs.jsonl",
-      });
+      enterDebug(actor);
 
       actor.send({
         type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
+        promptText: "Investigate",
         streamId: "s1",
       });
-      await waitForState(actor, "awaitingReproduction");
+      await waitForContext(
+        actor,
+        (c) =>
+          (c.debugMode as { lastTurnFailed?: boolean } | null)
+            ?.lastTurnFailed === true,
+      );
 
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze evidence",
-        streamId: "s2",
+      let snap = actor.getSnapshot();
+      expect(snap.value).toBe("debug");
+      expect(snap.context.debugMode?.phase).toBe("hypothesizing");
+      expect(snap.context.activeTurn).toMatchObject({
+        promptText: "Investigate",
       });
-      await waitForState(actor, "awaitingVerification");
+      expect(snap.context.lastError).toBe(
+        "Turn did not produce a valid structured response",
+      );
+      // With a failed turn preserved, retry becomes legal.
+      expect(
+        actor
+          .getSnapshot()
+          .can({ type: "DEBUG_COMMAND", command: { kind: "retry_turn" } }),
+      ).toBe(true);
 
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-      await waitForState(actor, "cleanupInstrumentation");
+      sendDebug(actor, { kind: "retry_turn" });
+      await waitForContext(
+        actor,
+        (c) =>
+          (c.debugMode as { phase?: string } | null)?.phase ===
+          "awaiting_reproduction",
+      );
+
+      snap = actor.getSnapshot();
+      expect(executedPrompts).toEqual(["Investigate", "Investigate"]);
+      expect(snap.context.debugMode?.lastTurnFailed).toBe(false);
+    });
+
+    it("cleanup verification success exits debug mode through the async DEBUG_COMMAND round-trip", async () => {
+      const actor = createActor(
+        makeTestMachine({
+          executePrompt: makeSequencedExecutePrompt([
+            { structuredOutput: CLEANUP_PAYLOAD },
+          ]),
+        }),
+        { input: CLEANUP_PHASE_INPUT },
+      );
+      activeActors.push(actor);
+      actor.start();
+      expect(actor.getSnapshot().value).toBe("debug");
+
       actor.send({
         type: "SUBMIT_PROMPT",
-        promptText: "Cleanup",
-        streamId: "s3",
+        promptText: "Clean up",
+        streamId: "s1",
       });
       await waitForState(actor, "idle");
 
-      expect(capturedSchemas).toHaveLength(3);
-      expect(capturedSchemas[0]).toBe(debugHypothesisOutputSchema);
-      expect(capturedSchemas[1]).toBe(debugEvidenceAnalysisOutputSchema);
-      expect(capturedSchemas[2]).toBe(debugCleanupResultSchema);
+      const snap = actor.getSnapshot();
+      expect(snap.context.debugMode).toBeNull();
+      expect(snap.context.activeTurn).toBeNull();
+      expect(snap.context.status).toBe("awaiting");
     });
 
-    it("restores active debugMode from input into the matching debug substate", () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, {
-        input: {
-          ...defaultInput,
-          debugMode: {
-            active: true,
-            recording: true,
-            logFilePath: "/tmp/.debug/restored.jsonl",
-            enteredAt: "2024-01-02T03:04:05Z",
-            hypotheses: [
-              { id: "H1", description: "Hypothesis from prior session" },
-            ],
-            reproductionSteps: [],
-            instructionsDelivered: true,
-            phase: "awaiting_reproduction",
-            fixSummary: null,
-            verificationSteps: [],
-            lastTurnFailed: false,
-          },
-        },
-      });
+    it("cleanup verification failure parks the failed cleanup turn with the remediation prompt", async () => {
+      const actor = createActor(
+        makeTestMachine({
+          executePrompt: makeSequencedExecutePrompt([
+            { structuredOutput: CLEANUP_PAYLOAD },
+          ]),
+          verifyCleanup: async () => ({
+            ok: false,
+            failedConditions: ["grepVerificationPassed"],
+            missingFiles: [],
+            remediationPrompt: "Probe P1 still present in src/a.ts",
+          }),
+        }),
+        { input: CLEANUP_PHASE_INPUT },
+      );
       activeActors.push(actor);
       actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Clean up",
+        streamId: "s1",
+      });
+      await waitForContext(
+        actor,
+        (c) =>
+          (c.debugMode as { lastTurnFailed?: boolean } | null)
+            ?.lastTurnFailed === true,
+      );
 
       const snap = actor.getSnapshot();
-      expect(snap.value).toEqual({ debug: "awaitingReproduction" });
-      expect(snap.context.debugMode?.active).toBe(true);
-      expect(snap.context.debugMode?.recording).toBe(true);
-      expect(snap.context.debugMode?.phase).toBe("awaiting_reproduction");
-      expect(snap.context.debugMode?.logFilePath).toBe(
-        "/tmp/.debug/restored.jsonl",
-      );
-      expect(snap.context.debugMode?.hypotheses).toEqual([
-        { id: "H1", description: "Hypothesis from prior session" },
-      ]);
-      expect(snap.context.debugMode?.instructionsDelivered).toBe(true);
+      expect(snap.value).toBe("debug");
+      expect(snap.context.debugMode).toMatchObject({
+        active: true,
+        phase: "cleanup_instrumentation",
+        lastTurnFailed: true,
+      });
+      expect(snap.context.lastError).toBe("Probe P1 still present in src/a.ts");
+      // The cleanup turn is preserved for retry_turn.
+      expect(snap.context.activeTurn).toMatchObject({
+        promptText: "Clean up",
+      });
     });
 
-    it("restores debug input across all phases to the right substate", () => {
-      const cases: Array<{
-        phase:
-          | "hypothesizing"
-          | "awaiting_reproduction"
-          | "analyzing_evidence"
-          | "awaiting_verification"
-          | "cleanup_instrumentation";
-        substate: string;
-      }> = [
-        { phase: "hypothesizing", substate: "hypothesizing" },
-        { phase: "awaiting_reproduction", substate: "awaitingReproduction" },
-        { phase: "analyzing_evidence", substate: "analyzingEvidence" },
-        { phase: "awaiting_verification", substate: "awaitingVerification" },
-        {
-          phase: "cleanup_instrumentation",
-          substate: "cleanupInstrumentation",
-        },
-      ];
-
-      for (const { phase, substate } of cases) {
-        const machine = makeTestMachine();
-        const actor = createActor(machine, {
-          input: {
-            ...defaultInput,
-            debugMode: {
-              active: true,
-              recording: false,
-              logFilePath: "/tmp/.debug/x.jsonl",
-              enteredAt: "2024-01-02T00:00:00Z",
-              hypotheses: [],
-              reproductionSteps: [],
-              instructionsDelivered: false,
-              phase,
-              fixSummary: null,
-              verificationSteps: [],
-              lastTurnFailed: false,
-            },
-          },
-        });
-        activeActors.push(actor);
-        actor.start();
-        expect(actor.getSnapshot().value).toEqual({ debug: substate });
-      }
-    });
-
-    it("REVERT_TO_AWAITING_REPRODUCTION rolls phase back from analyzingEvidence", async () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, { input: defaultInput });
+    it("restores active debugMode from input directly into the debug state", () => {
+      const actor = createActor(makeTestMachine(), {
+        input: CLEANUP_PHASE_INPUT,
+      });
       activeActors.push(actor);
       actor.start();
 
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      actor.send({ type: "MARK_REPRODUCED" });
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "analyzingEvidence",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "analyzing_evidence",
-      );
-
-      actor.send({ type: "REVERT_TO_AWAITING_REPRODUCTION" });
-
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingReproduction",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
-    });
-
-    it("REVERT_TO_AWAITING_VERIFICATION rolls phase back from cleanupInstrumentation", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeDebugFlowExecutePrompt({
-          removedInstrumentation: true,
-          filesModified: [],
-          grepVerificationPassed: true,
-          acknowledgesManifestDeletionContract: true,
-          notes: "",
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-
-      actor.send({ type: "MARK_FIX_VERIFIED" });
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "cleanupInstrumentation",
-      });
+      expect(actor.getSnapshot().value).toBe("debug");
       expect(actor.getSnapshot().context.debugMode?.phase).toBe(
         "cleanup_instrumentation",
       );
-
-      actor.send({ type: "REVERT_TO_AWAITING_VERIFICATION" });
-
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingVerification",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_verification",
-      );
     });
 
-    it("MARK_FIX_FAILED transitions awaitingVerification → hypothesizing and preserves fixSummary", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeDebugFlowExecutePrompt({
-          removedInstrumentation: true,
-          filesModified: [],
-          grepVerificationPassed: true,
-          acknowledgesManifestDeletionContract: true,
-          notes: "",
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-
-      // The analyzingEvidence outcome=fix_applied turn must have set fixSummary.
-      expect(actor.getSnapshot().context.debugMode?.fixSummary).toBe(
-        "Applied minimal fix.",
-      );
-
-      actor.send({ type: "MARK_FIX_FAILED" });
-
-      const snap = actor.getSnapshot();
-      expect(snap.value).toEqual({ debug: "hypothesizing" });
-      expect(snap.context.debugMode?.phase).toBe("hypothesizing");
-      // fixSummary stays accessible for the agent's recap prompt.
-      expect(snap.context.debugMode?.fixSummary).toBe("Applied minimal fix.");
-    });
-
-    it("REVERT_TO_AWAITING_VERIFICATION rolls phase back from hypothesizing after MARK_FIX_FAILED (Strategy B rollback)", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeDebugFlowExecutePrompt({
-          removedInstrumentation: true,
-          filesModified: [],
-          grepVerificationPassed: true,
-          acknowledgesManifestDeletionContract: true,
-          notes: "",
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-      actor.send({ type: "MARK_REPRODUCED" });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Analyze",
-        streamId: "s2",
-      });
-      await waitForState(actor, "awaitingVerification");
-
-      // User clicks "Fix Failed" — phase advances to hypothesizing.
-      actor.send({ type: "MARK_FIX_FAILED" });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "hypothesizing",
-      );
-
-      // Re-hypothesize prompt-send fails. Client rolls back.
-      actor.send({ type: "REVERT_TO_AWAITING_VERIFICATION" });
-
-      // Conversation MUST be back in awaiting_verification so the user can retry.
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingVerification",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_verification",
-      );
-    });
-
-    it("a failed prompt send after MARK_REPRODUCED + REVERT leaves the conversation in awaiting_reproduction (no advance)", async () => {
-      // Simulates the Strategy B atomic flow: phase advances, prompt send
-      // fails (no SUBMIT_PROMPT reaches the actor), client dispatches
-      // REVERT_TO_AWAITING_REPRODUCTION. Persisted phase MUST be
-      // awaiting_reproduction — i.e. the same as before the user clicked.
-      const machine = makeTestMachine();
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      // Click "Mark Reproduced" — phase advances
-      actor.send({ type: "MARK_REPRODUCED" });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "analyzing_evidence",
-      );
-
-      // Prompt-send fails (e.g. POST /prompt returns 500). Client rolls back.
-      actor.send({ type: "REVERT_TO_AWAITING_REPRODUCTION" });
-
-      // The conversation MUST be back in awaiting_reproduction so the user
-      // can retry — not stranded in analyzing_evidence with no prompt.
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "awaitingReproduction",
-      });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
-    });
-
-    it("advances phase when hypothesizing turn returns valid structuredOutput", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            hypotheses: [
-              { id: "H1", description: "A", instrumentationPlan: "Log A" },
-              { id: "H2", description: "B", instrumentationPlan: "Log B" },
-              { id: "H3", description: "C", instrumentationPlan: "Log C" },
-            ],
-            reproductionSteps: ["Step 1", "Step 2"],
-          },
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "awaitingReproduction");
-
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
-      expect(actor.getSnapshot().context.debugMode?.instructionsDelivered).toBe(
-        true,
-      );
-    });
-
-    it("routes to debug.error when a hypothesizing turn errors out", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          error: "SDK exhausted structured output retries",
-          structuredOutput: undefined,
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "error");
-
-      const snap = actor.getSnapshot();
-      expect(snap.value).toEqual({ debug: "error" });
-      // Phase preserved at the failed phase, not advanced.
-      expect(snap.context.debugMode?.phase).toBe("hypothesizing");
-      // instructionsDelivered MUST stay false on failure.
-      expect(snap.context.debugMode?.instructionsDelivered).toBe(false);
-      expect(snap.context.lastError).toContain("SDK exhausted");
-    });
-
-    it("routes to debug.error when an analyzing-evidence turn returns null structuredOutput (Codex parity case)", async () => {
-      const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          // Backend that supports outputFormat but produced no valid JSON —
-          // mirrors the Codex JSON.parse-failure path documented in the
-          // codex-output-format-parity audit.
-          structuredOutput: undefined,
-          error: null,
-        }),
-      });
-      const actor = createActor(machine, {
-        input: {
-          ...defaultInput,
-          debugMode: {
-            active: true,
-            recording: false,
-            logFilePath: "/tmp/.debug/x.jsonl",
-            enteredAt: "2024-01-02T00:00:00Z",
-            hypotheses: [],
-            reproductionSteps: [],
-            instructionsDelivered: true,
-            phase: "analyzing_evidence",
-            fixSummary: null,
-            verificationSteps: [],
-            lastTurnFailed: false,
+    it("mints and persists a generation for active legacy debug state before cleanup", async () => {
+      const persistSnapshot = vi.fn();
+      const syncDerivedFields = vi.fn();
+      const legacyDebugMode = { ...CLEANUP_PHASE_INPUT.debugMode! };
+      delete legacyDebugMode.debugSessionId;
+      const actor = createActor(
+        makeTestMachine({ persistSnapshot, syncDerivedFields }),
+        {
+          input: {
+            ...CLEANUP_PHASE_INPUT,
+            debugMode: legacyDebugMode,
           },
         },
-      });
+      );
       activeActors.push(actor);
       actor.start();
+
+      expect(actor.getSnapshot().value).toBe("debug");
+      expect(actor.getSnapshot().context.debugMode?.debugSessionId).toEqual(
+        expect.any(String),
+      );
+      expect(syncDerivedFields).toHaveBeenCalledTimes(1);
+      expect(persistSnapshot).toHaveBeenCalledTimes(1);
 
       actor.send({
         type: "SUBMIT_PROMPT",
-        promptText: "Analyze evidence",
-        streamId: "s1",
+        promptText: "Clean up after upgrade",
+        streamId: "s-legacy",
       });
-      await waitForState(actor, "error");
-
-      const snap = actor.getSnapshot();
-      expect(snap.value).toEqual({ debug: "error" });
-      expect(snap.context.debugMode?.phase).toBe("analyzing_evidence");
-    });
-
-    it("RETRY_DEBUG_TURN from debug.error re-runs the failed prompt against the same phase", async () => {
-      let callCount = 0;
-      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
-        async () => {
-          callCount += 1;
-          if (callCount === 1) {
-            return successResult({
-              error: "schema validation failed",
-              structuredOutput: undefined,
-            });
-          }
-          return successResult({
-            structuredOutput: {
-              hypotheses: [
-                { id: "H1", description: "A", instrumentationPlan: "Log" },
-                { id: "H2", description: "B", instrumentationPlan: "Log" },
-                { id: "H3", description: "C", instrumentationPlan: "Log" },
-              ],
-              reproductionSteps: ["Step 1", "Step 2"],
-            },
-          });
-        },
-      );
-
-      const machine = makeTestMachine({ executePrompt });
-      const actor = createActor(machine, { input: defaultInput });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "ENTER_DEBUG_MODE",
-        logFilePath: "/tmp/.debug/x.jsonl",
-      });
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hypothesize",
-        streamId: "s1",
-      });
-      await waitForState(actor, "error");
-
-      // The activeTurn must have been preserved so RETRY can re-run it.
-      const retryActiveTurn = actor.getSnapshot().context.activeTurn;
-      expect(retryActiveTurn?.kind).toBe("conversation_turn");
-      if (retryActiveTurn?.kind === "conversation_turn") {
-        expect(retryActiveTurn.promptText).toBe("Hypothesize");
-      }
-
-      actor.send({ type: "RETRY_DEBUG_TURN" });
-      await waitForState(actor, "awaitingReproduction");
-
-      expect(callCount).toBe(2);
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
-    });
-
-    it("restores into debug.error when input.debugMode.lastTurnFailed is true", () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, {
-        input: {
-          ...defaultInput,
-          debugMode: {
-            active: true,
-            recording: true,
-            logFilePath: "/tmp/.debug/old.jsonl",
-            enteredAt: "2024-01-02T00:00:00Z",
-            hypotheses: [],
-            reproductionSteps: [],
-            instructionsDelivered: true,
-            phase: "analyzing_evidence",
-            fixSummary: null,
-            verificationSteps: [],
-            lastTurnFailed: true,
-          },
-        },
-      });
-      activeActors.push(actor);
-      actor.start();
-      expect(actor.getSnapshot().value).toEqual({ debug: "error" });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "analyzing_evidence",
-      );
+      await waitForState(actor, "idle");
+      expect(actor.getSnapshot().context.debugMode).toBeNull();
     });
 
     it("ignores input.debugMode when active is false", () => {
-      const machine = makeTestMachine();
-      const actor = createActor(machine, {
+      const actor = createActor(makeTestMachine(), {
         input: {
-          ...defaultInput,
+          ...CLEANUP_PHASE_INPUT,
           debugMode: {
+            ...CLEANUP_PHASE_INPUT.debugMode!,
             active: false,
-            recording: false,
-            logFilePath: "/tmp/.debug/old.jsonl",
-            enteredAt: "2024-01-02T00:00:00Z",
-            hypotheses: [],
-            reproductionSteps: [],
-            instructionsDelivered: false,
-            phase: "hypothesizing",
-            fixSummary: null,
-            verificationSteps: [],
-            lastTurnFailed: false,
           },
         },
       });
       activeActors.push(actor);
       actor.start();
+
       expect(actor.getSnapshot().value).toBe("idle");
       expect(actor.getSnapshot().context.debugMode).toBeNull();
+    });
+
+    it("ignores SUBMIT_TASK_RUN and EXTERNAL_TURN_STARTED while in debug", () => {
+      const actor = createActor(makeTestMachine(), { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+      enterDebug(actor);
+
+      actor.send({ type: "SUBMIT_TASK_RUN", promptText: "run task" });
+      expect(actor.getSnapshot().value).toBe("debug");
+      expect(actor.getSnapshot().context.activeTurn).toBeNull();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      expect(actor.getSnapshot().value).toBe("debug");
     });
   });
 
@@ -2488,7 +1460,7 @@ describe("conversationMachine", () => {
           costUsd: 0.03,
           durationMs: 750,
           numTurns: 1,
-          backendRef: { backend: "claude" as const, sessionId: "sess-ext" },
+          backendRef: { backend: "claude" as const, ref: "sess-ext" },
         }),
       });
 
@@ -2503,7 +1475,7 @@ describe("conversationMachine", () => {
       expect(snap.context.totals.totalTurns).toBe(1);
       expect(snap.context.backendRef).toEqual({
         backend: "claude",
-        sessionId: "sess-ext",
+        ref: "sess-ext",
       });
       expect(snap.context.lastResult).toBeTruthy();
     });

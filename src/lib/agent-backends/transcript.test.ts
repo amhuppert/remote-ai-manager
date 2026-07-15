@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { toRawTranscriptEntries } from "./transcript";
+import {
+  conversationTranscriptFrame,
+  toRawTranscriptEntries,
+} from "./transcript";
 
 describe("toRawTranscriptEntries", () => {
   it("wraps each codex item in a lossless envelope, preserving order and raw payload", () => {
@@ -56,5 +59,78 @@ describe("toRawTranscriptEntries", () => {
     ]);
     expect(entries[0]!.raw).toBe(items[0]);
     expect(entries[3]!.raw).toBeNull();
+  });
+});
+
+describe("conversationTranscriptFrame", () => {
+  it("returns a frame-shaped payload as the SAME object (byte-exact passthrough)", () => {
+    const frame = {
+      timestamp: "2026-07-12T10:00:00.000Z",
+      type: "assistant",
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "hello" }],
+      uuid: "u1",
+      raw: { anything: true },
+    };
+
+    const resolved = conversationTranscriptFrame({
+      seq: 0,
+      backend: "claude",
+      type: "assistant",
+      raw: frame,
+    });
+
+    expect(resolved).toBe(frame);
+  });
+
+  it("accepts a minimal forensic frame ({timestamp, type, raw})", () => {
+    const frame = {
+      timestamp: "2026-07-12T10:00:00.000Z",
+      type: "result",
+      raw: { type: "result", subtype: "success" },
+    };
+
+    expect(
+      conversationTranscriptFrame({
+        seq: 3,
+        backend: "claude",
+        type: "result",
+        raw: frame,
+      }),
+    ).toBe(frame);
+  });
+
+  it("wraps a non-frame payload generically, keeping the payload untouched", () => {
+    const alien = { type: "testfake_frame", marker: "m-1" };
+
+    const resolved = conversationTranscriptFrame({
+      seq: 0,
+      backend: "codex",
+      type: "testfake_frame",
+      raw: alien,
+    });
+
+    expect(resolved.type).toBe("testfake_frame");
+    expect(typeof resolved.timestamp).toBe("string");
+    expect(resolved.raw).toBe(alien);
+  });
+
+  it("rejects a payload whose content blocks are malformed (falls back to the generic wrap)", () => {
+    const invalid = {
+      timestamp: "2026-07-12T10:00:00.000Z",
+      type: "assistant",
+      role: "assistant",
+      content: [{ bogus: true }],
+    };
+
+    const resolved = conversationTranscriptFrame({
+      seq: 0,
+      backend: "claude",
+      type: "assistant",
+      raw: invalid,
+    });
+
+    expect(resolved).not.toBe(invalid);
+    expect(resolved.raw).toBe(invalid);
   });
 });

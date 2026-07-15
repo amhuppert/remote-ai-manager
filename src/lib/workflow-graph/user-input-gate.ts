@@ -1,15 +1,16 @@
 import { createLogger } from "@/lib/logging";
+import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
 import type {
   AskQuestionAnswer,
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
-  GraphWorkflowExecutionEvent,
   GraphWorkflowLaneKind,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("workflow-graph.user-input-gate");
 
@@ -333,7 +334,9 @@ export function createUserInputGateService(
         }
 
         requestedAt = sameBatch ? existing.requestedAt : deps.now();
-        contextState.status = "awaiting_user_input";
+        transitionContextStatus(draft, input.contextId, "awaiting_user_input", {
+          reason: "user_input_gate.enter_awaiting_user_input",
+        });
         contextState.pendingUserInput = {
           conversationId: input.conversationId,
           lane: input.lane,
@@ -506,7 +509,9 @@ export function createUserInputGateService(
         };
         contextState.pendingUserInput = null;
         if (contextState.status === "awaiting_user_input") {
-          contextState.status = "running";
+          transitionContextStatus(draft, input.contextId, "running", {
+            reason: "user_input_gate.consume_answers",
+          });
         }
         return draft;
       },
@@ -551,7 +556,9 @@ export function createUserInputGateService(
           });
           contextState.pendingUserInput = null;
           if (contextState.status === "awaiting_user_input") {
-            contextState.status = "running";
+            transitionContextStatus(draft, contextId, "running", {
+              reason: "user_input_gate.withdraw_all",
+            });
           }
         }
         return draft;

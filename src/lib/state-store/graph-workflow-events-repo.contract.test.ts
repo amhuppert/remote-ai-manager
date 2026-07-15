@@ -19,7 +19,7 @@ import { createSessionsRepo } from "./sessions-repo";
 import {
   graphWorkflowExecutionEventSchema,
   type GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
@@ -132,7 +132,13 @@ describe("graph-workflow-events-repo append + read", () => {
   });
 
   it("appendMany with an empty array is a no-op", () => {
-    repo.appendMany(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, "2026-01-01Z", []);
+    repo.appendMany(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      "2026-01-01Z",
+      [],
+    );
     expect(repo.findByExecution(EXECUTION_ID)).toEqual([]);
   });
 
@@ -219,11 +225,13 @@ describe("graph-workflow-events-repo markPreReset", () => {
 
     const out = repo.findByExecution(EXECUTION_ID);
     const ctx1 = out.filter(
-      (e) => e.event.type === "graph-workflow-context-status" &&
+      (e) =>
+        e.event.type === "graph-workflow-context-status" &&
         e.event.contextId === "ctx-1",
     );
     const ctx2 = out.filter(
-      (e) => e.event.type === "graph-workflow-context-status" &&
+      (e) =>
+        e.event.type === "graph-workflow-context-status" &&
         e.event.contextId === "ctx-2",
     );
     expect(ctx1.every((e) => e.preReset)).toBe(true);

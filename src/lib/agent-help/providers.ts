@@ -15,7 +15,7 @@
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "@/lib/workflow-graph/constants";
 import type { DevServerStatusItem } from "@/lib/dev-server/service";
 import type { ArtifactKind } from "@/lib/context-artifacts/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 import type { HelpContextBlock } from "./schemas";
 

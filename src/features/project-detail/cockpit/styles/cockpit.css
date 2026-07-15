@@ -33,8 +33,6 @@
   position: fixed;
   inset: var(--topbar-height) 0 0 0;
   z-index: 90;
-  display: flex;
-  justify-content: flex-end;
   background: rgba(0, 0, 0, 0.5);
   animation: plc-diff-scrim-in 0.2s ease;
 }
@@ -44,9 +42,13 @@
   }
 }
 .plc-diff-slideover {
+  position: fixed;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  z-index: 90;
   width: clamp(480px, 56vw, 780px);
   max-width: 100%;
-  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);

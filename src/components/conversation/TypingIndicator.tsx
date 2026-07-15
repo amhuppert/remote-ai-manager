@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { cn } from "@/lib/ui/cn";
 import { messageRoleClass } from "@/components/conversation/MessageRow";
+import { backendLabel, backendToneToken } from "@/lib/agent-backends/catalog";
 import { useOptimisticMessagesFor } from "@/stores/session-detail.store";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 interface TypingIndicatorProps {
@@ -36,8 +37,8 @@ function TypingIndicator({
   const optimisticMessages = useOptimisticMessagesFor(conversationId);
   if (!visible) return null;
 
-  const isCodex = selectedBackend === "codex";
-  const dotColor = isCodex ? "bg-violet" : "bg-cyan";
+  const isVioletTone = backendToneToken(selectedBackend) === "violet";
+  const dotColor = isVioletTone ? "bg-violet" : "bg-cyan";
   const dots = (
     <div className="flex items-center gap-[4px] py-[4px]">
       <span className={cn(dotClass, dotColor)} />
@@ -65,9 +66,12 @@ function TypingIndicator({
       data-backend={selectedBackend}
     >
       <div
-        className={cn(messageRoleClass, isCodex ? "text-violet" : "text-cyan")}
+        className={cn(
+          messageRoleClass,
+          isVioletTone ? "text-violet" : "text-cyan",
+        )}
       >
-        {isCodex ? "Codex" : "Claude"}
+        {backendLabel(selectedBackend)}
       </div>
       <div className="message-content">{dots}</div>
     </div>

@@ -14,14 +14,6 @@ function makeMockRuntime(
   return {
     backend: "claude",
     status: "alive",
-    capabilities: {
-      queueWhileRunning: true,
-      askUserQuestion: true,
-      preciseFork: true,
-      portableMcpAtStart: true,
-      portableMcpBetweenTurns: true,
-      contextWindowMetrics: true,
-    },
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,

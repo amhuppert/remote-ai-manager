@@ -1,11 +1,8 @@
-import {
-  useMutation,
-  useQueryClient,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import {
   sessionStateSchema,
   bulkSessionsResponseSchema,
@@ -17,117 +14,42 @@ import {
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { invalidateTicketSessionLifecycle } from "@/lib/tickets/cache-lifecycle";
 
-interface SessionCachesSnapshot {
-  previousSessions: SessionListItem[] | undefined;
-  previousActive: ActiveConversationsResponse | undefined;
+function withSessionsArchived(
+  sessions: SessionListItem[] | undefined,
+  sessionNames: ReadonlySet<string>,
+  archived: boolean,
+): SessionListItem[] | undefined {
+  return sessions?.map((s) =>
+    sessionNames.has(s.sessionName) ? { ...s, archived } : s,
+  );
 }
 
-async function cancelSessionCaches(
-  client: QueryClient,
-  projectName: string,
-): Promise<void> {
-  await client.cancelQueries({ queryKey: sessionKeys.list(projectName) });
-  await client.cancelQueries({ queryKey: conversationKeys.active() });
+function withoutSessions(
+  sessions: SessionListItem[] | undefined,
+  sessionNames: ReadonlySet<string>,
+): SessionListItem[] | undefined {
+  return sessions?.filter((s) => !sessionNames.has(s.sessionName));
 }
 
-function snapshotSessionCaches(
-  client: QueryClient,
+function withoutSessionsActiveConversations(
+  active: ActiveConversationsResponse | undefined,
   projectName: string,
-): SessionCachesSnapshot {
+  sessionNames: ReadonlySet<string>,
+): ActiveConversationsResponse | undefined {
+  if (active === undefined) return undefined;
   return {
-    previousSessions: client.getQueryData<SessionListItem[]>(
-      sessionKeys.list(projectName),
-    ),
-    previousActive: client.getQueryData<ActiveConversationsResponse>(
-      conversationKeys.active(),
+    ...active,
+    conversations: active.conversations.filter(
+      (c) =>
+        !(
+          c.scope === "session" &&
+          c.projectName === projectName &&
+          sessionNames.has(c.sessionName)
+        ),
     ),
   };
 }
 
-function rollbackSessionCaches(
-  client: QueryClient,
-  projectName: string,
-  snapshot: SessionCachesSnapshot | undefined,
-): void {
-  if (snapshot === undefined) return;
-  if (snapshot.previousSessions !== undefined) {
-    client.setQueryData(
-      sessionKeys.list(projectName),
-      snapshot.previousSessions,
-    );
-  }
-  if (snapshot.previousActive !== undefined) {
-    client.setQueryData(conversationKeys.active(), snapshot.previousActive);
-  }
-}
-
-function invalidateSessionCaches(
-  client: QueryClient,
-  projectName: string,
-): void {
-  void client.invalidateQueries({ queryKey: sessionKeys.list(projectName) });
-  void client.invalidateQueries({ queryKey: conversationKeys.active() });
-}
-
-function setSessionsArchived(
-  client: QueryClient,
-  projectName: string,
-  sessionNames: ReadonlySet<string>,
-  archived: boolean,
-): void {
-  client.setQueryData<SessionListItem[]>(sessionKeys.list(projectName), (old) =>
-    old?.map((s) => (sessionNames.has(s.sessionName) ? { ...s, archived } : s)),
-  );
-}
-
-function removeSessionsFromList(
-  client: QueryClient,
-  projectName: string,
-  sessionNames: ReadonlySet<string>,
-): void {
-  client.setQueryData<SessionListItem[]>(sessionKeys.list(projectName), (old) =>
-    old?.filter((s) => !sessionNames.has(s.sessionName)),
-  );
-}
-
-function removeSessionsActiveConversations(
-  client: QueryClient,
-  projectName: string,
-  sessionNames: ReadonlySet<string>,
-): void {
-  client.setQueryData<ActiveConversationsResponse>(
-    conversationKeys.active(),
-    (old) =>
-      old === undefined
-        ? old
-        : {
-            ...old,
-            conversations: old.conversations.filter(
-              (c) =>
-                !(
-                  c.scope === "session" &&
-                  c.projectName === projectName &&
-                  sessionNames.has(c.sessionName)
-                ),
-            ),
-          },
-  );
-}
-
-function applyArchiveSessionOptimistic(
-  client: QueryClient,
-  projectName: string,
-  sessionName: string,
-  archived: boolean,
-): SessionCachesSnapshot {
-  const snapshot = snapshotSessionCaches(client, projectName);
-  const sessionNames = new Set([sessionName]);
-  setSessionsArchived(client, projectName, sessionNames, archived);
-  if (archived) {
-    removeSessionsActiveConversations(client, projectName, sessionNames);
-  }
-  return snapshot;
-}
 export function useCreateSessionMutation(projectName: string) {
   const queryClient = useQueryClient();
 
@@ -162,29 +84,37 @@ export function useCreateSessionMutation(projectName: string) {
 export function useDeleteSessionMutation(projectName: string) {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (sessionName: string) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(sessionName)}`,
-        "delete-session",
-        { method: "DELETE" },
-      ),
-    onMutate: async (sessionName) => {
-      await cancelSessionCaches(queryClient, projectName);
-      const snapshot = snapshotSessionCaches(queryClient, projectName);
-      const sessionNames = new Set([sessionName]);
-      removeSessionsFromList(queryClient, projectName, sessionNames);
-      removeSessionsActiveConversations(queryClient, projectName, sessionNames);
-      return snapshot;
-    },
-    onError: (_err, _vars, context) => {
-      rollbackSessionCaches(queryClient, projectName, context);
-    },
-    onSettled: (_data, _err, sessionName) => {
-      invalidateSessionCaches(queryClient, projectName);
-      invalidateTicketSessionLifecycle(queryClient, projectName, [sessionName]);
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (sessionName: string) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(sessionName)}`,
+          "delete-session",
+          { method: "DELETE" },
+        ),
+      updates: [
+        cacheUpdate<string, SessionListItem[]>({
+          key: () => sessionKeys.list(projectName),
+          update: (old, sessionName) =>
+            withoutSessions(old, new Set([sessionName])),
+        }),
+        cacheUpdate<string, ActiveConversationsResponse>({
+          key: () => conversationKeys.active(),
+          update: (old, sessionName) =>
+            withoutSessionsActiveConversations(
+              old,
+              projectName,
+              new Set([sessionName]),
+            ),
+        }),
+      ],
+      onSettled: (sessionName) => {
+        invalidateTicketSessionLifecycle(queryClient, projectName, [
+          sessionName,
+        ]);
+      },
+    }),
+  );
 }
 
 export function useArchiveSessionMutation(
@@ -193,130 +123,117 @@ export function useArchiveSessionMutation(
 ) {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (archived: boolean) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
-        "archive-session",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ archived }),
-        },
-      ),
-    onMutate: async (archived) => {
-      await cancelSessionCaches(queryClient, projectName);
-      return applyArchiveSessionOptimistic(
-        queryClient,
-        projectName,
-        sessionName,
-        archived,
-      );
-    },
-    onError: (_err, _vars, context) => {
-      rollbackSessionCaches(queryClient, projectName, context);
-    },
-    onSettled: () => {
-      invalidateSessionCaches(queryClient, projectName);
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (archived: boolean) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
+          "archive-session",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archived }),
+          },
+        ),
+      updates: [
+        cacheUpdate<boolean, SessionListItem[]>({
+          key: () => sessionKeys.list(projectName),
+          update: (old, archived) =>
+            withSessionsArchived(old, new Set([sessionName]), archived),
+        }),
+        cacheUpdate<boolean, ActiveConversationsResponse>({
+          key: () => conversationKeys.active(),
+          update: (old, archived) =>
+            archived
+              ? withoutSessionsActiveConversations(
+                  old,
+                  projectName,
+                  new Set([sessionName]),
+                )
+              : undefined,
+        }),
+      ],
+    }),
+  );
 }
 
 export function useTddToggleMutation(projectName: string, sessionName: string) {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (tddEnabled: boolean) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/tdd`,
-        "tdd-toggle",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tddEnabled }),
-        },
-      ),
-    onMutate: async (tddEnabled) => {
-      const listKey = sessionKeys.list(projectName);
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const previousSessions =
-        queryClient.getQueryData<SessionListItem[]>(listKey);
-      queryClient.setQueryData<SessionListItem[]>(listKey, (old) =>
-        old?.map((s) =>
-          s.sessionName === sessionName ? { ...s, tddEnabled } : s,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (tddEnabled: boolean) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/tdd`,
+          "tdd-toggle",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tddEnabled }),
+          },
         ),
-      );
-      return { previousSessions };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previousSessions !== undefined) {
-        queryClient.setQueryData(
-          sessionKeys.list(projectName),
-          context.previousSessions,
-        );
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
-    },
-  });
+      updates: [
+        cacheUpdate<boolean, SessionListItem[]>({
+          key: () => sessionKeys.list(projectName),
+          update: (old, tddEnabled) =>
+            old?.map((s) =>
+              s.sessionName === sessionName ? { ...s, tddEnabled } : s,
+            ),
+        }),
+      ],
+    }),
+  );
 }
 
 export function useBulkSessionsMutation(projectName: string) {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (req: BulkSessionsRequest): Promise<BulkSessionsResponse> =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/bulk`,
-        "bulk-sessions",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(req),
-        },
-        bulkSessionsResponseSchema,
-      ),
-    onMutate: async (req) => {
-      await cancelSessionCaches(queryClient, projectName);
-      const snapshot = snapshotSessionCaches(queryClient, projectName);
-      const sessionNames = new Set(req.sessionNames);
-      if (req.op === "delete") {
-        removeSessionsFromList(queryClient, projectName, sessionNames);
-        removeSessionsActiveConversations(
-          queryClient,
-          projectName,
-          sessionNames,
-        );
-      } else {
-        const archived = req.op === "archive";
-        setSessionsArchived(queryClient, projectName, sessionNames, archived);
-        if (archived) {
-          removeSessionsActiveConversations(
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (req: BulkSessionsRequest): Promise<BulkSessionsResponse> =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/bulk`,
+          "bulk-sessions",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(req),
+          },
+          bulkSessionsResponseSchema,
+        ),
+      updates: [
+        cacheUpdate<BulkSessionsRequest, SessionListItem[]>({
+          key: () => sessionKeys.list(projectName),
+          update: (old, req) => {
+            const sessionNames = new Set(req.sessionNames);
+            return req.op === "delete"
+              ? withoutSessions(old, sessionNames)
+              : withSessionsArchived(old, sessionNames, req.op === "archive");
+          },
+        }),
+        cacheUpdate<BulkSessionsRequest, ActiveConversationsResponse>({
+          key: () => conversationKeys.active(),
+          update: (old, req) =>
+            req.op === "delete" || req.op === "archive"
+              ? withoutSessionsActiveConversations(
+                  old,
+                  projectName,
+                  new Set(req.sessionNames),
+                )
+              : undefined,
+        }),
+      ],
+      onSettled: (req) => {
+        if (req.op === "delete") {
+          invalidateTicketSessionLifecycle(
             queryClient,
             projectName,
-            sessionNames,
+            req.sessionNames,
           );
         }
-      }
-      return snapshot;
-    },
-    onError: (_err, _vars, context) => {
-      rollbackSessionCaches(queryClient, projectName, context);
-    },
-    onSettled: (_data, _err, req) => {
-      invalidateSessionCaches(queryClient, projectName);
-      if (req.op === "delete") {
-        invalidateTicketSessionLifecycle(
-          queryClient,
-          projectName,
-          req.sessionNames,
-        );
-      }
-    },
-  });
+      },
+    }),
+  );
 }
 
 /**
@@ -324,42 +241,56 @@ export function useBulkSessionsMutation(projectName: string) {
  * variables — used from the active conversations sidebar where rows can
  * belong to sessions other than the one this component is bound to.
  */
+interface GenericArchiveSessionVariables {
+  projectName: string;
+  sessionName: string;
+  archived: boolean;
+}
+
 export function useGenericArchiveSessionMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({
-      projectName,
-      sessionName,
-      archived,
-    }: {
-      projectName: string;
-      sessionName: string;
-      archived: boolean;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
-        "archive-session",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ archived }),
-        },
-      ),
-    onMutate: async ({ projectName, sessionName, archived }) => {
-      await cancelSessionCaches(queryClient, projectName);
-      return applyArchiveSessionOptimistic(
-        queryClient,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
         projectName,
         sessionName,
         archived,
-      );
-    },
-    onError: (_err, { projectName }, context) => {
-      rollbackSessionCaches(queryClient, projectName, context);
-    },
-    onSettled: (_data, _err, { projectName }) => {
-      invalidateSessionCaches(queryClient, projectName);
-    },
-  });
+      }: GenericArchiveSessionVariables) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
+          "archive-session",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archived }),
+          },
+        ),
+      updates: [
+        cacheUpdate<GenericArchiveSessionVariables, SessionListItem[]>({
+          key: (vars) => sessionKeys.list(vars.projectName),
+          update: (old, vars) =>
+            withSessionsArchived(
+              old,
+              new Set([vars.sessionName]),
+              vars.archived,
+            ),
+        }),
+        cacheUpdate<
+          GenericArchiveSessionVariables,
+          ActiveConversationsResponse
+        >({
+          key: () => conversationKeys.active(),
+          update: (old, vars) =>
+            vars.archived
+              ? withoutSessionsActiveConversations(
+                  old,
+                  vars.projectName,
+                  new Set([vars.sessionName]),
+                )
+              : undefined,
+        }),
+      ],
+    }),
+  );
 }

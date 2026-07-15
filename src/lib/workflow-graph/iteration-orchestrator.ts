@@ -2,31 +2,37 @@ import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { assertLoopFence } from "./loop-fence";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import { refValueForBackend } from "@/lib/agent-backends/continuity";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
-  GraphWorkflowCollaborationContinuation,
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowResolvedContext,
-  GraphWorkflowHaltReason,
   GraphWorkflowSSEEvent,
+  GraphWorkflowValidationResultEvent,
+} from "@/lib/workflow-graph/event-schemas";
+import {
+  graphWorkflowAgentSessionStateSchema,
+  type GraphWorkflowExecution,
+  type GraphWorkflowHaltReason,
+  type GraphWorkflowTaskValidationFailure,
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowCollaborationContinuation } from "@/lib/workflow-graph/collaboration-schemas";
+import type {
+  GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
-  GraphWorkflowTaskValidationFailure,
-  GraphWorkflowValidationResultEvent,
   WorkflowValidatorIssue,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import type { ConversationTelemetrySummary } from "./conversation-telemetry";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type {
   ResolveImplementerCallInput,
   ResolvedImplementerCall,
-  RecordClaudeLaneTurnInput,
-  RecordCodexLaneTurnInput,
-} from "./workflow-continuity-service";
+  RecordLaneTurnOutcomeInput,
+} from "./lane-continuity";
+import type { LaneOutcome } from "@/lib/workflows/primitives/lane-service";
 import {
   buildIterationPrompt,
   buildFollowUpPrompt,
@@ -56,8 +62,14 @@ import {
   type CircuitBreakerGateResult,
   type RunCircuitBreakerGateInput,
 } from "@/lib/workflows/primitives/circuit-breaker-gate";
-import type { GraphWorkflowLifecycleSnapshot } from "./workflow-manager";
+import { scriptValidationGateFromOutcome } from "@/lib/workflows/primitives/script-validation-gate";
+import {
+  buildLifecycleSnapshot,
+  transitionContextStatus,
+} from "@/lib/workflow-graph/context-transitions";
 import type { MutateActiveResult } from "./execution-repository";
+import { getErrorMessage } from "@/lib/shared/errors";
+import { graphLaneContextMetrics } from "@/lib/workflow-graph/graph-lane-store";
 
 interface GraphWorkflowIterationExecutionRepository {
   getActive(
@@ -149,11 +161,8 @@ interface IterationOrchestratorContinuityService {
   resolveImplementerCall(
     input: ResolveImplementerCallInput,
   ): Promise<ResolvedImplementerCall>;
-  recordClaudeTurnOutcome(
-    input: RecordClaudeLaneTurnInput,
-  ): Promise<GraphWorkflowExecution>;
-  recordCodexTurnOutcome(
-    input: RecordCodexLaneTurnInput,
+  recordLaneTurnOutcome(
+    input: RecordLaneTurnOutcomeInput,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -350,19 +359,6 @@ function getUndeliveredCollaborationContinuations(
   return (execution.collaborationContinuations?.[contextId] ?? []).filter(
     (continuation) => continuation.deliveredAt === null,
   );
-}
-
-function buildMachineSnapshot(
-  execution: GraphWorkflowExecution,
-  hasLiveIteration: boolean,
-): GraphWorkflowLifecycleSnapshot {
-  return {
-    schemaVersion: 1,
-    lifecycleStatus: execution.status,
-    activeContextId: execution.activeContextIds[0] ?? null,
-    recoveryMode: "none",
-    hasLiveIteration,
-  };
 }
 
 function getContextDefinition(
@@ -707,7 +703,7 @@ export function createGraphWorkflowIterationOrchestrator(
         // failure is visible rather than silently suppressing every park.
         logger.warn("graph-workflow.iteration.read_lane_conversation_failed", {
           conversationId,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
         return null;
       }
@@ -831,10 +827,9 @@ export function createGraphWorkflowIterationOrchestrator(
           nextExecution,
           taskState.contextId,
         );
-        nextExecution.machineSnapshot = buildMachineSnapshot(
-          nextExecution,
-          true,
-        );
+        nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
+          hasLiveIteration: true,
+        });
         return nextExecution;
       },
     );
@@ -907,10 +902,9 @@ export function createGraphWorkflowIterationOrchestrator(
             (contextState.consecutiveFailureCount ?? 0) + 1;
         }
 
-        nextExecution.machineSnapshot = buildMachineSnapshot(
-          nextExecution,
-          true,
-        );
+        nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
+          hasLiveIteration: true,
+        });
 
         return {
           execution: nextExecution,
@@ -1003,10 +997,9 @@ export function createGraphWorkflowIterationOrchestrator(
             (contextState.consecutiveFailureCount ?? 0) + 1;
         }
 
-        nextExecution.machineSnapshot = buildMachineSnapshot(
-          nextExecution,
-          true,
-        );
+        nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
+          hasLiveIteration: true,
+        });
         return nextExecution;
       },
     );
@@ -1053,47 +1046,52 @@ export function createGraphWorkflowIterationOrchestrator(
       return "pass";
     }
 
+    const gate = scriptValidationGateFromOutcome(outcome);
+    const failureClass = gate.details?.failureClass;
+
     if (outcome.kind === "infra_error") {
       if (outcome.reason === "missing_pre_merge_command") {
         execLogger?.validation(
           input.contextId,
           "script_validation.missing_pre_merge_command",
-          { message: outcome.message },
+          { message: gate.reason },
         );
         logger.warn(
           "graph-workflow.script_validation.missing_pre_merge_command",
           {
             executionId: execution.id,
             contextId: input.contextId,
+            failureClass,
           },
         );
         const haltReason: GraphWorkflowHaltReason = {
           type: "script_validator_missing_command",
           contextId: input.contextId,
-          message: outcome.message,
+          message: gate.reason,
         };
         await onHalt(haltReason);
         throw new IterationHaltedError(haltReason);
       }
 
       execLogger?.validation(input.contextId, "script_validation.exception", {
-        message: outcome.message,
+        message: gate.reason,
       });
       logger.warn("graph-workflow.script_validation.exception", {
         executionId: execution.id,
         contextId: input.contextId,
-        message: outcome.message,
+        message: gate.reason,
+        failureClass,
       });
       const recoveryReason: GraphWorkflowHaltReason = {
         type: "recovery_error",
-        message: `Script validator error: ${outcome.message}`,
+        message: `Script validator error: ${gate.reason}`,
       };
       await onHalt(recoveryReason);
       throw new IterationHaltedError(recoveryReason);
     }
 
     execLogger?.validation(input.contextId, "script_validation.failed", {
-      summary: outcome.summary,
+      summary: gate.reason,
       logRelativePath: outcome.logRelativePath,
       timedOut: outcome.timedOut,
     });
@@ -1101,6 +1099,7 @@ export function createGraphWorkflowIterationOrchestrator(
       executionId: execution.id,
       contextId: input.contextId,
       logRelativePath: outcome.logRelativePath,
+      failureClass,
     });
 
     const failedExecution = await applyScriptValidatorFailure({
@@ -1202,7 +1201,9 @@ export function createGraphWorkflowIterationOrchestrator(
         next.activeContextIds = next.activeContextIds.filter(
           (id) => id !== input.contextId,
         );
-        next.machineSnapshot = buildMachineSnapshot(next, false);
+        next.machineSnapshot = buildLifecycleSnapshot(next, {
+          hasLiveIteration: false,
+        });
         return next;
       },
     );
@@ -1445,7 +1446,9 @@ export function createGraphWorkflowIterationOrchestrator(
           );
         }
         contextState.consecutiveFailureCount = 0;
-        reset.machineSnapshot = buildMachineSnapshot(reset, true);
+        reset.machineSnapshot = buildLifecycleSnapshot(reset, {
+          hasLiveIteration: true,
+        });
         return {
           execution: reset,
           events: eventPublisher.publishValidationResult({
@@ -1552,7 +1555,14 @@ export function createGraphWorkflowIterationOrchestrator(
           )?.humanApprovalGate.enabled ?? false;
 
         if (shouldContinueInContext) {
-          finalizedContextState.status = "running";
+          transitionContextStatus(
+            finalizedExecution,
+            input.contextId,
+            "running",
+            {
+              reason: "iteration.finalize_continue",
+            },
+          );
         } else if (gateEnabled) {
           approvalGateService.enterAwaitingApproval(finalizedExecution, {
             contextId: input.contextId,
@@ -1561,7 +1571,14 @@ export function createGraphWorkflowIterationOrchestrator(
           approvalRequestedAt =
             finalizedContextState.pendingApproval?.requestedAt ?? null;
         } else {
-          finalizedContextState.status = "completed";
+          transitionContextStatus(
+            finalizedExecution,
+            input.contextId,
+            "completed",
+            {
+              reason: "iteration.finalize_complete",
+            },
+          );
         }
         finalizedExecution.activeContextIds = shouldContinueInContext
           ? finalizedExecution.activeContextIds.includes(input.contextId)
@@ -1570,9 +1587,9 @@ export function createGraphWorkflowIterationOrchestrator(
           : finalizedExecution.activeContextIds.filter(
               (contextId) => contextId !== input.contextId,
             );
-        finalizedExecution.machineSnapshot = buildMachineSnapshot(
+        finalizedExecution.machineSnapshot = buildLifecycleSnapshot(
           finalizedExecution,
-          false,
+          { hasLiveIteration: false },
         );
         return finalizedExecution;
       },
@@ -1592,18 +1609,13 @@ export function createGraphWorkflowIterationOrchestrator(
         if (telemetry) {
           const implementerLane =
             persistedExecution.laneStates[input.contextId]?.["implementer"];
+          const laneMetrics = graphLaneContextMetrics(implementerLane);
           execLogger.iteration(input.contextId, "conversation.telemetry", {
             conversationId,
             iterationNumber,
             shouldContinueInContext,
-            contextTokens:
-              implementerLane?.engine === "claude"
-                ? implementerLane.lastContextTokens
-                : null,
-            contextWindowMax:
-              implementerLane?.engine === "claude"
-                ? implementerLane.lastContextWindowMax
-                : null,
+            contextTokens: laneMetrics.contextTokens,
+            contextWindowMax: laneMetrics.contextWindowMax,
             ...telemetry,
           });
         }
@@ -1612,7 +1624,7 @@ export function createGraphWorkflowIterationOrchestrator(
           executionId: persistedExecution.id,
           contextId: input.contextId,
           conversationId,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -1710,8 +1722,7 @@ export function createGraphWorkflowIterationOrchestrator(
         });
       } catch (haltError) {
         execLogger?.iteration(input.contextId, "iteration.signal_halt_error", {
-          error:
-            haltError instanceof Error ? haltError.message : String(haltError),
+          error: getErrorMessage(haltError),
         });
         throw haltError;
       }
@@ -1786,7 +1797,7 @@ export function createGraphWorkflowIterationOrchestrator(
           executionId: initialExecution.id,
           contextId: input.contextId,
           worktreePath: input.executionTarget.worktreePath,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       }
     }
@@ -1845,7 +1856,7 @@ export function createGraphWorkflowIterationOrchestrator(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         contextId: input.contextId,
-        engine: context.implementer.backend,
+        backend: context.implementer.backend,
         pinnedConversationId: input.resumeUserInput?.conversationId,
       });
       conversationId = resolved.conversationId;
@@ -1892,7 +1903,9 @@ export function createGraphWorkflowIterationOrchestrator(
         }
         next.completedAt = null;
         next.haltReason = null;
-        seededContextState.status = "running";
+        transitionContextStatus(next, input.contextId, "running", {
+          reason: "iteration.seed",
+        });
         seededContextState.iterationCount += 1;
         bindConversationToIncompleteTasks(
           next,
@@ -1900,7 +1913,9 @@ export function createGraphWorkflowIterationOrchestrator(
           conversation.id,
           getNow(deps),
         );
-        next.machineSnapshot = buildMachineSnapshot(next, true);
+        next.machineSnapshot = buildLifecycleSnapshot(next, {
+          hasLiveIteration: true,
+        });
         return next;
       },
     );
@@ -1975,8 +1990,7 @@ export function createGraphWorkflowIterationOrchestrator(
         });
       } catch (haltError) {
         execLogger?.iteration(input.contextId, "iteration.signal_halt_error", {
-          error:
-            haltError instanceof Error ? haltError.message : String(haltError),
+          error: getErrorMessage(haltError),
         });
         throw haltError;
       }
@@ -2127,36 +2141,38 @@ export function createGraphWorkflowIterationOrchestrator(
         if (!continuityService) return;
         const contextLimitTokens =
           context.iterationPolicy.continuity.contextLimitTokens;
-        await deps.executionRepository.mutateActive(
+        const latest = await loadCurrentExecution(
           input.projectPath,
           input.sessionName,
-          async (latest) => {
-            if (latest.status !== "running") {
-              return latest;
-            }
-            return context.implementer.backend === "codex"
-              ? await continuityService.recordCodexTurnOutcome({
-                  execution: latest,
-                  contextId: input.contextId,
-                  lane: "implementer",
-                  usage: null,
-                  contextLimitTokens,
-                  newThreadId:
-                    agentResult.sessionRef?.backend === "codex"
-                      ? agentResult.sessionRef.threadId
-                      : null,
-                })
-              : await continuityService.recordClaudeTurnOutcome({
-                  execution: latest,
-                  contextId: input.contextId,
-                  lane: "implementer",
-                  contextTokens: agentResult.contextTokens,
-                  contextWindowMax: agentResult.contextWindowMax,
-                  contextLimitTokens,
-                  compacted: agentResult.compacted,
-                });
-          },
         );
+        if (latest.status !== "running") {
+          return;
+        }
+        const laneBackend = context.implementer.backend;
+        const sessionRef = refValueForBackend(
+          agentResult.sessionRef,
+          laneBackend,
+        );
+        const outcome: LaneOutcome = {
+          backend: laneBackend,
+          ...(agentResult.contextTokens !== null
+            ? { contextTokens: agentResult.contextTokens }
+            : {}),
+          ...(agentResult.contextWindowMax !== null
+            ? { contextWindowMax: agentResult.contextWindowMax }
+            : {}),
+          ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
+          ...(sessionRef !== undefined ? { ref: sessionRef } : {}),
+          ...(agentResult.compacted ? { compactedThisTurn: true } : {}),
+        };
+        await continuityService.recordLaneTurnOutcome({
+          execution: latest,
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          contextId: input.contextId,
+          lane: "implementer",
+          outcome,
+        });
       }
 
       // Initial agent call — seed prompt for fresh sessions, follow-up for resumed sessions
@@ -2382,7 +2398,11 @@ export function createGraphWorkflowIterationOrchestrator(
         if (deps.continuityService) {
           const laneState =
             midExecution.laneStates[input.contextId]?.["implementer"];
-          if (laneState?.rotateBeforeNextTurn) {
+          const rotationScheduled = laneState
+            ? graphWorkflowAgentSessionStateSchema.parse(laneState).metrics
+                .rotateBeforeNextTurn
+            : false;
+          if (rotationScheduled) {
             execLogger?.iteration(
               input.contextId,
               "iteration.follow_up_skipped",

@@ -17,30 +17,38 @@ import type { SessionState } from "@/lib/sessions/schemas";
 
 type RouteContext = { params: Promise<Record<string, string>> };
 
-export interface SessionRouteDeps {
+export interface SessionRouteDeps<S = SessionState> {
   resolveProjectPath(name: string): Promise<string | null>;
-  getSession(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<SessionState | null>;
+  getSession(projectPath: string, sessionName: string): Promise<S | null>;
 }
 
-export interface ResolvedSessionRoute {
+export interface ResolvedSessionRoute<S = SessionState> {
   projectPath: string;
   sessionName: string;
-  session: SessionState;
+  session: S;
 }
 
-export interface ResolvedSessionConversationRoute extends ResolvedSessionRoute {
+/**
+ * The structural minimum a session must expose for conversation resolution.
+ * Generic so handlers whose deps narrow the session shape (e.g. only
+ * `conversations`) resolve without widening to the full `SessionState`.
+ */
+export interface ConversationOwningSession {
+  conversations: ConversationState[];
+}
+
+export interface ResolvedSessionConversationRoute<
+  S = SessionState,
+> extends ResolvedSessionRoute<S> {
   conversationId: string;
   conversation: ConversationState;
 }
 
 /** Resolve project + session, or a 404 Response. */
-export async function resolveSessionRoute(
-  deps: SessionRouteDeps,
+export async function resolveSessionRoute<S = SessionState>(
+  deps: SessionRouteDeps<S>,
   context: RouteContext,
-): Promise<RouteResolution<ResolvedSessionRoute>> {
+): Promise<RouteResolution<ResolvedSessionRoute<S>>> {
   const params = await context.params;
   const project = await resolveProjectOr404(deps, params["name"] ?? "");
   if (!project.ok) return project;
@@ -58,10 +66,12 @@ export async function resolveSessionRoute(
 }
 
 /** Resolve project + session + the addressed conversation, or a 404 Response. */
-export async function resolveSessionConversationRoute(
-  deps: SessionRouteDeps,
+export async function resolveSessionConversationRoute<
+  S extends ConversationOwningSession = SessionState,
+>(
+  deps: SessionRouteDeps<S>,
   context: RouteContext,
-): Promise<RouteResolution<ResolvedSessionConversationRoute>> {
+): Promise<RouteResolution<ResolvedSessionConversationRoute<S>>> {
   const base = await resolveSessionRoute(deps, context);
   if (!base.ok) return base;
 

@@ -5,7 +5,7 @@ import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import CopyableId from "@/components/CopyableId";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 
 interface InfoDetailsPopoverProps {
   conversationId: string;
@@ -23,9 +23,7 @@ interface InfoDetailsPopoverProps {
 
 function formatBackendRef(ref: AgentSessionRef | null): string {
   if (!ref) return "\u2014";
-  if (ref.backend === "claude") return ref.sessionId;
-  if (ref.backend === "codex") return ref.threadId;
-  return "\u2014";
+  return ref.ref;
 }
 
 function formatCreatedDate(iso: string): string {
@@ -226,6 +224,11 @@ export default function InfoDetailsPopover({
         <div
           className="absolute top-[calc(100%+6px)] right-0 z-panel w-[380px] animate-[info-details-pop-in_0.12s_ease-out] rounded-md border border-solid border-border-default bg-bg-elevated px-0 pt-[10px] pb-[8px] font-mono shadow-dropdown"
           role="dialog"
+          // Sanctioned bespoke-overlay survivor (seam-adoption site marker): a
+          // NON-MODAL hover-peek/click-pin popover — no focus trap or scrim by
+          // design. Deletion condition: a hover-intent ui/Popover trigger
+          // variant. The attribute renders as a harmless data-* on the element.
+          data-bespoke-overlay-justified=""
           aria-label="Session details"
         >
           <div className="flex items-center gap-[8px] border-x-0 border-t-0 border-b border-solid border-border-default px-[14px] pb-[8px]">

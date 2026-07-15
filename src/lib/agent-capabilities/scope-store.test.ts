@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createConfigReader } from "@/lib/config/loader";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { createStateStore } from "@/lib/state-store";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
 
@@ -20,7 +20,7 @@ const TEST_DIR = path.join("/tmp", "cc-agent-cap-scope-test-" + Date.now());
 
 function createTestHarness() {
   const configReader = createConfigReader(TEST_DIR);
-  const state = createStateManager({
+  const state = createStateStore({
     readConfig: () => configReader.readConfig(),
   });
   const store = createScopeCapabilityOverrideStore({ stateManager: state });
@@ -29,7 +29,7 @@ function createTestHarness() {
 
 function createSqlHarness() {
   const db: InstanceType<typeof Database> = _createTestDb({ inMemory: true });
-  const state = createStateManager({ db });
+  const state = createStateStore({ db });
   const store = createScopeCapabilityOverrideStore({ stateManager: state });
   return { db, state, store };
 }
@@ -626,7 +626,7 @@ describe("agent-capabilities / scope-store / project conversation", () => {
       // Simulate restart: a fresh state manager over the same persisted db has
       // no in-memory caches/write-queue carried over, so a successful read here
       // proves the override AND runtime apply state survived to disk.
-      const restarted = createStateManager({ db });
+      const restarted = createStateStore({ db });
       const restored = await restarted.getProjectConversation(
         PROJECT_PATH,
         "plc-1",

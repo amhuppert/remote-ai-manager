@@ -10,11 +10,11 @@
 import { promises as fsp, createReadStream } from "node:fs";
 import readline from "node:readline";
 import { createLogger } from "@/lib/logging";
+import { truncate } from "@/lib/shared/truncate";
 
 const log = createLogger("conversations:first-prompt-snippet");
 
 const SNIPPET_MAX_LENGTH = 120;
-const ELLIPSIS = "…";
 
 interface CacheEntry {
   mtimeMs: number;
@@ -63,7 +63,7 @@ async function readFirstUserSnippet(
         }
         const text = extractUserText(entry);
         if (text !== null) {
-          return truncate(flatten(text));
+          return truncate(flatten(text), SNIPPET_MAX_LENGTH);
         }
       }
       return null;
@@ -103,11 +103,6 @@ function extractUserText(entry: unknown): string | null {
 
 function flatten(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function truncate(value: string): string {
-  if (value.length <= SNIPPET_MAX_LENGTH) return value;
-  return value.slice(0, SNIPPET_MAX_LENGTH) + ELLIPSIS;
 }
 
 export function _resetFirstPromptSnippetCache(): void {

@@ -17,6 +17,7 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   ConversationBackendRuntime,
   ConversationBackendEvent,
@@ -25,12 +26,14 @@ import type {
   ConversationImageRef,
 } from "@/lib/agent-backends/conversation";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { AgentFailureWithContinuation } from "@/lib/agent-backends/errors";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,
   type AgentCallResult,
   type ArtifactRef,
   type BackendCapabilityView,
+  type NormalizedAgentCallFailureKind,
 } from "./agent-call-vocabulary";
 
 const defaultLogger = createLogger(
@@ -56,6 +59,12 @@ export interface DispatchConversationTurnDeps {
   /** Pre-known artifact references the caller wants attached to the result. */
   artifacts?: readonly ArtifactRef[];
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
+  /**
+   * Backend failure classifier for thrown dispatch errors (the registered
+   * descriptor's `errors.classify`). When absent, a thrown error normalizes
+   * to `backend_error`.
+   */
+  classifyFailure?(error: unknown): AgentFailureWithContinuation;
   /** Optional logger override; defaults to the module logger. */
   logger?: Logger;
 }
@@ -103,6 +112,7 @@ export async function dispatchConversationTurn(
         artifacts: deps.artifacts,
         failureKind: "capability_unavailable",
         message: toolingResult.message,
+        continuationDisposition: "retain",
       });
     }
   }
@@ -127,10 +137,15 @@ export async function dispatchConversationTurn(
   try {
     turnResult = await runtime.sendTurn(turnInput);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const decision = deps.classifyFailure?.(err);
+    const classification = decision?.failure;
+    const message = classification?.message ?? getErrorMessage(err);
     log.warn("agent_call.conversation.send_turn_threw", {
       ...baseLogFields,
       outcome: "failed",
+      ...(classification !== undefined
+        ? { failureKind: classification.kind }
+        : {}),
       message,
     });
     return buildFailureResult({
@@ -138,8 +153,9 @@ export async function dispatchConversationTurn(
       capabilityView,
       backendRef: null,
       artifacts: deps.artifacts,
-      failureKind: "backend_error",
+      failureKind: classification?.kind ?? "backend_error",
       message,
+      continuationDisposition: decision?.continuationDisposition ?? "retain",
     });
   }
 
@@ -147,7 +163,7 @@ export async function dispatchConversationTurn(
     log.warn("agent_call.conversation.aborted", {
       ...baseLogFields,
       outcome: "failed",
-      message: turnResult.error ?? "aborted",
+      message: turnResult.failure?.message ?? "aborted",
     });
     return buildFailureResult({
       backend,
@@ -155,23 +171,26 @@ export async function dispatchConversationTurn(
       backendRef: turnResult.backendRef,
       artifacts: deps.artifacts,
       failureKind: "aborted",
-      message: turnResult.error ?? "aborted",
+      message: turnResult.failure?.message ?? "aborted",
+      turnResult,
     });
   }
 
-  if (turnResult.error) {
+  if (turnResult.failure) {
     log.warn("agent_call.conversation.runtime_error", {
       ...baseLogFields,
       outcome: "failed",
-      message: turnResult.error,
+      failureKind: turnResult.failure.kind,
+      message: turnResult.failure.message,
     });
     return buildFailureResult({
       backend,
       capabilityView,
       backendRef: turnResult.backendRef,
       artifacts: deps.artifacts,
-      failureKind: "backend_error",
-      message: turnResult.error,
+      failureKind: turnResult.failure.kind,
+      message: turnResult.failure.message,
+      turnResult,
     });
   }
 
@@ -195,7 +214,14 @@ export async function dispatchConversationTurn(
       ...(turnResult.structuredOutput !== undefined
         ? { structuredOutput: turnResult.structuredOutput }
         : {}),
+      ...(turnResult.numTurns != null ? { numTurns: turnResult.numTurns } : {}),
+      contentBlocks: turnResult.contentBlocks,
     },
+    continuationDisposition: turnResult.continuationDisposition,
+    compacted: turnResult.compacted,
+    ...(turnResult.backgroundWait !== undefined
+      ? { backgroundWait: turnResult.backgroundWait }
+      : {}),
   };
 }
 
@@ -237,21 +263,25 @@ interface BuildFailureResultInput {
   capabilityView: BackendCapabilityView;
   backendRef: AgentCallResult["backendRef"];
   artifacts?: readonly ArtifactRef[];
-  failureKind:
-    | "timeout"
-    | "schema_validation"
-    | "backend_error"
-    | "aborted"
-    | "capability_unavailable";
+  failureKind: NormalizedAgentCallFailureKind;
   message: string;
+  /**
+   * Adapter turn result the failure was derived from, when one exists. Its
+   * partial content, usage, and continuation verdict ride the normalized
+   * result so consumers never need the raw runtime result. Absent for thrown
+   * errors, where `continuationDisposition` must be supplied explicitly.
+   */
+  turnResult?: ConversationBackendTurnResult;
+  continuationDisposition?: AgentCallResult["continuationDisposition"];
 }
 
 function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
+  const turnResult = input.turnResult;
   return {
     backend: input.backend,
     backendRef: input.backendRef,
     capabilities: input.capabilityView,
-    usage: {},
+    usage: turnResult !== undefined ? buildUsageMetrics(turnResult) : {},
     artifacts: [...(input.artifacts ?? [])],
     outcome: {
       kind: "failed",
@@ -260,7 +290,26 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
         backend: input.backend,
         message: input.message,
       },
+      ...(turnResult !== undefined
+        ? {
+            contentBlocks: turnResult.contentBlocks,
+            ...(turnResult.numTurns != null
+              ? { numTurns: turnResult.numTurns }
+              : {}),
+          }
+        : {}),
     },
+    ...(turnResult !== undefined
+      ? {
+          continuationDisposition: turnResult.continuationDisposition,
+          compacted: turnResult.compacted,
+          ...(turnResult.backgroundWait !== undefined
+            ? { backgroundWait: turnResult.backgroundWait }
+            : {}),
+        }
+      : input.continuationDisposition !== undefined
+        ? { continuationDisposition: input.continuationDisposition }
+        : {}),
   };
 }
 

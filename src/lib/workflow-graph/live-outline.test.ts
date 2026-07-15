@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
-import {
-  graphWorkflowExecutionSchema,
-  resolvedWorkflowSemanticDefinitionSchema,
-} from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import { resolvedWorkflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   buildInitialContextStates,

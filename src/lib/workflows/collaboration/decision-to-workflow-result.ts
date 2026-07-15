@@ -19,11 +19,11 @@
  */
 
 import {
-  workflowCollaborationResultSchema,
   type WorkflowCollaborationOpenConflict,
   type WorkflowCollaborationResult,
   type WorkflowCollaborationStatus,
-} from "@/lib/workflows/schemas";
+  workflowCollaborationResultSchema,
+} from "@/lib/workflow-graph/collaboration-schemas";
 import type { CollaborationPolicyDecision } from "./policy";
 
 export interface DecisionToWorkflowResultInput {

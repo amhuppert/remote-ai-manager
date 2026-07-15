@@ -20,12 +20,13 @@ import type {
 import {
   createCapabilityRuntimeApplyService,
   type AffectedConversation,
+  type ApplyConversationIdentity,
   type ApplyServiceDeps,
-  type ClaudeApplyPortInput,
-  type ClaudeApplyPortResult,
 } from ".";
-import type { ClaudeRuntimeCapabilityConfig } from "../claude-runtime-translator";
-import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "../claude-agent-suppression";
+import type {
+  ResolvedCapabilityCascade,
+  RuntimeConfigApplyResult,
+} from "@/lib/agent-backends/runtime-config";
 import { computeCascadeRuntimeHash } from "../runtime-hashes";
 import type { ComposeConversationStartResult } from "../runtime-composer";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -66,13 +67,6 @@ const projectConversation = (
     ...overrides,
   }) as AffectedConversation;
 
-const claudeRuntime = (): ClaudeRuntimeCapabilityConfig => ({
-  enabledPlugins: {},
-  skillOverrides: { alpha: "off" },
-  disabledAgentNames: [],
-  agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
-});
-
 const buildClaudeComposition = (input: {
   cascades: Partial<
     Record<
@@ -95,7 +89,15 @@ const buildClaudeComposition = (input: {
   }
   return {
     backend: "claude",
-    claudeRuntime: claudeRuntime(),
+    capabilities: {
+      backend: "claude",
+      kinds: [
+        {
+          kind: "skills",
+          items: [{ itemId: "alpha", enabled: false, originLayer: "global" }],
+        },
+      ],
+    },
     diagnostics: [],
     runtimeState: { cascades },
     views: {},
@@ -112,9 +114,10 @@ const buildDeps = (opts: {
   readRuntimeState?: () => Promise<
     AgentCapabilityRuntimeApplicationState | undefined
   >;
-  applyClaudeRuntime?: (
-    input: ClaudeApplyPortInput,
-  ) => Promise<ClaudeApplyPortResult>;
+  applyRuntimeConfig?: (input: {
+    conversation: ApplyConversationIdentity;
+    resolved: ResolvedCapabilityCascade;
+  }) => Promise<RuntimeConfigApplyResult>;
 }): ApplyServiceDeps => ({
   listAffectedConversations: vi.fn(async () => opts.affected ?? []),
   isTurnActive: () => false,
@@ -128,7 +131,7 @@ const buildDeps = (opts: {
       })),
   readRuntimeState: opts.readRuntimeState ?? (async () => undefined),
   writeRuntimeState: vi.fn(async () => undefined),
-  applyClaudeRuntime: opts.applyClaudeRuntime,
+  applyRuntimeConfig: opts.applyRuntimeConfig,
 });
 
 describe("capability runtime apply logging", () => {
@@ -146,8 +149,10 @@ describe("capability runtime apply logging", () => {
     });
     const service = createCapabilityRuntimeApplyService(
       buildDeps({
-        applyClaudeRuntime: vi.fn(
-          async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+        applyRuntimeConfig: vi.fn(
+          async (): Promise<RuntimeConfigApplyResult> => ({
+            status: "applied",
+          }),
         ),
         readRuntimeState: async () => ({
           cascades: {
@@ -205,7 +210,7 @@ describe("capability runtime apply logging", () => {
     const service = createCapabilityRuntimeApplyService(
       buildDeps({
         affected: [claudeConversation()],
-        applyClaudeRuntime: vi.fn(async () => {
+        applyRuntimeConfig: vi.fn(async () => {
           throw new Error(
             "reload failed in /home/alex/projects/repo with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
           );
@@ -238,8 +243,10 @@ describe("capability runtime apply logging", () => {
     const service = createCapabilityRuntimeApplyService(
       buildDeps({
         affected: [projectConversation({ conversationId: "plc-1" })],
-        applyClaudeRuntime: vi.fn(
-          async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+        applyRuntimeConfig: vi.fn(
+          async (): Promise<RuntimeConfigApplyResult> => ({
+            status: "applied",
+          }),
         ),
       }),
     );
@@ -279,14 +286,16 @@ describe("capability runtime apply logging", () => {
         affected: [projectConversation({ conversationId: "plc-1" })],
         composeForConversation: async () => ({
           backend: "claude",
-          claudeRuntime: claudeRuntime(),
+          capabilities: { backend: "claude", kinds: [] },
           diagnostics: [],
           runtimeState: { cascades: {} },
           views: {},
           failedCascadeKinds: ["claude-skills"],
         }),
-        applyClaudeRuntime: vi.fn(
-          async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+        applyRuntimeConfig: vi.fn(
+          async (): Promise<RuntimeConfigApplyResult> => ({
+            status: "applied",
+          }),
         ),
       }),
     );
@@ -341,7 +350,7 @@ describe("capability runtime apply logging", () => {
     const service = createCapabilityRuntimeApplyService(
       buildDeps({
         affected: [projectConversation({ conversationId: "plc-1" })],
-        applyClaudeRuntime: vi.fn(async () => {
+        applyRuntimeConfig: vi.fn(async () => {
           throw new Error("reload failed mid project conversation apply");
         }),
       }),

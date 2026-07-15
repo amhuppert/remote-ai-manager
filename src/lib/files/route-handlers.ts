@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -51,13 +52,9 @@ export function createFilesRouteHandlers(deps: FilesRouteDeps = defaultDeps) {
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     try {
       const { ignorePatterns } = await deps.readConfig();

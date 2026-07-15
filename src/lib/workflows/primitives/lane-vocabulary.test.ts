@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  laneBackendStateSchema,
   laneMetricsSchema,
   lanePolicySchema,
+  laneSessionRef,
   laneStateSchema,
+  laneStorageKey,
   type LaneState,
 } from "./lane-vocabulary";
 
@@ -39,69 +40,20 @@ describe("lanePolicySchema", () => {
   });
 });
 
-describe("laneBackendStateSchema", () => {
-  it("preserves Claude-specific continuity fields", () => {
-    const parsed = laneBackendStateSchema.parse({
-      backend: "claude",
-      conversationId: "conv-123",
-      staleSession: false,
-    });
-    expect(parsed.backend).toBe("claude");
-    if (parsed.backend === "claude") {
-      expect(parsed.conversationId).toBe("conv-123");
-      expect(parsed.staleSession).toBe(false);
-    }
-  });
-
-  it("preserves Codex-specific continuity fields", () => {
-    const parsed = laneBackendStateSchema.parse({
-      backend: "codex",
-      threadId: "thr-9",
-    });
-    expect(parsed.backend).toBe("codex");
-    if (parsed.backend === "codex") {
-      expect(parsed.threadId).toBe("thr-9");
-      expect(parsed.staleSession).toBeUndefined();
-    }
-  });
-
-  it("rejects mixing Claude state with a Codex thread id", () => {
-    expect(
-      laneBackendStateSchema.safeParse({
-        backend: "claude",
-        threadId: "thr-1",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("allows initial state where the backend reference is not yet known", () => {
-    const claude = laneBackendStateSchema.parse({ backend: "claude" });
-    expect(claude.backend).toBe("claude");
-    if (claude.backend === "claude") {
-      expect(claude.conversationId).toBeUndefined();
-    }
-  });
-});
-
 describe("laneMetricsSchema", () => {
-  it("captures Claude context metrics with rotation flag", () => {
+  it("captures context metrics alongside the rotation flag", () => {
     const parsed = laneMetricsSchema.parse({
-      backend: "claude",
       contextTokens: 12_345,
       contextWindowMax: 200_000,
       rotateBeforeNextTurn: false,
     });
-    expect(parsed.backend).toBe("claude");
-    if (parsed.backend === "claude") {
-      expect(parsed.contextTokens).toBe(12_345);
-      expect(parsed.contextWindowMax).toBe(200_000);
-      expect(parsed.rotateBeforeNextTurn).toBe(false);
-    }
+    expect(parsed.contextTokens).toBe(12_345);
+    expect(parsed.contextWindowMax).toBe(200_000);
+    expect(parsed.rotateBeforeNextTurn).toBe(false);
   });
 
-  it("captures Codex turn usage without forcing context-window metrics", () => {
+  it("captures per-turn usage without forcing context-window metrics", () => {
     const parsed = laneMetricsSchema.parse({
-      backend: "codex",
       lastTurnUsage: {
         inputTokens: 10,
         cachedInputTokens: 0,
@@ -109,50 +61,22 @@ describe("laneMetricsSchema", () => {
       },
       rotateBeforeNextTurn: true,
     });
-    expect(parsed.backend).toBe("codex");
-    if (parsed.backend === "codex") {
-      expect(parsed.lastTurnUsage?.outputTokens).toBe(25);
-      expect(parsed.rotateBeforeNextTurn).toBe(true);
-      // Codex never carries context-window metrics; the field is absent in
-      // the discriminated branch rather than flattened into a fake default.
-      expect(parsed).not.toHaveProperty("contextTokens");
-      expect(parsed).not.toHaveProperty("contextWindowMax");
-    }
+    expect(parsed.lastTurnUsage?.outputTokens).toBe(25);
+    expect(parsed.rotateBeforeNextTurn).toBe(true);
+    // Absent metrics stay absent rather than flattening into fake defaults.
+    expect(parsed).not.toHaveProperty("contextTokens");
+    expect(parsed).not.toHaveProperty("contextWindowMax");
   });
 
-  it("rejects context-window metrics on a Codex metrics object", () => {
+  it("requires the rotation flag", () => {
+    expect(laneMetricsSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown metric fields (strict shape)", () => {
     expect(
       laneMetricsSchema.safeParse({
-        backend: "codex",
-        contextTokens: 5,
         rotateBeforeNextTurn: false,
-      }).success,
-    ).toBe(false);
-  });
-
-  it("rejects Codex turn usage on a Claude metrics object", () => {
-    expect(
-      laneMetricsSchema.safeParse({
-        backend: "claude",
-        lastTurnUsage: {
-          inputTokens: 1,
-          cachedInputTokens: 0,
-          outputTokens: 1,
-        },
-        rotateBeforeNextTurn: false,
-      }).success,
-    ).toBe(false);
-  });
-
-  it("requires the rotation flag on every metrics shape", () => {
-    expect(
-      laneMetricsSchema.safeParse({
-        backend: "claude",
-      }).success,
-    ).toBe(false);
-    expect(
-      laneMetricsSchema.safeParse({
-        backend: "codex",
+        madeUpMetric: 1,
       }).success,
     ).toBe(false);
   });
@@ -164,48 +88,20 @@ describe("laneStateSchema", () => {
       workflowId: "collab-1",
       laneId: "primary",
       backend: "claude",
+      ref: "conv-1",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true, contextLimitTokens: 180_000 },
-      backendState: { backend: "claude", conversationId: "conv-1" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
       ...overrides,
     };
   }
 
-  it("requires the backend tag to match the backend-state and metrics tags", () => {
-    expect(
-      laneStateSchema.safeParse(
-        buildState({
-          backend: "codex",
-          backendState: { backend: "claude", conversationId: "conv-1" },
-        }),
-      ).success,
-    ).toBe(false);
-
-    expect(
-      laneStateSchema.safeParse(
-        buildState({
-          metrics: {
-            backend: "codex",
-            lastTurnUsage: null,
-            rotateBeforeNextTurn: false,
-          } as never,
-        }),
-      ).success,
-    ).toBe(false);
-  });
-
-  it("round-trips a Claude lane state with all supported fields populated", () => {
+  it("round-trips a lane state with all supported fields populated", () => {
     const parsed = laneStateSchema.parse(
       buildState({
-        backendState: {
-          backend: "claude",
-          conversationId: "conv-1",
-          staleSession: false,
-        },
+        staleSession: false,
         metrics: {
-          backend: "claude",
           contextTokens: 100,
           contextWindowMax: 200_000,
           rotateBeforeNextTurn: false,
@@ -215,30 +111,21 @@ describe("laneStateSchema", () => {
     expect(parsed.workflowId).toBe("collab-1");
     expect(parsed.laneId).toBe("primary");
     expect(parsed.backend).toBe("claude");
+    expect(parsed.ref).toBe("conv-1");
     expect(parsed.writeCapability).toBe("write_capable");
     expect(parsed.policy.contextLimitTokens).toBe(180_000);
+    expect(parsed.staleSession).toBe(false);
   });
 
-  it("round-trips a Codex lane state without inventing context-window metrics", () => {
-    const parsed = laneStateSchema.parse({
-      workflowId: "collab-1",
-      laneId: "secondary",
-      backend: "codex",
-      writeCapability: "read_only",
-      policy: { continuityEnabled: false },
-      backendState: { backend: "codex", threadId: "thr-1" },
-      metrics: {
-        backend: "codex",
-        lastTurnUsage: null,
-        rotateBeforeNextTurn: false,
-      },
-      lastUsedAt: "2026-04-28T10:00:00.000Z",
-    });
-    expect(parsed.backend).toBe("codex");
-    expect(parsed.metrics.backend).toBe("codex");
-    if (parsed.metrics.backend === "codex") {
-      expect(parsed.metrics.lastTurnUsage).toBeNull();
-    }
+  it("accepts a null continuity handle for a lane with no backend session yet", () => {
+    const parsed = laneStateSchema.parse(buildState({ ref: null }));
+    expect(parsed.ref).toBeNull();
+  });
+
+  it("rejects an empty-string continuity handle", () => {
+    expect(laneStateSchema.safeParse(buildState({ ref: "" })).success).toBe(
+      false,
+    );
   });
 
   it("rejects empty workflow or lane identifiers", () => {
@@ -248,5 +135,24 @@ describe("laneStateSchema", () => {
     expect(laneStateSchema.safeParse(buildState({ laneId: "" })).success).toBe(
       false,
     );
+  });
+
+  it("laneSessionRef exposes the handle as an AgentSessionRef, null when absent", () => {
+    expect(laneSessionRef(buildState())).toEqual({
+      backend: "claude",
+      ref: "conv-1",
+    });
+    expect(
+      laneSessionRef(buildState({ backend: "codex", ref: "thr-9" })),
+    ).toEqual({ backend: "codex", ref: "thr-9" });
+    expect(laneSessionRef(buildState({ ref: null }))).toBeNull();
+  });
+});
+
+describe("laneStorageKey", () => {
+  it("produces distinct keys for ids that would collide under naive concatenation", () => {
+    expect(
+      laneStorageKey({ workflowId: "wf-a", laneId: "b-lane" }),
+    ).not.toEqual(laneStorageKey({ workflowId: "wf-a-b", laneId: "lane" }));
   });
 });

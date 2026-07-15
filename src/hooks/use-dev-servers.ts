@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { ApiCallError } from "@/lib/api/errors";
+import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import type {
   DevServersStatusResponse,
   DevServerRuntimeState,
@@ -101,34 +102,24 @@ export function useDevServers(projectName: string, sessionName: string) {
     queryFn: () => apiFetch<DevServersStatusResponse>(base),
   });
 
-  const patchStatuses = useCallback(
-    async (
-      shouldPatch: (server: DevServerRuntimeState) => boolean,
+  const statusPatchUpdate = useCallback(
+    <TVars>(
+      shouldPatch: (server: DevServerRuntimeState, vars: TVars) => boolean,
       status: DevServerRuntimeState["status"],
-    ) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous =
-        queryClient.getQueryData<DevServersStatusResponse>(queryKey);
-      if (previous) {
-        queryClient.setQueryData<DevServersStatusResponse>(queryKey, {
-          ...previous,
-          servers: previous.servers.map((s) =>
-            shouldPatch(s) ? { ...s, status } : s,
-          ),
-        });
-      }
-      return { previous };
-    },
-    [queryClient, queryKey],
-  );
-
-  const rollback = useCallback(
-    (context: { previous?: DevServersStatusResponse } | undefined) => {
-      if (context?.previous) {
-        queryClient.setQueryData(queryKey, context.previous);
-      }
-    },
-    [queryClient, queryKey],
+    ) =>
+      cacheUpdate<TVars, DevServersStatusResponse>({
+        key: () => queryKey,
+        update: (old, vars) =>
+          old
+            ? {
+                ...old,
+                servers: old.servers.map((s) =>
+                  shouldPatch(s, vars) ? { ...s, status } : s,
+                ),
+              }
+            : undefined,
+      }),
+    [queryKey],
   );
 
   const markStopPending = useCallback((names: string[]) => {
@@ -143,19 +134,23 @@ export function useDevServers(projectName: string, sessionName: string) {
     });
   }, []);
 
-  const startServerMutation = useMutation({
-    mutationFn: (serverName: string) =>
-      apiPost(`${base}/${encodeURIComponent(serverName)}/start`),
-    onMutate: (serverName) =>
-      patchStatuses((s) => s.serverName === serverName, "starting"),
-    onSuccess: () => setUnmanagedConflict(null),
-    onError: (error, _serverName, context) => {
-      rollback(context);
-      const conflict = parseUnmanagedConflict(error);
-      if (conflict) setUnmanagedConflict(conflict);
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey }),
-  });
+  const startServerMutation = useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (serverName: string) =>
+        apiPost(`${base}/${encodeURIComponent(serverName)}/start`),
+      updates: [
+        statusPatchUpdate<string>(
+          (s, serverName) => s.serverName === serverName,
+          "starting",
+        ),
+      ],
+      onSuccess: () => setUnmanagedConflict(null),
+      onError: (error) => {
+        const conflict = parseUnmanagedConflict(error);
+        if (conflict) setUnmanagedConflict(conflict);
+      },
+    }),
+  );
 
   const stopServerMutation = useMutation({
     mutationFn: (serverName: string) =>
@@ -169,16 +164,17 @@ export function useDevServers(projectName: string, sessionName: string) {
     },
   });
 
-  const startAllMutation = useMutation({
-    mutationFn: () => apiPost(`${base}/start-all`),
-    onMutate: () =>
-      patchStatuses(
-        (s) => s.status === "stopped" || s.status === "error",
-        "starting",
-      ),
-    onError: (_error, _vars, context) => rollback(context),
-    onSettled: () => queryClient.invalidateQueries({ queryKey }),
-  });
+  const startAllMutation = useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: () => apiPost(`${base}/start-all`),
+      updates: [
+        statusPatchUpdate<void>(
+          (s) => s.status === "stopped" || s.status === "error",
+          "starting",
+        ),
+      ],
+    }),
+  );
 
   const stopAllMutation = useMutation({
     mutationFn: () => apiPost(`${base}/stop-all`),

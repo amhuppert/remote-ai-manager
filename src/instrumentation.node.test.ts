@@ -6,7 +6,7 @@ describe("createStartupRegistrar", () => {
   it("verifies the recorded server base URL exactly once, after recording it", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => 0,
       }),
       runStateMigrations: async () => [],
@@ -31,6 +31,7 @@ describe("createStartupRegistrar", () => {
         movedToPaused: 0,
       }),
       sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
     });
 
     await register();
@@ -44,7 +45,7 @@ describe("createStartupRegistrar", () => {
   it("resolves without awaiting verification and survives a throwing verify step", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => {
           calls.push("rehydrate");
           return 0;
@@ -74,6 +75,7 @@ describe("createStartupRegistrar", () => {
         movedToPaused: 0,
       }),
       sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
     });
 
     await expect(register()).resolves.not.toThrow();
@@ -84,7 +86,7 @@ describe("createStartupRegistrar", () => {
   it("rehydrates conversation actors before envelope recovery and notifications init", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => {
           calls.push("rehydrate");
           return 0;
@@ -125,6 +127,10 @@ describe("createStartupRegistrar", () => {
         calls.push("compaction-sweep");
         return 0;
       },
+      recoverStaleAgentRuns: () => {
+        calls.push("agent-run-sweep");
+        return 0;
+      },
     });
 
     await register();
@@ -140,12 +146,15 @@ describe("createStartupRegistrar", () => {
     expect(calls.indexOf("migrations")).toBeLessThan(
       calls.indexOf("compaction-sweep"),
     );
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("agent-run-sweep"),
+    );
   });
 
   it("runs rehydrate and envelope recovery inside distinct startup traces", async () => {
     const traces: Record<string, TraceContext | undefined> = {};
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => {
           traces["rehydrate"] = getTraceContext();
           return 0;
@@ -171,6 +180,7 @@ describe("createStartupRegistrar", () => {
         };
       },
       sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
     });
 
     await register();
@@ -187,7 +197,7 @@ describe("createStartupRegistrar", () => {
   it("invokes envelope recovery and surfaces failures without breaking startup", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => 0,
       }),
       runStateMigrations: async () => [],
@@ -213,18 +223,84 @@ describe("createStartupRegistrar", () => {
         calls.push("compaction-sweep-failed");
         throw new Error("simulated sweep failure");
       },
+      recoverStaleAgentRuns: () => {
+        calls.push("agent-run-sweep-failed");
+        throw new Error("simulated agent-run sweep failure");
+      },
     });
 
     await expect(register()).resolves.not.toThrow();
     expect(calls).toContain("envelope-recovery-failed");
     expect(calls).toContain("compaction-sweep-failed");
+    expect(calls).toContain("agent-run-sweep-failed");
     expect(calls).toContain("notifications");
+  });
+
+  it("aborts startup when state migrations fail, before any later step runs", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => {
+        calls.push("load-manager");
+        return {
+          rehydrateConversationActors: async () => {
+            calls.push("rehydrate");
+            return 0;
+          },
+        };
+      },
+      runStateMigrations: async () => {
+        throw new Error("simulated migration failure");
+      },
+      initNotificationDb: () => {
+        calls.push("notifications");
+      },
+      setConfigReader: () => {
+        calls.push("setConfigReader");
+      },
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => {
+        calls.push("token");
+        return "test-token";
+      },
+      installCli: async () => {
+        calls.push("install");
+        return { installed: false, reason: "bundle_missing" } as const;
+      },
+      recordServerBaseUrl: () => {
+        calls.push("record-url");
+        return "http://127.0.0.1:3000";
+      },
+      verifyServerBaseUrl: () => {
+        calls.push("verify-url");
+      },
+      recoverActiveWorkflowEnvelopes: async () => {
+        calls.push("envelope-recovery");
+        return {
+          scanned: 0,
+          failed: 0,
+          preservedPaused: 0,
+          preservedRunning: 0,
+          movedToPaused: 0,
+        };
+      },
+      sweepInterruptedCompactions: () => {
+        calls.push("compaction-sweep");
+        return 0;
+      },
+      recoverStaleAgentRuns: () => {
+        calls.push("agent-run-sweep");
+        return 0;
+      },
+    });
+
+    await expect(register()).rejects.toThrow("simulated migration failure");
+    expect(calls).toEqual([]);
   });
 
   it("ensures the agent token after migrations and before conversations rehydrate", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => {
           calls.push("rehydrate");
           return 0;
@@ -258,6 +334,7 @@ describe("createStartupRegistrar", () => {
         movedToPaused: 0,
       }),
       sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
     });
 
     await register();
@@ -273,7 +350,7 @@ describe("createStartupRegistrar", () => {
   it("survives a failing token step without breaking startup", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      loadConversationManager: async () => ({
+      loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => {
           calls.push("rehydrate");
           return 0;
@@ -299,6 +376,7 @@ describe("createStartupRegistrar", () => {
         movedToPaused: 0,
       }),
       sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
     });
 
     await expect(register()).resolves.not.toThrow();

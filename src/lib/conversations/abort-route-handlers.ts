@@ -11,6 +11,7 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { abortConversation as abortConversationRegistry } from "@/lib/conversations/abort-registry";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import { resolveSessionConversationRoute } from "./route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 
@@ -18,37 +19,12 @@ const logger = createLogger("abort-route-handlers");
 
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/abort — abort a running prompt */
 export const abortConversation = withTracing(async (_request, { params }) => {
-  const resolvedParams = await params;
-  const name = resolvedParams["name"] ?? "";
-  const sessionSlug = resolvedParams["session"] ?? "";
-  const sessionName = decodeURIComponent(sessionSlug);
-  const conversationId = resolvedParams["conversationId"] ?? "";
-
-  const projectPath = await resolveProjectPath(name);
-  if (!projectPath) {
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const session = await getSession(projectPath, sessionName);
-  if (!session) {
-    return NextResponse.json(
-      { error: "Session not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
+  const resolved = await resolveSessionConversationRoute(
+    { resolveProjectPath, getSession },
+    { params },
   );
-  if (!conversation) {
-    return NextResponse.json(
-      { error: "Conversation not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
+  if (!resolved.ok) return resolved.response;
+  const { projectPath, sessionName, conversationId } = resolved.value;
 
   // Signal the AbortController to stop SDK execution
   const aborted = abortConversationRegistry(conversationId);

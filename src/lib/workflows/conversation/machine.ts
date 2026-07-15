@@ -1,62 +1,76 @@
 /**
  * Conversation XState v5 state machine.
  *
- * Manages the full conversation lifecycle: prompt submission, resource
- * acquisition, SDK execution, AskUserQuestion handling, metadata tracking,
- * and debug mode as a compound state.
+ * Manages the conversation turn lifecycle: prompt submission, resource
+ * acquisition, SDK execution, AskUserQuestion handling, and metadata
+ * tracking. The machine is long-lived by design and has zero final states.
+ *
+ * Debug mode is an attached workflow (`src/lib/workflows/debug/`), not a
+ * machine concern: API routes drive it through the `DebugAdapter`, which maps
+ * lifecycle methods onto `DEBUG_COMMAND` events applied by the pure
+ * `applyDebugCommand` reducer; turn outcomes are interpreted by
+ * `resolveDebugFinalization`; cleanup verification runs asynchronously via
+ * `runDebugCleanupVerification` and reports back as a `DEBUG_COMMAND`. The
+ * machine contributes only the attachment points: the flat `debug` state
+ * (which parks the conversation between debug turns without queue draining),
+ * the finalize branch, and the retry re-entry into the turn spine.
  *
  * State chart:
  *
  * idle ─────────── SUBMIT_PROMPT ───────> acquiringResources
  *  │                                            │
- *  │ ENTER_DEBUG_MODE                           │ (prepareTurn done)
+ *  │ DEBUG_COMMAND (enter)                      │ (prepareTurn done)
  *  v                                            v
- * debug (compound)                 executing (compound, invokes executePrompt)
- *  ├─ hypothesizing                 │  ASK_QUESTION (internal: records the
- *  ├─ analyzingEvidence             │  pending question; the stream keeps
- *  ├─ awaitingReproduction          │  running until the agent ends its turn)
- *  ├─ awaitingVerification          │
- *  └─ cleanupInstrumentation        │
- *                                 PROMPT_COMPLETED / PROMPT_FAILED / ABORT_TURN
- *                                             │
- *                                             v
- *                                       finalizingTurn
- *                                             │
- *                    ┌────────────────────────┼──────────────┐
- *                    v                        v              v
- *            waitingForInput               idle           debug.*
- *          (pendingQuestion set;        (default)
- *           drains queue on entry;
- *           any turn claim clears
- *           the question)
+ * debug (flat; phase lives           executing (compound, invokes
+ *  in context.debugMode)             executePrompt or runTaskRun;
+ *  │                                 ASK_QUESTION is internal)
+ *  │ SUBMIT_PROMPT /                            │
+ *  │ DEBUG_COMMAND (retry_turn)  PROMPT_COMPLETED / PROMPT_FAILED / ABORT_TURN
+ *  v                                            │
+ * acquiringResources                            v
+ *                                         finalizingTurn
+ *                                               │
+ *                      ┌────────────────────────┼──────────────┐
+ *                      v                        v              v
+ *              waitingForInput               idle            debug
+ *            (pendingQuestion set;        (default)     (debugMode active)
+ *             drains queue on entry;
+ *             any turn claim clears
+ *             the question)
  */
 
-import { setup, assign, and, type ActorRefFrom } from "xstate";
+import { randomUUID } from "node:crypto";
+import { setup, assign, enqueueActions, type ActorRefFrom } from "xstate";
 import type {
   ConversationContext,
   ConversationEvent,
   ConversationInput,
-  ConversationOutput,
   ConversationTurnActive,
   PrepareTurnInput,
   ExecutePromptInput,
   PromptActorResult,
   RunTaskRunInput,
   TaskRunActive,
-  VerifyCleanupInput,
 } from "./types";
 import {
   prepareTurnActor,
   executePromptActor,
   runTaskRunActor,
-  verifyCleanupActor,
 } from "./actors";
 import {
-  debugEvidenceAnalysisSchema,
-  debugHypothesisOutputZodSchema,
-  debugCleanupResultZodSchema,
-} from "./debug-schemas";
+  applyDebugCommand,
+  clearDebugTurnFailure,
+} from "@/lib/workflows/debug/commands";
+import { resolveDebugFinalization } from "@/lib/workflows/debug/finalization";
+import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import { getDefaultDebugAdapter } from "./debug-adapter";
+import {
+  conversationRuntimeKey,
+  getConversationRuntime,
+} from "./runtime-state";
+import { createLogger } from "@/lib/logging";
+
+const logger = createLogger("conversation-machine");
 
 // ============================================================
 // Helpers
@@ -65,6 +79,15 @@ import { getDefaultDebugAdapter } from "./debug-adapter";
 function extractError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function mintMissingDebugSessionId(conversationId: string): string {
+  const debugSessionId = randomUUID();
+  logger.info("conversation.debug_session_id_minted", {
+    conversationId,
+    debugSessionId,
+  });
+  return debugSessionId;
 }
 
 function accumulateTotals(
@@ -81,7 +104,7 @@ function accumulateTotals(
 }
 
 /** Build the ActiveTurn for a SUBMIT_PROMPT claim. Shared by every state that
- *  can claim a conversation turn (idle, waitingForInput, debug.*). */
+ *  can claim a conversation turn (idle, waitingForInput, debug). */
 function conversationTurnFromEvent(
   context: ConversationContext,
   event: Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }>,
@@ -126,14 +149,52 @@ function taskRunFromEvent(
       : {}),
     ...(event.tooling !== undefined ? { tooling: event.tooling } : {}),
     ...(event.timeoutMs !== undefined ? { timeoutMs: event.timeoutMs } : {}),
-    ...(event.skipStructuredOutputGate !== undefined
-      ? { skipStructuredOutputGate: event.skipStructuredOutputGate }
-      : {}),
     ...(event.structuredOutputTextField !== undefined
       ? { structuredOutputTextField: event.structuredOutputTextField }
       : {}),
     ...(event.origin !== undefined ? { origin: event.origin } : {}),
   };
+}
+
+/**
+ * Resolve the context `backendRef` after a completed turn — the single owner
+ * of continuation disposition for every completed-turn path (executePrompt /
+ * runTaskRun onDone, PROMPT_COMPLETED, EXTERNAL_TURN_COMPLETED). The result's
+ * `continuationDisposition` is backend continuation policy decided where the
+ * turn executed, never by backend identity here. "clear" unconditionally
+ * drops the ref: the backend declared the continuation unusable, so the next
+ * turn must start fresh — adapters enforce `backendRef: null` alongside it
+ * (`turnContinuationSchema`), and honoring a ref here would retry the dead
+ * continuation forever. On "retain" a fresher ref from the turn wins, falling
+ * back to the prior ref: wiping a resumable ref strands the conversation with
+ * a rendered transcript but no agent memory of it.
+ */
+function resolveCompletedTurnBackendRef(
+  context: ConversationContext,
+  output: PromptActorResult,
+): ConversationContext["backendRef"] {
+  if (output.continuationDisposition === "clear") {
+    return null;
+  }
+  return output.backendRef ?? context.backendRef;
+}
+
+/**
+ * Legality gate for reducer-handled debug commands. Mirrors what the machine
+ * would apply so `snapshot.can()` — and therefore the adapter's dispatch
+ * result and the API route's 409 — stays truthful.
+ */
+function isApplicableDebugCommand(
+  context: ConversationContext,
+  event: Extract<ConversationEvent, { type: "DEBUG_COMMAND" }>,
+): boolean {
+  return (
+    applyDebugCommand(
+      context.debugMode,
+      event.command,
+      new Date().toISOString(),
+    ) !== null
+  );
 }
 
 // ============================================================
@@ -145,53 +206,17 @@ export const conversationMachine = setup({
     context: {} as ConversationContext,
     events: {} as ConversationEvent,
     input: {} as ConversationInput,
-    output: {} as ConversationOutput,
   },
 
   actors: {
     prepareTurn: prepareTurnActor,
     executePrompt: executePromptActor,
     runTaskRun: runTaskRunActor,
-    verifyCleanup: verifyCleanupActor,
   },
 
   guards: {
     isActiveTurnTaskRun: ({ context }) =>
       context.activeTurn?.kind === "task_run",
-    isDebugModeActive: ({ context }) => context.debugMode?.active === true,
-    isDebugHypothesizing: ({ context }) =>
-      context.debugMode?.phase === "hypothesizing",
-    isDebugAnalyzing: ({ context }) =>
-      context.debugMode?.phase === "analyzing_evidence",
-    isDebugAwaitingReproduction: ({ context }) =>
-      context.debugMode?.phase === "awaiting_reproduction",
-    isDebugAwaitingVerification: ({ context }) =>
-      context.debugMode?.phase === "awaiting_verification",
-    isDebugCleanup: ({ context }) =>
-      context.debugMode?.phase === "cleanup_instrumentation",
-    isDebugErrorRestore: ({ context }) =>
-      context.debugMode?.lastTurnFailed === true,
-    // Phase advancement gate: both backends surface a missing/invalid
-    // structured response as `structuredOutput == null`. Codex never sets
-    // `error` for schema-divergent replies, so the structuredOutput half
-    // is the single load-bearing condition; the error half is belt-and-
-    // suspenders for SDK-level failures. See
-    // .kiro/research/codex-output-format-parity.md.
-    lastTurnProducedStructuredOutput: ({ context }) =>
-      context.lastResult?.error == null &&
-      context.lastResult?.structuredOutput != null,
-    analysisOutcomeIsFixApplied: ({ context }) => {
-      const parsed = debugEvidenceAnalysisSchema.safeParse(
-        context.lastResult?.structuredOutput,
-      );
-      return parsed.success && parsed.data.outcome === "fix_applied";
-    },
-    analysisOutcomeIsMoreInstrumentation: ({ context }) => {
-      const parsed = debugEvidenceAnalysisSchema.safeParse(
-        context.lastResult?.structuredOutput,
-      );
-      return parsed.success && parsed.data.outcome === "more_instrumentation";
-    },
   },
 
   actions: {
@@ -206,6 +231,168 @@ export const conversationMachine = setup({
     markUnreadOnFinish: () => {},
     markReadOnUserTurnStart: () => {},
     drainPendingQueue: () => {},
+    cancelDebugCleanupVerification: ({ context }) => {
+      const runtime = getConversationRuntime(
+        conversationRuntimeKey(
+          context.projectPath,
+          context.sessionName,
+          context.conversationId,
+        ),
+      );
+      runtime?.debugCleanupVerification?.controller.abort();
+      if (runtime) runtime.debugCleanupVerification = undefined;
+    },
+    persistRestoredDebugGeneration: enqueueActions(({ context, enqueue }) => {
+      if (!context.debugGenerationNeedsPersistence) return;
+      enqueue.assign({ debugGenerationNeedsPersistence: false });
+      enqueue("syncDerivedFields");
+      enqueue("persistSnapshot");
+    }),
+
+    /** Single owner of the SUBMIT_PROMPT turn claim (idle, waitingForInput,
+     *  debug). Clears the previous turn's result with the error — an abort
+     *  mid-turn sets only lastError, and a surviving stale success would be
+     *  returned as the aborted turn's outcome — and clears the debug
+     *  failed-turn flag: any claim replaces the failed turn, so the error
+     *  presentation must not survive it. */
+    claimConversationTurn: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "SUBMIT_PROMPT") return;
+      enqueue.assign({
+        activeTurn: conversationTurnFromEvent(context, event),
+        pendingQuestion: null,
+        debugMode: clearDebugTurnFailure(context.debugMode),
+        lastResult: null,
+        lastError: null,
+      });
+    }),
+
+    /** SUBMIT_TASK_RUN counterpart of `claimConversationTurn`. */
+    claimTaskRun: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "SUBMIT_TASK_RUN") return;
+      enqueue.assign({
+        activeTurn: taskRunFromEvent(context, event),
+        pendingQuestion: null,
+        lastResult: null,
+        lastError: null,
+      });
+    }),
+
+    /** Apply a reducer-handled debug command and fire the side effects it
+     *  selects. Transition guards already established legality, so a null
+     *  effect is simply ignored. */
+    applyDebugCommandEffect: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "DEBUG_COMMAND") return;
+      const effect = applyDebugCommand(
+        context.debugMode,
+        event.command,
+        new Date().toISOString(),
+      );
+      if (!effect) return;
+      if (event.command.kind === "enter" || event.command.kind === "exit") {
+        enqueue("cancelDebugCleanupVerification");
+      }
+      enqueue.assign({
+        debugMode: effect.debugMode,
+        ...(effect.clearActiveTurn ? { activeTurn: null } : {}),
+        ...(effect.lastError !== undefined
+          ? { lastError: effect.lastError }
+          : {}),
+      });
+      enqueue("syncDerivedFields");
+      if (effect.broadcastConversationStatus) {
+        enqueue("broadcastConversationStatus");
+      }
+      if (effect.broadcastDebugModeStatus) {
+        enqueue("broadcastDebugModeStatus");
+      }
+      enqueue("persistSnapshot");
+    }),
+
+    /** Settle a turn that finalized while debug mode is active. The debug
+     *  workflow decides what the outcome means (`resolveDebugFinalization`);
+     *  this action applies shared turn accounting, maps the decision kind
+     *  onto side effects (user notification only on a phase advance), and
+     *  starts async cleanup verification when the cleanup turn produced a
+     *  structured report. `activeTurn` is preserved on `verify_cleanup` and
+     *  `turn_failed` so a retry can re-run the same prompt. */
+    finalizeDebugTurn: enqueueActions(({ context, enqueue }) => {
+      const debugMode = context.debugMode;
+      if (!debugMode?.active) return;
+      const result = context.lastResult;
+      const decision = resolveDebugFinalization({
+        debugMode,
+        lastResult: result
+          ? { structuredOutput: result.structuredOutput, error: result.error }
+          : null,
+        lastError: context.lastError,
+      });
+      const preserveActiveTurn =
+        decision.kind === "verify_cleanup" || decision.kind === "turn_failed";
+      enqueue.assign({
+        promptCount: context.promptCount + 1,
+        totals: result
+          ? accumulateTotals(context.totals, result)
+          : context.totals,
+        status: "awaiting" as const,
+        lastActivityAt: new Date().toISOString(),
+        debugMode: decision.debugMode,
+        ...(preserveActiveTurn ? {} : { activeTurn: null }),
+        ...(decision.kind === "turn_failed"
+          ? { lastError: decision.lastError }
+          : {}),
+      });
+      enqueue("syncDerivedFields");
+      enqueue("releaseResources");
+      enqueue("broadcastConversationStatus");
+      if (decision.kind === "advance") {
+        enqueue("dispatchPushNotification");
+        enqueue("markUnreadOnFinish");
+      }
+      enqueue("persistSnapshot");
+      if (decision.kind === "verify_cleanup") {
+        enqueue("startDebugCleanupVerification");
+      }
+    }),
+
+    /** Fire-and-forget cleanup verification. The default implementation is
+     *  production-real (the debug workflow module owns the verify logic);
+     *  tests override it via `.provide()` to inject a fake verifier. The
+     *  outcome re-enters the machine as a DEBUG_COMMAND stamped with this
+     *  attempt, so the reducer drops it if a newer cleanup attempt has
+     *  superseded it by the time it resolves. This action runs after
+     *  finalizeDebugTurn's assign, so `debugMode` already carries the
+     *  attempt the verify_cleanup decision stamped for this turn. */
+    startDebugCleanupVerification: ({ context, self }) => {
+      const debugSessionId = context.debugMode?.debugSessionId;
+      if (!debugSessionId) return;
+
+      const key = conversationRuntimeKey(
+        context.projectPath,
+        context.sessionName,
+        context.conversationId,
+      );
+      const runtime = getConversationRuntime(key);
+      runtime?.debugCleanupVerification?.controller.abort();
+      const controller = new AbortController();
+      if (runtime) {
+        runtime.debugCleanupVerification = { debugSessionId, controller };
+      }
+
+      void runDebugCleanupVerification({
+        worktreePath: context.worktreePath,
+        conversationId: context.conversationId,
+        structuredOutput: context.lastResult?.structuredOutput,
+        debugSessionId,
+        attempt: context.debugMode?.cleanupVerificationAttempt ?? 0,
+        signal: controller.signal,
+      }).then((command) => {
+        if (controller.signal.aborted || command == null) return;
+        const current = getConversationRuntime(key)?.debugCleanupVerification;
+        if (current && current.controller !== controller) return;
+        if (runtime) runtime.debugCleanupVerification = undefined;
+        self.send({ type: "DEBUG_COMMAND", command });
+      });
+    },
   },
 }).createMachine({
   id: "conversation",
@@ -244,8 +431,15 @@ export const conversationMachine = setup({
             instructionsDelivered: input.debugMode.instructionsDelivered,
             phase: input.debugMode.phase,
             lastTurnFailed: input.debugMode.lastTurnFailed,
+            debugSessionId:
+              input.debugMode.debugSessionId ??
+              mintMissingDebugSessionId(input.conversationId),
+            cleanupVerificationAttempt:
+              input.debugMode.cleanupVerificationAttempt,
           }
         : null,
+    debugGenerationNeedsPersistence:
+      input.debugMode?.active === true && !input.debugMode.debugSessionId,
     totals: {
       totalCostUsd: null,
       totalDurationMs: null,
@@ -270,80 +464,30 @@ export const conversationMachine = setup({
       // manager's provided action claims any pending queue batch and dispatches
       // it as the next turn. The default stub is a no-op.
       entry: [{ type: "drainPendingQueue" }],
+      // An active debugMode (restored from input, or just entered via
+      // DEBUG_COMMAND) parks the conversation in the debug state.
       always: [
         {
-          guard: and(["isDebugModeActive", "isDebugErrorRestore"]),
-          target: "debug.error",
-        },
-        {
-          guard: and(["isDebugModeActive", "isDebugHypothesizing"]),
-          target: "debug.hypothesizing",
-        },
-        {
-          guard: and(["isDebugModeActive", "isDebugAwaitingReproduction"]),
-          target: "debug.awaitingReproduction",
-        },
-        {
-          guard: and(["isDebugModeActive", "isDebugAnalyzing"]),
-          target: "debug.analyzingEvidence",
-        },
-        {
-          guard: and(["isDebugModeActive", "isDebugAwaitingVerification"]),
-          target: "debug.awaitingVerification",
-        },
-        {
-          guard: and(["isDebugModeActive", "isDebugCleanup"]),
-          target: "debug.cleanupInstrumentation",
+          guard: ({ context }) => context.debugMode?.active === true,
+          target: "debug",
         },
       ],
       on: {
         SUBMIT_PROMPT: {
           target: "acquiringResources",
-          actions: assign({
-            activeTurn: ({ context, event }) =>
-              conversationTurnFromEvent(context, event),
-            pendingQuestion: null,
-            // Clear the previous turn's result with the error: an abort mid-turn
-            // sets only lastError, and a surviving stale success would be
-            // returned as the aborted turn's outcome.
-            lastResult: null,
-            lastError: null,
-          }),
+          actions: "claimConversationTurn",
         },
         SUBMIT_TASK_RUN: {
           target: "acquiringResources",
-          actions: assign({
-            activeTurn: ({ context, event }) =>
-              taskRunFromEvent(context, event),
-            pendingQuestion: null,
-            // See SUBMIT_PROMPT: a stale success must not survive into a turn
-            // whose abort path sets only lastError.
-            lastResult: null,
-            lastError: null,
-          }),
+          actions: "claimTaskRun",
         },
-        ENTER_DEBUG_MODE: {
-          target: "debug",
-          actions: [
-            assign({
-              debugMode: ({ event }) => ({
-                active: true,
-                recording: true,
-                logFilePath: event.logFilePath,
-                enteredAt: new Date().toISOString(),
-                hypotheses: [],
-                reproductionSteps: [],
-                fixSummary: null,
-                verificationSteps: [],
-                instructionsDelivered: false,
-                phase: "hypothesizing" as const,
-                lastTurnFailed: false,
-              }),
-            }),
-            "syncDerivedFields",
-            "broadcastDebugModeStatus",
-            "persistSnapshot",
-          ],
+        // Only `enter` is legal here (the reducer refuses everything else
+        // while debug mode is inactive); the always-transition above then
+        // routes into the debug state.
+        DEBUG_COMMAND: {
+          guard: ({ context, event }) =>
+            isApplicableDebugCommand(context, event),
+          actions: "applyDebugCommandEffect",
         },
         EXTERNAL_TURN_STARTED: {
           target: "externalExecuting",
@@ -372,7 +516,7 @@ export const conversationMachine = setup({
           actions: assign({
             lastResult: ({ event }) => event.result,
             backendRef: ({ context, event }) =>
-              event.result.backendRef ?? context.backendRef,
+              resolveCompletedTurnBackendRef(context, event.result),
           }),
         },
       },
@@ -455,7 +599,7 @@ export const conversationMachine = setup({
           actions: assign({
             lastResult: ({ event }) => event.result,
             backendRef: ({ context, event }) =>
-              event.result.backendRef ?? context.backendRef,
+              resolveCompletedTurnBackendRef(context, event.result),
           }),
         },
         PROMPT_FAILED: {
@@ -582,19 +726,8 @@ export const conversationMachine = setup({
               target: "#conversation.finalizingTurn",
               actions: assign({
                 lastResult: ({ event }) => event.output,
-                // On error: Codex's threadId is unrecoverable when `codex exec`
-                // exits non-zero, so clear it to force a fresh thread next turn.
-                // Claude session IDs are server-side at Anthropic and a transient
-                // QuerySession failure (subprocess crash, idle TTL) does not
-                // invalidate them — preserve the last-known ref so the next turn
-                // can attempt `resume:`. Wiping it strands the conversation with
-                // a rendered transcript but no agent memory of it.
-                backendRef: ({ context, event }) => {
-                  if (event.output.error && context.agentBackend === "codex") {
-                    return event.output.backendRef ?? null;
-                  }
-                  return event.output.backendRef ?? context.backendRef;
-                },
+                backendRef: ({ context, event }) =>
+                  resolveCompletedTurnBackendRef(context, event.output),
               }),
             },
             onError: {
@@ -637,12 +770,6 @@ export const conversationMachine = setup({
                 ...(activeTurn.timeoutMs !== undefined
                   ? { timeoutMs: activeTurn.timeoutMs }
                   : {}),
-                ...(activeTurn.skipStructuredOutputGate !== undefined
-                  ? {
-                      skipStructuredOutputGate:
-                        activeTurn.skipStructuredOutputGate,
-                    }
-                  : {}),
                 ...(activeTurn.structuredOutputTextField !== undefined
                   ? {
                       structuredOutputTextField:
@@ -658,12 +785,8 @@ export const conversationMachine = setup({
               target: "#conversation.finalizingTurn",
               actions: assign({
                 lastResult: ({ event }) => event.output,
-                backendRef: ({ context, event }) => {
-                  if (event.output.error && context.agentBackend === "codex") {
-                    return event.output.backendRef ?? null;
-                  }
-                  return event.output.backendRef ?? context.backendRef;
-                },
+                backendRef: ({ context, event }) =>
+                  resolveCompletedTurnBackendRef(context, event.output),
               }),
             },
             onError: {
@@ -682,263 +805,13 @@ export const conversationMachine = setup({
     // ========================================================
     finalizingTurn: {
       always: [
-        // Debug mode: phase-advancing transitions only fire when the turn
-        // produced a valid structured output. Otherwise we route to
-        // debug.error so the user can retry without losing the prior phase.
+        // Debug mode: the attached debug workflow interprets the turn
+        // outcome (advance / follow-up / verify-cleanup / failed) and the
+        // conversation parks back in the debug state.
         {
-          guard: and([
-            "isDebugHypothesizing",
-            "lastTurnProducedStructuredOutput",
-          ]),
-          target: "debug.awaitingReproduction",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              const hypothesisParsed = debugHypothesisOutputZodSchema.safeParse(
-                result?.structuredOutput,
-              );
-              const hypothesisPayload = hypothesisParsed.success
-                ? hypothesisParsed.data
-                : undefined;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                debugMode: context.debugMode
-                  ? {
-                      ...context.debugMode,
-                      phase: "awaiting_reproduction" as const,
-                      instructionsDelivered: true,
-                      hypotheses:
-                        hypothesisPayload?.hypotheses ??
-                        context.debugMode.hypotheses,
-                      reproductionSteps:
-                        hypothesisPayload?.reproductionSteps ??
-                        context.debugMode.reproductionSteps,
-                    }
-                  : null,
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "dispatchPushNotification",
-            "markUnreadOnFinish",
-            "persistSnapshot",
-          ],
-        },
-        // Evidence analysis returned outcome="fix_applied" → agent already
-        // applied a fix in this same turn; advance to awaitingVerification
-        // and persist fixSummary + verificationSteps for deterministic
-        // rendering by the UI.
-        {
-          guard: and([
-            "isDebugAnalyzing",
-            "lastTurnProducedStructuredOutput",
-            "analysisOutcomeIsFixApplied",
-          ]),
-          target: "debug.awaitingVerification",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              const parsed = debugEvidenceAnalysisSchema.safeParse(
-                result?.structuredOutput,
-              );
-              const fixApplied =
-                parsed.success && parsed.data.outcome === "fix_applied"
-                  ? parsed.data
-                  : null;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                debugMode: context.debugMode
-                  ? {
-                      ...context.debugMode,
-                      phase: "awaiting_verification" as const,
-                      fixSummary:
-                        fixApplied?.fixSummary ?? context.debugMode.fixSummary,
-                      verificationSteps:
-                        fixApplied?.verificationSteps ??
-                        context.debugMode.verificationSteps,
-                    }
-                  : null,
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "dispatchPushNotification",
-            "markUnreadOnFinish",
-            "persistSnapshot",
-          ],
-        },
-        // Evidence analysis returned outcome="more_instrumentation" → agent
-        // proposes a fresh hypothesis set + reproduction steps; loop back
-        // to awaitingReproduction so the user can re-run the scenario.
-        {
-          guard: and([
-            "isDebugAnalyzing",
-            "lastTurnProducedStructuredOutput",
-            "analysisOutcomeIsMoreInstrumentation",
-          ]),
-          target: "debug.awaitingReproduction",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              const parsed = debugEvidenceAnalysisSchema.safeParse(
-                result?.structuredOutput,
-              );
-              const moreInstrumentation =
-                parsed.success && parsed.data.outcome === "more_instrumentation"
-                  ? parsed.data
-                  : null;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                debugMode: context.debugMode
-                  ? {
-                      ...context.debugMode,
-                      phase: "awaiting_reproduction" as const,
-                      hypotheses:
-                        moreInstrumentation?.hypotheses ??
-                        context.debugMode.hypotheses,
-                      reproductionSteps:
-                        moreInstrumentation?.reproductionSteps ??
-                        context.debugMode.reproductionSteps,
-                      // Returning to evidence-gathering invalidates any prior
-                      // fix attempt; clear it so stale data doesn't leak into
-                      // the next awaitingVerification cycle.
-                      fixSummary: null,
-                      verificationSteps: [],
-                    }
-                  : null,
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "dispatchPushNotification",
-            "markUnreadOnFinish",
-            "persistSnapshot",
-          ],
-        },
-        // Debug cleanup turn returned a structured response — defer the
-        // success/failure decision to the verifyingCleanup substate, which
-        // cross-checks the agent's report against the persisted manifest.
-        // activeTurn is preserved so RETRY_DEBUG_TURN from debug.error (after
-        // a failed verifyCleanup) can re-run the same cleanup prompt.
-        {
-          guard: and(["isDebugCleanup", "lastTurnProducedStructuredOutput"]),
-          target: "debug.verifyingCleanup",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
-        },
-        // Phase-advancing turn failed (no structured output / error). Route
-        // to debug.error preserving phase + activeTurn so the user can RETRY.
-        {
-          guard: ({ context }) =>
-            context.debugMode?.active === true &&
-            (context.debugMode.phase === "hypothesizing" ||
-              context.debugMode.phase === "analyzing_evidence" ||
-              context.debugMode.phase === "cleanup_instrumentation"),
-          target: "debug.error",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                lastError:
-                  context.lastError ??
-                  result?.error ??
-                  "Turn did not produce a valid structured response",
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
-        },
-        // Debug "waiting" phases: follow-up prompts return to same state.
-        // These phases never produce structuredOutput (no schema), so they
-        // are not gated.
-        {
-          guard: "isDebugAwaitingReproduction",
-          target: "debug.awaitingReproduction",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
-        },
-        {
-          guard: "isDebugAwaitingVerification",
-          target: "debug.awaitingVerification",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
+          guard: ({ context }) => context.debugMode?.active === true,
+          target: "debug",
+          actions: "finalizeDebugTurn",
         },
         // A question survived the turn: the agent registered it (cctl ask)
         // and ended its turn. Settle turn metadata but keep the pending
@@ -1016,28 +889,11 @@ export const conversationMachine = setup({
       on: {
         SUBMIT_PROMPT: {
           target: "acquiringResources",
-          actions: assign({
-            activeTurn: ({ context, event }) =>
-              conversationTurnFromEvent(context, event),
-            pendingQuestion: null,
-            // Clear the previous turn's result with the error: an abort mid-turn
-            // sets only lastError, and a surviving stale success would be
-            // returned as the aborted turn's outcome.
-            lastResult: null,
-            lastError: null,
-          }),
+          actions: "claimConversationTurn",
         },
         SUBMIT_TASK_RUN: {
           target: "acquiringResources",
-          actions: assign({
-            activeTurn: ({ context, event }) =>
-              taskRunFromEvent(context, event),
-            pendingQuestion: null,
-            // See SUBMIT_PROMPT: a stale success must not survive into a turn
-            // whose abort path sets only lastError.
-            lastResult: null,
-            lastError: null,
-          }),
+          actions: "claimTaskRun",
         },
         // An explicit user "stop" has no turn to abort here; it clears the
         // pending question — after a stop the next input comes from the user
@@ -1076,301 +932,53 @@ export const conversationMachine = setup({
     },
 
     // ========================================================
-    // DEBUG — compound state for debug workflow
+    // DEBUG — the attached debug workflow's parking state. The
+    // phase lives in context.debugMode; phase legality is the
+    // reducer's legality table, not machine topology. No queue
+    // drain on entry: debug settle points must not auto-claim
+    // queued messages as debug turns — draining resumes when
+    // exiting debug mode settles the conversation back to idle.
     // ========================================================
     debug: {
-      initial: "hypothesizing",
-
-      on: {
-        EXIT_DEBUG_MODE: {
+      entry: "persistRestoredDebugGeneration",
+      // Leaving debug mode (exit command, passed cleanup verification)
+      // clears debugMode; the conversation settles back to idle.
+      always: [
+        {
+          guard: ({ context }) => context.debugMode?.active !== true,
           target: "idle",
-          actions: [
-            assign({
-              debugMode: null,
-            }),
-            "syncDerivedFields",
-            "broadcastDebugModeStatus",
-            "persistSnapshot",
-          ],
         },
-        SET_DEBUG_RECORDING: {
-          actions: [
-            assign({
-              debugMode: ({ context, event }) =>
-                context.debugMode
-                  ? { ...context.debugMode, recording: event.recording }
-                  : null,
-            }),
-            "syncDerivedFields",
-            "broadcastDebugModeStatus",
-            "persistSnapshot",
-          ],
-        },
-        CLEAR_DEBUG_LOGS: {
-          // Side-effect only; state unchanged.
-          // The actual file clear is handled by the API route.
-        },
-        // Lifted from each substate. The transition body is identical across
-        // hypothesizing / awaiting_reproduction / analyzing_evidence /
-        // awaiting_verification / cleanup_instrumentation / error,
-        // so define it once at the parent and let the child substates inherit.
+      ],
+      on: {
         SUBMIT_PROMPT: {
-          target: "#conversation.acquiringResources",
-          actions: assign({
-            activeTurn: ({ context, event }) =>
-              conversationTurnFromEvent(context, event),
-            pendingQuestion: null,
-            // Clear the previous turn's result with the error: an abort mid-turn
-            // sets only lastError, and a surviving stale success would be
-            // returned as the aborted turn's outcome.
-            lastResult: null,
-            lastError: null,
-          }),
+          target: "acquiringResources",
+          actions: "claimConversationTurn",
         },
-      },
-
-      states: {
-        hypothesizing: {
-          on: {
-            // Strategy B rollback: when MARK_FIX_FAILED → re-hypothesize
-            // dispatch fails to send the follow-up prompt, the client undoes
-            // the phase advance by sending REVERT_TO_AWAITING_VERIFICATION.
-            REVERT_TO_AWAITING_VERIFICATION: {
-              target: "awaitingVerification",
-              actions: [
-                assign({
-                  debugMode: ({ context }) =>
-                    context.debugMode
-                      ? {
-                          ...context.debugMode,
-                          phase: "awaiting_verification" as const,
-                        }
-                      : null,
-                }),
-                "syncDerivedFields",
-                "persistSnapshot",
-              ],
-            },
+        DEBUG_COMMAND: [
+          // retry_turn re-enters the turn spine with the preserved failed
+          // turn (same prompt, same phase, same structured-output schema).
+          {
+            guard: ({ context, event }) =>
+              event.command.kind === "retry_turn" &&
+              context.debugMode?.lastTurnFailed === true &&
+              context.activeTurn != null,
+            target: "acquiringResources",
+            actions: assign({
+              debugMode: ({ context }) =>
+                clearDebugTurnFailure(context.debugMode),
+              lastResult: null,
+              lastError: null,
+            }),
           },
-        },
-
-        awaitingReproduction: {
-          on: {
-            MARK_REPRODUCED: {
-              target: "analyzingEvidence",
-              actions: [
-                assign({
-                  debugMode: ({ context }) =>
-                    context.debugMode
-                      ? {
-                          ...context.debugMode,
-                          phase: "analyzing_evidence" as const,
-                        }
-                      : null,
-                }),
-                "syncDerivedFields",
-                "persistSnapshot",
-              ],
-            },
+          {
+            guard: ({ context, event }) =>
+              isApplicableDebugCommand(context, event),
+            actions: "applyDebugCommandEffect",
           },
-        },
-
-        analyzingEvidence: {
-          on: {
-            REVERT_TO_AWAITING_REPRODUCTION: {
-              target: "awaitingReproduction",
-              actions: [
-                assign({
-                  debugMode: ({ context }) =>
-                    context.debugMode
-                      ? {
-                          ...context.debugMode,
-                          phase: "awaiting_reproduction" as const,
-                        }
-                      : null,
-                }),
-                "syncDerivedFields",
-                "persistSnapshot",
-              ],
-            },
-          },
-        },
-
-        awaitingVerification: {
-          on: {
-            MARK_FIX_VERIFIED: {
-              target: "cleanupInstrumentation",
-              actions: [
-                assign({
-                  debugMode: ({ context }) =>
-                    context.debugMode
-                      ? {
-                          ...context.debugMode,
-                          phase: "cleanup_instrumentation" as const,
-                        }
-                      : null,
-                }),
-                "syncDerivedFields",
-                "persistSnapshot",
-              ],
-            },
-            // User has tested the agent's claimed fix and confirmed the bug
-            // still reproduces. Loop back to hypothesizing so the agent can
-            // form a fresh hypothesis set (treating the prior fix as
-            // refuted). fixSummary is preserved for the re-hypothesize
-            // prompt, which references the prior attempt; verificationSteps
-            // are cleared because they pertained to the failed fix.
-            MARK_FIX_FAILED: {
-              target: "hypothesizing",
-              actions: [
-                assign({
-                  debugMode: ({ context }) =>
-                    context.debugMode
-                      ? {
-                          ...context.debugMode,
-                          phase: "hypothesizing" as const,
-                          verificationSteps: [],
-                        }
-                      : null,
-                }),
-                "syncDerivedFields",
-                "persistSnapshot",
-              ],
-            },
-          },
-        },
-
-        cleanupInstrumentation: {
-          on: {
-            REVERT_TO_AWAITING_VERIFICATION: {
-              target: "awaitingVerification",
-              actions: [
-                assign({
-                  debugMode: ({ context }) =>
-                    context.debugMode
-                      ? {
-                          ...context.debugMode,
-                          phase: "awaiting_verification" as const,
-                        }
-                      : null,
-                }),
-                "syncDerivedFields",
-                "persistSnapshot",
-              ],
-            },
-          },
-        },
-
-        // Cross-checks the agent's debugCleanupResultOutput against the
-        // persisted instrumentation manifest. Only on a passing verification
-        // does the conversation leave debug mode and physically delete the
-        // manifest. A failing verification routes to debug.error with a
-        // structured remediation message so the agent can be re-prompted.
-        verifyingCleanup: {
-          invoke: {
-            src: "verifyCleanup",
-            input: ({ context }): VerifyCleanupInput => {
-              const parsed = debugCleanupResultZodSchema.safeParse(
-                context.lastResult?.structuredOutput,
-              );
-              const cleanup = parsed.success
-                ? parsed.data
-                : {
-                    removedInstrumentation: false,
-                    filesModified: [],
-                    grepVerificationPassed: false,
-                    acknowledgesManifestDeletionContract: false,
-                    notes: "Cleanup payload failed schema validation.",
-                  };
-              return {
-                worktreePath: context.worktreePath,
-                conversationId: context.conversationId,
-                cleanup,
-              };
-            },
-            onDone: [
-              {
-                guard: ({ event }) => event.output.ok === true,
-                target: "#conversation.idle",
-                actions: [
-                  assign({
-                    debugMode: null,
-                    activeTurn: null,
-                  }),
-                  "syncDerivedFields",
-                  "broadcastConversationStatus",
-                  "broadcastDebugModeStatus",
-                  "persistSnapshot",
-                ],
-              },
-              {
-                target: "error",
-                actions: [
-                  assign(({ event }) => ({
-                    lastError: event.output.remediationPrompt,
-                  })),
-                  "syncDerivedFields",
-                  "broadcastConversationStatus",
-                  "persistSnapshot",
-                ],
-              },
-            ],
-            onError: {
-              target: "error",
-              actions: [
-                assign({
-                  lastError: ({ event }) =>
-                    `Cleanup verification failed: ${extractError(event.error)}`,
-                }),
-                "syncDerivedFields",
-                "broadcastConversationStatus",
-                "persistSnapshot",
-              ],
-            },
-          },
-        },
-
-        // Reached when a phase-advancing turn produced no valid structured
-        // output. Phase is preserved so RETRY re-runs the same turn against
-        // the same schema. SUBMIT_PROMPT (inherited from the parent debug
-        // state) replaces the failed turn with a new prompt; EXIT_DEBUG_MODE
-        // is also inherited from the parent debug state.
-        // The lastTurnFailed flag is toggled on entry/exit so that on
-        // actor rehydration (server restart) the idle.always restoration
-        // routes back into debug.error rather than the bare phase substate.
-        error: {
-          entry: assign({
-            debugMode: ({ context }) =>
-              context.debugMode
-                ? { ...context.debugMode, lastTurnFailed: true }
-                : null,
-          }),
-          exit: assign({
-            debugMode: ({ context }) =>
-              context.debugMode
-                ? { ...context.debugMode, lastTurnFailed: false }
-                : null,
-          }),
-          on: {
-            RETRY_DEBUG_TURN: {
-              guard: ({ context }) => context.activeTurn != null,
-              target: "#conversation.acquiringResources",
-              actions: assign({
-                lastResult: null,
-                lastError: null,
-              }),
-            },
-          },
-        },
+        ],
       },
     },
   },
-
-  output: ({ context }): ConversationOutput => ({
-    conversationId: context.conversationId,
-    status: context.status,
-    error: context.lastError,
-  }),
 });
 
 /** Type alias for the conversation actor reference. */

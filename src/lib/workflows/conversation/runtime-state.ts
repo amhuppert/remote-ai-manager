@@ -7,12 +7,17 @@
  * `${projectPath}::${sessionName}::${conversationId}`.
  *
  * Lifecycle:
- * - Created when a conversation actor starts a prompt turn
- * - Cleaned up when the turn completes or the actor reaches a terminal state
+ * - Registered when the manager (or rehydrator) creates a conversation actor;
+ *   individual handles (locks, runtimes, stream emitters) attach per turn
+ * - The machine is long-lived with zero final states, so cleanup is explicit:
+ *   `cleanupConversationRuntime` runs when the actor is stopped
+ *   (`stopConversationActor`, rebind, failed rehydrate), aborting in-flight
+ *   work and releasing locks
  */
 
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
+import type { ConversationEvent } from "./types";
 
 export interface ConversationRuntimeState {
   /** AbortController for cancelling in-flight SDK queries. */
@@ -34,7 +39,7 @@ export interface ConversationRuntimeState {
   timeoutHandle?: ReturnType<typeof setTimeout>;
 
   /** Callback to send intermediate events to the conversation machine. Registered by the manager before invoking actors. */
-  sendToMachine?: (event: Record<string, unknown>) => void;
+  sendToMachine?(event: ConversationEvent): void;
 
   /** Per-conversation tooling overrides injected by callers (e.g., graph workflow execution tools). Applied to backend runtime on creation. */
   tooling?: ConversationToolingOverrides;
@@ -52,6 +57,12 @@ export interface ConversationRuntimeState {
 
   /** Stable id of the visible user message that produced the current turn. */
   currentTurnMessageId?: string;
+
+  /** Cleanup verification owned by the currently active debug session. */
+  debugCleanupVerification?: {
+    debugSessionId: string;
+    controller: AbortController;
+  };
 }
 
 const GLOBAL_KEY = "__cc_conversation_runtime_state" as const;
@@ -98,6 +109,7 @@ export function cleanupConversationRuntime(key: string): void {
     if (state.timeoutHandle) {
       clearTimeout(state.timeoutHandle);
     }
+    state.debugCleanupVerification?.controller.abort();
     getRegistry().delete(key);
   }
 }

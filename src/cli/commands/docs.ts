@@ -1,16 +1,14 @@
 import { z } from "zod";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
-  EXIT_USAGE,
   checkFlags,
   cliRequest,
   encodePathSegment,
-  failure,
-  failureFromRequest,
+  failureFromRequestNotFoundAsUsage,
   render,
   resolveSessionContext,
-  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -47,24 +45,16 @@ export async function runDocs(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "docs requires a subcommand: register, list, or delete",
-      json,
-    );
-  }
-  if (sub === "register") {
-    return runDocsRegister(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "list") {
-    return runDocsList(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "delete") {
-    return runDocsDelete(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown docs subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["docs"],
+    rest,
+    json: flags.json,
+    handlers: {
+      register: (r) => runDocsRegister(r, flags, values, env, host),
+      list: (r) => runDocsList(r, flags, values, env, host),
+      delete: (r) => runDocsDelete(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runDocsRegister(
@@ -111,15 +101,7 @@ async function runDocsRegister(
   });
 
   if (result.kind !== "ok") {
-    if (result.kind === "error" && result.status === 404) {
-      return failure({
-        exitCode: EXIT_USAGE,
-        message: result.error,
-        ...structuredErrorFields(result),
-        json,
-      });
-    }
-    return failureFromRequest(result, json);
+    return failureFromRequestNotFoundAsUsage(result, json);
   }
 
   const parsed = registerResponseSchema.safeParse(result.body);
@@ -165,15 +147,7 @@ async function runDocsList(
   });
 
   if (result.kind !== "ok") {
-    if (result.kind === "error" && result.status === 404) {
-      return failure({
-        exitCode: EXIT_USAGE,
-        message: result.error,
-        ...structuredErrorFields(result),
-        json,
-      });
-    }
-    return failureFromRequest(result, json);
+    return failureFromRequestNotFoundAsUsage(result, json);
   }
 
   const parsed = documentListSchema.safeParse(result.body);
@@ -228,17 +202,9 @@ async function runDocsDelete(
     path: `${docsPath(project, session)}/${encodePathSegment(id)}`,
   });
 
+  // Unknown document (or session) is a caller mistake (exit 2), not a server outage.
   if (result.kind !== "ok") {
-    if (result.kind === "error" && result.status === 404) {
-      // Unknown document (or session) is a caller mistake, not a server outage.
-      return failure({
-        exitCode: EXIT_USAGE,
-        message: result.error,
-        ...structuredErrorFields(result),
-        json,
-      });
-    }
-    return failureFromRequest(result, json);
+    return failureFromRequestNotFoundAsUsage(result, json);
   }
 
   // No hint — delete is terminal.

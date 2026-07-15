@@ -10,11 +10,9 @@ import {
   type SetStateAction,
 } from "react";
 import { findBusyOtherConversations } from "@/lib/sessions/derived";
-import {
-  queueCapabilityForBackend as defaultQueueCapabilityForBackend,
-  type QueueCapability,
-} from "@/lib/agent-backends/capabilities-descriptor";
-import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
+import type { QueueCapability } from "@/lib/agent-backends/descriptor";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";

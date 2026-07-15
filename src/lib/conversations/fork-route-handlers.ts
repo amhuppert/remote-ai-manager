@@ -7,6 +7,10 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import {
@@ -30,21 +34,13 @@ export const forkConversation = withTracing(async (request, { params }) => {
   const sessionName = decodeURIComponent(sessionSlug);
   const conversationId = resolvedParams["conversationId"] ?? "";
 
-  const projectPath = await resolveProjectPath(name);
-  if (!projectPath) {
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const session = await getSession(projectPath, sessionName);
-  if (!session) {
-    return NextResponse.json(
-      { error: "Session not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
+  const resolved = await resolveProjectSessionOr404(
+    { resolveProjectPath, getSession },
+    name,
+    sessionName,
+  );
+  if (!resolved.ok) return resolved.response;
+  const projectPath = resolved.value.projectPath;
 
   const conversation = await getConversation(
     projectPath,
@@ -52,10 +48,7 @@ export const forkConversation = withTracing(async (request, { params }) => {
     conversationId,
   );
   if (!conversation) {
-    return NextResponse.json(
-      { error: "Conversation not found" } satisfies ApiError,
-      { status: 404 },
-    );
+    return notFound("Conversation not found");
   }
 
   let body: { messageIndex: number };

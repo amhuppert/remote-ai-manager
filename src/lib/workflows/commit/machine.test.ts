@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createActor, fromPromise, toPromise } from "xstate";
 import { commitMachine } from "./machine";
 import type { CommitInput } from "./types";
@@ -11,7 +11,7 @@ import type {
   RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
-} from "../merge/actors";
+} from "../validation-fix/actors";
 
 // ============================================================
 // Typed Actor Helpers
@@ -68,7 +68,6 @@ type ActorOverrides = {
   commitChanges?: ReturnType<typeof mockCommitChanges>;
   runValidation?: ReturnType<typeof mockRunValidation>;
   fixValidation?: ReturnType<typeof mockFixValidation>;
-  onTerminal?: () => void;
 };
 
 function createTestMachine(overrides: ActorOverrides = {}) {
@@ -85,9 +84,6 @@ function createTestMachine(overrides: ActorOverrides = {}) {
       fixValidation:
         overrides.fixValidation ??
         mockFixValidation(async () => ({ status: "fixed" })),
-    },
-    actions: {
-      onTerminal: overrides.onTerminal ?? vi.fn(),
     },
   });
 }
@@ -285,6 +281,75 @@ describe("commitMachine", () => {
     });
   });
 
+  describe("validation timeout short-circuits the fix loop", () => {
+    it("skips fixingValidation and fails with actionable guidance when initial validation times out", async () => {
+      const states: string[] = [];
+      let fixCallCount = 0;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw Object.assign(
+            new Error("Pre-merge validation timed out after 300s"),
+            { timedOut: true },
+          );
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      // A timeout is an environment/scope limit, not a code defect: the fix
+      // agent can never resolve it, so it must not be dispatched.
+      expect(states).not.toContain("fixingValidation");
+      expect(fixCallCount).toBe(0);
+      expect(output.error).toContain("timed out");
+      expect(output.error).toContain("preMergeTimeoutMs");
+    });
+
+    it("stops retrying when a timeout occurs during revalidation", async () => {
+      const states: string[] = [];
+      let validationCallCount = 0;
+      let fixCallCount = 0;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          // First validation fails normally (fixable), revalidation times out.
+          if (validationCallCount === 1) {
+            throw new Error("typecheck failed: TS2345");
+          }
+          throw Object.assign(
+            new Error("Pre-merge validation timed out after 300s"),
+            { timedOut: true },
+          );
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, maxFixAttempts: 3 },
+      });
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      // The first (fixable) failure dispatches exactly one fix; the timeout on
+      // revalidation must not trigger a second fix even though retries remain.
+      expect(fixCallCount).toBe(1);
+      expect(states.filter((s) => s === "fixingValidation")).toHaveLength(1);
+      expect(output.error).toContain("preMergeTimeoutMs");
+    });
+  });
+
   describe("committingFix with no changes", () => {
     it("skips committingFix when fix agent makes no changes", async () => {
       let validationCallCount = 0;
@@ -473,35 +538,6 @@ describe("commitMachine", () => {
       await toPromise(actor);
 
       expect(received?.targetBranch).toBe("csm/parent");
-    });
-  });
-
-  describe("onTerminal action", () => {
-    it("calls onTerminal on completed", async () => {
-      const onTerminal = vi.fn();
-      const machine = createTestMachine({ onTerminal });
-      const actor = createActor(machine, { input: defaultInput });
-      actor.start();
-
-      await toPromise(actor);
-
-      expect(onTerminal).toHaveBeenCalled();
-    });
-
-    it("calls onTerminal on failed", async () => {
-      const onTerminal = vi.fn();
-      const machine = createTestMachine({
-        onTerminal,
-        commitChanges: mockCommitChanges(async () => {
-          throw new Error("git error");
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      actor.start();
-
-      await toPromise(actor);
-
-      expect(onTerminal).toHaveBeenCalled();
     });
   });
 

@@ -1,5 +1,7 @@
-import type { SSEEvent } from "@/lib/api/sse-events";
-import { broadcastEvent } from "@/lib/events/broadcast-event";
+import {
+  publishEventBestEffort,
+  type PublishFn,
+} from "@/lib/events/publication";
 import type { createLogger } from "@/lib/logging";
 import {
   ticketChangedEventSchema,
@@ -10,7 +12,7 @@ import {
 type TicketLogger = ReturnType<typeof createLogger>;
 
 export interface PublishTicketChangeInput {
-  broadcast(event: SSEEvent): void;
+  publish: PublishFn;
   logger: TicketLogger;
   change: TicketChangedEvent["change"];
   projectName: string;
@@ -27,8 +29,8 @@ export interface PublishTicketChangeInput {
  * error after a committed mutation.
  */
 export function publishTicketChange(input: PublishTicketChangeInput): void {
-  broadcastEvent({
-    broadcast: input.broadcast,
+  publishEventBestEffort({
+    publish: input.publish,
     logger: input.logger,
     failureEvent: "tickets.service.event_broadcast_failed",
     context: {

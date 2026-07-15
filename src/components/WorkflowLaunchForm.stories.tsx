@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import WorkflowLaunchForm from "./WorkflowLaunchForm";
 
 const mixedParameters: ParameterDeclaration[] = [

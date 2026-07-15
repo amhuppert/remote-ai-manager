@@ -1,15 +1,12 @@
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
-  EXIT_USAGE,
   checkFlags,
   cliRequest,
   encodePathSegment,
-  failure,
-  failureFromRequest,
+  failureFromRequestNotFoundAsUsage,
   render,
   resolveSessionContext,
-  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -64,17 +61,9 @@ export async function runNotify(
     body,
   });
 
+  // Session/project not found is a caller mistake (exit 2), not a server outage.
   if (result.kind !== "ok") {
-    if (result.kind === "error" && result.status === 404) {
-      // Session/project not found is a caller mistake, not a server outage.
-      return failure({
-        exitCode: EXIT_USAGE,
-        message: result.error,
-        ...structuredErrorFields(result),
-        json,
-      });
-    }
-    return failureFromRequest(result, json);
+    return failureFromRequestNotFoundAsUsage(result, json);
   }
 
   return {

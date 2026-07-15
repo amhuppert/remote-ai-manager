@@ -4,6 +4,7 @@ import { NodeViewWrapper } from "@tiptap/react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import type { MouseEvent } from "react";
 import type { MessageMentionAttrs } from "@/lib/prompt-editor";
+import { truncate } from "@/lib/shared/truncate";
 
 const MAX_LABEL_LENGTH = 40;
 
@@ -45,11 +46,6 @@ const EMPTY_ATTRS: MessageMentionAttrs = {
   compactCreatedAt: "",
 };
 
-function truncate(label: string): string {
-  if (label.length <= MAX_LABEL_LENGTH) return label;
-  return label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
-}
-
 export default function MessageMentionChip(
   props: ReactNodeViewProps<HTMLElement>,
 ): React.JSX.Element {
@@ -66,7 +62,11 @@ export default function MessageMentionChip(
     attrs.conversationName.length > 0
       ? attrs.conversationName
       : attrs.conversationId;
-  const label = truncate(`${conversationLabel} · msg ${attrs.messageIndex}`);
+  const label = truncate(
+    `${conversationLabel} · msg ${attrs.messageIndex}`,
+    MAX_LABEL_LENGTH,
+    { countEllipsisInBudget: true },
+  );
 
   const tooltip = [attrs.projectName, attrs.sessionName]
     .filter((part) => part.length > 0)

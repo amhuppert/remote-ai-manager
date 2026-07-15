@@ -6,10 +6,8 @@ import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import type { CodexConfig } from "@/lib/agent-backends/schemas";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
-import type {
-  GraphWorkflowAgentConfig,
-  WorkflowDefinitionRecord,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import type { InspectorTab } from "./WorkflowInspectorPanel";
 import {
   addExecutionContext,

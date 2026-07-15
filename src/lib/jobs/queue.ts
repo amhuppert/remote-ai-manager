@@ -2,9 +2,16 @@
  * Background job lifecycle management for async merge, commit,
  * and conflict resolution operations.
  *
- * Jobs are dispatched synchronously (fire-and-forget) using XState actors.
- * Merge and resolve-conflicts jobs use the mergeMachine (Smart Merge pipeline).
- * Commit jobs use the commitMachine (Smart Commit pipeline with validation).
+ * Jobs are dispatched synchronously (fire-and-forget) as XState actors via
+ * the generic machine host (`machine-host.ts`). Merge and resolve-conflicts
+ * jobs use the mergeMachine (Smart Merge pipeline); commit jobs use the
+ * commitMachine (Smart Commit pipeline with validation).
+ *
+ * Jobs are ephemeral by decision (plan D12): machine actors exist only in
+ * this process, a server restart does not rehydrate them, and no machine
+ * snapshot is persisted. The durable record is the BackgroundJob row —
+ * written on dispatch, finalized on terminal state — and jobs orphaned by a
+ * restart or hang are closed out by stale-job recovery, never resumed.
  *
  * Status changes are broadcast via SSE so the UI can track progress in real
  * time. Storage uses globalThis Maps (HMR-safe singleton pattern) keyed by
@@ -14,17 +21,23 @@
 import { randomUUID } from "node:crypto";
 import { createActor } from "xstate";
 import { acquireSessionLock as defaultAcquireSessionLock } from "../prompt/single-flight";
-import type { BroadcastFn } from "../events/broadcaster";
-import { publishSessionStatus } from "../workflows/primitives/default-session-status-bus";
-import { captureTraceContext, createLogger, runAsTrace } from "../logging";
-import { createNotification } from "../notifications/repo";
-import { recordMergeIntent } from "../merge-intents/repo";
+import { publishEvent, type PublishFn } from "../events/publication";
+import { createLogger } from "../logging";
+import { createJobNotification } from "../notifications/service";
+import { createMergeIntentsRepo } from "../merge-intents/repo";
+import { getStateDb } from "../state-store/store";
 import {
-  createJobRecord,
-  updateJobRecord,
+  createJobsRepo,
   deriveNotificationType,
   deriveNotificationTitle,
 } from "./repo";
+import {
+  dispatchMachineJob,
+  type JobDispatchError,
+  type JobDispatchHost,
+  type JobDispatchResult,
+  type JobSubscriptionConfig,
+} from "./machine-host";
 import {
   mergeMachine,
   type MergeMachineType,
@@ -63,11 +76,8 @@ const logger = createLogger("background-jobs");
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
 // ============================================================
-// Result Type
+// Dependency Types
 // ============================================================
-
-type JobDispatchError = "SESSION_BUSY" | "JOB_ALREADY_RUNNING";
-type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
 export type AcquireSessionLockFn = (
   projectPath: string,
@@ -132,13 +142,11 @@ export function getConflictAnalysis(
 // Broadcast Helper
 // ============================================================
 
-const defaultJobBroadcast: BroadcastFn = (event) => {
-  publishSessionStatus(event);
-};
+const defaultJobBroadcast: PublishFn = publishEvent;
 
 function broadcastJobStatus(
   job: BackgroundJob,
-  broadcast: BroadcastFn = defaultJobBroadcast,
+  broadcast: PublishFn = defaultJobBroadcast,
 ): void {
   const event: JobStatusEvent = {
     type: "job-status",
@@ -180,7 +188,7 @@ function broadcastJobStatus(
 /** Persist a job record to the DB. Non-throwing — logs errors. */
 function persistJobRecord(job: BackgroundJob): void {
   try {
-    createJobRecord(job);
+    createJobsRepo(getStateDb()).createJobRecord(job);
   } catch (err) {
     logger.error("background-jobs.persist_job_record_failed", {
       jobId: job.jobId,
@@ -192,7 +200,7 @@ function persistJobRecord(job: BackgroundJob): void {
 /** Persist terminal state to DB and create a notification. Non-throwing. */
 function persistTerminalState(job: BackgroundJob): void {
   try {
-    updateJobRecord(job.jobId, {
+    createJobsRepo(getStateDb()).updateJobRecord(job.jobId, {
       status: job.status,
       mergeHash: job.mergeHash,
       commitHash: job.commitHash,
@@ -205,7 +213,7 @@ function persistTerminalState(job: BackgroundJob): void {
     const title = deriveNotificationTitle(notifType);
     const message = buildNotificationMessage(job);
 
-    createNotification({
+    createJobNotification({
       type: notifType,
       title,
       message,
@@ -301,9 +309,9 @@ function prepareDispatch(params: {
   branchName: string;
   jobType: BackgroundJob["jobType"];
   targetBranch?: string;
-  broadcast?: BroadcastFn;
+  broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
-}): Result<{ job: BackgroundJob; release: () => void }, JobDispatchError> {
+}): JobDispatchResult<{ job: BackgroundJob; release: () => void }> {
   const {
     projectPath,
     projectName,
@@ -354,153 +362,93 @@ function prepareDispatch(params: {
 }
 
 // ============================================================
-// XState Actor Helpers
+// Machine-Host Wiring
 // ============================================================
 
-/**
- * Subscribe to a merge machine actor and update the BackgroundJob registry
- * on state changes and completion. Releases the session lock on terminal state.
- */
-function subscribeMergeActor(
-  actor: ReturnType<typeof createActor<MergeMachineType>>,
-  job: BackgroundJob,
-  release: () => void,
-  broadcast: BroadcastFn = defaultJobBroadcast,
-): void {
-  let lastPhase: string | undefined = undefined;
-
-  actor.subscribe({
-    next(snapshot) {
-      if (snapshot.status === "active") {
-        const phase = (snapshot.context as MergeContext).phase ?? undefined;
-        if (phase !== lastPhase) {
-          lastPhase = phase;
-          job.phase = phase;
-          broadcastJobStatus(job, broadcast);
-        }
-      }
+/** Bind the dispatch guard and status broadcast to one broadcast target. */
+function createDispatchHost(
+  broadcast: PublishFn,
+  acquireSessionLock?: AcquireSessionLockFn,
+): JobDispatchHost {
+  return {
+    prepare(params) {
+      return prepareDispatch({ ...params, broadcast, acquireSessionLock });
     },
-    complete() {
-      const snapshot = actor.getSnapshot();
-      const output = snapshot.output as MergeOutput;
-      const ctx = snapshot.context as MergeContext;
-
-      // Map output → BackgroundJob
-      job.status = output.status;
-      job.mergeHash = output.mergeHash ?? undefined;
-      job.commitHash = output.commitHash ?? undefined;
-      job.errorMessage = output.error ?? undefined;
-      job.phase = output.phase ?? undefined;
-      job.preparedSha = output.preparedSha ?? undefined;
-      job.expectedTargetSha = output.expectedTargetSha ?? undefined;
-      job.parkedRef = output.parkedRef ?? undefined;
-      job.refreshWarning = output.refreshWarning ?? undefined;
-      job.completedAt = new Date().toISOString();
-
-      if (output.conflictFiles.length > 0) {
-        job.conflictFiles = output.conflictFiles;
-        job.conflictCount = output.conflictFiles.length;
-      }
-
-      // Store conflict analysis if available
-      if (output.conflictAnalysis) {
-        storeConflictAnalysis(
-          ctx.projectPath,
-          ctx.sessionName,
-          job.jobId,
-          ctx.projectName,
-          output.conflictAnalysis,
-        );
-      }
-
-      // Attach the intent brief to the landed commit so future merges can
-      // explain this commit to their conflict resolvers. Non-throwing.
-      if (
-        output.status === "completed" &&
-        output.mergeHash &&
-        ctx.resolutionContext
-      ) {
-        try {
-          recordMergeIntent({
-            projectPath: ctx.projectPath,
-            commitSha: output.mergeHash,
-            intent: ctx.resolutionContext,
-            source: "session-merge",
-          });
-        } catch (err) {
-          logger.error("background-jobs.record_merge_intent_failed", {
-            jobId: job.jobId,
-            mergeHash: output.mergeHash,
-            error: getErrorMessage(err),
-          });
-        }
-      }
-
+    publishStatus(job) {
       broadcastJobStatus(job, broadcast);
-      release();
     },
-    error(err) {
-      // Shouldn't happen — machine handles errors internally as "failed" state.
-      // But handle defensively.
-      job.status = "failed";
-      job.errorMessage = err instanceof Error ? err.message : "Unknown error";
-      job.phase = undefined;
-      job.completedAt = new Date().toISOString();
-      broadcastJobStatus(job, broadcast);
-      release();
-    },
-  });
+  };
 }
 
-/**
- * Subscribe to a commit machine actor and update the BackgroundJob registry
- * on state changes and completion. Releases the session lock on terminal state.
- */
-function subscribeCommitActor(
-  actor: ReturnType<typeof createActor<CommitMachineType>>,
-  job: BackgroundJob,
-  release: () => void,
-  broadcast: BroadcastFn = defaultJobBroadcast,
-): void {
-  let lastPhase: string | undefined = undefined;
+/** Merge-machine → BackgroundJob projection (merge and resolve-conflicts). */
+const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
+  phaseOf(context) {
+    return context.phase ?? undefined;
+  },
+  mapOutput(job, output, context) {
+    job.status = output.status;
+    job.mergeHash = output.mergeHash ?? undefined;
+    job.commitHash = output.commitHash ?? undefined;
+    job.errorMessage = output.error ?? undefined;
+    job.phase = output.phase ?? undefined;
+    job.preparedSha = output.preparedSha ?? undefined;
+    job.expectedTargetSha = output.expectedTargetSha ?? undefined;
+    job.parkedRef = output.parkedRef ?? undefined;
+    job.refreshWarning = output.refreshWarning ?? undefined;
 
-  actor.subscribe({
-    next(snapshot) {
-      if (snapshot.status === "active") {
-        const phase = (snapshot.context as CommitContext).phase ?? undefined;
-        if (phase !== lastPhase) {
-          lastPhase = phase;
-          job.phase = phase;
-          broadcastJobStatus(job, broadcast);
-        }
+    if (output.conflictFiles.length > 0) {
+      job.conflictFiles = output.conflictFiles;
+      job.conflictCount = output.conflictFiles.length;
+    }
+
+    // Store conflict analysis if available
+    if (output.conflictAnalysis) {
+      storeConflictAnalysis(
+        context.projectPath,
+        context.sessionName,
+        job.jobId,
+        context.projectName,
+        output.conflictAnalysis,
+      );
+    }
+
+    // Attach the intent brief to the landed commit so future merges can
+    // explain this commit to their conflict resolvers. Non-throwing.
+    if (
+      output.status === "completed" &&
+      output.mergeHash &&
+      context.resolutionContext
+    ) {
+      try {
+        createMergeIntentsRepo(getStateDb()).recordMergeIntent({
+          projectPath: context.projectPath,
+          commitSha: output.mergeHash,
+          intent: context.resolutionContext,
+          source: "session-merge",
+        });
+      } catch (err) {
+        logger.error("background-jobs.record_merge_intent_failed", {
+          jobId: job.jobId,
+          mergeHash: output.mergeHash,
+          error: getErrorMessage(err),
+        });
       }
-    },
-    complete() {
-      const snapshot = actor.getSnapshot();
-      const output = snapshot.output as CommitOutput;
+    }
+  },
+};
 
-      // Map output → BackgroundJob
-      job.status = output.status;
-      job.commitHash = output.commitHash ?? undefined;
-      job.errorMessage = output.error ?? undefined;
-      job.phase = undefined;
-      job.completedAt = new Date().toISOString();
-
-      broadcastJobStatus(job, broadcast);
-      release();
-    },
-    error(err) {
-      // Shouldn't happen — machine handles errors internally as "failed" state.
-      // But handle defensively.
-      job.status = "failed";
-      job.errorMessage = err instanceof Error ? err.message : "Unknown error";
-      job.phase = undefined;
-      job.completedAt = new Date().toISOString();
-      broadcastJobStatus(job, broadcast);
-      release();
-    },
-  });
-}
+/** Commit-machine → BackgroundJob projection. */
+const commitSubscription: JobSubscriptionConfig<CommitContext, CommitOutput> = {
+  phaseOf(context) {
+    return context.phase ?? undefined;
+  },
+  mapOutput(job, output) {
+    job.status = output.status;
+    job.commitHash = output.commitHash ?? undefined;
+    job.errorMessage = output.error ?? undefined;
+    job.phase = undefined;
+  },
+};
 
 // ============================================================
 // Public API — Dispatch
@@ -521,7 +469,7 @@ export interface DispatchMergeParams {
   autoResolve: boolean;
   targetBranch?: string;
   targetWorktreePath?: string;
-  broadcast?: BroadcastFn;
+  broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
   entryMode?: "merge" | "land" | "discard";
@@ -534,19 +482,7 @@ export interface DispatchMergeParams {
 
 export function dispatchMergeJob(
   params: DispatchMergeParams,
-): Result<{ jobId: string }, JobDispatchError> {
-  // Inherit the caller's traceId (request that triggered dispatch) so the
-  // background actor's timed() calls aggregate under the same trace.
-  return runAsTrace(
-    "job:merge",
-    () => dispatchMergeJobImpl(params),
-    captureTraceContext(),
-  );
-}
-
-function dispatchMergeJobImpl(
-  params: DispatchMergeParams,
-): Result<{ jobId: string }, JobDispatchError> {
+): JobDispatchResult<{ jobId: string }> {
   const {
     projectPath,
     projectName,
@@ -567,63 +503,52 @@ function dispatchMergeJobImpl(
     resolutionContext,
   } = params;
 
-  const prepared = prepareDispatch({
-    projectPath,
-    projectName,
-    sessionName,
-    branchName,
+  return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "merge",
-    targetBranch,
-    broadcast,
-    acquireSessionLock,
+    session: {
+      projectPath,
+      projectName,
+      sessionName,
+      branchName,
+      targetBranch,
+    },
+    host: createDispatchHost(broadcast, acquireSessionLock),
+    decorateJob(job) {
+      if (resolutionContext) job.resolutionContext = resolutionContext;
+    },
+    logStart(job) {
+      logger.info("merge.start", {
+        jobId: job.jobId,
+        sessionName,
+        worktreePath,
+        branchName,
+        autoResolve,
+        entryMode: entryMode ?? "merge",
+      });
+    },
+    createJobActor(jobId) {
+      const input: MergeInput = {
+        jobId,
+        projectPath,
+        projectName,
+        sessionName,
+        worktreePath,
+        branchName,
+        message,
+        autoResolve,
+        jobType: "merge",
+        targetBranch,
+        targetWorktreePath,
+        ...(entryMode && { entryMode }),
+        ...(preparedSha && { preparedSha }),
+        ...(expectedTargetSha && { expectedTargetSha }),
+        ...(parkedRef && { parkedRef }),
+        ...(resolutionContext && { resolutionContext }),
+      };
+      return createActor(machine, { input });
+    },
+    subscription: mergeSubscription,
   });
-  if (!prepared.ok) return prepared;
-
-  const { job, release } = prepared.value;
-  if (resolutionContext) {
-    job.resolutionContext = resolutionContext;
-  }
-
-  logger.info("merge.start", {
-    jobId: job.jobId,
-    sessionName,
-    worktreePath,
-    branchName,
-    autoResolve,
-    entryMode: entryMode ?? "merge",
-  });
-
-  // Create and start the merge machine actor
-  const input: MergeInput = {
-    jobId: job.jobId,
-    projectPath,
-    projectName,
-    sessionName,
-    worktreePath,
-    branchName,
-    message,
-    autoResolve,
-    jobType: "merge",
-    targetBranch,
-    targetWorktreePath,
-    ...(entryMode && { entryMode }),
-    ...(preparedSha && { preparedSha }),
-    ...(expectedTargetSha && { expectedTargetSha }),
-    ...(parkedRef && { parkedRef }),
-    ...(resolutionContext && { resolutionContext }),
-  };
-
-  const actor = createActor(
-    machine.provide({
-      actions: { onTerminal: () => {} },
-    }),
-    { input },
-  );
-
-  subscribeMergeActor(actor, job, release, broadcast);
-  actor.start();
-
-  return { ok: true, value: { jobId: job.jobId } };
 }
 
 /**
@@ -638,29 +563,10 @@ export function dispatchCommitJob(params: {
   branchName: string;
   message: string;
   targetBranch?: string;
-  broadcast?: BroadcastFn;
+  broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: CommitMachineType;
-}): Result<{ jobId: string }, JobDispatchError> {
-  return runAsTrace(
-    "job:commit",
-    () => dispatchCommitJobImpl(params),
-    captureTraceContext(),
-  );
-}
-
-function dispatchCommitJobImpl(params: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  worktreePath: string;
-  branchName: string;
-  message: string;
-  targetBranch?: string;
-  broadcast?: BroadcastFn;
-  acquireSessionLock?: AcquireSessionLockFn;
-  machine?: CommitMachineType;
-}): Result<{ jobId: string }, JobDispatchError> {
+}): JobDispatchResult<{ jobId: string }> {
   const {
     projectPath,
     projectName,
@@ -674,48 +580,32 @@ function dispatchCommitJobImpl(params: {
     machine = commitMachine,
   } = params;
 
-  const prepared = prepareDispatch({
-    projectPath,
-    projectName,
-    sessionName,
-    branchName,
+  return dispatchMachineJob<CommitContext, CommitOutput>({
     jobType: "commit",
-    broadcast,
-    acquireSessionLock,
+    session: { projectPath, projectName, sessionName, branchName },
+    host: createDispatchHost(broadcast, acquireSessionLock),
+    logStart(job) {
+      logger.info("commit.start", {
+        jobId: job.jobId,
+        sessionName,
+        worktreePath,
+      });
+    },
+    createJobActor(jobId) {
+      const input: CommitInput = {
+        jobId,
+        projectPath,
+        projectName,
+        sessionName,
+        worktreePath,
+        branchName,
+        message,
+        targetBranch,
+      };
+      return createActor(machine, { input });
+    },
+    subscription: commitSubscription,
   });
-  if (!prepared.ok) return prepared;
-
-  const { job, release } = prepared.value;
-
-  logger.info("commit.start", {
-    jobId: job.jobId,
-    sessionName,
-    worktreePath,
-  });
-
-  // Create and start the commit machine actor
-  const input: CommitInput = {
-    jobId: job.jobId,
-    projectPath,
-    projectName,
-    sessionName,
-    worktreePath,
-    branchName,
-    message,
-    targetBranch,
-  };
-
-  const actor = createActor(
-    machine.provide({
-      actions: { onTerminal: () => {} },
-    }),
-    { input },
-  );
-
-  subscribeCommitActor(actor, job, release, broadcast);
-  actor.start();
-
-  return { ok: true, value: { jobId: job.jobId } };
 }
 
 /**
@@ -734,32 +624,10 @@ export function dispatchResolveConflictsJob(params: {
   targetBranch?: string;
   targetWorktreePath?: string;
   resolutionContext?: string;
-  broadcast?: BroadcastFn;
+  broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
-}): Result<{ jobId: string }, JobDispatchError> {
-  return runAsTrace(
-    "job:resolve-conflicts",
-    () => dispatchResolveConflictsJobImpl(params),
-    captureTraceContext(),
-  );
-}
-
-function dispatchResolveConflictsJobImpl(params: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  worktreePath: string;
-  branchName: string;
-  mergeMessage: string;
-  decisions?: ConflictDecisionInput[];
-  targetBranch?: string;
-  targetWorktreePath?: string;
-  resolutionContext?: string;
-  broadcast?: BroadcastFn;
-  acquireSessionLock?: AcquireSessionLockFn;
-  machine?: MergeMachineType;
-}): Result<{ jobId: string }, JobDispatchError> {
+}): JobDispatchResult<{ jobId: string }> {
   const {
     projectPath,
     projectName,
@@ -776,57 +644,46 @@ function dispatchResolveConflictsJobImpl(params: {
     machine = mergeMachine,
   } = params;
 
-  const prepared = prepareDispatch({
-    projectPath,
-    projectName,
-    sessionName,
-    branchName,
+  return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "resolve-conflicts",
-    targetBranch,
-    broadcast,
-    acquireSessionLock,
+    session: {
+      projectPath,
+      projectName,
+      sessionName,
+      branchName,
+      targetBranch,
+    },
+    host: createDispatchHost(broadcast, acquireSessionLock),
+    decorateJob(job) {
+      if (resolutionContext) job.resolutionContext = resolutionContext;
+    },
+    logStart(job) {
+      logger.info("resolve-conflicts.start", {
+        jobId: job.jobId,
+        sessionName,
+        resolutionContextLength: resolutionContext?.length ?? 0,
+      });
+    },
+    createJobActor(jobId) {
+      const input: MergeInput = {
+        jobId,
+        projectPath,
+        projectName,
+        sessionName,
+        worktreePath,
+        branchName,
+        message: mergeMessage,
+        autoResolve: false,
+        jobType: "resolve-conflicts",
+        decisions,
+        targetBranch,
+        targetWorktreePath,
+        ...(resolutionContext && { resolutionContext }),
+      };
+      return createActor(machine, { input });
+    },
+    subscription: mergeSubscription,
   });
-  if (!prepared.ok) return prepared;
-
-  const { job, release } = prepared.value;
-  if (resolutionContext) {
-    job.resolutionContext = resolutionContext;
-  }
-
-  logger.info("resolve-conflicts.start", {
-    jobId: job.jobId,
-    sessionName,
-    resolutionContextLength: resolutionContext?.length ?? 0,
-  });
-
-  // Create the merge machine with resolve-conflicts routing
-  const input: MergeInput = {
-    jobId: job.jobId,
-    projectPath,
-    projectName,
-    sessionName,
-    worktreePath,
-    branchName,
-    message: mergeMessage,
-    autoResolve: false,
-    jobType: "resolve-conflicts",
-    decisions,
-    targetBranch,
-    targetWorktreePath,
-    ...(resolutionContext && { resolutionContext }),
-  };
-
-  const actor = createActor(
-    machine.provide({
-      actions: { onTerminal: () => {} },
-    }),
-    { input },
-  );
-
-  subscribeMergeActor(actor, job, release, broadcast);
-  actor.start();
-
-  return { ok: true, value: { jobId: job.jobId } };
 }
 
 // ============================================================
@@ -858,3 +715,5 @@ export function _resetForTesting(): void {
   getJobRegistry().clear();
   getConflictAnalysisRegistry().clear();
 }
+
+export type { JobDispatchError };

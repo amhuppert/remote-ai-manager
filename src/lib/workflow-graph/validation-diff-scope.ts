@@ -1,6 +1,7 @@
 import { computeDiff as defaultComputeDiff } from "@/lib/git/diff";
 import { hasUncommittedChanges as defaultHasUncommittedChanges } from "@/lib/git/commits";
 import type { FileDiff, SessionDiff } from "@/lib/git/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 /**
  * The change set a context validator reviews. Computed from the validator's
@@ -32,7 +33,7 @@ const defaultDeps: ValidationDiffScopeDeps = {
 };
 
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 /**

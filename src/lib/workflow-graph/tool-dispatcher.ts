@@ -23,7 +23,7 @@
  * already provides the serialization the contract asserts.
  */
 
-import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import { IterationHaltedError } from "./iteration-orchestrator";
 
 export interface ToolUseBlock {

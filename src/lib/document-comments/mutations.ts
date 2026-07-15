@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import { documentCommentKeys } from "./query-keys";
 import {
   documentCommentSchema,
@@ -114,38 +115,32 @@ export function useUpdateDocumentCommentMutation(
   const queryClient = useQueryClient();
   const listKey = documentCommentKeys.list(projectName, sessionName, docPath);
 
-  return useMutation({
-    mutationFn: ({ id, ...body }: UpdateDocumentCommentInput) =>
-      mutationFetch(
-        commentUrl(projectName, sessionName, id),
-        "update-document-comment",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body satisfies UpdateDocumentCommentRequest),
-        },
-        documentCommentSchema,
-      ),
-    onMutate: async ({ id, note, status }) => {
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const previous = queryClient.getQueryData<DocumentComment[]>(listKey);
-      const now = new Date().toISOString();
-      queryClient.setQueryData<DocumentComment[]>(listKey, (old) =>
-        (old ?? []).map((c) =>
-          c.id === id ? applyUpdate(c, { note, status }, now) : c,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({ id, ...body }: UpdateDocumentCommentInput) =>
+        mutationFetch(
+          commentUrl(projectName, sessionName, id),
+          "update-document-comment",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body satisfies UpdateDocumentCommentRequest),
+          },
+          documentCommentSchema,
         ),
-      );
-      return { previous };
-    },
-    onError: (_err, _input, context) => {
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData(listKey, context.previous);
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: listKey });
-    },
-  });
+      updates: [
+        cacheUpdate<UpdateDocumentCommentInput, DocumentComment[]>({
+          key: () => listKey,
+          update: (old, { id, note, status }) => {
+            const now = new Date().toISOString();
+            return (old ?? []).map((c) =>
+              c.id === id ? applyUpdate(c, { note, status }, now) : c,
+            );
+          },
+        }),
+      ],
+    }),
+  );
 }
 
 /** Apply a note/status change to a cached comment, mirroring the route's
@@ -173,28 +168,20 @@ export function useDeleteDocumentCommentMutation(
   const queryClient = useQueryClient();
   const listKey = documentCommentKeys.list(projectName, sessionName, docPath);
 
-  return useMutation({
-    mutationFn: (id: string) =>
-      mutationFetch(
-        commentUrl(projectName, sessionName, id),
-        "delete-document-comment",
-        { method: "DELETE" },
-      ),
-    onMutate: async (id) => {
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const previous = queryClient.getQueryData<DocumentComment[]>(listKey);
-      queryClient.setQueryData<DocumentComment[]>(listKey, (old) =>
-        (old ?? []).filter((c) => c.id !== id),
-      );
-      return { previous };
-    },
-    onError: (_err, _id, context) => {
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData(listKey, context.previous);
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: listKey });
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (id: string) =>
+        mutationFetch(
+          commentUrl(projectName, sessionName, id),
+          "delete-document-comment",
+          { method: "DELETE" },
+        ),
+      updates: [
+        cacheUpdate<string, DocumentComment[]>({
+          key: () => listKey,
+          update: (old, id) => (old ?? []).filter((c) => c.id !== id),
+        }),
+      ],
+    }),
+  );
 }

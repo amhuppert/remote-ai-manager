@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import ContextHaltCard from "./ContextHaltCard";
-import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import "./workflow-graph.css";
 
 function Frame({ children }: { children: React.ReactNode }) {

@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import "@/app/globals.css";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import CopyableId from "@/components/CopyableId";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
@@ -42,10 +43,7 @@ function InfoStripDemo({
   worktreeFull: string;
   contextPercent: number | null;
   conversationId: string;
-  backendRef:
-    | { backend: "claude"; sessionId: string }
-    | { backend: "codex"; threadId: string }
-    | null;
+  backendRef: AgentSessionRef | null;
   createdAt: string;
   statusDotClass: string;
 }) {
@@ -137,7 +135,7 @@ export const ClaudeSession: Story = {
       "/home/alex/github/remote-ai-manager/.worktrees/implement-codex-mcp-support-b0b4cd",
     contextPercent: 52,
     conversationId: "c3e2c1cc-abcd-1234-5678-abcdef012345",
-    backendRef: { backend: "claude", sessionId: "sess_abc123xyz456" },
+    backendRef: { backend: "claude", ref: "sess_abc123xyz456" },
     createdAt: "2026-04-15T16:15:00Z",
     statusDotClass: "cyan",
   },
@@ -153,7 +151,7 @@ export const CodexSession: Story = {
       "/home/alex/github/remote-ai-manager/.worktrees/fix-auth-flow-a1b2c3",
     contextPercent: 78,
     conversationId: "d4e5f6aa-bbbb-cccc-dddd-eeeeeeeeeeee",
-    backendRef: { backend: "codex", threadId: "thread_xyz789def" },
+    backendRef: { backend: "codex", ref: "thread_xyz789def" },
     createdAt: "2026-04-15T10:30:00Z",
     statusDotClass: "amber",
   },
@@ -169,7 +167,7 @@ export const HighContextUsage: Story = {
       "/home/alex/github/remote-ai-manager/.worktrees/massive-refactor-session-xyz",
     contextPercent: 92,
     conversationId: "aabbccdd-1122-3344-5566-778899aabbcc",
-    backendRef: { backend: "claude", sessionId: "sess_longrunning001" },
+    backendRef: { backend: "claude", ref: "sess_longrunning001" },
     createdAt: "2026-04-14T08:00:00Z",
     statusDotClass: "cyan",
   },
@@ -201,7 +199,7 @@ export const MergedSession: Story = {
       "/home/alex/github/remote-ai-manager/.worktrees/completed-feature-abc123",
     contextPercent: 65,
     conversationId: "ff001122-3344-5566-7788-99aabbccddee",
-    backendRef: { backend: "claude", sessionId: "sess_merged999" },
+    backendRef: { backend: "claude", ref: "sess_merged999" },
     createdAt: "2026-04-13T14:22:00Z",
     statusDotClass: "green",
   },

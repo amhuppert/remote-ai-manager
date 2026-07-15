@@ -6,10 +6,8 @@ import {
   renderCharterMarkdown,
 } from "@/lib/workflow-graph/charter/render";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createWorkflowCharterService } from "./service";
 
 interface CapturedWrite {

@@ -34,6 +34,8 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { parseFrontmatter } from "@/lib/commands/service";
 
+import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import { parseNativePluginEntries } from "@/lib/agent-backends/claude/runtime-config/plugin-native-records";
 import { redactAgentCapabilityText } from "./redaction";
 
 import type {
@@ -316,48 +318,10 @@ async function resolveNativePlugins(
     return { records, diagnostics, signatureParts };
   }
 
-  const enabledPlugins = parsedSettings.enabledPlugins;
-
-  type RawNativeValue =
-    | boolean
-    | readonly string[]
-    | { readonly [k: string]: unknown };
-  const nativeEntries: Array<{
-    pluginId: string;
-    nativeEnabled: boolean;
-    nativeRawValue: RawNativeValue;
-  }> = [];
-
-  if (Array.isArray(enabledPlugins)) {
-    for (const id of enabledPlugins as readonly unknown[]) {
-      if (typeof id !== "string") continue;
-      nativeEntries.push({
-        pluginId: id,
-        nativeEnabled: true,
-        nativeRawValue: true,
-      });
-    }
-  } else if (enabledPlugins && typeof enabledPlugins === "object") {
-    for (const [pluginId, raw] of Object.entries(
-      enabledPlugins as Record<string, unknown>,
-    )) {
-      let nativeEnabled: boolean;
-      let nativeRawValue: RawNativeValue;
-      if (typeof raw === "boolean") {
-        nativeEnabled = raw;
-        nativeRawValue = raw;
-      } else if (Array.isArray(raw)) {
-        nativeEnabled = true;
-        nativeRawValue = raw as readonly string[];
-      } else if (raw && typeof raw === "object") {
-        nativeEnabled = true;
-        nativeRawValue = raw as { readonly [k: string]: unknown };
-      } else {
-        continue;
-      }
-      nativeEntries.push({ pluginId, nativeEnabled, nativeRawValue });
-    }
-  }
+  // Shared native-records parser — provider knowledge owned by the Claude
+  // runtime-config adapter; imported here (capabilities → backends) so the
+  // enabledPlugins shape is decoded in exactly one place.
+  const nativeEntries = parseNativePluginEntries(parsedSettings.enabledPlugins);
 
   signatureParts.push(
     `settings:${settingsPath}:${createHash("sha256").update(settingsRaw).digest("hex")}`,
@@ -812,5 +776,32 @@ export async function discoverClaudePlugins(
     diagnostics: resolution.diagnostics,
     sourceSignature: buildSignature(resolution.signatureParts),
     nativeRecords: resolution.records,
+  };
+}
+
+/**
+ * Live-runtime probe for the conversation's Claude SDK session, when one is
+ * alive: skills/agents discovery cross-checks source files against what the
+ * runtime actually loaded. Claude-owned by construction (the probe ports are
+ * Claude SDK surfaces), so the identity check lives here beside the discovery
+ * it feeds — never in a backend-neutral consumer.
+ */
+export function getClaudeRuntimeProbe(
+  conversationId: string,
+): ClaudeRuntimeProbe | undefined {
+  const runtime = getRuntime(conversationId);
+  if (!runtime || runtime.backend !== "claude" || runtime.status !== "alive") {
+    return undefined;
+  }
+  if (!runtime.supportedCommands && !runtime.supportedAgents) {
+    return undefined;
+  }
+  return {
+    ...(runtime.supportedCommands
+      ? { supportedCommands: runtime.supportedCommands.bind(runtime) }
+      : {}),
+    ...(runtime.supportedAgents
+      ? { supportedAgents: runtime.supportedAgents.bind(runtime) }
+      : {}),
   };
 }

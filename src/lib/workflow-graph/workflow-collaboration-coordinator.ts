@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedCollaborationConfig,
   WorkflowCollaborationResult,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 
 const logger = createLogger("graph-workflow-collaboration-coordinator");
 
@@ -130,7 +133,9 @@ export function createGraphWorkflowCollaborationCoordinator(
 
         const contextState = next.contextStates[input.contextId];
         if (contextState?.status === "running") {
-          contextState.status = "ready";
+          transitionContextStatus(next, input.contextId, "ready", {
+            reason: "collaboration_coordinator.continuation_recorded",
+          });
         }
         if (!next.activeContextIds.includes(input.contextId)) {
           next.activeContextIds = [...next.activeContextIds, input.contextId];

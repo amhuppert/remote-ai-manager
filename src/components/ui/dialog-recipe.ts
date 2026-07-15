@@ -23,6 +23,14 @@ export const overlayCentering =
   "fixed inset-0 z-dropdown flex items-center justify-center";
 export const overlayCenteringSheet = "max-768:items-end";
 
+// Edge-anchored positioning layer for the `unstyled` variant: a bare full-bleed
+// `inset-0` box that does NOT centre its child, so an edge-anchored card
+// (a right-edge slide-over, a bottom sheet, a full-screen immersive surface)
+// positions itself with its own `fixed`/`absolute` geometry via
+// `layoutClassName`. Kept out of the centring recipe because a centring flex
+// context would fight a self-positioned card.
+export const overlayStretch = "fixed inset-0 z-dropdown";
+
 // Card (Radix `*.Content`). `w-full` + a `max-w` cap reproduces the legacy
 // `min(100vw, max-w)` width; `slideUp` held at its legacy 0.2s, gated
 // `motion-safe`.

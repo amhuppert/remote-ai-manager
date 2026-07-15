@@ -276,8 +276,8 @@ describe("assertExecutionSupported", () => {
 
     const result = assertExecutionSupported(execution);
     const lane = result.laneStates["ctx-1"]?.["context_validator"];
-    expect(lane?.engine).toBe("claude");
-    if (lane?.engine === "claude") {
+    expect(lane?.backend).toBe("claude");
+    if (lane?.backend === "claude") {
       expect(lane.limitEvaluation).toBe("metrics_unavailable");
     }
   });

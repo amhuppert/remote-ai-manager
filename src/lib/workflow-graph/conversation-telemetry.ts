@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { parseJsonl } from "@/lib/shared/read-jsonl";
+import { projectTranscriptUsage } from "@/lib/agent-backends/transcript-projections";
 import { createLogger } from "@/lib/logging";
 import { getTranscriptPath } from "@/lib/prompt/transcript";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("workflow-conversation-telemetry");
 
@@ -12,15 +15,15 @@ const logger = createLogger("workflow-conversation-telemetry");
  */
 export interface ConversationTelemetrySummary {
   /**
-   * True conversation cost: the sum of each SDK session lineage's FINAL
-   * cumulative `total_cost_usd`. (Summing every result double-counts — the
-   * SDK reports cumulative cost per lineage.) Null when the transcript has no
-   * result entries.
+   * True conversation cost: the sum of each session lineage's FINAL
+   * cumulative cost. (Summing every result frame double-counts — the usage
+   * projection reports cost cumulatively per lineage.) Null when the
+   * transcript has no result frames.
    */
   costUsd: number | null;
-  /** Sum of `num_turns` across all SDK result entries; null when none exist. */
+  /** Sum of turns across all result frames; null when none exist. */
   apiTurns: number | null;
-  /** Distinct SDK session lineages observed (restarts within the conversation). */
+  /** Distinct session lineages observed (restarts within the conversation). */
   lineageCount: number;
   reads: {
     uniqueFiles: number;
@@ -52,32 +55,24 @@ export function summarizeTranscriptTelemetry(
   let apiTurns: number | null = null;
   const readCounts = new Map<string, number>();
 
-  for (const line of jsonlText.split(/\r?\n/)) {
-    if (line.trim().length === 0) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const parsed of parseJsonl(jsonlText)) {
     const entry = asRecord(parsed);
     if (!entry) continue;
 
-    const raw = asRecord(entry.raw);
-    if (raw && typeof raw.total_cost_usd === "number") {
-      const lineageId = String(raw.session_id ?? "unknown");
+    const usage = projectTranscriptUsage(entry);
+    if (usage) {
       // Cumulative per lineage — the last result in file order is the final.
-      // A restarted subprocess can resume the SAME session id with its
-      // cumulative reset; the drop is the lineage boundary, so bank the
-      // finished lineage's final before tracking the new one.
-      const previous = lineageFinalCost.get(lineageId);
-      if (previous !== undefined && raw.total_cost_usd < previous) {
+      // A cumulative drop under the same lineage id is the lineage boundary
+      // (backend restart), so bank the finished lineage's final before
+      // tracking the new one.
+      const previous = lineageFinalCost.get(usage.lineageId);
+      if (previous !== undefined && usage.cumulativeCostUsd < previous) {
         committedLineageCost += previous;
         lineageRestarts += 1;
       }
-      lineageFinalCost.set(lineageId, raw.total_cost_usd);
-      if (typeof raw.num_turns === "number") {
-        apiTurns = (apiTurns ?? 0) + raw.num_turns;
+      lineageFinalCost.set(usage.lineageId, usage.cumulativeCostUsd);
+      if (usage.numTurns !== null) {
+        apiTurns = (apiTurns ?? 0) + usage.numTurns;
       }
     }
 
@@ -139,7 +134,7 @@ export async function readConversationTelemetry(
   } catch (error) {
     logger.debug("conversation_telemetry.read_failed", {
       conversationId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return null;
   }

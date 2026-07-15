@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useState } from "react";
 import { cn } from "@/lib/ui/cn";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import type {
   MessageContentBlock,
   TranscriptMessage,
@@ -133,22 +134,23 @@ function CompactableMessageActions({
         compactionTarget={compactionTarget}
         messageRef={messageRef}
       >
-        <button
-          type="button"
-          className={cn(
-            msgActionBtnClass,
-            "data-[state=failed]:text-red data-[state=open]:text-cyan",
-          )}
-          data-state={state}
-          onClick={handleActivate}
-          disabled={busy}
-          aria-busy={busy || undefined}
-          aria-label={label}
-          data-tooltip={label}
-          title={label}
-        >
-          {busy ? <Spinner size="sm" tone="inherit" /> : <CompactIcon />}
-        </button>
+        <WithTooltip label={label}>
+          <button
+            type="button"
+            className={cn(
+              msgActionBtnClass,
+              "data-[state=failed]:text-red data-[state=open]:text-cyan",
+            )}
+            data-state={state}
+            onClick={handleActivate}
+            disabled={busy}
+            aria-busy={busy || undefined}
+            aria-label={label}
+            title={label}
+          >
+            {busy ? <Spinner size="sm" tone="inherit" /> : <CompactIcon />}
+          </button>
+        </WithTooltip>
       </ActionBar>
       {viewerOpen && artifact && artifact.status !== "pending" && (
         <MessageCompactionViewer
@@ -207,16 +209,17 @@ function ActionBar({
         />
       )}
       {onFork && (
-        <button
-          className={msgActionBtnClass}
-          onClick={handleFork}
-          disabled={forking}
-          aria-busy={forking || undefined}
-          data-tooltip={forking ? "Forking…" : "Fork"}
-          title="Fork conversation from this message"
-        >
-          {forking ? <Spinner size="sm" tone="inherit" /> : <ForkIcon />}
-        </button>
+        <WithTooltip label={forking ? "Forking…" : "Fork"}>
+          <button
+            className={msgActionBtnClass}
+            onClick={handleFork}
+            disabled={forking}
+            aria-busy={forking || undefined}
+            title="Fork conversation from this message"
+          >
+            {forking ? <Spinner size="sm" tone="inherit" /> : <ForkIcon />}
+          </button>
+        </WithTooltip>
       )}
       {children}
     </div>

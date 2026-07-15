@@ -1,16 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const logging = vi.hoisted(() => ({
+  warn: vi.fn(),
+}));
+
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
     info: vi.fn(),
     debug: vi.fn(),
-    warn: vi.fn(),
+    warn: logging.warn,
     error: vi.fn(),
   }),
 }));
 
 import type Database from "better-sqlite3";
 import type { SSEEvent } from "@/lib/api/sse-events";
+import type { PublishFn } from "@/lib/events/publication";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import type { TicketsRepo } from "@/lib/state-store/tickets-repo";
@@ -35,7 +40,7 @@ let db: Db;
 let service: TicketService;
 let repo: TicketsRepo;
 let events: SSEEvent[];
-let broadcastImpl: (event: SSEEvent) => void;
+let publishImpl: PublishFn;
 let deletedContentTicketIds: string[];
 let deleteTicketContentImpl: (ticketId: string) => Promise<void>;
 let projectAvailable: boolean;
@@ -49,14 +54,16 @@ let idSeq: number;
 let clock: number;
 
 beforeEach(() => {
+  logging.warn.mockClear();
   db = _createTestDb({ inMemory: true });
   db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
   events = [];
   projectGateDepth = 0;
   eventPublishedInsideProjectGate = false;
-  broadcastImpl = (event) => {
+  publishImpl = (event) => {
     events.push(event);
     eventPublishedInsideProjectGate ||= projectGateDepth > 0;
+    return { delivered: true };
   };
   deletedContentTicketIds = [];
   deleteTicketContentImpl = async (ticketId) => {
@@ -75,7 +82,7 @@ beforeEach(() => {
       name === PROJECT_NAME ? PROJECT_PATH : null,
     resolveAvailableProjectPath: async (name) =>
       name === PROJECT_NAME && projectAvailable ? PROJECT_PATH : null,
-    broadcast: (event) => broadcastImpl(event),
+    publish: (event) => publishImpl(event),
     deleteTicketContent: (ticketId) => deleteTicketContentImpl(ticketId),
     runProjectTicketOperation: async (projectPath, operation) => {
       gatedProjectPaths.push(projectPath);
@@ -131,6 +138,25 @@ describe("create", () => {
     expect(gatedProjectPaths).toEqual([PROJECT_PATH]);
     expect(events).toHaveLength(1);
     expect(eventPublishedInsideProjectGate).toBe(true);
+  });
+
+  it("keeps the committed ticket and logs context when publication reports failed delivery", async () => {
+    const deliveryError = new Error("transport unavailable");
+    publishImpl = () => ({ delivered: false, error: deliveryError });
+
+    const result = await createTicket();
+
+    expect(result.ok).toBe(true);
+    expect(await repo.list({ sort: "updated" })).toHaveLength(1);
+    expect(logging.warn).toHaveBeenCalledWith(
+      "tickets.service.event_broadcast_failed",
+      {
+        change: "created",
+        projectName: PROJECT_NAME,
+        ticketNumber: 1,
+        error: "transport unavailable",
+      },
+    );
   });
 
   it("resolves the project name to its canonical path at the boundary", async () => {
@@ -443,7 +469,7 @@ describe("delete", () => {
         name === PROJECT_NAME ? PROJECT_PATH : null,
       resolveAvailableProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
-      broadcast: (event) => broadcastImpl(event),
+      publish: (event) => publishImpl(event),
       deleteTicketContent: (ticketId) => deleteTicketContentImpl(ticketId),
       runProjectTicketOperation: (_projectPath, operation) =>
         operation({ projectDeletionPrecededOperation: false }),
@@ -559,8 +585,8 @@ describe("change events", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("never rolls back a committed mutation when the broadcast fails", async () => {
-    broadcastImpl = () => {
+  it("never rolls back a committed mutation when publication throws", async () => {
+    publishImpl = () => {
       throw new Error("sse transport down");
     };
     const result = await createTicket();

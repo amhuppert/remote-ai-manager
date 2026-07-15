@@ -4,7 +4,7 @@ import type {
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
   GraphWorkflowTaskState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { SESSION_LANE_ID } from "./lane-join";
 import { buildJoinResolutionContext } from "./join-resolution-context";

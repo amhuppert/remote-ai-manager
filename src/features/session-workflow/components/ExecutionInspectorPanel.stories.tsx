@@ -1,10 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 
@@ -23,9 +21,11 @@ const overviewEvents: GraphWorkflowExecutionEvent[] = [
       issues: [],
       reopenTaskIds: [],
       sessionRef: {
-        engine: "claude" as const,
+        backend: "claude" as const,
+        ref: "conv-val-1",
         lane: "context_validator" as const,
-        conversationId: "conv-val-1",
+        refKind: "conversation" as const,
+        workflowConversationId: "conv-val-1",
       },
     },
     preReset: false,
@@ -58,13 +58,15 @@ const overviewEvents: GraphWorkflowExecutionEvent[] = [
       ],
       reopenTaskIds: ["task-1", "task-2"],
       sessionRef: {
-        engine: "codex" as const,
+        backend: "codex" as const,
+        ref: "thread-abc123",
         lane: "context_validator" as const,
-        threadId: "thread-abc123",
+        refKind: "backend" as const,
       },
       reviewArtifact: {
-        engine: "codex" as const,
-        threadId: "thread-abc123",
+        backend: "codex" as const,
+        kind: "response" as const,
+        ref: "thread-abc123",
         response:
           "Reviewed the POST /api/users endpoint. Found missing error handling for duplicate emails and insufficient input validation.",
         usage: {

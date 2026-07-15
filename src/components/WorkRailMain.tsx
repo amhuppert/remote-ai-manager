@@ -1,7 +1,8 @@
 "use client";
 
 import { cn } from "@/lib/ui/cn";
-import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
+import { WithTooltip } from "@/components/ui/WithTooltip";
+import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 import {
   useSidebarCollapsed,
   useToggleSidebar,
@@ -53,13 +54,14 @@ export default function WorkRailMain({
         showNewConversationButton={hasSessionContext}
       />
       {sidebarCollapsed && (
-        <button
-          className="fixed top-1/2 left-0 z-sticky flex h-[48px] w-[20px] -translate-y-1/2 cursor-pointer items-center justify-center rounded-l-none rounded-r-sm border-y border-r border-l-0 border-solid border-border-default bg-bg-raised p-0 text-[0.7rem] text-cyan transition-[color,background-color,border-color,box-shadow] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-bg-elevated hover:text-cyan hover:shadow-[0_0_8px_var(--color-cyan-glow)] max-768:hidden"
-          onClick={toggleSidebar}
-          data-tooltip="Expand sidebar"
-        >
-          {"▶"}
-        </button>
+        <WithTooltip label="Expand sidebar">
+          <button
+            className="fixed top-1/2 left-0 z-sticky flex h-[48px] w-[20px] -translate-y-1/2 cursor-pointer items-center justify-center rounded-l-none rounded-r-sm border-y border-r border-l-0 border-solid border-border-default bg-bg-raised p-0 text-[0.7rem] text-cyan transition-[color,background-color,border-color,box-shadow] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-bg-elevated hover:text-cyan hover:shadow-[0_0_8px_var(--color-cyan-glow)] max-768:hidden"
+            onClick={toggleSidebar}
+          >
+            {"▶"}
+          </button>
+        </WithTooltip>
       )}
       <div
         className={cn(

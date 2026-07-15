@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import { checkVoiceHealth, proxyTranscribe } from "@/lib/voice/transcribe";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("voice");
 
@@ -16,7 +18,7 @@ export const POST_TRANSCRIBE = withTracing(async (request) => {
     // (no upstream call, no history row), so this is otherwise invisible.
     logger.warn("voice.transcribe.rejected", {
       reason: "invalid-form-data",
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     return NextResponse.json(
       { error: "Invalid form data" } satisfies ApiError,
@@ -57,22 +59,26 @@ export const POST_TRANSCRIBE = withTracing(async (request) => {
     );
   }
 
-  const projectPath = await resolveProjectPath(projectName);
-  if (!projectPath) {
+  const project = await resolveProjectOr404(
+    { resolveProjectPath },
+    projectName,
+  );
+  if (!project.ok) {
     logger.warn("voice.transcribe.rejected", {
       reason: "project-not-found",
       projectName,
     });
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
+    return project.response;
   }
 
   const contextValue = formData.get("context");
   const context = typeof contextValue === "string" ? contextValue : undefined;
 
-  const result = await proxyTranscribe({ audio, projectPath, context });
+  const result = await proxyTranscribe({
+    audio,
+    projectPath: project.value,
+    context,
+  });
   if (!result.ok) {
     return NextResponse.json({ error: result.error } satisfies ApiError, {
       status: result.status,

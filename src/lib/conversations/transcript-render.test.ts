@@ -14,7 +14,6 @@ import {
 } from "./transcript-render";
 import type { MessageContentBlock } from "./schemas";
 import {
-  readConversationMessagesWithSeq,
   readTranscriptEntriesWithSeq,
   _resetTranscriptEntriesCacheForTesting,
   _resetTranscriptReadCacheForTesting,
@@ -112,10 +111,16 @@ describe("renderOptionsSchema", () => {
 });
 
 // ==========================================================================
-// Grouping: merge/index parity with readConversationMessagesWithSeq
+// Render grouping projection over a real cached transcript. `groupTranscriptEntries`
+// projects the entry-level reader onto the shared grouping owner
+// (transcript-logical-units); this pins the render product — merged indexes,
+// roles, ids, per-part seqs, and command-block content — end to end through a
+// real JSONL read. The read/render agreement itself is guaranteed by both
+// projecting onto that one owner (its contract test covers the boundary rule),
+// so this asserts render's own product, not a cross-copy comparison.
 // ==========================================================================
 
-describe("groupTranscriptEntries parity with readConversationMessagesWithSeq", () => {
+describe("groupTranscriptEntries over a real cached transcript", () => {
   const TEST_DIR = path.join("/tmp", "cc-transcript-render-test-" + Date.now());
 
   beforeEach(async () => {
@@ -128,8 +133,8 @@ describe("groupTranscriptEntries parity with readConversationMessagesWithSeq", (
     await rm(TEST_DIR, { recursive: true, force: true });
   });
 
-  it("produces the same logical message indexes, roles, ids, and end seqs", async () => {
-    const filePath = path.join(TEST_DIR, "parity.jsonl");
+  it("merges same-role runs, breaks on a slash command, and skips system lines", async () => {
+    const filePath = path.join(TEST_DIR, "grouping.jsonl");
     const lines = [
       JSON.stringify({
         id: "m-0",
@@ -174,19 +179,19 @@ describe("groupTranscriptEntries parity with readConversationMessagesWithSeq", (
     ];
     await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
 
-    const merged = await readConversationMessagesWithSeq(filePath);
     const { entries } = await readTranscriptEntriesWithSeq(filePath);
     const units = groupTranscriptEntries(entries);
 
-    expect(units).toHaveLength(merged.length);
-    for (let i = 0; i < merged.length; i++) {
-      const message = merged[i]!;
-      const unit = units[i]!;
-      expect(unit.messageIndex).toBe(i);
-      expect(unit.role).toBe(message.role);
-      expect(unit.messageId).toBe(message.id ?? null);
-      expect(unit.parts[unit.parts.length - 1]!.seq).toBe(message.seq);
-    }
+    expect(units.map((u) => u.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "notice",
+    ]);
+    expect(units.map((u) => u.messageIndex)).toEqual([0, 1, 2, 3]);
+    expect(units[0]!.messageId).toBe("m-0");
+    // Consecutive assistant lines merge; the system line is invisible.
+    expect(units[1]!.parts.map((p) => p.seq)).toEqual([2, 3]);
     // The command unit carries the parsed command block plus the merged text.
     expect(units[2]!.parts.map((p) => p.seq)).toEqual([4, 5]);
     expect(units[2]!.parts[0]!.content).toEqual([
@@ -786,14 +791,14 @@ describe("tool_result entry folding and rendering", () => {
     expect(result.units[0]!.ref.messageIndex).toBe(0);
   });
 
-  it("keeps messageIndex parity with readConversationMessagesWithSeq on a real transcript with interleaved tool_result lines", async () => {
+  it("folds an interleaved tool_result into the open assistant unit on a real transcript", async () => {
     const TEST_DIR = path.join(
       "/tmp",
       "cc-transcript-render-toolresult-" + Date.now(),
     );
     await mkdir(TEST_DIR, { recursive: true });
     try {
-      const filePath = path.join(TEST_DIR, "parity-tool-results.jsonl");
+      const filePath = path.join(TEST_DIR, "tool-results.jsonl");
       const lines = [
         JSON.stringify({
           timestamp: "2024-01-01T00:00:00Z",
@@ -850,17 +855,16 @@ describe("tool_result entry folding and rendering", () => {
       ];
       await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
 
-      const merged = await readConversationMessagesWithSeq(filePath);
       const { entries, maxSeq } = await readTranscriptEntriesWithSeq(filePath);
       const units = groupTranscriptEntries(entries);
 
-      expect(units).toHaveLength(merged.length);
-      for (let i = 0; i < merged.length; i++) {
-        expect(units[i]!.messageIndex).toBe(i);
-        expect(units[i]!.role).toBe(merged[i]!.role);
-      }
+      // The tool_result is invisible, so it neither starts nor counts a unit:
+      // user (0), assistant+tool_result+assistant (1), user (2).
+      expect(units.map((u) => u.role)).toEqual(["user", "assistant", "user"]);
+      expect(units.map((u) => u.messageIndex)).toEqual([0, 1, 2]);
       // The tool_result folded into the assistant unit with its exact seq.
       expect(units[1]!.parts.map((p) => p.seq)).toEqual([1, 2, 3]);
+      // maxSeq tracks the last VISIBLE entry, not the trailing tool_result.
       expect(maxSeq).toBe(4);
     } finally {
       await rm(TEST_DIR, { recursive: true, force: true });

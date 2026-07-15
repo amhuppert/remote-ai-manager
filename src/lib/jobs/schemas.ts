@@ -79,7 +79,9 @@ export const jobStatusEventSchema = z.object({
   status: jobStatusSchema,
   projectName: z.string(),
   sessionName: z.string(),
-  jobId: z.string(),
+  // Non-empty because the lifecycle projection uses jobId as the StatusBus
+  // scopeId, which the envelope schema requires to be non-empty.
+  jobId: z.string().min(1),
   branchName: z.string(),
   mergeHash: z.string().optional(),
   commitHash: z.string().optional(),

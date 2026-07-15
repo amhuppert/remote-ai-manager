@@ -1,8 +1,6 @@
 import { createLogger } from "@/lib/logging";
-import {
-  createProjectConversationNotification,
-  type CreateProjectConversationNotificationInput,
-} from "./repo";
+import type { CreateProjectConversationNotificationInput } from "./repo";
+import { getNotificationsService } from "./service";
 import type {
   ProjectConversationNotification,
   ProjectConversationNotificationType,
@@ -48,7 +46,8 @@ export interface ProjectConversationNotificationService {
 }
 
 const defaultDeps: ProjectConversationNotificationServiceDeps = {
-  createProjectConversationNotification,
+  createProjectConversationNotification: (input) =>
+    getNotificationsService().createProjectConversationNotification(input),
 };
 
 function conversationLabel(input: {

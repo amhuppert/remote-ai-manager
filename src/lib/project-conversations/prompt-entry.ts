@@ -17,7 +17,7 @@ import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-reso
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
-import { broadcast } from "@/lib/events/broadcaster";
+import { publishEvent } from "@/lib/events/publication";
 import { resolveProjectExecutionTarget } from "./execution-target";
 import { createProjectConversationService } from "./service";
 import { buildProjectConversationCreatedEvent } from "./events";
@@ -85,7 +85,7 @@ function defaultDeps(): ExecuteProjectPromptStreamDeps {
         },
       ),
     broadcastConversationCreated: (projectPath, conversation) => {
-      broadcast(
+      publishEvent(
         buildProjectConversationCreatedEvent(
           getProjectDisplayName(projectPath),
           conversation,

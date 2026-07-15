@@ -1,11 +1,7 @@
-import {
-  graphWorkflowExecutionSchema,
-  workflowDefinitionRecordSchema,
-} from "@/lib/workflows/schemas";
-import type {
-  GraphWorkflowExecution,
-  WorkflowDefinitionRecord,
-} from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 const UNCONDITIONAL_REMOVED_FIELDS = [
   "contextSoftLimitTokens",
   "contextHardLimitTokens",

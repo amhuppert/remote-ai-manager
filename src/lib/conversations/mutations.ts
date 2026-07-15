@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQueryClient,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { conversationKeys } from "./query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
@@ -15,55 +11,36 @@ import {
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
+import {
+  cacheUpdate,
+  createOptimisticMutation,
+  type OptimisticCacheUpdate,
+} from "@/lib/api/optimistic";
 
-function renameInActiveCache(
-  client: QueryClient,
+function renamedInActive(
+  active: ActiveConversationsResponse | undefined,
   conversationId: string,
   name: string,
 ): ActiveConversationsResponse | undefined {
-  const activeKey = conversationKeys.active();
-  const previous = client.getQueryData<ActiveConversationsResponse>(activeKey);
-  client.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
-    old === undefined
-      ? old
-      : {
-          ...old,
-          conversations: old.conversations.map((c) =>
-            c.id === conversationId ? { ...c, name } : c,
-          ),
-        },
-  );
-  return previous;
+  if (active === undefined) return undefined;
+  return {
+    ...active,
+    conversations: active.conversations.map((c) =>
+      c.id === conversationId ? { ...c, name } : c,
+    ),
+  };
 }
 
-function removeFromActiveCacheIfArchived(
-  client: QueryClient,
+function withoutActiveConversationIfArchived(
+  active: ActiveConversationsResponse | undefined,
   conversationId: string,
   archived: boolean,
 ): ActiveConversationsResponse | undefined {
-  const activeKey = conversationKeys.active();
-  const previous = client.getQueryData<ActiveConversationsResponse>(activeKey);
-  if (!archived) return previous;
-  client.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
-    old === undefined
-      ? old
-      : {
-          ...old,
-          conversations: old.conversations.filter(
-            (c) => c.id !== conversationId,
-          ),
-        },
-  );
-  return previous;
-}
-
-function restoreActiveCache(
-  client: QueryClient,
-  previous: ActiveConversationsResponse | undefined,
-): void {
-  if (previous !== undefined) {
-    client.setQueryData(conversationKeys.active(), previous);
-  }
+  if (!archived || active === undefined) return undefined;
+  return {
+    ...active,
+    conversations: active.conversations.filter((c) => c.id !== conversationId),
+  };
 }
 
 type GenericSessionMutationScope = {
@@ -109,24 +86,6 @@ type GenericConversationMutationVariables =
   | GenericRenameConversationVariables
   | GenericArchiveConversationVariables;
 
-type GenericSessionMutationContext = {
-  scope: "session";
-  listKey: ReturnType<typeof conversationKeys.list>;
-  previousList: ConversationState[] | undefined;
-  previousActive: ActiveConversationsResponse | undefined;
-};
-
-type GenericProjectMutationContext = {
-  scope: "project";
-  projectListKey: ReturnType<typeof projectConversationKeys.list>;
-  openCountKey: ReturnType<typeof projectConversationKeys.openCount>;
-  previousActive: ActiveConversationsResponse | undefined;
-};
-
-type GenericConversationMutationContext =
-  | GenericSessionMutationContext
-  | GenericProjectMutationContext;
-
 function isProjectMutationScope(
   variables: GenericConversationMutationVariables,
 ): variables is
@@ -148,40 +107,55 @@ function genericConversationMutationPath(
   return `/api/projects/${projectName}/sessions/${encodeURIComponent(variables.sessionName)}/conversations/${conversationId}/${action}`;
 }
 
-function restoreGenericConversationMutationCache(
-  client: QueryClient,
-  context: GenericConversationMutationContext | undefined,
-): void {
-  if (context?.scope === "session" && context.previousList !== undefined) {
-    client.setQueryData(context.listKey, context.previousList);
+/**
+ * The generic (project-or-session scoped) mutations patch the session
+ * conversation list only for session scope; the project list carries no
+ * optimistic write and is reconciled by invalidation alone.
+ */
+function genericConversationUpdates<
+  TVars extends GenericConversationMutationVariables,
+>(
+  vars: TVars,
+  sessionListUpdate: (
+    old: ConversationState[] | undefined,
+    vars: TVars,
+  ) => ConversationState[] | undefined,
+  activeUpdate: (
+    old: ActiveConversationsResponse | undefined,
+    vars: TVars,
+  ) => ActiveConversationsResponse | undefined,
+): ReadonlyArray<OptimisticCacheUpdate<TVars>> {
+  const active = cacheUpdate<TVars, ActiveConversationsResponse>({
+    key: () => conversationKeys.active(),
+    update: activeUpdate,
+  });
+  const wide: GenericConversationMutationVariables = vars;
+  if (isProjectMutationScope(wide)) {
+    return [active];
   }
-  restoreActiveCache(client, context?.previousActive);
+  const listKey = conversationKeys.list(wide.projectName, wide.sessionName);
+  return [
+    cacheUpdate<TVars, ConversationState[]>({
+      key: () => listKey,
+      update: sessionListUpdate,
+    }),
+    active,
+  ];
 }
 
-function invalidateGenericConversationMutationQueries(
-  client: QueryClient,
+function genericConversationInvalidateKeys(
   variables: GenericConversationMutationVariables,
-): void {
-  void client.invalidateQueries({
-    queryKey: conversationKeys.active(),
-  });
-
+) {
   if (isProjectMutationScope(variables)) {
-    void client.invalidateQueries({
-      queryKey: projectConversationKeys.list(variables.projectName),
-    });
-    void client.invalidateQueries({
-      queryKey: projectConversationKeys.openCount(variables.projectName),
-    });
-    return;
+    return [
+      conversationKeys.active(),
+      projectConversationKeys.list(variables.projectName),
+    ];
   }
-
-  void client.invalidateQueries({
-    queryKey: conversationKeys.list(
-      variables.projectName,
-      variables.sessionName,
-    ),
-  });
+  return [
+    conversationKeys.active(),
+    conversationKeys.list(variables.projectName, variables.sessionName),
+  ];
 }
 
 export function useCreateConversationMutation(
@@ -213,50 +187,52 @@ export function useArchiveConversationMutation(
   const queryClient = useQueryClient();
   const listKey = conversationKeys.list(projectName, sessionName);
 
-  return useMutation({
-    mutationFn: ({
-      conversationId,
-      archived,
-    }: {
-      conversationId: string;
-      archived: boolean;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/archive`,
-        "archive-conversation",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ archived }),
-        },
-      ),
-    onMutate: async ({ conversationId, archived }) => {
-      await queryClient.cancelQueries({ queryKey: listKey });
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
-      const previous = queryClient.getQueryData<ConversationState[]>(listKey);
-      queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) => (c.id === conversationId ? { ...c, archived } : c)),
-      );
-      const previousActive = removeFromActiveCacheIfArchived(
-        queryClient,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
         conversationId,
         archived,
-      );
-      return { previous, previousActive };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData(listKey, context.previous);
-      }
-      restoreActiveCache(queryClient, context?.previousActive);
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: listKey });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
+      }: {
+        conversationId: string;
+        archived: boolean;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/archive`,
+          "archive-conversation",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archived }),
+          },
+        ),
+      updates: [
+        cacheUpdate<
+          { conversationId: string; archived: boolean },
+          ConversationState[]
+        >({
+          key: () => listKey,
+          update: (old, vars) =>
+            old?.map((c) =>
+              c.id === vars.conversationId
+                ? { ...c, archived: vars.archived }
+                : c,
+            ),
+        }),
+        cacheUpdate<
+          { conversationId: string; archived: boolean },
+          ActiveConversationsResponse
+        >({
+          key: () => conversationKeys.active(),
+          update: (old, vars) =>
+            withoutActiveConversationIfArchived(
+              old,
+              vars.conversationId,
+              vars.archived,
+            ),
+        }),
+      ],
+    }),
+  );
 }
 
 export function useRenameConversationMutation(
@@ -266,50 +242,46 @@ export function useRenameConversationMutation(
   const queryClient = useQueryClient();
   const listKey = conversationKeys.list(projectName, sessionName);
 
-  return useMutation({
-    mutationFn: ({
-      conversationId,
-      name,
-    }: {
-      conversationId: string;
-      name: string;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
-        "rename-conversation",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
-        },
-      ),
-    onMutate: async ({ conversationId, name }) => {
-      await queryClient.cancelQueries({ queryKey: listKey });
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
-      const previous = queryClient.getQueryData<ConversationState[]>(listKey);
-      queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) => (c.id === conversationId ? { ...c, name } : c)),
-      );
-      const previousActive = renameInActiveCache(
-        queryClient,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
         conversationId,
         name,
-      );
-      return { previous, previousActive };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData(listKey, context.previous);
-      }
-      restoreActiveCache(queryClient, context?.previousActive);
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: listKey });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
+      }: {
+        conversationId: string;
+        name: string;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
+          "rename-conversation",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          },
+        ),
+      updates: [
+        cacheUpdate<
+          { conversationId: string; name: string },
+          ConversationState[]
+        >({
+          key: () => listKey,
+          update: (old, vars) =>
+            old?.map((c) =>
+              c.id === vars.conversationId ? { ...c, name: vars.name } : c,
+            ),
+        }),
+        cacheUpdate<
+          { conversationId: string; name: string },
+          ActiveConversationsResponse
+        >({
+          key: () => conversationKeys.active(),
+          update: (old, vars) =>
+            renamedInActive(old, vars.conversationId, vars.name),
+        }),
+      ],
+    }),
+  );
 }
 
 export function useAnswerQuestionMutation(
@@ -319,107 +291,91 @@ export function useAnswerQuestionMutation(
 ) {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: async ({
-      questionId,
-      answers,
-    }: {
-      questionId: string;
-      answers: Record<string, AskQuestionAnswer>;
-    }) => {
-      const res = await fetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/answer`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ questionId, answers }),
-        },
-      );
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: async ({
+        questionId,
+        answers,
+      }: {
+        questionId: string;
+        answers: Record<string, AskQuestionAnswer>;
+      }) => {
+        const res = await fetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/answer`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ questionId, answers }),
+          },
+        );
 
-      if (res.ok) {
-        return { status: "ok" as const };
-      }
+        if (res.ok) {
+          return { status: "ok" as const };
+        }
 
-      if (res.status === 410) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        return { status: "gone" as const, error: body?.error ?? null };
-      }
+        if (res.status === 410) {
+          const body = (await res.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          return { status: "gone" as const, error: body?.error ?? null };
+        }
 
-      throw new Error(`Answer submission failed: ${res.status}`);
-    },
-    onMutate: async () => {
-      const activeKey = conversationKeys.active();
-      const sessionKey = sessionKeys.detail(projectName, sessionName);
-      await queryClient.cancelQueries({ queryKey: activeKey });
-      await queryClient.cancelQueries({ queryKey: sessionKey });
-
-      const previousActive =
-        queryClient.getQueryData<ActiveConversationsResponse>(activeKey);
-      queryClient.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
-        old === undefined
-          ? old
-          : {
-              ...old,
-              conversations: old.conversations.map((c) =>
-                c.id === conversationId
-                  ? {
-                      ...c,
-                      status: "running" as const,
-                      pendingQuestion: null,
-                      pendingQuestionId: null,
-                      pendingQuestions: null,
-                    }
-                  : c,
-              ),
-            },
-      );
-
-      const previousSession =
-        queryClient.getQueryData<SessionState>(sessionKey);
-      queryClient.setQueryData<SessionState>(sessionKey, (old) =>
-        old === undefined
-          ? old
-          : {
-              ...old,
-              conversations: old.conversations.map((c) =>
-                c.id === conversationId
-                  ? {
-                      ...c,
-                      status: "running" as const,
-                      pendingQuestionId: null,
-                      pendingQuestions: null,
-                    }
-                  : c,
-              ),
-            },
-      );
-
-      return { previousActive, previousSession, sessionKey };
-    },
-    onError: (_err, _vars, context) => {
-      restoreActiveCache(queryClient, context?.previousActive);
-      if (context?.previousSession !== undefined) {
-        queryClient.setQueryData(context.sessionKey, context.previousSession);
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.messages(
-          projectName,
-          sessionName,
-          conversationId,
-        ),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
+        throw new Error(`Answer submission failed: ${res.status}`);
+      },
+      updates: [
+        cacheUpdate<
+          { questionId: string; answers: Record<string, AskQuestionAnswer> },
+          ActiveConversationsResponse
+        >({
+          key: () => conversationKeys.active(),
+          update: (old) =>
+            old === undefined
+              ? undefined
+              : {
+                  ...old,
+                  conversations: old.conversations.map((c) =>
+                    c.id === conversationId
+                      ? {
+                          ...c,
+                          status: "running" as const,
+                          pendingQuestion: null,
+                          pendingQuestionId: null,
+                          pendingQuestions: null,
+                        }
+                      : c,
+                  ),
+                },
+        }),
+        cacheUpdate<
+          { questionId: string; answers: Record<string, AskQuestionAnswer> },
+          SessionState
+        >({
+          key: () => sessionKeys.detail(projectName, sessionName),
+          update: (old) =>
+            old === undefined
+              ? undefined
+              : {
+                  ...old,
+                  conversations: old.conversations.map((c) =>
+                    c.id === conversationId
+                      ? {
+                          ...c,
+                          status: "running" as const,
+                          pendingQuestionId: null,
+                          pendingQuestions: null,
+                        }
+                      : c,
+                  ),
+                },
+        }),
+      ],
+      invalidateKeys: () => [
+        conversationKeys.messages(projectName, sessionName, conversationId),
+        sessionKeys.detail(projectName, sessionName),
+        conversationKeys.active(),
+      ],
+    }),
+  );
 }
 
 /**
@@ -479,72 +435,35 @@ export function useForkConversationMutation(
 export function useGenericArchiveConversationMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (variables: GenericArchiveConversationVariables) =>
-      mutationFetch(
-        genericConversationMutationPath(variables, "archive"),
-        "archive-conversation",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ archived: variables.archived }),
-        },
-      ),
-    onMutate: async (
-      variables,
-    ): Promise<GenericConversationMutationContext> => {
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
-
-      if (isProjectMutationScope(variables)) {
-        const projectListKey = projectConversationKeys.list(
-          variables.projectName,
-        );
-        const openCountKey = projectConversationKeys.openCount(
-          variables.projectName,
-        );
-        await queryClient.cancelQueries({ queryKey: projectListKey });
-        await queryClient.cancelQueries({ queryKey: openCountKey });
-        const previousActive = removeFromActiveCacheIfArchived(
-          queryClient,
-          variables.conversationId,
-          variables.archived,
-        );
-        return {
-          scope: "project",
-          projectListKey,
-          openCountKey,
-          previousActive,
-        };
-      }
-
-      const listKey = conversationKeys.list(
-        variables.projectName,
-        variables.sessionName,
-      );
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const previousList =
-        queryClient.getQueryData<ConversationState[]>(listKey);
-      queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) =>
-          c.id === variables.conversationId
-            ? { ...c, archived: variables.archived }
-            : c,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (variables: GenericArchiveConversationVariables) =>
+        mutationFetch(
+          genericConversationMutationPath(variables, "archive"),
+          "archive-conversation",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archived: variables.archived }),
+          },
         ),
-      );
-      const previousActive = removeFromActiveCacheIfArchived(
-        queryClient,
-        variables.conversationId,
-        variables.archived,
-      );
-      return { scope: "session", previousList, previousActive, listKey };
-    },
-    onError: (_err, _vars, context) => {
-      restoreGenericConversationMutationCache(queryClient, context);
-    },
-    onSettled: (_data, _err, variables) => {
-      invalidateGenericConversationMutationQueries(queryClient, variables);
-    },
-  });
+      updates: (vars) =>
+        genericConversationUpdates<GenericArchiveConversationVariables>(
+          vars,
+          (old, v) =>
+            old?.map((c) =>
+              c.id === v.conversationId ? { ...c, archived: v.archived } : c,
+            ),
+          (old, v) =>
+            withoutActiveConversationIfArchived(
+              old,
+              v.conversationId,
+              v.archived,
+            ),
+        ),
+      invalidateKeys: (vars) => genericConversationInvalidateKeys(vars),
+    }),
+  );
 }
 
 /**
@@ -556,47 +475,41 @@ export function useGenericArchiveConversationMutation() {
 export function useMarkConversationReadMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({
-      projectName,
-      sessionName,
-      conversationId,
-    }: {
-      projectName: string;
-      sessionName: string;
-      conversationId: string;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mark-read`,
-        "mark-conversation-read",
-        { method: "POST" },
-      ),
-    onMutate: async ({ conversationId }) => {
-      const activeKey = conversationKeys.active();
-      await queryClient.cancelQueries({ queryKey: activeKey });
-      const previousActive =
-        queryClient.getQueryData<ActiveConversationsResponse>(activeKey);
-      queryClient.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
-        old === undefined
-          ? old
-          : {
-              ...old,
-              conversations: old.conversations.map((c) =>
-                c.id === conversationId ? { ...c, unread: false } : c,
-              ),
-            },
-      );
-      return { previousActive };
-    },
-    onError: (_err, _vars, context) => {
-      restoreActiveCache(queryClient, context?.previousActive);
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
+        projectName,
+        sessionName,
+        conversationId,
+      }: {
+        projectName: string;
+        sessionName: string;
+        conversationId: string;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mark-read`,
+          "mark-conversation-read",
+          { method: "POST" },
+        ),
+      updates: [
+        cacheUpdate<
+          { projectName: string; sessionName: string; conversationId: string },
+          ActiveConversationsResponse
+        >({
+          key: () => conversationKeys.active(),
+          update: (old, vars) =>
+            old === undefined
+              ? undefined
+              : {
+                  ...old,
+                  conversations: old.conversations.map((c) =>
+                    c.id === vars.conversationId ? { ...c, unread: false } : c,
+                  ),
+                },
+        }),
+      ],
+    }),
+  );
 }
 
 /**
@@ -606,70 +519,28 @@ export function useMarkConversationReadMutation() {
 export function useGenericRenameConversationMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (variables: GenericRenameConversationVariables) =>
-      mutationFetch(
-        genericConversationMutationPath(variables, "rename"),
-        "rename-conversation",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: variables.name }),
-        },
-      ),
-    onMutate: async (
-      variables,
-    ): Promise<GenericConversationMutationContext> => {
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
-
-      if (isProjectMutationScope(variables)) {
-        const projectListKey = projectConversationKeys.list(
-          variables.projectName,
-        );
-        const openCountKey = projectConversationKeys.openCount(
-          variables.projectName,
-        );
-        await queryClient.cancelQueries({ queryKey: projectListKey });
-        await queryClient.cancelQueries({ queryKey: openCountKey });
-        const previousActive = renameInActiveCache(
-          queryClient,
-          variables.conversationId,
-          variables.name,
-        );
-        return {
-          scope: "project",
-          projectListKey,
-          openCountKey,
-          previousActive,
-        };
-      }
-
-      const listKey = conversationKeys.list(
-        variables.projectName,
-        variables.sessionName,
-      );
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const previousList =
-        queryClient.getQueryData<ConversationState[]>(listKey);
-      queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) =>
-          c.id === variables.conversationId
-            ? { ...c, name: variables.name }
-            : c,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (variables: GenericRenameConversationVariables) =>
+        mutationFetch(
+          genericConversationMutationPath(variables, "rename"),
+          "rename-conversation",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: variables.name }),
+          },
         ),
-      );
-      const previousActive = renameInActiveCache(
-        queryClient,
-        variables.conversationId,
-        variables.name,
-      );
-      return { scope: "session", previousList, previousActive, listKey };
-    },
-    onError: (_err, _vars, context) => {
-      restoreGenericConversationMutationCache(queryClient, context);
-    },
-    onSettled: (_data, _err, variables) => {
-      invalidateGenericConversationMutationQueries(queryClient, variables);
-    },
-  });
+      updates: (vars) =>
+        genericConversationUpdates<GenericRenameConversationVariables>(
+          vars,
+          (old, v) =>
+            old?.map((c) =>
+              c.id === v.conversationId ? { ...c, name: v.name } : c,
+            ),
+          (old, v) => renamedInActive(old, v.conversationId, v.name),
+        ),
+      invalidateKeys: (vars) => genericConversationInvalidateKeys(vars),
+    }),
+  );
 }

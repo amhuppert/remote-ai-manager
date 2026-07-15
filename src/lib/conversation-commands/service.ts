@@ -36,6 +36,7 @@ import {
   MERGE_MESSAGE_JSON_SCHEMA,
 } from "./schemas";
 import type { ParsedConversationCommand } from "./schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("conversation-commands");
 
@@ -307,9 +308,7 @@ export function createConversationCommandService(
     } catch (err) {
       resolved = {
         ok: false,
-        reason: `generation turn threw: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        reason: `generation turn threw: ${getErrorMessage(err)}`,
       };
     }
 
@@ -348,7 +347,7 @@ export function createConversationCommandService(
       try {
         target = await deps.resolveMergeTarget(input.projectPath, session);
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
+        const reason = getErrorMessage(err);
         logger.warn("command.merge_target_failed", {
           command: parsed.command,
           reason,
@@ -376,9 +375,7 @@ export function createConversationCommandService(
     } catch (err) {
       changeSummary = {
         ok: false,
-        reason: `change summary collection failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        reason: `change summary collection failed: ${getErrorMessage(err)}`,
       };
     }
 

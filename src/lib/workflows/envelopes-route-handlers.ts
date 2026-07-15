@@ -12,6 +12,7 @@
  * work" requirement.
  */
 import { NextResponse } from "next/server";
+import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
@@ -56,13 +57,9 @@ export function createWorkflowEnvelopesRouteHandlers(
       );
     }
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const url = new URL(request.url);
     const includeTerminal = url.searchParams.get("includeTerminal") === "true";

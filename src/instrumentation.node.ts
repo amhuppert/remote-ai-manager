@@ -3,7 +3,7 @@ import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";
 import { runMigrations } from "./lib/state-store/migrator";
 import { createContextArtifactsRepo } from "./lib/context-artifacts/repo";
-import { initialize as initNotificationDb } from "./lib/notifications/repo";
+import { initializeNotifications } from "./lib/notifications/service";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
 import { readConfig, getConfigDirPath } from "./lib/config/loader";
 import { ensureInstanceToken } from "./lib/agent-gateway/token";
@@ -20,16 +20,17 @@ import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
+import { createAgentRunsRepo } from "./lib/agent-runs/repo";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";
 
 const logger = createLogger("startup");
 
 export interface StartupDeps {
-  loadConversationManager(): Promise<{
+  loadConversationRehydration(): Promise<{
     rehydrateConversationActors(): Promise<number>;
   }>;
   runStateMigrations(): Promise<string[]>;
-  initNotificationDb: typeof initNotificationDb;
+  initNotificationDb: typeof initializeNotifications;
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
   recoverActiveWorkflowEnvelopes: typeof recoverActiveWorkflowEnvelopes;
@@ -38,14 +39,17 @@ export interface StartupDeps {
   recordServerBaseUrl(): string;
   /** Marks orphaned pending compaction rows failed; returns the swept count. */
   sweepInterruptedCompactions(): number;
+  /** Marks orphaned running agent-run rows failed; returns the swept count. */
+  recoverStaleAgentRuns(): number;
   verifyServerBaseUrl(): void;
 }
 
 const defaultStartupDeps: StartupDeps = {
-  loadConversationManager: () => import("./lib/workflows/conversation/manager"),
+  loadConversationRehydration: () =>
+    import("./lib/workflows/conversation/rehydration"),
   runStateMigrations: () =>
     runMigrations({ db: getDb(), configDir: getConfigDirPath() }),
-  initNotificationDb,
+  initNotificationDb: initializeNotifications,
   setConfigReader,
   readConfig,
   recoverActiveWorkflowEnvelopes,
@@ -62,6 +66,8 @@ const defaultStartupDeps: StartupDeps = {
       "interrupted by server restart",
       new Date().toISOString(),
     ),
+  recoverStaleAgentRuns: () =>
+    createAgentRunsRepo(getStateDb()).recoverStaleAgentRuns(),
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -73,7 +79,11 @@ export function createStartupRegistrar(
   return async () => {
     // Apply state-store migrations before any step reads or writes the DB. The
     // synchronous schema floor runs on DB open; this applies the async,
-    // ledgered migrations (see state-store/migrator.ts).
+    // ledgered migrations (see state-store/migrator.ts). A failure is FATAL:
+    // a partially-migrated database must never serve requests, run sweeps, or
+    // rehydrate actors, so the error propagates and aborts server startup.
+    // The failed migration stays out of the ledger, so the next startup
+    // retries it (migrations are idempotent by contract).
     try {
       const applied = await runAsTrace(
         "startup:state-migrations",
@@ -87,7 +97,9 @@ export function createStartupRegistrar(
     } catch (err) {
       logger.error("startup.state_migrations_failed", {
         error: getErrorMessage(err),
+        fatal: true,
       });
+      throw err;
     }
 
     // A compaction run lives only in the compaction service's in-memory
@@ -102,6 +114,22 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.compaction_sweep_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // An agent run's abort handle lives only in this process's abort
+    // registry, so rows still `running` now were orphaned by the previous
+    // process shutting down — they would report running forever and cancel
+    // would be a silent no-op. Sweep them to failed before any request reads
+    // them.
+    try {
+      const sweptRuns = deps.recoverStaleAgentRuns();
+      if (sweptRuns > 0) {
+        logger.info("startup.stale_agent_runs_swept", { count: sweptRuns });
+      }
+    } catch (err) {
+      logger.error("startup.agent_run_sweep_failed", {
         error: getErrorMessage(err),
       });
     }
@@ -143,7 +171,7 @@ export function createStartupRegistrar(
     // Rehydrate conversation actors from persisted machine snapshots
     try {
       const { rehydrateConversationActors } =
-        await deps.loadConversationManager();
+        await deps.loadConversationRehydration();
       const rehydrated = await runAsTrace(
         "startup:rehydrate-conversations",
         rehydrateConversationActors,

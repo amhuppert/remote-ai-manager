@@ -1,16 +1,18 @@
 import type { Node, Edge } from "@xyflow/react";
 import type {
-  GraphWorkflowContextStatus,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowExecutionContextState,
+  GraphWorkflowTaskState,
+} from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowContextStatus,
+  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
-  GraphWorkflowTaskState,
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   deriveContextWaitState,
   type ContextWaitState,

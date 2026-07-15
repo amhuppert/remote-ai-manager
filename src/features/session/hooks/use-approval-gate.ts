@@ -5,10 +5,8 @@ import type { ComponentProps } from "react";
 import type ApprovalGatePanel from "@/components/ApprovalGatePanel";
 import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
 import { useWorkflowDefinitionQuery } from "@/lib/workflows/queries";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 
 export type ApprovalGatePanelProps = ComponentProps<typeof ApprovalGatePanel>;
 

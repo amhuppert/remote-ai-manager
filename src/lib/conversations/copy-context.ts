@@ -3,7 +3,7 @@
  * Used on both the session overview and conversation detail pages.
  */
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,

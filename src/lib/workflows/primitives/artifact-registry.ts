@@ -33,6 +33,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const ARTIFACT_KINDS = [
   "reference_document",
@@ -100,7 +101,6 @@ export interface ArtifactWriteRequest {
   relativePath: string;
   contents: string | Uint8Array;
   audience: ArtifactAudience;
-  required: boolean;
   source: {
     workflowId?: string;
     laneId?: string;
@@ -110,20 +110,7 @@ export interface ArtifactWriteRequest {
   readWhen?: string;
 }
 
-export interface ArtifactWriteOptionalRequest {
-  kind: ArtifactKind;
-  worktreePath: string;
-  relativePath: string;
-  contents: string | Uint8Array;
-  audience: ArtifactAudience;
-  source: {
-    workflowId?: string;
-    laneId?: string;
-    round?: number;
-  };
-  description?: string;
-  readWhen?: string;
-}
+export type ArtifactWriteOptionalRequest = ArtifactWriteRequest;
 
 export type ArtifactWriteOutcome =
   | { status: "registered"; record: ArtifactRecord }
@@ -318,7 +305,7 @@ export function createArtifactRegistry(
         worktreePath: request.worktreePath,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       throw new ArtifactRequiredFailure({
         kind: request.kind,
         relativePath: request.relativePath,
@@ -487,7 +474,7 @@ export function createArtifactRegistry(
         worktreePath: request.worktreePath,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       throw new ArtifactRequiredFailure({
         kind: request.kind,
         relativePath: request.relativePath,
@@ -627,10 +614,7 @@ export function createArtifactRegistry(
     request: ArtifactWriteOptionalRequest,
   ): Promise<ArtifactWriteOutcome> {
     try {
-      const record = await performWrite({
-        ...request,
-        required: false,
-      });
+      const record = await performWrite(request);
       return { status: "registered", record };
     } catch (err) {
       if (err instanceof ArtifactRequiredFailure) {

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type { ApiError } from "@/lib/api/errors";
 import type { GlobalConfig } from "@/lib/config/schemas";
-import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import {
   createWorkflowStorageService,
   type WorkflowDefinitionDraft,
@@ -54,20 +55,6 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
     defaultStorage.delete({ kind: "project", projectPath }, workflowId),
 };
 
-async function resolveProjectOr404(
-  deps: WorkflowDefinitionRouteDeps,
-  name: string,
-): Promise<string | Response> {
-  const projectPath = await deps.resolveProjectPath(name);
-  if (projectPath) {
-    return projectPath;
-  }
-
-  return NextResponse.json({ error: "Project not found" } satisfies ApiError, {
-    status: 404,
-  });
-}
-
 export function createWorkflowDefinitionRouteHandlers(
   deps: WorkflowDefinitionRouteDeps = defaultDeps,
 ) {
@@ -76,10 +63,9 @@ export function createWorkflowDefinitionRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const items = await deps.listDefinitions(projectPath);
     return NextResponse.json({ items });
@@ -90,10 +76,9 @@ export function createWorkflowDefinitionRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     let rawBody: unknown;
     try {
@@ -132,17 +117,13 @@ export function createWorkflowDefinitionRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name = "", workflowId = "" } = await context.params;
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const item = await deps.getDefinition(projectPath, workflowId);
     if (!item) {
-      return NextResponse.json(
-        { error: "Workflow not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Workflow not found");
     }
 
     const globalConfig = await deps.readConfig();
@@ -156,10 +137,9 @@ export function createWorkflowDefinitionRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name = "", workflowId = "" } = await context.params;
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     let rawBody: unknown;
     try {
@@ -191,9 +171,7 @@ export function createWorkflowDefinitionRouteHandlers(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to update workflow";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 404,
-      });
+      return notFound(message);
     }
   }
 
@@ -202,10 +180,9 @@ export function createWorkflowDefinitionRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name = "", workflowId = "" } = await context.params;
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const rawBody = await request.json().catch(() => undefined);
     return runDefinitionEditRequest({
@@ -221,17 +198,13 @@ export function createWorkflowDefinitionRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name = "", workflowId = "" } = await context.params;
-    const projectPath = await resolveProjectOr404(deps, name);
-    if (projectPath instanceof Response) {
-      return projectPath;
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const deleted = await deps.deleteDefinition(projectPath, workflowId);
     if (!deleted) {
-      return NextResponse.json(
-        { error: "Workflow not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Workflow not found");
     }
 
     return NextResponse.json({ ok: true });

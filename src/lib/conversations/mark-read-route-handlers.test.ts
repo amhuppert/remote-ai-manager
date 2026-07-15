@@ -96,6 +96,7 @@ function makeDeps(overrides: Partial<MarkReadRouteDeps> = {}): {
     mutateConversation: fixture.deps.mutateConversation,
     broadcast: vi.fn((event: SSEEvent) => {
       broadcastedEvents.push(event);
+      return { delivered: true as const };
     }),
     ...overrides,
   };

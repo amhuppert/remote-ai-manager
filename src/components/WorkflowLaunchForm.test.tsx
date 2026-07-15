@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import WorkflowLaunchForm from "@/components/WorkflowLaunchForm";
 
 // Radix Select focuses items / captures the pointer on open; jsdom implements

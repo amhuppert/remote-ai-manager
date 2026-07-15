@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,8 +15,8 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
-  WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 import { computeCharterHash } from "./charter/render";
@@ -21,6 +27,8 @@ import { createWorkflowStorageService } from "./storage";
 import { createWorkflowDefinition } from "./test-fixtures";
 import {
   LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
+  LEGACY_WORKFLOW_PURGE_PENDING_MIGRATION_ID,
+  LEGACY_WORKFLOW_PURGE_QUARANTINE_DIR_NAME,
   _createTestDbAtPath,
 } from "@/lib/state-store/state-db";
 
@@ -143,8 +151,15 @@ describe("charter lifecycle integration — Migration", () => {
       history: JSON.stringify([{ executionId: "exec-a" }]),
     });
     bootstrap
-      .prepare("DELETE FROM applied_data_migrations WHERE id = ?")
-      .run(LEGACY_WORKFLOW_PURGE_MIGRATION_ID);
+      .prepare("DELETE FROM applied_data_migrations WHERE id IN (?, ?)")
+      .run(
+        LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
+        LEGACY_WORKFLOW_PURGE_PENDING_MIGRATION_ID,
+      );
+    rmSync(path.join(configDir, LEGACY_WORKFLOW_PURGE_QUARANTINE_DIR_NAME), {
+      recursive: true,
+      force: true,
+    });
     bootstrap.close();
     openDbs.pop();
 
@@ -156,7 +171,7 @@ describe("charter lifecycle integration — Migration", () => {
     const migrated = open(dbPath);
 
     // Observed through the REAL storage service: the workflow store is empty
-    // (the purge removed the whole workflows directory, so list() returns []).
+    // after the purge durably captures and cleans the legacy directory.
     expect(existsSync(legacyDefFile)).toBe(false);
     expect(
       await storage.list({ kind: "project", projectPath: PROJECT_PATH }),

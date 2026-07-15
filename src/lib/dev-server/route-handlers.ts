@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  notFound,
+  resolveProjectOr404,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
@@ -107,13 +112,13 @@ function apiError(
 
 function serviceErrorResponse(error: unknown): Response {
   if (error instanceof SessionNotFoundError) {
-    return apiError(error.message, 404, error.code);
+    return notFound(error.message, error.code);
   }
   if (error instanceof NoDevServersConfiguredError) {
     return apiError(error.message, 400, error.code);
   }
   if (error instanceof UnknownDevServerError) {
-    return apiError(error.message, 404, error.code);
+    return notFound(error.message, error.code);
   }
   if (error instanceof AmbiguousDevServerError) {
     return apiError(error.message, 400, error.code);
@@ -144,34 +149,6 @@ const stopUnmanagedRequestSchema = z.object({
   port: z.number().int().positive(),
 });
 
-async function resolveProjectOr404(
-  deps: DevServerRouteDeps,
-  projectName: string,
-): Promise<{ projectPath: string } | Response> {
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return apiError("Project not found", 404);
-  }
-  return { projectPath };
-}
-
-async function resolveProjectAndSessionOr404(
-  deps: DevServerRouteDeps,
-  projectName: string,
-  sessionName: string,
-): Promise<{ projectPath: string; worktreePath: string } | Response> {
-  const resolved = await resolveProjectOr404(deps, projectName);
-  if (resolved instanceof Response) return resolved;
-  const sessionState = await deps.getSession(resolved.projectPath, sessionName);
-  if (!sessionState) {
-    return apiError("Session not found", 404);
-  }
-  return {
-    projectPath: resolved.projectPath,
-    worktreePath: sessionState.worktreePath,
-  };
-}
-
 export function createDevServerRouteHandlers(
   deps: DevServerRouteDeps = defaultDeps,
 ) {
@@ -182,12 +159,12 @@ export function createDevServerRouteHandlers(
     const params = await context.params;
     const projectName = params["name"] ?? "";
     const sessionName = decodeURIComponent(params["session"] ?? "");
-    const resolved = await resolveProjectOr404(deps, projectName);
-    if (resolved instanceof Response) return resolved;
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
 
     try {
       const servers = await deps.service.list({
-        projectPath: resolved.projectPath,
+        projectPath: project.value,
         sessionName,
       });
       return NextResponse.json({
@@ -211,12 +188,12 @@ export function createDevServerRouteHandlers(
     const projectName = params["name"] ?? "";
     const sessionName = decodeURIComponent(params["session"] ?? "");
     const serverName = decodeURIComponent(params["serverName"] ?? "");
-    const resolved = await resolveProjectOr404(deps, projectName);
-    if (resolved instanceof Response) return resolved;
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
 
     try {
       const server = await deps.service.ensure({
-        projectPath: resolved.projectPath,
+        projectPath: project.value,
         sessionName,
         serverName,
         wait: false,
@@ -243,12 +220,12 @@ export function createDevServerRouteHandlers(
     const params = await context.params;
     const projectName = params["name"] ?? "";
     const sessionName = decodeURIComponent(params["session"] ?? "");
-    const resolved = await resolveProjectOr404(deps, projectName);
-    if (resolved instanceof Response) return resolved;
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
 
     try {
       const servers = await deps.service.list({
-        projectPath: resolved.projectPath,
+        projectPath: project.value,
         sessionName,
       });
       if (servers.length === 0) {
@@ -261,7 +238,7 @@ export function createDevServerRouteHandlers(
         }
 
         await deps.service.ensure({
-          projectPath: resolved.projectPath,
+          projectPath: project.value,
           sessionName,
           serverName: server.serverName,
           wait: false,
@@ -287,30 +264,30 @@ export function createDevServerRouteHandlers(
     const projectName = params["name"] ?? "";
     const sessionName = params["session"] ?? "";
     const serverName = params["serverName"] ?? "";
-    const resolved = await resolveProjectAndSessionOr404(
+    const resolved = await resolveProjectSessionOr404(
       deps,
       projectName,
       sessionName,
     );
-    if (resolved instanceof Response) return resolved;
+    if (!resolved.ok) return resolved.response;
 
     const existing = deps.getServer({
-      projectPath: resolved.projectPath,
+      projectPath: resolved.value.projectPath,
       sessionName,
-      worktreePath: resolved.worktreePath,
+      worktreePath: resolved.value.session.worktreePath,
       serverName,
     });
     if (
       !existing ||
       (existing.status !== "running" && existing.status !== "starting")
     ) {
-      return apiError(`Server "${serverName}" is not running`, 404);
+      return notFound(`Server "${serverName}" is not running`);
     }
 
     await deps.stopServer({
-      projectPath: resolved.projectPath,
+      projectPath: resolved.value.projectPath,
       sessionName,
-      worktreePath: resolved.worktreePath,
+      worktreePath: resolved.value.session.worktreePath,
       serverName,
     });
     return NextResponse.json({ status: "ok" });
@@ -323,15 +300,15 @@ export function createDevServerRouteHandlers(
     const params = await context.params;
     const projectName = params["name"] ?? "";
     const sessionName = params["session"] ?? "";
-    const resolved = await resolveProjectAndSessionOr404(
+    const resolved = await resolveProjectSessionOr404(
       deps,
       projectName,
       sessionName,
     );
-    if (resolved instanceof Response) return resolved;
+    if (!resolved.ok) return resolved.response;
 
     await deps.stopAllForSession({
-      projectPath: resolved.projectPath,
+      projectPath: resolved.value.projectPath,
       sessionName,
     });
     return NextResponse.json({ status: "ok" });
@@ -345,8 +322,8 @@ export function createDevServerRouteHandlers(
     const projectName = params["name"] ?? "";
     const sessionName = decodeURIComponent(params["session"] ?? "");
     const serverName = decodeURIComponent(params["serverName"] ?? "");
-    const resolved = await resolveProjectOr404(deps, projectName);
-    if (resolved instanceof Response) return resolved;
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
 
     const body = (await request.json().catch(() => ({}))) as {
       port?: number;
@@ -361,7 +338,7 @@ export function createDevServerRouteHandlers(
 
     try {
       const result = await deps.service.stopUnmanaged({
-        projectPath: resolved.projectPath,
+        projectPath: project.value,
         sessionName,
         serverName,
         port: parsed.data.port,

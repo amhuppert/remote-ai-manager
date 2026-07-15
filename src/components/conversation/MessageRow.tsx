@@ -7,6 +7,7 @@ import MessageActions from "@/components/MessageActions";
 import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import { EffortLabel } from "@/components/conversation/EffortLabel";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
+import { backendLabel } from "@/lib/agent-backends/catalog";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   ConversationState,
@@ -131,7 +132,7 @@ const MessageRow = memo(function MessageRow({
       data-msg-index={messageIndex}
     >
       <div className={cn(messageRoleClass, roleColor)}>
-        {isUserMsg ? "You" : selectedBackend === "codex" ? "Codex" : "Claude"}
+        {isUserMsg ? "You" : backendLabel(selectedBackend)}
         {iterationIndex !== undefined && (
           <span
             className="message-iteration-badge ml-sm inline-flex items-center justify-center rounded-full bg-bg-raised px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-medium tracking-[0.02em] whitespace-nowrap text-text-secondary normal-case"

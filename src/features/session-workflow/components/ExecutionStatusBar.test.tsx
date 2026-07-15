@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import ExecutionStatusBar from "./ExecutionStatusBar";
 

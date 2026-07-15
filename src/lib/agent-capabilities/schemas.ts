@@ -3,6 +3,10 @@ import { z } from "zod";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
+import {
+  capabilityKindSchema,
+  type CapabilityKind,
+} from "@/lib/agent-backends/descriptor";
 
 // ============================================================
 // Agent Capability Configuration Schemas
@@ -28,6 +32,53 @@ export const agentCapabilityCascadeKindSchema = z.enum(
 export type AgentCapabilityCascadeKind = z.infer<
   typeof agentCapabilityCascadeKindSchema
 >;
+
+// ============================================================
+// In-memory cascade taxonomy: { backend, kind }
+//
+// The persisted representation stays the five strings above (overrides in
+// config.json and project/session/conversation state keep their shape; older
+// builds keep reading them). This bijective codec is the only translation
+// point; an unknown pair or string fails loudly instead of being coerced.
+// ============================================================
+
+export const agentCapabilityCascadeRefSchema = z
+  .object({
+    backend: agentBackendSchema,
+    kind: capabilityKindSchema,
+  })
+  .superRefine((value, ctx) => {
+    const encoded = `${value.backend}-${value.kind}`;
+    if (!agentCapabilityCascadeKindSchema.safeParse(encoded).success) {
+      ctx.addIssue({
+        code: "custom",
+        message: `backend '${value.backend}' does not support capability kind '${value.kind}'`,
+        path: ["kind"],
+      });
+    }
+  });
+export type AgentCapabilityCascadeRef = z.infer<
+  typeof agentCapabilityCascadeRefSchema
+>;
+
+export function encodeCascadeKind(
+  ref: AgentCapabilityCascadeRef,
+): AgentCapabilityCascadeKind {
+  const parsedRef = agentCapabilityCascadeRefSchema.parse(ref);
+  return agentCapabilityCascadeKindSchema.parse(
+    `${parsedRef.backend}-${parsedRef.kind}`,
+  );
+}
+
+export function decodeCascadeKind(value: string): AgentCapabilityCascadeRef {
+  const cascadeKind = agentCapabilityCascadeKindSchema.parse(value);
+  const separator = cascadeKind.indexOf("-");
+  const backend = agentBackendSchema.parse(cascadeKind.slice(0, separator));
+  const kind: CapabilityKind = capabilityKindSchema.parse(
+    cascadeKind.slice(separator + 1),
+  );
+  return { backend, kind };
+}
 
 // Backend ownership of each cascade is fixed by name. Pairing
 // (cascadeKind: "claude-skills", backend: "codex") is structurally invalid

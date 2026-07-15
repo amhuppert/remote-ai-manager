@@ -9,7 +9,7 @@ import type { ConversationVirtuosoListProps } from "@/components/conversation/Co
 import type { TranscriptExtensionRowData } from "@/components/conversation/conversation-rows";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
-import { stripProposalFencesFromContent } from "@/features/_root/spawn-card/derive-spawn-cards";
+import { stripProposalFencesFromContent } from "@/features/project-detail/spawn-card/derive-spawn-cards";
 import {
   noopRenderSpawnCardRow,
   type RenderSpawnCardRow,

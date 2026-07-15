@@ -9,6 +9,7 @@ import {
   overlayScrim,
   overlayCentering,
   overlayCenteringSheet,
+  overlayStretch,
   cardBase,
   cardSize,
   cardSheet,
@@ -78,45 +79,105 @@ export const DialogClose = RadixDialog.Close;
 // ---------------------------------------------------------------------------
 // Content — bakes Portal + Overlay (scrim) + the centring layer + the card so a
 // call site cannot forget the overlay or mis-centre the card.
+//
+// The `unstyled` escape hatch keeps everything Radix owns (Portal, the focus
+// trap + focus return, Escape/outside-press dismissal, scroll-lock, the
+// `role="dialog"`/`aria-modal`/`aria-labelledby`/`aria-describedby` wiring, the
+// scrim) while dropping the padded card recipe, so a bespoke overlay — an
+// edge-anchored slide-over/drawer, a bottom sheet, a full-screen immersive
+// surface, or a custom-box-model card — supplies its own box model via
+// `layoutClassName` instead of hand-rolling a `role="dialog"` div with a manual
+// keydown/outside-click/focus loop. Pair `anchor="stretch"` (full-bleed
+// positioning layer) with self-positioning `fixed` geometry for the
+// edge-anchored shapes; `scrimClassName` overrides the tokenized scrim
+// appearance for overlays whose backdrop differs (blur+saturate drawers, etc.).
 // ---------------------------------------------------------------------------
 
 type DialogContentProps = Omit<
   React.ComponentProps<typeof RadixDialog.Content>,
   "className" | "style"
 > & {
-  /** Card width: `default` (480px) or `confirm` (400px). */
+  /** Card width: `default` (480px) or `confirm` (400px). Ignored when `unstyled`. */
   size?: DialogSize;
   /** Dock to a full-width bottom sheet below 768px (the legacy `.modal` sheet). */
   mobileSheet?: boolean;
-  /** External-geometry utilities only; appended after appearance. */
+  /**
+   * Drop the padded card appearance recipe. The consumer owns the whole card box
+   * model via `contentClassName`; Radix behaviour and the scrim stay. For a
+   * bespoke overlay — an edge-anchored slide-over/drawer, a bottom sheet, a
+   * full-screen immersive surface, or a custom-box-model card — that a plain
+   * `DialogContent` cannot host.
+   */
+  unstyled?: boolean;
+  /**
+   * The card's full box model (appearance + geometry) in the `unstyled` variant —
+   * where the primitive relinquishes appearance ownership, so this is a distinct
+   * prop from the layout-only `layoutClassName` (the appearance-in-layout
+   * guardrail does not apply). Ignored unless `unstyled`.
+   */
+  contentClassName?: string;
+  /**
+   * Positioning layer for the card. `center` (default) centres it above the
+   * scrim; `stretch` makes the layer full-bleed (`inset-0`) so an edge-anchored
+   * card positions itself. Only meaningful with `unstyled`.
+   */
+  anchor?: "center" | "stretch";
+  /** Override the tokenized scrim appearance (kept marked for the freeze rule). */
+  scrimClassName?: string;
+  /**
+   * Dynamic edge insets for a card anchored to a measured rect (`top`/`right`/
+   * `bottom`/`left`), the one geometry an arbitrary Tailwind class cannot express
+   * because the value is computed at runtime. Not an appearance escape hatch —
+   * only positional insets are accepted, and only in the `unstyled` variant.
+   */
+  positionStyle?: Pick<
+    React.CSSProperties,
+    "top" | "right" | "bottom" | "left"
+  >;
+  /** External-geometry utilities only (styled variant); appended after appearance. */
   layoutClassName?: string;
 };
 
 export function DialogContent({
   size = "default",
   mobileSheet = false,
+  unstyled = false,
+  contentClassName,
+  anchor = "center",
+  scrimClassName,
+  positionStyle,
   layoutClassName,
   children,
   ...rest
 }: DialogContentProps): React.JSX.Element {
+  const positioningLayer =
+    unstyled && anchor === "stretch"
+      ? overlayStretch
+      : cn(overlayCentering, mobileSheet && overlayCenteringSheet);
   return (
     <RadixDialog.Portal>
       {/* `data-cc-modal-scrim` lets the global ambient-animation freeze rule
           (globals.css) pause the page's perpetual status-dot animations while
           this full-viewport `backdrop-filter` blur is mounted — otherwise the
           blur re-rasterizes every frame behind them and saturates the compositor. */}
-      <RadixDialog.Overlay className={overlayScrim} data-cc-modal-scrim="" />
-      <div
-        className={cn(overlayCentering, mobileSheet && overlayCenteringSheet)}
-      >
+      <RadixDialog.Overlay
+        className={scrimClassName ?? overlayScrim}
+        data-cc-modal-scrim=""
+      />
+      <div className={positioningLayer}>
         <RadixDialog.Content
           {...rest}
-          className={cn(
-            cardBase,
-            cardSize[size],
-            mobileSheet && cardSheet,
-            layoutClassName,
-          )}
+          {...(unstyled && positionStyle ? { style: positionStyle } : {})}
+          className={
+            unstyled
+              ? cn(contentClassName)
+              : cn(
+                  cardBase,
+                  cardSize[size],
+                  mobileSheet && cardSheet,
+                  layoutClassName,
+                )
+          }
         >
           {children}
         </RadixDialog.Content>

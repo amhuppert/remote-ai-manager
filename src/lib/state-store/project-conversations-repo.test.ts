@@ -40,7 +40,7 @@ function makeProjectConversation(
     debugMode: null,
     machineSnapshot: null,
     agentBackend: overrides.agentBackend ?? "claude",
-    backendRef: null,
+    backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
@@ -73,6 +73,41 @@ describe("ProjectConversationsRepo", () => {
     expect(found?.id).toBe("c1");
   });
 
+  it("persists backendRef as canonical bytes and round-trips the canonical shape", () => {
+    repo.upsert(
+      "/repo-a",
+      makeProjectConversation({
+        id: "c-canon",
+        agentBackend: "codex",
+        backendRef: { backend: "codex", ref: "thr-plc" },
+      }),
+    );
+
+    const raw = db
+      .prepare(`SELECT backend_ref FROM project_conversations WHERE id = ?`)
+      .get("c-canon") as { backend_ref: string | null };
+    expect(JSON.parse(raw.backend_ref!)).toEqual({
+      backend: "codex",
+      ref: "thr-plc",
+    });
+
+    const found = repo.findByKey("/repo-a", "c-canon");
+    expect(found?.backendRef).toEqual({ backend: "codex", ref: "thr-plc" });
+  });
+
+  it("decodes a legacy-shape backend_ref row to the canonical ref", () => {
+    repo.upsert("/repo-a", makeProjectConversation({ id: "c-legacy" }));
+    db.prepare(
+      `UPDATE project_conversations SET backend_ref = ? WHERE id = ?`,
+    ).run(
+      JSON.stringify({ backend: "claude", sessionId: "sess-old" }),
+      "c-legacy",
+    );
+
+    const found = repo.findByKey("/repo-a", "c-legacy");
+    expect(found?.backendRef).toEqual({ backend: "claude", ref: "sess-old" });
+  });
+
   it("defaults spawnedSessionIds to [] for a row written without it", () => {
     repo.upsert("/repo-a", makeProjectConversation({ id: "c1" }));
     const found = repo.findByKey("/repo-a", "c1");
@@ -93,6 +128,46 @@ describe("ProjectConversationsRepo", () => {
     const first = repo.findAll();
     const second = repo.findAll();
     expect(second).toBe(first);
+  });
+
+  it("does NOT execute the findAll statement on a warm-version cache hit (F9)", () => {
+    // Fresh db + counting wrapper so we can observe raw SQL executions, proving
+    // the version hit short-circuits BEFORE the SQLite fetch, not just before
+    // the Zod parse (PERFORMANCE.md §50-62).
+    const local = _createTestDb({ inMemory: true });
+    local.prepare(`INSERT INTO projects (root_path) VALUES ('/repo-a')`).run();
+    const counter = { count: 0 };
+    const realPrepare = local.prepare.bind(local);
+    local.prepare = ((sql: string) => {
+      const stmt = realPrepare(sql);
+      if (
+        !/FROM project_conversations[\s\S]*ORDER BY project_path ASC/.test(sql)
+      ) {
+        return stmt;
+      }
+      const realAll = stmt.all.bind(stmt);
+      stmt.all = ((...args: unknown[]) => {
+        counter.count += 1;
+        return realAll(...args);
+      }) as typeof stmt.all;
+      return stmt;
+    }) as typeof local.prepare;
+    const localRepo = createProjectConversationsRepo(local);
+    localRepo.upsert("/repo-a", makeProjectConversation({ id: "c1" }));
+
+    localRepo.findAll();
+    expect(counter.count).toBe(1);
+
+    // Warm hit: version unchanged, so no SQL fetch may run.
+    localRepo.findAll();
+    expect(counter.count).toBe(1);
+
+    // A mutation bumps the version; the next findAll re-fetches once.
+    localRepo.upsert("/repo-a", makeProjectConversation({ id: "c2" }));
+    localRepo.findAll();
+    expect(counter.count).toBe(2);
+
+    local.close();
   });
 
   it("findAll returns a new reference after upsert, setOpen, and setArchived", () => {

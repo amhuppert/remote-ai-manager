@@ -15,11 +15,31 @@ import { vi } from "vitest";
 // Render utilities
 // ---------------------------------------------------------------------------
 
-/** Render a React element wrapped in a fresh QueryClientProvider (retry disabled). */
-export function renderWithQuery(ui: React.ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+/**
+ * A QueryClient tuned for tests: retries disabled so an unmatched fetch surfaces
+ * as an immediate query error rather than retry-storming, and background refetch
+ * disabled so cache seeding stays deterministic. This is the injectable query
+ * client half of the sanctioned client-test seam (plan D20): seed its cache
+ * (`setQueryData`) or let it fetch through `@/test/fetch-fixture`, then pass it
+ * to `renderWithQuery` — or share one instance across `hydrateRoot` and a render.
+ */
+export function createTestQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false },
+    },
   });
+}
+
+/**
+ * Render a React element wrapped in a QueryClientProvider. Pass a `queryClient`
+ * to share one across renders or to pre-seed its cache; otherwise a fresh
+ * test client is created per render.
+ */
+export function renderWithQuery(
+  ui: React.ReactElement,
+  queryClient: QueryClient = createTestQueryClient(),
+) {
   return render(
     <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
   );

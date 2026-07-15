@@ -139,7 +139,7 @@ All current nodes get entries (leaf count 34 + group nodes ~8), ported from `hel
 `fixture {session create, session delete, prompt, status}` ·
 `workflow {validate,create,replace,list,get,status,start,delete,templates}` ·
 `workflow task {complete,add}` · `workflow shared-doc upsert` · `workflow collab request` ·
-`charter write` · `decisions propose` · `codex {run,status,cancel}` ·
+`charter write` · `decisions propose` · `agent {run,status,cancel}` ·
 `conversation {read,compact}` · `conversation compaction {get,list}` · `doctor` · `version`.
 
 Porting fixes the known gaps in the same stroke (`conversation read` flags; any others surfaced by

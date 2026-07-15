@@ -1,4 +1,4 @@
-import { createStateStore } from "./store";
+import { createStateStore, type StateStore } from "./store";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 
 export { createStateStore, getStateDb, type StateStore } from "./store";
@@ -13,7 +13,16 @@ const defaultStore = getGlobalSingleton("__cc_state_store", () =>
   createStateStore(),
 );
 
-export const createStateManager = createStateStore;
+/**
+ * Process-wide store singleton. Modules that need the store as an object
+ * (e.g. to satisfy a `stateManager` deps slot) MUST use this accessor instead
+ * of constructing their own instance via `createStateStore` — a private
+ * instance over the same DB never sees the singleton's cache-version bumps
+ * and serves stale reads indefinitely.
+ */
+export function getStateStore(): StateStore {
+  return defaultStore;
+}
 
 export const readState = defaultStore.readState;
 export const mutateState = defaultStore.mutateState;

@@ -229,6 +229,172 @@ This context is **best-effort garnish**, not contract:
 
 Each group's verbs, flags, and examples are documented in its own section below.
 
+<!-- BEGIN GENERATED COMMAND REFERENCE -->
+### Command reference
+
+_Generated from the `cctl` help registry — do not edit by hand; run `bun scripts/cc-cli-skill-reference.ts`. Every command's `--help` is the authoritative, always-current node._
+
+- `cctl ask` — ask the user a question batch, then end your turn
+  - `cctl ask --file .cc/temp/questions.json`
+  - `cctl ask --question "<text>" --option <label> --option <label> [--multi-select] [--header "<h>"] [--context "<c>"]`
+
+- `cctl notify` — send a push notification to the user
+  - `cctl notify "<message>" [--title "<title>"]`
+
+- `cctl docs` — register, list, and delete reference documents
+  - `cctl docs <register|list|delete>`
+- `cctl docs register` — register (or update) a reference document
+  - `cctl docs register <path> --description "<why it matters>"`
+- `cctl docs list` — list registered reference documents
+  - `cctl docs list [--json]`
+- `cctl docs delete` — deregister a reference document
+  - `cctl docs delete <id>`
+
+- `cctl dev` — list, ensure, and stop dev servers
+  - `cctl dev <list|ensure|stop>`
+- `cctl dev list` — show configured dev servers with status and URLs
+  - `cctl dev list [--json]`
+- `cctl dev ensure` — start a dev server and block until it is live
+  - `cctl dev ensure [<serverName>]`
+- `cctl dev stop` — stop a running dev server
+  - `cctl dev stop <serverName>`
+
+- `cctl fixture` — scaffold test sessions and run prompts against a dev server
+  - `cctl fixture <session create|session delete|prompt|status>`
+- `cctl fixture session` — create and delete throwaway test sessions
+  - `cctl fixture session <create|delete>`
+- `cctl fixture prompt` — run a real LLM turn in a test session
+  - `cctl fixture prompt <project> <sessionName> --text "<prompt>" [--conversation <id>] [--wait [--timeout <sec>]]`
+- `cctl fixture status` — list a test session's conversations and their status
+  - `cctl fixture status <project> <sessionName>`
+- `cctl fixture session create` — create a throwaway test session and pre-warm its routes
+  - `cctl fixture session create <project> [--name <n>] [--dev <serverName>] [--target <url>] [--skip-warm]`
+- `cctl fixture session delete` — tear down a throwaway test session
+  - `cctl fixture session delete <project> <sessionName>`
+
+- `cctl workflow` — list, inspect, start, and delete graph workflows
+  - `cctl workflow <validate|create|replace|edit|list|get|status|start|delete|templates>`
+  - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
+- `cctl workflow validate` — check a plan.json without saving anything
+  - `cctl workflow validate --file .cc/temp/plan.json [--json]`
+- `cctl workflow create` — save a new definition from a validated plan
+  - `cctl workflow create --file .cc/temp/plan.json [--json]`
+- `cctl workflow replace` — overwrite an existing definition from a plan file
+  - `cctl workflow replace <id> --file .cc/temp/plan.json [--json]`
+- `cctl workflow list` — list this project's saved workflow definitions
+  - `cctl workflow list [--json]`
+- `cctl workflow get` — print a definition's outline (or one section, or the full JSON)
+  - `cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]`
+- `cctl workflow edit` — apply targeted, atomic edits to a saved definition
+  - `cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]`
+- `cctl workflow status` — show this session's active execution
+  - `cctl workflow status [--json]`
+- `cctl workflow start` — launch an execution from a saved definition
+  - `cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]`
+- `cctl workflow delete` — permanently remove a saved definition
+  - `cctl workflow delete <id>`
+- `cctl workflow templates` — list saved workflow templates across both tiers
+  - `cctl workflow templates [--tier global|project] [--json]`
+- `cctl workflow live` — act on this session's ACTIVE launched execution
+  - `cctl workflow live <get|edit|pause|resume>`
+- `cctl workflow task` — advance a running lane — complete or add tasks
+  - `cctl workflow task <complete|add>`
+- `cctl workflow shared-doc` — share a document with other lanes
+  - `cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json`
+- `cctl workflow collab` — request a second opinion from another agent
+  - `cctl workflow collab request --brief "<question with context>"`
+- `cctl workflow live get` — print the live outline of the active execution
+  - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --full] [--json]`
+- `cctl workflow live edit` — apply live edits to the running execution's working copy
+  - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
+- `cctl workflow live pause` — pause the active execution to unlock started contexts
+  - `cctl workflow live pause [--json]`
+- `cctl workflow live resume` — resume a paused or resumably-halted execution
+  - `cctl workflow live resume [--json]`
+- `cctl workflow task complete` — mark the current lane task done (advances the workflow)
+  - `cctl workflow task complete <taskId> --summary "<what changed, how verified>"`
+- `cctl workflow task add` — append a newly-discovered task to this lane
+  - `cctl workflow task add --title "<name>" --instructions "<self-contained steps>" [--slug <slug>]`
+- `cctl workflow shared-doc upsert` — register or update a shared document for other lanes
+  - `cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json`
+- `cctl workflow collab request` — ask another agent to weigh in on an ambiguous decision
+  - `cctl workflow collab request --brief "<question with context>"`
+
+- `cctl charter` — submit the session's Alignment charter
+  - `cctl charter write --file .cc/temp/charter.json`
+- `cctl charter write` — submit the Alignment charter draft for approval
+  - `cctl charter write --file .cc/temp/charter.json`
+
+- `cctl decisions` — propose decisions for the user's review
+  - `cctl decisions propose --file .cc/temp/decisions.json`
+- `cctl decisions propose` — propose a decision batch for review
+  - `cctl decisions propose --file .cc/temp/decisions.json`
+
+- `cctl agent` — run, poll, and cancel one-shot sub-agent jobs
+  - `cctl agent <run|status|cancel>`
+- `cctl agent run` — start an agent run (optionally waiting for it)
+  - `cctl agent run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]`
+- `cctl agent status` — read a run's state (and recover its result)
+  - `cctl agent status <runId> [--json]`
+- `cctl agent cancel` — abort a live agent run
+  - `cctl agent cancel <runId>`
+
+- `cctl conversation` — read conversation transcripts and manage compaction artifacts
+  - `cctl conversation <read|compact|compaction get|compaction list>`
+- `cctl conversation read` — render a bounded window of a transcript
+  - `cctl conversation read [<conversation-id>] [--outline] [--message N] [--message-range A:B] [--seq-range A:B] [--include-tools none|summary|full] [--include-thinking] [--search <regex>] [--max-bytes N] [--format json|markdown] [--json]`
+- `cctl conversation compact` — create or refresh a compaction artifact
+  - `cctl conversation compact <conversation-id> [--message N] [--force] [--wait] [--json]`
+- `cctl conversation compaction` — read compaction artifacts
+  - `cctl conversation compaction <get|list>`
+- `cctl conversation compaction get` — fetch the newest matching compaction envelope
+  - `cctl conversation compaction get <conversation-id> [--message N] [--format json|markdown] [--json]`
+- `cctl conversation compaction list` — list a conversation's compaction artifacts
+  - `cctl conversation compaction list <conversation-id> [--json]`
+
+- `cctl ticket` — create, list, read, update, delete, start work on, and attach context to work tickets
+  - `cctl ticket <create|list|get|update|delete|start|attach|attachment>`
+- `cctl ticket create` — create a ticket in the ambient project
+  - `cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <not_started|in_progress|done|blocked|closed>]`
+- `cctl ticket list` — list tickets with filters
+  - `cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all]`
+- `cctl ticket get` — read one ticket in full
+  - `cctl ticket get <number | project#number>`
+- `cctl ticket update` — update a ticket's fields or status
+  - `cctl ticket update <number | project#number> [--title "<title>"] [--description "<markdown>"] [--type <type>] [--status <status>]`
+- `cctl ticket delete` — delete a ticket
+  - `cctl ticket delete <number | project#number>`
+- `cctl ticket start` — start work on a ticket in a new session
+  - `cctl ticket start <number | project#number> --mode <agent|prepared> [--backend <claude|codex> --model <model> --effort <level>]`
+- `cctl ticket attach` — attach described context to a ticket
+  - `cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"`
+- `cctl ticket attachment` — read, edit, and remove ticket attachments
+  - `cctl ticket attachment <get|update|remove> <number | project#number> <attachmentId>`
+- `cctl ticket attach file` — attach a file snapshot
+  - `cctl ticket attach file <number | project#number> <path> --description "<what and why>" [--media-type <mime>]`
+- `cctl ticket attach conversation` — attach a conversation's compaction snapshot
+  - `cctl ticket attach conversation <number | project#number> [<conversationId>] --description "<what and why>"`
+- `cctl ticket attach session` — attach a live session pointer
+  - `cctl ticket attach session <number | project#number> <sessionName> --description "<what and why>"`
+- `cctl ticket attach ticket` — attach a related ticket
+  - `cctl ticket attach ticket <number | project#number> <relatedNumber | project#number> --description "<how it relates>"`
+- `cctl ticket attach note` — attach a markdown note
+  - `cctl ticket attach note <number | project#number> "<markdown>" --description "<what and why>"`
+- `cctl ticket attachment get` — retrieve an attachment's full content
+  - `cctl ticket attachment get <number | project#number> <attachmentId>`
+- `cctl ticket attachment update` — edit an attachment's description or note body
+  - `cctl ticket attachment update <number | project#number> <attachmentId> [--description "<what and why>"] [--markdown "<note body>"]`
+- `cctl ticket attachment remove` — remove an attachment
+  - `cctl ticket attachment remove <number | project#number> <attachmentId>`
+
+- `cctl doctor` — check connectivity, auth, and build parity with the CC server
+  - `cctl doctor`
+
+- `cctl version` — print the cctl build stamp
+  - `cctl version`
+
+<!-- END GENERATED COMMAND REFERENCE -->
+
 ## cctl notify
 
 Send a push notification to the user (e.g. a long task finished, or you need
@@ -833,60 +999,61 @@ cctl decisions propose --file .cc/temp/decisions.json
 # → proposed 2 decisions for the user's review
 ```
 
-## cctl codex
+## cctl agent
 
-Run **OpenAI Codex** as a one-shot sub-agent in this worktree. Codex operates
-autonomously with full access and does not persist conversation state. Replaces
-the `run_codex` MCP tool. Because a run can take tens of minutes, it is
+Run a backend agent (e.g. **OpenAI Codex**) as a one-shot sub-agent in this
+worktree. The sub-agent operates autonomously with full access and does not
+persist conversation state. Because a run can take tens of minutes, it is
 **job-shaped**: the server runs it and the CLI observes it.
 
 ```
-cctl codex run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]
-cctl codex status <runId> [--json]
-cctl codex cancel <runId>
+cctl agent run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]
+cctl agent status <runId> [--json]
+cctl agent cancel <runId>
 ```
 
-- `run` — start a codex run. **File-only input**: author `.cc/temp/prompt.json`
-  as a JSON object `{ "prompt": "<task>" }` with the Write tool. The body mirrors the old
-  `run_codex` tool input, so optional fields are `model` and `reasoning_effort`
-  (`minimal|low|medium|high|xhigh`) plus the job extras `timeoutMs` (server-side
-  execution cap) and `workingDirectory` (defaults to the session worktree; must
-  resolve **inside** it). Codex is instructed to write detailed output to files
-  under `memory-bank/codex/` and return a short `summary` plus a
-  `referenceDocuments` list — so **read the referenced files**, don't rely on the
-  summary alone.
+- `run` — start an agent run. **File-only input**: author `.cc/temp/prompt.json`
+  as a JSON object `{ "backend": "codex", "prompt": "<task>" }` with the Write
+  tool. `backend` is required (`codex` or `claude`); optional fields are `model`
+  and `reasoning_effort` (`minimal|low|medium|high|xhigh`) plus the job extras
+  `timeoutMs` (server-side execution cap) and `workingDirectory` (defaults to
+  the session worktree; must resolve **inside** it). The agent is instructed to
+  write detailed output to files under `memory-bank/agent-runs/` and return a
+  short `summary` plus a `referenceDocuments` list — so **read the referenced
+  files**, don't rely on the summary alone.
   - Without `--wait`: returns immediately with a `runId` and hints how to poll
     and cancel. The run continues server-side.
-  - With `--wait`: long-polls until the run finishes and prints the same result
-    shape the tool returned (`summary` + `referenceDocuments`). On completion
-    with N>0 registered documents it hints you to read them. `--timeout <dur>`
+  - With `--wait`: long-polls until the run finishes and prints the result
+    shape (`summary` + `referenceDocuments`). On completion with N>0 registered
+    documents it hints you to read them. `--timeout <dur>`
     (`25m`, `90s`, `500ms`, or bare seconds like `1800`) bounds how long the CLI
     waits — **not** the run: if the budget elapses (or your Bash call is killed)
-    the run keeps going; recover it with `cctl codex status <runId>`. A run that
-    **failed or timed out server-side** exits `1` with the error.
+    the run keeps going; recover it with `cctl agent status <runId>`. A run that
+    **failed server-side** (including a server-side timeout) exits `1` with the
+    error.
 - `status` — read a run's current state (`running`, or a terminal
-  `succeeded`/`failed`/`timed_out`). A `succeeded` run reproduces the full
+  `completed`/`failed`). A `completed` run reproduces the full
   result (summary + reference documents) — this is how you recover a run whose
   `--wait` was killed. Reading always exits `0`; the run's own outcome is in the
   output. An unknown runId exits `2`.
 - `cancel` — abort a live run. Idempotent; an unknown runId exits `2`. Terminal
   — no hint.
 
-Codex must be enabled in the CC config; if it is not, `run` exits `1` with a
-one-line reason.
+The Codex backend must be enabled in the CC config; if it is not, a
+`"backend": "codex"` run exits `1` with a one-line reason.
 
 ```
-cctl codex run --file .cc/temp/prompt.json --wait
+cctl agent run --file .cc/temp/prompt.json --wait
 # → found two bugs
 #
 #   reference documents:
-#     memory-bank/codex/bugs.md  —  the bugs
-#   hint: codex registered 1 reference documents — read them before building on the summary
+#     memory-bank/agent-runs/bugs.md  —  the bugs
+#   hint: the agent registered 1 reference documents — read them before building on the summary
 
-cctl codex run --file .cc/temp/prompt.json
-# → started codex run run-4f1d2797
-#   hint: poll with 'cctl codex status run-4f1d2797'; cancel with 'cctl codex cancel run-4f1d2797'
-cctl codex status run-4f1d2797
+cctl agent run --file .cc/temp/prompt.json
+# → started agent run run-4f1d2797
+#   hint: poll with 'cctl agent status run-4f1d2797'; cancel with 'cctl agent cancel run-4f1d2797'
+cctl agent status run-4f1d2797
 ```
 
 ## cctl ask

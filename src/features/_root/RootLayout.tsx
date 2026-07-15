@@ -2,11 +2,8 @@ import { Anybody, Manrope, Geist_Mono } from "next/font/google";
 import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
 import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
-import TooltipProvider from "@/components/TooltipProvider";
-import MergeToastContainer from "@/components/MergeToastContainer";
-import InputNeededToastContainer from "@/components/InputNeededToastContainer";
-import PromptErrorToastContainer from "@/components/PromptErrorToastContainer";
-import ToastContainer from "@/components/ToastContainer";
+import { TooltipProvider as UiTooltipProvider } from "@/components/ui/Tooltip";
+import ToastHost from "@/components/ToastHost";
 import DevToolsGate from "@/components/DevToolsGate";
 import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
 import "@/app/globals.css";
@@ -64,17 +61,13 @@ export default function RootLayout({
       </head>
       <body>
         <Providers>
-          {children}
+          <UiTooltipProvider>{children}</UiTooltipProvider>
           <NotificationListener />
-          <MergeToastContainer />
-          <InputNeededToastContainer />
-          <PromptErrorToastContainer />
-          <ToastContainer />
+          <ToastHost />
 
           <DevToolsGate />
           <ReactScanInstrumentation />
           <GlobalHotkeyHelp />
-          <TooltipProvider />
         </Providers>
       </body>
     </html>

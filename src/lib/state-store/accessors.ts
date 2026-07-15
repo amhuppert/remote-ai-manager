@@ -6,10 +6,7 @@ import {
   deriveSessionStatusFromParts,
   getCollaborationEnvelopeContribution,
 } from "@/lib/sessions/derived";
-import {
-  sessionListItemSchema,
-  spawnedFromSchema,
-} from "@/lib/sessions/schemas";
+import { sessionListItemSchema } from "@/lib/sessions/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
@@ -18,10 +15,8 @@ import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionListItem, SessionState } from "@/lib/sessions/schemas";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { StateStoreCore } from "./schemas";
 
 const logger = createLogger("state-store");
@@ -126,74 +121,40 @@ export function createAccessors(core: StateStoreCore) {
       }
 
       const result: SessionListItem[] = sessionRows.map((row) => {
-        let parsedEnvelopes: Record<string, unknown> | null = null;
-        if (row.workflow_envelopes !== null) {
-          try {
-            const candidate: unknown = JSON.parse(row.workflow_envelopes);
-            if (
-              candidate !== null &&
-              typeof candidate === "object" &&
-              !Array.isArray(candidate)
-            ) {
-              parsedEnvelopes = candidate as Record<string, unknown>;
-            }
-          } catch {
-            logger.warn("state-store.workflow_envelopes_parse_failed", {
-              projectPath,
-              sessionName: row.session_name,
-            });
-            parsedEnvelopes = null;
-          }
-        }
-
         const collabContribution = getCollaborationEnvelopeContribution({
-          workflowEnvelopes: parsedEnvelopes,
+          workflowEnvelopes: row.workflowEnvelopes,
         });
-        let spawnedFrom: SessionListItem["spawnedFrom"] = null;
-        if (row.spawned_from !== null) {
-          try {
-            const parsed = spawnedFromSchema.safeParse(
-              JSON.parse(row.spawned_from),
-            );
-            if (parsed.success) spawnedFrom = parsed.data;
-          } catch {
-            logger.warn("state-store.spawned_from_parse_failed", {
-              projectPath,
-              sessionName: row.session_name,
-            });
-          }
-        }
-        const convs = convsBySession.get(row.session_name) ?? [];
+        const convs = convsBySession.get(row.sessionName) ?? [];
         const derivedStatus = deriveSessionStatusFromParts({
-          finished: row.finished === 1,
+          finished: row.finished,
           convStatuses: convs.map((c) => c.status),
           collabContribution,
         });
         const promptCount = deriveSessionPromptCountFromConvs(convs);
         const derivedLastActivityAt = deriveSessionLastActivityFromConvs(
-          row.last_activity_at,
+          row.lastActivityAt,
           convs,
         );
 
         const item: SessionListItem = {
-          sessionName: row.session_name,
-          worktreePath: row.worktree_path,
-          branchName: row.branch_name,
-          targetBranch: row.target_branch,
-          parentSessionName: row.parent_session_name,
-          createdAt: row.created_at,
-          lastActivityAt: row.last_activity_at,
-          archived: row.archived === 1,
-          finished: row.finished === 1,
-          source: row.source as SessionListItem["source"],
-          creationMode: row.creation_mode as SessionListItem["creationMode"],
-          tddEnabled: row.tdd_enabled === 1,
+          sessionName: row.sessionName,
+          worktreePath: row.worktreePath,
+          branchName: row.branchName,
+          targetBranch: row.targetBranch,
+          parentSessionName: row.parentSessionName,
+          createdAt: row.createdAt,
+          lastActivityAt: row.lastActivityAt,
+          archived: row.archived,
+          finished: row.finished,
+          source: row.source,
+          creationMode: row.creationMode,
+          tddEnabled: row.tddEnabled,
           derivedStatus,
           promptCount,
           derivedLastActivityAt,
           collabContribution,
-          hasActiveGraphWorkflow: row.has_active_graph_workflow === 1,
-          spawnedFrom,
+          hasActiveGraphWorkflow: row.hasActiveGraphWorkflow,
+          spawnedFrom: row.spawnedFrom,
         };
         return item;
       });

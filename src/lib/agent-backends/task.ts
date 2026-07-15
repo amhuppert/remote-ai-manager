@@ -1,9 +1,18 @@
-import type {
-  AgentBackendId,
-  AgentSessionRef,
-  ConversationToolingOverrides,
-} from "./types";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { ConversationToolingOverrides } from "./types";
 import type { AgentTranscriptEntry } from "./transcript";
+import type {
+  AgentFailureClassification,
+  ContinuationDisposition,
+} from "./errors";
+
+/**
+ * Semantic execution shape for a backend task. `isolated-one-shot` requests a
+ * fresh, non-persistent turn with inherited tools and provider configuration
+ * disabled. An adapter that cannot guarantee the contract returns an explicit
+ * unsupported profile result without invoking its provider.
+ */
+export type AgentTaskExecutionProfile = "standard" | "isolated-one-shot";
 
 export interface AgentTaskRequest {
   workingDirectory: string;
@@ -17,6 +26,7 @@ export interface AgentTaskRequest {
   outputSchema?: Record<string, unknown>;
   timeoutMs: number;
   tooling?: ConversationToolingOverrides;
+  executionProfile?: AgentTaskExecutionProfile;
   autonomous: boolean;
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
@@ -45,6 +55,10 @@ export interface AgentTaskResult {
   } | null;
   error: string | null;
   timedOut: boolean;
+  /** Adapter-owned normalized failure verdict; null for a clean run. */
+  failure: AgentFailureClassification | null;
+  /** Adapter-owned verdict for the returned continuation ref. */
+  continuationDisposition: ContinuationDisposition;
   /**
    * Full backend-native turn transcript (codex `ThreadItem`s / claude
    * `SDKMessage`s) wrapped in lossless envelopes. Present when the backend

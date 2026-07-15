@@ -6,7 +6,6 @@ import {
   translatePortableMcpToCodex,
 } from "@/lib/agent-backends/mcp-translation";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import type { ConversationBackendCapabilities } from "@/lib/agent-backends/types";
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import { createClaudeRuntimeToolSource } from "@/lib/mcp/tool-discovery-runtime";
 import type {
@@ -337,18 +336,9 @@ function makeRuntime(
     ) => Promise<McpDiscoveredTool[] | undefined>;
   },
 ): ConversationBackendRuntime {
-  const caps: ConversationBackendCapabilities = {
-    queueWhileRunning: true,
-    askUserQuestion: true,
-    preciseFork: false,
-    portableMcpAtStart: true,
-    portableMcpBetweenTurns: true,
-    contextWindowMetrics: true,
-  };
   return {
     backend: partial.backend ?? "claude",
     status: partial.status ?? "alive",
-    capabilities: partial.capabilities ?? caps,
     modelId: partial.modelId,
     reasoningEffort: partial.reasoningEffort,
     outputFormat: partial.outputFormat,

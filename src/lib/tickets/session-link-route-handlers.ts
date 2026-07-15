@@ -10,10 +10,8 @@ import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
 import { createLogger, withTracing } from "@/lib/logging";
 import { NextResponse } from "next/server";
-import {
-  parseProjectNameParam,
-  projectNotFoundResponse,
-} from "./route-handlers";
+import { parseProjectNameParam } from "./route-handlers";
+import { resolveTicketProjectOr404 } from "./route-resolution";
 import { getTicketProjectResolver, getTicketsRepo } from "./service-factory";
 import type { TicketLinkSummary } from "./schemas";
 
@@ -50,12 +48,10 @@ export function createTicketSessionLinksRouteHandlers(
       const name = parseProjectNameParam(await context.params);
       if (!name.ok) return name.response;
       const { projectName } = name;
-      const projectPath = await deps.resolveProjectPath(projectName);
-      if (projectPath === null) {
-        return projectNotFoundResponse(projectName);
-      }
+      const project = await resolveTicketProjectOr404(deps, projectName);
+      if (!project.ok) return project.response;
 
-      const links = await deps.listSessionLinks(projectPath);
+      const links = await deps.listSessionLinks(project.value);
       logger.debug("tickets.routes.session_links_served", {
         projectName,
         linkCount: Object.keys(links).length,

@@ -7,12 +7,12 @@
  * or durable state visible to existing callers**.
  *
  * The primary migrations are in place:
- *  - `execution-events.ts` defaults to `publishSessionStatus` instead of the
+ *  - `execution-events.ts` defaults to `publishEvent` instead of the
  *    older direct-broadcast wire.
  *  - `script-validator-runner.ts` writes `validation_log` artifacts through
  *    the shared `ArtifactRegistry` primitive.
  *  - The conversation manager publishes `debug-mode-status` /
- *    `debug-log-received` events through `publishSessionStatus`.
+ *    `debug-log-received` events through `publishEvent`.
  *  - `validator-runner.ts` builds `task_run` `AgentCallRequest`s and dispatches
  *    them through the shared `executeAgentCall` facade (verified by the
  *    "validator-runner builds task_run requests through deps.executeAgentCall"
@@ -50,42 +50,44 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 import {
-  publishSessionStatus,
-  setDefaultSessionStatusBusBroadcastForTesting,
-  subscribeSessionStatus,
-  _resetDefaultSessionStatusBusForTesting,
-} from "./default-session-status-bus";
-import type { StatusBusEnvelope } from "./status-bus";
+  publishEvent,
+  setPublicationBroadcastForTesting,
+  subscribeLifecycle,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
+import type { StatusBusEnvelope } from "@/lib/events/status-bus";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowExecutionEventPublisherDeps,
 } from "@/lib/workflow-graph/execution-events";
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
-import { applyJoinProgress } from "@/lib/workflow-graph/lane-join";
+import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import {
   createWorkflowExecution,
   createResolvedWorkflowDefinition,
 } from "@/lib/workflow-graph/test-fixtures";
 import { runCircuitBreakerGate } from "./circuit-breaker-gate";
 import { runStructuredOutputGate } from "./structured-output-gate";
-import { workflowAgentValidatorResultSchema } from "@/lib/workflows/schemas";
+import { workflowAgentValidatorResultSchema } from "@/lib/workflow-graph/definition-schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  GraphWorkflowSSEEvent,
+} from "@/lib/workflow-graph/schemas";
+import type {
   GraphWorkflowStatus,
   GraphWorkflowTaskStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 function captureWire() {
   const wire = vi.fn<(event: SSEEvent) => void>();
-  setDefaultSessionStatusBusBroadcastForTesting(wire);
+  setPublicationBroadcastForTesting(wire);
   return wire;
 }
 
 function captureEnvelopes() {
   const envelopes: StatusBusEnvelope[] = [];
-  const unsubscribe = subscribeSessionStatus((envelope) => {
+  const unsubscribe = subscribeLifecycle((envelope) => {
     envelopes.push(envelope);
   });
   return { envelopes, unsubscribe };
@@ -104,12 +106,12 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
   let workingDir: string;
 
   beforeEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     workingDir = await fs.mkdtemp(path.join(os.tmpdir(), "section6-2-"));
   });
 
   afterEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
@@ -123,7 +125,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       { status: "paused", expectedScopeStatus: "paused" },
       { status: "halted", expectedScopeStatus: "paused" },
       { status: "completed", expectedScopeStatus: "completed" },
-      { status: "aborted", expectedScopeStatus: "running" },
+      { status: "aborted", expectedScopeStatus: "failed" },
     ];
 
     for (const { status, expectedScopeStatus } of cases) {
@@ -189,7 +191,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       expectedScopeStatus: "running" | "paused" | "completed" | "failed";
     }> = [
       { status: "running", expectedScopeStatus: "running" },
-      { status: "interrupted", expectedScopeStatus: "running" },
+      { status: "interrupted", expectedScopeStatus: "paused" },
       { status: "completed", expectedScopeStatus: "completed" },
       { status: "failed", expectedScopeStatus: "failed" },
     ];
@@ -252,8 +254,8 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
             "graph-workflow-task-status",
         );
         expect(taskEnvelope).toBeDefined();
-        expect(taskEnvelope?.scope).toBe("graph_workflow");
-        expect(taskEnvelope?.scopeId).toBe(nextExecution.id);
+        expect(taskEnvelope?.scope).toBe("graph_workflow_task");
+        expect(taskEnvelope?.scopeId).toBe(`${nextExecution.id}/task-plan-1`);
         expect(taskEnvelope?.status).toBe(expectedScopeStatus);
       });
     }
@@ -311,14 +313,14 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       summary: "consecutive failures exhausted retry budget",
     });
 
+    // Point event outside the enumerated lifecycle set: wire-only,
+    // no lifecycle envelope is manufactured for it.
     const envelope = envelopes.find(
       (e) =>
         (e.payload as { type?: string } | null)?.type ===
         "graph-workflow-circuit-breaker",
     );
-    expect(envelope).toBeDefined();
-    expect(envelope?.scope).toBe("graph_workflow");
-    expect(envelope?.scopeId).toBe(nextExecution.id);
+    expect(envelope).toBeUndefined();
   });
 
   it("preserves graph-workflow-validation-result payload through the shared bus", () => {
@@ -346,7 +348,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         },
       ],
       reopenTaskIds: ["task-plan-1"],
-      sessionRef: { backend: "claude", sessionId: "claude-conv-1" },
+      sessionRef: {
+        backend: "claude",
+        ref: "claude-conv-1",
+        lane: "context_validator",
+        refKind: "conversation",
+        workflowConversationId: "claude-conv-1",
+      },
     });
 
     unsubscribe();
@@ -365,20 +373,22 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       summary: "two issues",
       reopenTaskIds: ["task-plan-1"],
       sessionRef: {
-        engine: "claude",
+        backend: "claude",
+        ref: "claude-conv-1",
         lane: "context_validator",
-        conversationId: "claude-conv-1",
+        refKind: "conversation",
+        workflowConversationId: "claude-conv-1",
       },
     });
 
+    // Point event outside the enumerated lifecycle set: wire-only,
+    // no lifecycle envelope is manufactured for it.
     const envelope = envelopes.find(
       (e) =>
         (e.payload as { type?: string } | null)?.type ===
         "graph-workflow-validation-result",
     );
-    expect(envelope).toBeDefined();
-    expect(envelope?.scope).toBe("graph_workflow");
-    expect(envelope?.scopeId).toBe(execution.id);
+    expect(envelope).toBeUndefined();
   });
 
   it("preserves graph-workflow-shared-documents-updated payload through the shared bus", () => {
@@ -426,14 +436,14 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       documents: nextExecution.sharedDocuments,
     });
 
+    // Point event outside the enumerated lifecycle set: wire-only,
+    // no lifecycle envelope is manufactured for it.
     const envelope = envelopes.find(
       (e) =>
         (e.payload as { type?: string } | null)?.type ===
         "graph-workflow-shared-documents-updated",
     );
-    expect(envelope).toBeDefined();
-    expect(envelope?.scope).toBe("graph_workflow");
-    expect(envelope?.scopeId).toBe(nextExecution.id);
+    expect(envelope).toBeUndefined();
   });
 
   it("preserves graph-workflow-context-status payload through the shared bus", () => {
@@ -487,8 +497,8 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         "graph-workflow-context-status",
     );
     expect(envelope).toBeDefined();
-    expect(envelope?.scope).toBe("graph_workflow");
-    expect(envelope?.scopeId).toBe(nextExecution.id);
+    expect(envelope?.scope).toBe("graph_workflow_context");
+    expect(envelope?.scopeId).toBe(`${nextExecution.id}/context-plan`);
   });
 
   it("does not emit any wire events when execution state is unchanged (preserves existing diff-only behavior)", () => {
@@ -550,7 +560,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       active: true,
       recording: true,
     };
-    const outcome = publishSessionStatus(event);
+    const outcome = publishEvent(event);
     unsubscribe();
 
     expect(outcome.delivered).toBe(true);
@@ -571,7 +581,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       conversationId: "conv-debug-1",
       entryCount: 4,
     };
-    const outcome = publishSessionStatus(event);
+    const outcome = publishEvent(event);
     unsubscribe();
 
     expect(outcome.delivered).toBe(true);
@@ -1055,7 +1065,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           type: "json_schema",
           schema: VALIDATOR_OUTPUT_SCHEMA,
         },
-        skipStructuredOutputGate: true,
       });
     });
   });

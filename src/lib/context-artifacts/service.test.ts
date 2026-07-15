@@ -64,6 +64,7 @@ function structuredResult(output: unknown): TaskRunResult {
     text: "",
     usage: USAGE,
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -573,6 +574,7 @@ describe("createCompactionService — retries and failures", () => {
       aborted: false,
       usage: USAGE,
       backendRef: null,
+      continuationDisposition: "retain",
     }));
 
     const result = await service.trigger(makeTriggerInput());
@@ -708,6 +710,7 @@ describe("createCompactionService — coalescing and freshness", () => {
         aborted: false,
         usage: USAGE,
         backendRef: null,
+        continuationDisposition: "retain",
       };
     });
 
@@ -1025,6 +1028,7 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
           aborted: false,
           usage: USAGE,
           backendRef: null,
+          continuationDisposition: "retain",
         };
       }
       return structuredResult(envelopeFromPrompt(input.prompt));

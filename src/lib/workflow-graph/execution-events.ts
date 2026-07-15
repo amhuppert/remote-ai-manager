@@ -1,6 +1,7 @@
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
-import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import { assertNever } from "@/lib/shared/assert-never";
+import { publishEvent } from "@/lib/events/publication";
 import {
   createExecutionIndex,
   type ExecutionIndex,
@@ -12,16 +13,10 @@ import type {
   GraphWorkflowCharterRegisteredEvent,
   GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowExecutionJoinState,
-  GraphWorkflowExecutionLaneState,
-  GraphWorkflowExecutionSessionRef,
-  GraphWorkflowHaltReason,
-  GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowJoinStatusEvent,
   GraphWorkflowLaneStatusEvent,
+  GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSSEEvent,
@@ -30,16 +25,25 @@ import type {
   GraphWorkflowUserInputPendingEvent,
   GraphWorkflowUserInputResolvedEvent,
   GraphWorkflowValidationResultEvent,
+  GraphWorkflowValidationEventSessionRef,
   GraphWorkflowValidationReviewArtifact,
+} from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
+  GraphWorkflowExecutionJoinState,
+  GraphWorkflowExecutionLaneState,
+  GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   GraphWorkflowValidatorType,
   WorkflowValidatorIssue,
-} from "@/lib/workflows/schemas";
-import type { AgentSessionRef } from "@/lib/agent-backends/types";
+} from "@/lib/workflow-graph/definition-schemas";
 
 const logger = createLogger("workflow.live-edit");
 
 function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
-  publishSessionStatus(event);
+  publishEvent(event);
 }
 
 interface PublishExecutionUpdateInput {
@@ -59,7 +63,7 @@ interface PublishValidationResultInput {
   summary: string;
   issues?: WorkflowValidatorIssue[];
   reopenTaskIds?: string[];
-  sessionRef?: AgentSessionRef | null;
+  sessionRef?: GraphWorkflowValidationEventSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
@@ -130,24 +134,6 @@ export interface PublishLiveEditAppliedInput {
   operationCount: number;
   affectedContextIds: string[];
   source: GraphWorkflowLiveEditAppliedEvent["source"];
-}
-
-/**
- * Convert an AgentSessionRef to a GraphWorkflowExecutionSessionRef for event persistence.
- * The lane is set to "context_validator" since validation events are the only consumer.
- */
-function toExecutionSessionRef(
-  ref: AgentSessionRef | null | undefined,
-): GraphWorkflowExecutionSessionRef | null {
-  if (!ref) return null;
-  if (ref.backend === "claude") {
-    return {
-      engine: "claude",
-      lane: "context_validator",
-      conversationId: ref.sessionId,
-    };
-  }
-  return { engine: "codex", lane: "context_validator", threadId: ref.threadId };
 }
 
 interface GraphWorkflowPushInfo {
@@ -350,8 +336,7 @@ function haltReasonsEqual(
       );
   }
 
-  const exhaustive: never = previous;
-  return exhaustive;
+  return assertNever(previous);
 }
 
 function haltReasonArraysEqual(
@@ -819,7 +804,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       summary: input.summary,
       issues: input.issues ?? [],
       reopenTaskIds: input.reopenTaskIds ?? [],
-      sessionRef: toExecutionSessionRef(input.sessionRef),
+      sessionRef: input.sessionRef ?? null,
       reviewArtifact: input.reviewArtifact ?? null,
     };
 

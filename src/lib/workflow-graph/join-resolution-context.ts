@@ -11,10 +11,14 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createLogger } from "@/lib/logging";
+import { truncate } from "@/lib/shared/truncate";
 
 const logger = createLogger("graph-workflow-join-resolution-context");
+
+const RESOLUTION_CONTEXT_TRUNCATION_MARKER =
+  "\n…[resolution context truncated]";
 
 /** Per-task summary cap; summaries beyond this are cut mid-sentence. */
 const MAX_TASK_SUMMARY_CHARS = 700;
@@ -69,7 +73,9 @@ export function buildJoinResolutionContext(
       "- No recorded work descriptions for this side.",
   ];
 
-  const brief = truncate(lines.join("\n"), MAX_BRIEF_CHARS);
+  const brief = truncate(lines.join("\n"), MAX_BRIEF_CHARS, {
+    ellipsis: RESOLUTION_CONTEXT_TRUNCATION_MARKER,
+  });
   logger.debug("join-resolution-context.built", {
     joinId: join.joinId,
     sourceLaneId,
@@ -105,7 +111,9 @@ function describeLaneWork(
       const state = execution.taskStates[task.id];
       if (state?.status !== "completed" || !state.summary) continue;
       lines.push(
-        `  - ${task.title}: ${truncate(state.summary, MAX_TASK_SUMMARY_CHARS)}`,
+        `  - ${task.title}: ${truncate(state.summary, MAX_TASK_SUMMARY_CHARS, {
+          ellipsis: RESOLUTION_CONTEXT_TRUNCATION_MARKER,
+        })}`,
       );
     }
 
@@ -129,9 +137,4 @@ function describeBareLane(
 ): string | null {
   if (lane.kind !== "session") return null;
   return "- The workflow session's base branch, including work from previously merged lanes.";
-}
-
-function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n…[resolution context truncated]`;
 }

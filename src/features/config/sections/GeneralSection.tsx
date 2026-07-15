@@ -79,6 +79,7 @@ export function GeneralSection({
           hint="Reach Command Center over your tailnet from a phone or laptop."
         >
           <ConfigToggle
+            label="Tailscale enabled"
             value={formState.tailscaleEnabled ?? false}
             onChange={(value) => handleChange("tailscaleEnabled", value)}
           />

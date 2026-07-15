@@ -3,6 +3,7 @@ import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { debugLogKeys } from "./query-keys";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import type { SessionState } from "@/lib/sessions/schemas";
 
 function debugModeUrl(
@@ -85,41 +86,36 @@ export function useDebugRecordingMutation(
 
   const queryKey = sessionKeys.detail(projectName, sessionName);
 
-  return useMutation({
-    mutationFn: (recording: boolean) =>
-      mutationFetch(
-        `${debugModeUrl(projectName, sessionName, conversationId)}/recording`,
-        "debug-recording-toggle",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recording }),
-        },
-      ),
-    onMutate: async (recording) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<SessionState>(queryKey);
-      if (previous) {
-        queryClient.setQueryData<SessionState>(queryKey, {
-          ...previous,
-          conversations: previous.conversations.map((c) =>
-            c.id === conversationId && c.debugMode
-              ? { ...c, debugMode: { ...c.debugMode, recording } }
-              : c,
-          ),
-        });
-      }
-      return { previous };
-    },
-    onError: (_err, _recording, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData<SessionState>(queryKey, context.previous);
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey });
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (recording: boolean) =>
+        mutationFetch(
+          `${debugModeUrl(projectName, sessionName, conversationId)}/recording`,
+          "debug-recording-toggle",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ recording }),
+          },
+        ),
+      updates: [
+        cacheUpdate<boolean, SessionState>({
+          key: () => queryKey,
+          update: (old, recording) =>
+            old
+              ? {
+                  ...old,
+                  conversations: old.conversations.map((c) =>
+                    c.id === conversationId && c.debugMode
+                      ? { ...c, debugMode: { ...c.debugMode, recording } }
+                      : c,
+                  ),
+                }
+              : undefined,
+        }),
+      ],
+    }),
+  );
 }
 
 export function useClearDebugLogsMutation(
@@ -131,29 +127,24 @@ export function useClearDebugLogsMutation(
 
   const statsKey = debugLogKeys.stats(projectName, sessionName, conversationId);
 
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        `${debugModeUrl(projectName, sessionName, conversationId)}/logs`,
-        "clear-debug-logs",
-        { method: "DELETE" },
-      ),
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: statsKey });
-      const previous = queryClient.getQueryData<number>(statsKey);
-      queryClient.setQueryData<number>(statsKey, 0);
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData<number>(statsKey, context.previous);
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({ queryKey: statsKey });
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: () =>
+        mutationFetch(
+          `${debugModeUrl(projectName, sessionName, conversationId)}/logs`,
+          "clear-debug-logs",
+          { method: "DELETE" },
+        ),
+      updates: [
+        cacheUpdate<void, number>({
+          key: () => statsKey,
+          update: () => 0,
+        }),
+      ],
+      invalidateKeys: () => [
+        sessionKeys.detail(projectName, sessionName),
+        statsKey,
+      ],
+    }),
+  );
 }

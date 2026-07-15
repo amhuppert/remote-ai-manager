@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type {
   WorkflowCollaborationConfig,
   WorkflowCollaborationConfigOverride,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import {
   resolveContextCollaboration,
   resolveWorkflowCollaboration,

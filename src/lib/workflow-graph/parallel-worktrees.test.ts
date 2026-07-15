@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { type GitClient } from "@/lib/git/client";
+import type { FastRemoveInput } from "@/lib/git/worktree-fast-remove";
 import { createParallelWorktrees } from "./parallel-worktrees";
 
 describe("createParallelWorktrees.provision dirty-after-create probe", () => {
@@ -53,6 +54,8 @@ describe("createParallelWorktrees.provision dirty-after-create probe", () => {
     const pwt = createParallelWorktrees({
       gitClient: fakeClient,
       existsSync: () => false,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
       logger,
     });
 
@@ -88,6 +91,8 @@ describe("createParallelWorktrees.provision dirty-after-create probe", () => {
     const pwt = createParallelWorktrees({
       gitClient: fakeClient,
       existsSync: () => false,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
       logger,
     });
 
@@ -102,6 +107,223 @@ describe("createParallelWorktrees.provision dirty-after-create probe", () => {
     expect(
       warnCalls.find((c) => c.message === "provision_dirty_after_create"),
     ).toBeUndefined();
+  });
+});
+
+describe("createParallelWorktrees branch prefix resolution", () => {
+  function makeRecordingClient() {
+    const calls: string[] = [];
+    const client: GitClient = {
+      git: async (args: readonly string[]) => {
+        calls.push(args.join(" "));
+        return { stdout: "", stderr: "" };
+      },
+    };
+    return { client, calls };
+  }
+
+  it("uses the configured global branch prefix for lane branches", async () => {
+    const { client, calls } = makeRecordingClient();
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "wt" }),
+      readRepoConfig: async () => null,
+    });
+
+    const result = await pwt.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "wt/session-1",
+      laneId: "lane-a",
+    });
+
+    expect(result.branchName).toBe("wt/session-1-lane-a");
+    expect(
+      calls.some((c) =>
+        c.startsWith(
+          "worktree add -b wt/session-1-lane-a /repo/.worktrees/session-1.lane-a wt/session-1",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("prefers the per-repo branch prefix over the global one", async () => {
+    const { client } = makeRecordingClient();
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "global" }),
+      readRepoConfig: async () => ({ branchPrefix: "repo" }),
+    });
+
+    const result = await pwt.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "repo/session-1",
+      laneId: "lane-a",
+    });
+
+    expect(result.branchName).toBe("repo/session-1-lane-a");
+  });
+
+  it("falls back to csm when no prefix is configured", async () => {
+    const { client } = makeRecordingClient();
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
+    });
+
+    const result = await pwt.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "csm/session-1",
+      laneId: "lane-a",
+    });
+
+    expect(result.branchName).toBe("csm/session-1-lane-a");
+  });
+
+  it("derives an unprefixed branch when the resolved prefix is empty", async () => {
+    const { client } = makeRecordingClient();
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "" }),
+      readRepoConfig: async () => null,
+    });
+
+    const result = await pwt.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "session-1",
+      laneId: "lane-a",
+    });
+
+    expect(result.branchName).toBe("session-1-lane-a");
+  });
+
+  it("cleans up the worktree's actual branch when the configured prefix changed between provision and cleanup", async () => {
+    const worktreePath = "/repo/.worktrees/session-1.lane-a";
+    let branchPrefix = "wt";
+    let provisioned = false;
+    const client: GitClient = {
+      git: async (args: readonly string[]) => {
+        if (args.join(" ") === "worktree list --porcelain") {
+          return {
+            stdout: provisioned
+              ? `worktree ${worktreePath}\nHEAD abc123\nbranch refs/heads/wt/session-1-lane-a\n`
+              : "",
+            stderr: "",
+          };
+        }
+        return { stdout: "", stderr: "" };
+      },
+    };
+    const fastRemoveWorktree = vi.fn(async () => ({
+      status: "moved" as const,
+    }));
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: (p) => provisioned && p === worktreePath,
+      readGlobalConfig: async () => ({ branchPrefix }),
+      readRepoConfig: async () => null,
+      fastRemoveWorktree,
+      stopDevServersForWorktree: async () => {},
+    });
+
+    const provisionResult = await pwt.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "wt/session-1",
+      laneId: "lane-a",
+    });
+    expect(provisionResult.branchName).toBe("wt/session-1-lane-a");
+    provisioned = true;
+    branchPrefix = "team";
+
+    const result = await pwt.cleanupLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      contextId: "lane-a",
+    });
+
+    expect(result.status).toBe("removed");
+    expect(fastRemoveWorktree).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      worktreePath,
+      branchName: "wt/session-1-lane-a",
+    });
+  });
+
+  it("uses the branch persisted at provision time when the worktree is already gone, ignoring current config", async () => {
+    const { client } = makeRecordingClient();
+    const fastRemoveWorktree = vi.fn(async () => ({
+      status: "moved" as const,
+    }));
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "team" }),
+      readRepoConfig: async () => null,
+      fastRemoveWorktree,
+      stopDevServersForWorktree: async () => {},
+    });
+
+    const result = await pwt.cleanupLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      contextId: "ctx-1",
+      branchName: "wt/session-1-ctx-1",
+    });
+
+    expect(result.status).toBe("removed");
+    expect(fastRemoveWorktree).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      worktreePath: "/repo/.worktrees/session-1.ctx-1",
+      branchName: "wt/session-1-ctx-1",
+    });
+  });
+
+  it("skips branch deletion when no branch is resolvable instead of guessing from config", async () => {
+    const { client } = makeRecordingClient();
+    const fastRemoveCalls: FastRemoveInput[] = [];
+    const fastRemoveWorktree = async (input: FastRemoveInput) => {
+      fastRemoveCalls.push(input);
+      return { status: "absent" as const };
+    };
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "team" }),
+      readRepoConfig: async () => null,
+      fastRemoveWorktree,
+      stopDevServersForWorktree: async () => {},
+    });
+
+    const result = await pwt.cleanupLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      contextId: "ctx-1",
+    });
+
+    expect(result.status).toBe("removed");
+    expect(fastRemoveCalls).toHaveLength(1);
+    expect(fastRemoveCalls[0]?.projectPath).toBe("/repo");
+    expect(fastRemoveCalls[0]?.worktreePath).toBe(
+      "/repo/.worktrees/session-1.ctx-1",
+    );
+    expect(fastRemoveCalls[0]?.branchName).toBeUndefined();
   });
 });
 

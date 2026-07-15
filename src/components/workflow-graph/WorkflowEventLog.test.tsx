@@ -5,10 +5,10 @@ import { describe, it, expect } from "vitest";
 import WorkflowEventLog from "./WorkflowEventLog";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
   GraphWorkflowValidationResultEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 function executionWithHistory(
   history: Array<Omit<GraphWorkflowExecutionEvent, "preReset">>,
 ): {

@@ -13,8 +13,6 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQuery } from "@/test/component-mocks";
-import CreateSessionModal from "@/features/project-detail/components/CreateSessionModal";
 import AlignmentChip from "@/features/session/conversation/AlignmentChip";
 import { deriveAlignmentChipState } from "@/features/session/conversation/alignment-chip-state";
 import DecisionApprovalPanel from "@/features/session/conversation/DecisionApprovalPanel";
@@ -25,45 +23,11 @@ import type {
   DecisionProposalBatch,
 } from "@/lib/session-alignment/schemas";
 
-// Validation of the creation-mode and alignment UI paths (R1.1, R1.2, R9.1,
-// R5.2): the create-session modal offers only the two retained modes, the
-// session-header alignment chip transitions to "active vN" once a charter draft
-// is approved, and the decision-approval component round-trips a bulk
-// approve/reject-with-note submission to the API.
-
-// CreateSessionModal directly imports these leaf hooks (no DI seam), so they are
-// stubbed at the module boundary exactly as in its own test suite.
-vi.mock(
-  "next/navigation",
-  async () => (await import("@/test/component-mocks")).nextNavigationMock,
-);
-vi.mock(
-  "@/hooks/useVoiceRecorder",
-  async () => (await import("@/test/component-mocks")).voiceRecorderMock,
-);
-vi.mock(
-  "@/hooks/useAppHotkey",
-  async () => (await import("@/test/component-mocks")).appHotkeyMock,
-);
-vi.mock(
-  "@/components/VoiceRecordButton",
-  async () => (await import("@/test/component-mocks")).voiceRecordButtonMock,
-);
-vi.mock("@/lib/sessions/mutations", () => ({
-  useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-vi.mock("@/hooks/use-image-attachments", () => ({
-  useImageAttachments: () => ({
-    pendingImages: [],
-    addImage: vi.fn(),
-    removeImage: vi.fn(),
-    clearImages: vi.fn(),
-    isAtLimit: false,
-  }),
-}));
-vi.mock("@/components/ImageAttachmentPreview", () => ({
-  default: () => null,
-}));
+// Validation of the alignment UI paths (R9.1, R5.2): the session-header
+// alignment chip transitions to "active vN" once a charter draft is approved,
+// and the decision-approval component round-trips a bulk approve/reject-with-note
+// submission to the API. (Creation-mode coverage — R1.1, R1.2 — lives with the
+// component it exercises in project-detail/components/CreateSessionModal.test.tsx.)
 
 function renderSeeded(
   ui: React.ReactElement,
@@ -136,18 +100,6 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
-
-describe("creation-mode UI path", () => {
-  it("offers only normal and optimistic — no focus/fast affordance (R1.1, R1.2)", () => {
-    renderWithQuery(
-      <CreateSessionModal projectName="my-project" open onClose={vi.fn()} />,
-    );
-    expect(screen.getByText("Normal")).toBeInTheDocument();
-    expect(screen.getByText("Optimistic")).toBeInTheDocument();
-    expect(screen.queryByText("Focus")).toBeNull();
-    expect(screen.queryByText("Fast")).toBeNull();
-  });
 });
 
 describe("alignment chip approval transition", () => {

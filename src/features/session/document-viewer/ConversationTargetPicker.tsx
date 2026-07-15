@@ -14,6 +14,7 @@ import {
 import { filterAndScoreConversations } from "@/lib/conversations/conversation-autocomplete-filter";
 import { resolveDisplayLabel } from "@/lib/conversations/display-label";
 import { useAllConversationsQuery } from "@/lib/conversations/queries";
+import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { cn } from "@/lib/ui/cn";
 import { targetFromConversation } from "./use-conversation-target";
 import type { ConversationTargetDeps } from "./use-conversation-target";
@@ -30,17 +31,6 @@ export interface ConversationTargetPickerProps {
   defaultOpen?: boolean;
   /** Label shown on the trigger when no target is selected. */
   placeholder?: string;
-}
-
-function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
 }
 
 const searchInputClass =
@@ -96,7 +86,9 @@ export function createConversationTargetPicker(deps: ConversationTargetDeps) {
             sessionName: it.sessionName,
             backend: it.backend,
             model: null,
-            lastActivityRelative: formatRelative(it.lastActivityAt),
+            lastActivityRelative: formatRelativeTime(it.lastActivityAt, {
+              style: "short",
+            }),
             status: it.status,
             isCurrentProject: it.projectName === docProjectName,
             archived: it.archived,

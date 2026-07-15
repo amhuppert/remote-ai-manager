@@ -35,6 +35,7 @@ export function NotificationsSection({
           isModified={isModified("pushNotification.enabled")}
         >
           <ConfigToggle
+            label="Push notifications enabled"
             value={formState.pushNotification?.enabled ?? false}
             onChange={(value) =>
               handleChange("pushNotification.enabled", value)
@@ -99,6 +100,7 @@ export function NotificationsSection({
             isModified={isModified(`pushNotification.triggers.${trigger}`)}
           >
             <ConfigToggle
+              label={`Notify on ${formatFieldLabel(trigger)}`}
               value={formState.pushNotification?.triggers?.[trigger] ?? true}
               onChange={(value) =>
                 handleChange(`pushNotification.triggers.${trigger}`, value)

@@ -13,7 +13,7 @@ import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
   PromptEditor,
   type PromptEditorHandle,
-} from "@/features/session/prompt/PromptEditor";
+} from "@/components/session/prompt/PromptEditor";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useMultilineVoice } from "@/hooks/use-multiline-voice";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";

@@ -8,9 +8,12 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import { truncate } from "@/lib/shared/truncate";
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
-import { getMergeIntents as defaultGetMergeIntents } from "./repo";
+import { createMergeIntentsRepo } from "./repo";
+import { getStateDb } from "../state-store/store";
 import type { MergeIntent } from "./schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("merge-intents.incoming-changes");
 
@@ -20,6 +23,8 @@ const MAX_INCOMING_COMMITS = 30;
 const MAX_INTENT_CHARS = 1_200;
 /** Whole-section cap; keeps the resolver prompt bounded. */
 const MAX_SECTION_CHARS = 6_000;
+/** Appended when an intent or the whole section is cut. */
+const INCOMING_CHANGES_TRUNCATION_MARKER = "\n…[truncated]";
 
 /** `git log` field separator: the ASCII unit separator cannot appear in a
  *  commit subject line, unlike any printable delimiter. */
@@ -41,7 +46,13 @@ export async function buildIncomingChangesSection(
   deps: IncomingChangesDeps = {},
 ): Promise<string | null> {
   const gitClient = deps.gitClient ?? defaultGitClient;
-  const getMergeIntents = deps.getMergeIntents ?? defaultGetMergeIntents;
+  const getMergeIntents =
+    deps.getMergeIntents ??
+    ((projectPath: string, commitShas: string[]) =>
+      createMergeIntentsRepo(getStateDb()).getMergeIntents(
+        projectPath,
+        commitShas,
+      ));
   const { projectPath, worktreePath, targetBranch } = params;
 
   try {
@@ -87,11 +98,17 @@ export async function buildIncomingChangesSection(
       lines.push(`- ${commit.sha.slice(0, 7)} ${commit.subject}`);
       const intent = intentsBySha.get(commit.sha);
       if (intent) {
-        lines.push(`  Intent: ${truncate(intent, MAX_INTENT_CHARS)}`);
+        lines.push(
+          `  Intent: ${truncate(intent, MAX_INTENT_CHARS, {
+            ellipsis: INCOMING_CHANGES_TRUNCATION_MARKER,
+          })}`,
+        );
       }
     }
 
-    const section = truncate(lines.join("\n"), MAX_SECTION_CHARS);
+    const section = truncate(lines.join("\n"), MAX_SECTION_CHARS, {
+      ellipsis: INCOMING_CHANGES_TRUNCATION_MARKER,
+    });
     logger.info("incoming-changes.built", {
       worktreePath,
       targetBranch,
@@ -104,13 +121,8 @@ export async function buildIncomingChangesSection(
     logger.warn("incoming-changes.failed", {
       worktreePath,
       targetBranch,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     return null;
   }
-}
-
-function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n…[truncated]`;
 }

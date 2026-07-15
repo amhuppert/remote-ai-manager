@@ -1,11 +1,13 @@
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/schemas";
+import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   isContextOutputCommittedToLane,
   isUpstreamVisibleToDownstream,
@@ -20,7 +22,7 @@ type ValidatableDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;
 
-export type { WorkflowGraphValidationError } from "@/lib/workflows/schemas";
+export type { WorkflowGraphValidationError } from "@/lib/workflow-graph/definition-schemas";
 
 export interface WorkflowGraphValidationResult {
   ok: boolean;

@@ -36,8 +36,30 @@ export const debugModeStateSchema = z.object({
   instructionsDelivered: z.boolean().default(false),
   phase: debugModePhaseSchema.default("hypothesizing"),
   lastTurnFailed: z.boolean().default(false),
+  /**
+   * Stable identity for one enter-to-exit debug session. Cleanup verification
+   * results carry this identity in addition to their per-session attempt so a
+   * late result from an earlier session cannot affect a re-entered session.
+   */
+  debugSessionId: z.string().min(1).optional(),
+  /**
+   * Monotonic count of cleanup verifications started this debug session
+   * (absent = 0). Each async verification result is stamped with the attempt
+   * that started it, so a superseded attempt's late result is ignored instead
+   * of exiting debug mode or failing the current attempt.
+   */
+  cleanupVerificationAttempt: z.number().int().nonnegative().optional(),
 });
 export type DebugModeState = z.infer<typeof debugModeStateSchema>;
+
+/**
+ * Debug state after the persistence-boundary legacy upgrade has completed.
+ * Runtime reducers require this shape so every async cleanup result can be
+ * matched to one concrete enter-to-exit debug session.
+ */
+export type RuntimeDebugModeState = DebugModeState & {
+  debugSessionId: string;
+};
 
 export const debugLogEntrySchema = z.object({
   timestamp: z.string(),
@@ -92,7 +114,9 @@ export const debugModeStatusEventSchema = z.object({
   type: z.literal("debug-mode-status"),
   projectName: z.string(),
   sessionName: z.string(),
-  conversationId: z.string(),
+  // Non-empty: the lifecycle projection uses conversationId as the StatusBus
+  // scopeId, which the envelope schema requires to be non-empty.
+  conversationId: z.string().min(1),
   active: z.boolean(),
   recording: z.boolean(),
 });
@@ -102,7 +126,9 @@ export const debugLogReceivedEventSchema = z.object({
   type: z.literal("debug-log-received"),
   projectName: z.string(),
   sessionName: z.string(),
-  conversationId: z.string(),
+  // Non-empty: the lifecycle projection uses conversationId as the StatusBus
+  // scopeId, which the envelope schema requires to be non-empty.
+  conversationId: z.string().min(1),
   entryCount: z.number(),
 });
 export type DebugLogReceivedEvent = z.infer<typeof debugLogReceivedEventSchema>;

@@ -3,8 +3,9 @@ import { createLogger } from "@/lib/logging";
 import {
   graphWorkflowExecutionEventSchema,
   type GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
 import { PersistenceError } from "../shared/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.graph-workflow-events");
@@ -57,7 +58,9 @@ interface EventStorageRow {
  * context-scoped indexes (reset marking, latest-validation lookup) can answer
  * with a single index range rather than a full-execution scan.
  */
-function extractContextId(event: GraphWorkflowExecutionEvent["event"]): string | null {
+function extractContextId(
+  event: GraphWorkflowExecutionEvent["event"],
+): string | null {
   if ("contextId" in event && typeof event.contextId === "string") {
     return event.contextId;
   }
@@ -69,7 +72,8 @@ function eventToStorageRow(
   fallbackOccurredAt: string,
 ): EventStorageRow {
   return {
-    occurred_at: event.occurredAt === "" ? fallbackOccurredAt : event.occurredAt,
+    occurred_at:
+      event.occurredAt === "" ? fallbackOccurredAt : event.occurredAt,
     event_type: event.event.type,
     context_id: extractContextId(event.event),
     pre_reset: event.preReset ? 1 : 0,
@@ -123,7 +127,7 @@ function rowToDomain(
       {
         code: "invalid_json",
         path: ["event_json"],
-        message: err instanceof Error ? err.message : String(err),
+        message: getErrorMessage(err),
       },
     ]);
   }
@@ -161,9 +165,7 @@ function timed<T>(
   }
 }
 
-export function createGraphWorkflowEventsRepo(
-  db: Db,
-): GraphWorkflowEventsRepo {
+export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
   const insertStmt = db.prepare(
     `INSERT INTO graph_workflow_events (
        project_path, session_name, execution_id, occurred_at,
@@ -230,7 +232,13 @@ export function createGraphWorkflowEventsRepo(
     appendMany(projectPath, sessionName, executionId, occurredAt, events) {
       if (events.length === 0) return;
       timed("appendMany", { executionId }, () => {
-        insertManyTxn(projectPath, sessionName, executionId, occurredAt, events);
+        insertManyTxn(
+          projectPath,
+          sessionName,
+          executionId,
+          occurredAt,
+          events,
+        );
       });
     },
     findByExecution(executionId) {
@@ -246,19 +254,15 @@ export function createGraphWorkflowEventsRepo(
       });
     },
     findLatestForContext(executionId, contextId, eventType) {
-      return timed(
-        "findLatestForContext",
-        { executionId, contextId },
-        () => {
-          const row: unknown = findLatestForContextStmt.get(
-            executionId,
-            contextId,
-            eventType,
-          );
-          if (row === undefined) return null;
-          return rowToDomain(executionId, row);
-        },
-      );
+      return timed("findLatestForContext", { executionId, contextId }, () => {
+        const row: unknown = findLatestForContextStmt.get(
+          executionId,
+          contextId,
+          eventType,
+        );
+        if (row === undefined) return null;
+        return rowToDomain(executionId, row);
+      });
     },
     markPreReset(executionId, contextId, boundaryId) {
       return timed("markPreReset", { executionId, contextId }, () => {

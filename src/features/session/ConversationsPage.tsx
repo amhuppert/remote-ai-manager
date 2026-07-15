@@ -4,12 +4,13 @@ import { Suspense, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import Topbar from "@/components/Topbar";
 import ConversationWorkspace from "@/features/session/ConversationWorkspace";
-import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
+import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 import {
   EmptyState,
   EmptyStateTitle,
   EmptyStateDesc,
 } from "@/components/ui/EmptyState";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { parseConversationsPageParams } from "@/lib/conversations/hrefs";
 import { useConversationLookupQuery } from "@/lib/conversations/queries";
 import {
@@ -22,7 +23,7 @@ import {
   useSwitchLayout,
   useLayout,
 } from "@/stores/session-detail.store";
-import { type EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { type OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import { useConversationsPageSelection } from "./hooks/use-conversations-page-selection";
 import {
@@ -32,10 +33,7 @@ import {
 } from "./conversations-page-state";
 
 interface Props {
-  defaultModel: string;
-  defaultEffort?: EffortLevel;
-  defaultCodexModel: string;
-  defaultCodexEffort?: EffortLevel;
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 function StatusPanel({
@@ -77,10 +75,7 @@ function renderPanel(
           projectName={state.conversation.projectName}
           sessionName={state.conversation.sessionName}
           conversationId={state.conversation.conversationId}
-          defaultModel={props.defaultModel}
-          defaultEffort={props.defaultEffort}
-          defaultCodexModel={props.defaultCodexModel}
-          defaultCodexEffort={props.defaultCodexEffort}
+          backendDefaults={props.backendDefaults}
           autoFocus={autoFocus}
           onOpenConversation={onOpenConversation}
           openTabs={openTabs}
@@ -223,13 +218,15 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
         />
 
         {sidebarCollapsed && (
-          <button
-            className="fixed left-0 top-1/2 z-sticky flex h-[48px] w-[20px] -translate-y-1/2 items-center justify-center rounded-l-none rounded-r-sm border-y border-r border-l-0 border-solid border-border-default bg-bg-raised p-0 text-[0.7rem] text-cyan cursor-pointer transition-[color,background-color,border-color,box-shadow] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-bg-elevated hover:text-cyan hover:shadow-[0_0_8px_var(--color-cyan-glow)] max-768:hidden"
-            onClick={toggleSidebar}
-            data-tooltip="Expand sidebar"
-          >
-            {"▶"}
-          </button>
+          <WithTooltip label="Expand sidebar" side="right">
+            <button
+              className="fixed left-0 top-1/2 z-sticky flex h-[48px] w-[20px] -translate-y-1/2 items-center justify-center rounded-l-none rounded-r-sm border-y border-r border-l-0 border-solid border-border-default bg-bg-raised p-0 text-[0.7rem] text-cyan cursor-pointer transition-[color,background-color,border-color,box-shadow] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-bg-elevated hover:text-cyan hover:shadow-[0_0_8px_var(--color-cyan-glow)] max-768:hidden"
+              onClick={toggleSidebar}
+              aria-label="Expand sidebar"
+            >
+              {"▶"}
+            </button>
+          </WithTooltip>
         )}
 
         {renderPanel(

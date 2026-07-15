@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { cn } from "@/lib/ui/cn";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import {
@@ -71,39 +72,40 @@ export default function CopyMessageRefButton({
   }, [target, messageIndex, role, meta, artifact]);
 
   return (
-    <button
-      type="button"
-      className={cn(msgActionBtnClass, "data-[copied=true]:text-green")}
-      data-copied={copied}
-      onClick={handleCopy}
-      data-tooltip={copied ? "Copied ✓" : "Copy reference"}
-      title="Copy message reference"
-      aria-label="Copy message reference"
-    >
-      {copied ? (
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M1.5 5.5L4 8L8.5 2"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      ) : (
-        <span
-          aria-hidden="true"
-          className="font-mono text-[13px] leading-none font-semibold"
-        >
-          #
-        </span>
-      )}
-    </button>
+    <WithTooltip label={copied ? "Copied ✓" : "Copy reference"}>
+      <button
+        type="button"
+        className={cn(msgActionBtnClass, "data-[copied=true]:text-green")}
+        data-copied={copied}
+        onClick={handleCopy}
+        title="Copy message reference"
+        aria-label="Copy message reference"
+      >
+        {copied ? (
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M1.5 5.5L4 8L8.5 2"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="font-mono text-[13px] leading-none font-semibold"
+          >
+            #
+          </span>
+        )}
+      </button>
+    </WithTooltip>
   );
 }

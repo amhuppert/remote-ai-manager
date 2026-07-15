@@ -101,11 +101,27 @@ type PopoverContentProps = Omit<
   React.ComponentProps<typeof RadixPopover.Content>,
   "className" | "style"
 > & {
-  /** External-geometry utilities only (e.g. width); appended after appearance. */
+  /**
+   * Drop the padded floating-surface recipe. The consumer owns the whole panel
+   * box model via `contentClassName`; Radix's collision-aware positioning,
+   * Portal, Escape/outside-click dismissal, and `role`/`aria-*` wiring stay.
+   * For an anchored panel whose card is a custom box model (a full-bleed
+   * scrollable header + flex column) rather than the canonical padded surface.
+   */
+  unstyled?: boolean;
+  /**
+   * The panel's full box model (appearance + geometry) in the `unstyled`
+   * variant — a distinct prop from the layout-only `layoutClassName` because the
+   * primitive relinquishes appearance ownership here. Ignored unless `unstyled`.
+   */
+  contentClassName?: string;
+  /** External-geometry utilities only (styled variant); appended after appearance. */
   layoutClassName?: string;
 };
 
 export function PopoverContent({
+  unstyled = false,
+  contentClassName,
   layoutClassName,
   sideOffset = 6,
   collisionPadding = 8,
@@ -117,7 +133,9 @@ export function PopoverContent({
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         {...rest}
-        className={cn(contentClass, layoutClassName)}
+        className={
+          unstyled ? cn(contentClassName) : cn(contentClass, layoutClassName)
+        }
       />
     </RadixPopover.Portal>
   );

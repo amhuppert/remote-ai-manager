@@ -10,19 +10,21 @@ import type {
 } from "@/lib/workflow-graph/parallel-worktrees";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
-import { applyJoinProgress } from "@/lib/workflow-graph/lane-join";
+import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
-import { createSessionGitLock } from "@/lib/workflow-graph/session-git-lock";
+import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   createGraphWorkflowExecutionLoop,
@@ -673,6 +675,12 @@ describe("execution loop — parallel integration", () => {
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
         mergeOrder.push(input.contextId);
+        // ctx-a becomes mergeable only once ctx-b's merge has begun, so the
+        // B-before-A ordering is causal rather than a wall-clock race (a 5ms
+        // timer starves under load and flips the observed order).
+        if (input.contextId === "ctx-b") {
+          completionGates.get("ctx-a")!.resolve();
+        }
         return buildSuccessMergeOutput();
       },
     };
@@ -700,7 +708,6 @@ describe("execution loop — parallel integration", () => {
     });
 
     completionGates.get("ctx-b")!.resolve();
-    setTimeout(() => completionGates.get("ctx-a")!.resolve(), 5);
 
     const result = await loop.run({
       projectPath: "/repo",
@@ -2671,6 +2678,7 @@ describe("execution loop — parallel integration", () => {
         sessionName: "session-1",
         sessionDir: "session-1",
         contextId: "ctx-a",
+        branchName: "csm/session-1-ctx-a",
       },
     ]);
   });

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   createGraphWorkflowExecutionToolContext,
@@ -705,22 +705,16 @@ describe("GraphWorkflowExecutionToolContext", () => {
 });
 
 function makeClaudeImplementerLane(
-  overrides: Partial<
-    Extract<GraphWorkflowAgentSessionState, { engine: "claude" }>
-  > = {},
+  overrides: Partial<GraphWorkflowAgentSessionState> = {},
 ): GraphWorkflowAgentSessionState {
   return {
-    engine: "claude",
+    backend: "claude",
+    refKind: "conversation",
     lane: "implementer",
     contextId: "context-plan",
-    sessionRef: {
-      engine: "claude",
-      lane: "implementer",
-      conversationId: "conv-bound",
-    },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    workflowConversationId: "conv-bound",
+    sessionRef: { backend: "claude", ref: "conv-bound" },
+    metrics: { rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: "2026-03-27T11:00:00.000Z",
     ...overrides,
@@ -729,16 +723,12 @@ function makeClaudeImplementerLane(
 
 function makeCodexImplementerLane(): GraphWorkflowAgentSessionState {
   return {
-    engine: "codex",
+    backend: "codex",
+    refKind: "backend",
     lane: "implementer",
     contextId: "context-plan",
-    sessionRef: {
-      engine: "codex",
-      lane: "implementer",
-      threadId: "thread-1",
-    },
-    lastTurnUsage: null,
-    rotateBeforeNextTurn: false,
+    sessionRef: { backend: "codex", ref: "thread-1" },
+    metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: "2026-03-27T11:00:00.000Z",
   };
@@ -801,8 +791,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
 
     expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(true);
     expect(result.contextLimitStop).toEqual({
       contextTokens: 200,
@@ -826,8 +816,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
 
     expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(false);
     expect(result.contextLimitStop).toBeNull();
   });
@@ -836,7 +826,9 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const { store, toolContext } = buildToolContext({
       initialExecution: buildContextLimitExecution({
         limit: 100,
-        lane: makeClaudeImplementerLane({ lastContextTokens: 200 }),
+        lane: makeClaudeImplementerLane({
+          metrics: { contextTokens: 200, rotateBeforeNextTurn: false },
+        }),
       }),
       readLiveOccupancy: () => null,
     });
@@ -844,8 +836,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const result = await toolContext.completeTask("task-plan-1", "done");
 
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(true);
     expect(result.contextLimitStop).toEqual({
       contextTokens: 200,
@@ -860,7 +852,7 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const { store, toolContext } = buildToolContext({
       initialExecution: buildContextLimitExecution({
         limit: 100,
-        lane: makeClaudeImplementerLane({ lastContextTokens: null }),
+        lane: makeClaudeImplementerLane(),
       }),
       readLiveOccupancy: () => null,
     });
@@ -869,8 +861,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
 
     expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(false);
     expect(result.contextLimitStop).toBeNull();
   });
@@ -890,8 +882,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const result = await toolContext.completeTask("task-plan-1", "done");
 
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(false);
     expect(result.contextLimitStop).toBeNull();
   });
@@ -905,8 +897,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const result = await toolContext.completeTask("task-plan-1", "done");
 
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(true);
     expect(result.contextLimitStop).toEqual({
       contextTokens: 50,
@@ -921,7 +913,9 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const { store, toolContext } = buildToolContext({
       initialExecution: buildContextLimitExecution({
         limit: 100,
-        lane: makeClaudeImplementerLane({ rotateBeforeNextTurn: true }),
+        lane: makeClaudeImplementerLane({
+          metrics: { rotateBeforeNextTurn: true },
+        }),
       }),
       readLiveOccupancy: () => null,
     });
@@ -929,8 +923,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     const result = await toolContext.completeTask("task-plan-1", "done");
 
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(true);
     expect(result.contextLimitStop).toEqual({
       contextTokens: null,
@@ -983,8 +977,8 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
       "first completion",
     );
     expect(
-      store.current.laneStates["context-plan"]?.["implementer"]
-        ?.rotateBeforeNextTurn,
+      store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(true);
     expect(result.contextLimitStop?.source).toBe("live");
   });

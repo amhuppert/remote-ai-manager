@@ -22,7 +22,7 @@ import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { WorkflowAgentCaller } from "@/lib/workflows/primitives/workflow-agent-caller";
 import type { WorkflowAgentCallerRequest } from "@/lib/workflows/primitives/workflow-agent-caller";
 import { createWorkflowCollaboratorCaller } from "./workflow-collaborator-caller";
-import type { AgentBackendId } from "@/lib/agent-backends/types";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   AgentCallResult,
   BackendCapabilityView,
@@ -35,7 +35,7 @@ import type {
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
   ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import {
   makeAgentOneInitialDraft,
   makeAgentOneProposedChanges,

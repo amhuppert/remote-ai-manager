@@ -1,43 +1,55 @@
 import { describe, expect, it } from "vitest";
 import { getCodexReasoningLevelsForModel } from "@/lib/agent-backends/schemas";
 import {
-  graphWorkflowAgentValidatorConfigSchema,
-  graphWorkflowIterationPolicySchema,
-  graphWorkflowLaneContinuityPolicySchema,
-  graphWorkflowScriptValidatorConfigSchema,
-  graphWorkflowApprovalDecisionSchema,
   graphWorkflowApprovalPendingEventSchema,
   graphWorkflowApprovalResolvedEventSchema,
   graphWorkflowBatchScheduledEventSchema,
-  graphWorkflowHumanApprovalGateConfigSchema,
-  graphWorkflowPendingApprovalSchema,
-  graphWorkflowContextStatusSchema,
-  graphWorkflowExecutionContextDefinitionSchema,
-  graphWorkflowExecutionContextStateSchema,
   graphWorkflowExecutionEventSchema,
+  graphWorkflowMergeStatusEventSchema,
+  graphWorkflowPendingHaltReasonEventSchema,
+  graphWorkflowSharedDocumentsUpdatedEventSchema,
+  graphWorkflowStatusEventSchema,
+  graphWorkflowValidationEventSessionRefSchema,
+  graphWorkflowValidationReviewArtifactSchema,
+  graphWorkflowValidationResultEventSchema,
+} from "@/lib/workflow-graph/event-schemas";
+import {
+  graphWorkflowAgentSessionStateSchema,
+  graphWorkflowApprovalDecisionSchema,
+  graphWorkflowExecutionContextStateSchema,
   graphWorkflowExecutionJoinStateSchema,
   graphWorkflowExecutionLaneStateSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
   graphWorkflowHaltReasonSchema,
-  workflowCollaborationStatusSchema,
+  graphWorkflowPendingApprovalSchema,
+  resetExecutionContextRequestSchema,
+} from "@/lib/workflow-graph/schemas";
+import {
   workflowCollaborationResultSchema,
-  graphWorkflowAgentSessionStateSchema,
-  graphWorkflowMergeStatusEventSchema,
-  graphWorkflowPendingHaltReasonEventSchema,
+  workflowCollaborationStatusSchema,
+} from "@/lib/workflow-graph/collaboration-schemas";
+import {
+  graphWorkflowAgentValidatorConfigSchema,
+  graphWorkflowHumanApprovalGateConfigSchema,
+  graphWorkflowIterationPolicySchema,
+  graphWorkflowLaneContinuityPolicySchema,
+  graphWorkflowScriptValidatorConfigSchema,
+} from "@/lib/workflow-graph/config-schemas";
+import {
+  graphWorkflowContextStatusSchema,
+  graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowResolvedContextSchema,
   graphWorkflowSharedDocumentEntrySchema,
-  graphWorkflowSharedDocumentsUpdatedEventSchema,
-  graphWorkflowStatusEventSchema,
-  graphWorkflowValidationResultEventSchema,
-  resetExecutionContextRequestSchema,
   workflowAgentValidatorResultSchema,
   workflowConfigOverrideSchema,
   workflowDefinitionRecordSchema,
+  workflowSemanticDefinitionSchema,
+} from "@/lib/workflow-graph/definition-schemas";
+import {
   workflowLiveEditOperationSchema,
   workflowLiveEditRequestSchema,
-  workflowSemanticDefinitionSchema,
-} from "./schemas";
+} from "@/lib/workflows/edit-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   globalConfigSchema,
@@ -545,7 +557,7 @@ describe("workflow graph validator and request schemas", () => {
       },
     });
     expect(
-      legacy.reviewArtifact?.engine === "codex"
+      legacy.reviewArtifact?.kind === "response"
         ? legacy.reviewArtifact.usage
         : null,
     ).toEqual({
@@ -570,10 +582,88 @@ describe("workflow graph validator and request schemas", () => {
       },
     });
     expect(
-      priced.reviewArtifact?.engine === "codex"
+      priced.reviewArtifact?.kind === "response"
         ? priced.reviewArtifact.usage?.costUsd
         : null,
     ).toBe(0.0021);
+  });
+
+  it("normalizes legacy validation metadata into provider-neutral event contracts", () => {
+    expect(
+      graphWorkflowValidationEventSessionRefSchema.parse({
+        engine: "claude",
+        lane: "context_validator",
+        conversationId: "conversation-legacy",
+      }),
+    ).toEqual({
+      backend: "claude",
+      ref: "conversation-legacy",
+      lane: "context_validator",
+      refKind: "conversation",
+      workflowConversationId: "conversation-legacy",
+    });
+
+    expect(
+      graphWorkflowValidationReviewArtifactSchema.parse({
+        engine: "codex",
+        threadId: "thread-legacy",
+        response: "Reviewed",
+        usage: null,
+      }),
+    ).toEqual({
+      backend: "codex",
+      kind: "response",
+      ref: "thread-legacy",
+      response: "Reviewed",
+      usage: null,
+    });
+  });
+
+  it("keeps legacy response artifacts readable when no backend ref was recorded", () => {
+    expect(
+      graphWorkflowValidationReviewArtifactSchema.parse({
+        engine: "codex",
+        threadId: "",
+        response: "Review completed without a resumable thread.",
+        usage: null,
+      }),
+    ).toMatchObject({
+      backend: "codex",
+      kind: "response",
+      ref: "",
+    });
+  });
+
+  it("normalizes validation events containing only an AgentSessionRef", () => {
+    expect(
+      graphWorkflowValidationEventSessionRefSchema.parse({
+        backend: "claude",
+        ref: "backend-session-1",
+      }),
+    ).toEqual({
+      backend: "claude",
+      ref: "backend-session-1",
+      lane: "context_validator",
+      refKind: "backend",
+    });
+  });
+
+  it("accepts a third backend without projecting it onto a built-in provider", () => {
+    expect(
+      graphWorkflowValidationReviewArtifactSchema.parse({
+        backend: "testfake",
+        kind: "response",
+        ref: "testfake-ref",
+        response: "Reviewed by testfake",
+        usage: null,
+      }),
+    ).toEqual({
+      backend: "testfake",
+      kind: "response",
+      ref: "testfake-ref",
+      response: "Reviewed by testfake",
+      usage: null,
+    });
   });
 });
 
@@ -1340,7 +1430,7 @@ describe("globalConfigSchema workflowDefaults", () => {
 });
 
 describe("graphWorkflowExecutionSessionRefSchema", () => {
-  it("parses a claude session ref", () => {
+  it("normalizes a legacy claude session ref to an opaque backend ref", () => {
     const result = graphWorkflowExecutionSessionRefSchema.safeParse({
       engine: "claude",
       lane: "implementer",
@@ -1348,15 +1438,11 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.engine).toBe("claude");
-      expect(result.data.lane).toBe("implementer");
-      if (result.data.engine === "claude") {
-        expect(result.data.conversationId).toBe("conv-123");
-      }
+      expect(result.data).toEqual({ backend: "claude", ref: "conv-123" });
     }
   });
 
-  it("parses a codex session ref", () => {
+  it("normalizes a legacy codex session ref to an opaque backend ref", () => {
     const result = graphWorkflowExecutionSessionRefSchema.safeParse({
       engine: "codex",
       lane: "context_validator",
@@ -1364,11 +1450,7 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.engine).toBe("codex");
-      expect(result.data.lane).toBe("context_validator");
-      if (result.data.engine === "codex") {
-        expect(result.data.threadId).toBe("thread-abc");
-      }
+      expect(result.data).toEqual({ backend: "codex", ref: "thread-abc" });
     }
   });
 
@@ -1419,8 +1501,9 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "claude") {
-      expect(result.data.lastContextTokens).toBe(50000);
+    if (result.success && result.data.backend === "claude") {
+      expect(result.data.metrics.contextTokens).toBe(50000);
+      expect(result.data.metrics.contextWindowMax).toBe(200000);
       expect(result.data.limitEvaluation).toBe("supported");
     }
   });
@@ -1450,10 +1533,10 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "claude") {
-      expect(result.data.lastContextTokens).toBeNull();
-      expect(result.data.lastContextWindowMax).toBeNull();
-      expect(result.data.rotateBeforeNextTurn).toBe(false);
+    if (result.success && result.data.backend === "claude") {
+      expect(result.data.metrics.contextTokens).toBeUndefined();
+      expect(result.data.metrics.contextWindowMax).toBeUndefined();
+      expect(result.data.metrics.rotateBeforeNextTurn).toBe(false);
     }
   });
 
@@ -1473,8 +1556,8 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "codex") {
-      expect(result.data.lastTurnUsage?.inputTokens).toBe(1000);
+    if (result.success && result.data.backend === "codex") {
+      expect(result.data.metrics.lastTurnUsage?.inputTokens).toBe(1000);
       expect(result.data.limitEvaluation).toBe("unsupported");
     }
   });
@@ -1489,13 +1572,13 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "codex") {
-      expect(result.data.lastTurnUsage).toBeNull();
-      expect(result.data.rotateBeforeNextTurn).toBe(false);
+    if (result.success && result.data.backend === "codex") {
+      expect(result.data.metrics.lastTurnUsage).toBeUndefined();
+      expect(result.data.metrics.rotateBeforeNextTurn).toBe(false);
     }
   });
 
-  it("rejects claude lane state with unsupported limitEvaluation", () => {
+  it("allows a conversation lane to report unsupported limit evaluation", () => {
     const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
@@ -1504,10 +1587,10 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       limitEvaluation: "unsupported",
       lastUsedAt: timestamp,
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects codex lane state with supported limitEvaluation", () => {
+  it("allows a backend-ref lane to report supported limit evaluation", () => {
     const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "context_validator",
@@ -1516,7 +1599,7 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       limitEvaluation: "supported",
       lastUsedAt: timestamp,
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("parses a codex implementer lane state with workflowConversationId", () => {
@@ -1536,13 +1619,12 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "codex") {
+    if (result.success && result.data.backend === "codex") {
       expect(result.data.workflowConversationId).toBe("conv-cc-123");
       expect(result.data.lane).toBe("implementer");
       expect(result.data.sessionRef).toEqual({
-        engine: "codex",
-        lane: "implementer",
-        threadId: "thread-impl",
+        backend: "codex",
+        ref: "thread-impl",
       });
     }
   });
@@ -1559,7 +1641,7 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "codex") {
+    if (result.success && result.data.backend === "codex") {
       expect(result.data.workflowConversationId).toBe("conv-cc-123");
       expect(result.data.sessionRef).toBeUndefined();
     }
@@ -1579,7 +1661,7 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
-    if (result.success && result.data.engine === "claude") {
+    if (result.success && result.data.backend === "claude") {
       expect(result.data.workflowConversationId).toBe("conv-123");
     }
   });

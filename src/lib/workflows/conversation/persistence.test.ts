@@ -1,12 +1,23 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { z } from "zod";
+import { createActor, fromPromise, setup } from "xstate";
 import {
   persistConversationSnapshot,
+  persistSnapshotAfterTransition,
   restoreConversationSnapshot,
   validateRestoredSnapshot,
   clearConversationSnapshot,
   setPersistenceDeps,
   _resetForTesting,
 } from "./persistence";
+import { conversationMachine } from "./machine";
+import type {
+  ConversationInput,
+  ExecutePromptInput,
+  PrepareTurnInput,
+  PrepareTurnOutput,
+  PromptActorResult,
+} from "./types";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -55,6 +66,39 @@ function makeConversation(
   };
 }
 
+interface RefOccurrence {
+  path: string;
+  value: Record<string, unknown>;
+}
+
+/**
+ * Deep-walk arbitrary JSON collecting every object that looks like a session
+ * ref (a claude/codex `backend` plus any known handle key), with its path.
+ * Deliberately looser than the production matcher so a half-encoded or
+ * canonical-only occurrence is still collected and fails the assertions.
+ */
+function collectRefOccurrences(node: unknown, path = "$"): RefOccurrence[] {
+  if (node === null || typeof node !== "object") return [];
+  const out: RefOccurrence[] = [];
+  const obj = node as Record<string, unknown>;
+  if (
+    !Array.isArray(node) &&
+    (obj.backend === "claude" || obj.backend === "codex") &&
+    (typeof obj.ref === "string" ||
+      typeof obj.sessionId === "string" ||
+      typeof obj.threadId === "string")
+  ) {
+    out.push({ path, value: obj });
+  }
+  const entries = Array.isArray(node)
+    ? node.map((value, index) => [String(index), value] as const)
+    : Object.entries(obj);
+  for (const [key, value] of entries) {
+    out.push(...collectRefOccurrences(value, `${path}.${key}`));
+  }
+  return out;
+}
+
 describe("conversation persistence", () => {
   let fixture: PersistenceFixture;
 
@@ -98,12 +142,81 @@ describe("conversation persistence", () => {
         SESSION_NAME,
         CONVERSATION_ID,
         snapshot,
-        { immediate: true },
+        { debounceMs: 0 },
       );
 
       await vi.waitFor(async () => {
         const reloaded = await reloadConversation();
         expect(reloaded.machineSnapshot).toEqual({ value: "idle" });
+      });
+    });
+
+    it("persists context refs as canonical bytes without mutating the live snapshot", async () => {
+      const snapshot = {
+        value: "idle",
+        context: {
+          _schemaVersion: 1,
+          conversationId: CONVERSATION_ID,
+          backendRef: { backend: "claude", ref: "sess-live" },
+          forkedFrom: {
+            sourceConversationId: "parent",
+            messageIndex: 1,
+            sourceBackendRef: { backend: "codex", ref: "thr-src" },
+          },
+        },
+      } as never;
+
+      persistConversationSnapshot(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        snapshot,
+        { debounceMs: 0 },
+      );
+
+      await vi.waitFor(async () => {
+        const reloaded = await reloadConversation();
+        const persisted = reloaded.machineSnapshot as {
+          context: {
+            backendRef: unknown;
+            forkedFrom: { sourceBackendRef: unknown };
+          };
+        };
+        expect(persisted.context.backendRef).toEqual({
+          backend: "claude",
+          ref: "sess-live",
+        });
+        expect(persisted.context.forkedFrom.sourceBackendRef).toEqual({
+          backend: "codex",
+          ref: "thr-src",
+        });
+      });
+
+      // No persisted ref carries a mirrored legacy key: the on-disk shape is
+      // canonical, identical to the live shape.
+      const reloaded = await reloadConversation();
+      for (const { path, value } of collectRefOccurrences(
+        reloaded.machineSnapshot,
+      )) {
+        expect(value, `persisted ref not canonical at ${path}`).toEqual({
+          backend: value.backend,
+          ref: value.ref,
+        });
+      }
+
+      const live = snapshot as {
+        context: {
+          backendRef: unknown;
+          forkedFrom: { sourceBackendRef: unknown };
+        };
+      };
+      expect(live.context.backendRef).toEqual({
+        backend: "claude",
+        ref: "sess-live",
+      });
+      expect(live.context.forkedFrom.sourceBackendRef).toEqual({
+        backend: "codex",
+        ref: "thr-src",
       });
     });
 
@@ -136,7 +249,7 @@ describe("conversation persistence", () => {
         SESSION_NAME,
         "compaction-artifact-1",
         { value: "idle", context: { transient: true } } as never,
-        { immediate: true },
+        { debounceMs: 0 },
       );
 
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -149,7 +262,7 @@ describe("conversation persistence", () => {
         SESSION_NAME,
         CONVERSATION_ID,
         { value: "idle", context: { transient: false } } as never,
-        { immediate: true },
+        { debounceMs: 0 },
       );
 
       await vi.waitFor(async () => {
@@ -159,6 +272,104 @@ describe("conversation persistence", () => {
           context: { transient: false },
         });
       });
+    });
+
+    // Raw-bytes contract for the canonical cutover: every ref reaching
+    // `machine_snapshot` is canonical `{backend, ref}` with no mirrored legacy
+    // key, on the root context AND inside active XState child snapshots
+    // (`children.*.snapshot.input.backendRef`), so the walk must be recursive.
+    it("persists every ref occurrence as canonical bytes, including inside active child snapshots", async () => {
+      const machine = conversationMachine.provide({
+        actors: {
+          prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
+            async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
+          ),
+          // Never settles: the persisted snapshot is captured while the
+          // executePrompt child is active and still holds its input.
+          executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
+            () => new Promise<PromptActorResult>(() => {}),
+          ),
+        },
+      });
+      const input: ConversationInput = {
+        projectPath: PROJECT_PATH,
+        projectName: "my-project",
+        sessionName: SESSION_NAME,
+        worktreePath: "/repo/.worktrees/sess-1",
+        conversationId: CONVERSATION_ID,
+        createdAt: "2024-01-01T00:00:00Z",
+        forkedFrom: {
+          sourceConversationId: "parent-conv",
+          messageIndex: 2,
+          sourceBackend: "codex",
+          sourceBackendRef: { backend: "codex", ref: "thr-fork-src" },
+          forkLocator: null,
+          forkMode: "native",
+        },
+        role: null,
+        transcriptPath: null,
+        agentBackend: "claude",
+        backendRef: { backend: "claude", ref: "sess-mid-turn" },
+        promptCount: 1,
+      };
+      const actor = createActor(machine, { input });
+      actor.start();
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "hello",
+        streamId: "stream-1",
+      });
+      await vi.waitFor(() => {
+        expect(JSON.stringify(actor.getSnapshot().value)).toContain(
+          "conversationTurn",
+        );
+      });
+
+      const liveSnapshot = actor.getPersistedSnapshot();
+      try {
+        persistConversationSnapshot(
+          PROJECT_PATH,
+          SESSION_NAME,
+          CONVERSATION_ID,
+          liveSnapshot,
+          { debounceMs: 0 },
+        );
+
+        await vi.waitFor(async () => {
+          const reloaded = await reloadConversation();
+          expect(reloaded.machineSnapshot).not.toBeNull();
+        });
+
+        const reloaded = await reloadConversation();
+        const persistedOccurrences = collectRefOccurrences(
+          reloaded.machineSnapshot,
+        );
+        // The corpus must contain the root context ref AND at least one ref
+        // inside a child snapshot — otherwise the contract passes vacuously.
+        expect(
+          persistedOccurrences.some((o) => o.path === "$.context.backendRef"),
+        ).toBe(true);
+        expect(
+          persistedOccurrences.some((o) => o.path.includes(".children.")),
+        ).toBe(true);
+        for (const { path, value } of persistedOccurrences) {
+          expect(value, `persisted ref not canonical at ${path}`).toEqual({
+            backend: value.backend,
+            ref: value.ref,
+          });
+        }
+
+        // The captured live snapshot must stay canonical too — the write path
+        // clones before rewriting, so the live tree is never mutated.
+        for (const { path, value } of collectRefOccurrences(liveSnapshot)) {
+          expect(value, `live ref not canonical at ${path}`).toEqual({
+            backend: value.backend,
+            ref: value.ref,
+          });
+        }
+      } finally {
+        actor.stop();
+      }
     });
 
     it("debounces writes by default", async () => {
@@ -185,6 +396,56 @@ describe("conversation persistence", () => {
         expect(afterDebounce.machineSnapshot).toEqual({ value: "idle" });
       } finally {
         vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("persistSnapshotAfterTransition", () => {
+    // Regression: XState runs transition actions while the macrostep is still
+    // resolving, so capturing `getPersistedSnapshot()` synchronously inside
+    // the `persistSnapshot` action persisted the PREVIOUS macrostep — the
+    // durable snapshot lagged one event behind (a BACKEND_INIT persist missed
+    // the backendRef it had just assigned).
+    it("persists the state the actor settles into AFTER the event, not the previous macrostep", async () => {
+      const machine = setup({}).createMachine({
+        initial: "idle",
+        states: {
+          idle: {
+            on: {
+              GO: {
+                target: "running",
+                actions: ({ self }) =>
+                  persistSnapshotAfterTransition(
+                    {
+                      projectPath: PROJECT_PATH,
+                      sessionName: SESSION_NAME,
+                      conversationId: CONVERSATION_ID,
+                    },
+                    self,
+                    { debounceMs: 0 },
+                  ),
+              },
+            },
+          },
+          running: {},
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+      try {
+        actor.send({ type: "GO" });
+
+        await vi.waitFor(async () => {
+          const reloaded = await reloadConversation();
+          expect(reloaded.machineSnapshot).not.toBeNull();
+        });
+
+        const reloaded = await reloadConversation();
+        expect((reloaded.machineSnapshot as { value: unknown }).value).toBe(
+          "running",
+        );
+      } finally {
+        actor.stop();
       }
     });
   });
@@ -268,6 +529,38 @@ describe("conversation persistence", () => {
       expect(result).toEqual(snapshot);
     });
 
+    it("normalizes an active debug snapshot that has no session generation", () => {
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: CONVERSATION_ID,
+          debugMode: {
+            active: true,
+            recording: true,
+            logFilePath: "/tmp/debug.jsonl",
+            enteredAt: "2024-01-01T00:00:00Z",
+          },
+        },
+        value: "debug",
+      };
+
+      const result = validateRestoredSnapshot(
+        snapshot,
+        CONVERSATION_ID,
+        1,
+      ) as unknown as {
+        context: {
+          debugMode: { debugSessionId?: string };
+          debugGenerationNeedsPersistence?: boolean;
+        };
+      };
+
+      expect(result.context.debugMode.debugSessionId).toEqual(
+        expect.any(String),
+      );
+      expect(result.context.debugGenerationNeedsPersistence).toBe(true);
+    });
+
     it("returns null when schema version mismatches", () => {
       const snapshot = {
         context: { _schemaVersion: 99, conversationId: CONVERSATION_ID },
@@ -282,6 +575,134 @@ describe("conversation persistence", () => {
     it("returns null when snapshot is null", () => {
       const result = validateRestoredSnapshot(null, CONVERSATION_ID, 1);
       expect(result).toBeNull();
+    });
+
+    it("normalizes a legacy context.backendRef to the canonical ref shape", () => {
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: CONVERSATION_ID,
+          backendRef: { backend: "claude", sessionId: "sess-legacy" },
+        },
+        value: "idle",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
+
+      expect(result).not.toBeNull();
+      const { context } = z
+        .object({ context: z.object({ backendRef: z.unknown() }) })
+        .parse(result);
+      expect(context.backendRef).toEqual({
+        backend: "claude",
+        ref: "sess-legacy",
+      });
+    });
+
+    it("normalizes a superset context.backendRef and a legacy forkedFrom.sourceBackendRef", () => {
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: CONVERSATION_ID,
+          backendRef: {
+            backend: "codex",
+            ref: "thr-super",
+            threadId: "thr-super",
+          },
+          forkedFrom: {
+            sourceConversationId: "parent",
+            messageIndex: 0,
+            sourceBackendRef: { backend: "codex", threadId: "thr-fork" },
+          },
+        },
+        value: "idle",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
+
+      expect(result).not.toBeNull();
+      const { context } = z
+        .object({
+          context: z.object({
+            backendRef: z.unknown(),
+            forkedFrom: z.object({
+              sourceBackendRef: z.unknown(),
+              messageIndex: z.number(),
+            }),
+          }),
+        })
+        .parse(result);
+      expect(context.backendRef).toEqual({
+        backend: "codex",
+        ref: "thr-super",
+      });
+      expect(context.forkedFrom.sourceBackendRef).toEqual({
+        backend: "codex",
+        ref: "thr-fork",
+      });
+      expect(context.forkedFrom.messageIndex).toBe(0);
+    });
+
+    // A snapshot persisted mid-turn (by this build's shadow encoder, by
+    // migration 0005, or by an old build writing pure legacy refs) carries
+    // encoded refs inside active child snapshots too. Restoration must hand
+    // the actor a fully canonical tree.
+    it("normalizes shadow and legacy refs inside child snapshots back to canonical", () => {
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: CONVERSATION_ID,
+          backendRef: {
+            backend: "claude",
+            ref: "sess-root",
+            sessionId: "sess-root",
+          },
+        },
+        value: { executing: "conversationTurn" },
+        children: {
+          "0.conversation.executing.conversationTurn": {
+            snapshot: {
+              status: "active",
+              input: {
+                conversationId: CONVERSATION_ID,
+                backendRef: { backend: "claude", sessionId: "sess-child" },
+                forkedFrom: {
+                  sourceConversationId: "parent",
+                  messageIndex: 0,
+                  sourceBackendRef: {
+                    backend: "codex",
+                    ref: "thr-child",
+                    threadId: "thr-child",
+                  },
+                },
+              },
+            },
+            src: "executePrompt",
+          },
+        },
+      };
+
+      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
+
+      expect(result).not.toBeNull();
+      for (const { path, value } of collectRefOccurrences(result)) {
+        expect(value, `restored ref not canonical at ${path}`).toEqual({
+          backend: value.backend,
+          ref: value.ref,
+        });
+      }
+      const childInput = (
+        result as unknown as {
+          children: Record<
+            string,
+            { snapshot: { input: Record<string, unknown> } }
+          >;
+        }
+      ).children["0.conversation.executing.conversationTurn"]!.snapshot.input;
+      expect(childInput.backendRef).toEqual({
+        backend: "claude",
+        ref: "sess-child",
+      });
     });
 
     it("returns null when snapshot has no context", () => {

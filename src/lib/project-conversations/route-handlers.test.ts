@@ -104,7 +104,10 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
       };
     },
     isConversationBusy: () => false,
-    broadcast: (e) => broadcasts.push(e),
+    broadcast: (e) => {
+      broadcasts.push(e);
+      return { delivered: true };
+    },
     ...overrides,
   };
   return {

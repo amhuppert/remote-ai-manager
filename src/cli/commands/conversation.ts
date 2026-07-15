@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
@@ -334,34 +335,26 @@ export async function runConversation(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "conversation requires a subcommand: read, compact, or compaction",
-      json,
-    );
-  }
-  if (sub === "read") {
-    return runConversationRead(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "compact") {
-    return runConversationCompact(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "compaction") {
-    const verb = rest[1];
-    if (verb === "get") {
-      return runCompactionGet(rest.slice(2), flags, values, env, host);
-    }
-    if (verb === "list") {
-      return runCompactionList(rest.slice(2), flags, values, env, host);
-    }
-    return usageFailure(
-      "conversation compaction requires a verb: get or list",
-      json,
-    );
-  }
-  return usageFailure(`unknown conversation subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["conversation"],
+    rest,
+    json: flags.json,
+    handlers: {
+      read: (r) => runConversationRead(r, flags, values, env, host),
+      compact: (r) => runConversationCompact(r, flags, values, env, host),
+      compaction: (r) =>
+        dispatchGroup({
+          group: ["conversation", "compaction"],
+          rest: r,
+          json: flags.json,
+          noun: "verb",
+          handlers: {
+            get: (rr) => runCompactionGet(rr, flags, values, env, host),
+            list: (rr) => runCompactionList(rr, flags, values, env, host),
+          },
+        }),
+    },
+  });
 }
 
 interface ParsedPositional {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import { createDefaultPlannerRunner } from "./planner";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
@@ -70,6 +70,7 @@ describe("default planner runner — executeWorkflowTaskRun routing", () => {
             cachedInputTokens: null;
           };
           backendRef: null;
+          continuationDisposition: "retain";
         }>
       >()
       .mockResolvedValue({
@@ -85,6 +86,7 @@ describe("default planner runner — executeWorkflowTaskRun routing", () => {
           cachedInputTokens: null,
         },
         backendRef: null,
+        continuationDisposition: "retain",
       });
 
     const consumePlannerDraft = vi.fn(() => submittedDefinition);

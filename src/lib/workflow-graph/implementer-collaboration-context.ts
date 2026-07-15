@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type {
-  GraphWorkflowHaltReason,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 
 export interface ImplementerCollaborationContextInput {

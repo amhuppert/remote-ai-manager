@@ -27,6 +27,7 @@ function textOk(text: string): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -45,6 +46,7 @@ function errResult(error: string): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 

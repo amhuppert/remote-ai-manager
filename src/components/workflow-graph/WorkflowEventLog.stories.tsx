@@ -1,9 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import WorkflowEventLog from "./WorkflowEventLog";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import "./workflow-graph.css";
@@ -254,9 +252,11 @@ const richHistory: GraphWorkflowExecutionEvent[] = [
       ],
       reopenTaskIds: ["task-impl-2"],
       sessionRef: {
-        engine: "claude",
+        backend: "claude",
+        ref: "conv-val-1",
         lane: "context_validator",
-        conversationId: "conv-val-1",
+        refKind: "conversation",
+        workflowConversationId: "conv-val-1",
       },
     },
   },
@@ -291,9 +291,11 @@ const richHistory: GraphWorkflowExecutionEvent[] = [
       issues: [],
       reopenTaskIds: [],
       sessionRef: {
-        engine: "claude",
+        backend: "claude",
+        ref: "conv-val-2",
         lane: "context_validator",
-        conversationId: "conv-val-2",
+        refKind: "conversation",
+        workflowConversationId: "conv-val-2",
       },
     },
   },
@@ -367,9 +369,11 @@ const failureHistory: GraphWorkflowExecutionEvent[] = [
       ],
       reopenTaskIds: ["task-impl-1"],
       sessionRef: {
-        engine: "claude",
+        backend: "claude",
+        ref: "conv-fail-1",
         lane: "context_validator",
-        conversationId: "conv-fail-1",
+        refKind: "conversation",
+        workflowConversationId: "conv-fail-1",
       },
     },
   },

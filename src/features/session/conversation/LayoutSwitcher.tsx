@@ -1,5 +1,6 @@
 "use client";
 
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import type { LayoutMode } from "@/lib/sessions/schemas";
 interface LayoutSwitcherProps {
   activeLayout: LayoutMode;
@@ -119,15 +120,16 @@ export default function LayoutSwitcher({
   return (
     <div className={SWITCHER_CLASS}>
       {layouts.map(({ mode, tooltip, icon }) => (
-        <button
-          key={mode}
-          data-active={activeLayout === mode}
-          className={LAYOUT_BTN_CLASS}
-          data-tooltip={tooltip}
-          onClick={() => onLayoutChange(mode)}
-        >
-          {icon}
-        </button>
+        <WithTooltip key={mode} label={tooltip}>
+          <button
+            data-active={activeLayout === mode}
+            className={LAYOUT_BTN_CLASS}
+            aria-label={tooltip}
+            onClick={() => onLayoutChange(mode)}
+          >
+            {icon}
+          </button>
+        </WithTooltip>
       ))}
     </div>
   );

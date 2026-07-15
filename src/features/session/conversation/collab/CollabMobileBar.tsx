@@ -1,6 +1,7 @@
 "use client";
 
 import { KebabIcon } from "@/components/icons";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import CollabPhaseSummary from "@/features/session/conversation/collab/CollabPhaseSummary";
 import {
   type CollabPhaseStripPhase,
@@ -93,15 +94,16 @@ export default function CollabMobileBar({
         </div>
       ) : null}
 
-      <button
-        type="button"
-        className="inline-flex h-[44px] w-[40px] flex-none cursor-pointer appearance-none items-center justify-center rounded-sm border-0 bg-transparent p-0 text-text-secondary transition-colors duration-150 hover:text-text-primary"
-        onClick={onOpenControls}
-        aria-label="Collaboration controls"
-        data-tooltip="Collaboration controls"
-      >
-        <KebabIcon size={18} />
-      </button>
+      <WithTooltip label="Collaboration controls">
+        <button
+          type="button"
+          className="inline-flex h-[44px] w-[40px] flex-none cursor-pointer appearance-none items-center justify-center rounded-sm border-0 bg-transparent p-0 text-text-secondary transition-colors duration-150 hover:text-text-primary"
+          onClick={onOpenControls}
+          aria-label="Collaboration controls"
+        >
+          <KebabIcon size={18} />
+        </button>
+      </WithTooltip>
     </div>
   );
 }

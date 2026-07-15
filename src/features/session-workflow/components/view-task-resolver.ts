@@ -1,4 +1,4 @@
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { isTaskConversationLive } from "./task-runtime-state";
 
 export interface ResolvedViewingTask {

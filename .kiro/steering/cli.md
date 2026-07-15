@@ -23,10 +23,17 @@ that names a command should match that command's help node.
 
 All command metadata lives in typed `CommandHelpEntry` objects (`src/cli/help-types.ts`), authored
 in colocated `src/cli/commands/<command>.help.ts` files and aggregated by `src/cli/help-registry.ts`.
-**Help text, per-command flag allowlists (`checkFlags`), the parse-time boolean-flag set, and the
-top-level usage are all derived from it.** Hand-syncing any of these is a defect: the 2026-07-06
-audit found real drift (`conversation read` flags missing from help) and derivation is what makes
-that class impossible.
+**Help text, per-command flag allowlists (`checkFlags`), the parse-time boolean-flag set, the
+top-level usage, group dispatch, and the SKILL.md command reference are all derived from it.**
+Hand-syncing any of these is a defect: the 2026-07-06 audit found real drift (`conversation read`
+flags missing from help) and derivation is what makes that class impossible.
+
+Group dispatch goes through `dispatchGroup` (`src/cli/dispatch.ts`): it derives a group's valid
+verbs from that group's registry children, routes to the matching handler, and renders the
+"requires a subcommand: …" / "unknown … subcommand" usage failures from that same list — so no
+group module hand-lists its verbs. `dispatchGroup` throws when its handler map disagrees with the
+registry (a verb wired into dispatch without an entry, or an entry with no handler), and the
+contract test drives every group node through it, so drift fails the suite instead of shipping.
 
 **When adding or changing a command/subcommand/flag, you MUST:**
 
@@ -34,9 +41,13 @@ that class impossible.
 2. Wire flags through the registry — never a literal allowlist at the `checkFlags` call site.
 3. Add `related` edges both ways (the new node points at siblings; siblings point back when apt).
 4. Add `skills` refs where a skill materially helps (repo-relative path — contract-tested).
-5. Run the registry contract test (`help-registry.contract.test.ts`) — it enforces entry coverage,
-   graph-edge resolution, skill-path existence, and boolean/value flag-name consistency.
-6. Update the `cc-cli` SKILL.md command reference (manual sync until generation exists).
+5. Run the registry contract test (`help-registry.contract.test.ts`) — it enforces
+   dispatch↔registry agreement (via `dispatchGroup`, see below), graph-edge resolution,
+   skill-path existence, and boolean/value flag-name consistency.
+6. Regenerate the `cc-cli` SKILL.md command reference: `bun scripts/cc-cli-skill-reference.ts`
+   (the block between the `GENERATED COMMAND REFERENCE` markers is derived from the registry;
+   `bun run cli:skill-ref` and `cc-cli-skill-reference.test.ts` fail if it drifts). The
+   rich per-group prose stays hand-authored.
 
 ## Help never fails, and is static-first
 

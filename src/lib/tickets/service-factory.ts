@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
 import { createFirstTurnDispatcher } from "@/lib/prompt/first-turn-dispatch";
@@ -17,7 +17,7 @@ import {
   createSessionNormal,
   deleteSessionIfCurrent,
 } from "@/lib/sessions/service";
-import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import { publishEvent } from "@/lib/events/publication";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import {
   createReferenceDocument,
@@ -144,11 +144,9 @@ export function getTicketService(): TicketService {
       runTicketOperation(key, fn) {
         return getTicketOperationLock().runExclusive(key, fn);
       },
-      // Through the StatusBus (never the broadcaster directly): in-process
-      // subscribers see the scoped envelope while the wire event is unchanged.
-      broadcast(event) {
-        publishSessionStatus(event);
-      },
+      // Ticket events are wire-only, but still use typed publication so
+      // transport failures retain their delivery outcome and structured logs.
+      publish: publishEvent,
       now() {
         return new Date().toISOString();
       },
@@ -370,9 +368,7 @@ export function getTicketAttachmentService(): TicketAttachmentService {
       onTicketStartReleased(ticketId) {
         return getTicketOperationLock().onTicketStartReleased(ticketId);
       },
-      broadcast(event) {
-        publishSessionStatus(event);
-      },
+      publish: publishEvent,
       now() {
         return new Date().toISOString();
       },
@@ -437,9 +433,7 @@ export function getTicketStartService(): TicketStartService {
       queueKickoff(input) {
         return getTicketKickoffQueuer().queueKickoff(input);
       },
-      broadcast(event) {
-        publishSessionStatus(event);
-      },
+      publish: publishEvent,
       now() {
         return new Date().toISOString();
       },
@@ -473,9 +467,7 @@ export function getTicketCommandRunner(): TicketCommandRunner {
       },
       executeWorkflowTaskRun,
       appendNotice,
-      broadcast(event) {
-        publishSessionStatus(event);
-      },
+      publish: publishEvent,
       now() {
         return new Date().toISOString();
       },

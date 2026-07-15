@@ -4,7 +4,7 @@ import {
   codexReasoningEffortSchema,
   getDefaultCodexModel,
 } from "@/lib/agent-backends/schemas";
-import type { GraphWorkflowAgentConfig } from "@/lib/workflows/schemas";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import ConnectedWorkflowBuilderPage from "./components/ConnectedWorkflowBuilderPage";
 
 interface WorkflowsBuilderPageProps {

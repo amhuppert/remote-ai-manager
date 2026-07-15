@@ -26,8 +26,11 @@ import {
 } from "@/lib/conversations/schemas";
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
-import { broadcastEvent } from "@/lib/events/broadcast-event";
+import {
+  publishEvent,
+  publishEventBestEffort,
+  type PublishFn,
+} from "@/lib/events/publication";
 import {
   resolveProjectOr404,
   parseJsonBody,
@@ -43,7 +46,6 @@ import {
 import { createProjectConversationService } from "./service";
 import { buildProjectConversationCreatedEvent } from "./events";
 import { executeProjectPromptStream as defaultExecuteProjectPromptStream } from "./prompt-entry";
-import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   ConversationState,
   TranscriptMessage,
@@ -96,7 +98,7 @@ export interface ProjectConversationRouteDeps {
     sessionName: string,
     conversationId: string,
   ): boolean;
-  broadcast(event: SSEEvent): void;
+  broadcast: PublishFn;
 }
 
 function defaultDeps(): ProjectConversationRouteDeps {
@@ -121,7 +123,7 @@ function defaultDeps(): ProjectConversationRouteDeps {
       service.markProjectConversationRead(projectPath, id),
     executeProjectPromptStream: defaultExecuteProjectPromptStream,
     isConversationBusy: defaultIsConversationBusy,
-    broadcast: defaultBroadcast,
+    broadcast: publishEvent,
   };
 }
 
@@ -222,8 +224,8 @@ export function createProjectConversationRouteHandlers(
       parsed.value,
     );
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "project_conversation_created.broadcast_failed",
       context: { projectName, conversationId: conversation.id },
@@ -340,8 +342,8 @@ export function createProjectConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "project_conversation_renamed.broadcast_failed",
       context: { projectName, conversationId },
@@ -386,8 +388,8 @@ export function createProjectConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "project_conversation_archived.broadcast_failed",
       context: { projectName, conversationId },
@@ -432,8 +434,8 @@ export function createProjectConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "project_conversation_open.broadcast_failed",
       context: { projectName, conversationId },
@@ -467,8 +469,8 @@ export function createProjectConversationRouteHandlers(
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    broadcastEvent({
-      broadcast: deps.broadcast,
+    publishEventBestEffort({
+      publish: deps.broadcast,
       logger,
       failureEvent: "project_conversation_mark_read.broadcast_failed",
       context: { projectName, conversationId },

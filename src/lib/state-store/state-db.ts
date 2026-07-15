@@ -1,5 +1,15 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getConfigDirPath } from "../config/loader";
@@ -10,6 +20,10 @@ import {
   getGlobalValue,
   setGlobalValue,
 } from "../shared/global-singleton";
+import {
+  enforceCurrentSchemaCompatibility,
+  enforceSchemaCompatibilityBarrier,
+} from "./schema-compatibility";
 
 const logger = createLogger("state-store/state-db");
 
@@ -20,22 +34,98 @@ const DB_FILE_NAME = "command-center.db";
 
 /**
  * Highest schema migration version this build understands. Forward-only rule:
- * if the on-disk DB records a version greater than this, the build refuses to
- * open the connection and emits a `state-store.fatal` log so an older build
- * cannot silently downgrade a newer database.
+ * a protocol-aware build refuses a higher external barrier before opening
+ * SQLite and also rejects a higher ledger version under each migration's write
+ * lock. The protocol is not a lifetime lease: every lower-version process that
+ * already holds a connection must be quiesced during a breaking cutover, and a
+ * pre-protocol binary must also be prevented from reopening afterward.
+ *
+ * Version 1 is the `AgentSessionRef` shape cutover: migration
+ * `0005-agent-session-ref-shape` rewrites every persisted ref to the canonical
+ * `{backend, ref}` (dropping the legacy `sessionId`/`threadId` handle key) and
+ * stamps `schema_migrations` version 1.
  */
-export const KNOWN_SCHEMA_VERSION = 0;
+export const KNOWN_SCHEMA_VERSION = 1;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
  * dedicated `applied_data_migrations` table — NOT in `schema_migrations` —
  * so it never advances `MAX(version)` and therefore cannot trip the
- * forward-only version gate. A new bookkeeping table is invisible to
- * other-branch builds (KNOWN_SCHEMA_VERSION stays 0 for everyone), so this
- * data reset does not brick older builds that share `command-center.db`.
+ * forward-only version gate. Tracking the purge in its own bookkeeping table
+ * keeps `MAX(schema_migrations.version)` unaffected, so this data reset does
+ * not, on its own, brick older builds that share `command-center.db`.
  */
 export const LEGACY_WORKFLOW_PURGE_MIGRATION_ID =
   "graph-workflow-charter-legacy-purge";
+
+/**
+ * Durable cleanup witness committed with the SQLite reset and completion
+ * marker, after the legacy workflows directory has been captured and its
+ * parent directory entries have been synced.
+ */
+export const LEGACY_WORKFLOW_PURGE_PENDING_MIGRATION_ID =
+  "graph-workflow-charter-legacy-purge:pending";
+
+/**
+ * Permanent capture sentinel for the purge's filesystem phase. Its captured
+ * root remains after cleanup so a delayed retry can never mistake a newly
+ * created live `workflows/` directory for pre-migration data.
+ */
+export const LEGACY_WORKFLOW_PURGE_QUARANTINE_DIR_NAME =
+  ".graph-workflow-charter-legacy-purge";
+
+const LEGACY_WORKFLOW_PURGE_CAPTURE_DIR_NAME = "captured-workflows";
+
+export interface LegacyWorkflowPurgeFsOps {
+  exists(targetPath: string): boolean;
+  makeDir(dirPath: string): void;
+  rename(from: string, to: string): void;
+  list(dirPath: string): string[];
+  remove(targetPath: string): void;
+  syncDirectory(dirPath: string): void;
+}
+
+function syncDirectory(dirPath: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(dirPath, "r");
+    fsyncSync(fd);
+  } catch (err) {
+    if (!isUnsupportedDirectorySyncError(err)) throw err;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Nothing actionable if closing the directory descriptor fails.
+      }
+    }
+  }
+}
+
+const defaultLegacyWorkflowPurgeFsOps: LegacyWorkflowPurgeFsOps = {
+  exists: existsSync,
+  makeDir(dirPath: string): void {
+    mkdirSync(dirPath, { recursive: true });
+  },
+  rename: renameSync,
+  list: readdirSync,
+  remove(targetPath: string): void {
+    rmSync(targetPath, { recursive: true, force: true });
+  },
+  syncDirectory,
+};
+
+let legacyWorkflowPurgeFsOps = defaultLegacyWorkflowPurgeFsOps;
+
+export function _setLegacyWorkflowPurgeFsOpsForTesting(
+  overrides: Partial<LegacyWorkflowPurgeFsOps> | null,
+): void {
+  legacyWorkflowPurgeFsOps =
+    overrides === null
+      ? defaultLegacyWorkflowPurgeFsOps
+      : { ...defaultLegacyWorkflowPurgeFsOps, ...overrides };
+}
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -234,6 +324,9 @@ const SCHEMA_DDL = `
     agent_capabilities_runtime TEXT,
     unread                INTEGER NOT NULL DEFAULT 0,
     spawned_session_ids   TEXT,
+    pending_queue         TEXT,
+    last_seen_alignment_version INTEGER,
+    pending_agent_notices TEXT,
     FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
   );
 
@@ -315,13 +408,15 @@ const SCHEMA_DDL = `
     commit_hash    TEXT,
     conflict_count INTEGER,
     conflict_files TEXT,
-    error_message  TEXT
+    error_message  TEXT,
+    owner_pid      INTEGER
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
 
-  CREATE TABLE IF NOT EXISTS codex_run_records (
+  CREATE TABLE IF NOT EXISTS agent_run_records (
     run_id              TEXT PRIMARY KEY,
+    backend             TEXT NOT NULL,
     project_name        TEXT NOT NULL,
     session_name        TEXT NOT NULL,
     status              TEXT NOT NULL,
@@ -329,11 +424,12 @@ const SCHEMA_DDL = `
     completed_at        TEXT,
     summary             TEXT,
     reference_documents TEXT,
-    error_message       TEXT
+    error_message       TEXT,
+    owner_pid           INTEGER
   );
 
-  CREATE INDEX IF NOT EXISTS idx_codex_run_records_session
-    ON codex_run_records(project_name, session_name);
+  CREATE INDEX IF NOT EXISTS idx_agent_run_records_session
+    ON agent_run_records(project_name, session_name);
 
   CREATE TABLE IF NOT EXISTS graph_workflow_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -570,38 +666,21 @@ const SCHEMA_DDL = `
     ON ticket_sessions (project_path, session_name);
 `;
 
-class SchemaVersionConflictError extends Error {
-  constructor(
-    public readonly recordedVersion: number,
-    public readonly knownVersion: number,
-  ) {
-    super(
-      `Refusing to open command-center.db: recorded schema version ${recordedVersion} is greater than known build version ${knownVersion}`,
-    );
-    this.name = "SchemaVersionConflictError";
-  }
-}
-
-function applyPragmas(db: Db): void {
-  db.pragma("journal_mode = WAL");
+function applyConnectionPragmas(db: Db): void {
   db.pragma("foreign_keys = ON");
   db.pragma("synchronous = FULL");
 }
 
-function enforceForwardOnlyVersion(db: Db, dbPath: string): void {
-  const row = db
-    .prepare("SELECT MAX(version) AS maxVersion FROM schema_migrations")
-    .get() as { maxVersion: number | null };
-  const recorded = row.maxVersion ?? 0;
-  if (recorded > KNOWN_SCHEMA_VERSION) {
-    logger.error("state-store.fatal", {
-      reason: "schema_version_conflict",
-      dbPath,
-      recordedVersion: recorded,
-      knownVersion: KNOWN_SCHEMA_VERSION,
-    });
-    throw new SchemaVersionConflictError(recorded, KNOWN_SCHEMA_VERSION);
-  }
+function applyJournalMode(db: Db): void {
+  db.pragma("journal_mode = WAL");
+}
+
+let stateDbBeforeLockedInitializationHook: (() => void) | null = null;
+
+export function _setStateDbBeforeLockedInitializationHookForTesting(
+  hook: (() => void) | null,
+): void {
+  stateDbBeforeLockedInitializationHook = hook;
 }
 
 /**
@@ -658,6 +737,18 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "TEXT",
   },
   { table: "conversations", column: "pending_agent_notices", type: "TEXT" },
+  { table: "job_records", column: "owner_pid", type: "INTEGER" },
+  { table: "project_conversations", column: "pending_queue", type: "TEXT" },
+  {
+    table: "project_conversations",
+    column: "last_seen_alignment_version",
+    type: "INTEGER",
+  },
+  {
+    table: "project_conversations",
+    column: "pending_agent_notices",
+    type: "TEXT",
+  },
 ];
 
 function columnExists(db: Db, table: string, column: string): boolean {
@@ -854,17 +945,19 @@ function migrateNotificationsTable(db: Db): void {
  * execution, so legacy charter-less records cannot satisfy the schema. This
  * runs once at app start — before any sessions-repo reader that would
  * otherwise quarantine charter-less rows — and:
+ *   - captures `<configDir>/workflows/` under a permanent quarantine sentinel
+ *     and syncs both sides of the rename while holding the SQLite write lock,
  *   - nulls the embedded `graph_workflow_execution` and resets the history to
  *     `'[]'` on every persisted session (executions live inside SessionState,
  *     so a table drop is insufficient),
- *   - deletes every workflow definition file under `<configDir>/workflows/`,
- *   - records its marker so a repeat run is a no-op.
+ *   - commits the pending cleanup witness, reset, and completion marker in the
+ *     same transaction, then deletes only the captured files after commit.
  *
  * `configDir` is derived from the open DB path by the caller (its directory),
  * NOT from `getConfigDirPath()`, so tests over a temp DB never touch the real
  * config dir. In production `path.dirname(dbPath) === getConfigDirPath()`. A
- * `null` configDir (in-memory DB) skips the file-deletion step only; the
- * SQLite-side reset still runs.
+ * `null` configDir (in-memory DB) skips the capture step only; the SQLite-side
+ * reset and claim/completion state still run.
  *
  * Shared-database blast radius: `command-center.db` is shared across all
  * branches/worktrees, so this delete removes definitions and executions for
@@ -874,68 +967,237 @@ function migrateNotificationsTable(db: Db): void {
 export function runLegacyWorkflowPurgeMigration(
   db: Db,
   configDir: string | null,
+  dbPath: string,
 ): void {
-  // The marker insert IS the claim: `command-center.db` is shared across
-  // branches/worktrees and opened concurrently (Next.js build spawns many
-  // workers), so a SELECT-then-INSERT guard races — two connections both see
-  // the marker absent and the second INSERT violates the PRIMARY KEY. Claiming
-  // atomically with INSERT OR IGNORE lets only the winner (changes === 1) run
-  // the purge; losers (changes === 0) skip without touching files or logging.
-  const purge = db.transaction(() => {
-    const claim = db
-      .prepare("INSERT OR IGNORE INTO applied_data_migrations (id) VALUES (?)")
-      .run(LEGACY_WORKFLOW_PURGE_MIGRATION_ID);
-    if (claim.changes === 0) {
-      return null;
+  const migrate = db.transaction((): LegacyWorkflowPurgeState => {
+    enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
+    const completionRecorded = hasDataMigrationMarker(
+      db,
+      LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
+    );
+    const pendingRecorded = hasDataMigrationMarker(
+      db,
+      LEGACY_WORKFLOW_PURGE_PENDING_MIGRATION_ID,
+    );
+    if (completionRecorded) {
+      return pendingRecorded
+        ? {
+            kind: "cleanup",
+            capture: legacyWorkflowCapturePaths(configDir),
+            sessionsCleared: 0,
+            completionRecorded: false,
+          }
+        : { kind: "done" };
     }
-    const result = db
-      .prepare(
-        `UPDATE sessions
-           SET graph_workflow_execution = NULL,
-               graph_workflow_execution_history = '[]'
-         WHERE graph_workflow_execution IS NOT NULL
-            OR graph_workflow_execution_history <> '[]'`,
-      )
-      .run();
-    return result.changes;
+
+    // A pending-only row can exist only from the earlier two-phase
+    // implementation. Its live workflow directory may contain post-claim data,
+    // so establish an empty sentinel instead of recapturing that directory.
+    const capture = captureLegacyWorkflowDirectory(configDir, !pendingRecorded);
+
+    let sessionsCleared = 0;
+    if (!pendingRecorded) {
+      db.prepare("INSERT INTO applied_data_migrations (id) VALUES (?)").run(
+        LEGACY_WORKFLOW_PURGE_PENDING_MIGRATION_ID,
+      );
+      sessionsCleared = db
+        .prepare(
+          `UPDATE sessions
+             SET graph_workflow_execution = NULL,
+                 graph_workflow_execution_history = '[]'
+           WHERE graph_workflow_execution IS NOT NULL
+              OR graph_workflow_execution_history <> '[]'`,
+        )
+        .run().changes;
+    }
+
+    const completion = db
+      .prepare("INSERT INTO applied_data_migrations (id) VALUES (?)")
+      .run(LEGACY_WORKFLOW_PURGE_MIGRATION_ID);
+    return {
+      kind: "cleanup",
+      capture,
+      sessionsCleared,
+      completionRecorded: completion.changes === 1,
+    };
   });
 
-  const sessionsCleared = purge();
-  if (sessionsCleared === null) {
-    return;
+  const state = migrate.immediate();
+  if (state.kind === "done") return;
+
+  if (state.completionRecorded) {
+    logger.info("state-store.legacy_workflow_purge_claimed", {
+      migrationId: LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
+      sessionsCleared: state.sessionsCleared,
+    });
+  }
+  cleanupCapturedLegacyWorkflows(state);
+}
+
+function hasDataMigrationMarker(db: Db, id: string): boolean {
+  return (
+    db.prepare("SELECT 1 FROM applied_data_migrations WHERE id = ?").get(id) !==
+    undefined
+  );
+}
+
+interface LegacyWorkflowCapture {
+  workflowsDir: string | null;
+  quarantineRoot: string | null;
+  capturedRoot: string | null;
+  workflowsDirCaptured: boolean;
+}
+
+type LegacyWorkflowPurgeState =
+  | { kind: "done" }
+  | {
+      kind: "cleanup";
+      capture: LegacyWorkflowCapture;
+      sessionsCleared: number;
+      completionRecorded: boolean;
+    };
+
+function legacyWorkflowCapturePaths(
+  configDir: string | null,
+): LegacyWorkflowCapture {
+  if (configDir === null) {
+    return {
+      workflowsDir: null,
+      quarantineRoot: null,
+      capturedRoot: null,
+      workflowsDirCaptured: false,
+    };
+  }
+  const quarantineRoot = path.join(
+    configDir,
+    LEGACY_WORKFLOW_PURGE_QUARANTINE_DIR_NAME,
+  );
+  return {
+    workflowsDir: path.join(configDir, "workflows"),
+    quarantineRoot,
+    capturedRoot: path.join(
+      quarantineRoot,
+      LEGACY_WORKFLOW_PURGE_CAPTURE_DIR_NAME,
+    ),
+    workflowsDirCaptured: false,
+  };
+}
+
+function captureLegacyWorkflowDirectory(
+  configDir: string | null,
+  captureLiveDirectory: boolean,
+): LegacyWorkflowCapture {
+  const capture = legacyWorkflowCapturePaths(configDir);
+  if (
+    configDir === null ||
+    capture.quarantineRoot === null ||
+    capture.capturedRoot === null ||
+    capture.workflowsDir === null
+  ) {
+    return capture;
   }
 
-  const workflowsDir = configDir ? path.join(configDir, "workflows") : null;
-  const workflowsDirRemoved = workflowsDir !== null && existsSync(workflowsDir);
-  if (workflowsDir !== null && workflowsDirRemoved) {
-    rmSync(workflowsDir, { recursive: true, force: true });
+  legacyWorkflowPurgeFsOps.makeDir(capture.quarantineRoot);
+  if (!legacyWorkflowPurgeFsOps.exists(capture.capturedRoot)) {
+    if (captureLiveDirectory) {
+      try {
+        legacyWorkflowPurgeFsOps.rename(
+          capture.workflowsDir,
+          capture.capturedRoot,
+        );
+        capture.workflowsDirCaptured = true;
+      } catch (err) {
+        if (!isNodeErrorCode(err, "ENOENT")) throw err;
+      }
+    }
+    if (!legacyWorkflowPurgeFsOps.exists(capture.capturedRoot)) {
+      legacyWorkflowPurgeFsOps.makeDir(capture.capturedRoot);
+    }
+  }
+
+  // Destination first, then source: completion is recorded only after both
+  // directory entries are durable across power loss.
+  legacyWorkflowPurgeFsOps.syncDirectory(capture.quarantineRoot);
+  legacyWorkflowPurgeFsOps.syncDirectory(configDir);
+  return capture;
+}
+
+function cleanupCapturedLegacyWorkflows(
+  state: Extract<LegacyWorkflowPurgeState, { kind: "cleanup" }>,
+): void {
+  const { capture } = state;
+  let capturedEntriesRemoved = 0;
+  if (
+    capture.capturedRoot !== null &&
+    legacyWorkflowPurgeFsOps.exists(capture.capturedRoot)
+  ) {
+    for (const entry of legacyWorkflowPurgeFsOps.list(capture.capturedRoot)) {
+      legacyWorkflowPurgeFsOps.remove(path.join(capture.capturedRoot, entry));
+      capturedEntriesRemoved += 1;
+    }
+    legacyWorkflowPurgeFsOps.syncDirectory(capture.capturedRoot);
   }
 
   logger.info("state-store.legacy_workflow_purge", {
     migrationId: LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
-    sessionsCleared,
-    workflowsDirRemoved,
-    workflowsDir,
+    sessionsCleared: state.sessionsCleared,
+    completionRecorded: state.completionRecorded,
+    workflowsDirCaptured: capture.workflowsDirCaptured,
+    capturedEntriesRemoved,
+    workflowsDir: capture.workflowsDir,
+    capturedRoot: capture.capturedRoot,
   });
 }
 
+function isUnsupportedDirectorySyncError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("code" in err)) return false;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code !== "string") return false;
+  if (["EISDIR", "EINVAL", "ENOTSUP", "EOPNOTSUPP"].includes(code)) {
+    return true;
+  }
+  return process.platform === "win32" && ["EPERM", "EBADF"].includes(code);
+}
+
+function isNodeErrorCode(err: unknown, code: string): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === code
+  );
+}
+
 function initializeSchema(db: Db, dbPath: string): void {
+  enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
   db.exec(SCHEMA_DDL);
   migrateNotificationsTable(db);
   db.exec(NOTIFICATIONS_INDEX_DDL);
   ensureAdditiveColumns(db);
-  // `:memory:` has no on-disk config dir; skip the file-deleting purge there.
-  // The SQLite-side reset still runs against the in-memory sessions table.
-  const configDir = dbPath === ":memory:" ? null : path.dirname(dbPath);
-  runLegacyWorkflowPurgeMigration(db, configDir);
-  enforceForwardOnlyVersion(db, dbPath);
 }
 
 function openStateDb(dbPath: string): Db {
+  enforceSchemaCompatibilityBarrier(dbPath, KNOWN_SCHEMA_VERSION);
   const db = new Database(dbPath);
-  applyPragmas(db);
   try {
-    initializeSchema(db, dbPath);
+    // The external barrier above is the mutation-free pre-open gate. This
+    // ledger check is defense in depth for legacy databases without a barrier.
+    enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
+    applyConnectionPragmas(db);
+    stateDbBeforeLockedInitializationHook?.();
+    // Hold the write lock from the second version check through schema setup,
+    // so a concurrently starting newer build cannot advance the compatibility
+    // version between the gate and this build's DDL/data migrations.
+    const initialize = db.transaction(() => initializeSchema(db, dbPath));
+    initialize.immediate();
+    // `journal_mode` changes persistent database state and SQLite does not
+    // permit changing it inside a transaction. Apply it only after the locked
+    // compatibility recheck and schema initialization succeed.
+    applyJournalMode(db);
+    // Filesystem capture and its parent-directory sync happen under a second
+    // write lock before the reset and completion markers commit together.
+    const configDir = dbPath === ":memory:" ? null : path.dirname(dbPath);
+    runLegacyWorkflowPurgeMigration(db, configDir, dbPath);
   } catch (err) {
     db.close();
     throw err;

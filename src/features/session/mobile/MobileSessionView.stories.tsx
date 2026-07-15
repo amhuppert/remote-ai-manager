@@ -241,6 +241,7 @@ function MobileSessionViewDemo({
                         </button>
                         <ModelSelector
                           value={model}
+                          backend="claude"
                           onChange={setModel}
                           disabled={sending}
                         />

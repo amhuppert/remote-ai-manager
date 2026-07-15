@@ -112,7 +112,7 @@ function makeFullConversation(
       sourceConversationId: "parent-conv",
       messageIndex: 4,
       sourceBackend: "claude",
-      sourceBackendRef: { backend: "claude", sessionId: "src-sess" },
+      sourceBackendRef: { backend: "claude", ref: "src-sess" },
       forkLocator: "msg-4",
       forkMode: "native",
     },
@@ -127,10 +127,11 @@ function makeFullConversation(
       hypotheses: [{ id: "h1", description: "race condition" }],
       instructionsDelivered: true,
       phase: "analyzing_evidence",
+      cleanupVerificationAttempt: 2,
     },
     machineSnapshot: { state: "idle", context: { foo: 42 } },
     agentBackend: "codex",
-    backendRef: { backend: "codex", threadId: "thr-1" },
+    backendRef: { backend: "codex", ref: "thr-1" },
     mcpOverrides: {
       servers: {
         stripe: { enabled: true, tools: { charge: { enabled: false } } },
@@ -1106,6 +1107,89 @@ describe("conversations-repo findAll caching", () => {
   });
 });
 
+/**
+ * Wrap `db.prepare` so every `Statement.all()` execution whose source SQL
+ * matches a predicate is counted, proving the cache short-circuits BEFORE the
+ * raw SQLite fetch (PERFORMANCE.md §50-62, "short-circuit before raw fetch"),
+ * not merely before the Zod parse.
+ */
+function countingAllStmtDb(
+  target: Db,
+  sqlMatches: (sql: string) => boolean,
+): { count: number } {
+  const counter = { count: 0 };
+  const realPrepare = target.prepare.bind(target);
+  target.prepare = ((sql: string) => {
+    const stmt = realPrepare(sql);
+    if (!sqlMatches(sql)) return stmt;
+    const realAll = stmt.all.bind(stmt);
+    stmt.all = ((...args: unknown[]) => {
+      counter.count += 1;
+      return realAll(...args);
+    }) as typeof stmt.all;
+    return stmt;
+  }) as typeof target.prepare;
+  return counter;
+}
+
+describe("conversations-repo findAll SQL short-circuit (F9)", () => {
+  it("does NOT execute the findAll statement on a warm-version cache hit", () => {
+    const local = _createTestDb({ inMemory: true });
+    local
+      .prepare(`INSERT OR IGNORE INTO projects (root_path) VALUES (?)`)
+      .run(PROJECT_PATH);
+    local
+      .prepare(
+        `INSERT INTO sessions
+           (project_path, session_name, worktree_path, branch_name,
+            created_at, last_activity_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        PROJECT_PATH,
+        SESSION_NAME,
+        `/wt/${SESSION_NAME}`,
+        `csm/${SESSION_NAME}`,
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+      );
+    const counter = countingAllStmtDb(local, (sql) =>
+      /FROM conversations[\s\S]*ORDER BY project_path ASC, session_name ASC/.test(
+        sql,
+      ),
+    );
+    const localRepo = createConversationsRepo(local);
+    localRepo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-a" }),
+    );
+    localRepo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-b" }),
+    );
+
+    localRepo.findAll();
+    expect(counter.count).toBe(1);
+
+    // Warm hit: version unchanged, so no SQL fetch may run.
+    localRepo.findAll();
+    expect(counter.count).toBe(1);
+
+    // A mutation bumps the version; the next findAll re-fetches once.
+    localRepo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-a", summary: "moved" }),
+    );
+    localRepo.findAll();
+    expect(counter.count).toBe(2);
+
+    local.close();
+  });
+});
+
 describe("conversations-repo findBySession caching", () => {
   it("returns identical conversation references for unchanged rows across calls (cache hit)", () => {
     repo.upsert(
@@ -1307,7 +1391,7 @@ function buildMaximalConversation(): ConversationState {
       sourceConversationId: "parent-conv",
       messageIndex: 7,
       sourceBackend: "codex",
-      sourceBackendRef: { backend: "codex", threadId: "src-thread" },
+      sourceBackendRef: { backend: "codex", ref: "src-thread" },
       forkLocator: "msg-7",
       forkMode: "synthetic",
     },
@@ -1318,6 +1402,7 @@ function buildMaximalConversation(): ConversationState {
     contextWindowMax: 200_000,
     debugMode: {
       active: true,
+      debugSessionId: "debug-session-c-maximal",
       recording: true,
       logFilePath: "/tmp/debug/c-maximal.log",
       enteredAt: "2026-01-15T00:00:00Z",
@@ -1334,13 +1419,14 @@ function buildMaximalConversation(): ConversationState {
       instructionsDelivered: true,
       phase: "awaiting_verification",
       lastTurnFailed: true,
+      cleanupVerificationAttempt: 2,
     },
     machineSnapshot: {
       value: "awaiting",
       context: { iteration: 3, lastError: null },
     },
     agentBackend: "codex",
-    backendRef: { backend: "codex", threadId: "thread-maximal" },
+    backendRef: { backend: "codex", ref: "thread-maximal" },
     mcpOverrides: {
       servers: {
         stripe: {
@@ -1453,6 +1539,212 @@ describe("conversations-repo durability contract", () => {
         spawnedSessionIds: "not-persisted",
       },
     });
+  });
+});
+
+describe("conversations-repo backend-ref canonical encoding (raw bytes)", () => {
+  // The on-disk shape is canonical `{backend, ref}` — no mirrored
+  // sessionId/threadId key. The ref-shape cutover bumps KNOWN_SCHEMA_VERSION,
+  // so an older build sharing CC_CONFIG_DIR is refused on open rather than
+  // expected to parse a legacy handle out of backend_ref /
+  // forked_from.sourceBackendRef.
+  function rawColumns(id: string): {
+    backend_ref: string | null;
+    forked_from: string | null;
+  } {
+    return db
+      .prepare(
+        `SELECT backend_ref, forked_from FROM conversations WHERE id = ?`,
+      )
+      .get(id) as { backend_ref: string | null; forked_from: string | null };
+  }
+
+  it("persists a codex backendRef as canonical bytes with no mirrored threadId", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({
+        id: "c-canon-codex",
+        agentBackend: "codex",
+        backendRef: { backend: "codex", ref: "thr-canon" },
+      }),
+    );
+
+    const raw = rawColumns("c-canon-codex");
+    expect(raw.backend_ref).not.toBeNull();
+    expect(JSON.parse(raw.backend_ref!)).toEqual({
+      backend: "codex",
+      ref: "thr-canon",
+    });
+  });
+
+  it("persists a claude backendRef as canonical bytes with no mirrored sessionId", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({
+        id: "c-canon-claude",
+        backendRef: { backend: "claude", ref: "sess-canon" },
+      }),
+    );
+
+    const raw = rawColumns("c-canon-claude");
+    expect(JSON.parse(raw.backend_ref!)).toEqual({
+      backend: "claude",
+      ref: "sess-canon",
+    });
+  });
+
+  it("persists forkedFrom.sourceBackendRef as canonical bytes", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({
+        id: "c-canon-fork",
+        forkedFrom: {
+          sourceConversationId: "parent-conv",
+          messageIndex: 2,
+          sourceBackend: "claude",
+          sourceBackendRef: { backend: "claude", ref: "src-canon" },
+          forkLocator: "msg-2",
+          forkMode: "native",
+        },
+      }),
+    );
+
+    const raw = rawColumns("c-canon-fork");
+    expect(raw.forked_from).not.toBeNull();
+    const forkedFrom = JSON.parse(raw.forked_from!) as {
+      sourceBackendRef: unknown;
+    };
+    expect(forkedFrom.sourceBackendRef).toEqual({
+      backend: "claude",
+      ref: "src-canon",
+    });
+  });
+
+  it("writes canonical bytes through the focused per-column update path too", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-canon-diff" }),
+    );
+    const before = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-canon-diff")!;
+    const after: ConversationState = {
+      ...before,
+      backendRef: { backend: "codex", ref: "thr-diff" },
+    };
+    const changed = diffChangedConversationColumns(before, after);
+    expect(Object.keys(changed)).toEqual(["backend_ref"]);
+
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-canon-diff",
+      changed,
+      "2026-06-04T00:00:00Z",
+    );
+
+    const raw = rawColumns("c-canon-diff");
+    expect(JSON.parse(raw.backend_ref!)).toEqual({
+      backend: "codex",
+      ref: "thr-diff",
+    });
+  });
+
+  it("decodes a legacy-shape row written by an old build back to the canonical ref", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-legacy-writer" }),
+    );
+    db.prepare(`UPDATE conversations SET backend_ref = ? WHERE id = ?`).run(
+      JSON.stringify({ backend: "codex", threadId: "thr-old-build" }),
+      "c-legacy-writer",
+    );
+
+    const loaded = repo.findByKey(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-legacy-writer",
+    );
+    expect(loaded?.backendRef).toEqual({
+      backend: "codex",
+      ref: "thr-old-build",
+    });
+  });
+});
+
+describe("conversations-repo forward quarantine of unparseable ref columns", () => {
+  it("degrades an unparseable backend_ref to null and keeps the rest of the row", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-quarantine-ref", summary: null }),
+    );
+    db.prepare(
+      `UPDATE conversations SET backend_ref = ?, summary = ? WHERE id = ?`,
+    ).run(
+      JSON.stringify({ backend: "claude", futureShape: { nested: true } }),
+      "still readable",
+      "c-quarantine-ref",
+    );
+
+    const loaded = repo.findByKey(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-quarantine-ref",
+    );
+    expect(loaded).not.toBeNull();
+    expect(loaded?.backendRef).toBeNull();
+    expect(loaded?.summary).toBe("still readable");
+  });
+
+  it("degrades an unparseable forked_from to null and keeps the rest of the row", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-quarantine-fork" }),
+    );
+    db.prepare(`UPDATE conversations SET forked_from = ? WHERE id = ?`).run(
+      JSON.stringify({ sourceConversationId: 42 }),
+      "c-quarantine-fork",
+    );
+
+    const loaded = repo.findByKey(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-quarantine-fork",
+    );
+    expect(loaded).not.toBeNull();
+    expect(loaded?.forkedFrom).toBeNull();
+  });
+
+  it("still lists every sibling conversation when one row has a bad backend_ref", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({
+        id: "c-good",
+        createdAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({
+        id: "c-bad",
+        createdAt: "2026-01-02T00:00:00Z",
+      }),
+    );
+    db.prepare(`UPDATE conversations SET backend_ref = ? WHERE id = ?`).run(
+      "not-json",
+      "c-bad",
+    );
+
+    const listed = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+    expect(listed.map((c) => c.id)).toEqual(["c-good", "c-bad"]);
+    expect(listed[1]?.backendRef).toBeNull();
   });
 });
 

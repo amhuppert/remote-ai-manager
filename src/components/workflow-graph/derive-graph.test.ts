@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type {
-  GraphWorkflowContextStatus,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowExecutionContextState,
-  GraphWorkflowResolvedContext,
   GraphWorkflowTaskState,
+} from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowContextStatus,
+  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   deriveEdges,
   deriveNodes,

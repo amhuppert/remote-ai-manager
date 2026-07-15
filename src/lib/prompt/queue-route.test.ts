@@ -5,7 +5,7 @@ import type {
   PendingQueuedMessage,
   QueuedMessageView,
 } from "@/lib/conversations/message-queue-schemas";
-import type { QueueCapability } from "@/lib/agent-backends/capabilities-descriptor";
+import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { ImagePayload } from "@/lib/images/schemas";
 import {
   createQueueRouteHandlers,

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import ToastContainer from "@/components/ToastContainer";
+import { GenericToastSource } from "@/components/ToastHost";
 import {
   matchesTicketListFilters,
   normalizeTicketListFilters,
@@ -203,7 +203,7 @@ function BoardHarness({
       <div className="min-h-[480px] bg-bg-void">
         <BoardFromQuery />
       </div>
-      <ToastContainer />
+      <GenericToastSource />
     </QueryClientProvider>
   );
 }

@@ -21,11 +21,12 @@ import {
 import {
   createCapabilityRuntimeApplyService,
   type AffectedConversation,
-  type ClaudeApplyPortInput,
-  type ClaudeApplyPortResult,
-  type CodexApplyPortInput,
-  type CodexApplyPortResult,
+  type ApplyConversationIdentity,
 } from "./apply";
+import type {
+  ResolvedCapabilityCascade,
+  RuntimeConfigApplyResult,
+} from "@/lib/agent-backends/runtime-config";
 import { composeConversationStartRuntime } from "./runtime-composer";
 import {
   AGENT_CAPABILITY_CASCADE_KINDS,
@@ -90,7 +91,10 @@ describe("agent capability end-to-end acceptance", () => {
     const writes: AgentCapabilityOverrides[] = [];
     const runtimeWrites: unknown[] = [];
     const applyClaudeRuntime = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+      (input: {
+        conversation: ApplyConversationIdentity;
+        resolved: ResolvedCapabilityCascade;
+      }) => Promise<RuntimeConfigApplyResult>
     >(async () => ({ status: "applied" }));
 
     const claudePlugins = [discoveredPlugin("owner-plugin")];
@@ -166,7 +170,7 @@ describe("agent capability end-to-end acceptance", () => {
       writeRuntimeState: async (input) => {
         runtimeWrites.push(input.state);
       },
-      applyClaudeRuntime,
+      applyRuntimeConfig: applyClaudeRuntime,
     });
 
     const mutationService = createCapabilityMutationService({
@@ -345,7 +349,7 @@ describe("agent capability end-to-end acceptance", () => {
       },
       failedCascadeKinds: ["claude-skills"],
     });
-    expect(nonBlocking.claudeRuntime).toBeDefined();
+    expect(nonBlocking.capabilities.kinds.length).toBeGreaterThan(0);
     expect(nonBlocking.failedCascadeKinds).toEqual(["claude-skills"]);
     expect(nonBlocking.diagnostics).toContainEqual(
       expect.objectContaining({
@@ -472,7 +476,10 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     };
 
     const applyClaudeRuntime = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+      (input: {
+        conversation: ApplyConversationIdentity;
+        resolved: ResolvedCapabilityCascade;
+      }) => Promise<RuntimeConfigApplyResult>
     >(async () => ({ status: "applied" }));
 
     const claudeApplyService = createCapabilityRuntimeApplyService({
@@ -501,7 +508,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
           state: input.state,
         });
       },
-      applyClaudeRuntime,
+      applyRuntimeConfig: applyClaudeRuntime,
     });
 
     const plcMutationService = createCapabilityMutationService({
@@ -715,7 +722,10 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     // (b) A turn-active Claude PLC stages for idle rather than applying mid-turn
     // — matching session-conversation user-visible semantics.
     const claudeTurnActivePort = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+      (input: {
+        conversation: ApplyConversationIdentity;
+        resolved: ResolvedCapabilityCascade;
+      }) => Promise<RuntimeConfigApplyResult>
     >(async () => ({ status: "applied" }));
     const claudeBusyApplyService = createCapabilityRuntimeApplyService({
       listAffectedConversations: async () => [
@@ -743,7 +753,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
           state: input.state,
         });
       },
-      applyClaudeRuntime: claudeTurnActivePort,
+      applyRuntimeConfig: claudeTurnActivePort,
     });
     const busyResult = await claudeBusyApplyService.applyAfterOverrideChange({
       scope: {
@@ -764,7 +774,10 @@ describe("project-level conversation capability end-to-end acceptance", () => {
 
     // (c) Codex PLC stages for next turn rather than applying mid-turn.
     const codexApplyPort = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
+      (input: {
+        conversation: ApplyConversationIdentity;
+        resolved: ResolvedCapabilityCascade;
+      }) => Promise<RuntimeConfigApplyResult>
     >(async () => ({ status: "applied" }));
     const codexPlc: AffectedConversation = {
       conversationScope: "project",
@@ -799,7 +812,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
           state: input.state,
         });
       },
-      applyCodexRuntime: codexApplyPort,
+      applyRuntimeConfig: codexApplyPort,
     });
     const codexResult = await codexApplyService.applyAfterOverrideChange({
       scope: {

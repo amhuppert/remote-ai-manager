@@ -11,10 +11,11 @@
  */
 
 import { getErrorMessage } from "@/lib/shared/errors";
-import type {
-  AgentCallRequest,
-  AgentCallResult,
-  LaneWriteCapability,
+import {
+  DEFAULT_LANE_WRITE_CAPABILITY,
+  type AgentCallRequest,
+  type AgentCallResult,
+  type LaneWriteCapability,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type {
   AsymmetricCollaborationSliceDeps,
@@ -205,7 +206,7 @@ export async function callPrimitive(
   ctx: CallPrimitiveContext,
 ): Promise<CallPrimitiveOutcome> {
   const { input, deps, backend, prompt, imageRefs } = ctx;
-  const writeCapability = ctx.writeCapability ?? "write_capable";
+  const writeCapability = ctx.writeCapability ?? DEFAULT_LANE_WRITE_CAPABILITY;
   const laneRef = { workflowId: input.workflowId, laneId: backend };
   const request: AgentCallRequest =
     backend === "claude"
@@ -228,17 +229,11 @@ export async function callPrimitive(
           ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
         };
 
+  // Lane scheduling is owned by the WorkflowAgentCaller behind
+  // `deps.callAgent` — the single acquisition point (D16). No scheduling here.
   let result: AgentCallResult;
   try {
-    result = await deps.laneScheduler.schedule(
-      {
-        sessionKey: input.sessionKey,
-        writeCapability,
-        workflowId: input.workflowId,
-        laneId: backend,
-      },
-      () => deps.callAgent(request),
-    );
+    result = await deps.callAgent(request);
   } catch (err) {
     return { kind: "failed", errorSummary: getErrorMessage(err) };
   }
@@ -256,22 +251,12 @@ export async function callPrimitive(
     };
   }
 
-  await deps.laneService.recordOutcome(
-    laneRef,
-    backend === "claude"
-      ? {
-          backend: "claude",
-          ...(result.backendRef && result.backendRef.backend === "claude"
-            ? { conversationId: result.backendRef.sessionId }
-            : {}),
-        }
-      : {
-          backend: "codex",
-          ...(result.backendRef && result.backendRef.backend === "codex"
-            ? { threadId: result.backendRef.threadId }
-            : {}),
-        },
-  );
+  await deps.laneService.recordOutcome(laneRef, {
+    backend,
+    ...(result.backendRef && result.backendRef.backend === backend
+      ? { ref: result.backendRef.ref }
+      : {}),
+  });
 
   return { kind: "ok", result };
 }

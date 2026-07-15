@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   projectEventIdentity,
   sessionEventIdentity,
@@ -105,11 +106,6 @@ export type ContextArtifactCreatedBy = z.infer<typeof createdBySchema>;
 export const contextArtifactScopeSchema = z.enum(["session", "project"]);
 export type ContextArtifactScope = z.infer<typeof contextArtifactScopeSchema>;
 
-export const contextArtifactModelProviderSchema = z.enum(["claude", "codex"]);
-export type ContextArtifactModelProvider = z.infer<
-  typeof contextArtifactModelProviderSchema
->;
-
 /**
  * Domain shape of one `context_artifacts` row (camelCase). `payload` is the
  * parsed `payload_json` envelope — null while the artifact is pending or
@@ -163,7 +159,7 @@ export const contextArtifactRowSchema = z.object({
   sourceHash: z.string(),
   status: contextArtifactStatusSchema,
   error: z.string().nullable(),
-  modelProvider: contextArtifactModelProviderSchema,
+  modelProvider: agentBackendSchema,
   model: z.string(),
   effort: z.string().nullable(),
   schemaVersion: z.number().int(),

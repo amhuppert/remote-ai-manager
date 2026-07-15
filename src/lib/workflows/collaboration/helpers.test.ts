@@ -21,7 +21,7 @@ import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-voca
 function completed(structuredOutput: unknown): AgentCallResult {
   return {
     backend: "claude",
-    backendRef: { backend: "claude", sessionId: "sess" },
+    backendRef: { backend: "claude", ref: "sess" },
     capabilities: {
       backend: "claude",
       continuationStrength: "precise_session",

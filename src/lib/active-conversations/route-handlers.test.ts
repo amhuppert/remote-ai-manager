@@ -19,8 +19,8 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 
 function convo(
   status: ConversationStatus,

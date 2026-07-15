@@ -1,18 +1,20 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import PromptComposer from "@/features/session/prompt/PromptComposer";
-import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
-import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
-import { useClearInputHotkey } from "@/features/session/hooks/use-clear-input-hotkey";
-import { getModelsForBackend } from "@/components/ModelSelector";
+import PromptComposer from "@/components/session/prompt/PromptComposer";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
+import { useVoiceWiring } from "@/hooks/use-voice-wiring";
+import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
+import {
+  getDefaultModelForBackend,
+  getEffortLevelsForBackend,
+  getModelsForBackend,
+} from "@/lib/agent-backends/catalog";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   effortLevelSchema,
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";

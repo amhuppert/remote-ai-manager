@@ -1,19 +1,21 @@
 /**
  * Debug adapter — single seam around debug-mode operations.
  *
- * The conversation state machine still owns debug phase transitions, but
- * everything debug-specific that lives outside the machine — schema selection
- * for structured output, status emission onto the SSE wire, and lifecycle
- * dispatch from API routes — flows through this adapter. That gives the
- * debug subsystem one place to extend, audit, or stub in tests without
- * threading a new dependency through every caller.
+ * The debug workflow (`@/lib/workflows/debug/`) owns phase transitions
+ * through its pure command reducer; this adapter is how everything outside
+ * the machine reaches it — schema selection for structured output, status
+ * emission onto the SSE wire, and lifecycle dispatch from API routes. Each
+ * lifecycle method maps onto a `DebugCommand` carried by the machine's single
+ * `DEBUG_COMMAND` event; the boolean return mirrors the machine's legality
+ * gate (`snapshot.can()`), which routes reject with a 409.
  *
  * `sendConversationEvent` is resolved lazily via `require()` to mirror the
- * dynamic-import deferral used by `default-session-status-bus.ts` and avoid a
+ * dynamic-import deferral used by the SSE publication module and avoid a
  * circular import with `manager.ts`, which itself depends on the conversation
  * machine. Tests can inject a fake sender directly through `createDebugAdapter`.
  */
 import type { ConversationEvent } from "./types";
+import type { DebugCommand } from "@/lib/workflows/debug/commands";
 import type { DebugModePhase } from "@/lib/debug-log/schemas";
 import {
   debugCleanupResultSchema,
@@ -21,8 +23,8 @@ import {
   debugHypothesisOutputSchema,
 } from "./debug-schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
-import type { StatusBusDeliveryOutcome } from "@/lib/workflows/primitives/status-bus";
-import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import { publishEvent, type PublishOutcome } from "@/lib/events/publication";
+import { randomUUID } from "node:crypto";
 
 interface DebugOutputFormat {
   type: "json_schema";
@@ -57,21 +59,20 @@ type SendConversationEventFn = (
   event: ConversationEvent,
 ) => boolean;
 
-type PublishSSEFn = (event: SSEEvent) => StatusBusDeliveryOutcome;
+type PublishSSEFn = (event: SSEEvent) => PublishOutcome;
 
 export interface DebugAdapterDeps {
   sendConversationEvent?: SendConversationEventFn;
   publishSSE?: PublishSSEFn;
+  createDebugSessionId?(): string;
 }
 
 export interface DebugAdapter {
   resolveOutputFormat(
     phase: DebugModePhase | null | undefined,
   ): DebugOutputFormat | undefined;
-  publishDebugModeStatus(input: DebugStatusInput): StatusBusDeliveryOutcome;
-  publishDebugLogReceived(
-    input: DebugLogReceivedInput,
-  ): StatusBusDeliveryOutcome;
+  publishDebugModeStatus(input: DebugStatusInput): PublishOutcome;
+  publishDebugLogReceived(input: DebugLogReceivedInput): PublishOutcome;
   enterDebugMode(target: DebugTarget, args: { logFilePath: string }): boolean;
   exitDebugMode(target: DebugTarget): boolean;
   markReproduced(target: DebugTarget): boolean;
@@ -99,7 +100,6 @@ export interface DebugAdapter {
    */
   retryDebugTurn(target: DebugTarget): boolean;
   setRecording(target: DebugTarget, recording: boolean): boolean;
-  clearDebugLogs(target: DebugTarget): boolean;
 }
 
 function resolveSchema(
@@ -137,13 +137,20 @@ function defaultSendConversationEvent(
   );
 }
 
-function defaultPublishSSE(event: SSEEvent): StatusBusDeliveryOutcome {
-  return publishSessionStatus(event);
+function defaultPublishSSE(event: SSEEvent): PublishOutcome {
+  return publishEvent(event);
 }
 
 export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
   const sendEvent = deps.sendConversationEvent ?? defaultSendConversationEvent;
   const publishSSE = deps.publishSSE ?? defaultPublishSSE;
+  const createDebugSessionId = deps.createDebugSessionId ?? randomUUID;
+
+  const dispatch = (target: DebugTarget, command: DebugCommand): boolean =>
+    sendEvent(target.projectPath, target.sessionName, target.conversationId, {
+      type: "DEBUG_COMMAND",
+      command,
+    });
 
   // Per-phase wrapper cache. The downstream `shouldRecreateRuntime` check uses
   // reference equality on `outputFormat`, so returning a fresh `{ type, schema }`
@@ -186,93 +193,43 @@ export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
     },
 
     enterDebugMode(target, { logFilePath }) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "ENTER_DEBUG_MODE", logFilePath },
-      );
+      return dispatch(target, {
+        kind: "enter",
+        logFilePath,
+        debugSessionId: createDebugSessionId(),
+      });
     },
 
     exitDebugMode(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "EXIT_DEBUG_MODE" },
-      );
+      return dispatch(target, { kind: "exit" });
     },
 
     markReproduced(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "MARK_REPRODUCED" },
-      );
+      return dispatch(target, { kind: "mark_reproduced" });
     },
 
     markFixVerified(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "MARK_FIX_VERIFIED" },
-      );
+      return dispatch(target, { kind: "mark_fix_verified" });
     },
 
     markFixFailed(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "MARK_FIX_FAILED" },
-      );
+      return dispatch(target, { kind: "mark_fix_failed" });
     },
 
     revertToAwaitingReproduction(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "REVERT_TO_AWAITING_REPRODUCTION" },
-      );
+      return dispatch(target, { kind: "revert_to_awaiting_reproduction" });
     },
 
     revertToAwaitingVerification(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "REVERT_TO_AWAITING_VERIFICATION" },
-      );
+      return dispatch(target, { kind: "revert_to_awaiting_verification" });
     },
 
     retryDebugTurn(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "RETRY_DEBUG_TURN" },
-      );
+      return dispatch(target, { kind: "retry_turn" });
     },
 
     setRecording(target, recording) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "SET_DEBUG_RECORDING", recording },
-      );
-    },
-
-    clearDebugLogs(target) {
-      return sendEvent(
-        target.projectPath,
-        target.sessionName,
-        target.conversationId,
-        { type: "CLEAR_DEBUG_LOGS" },
-      );
+      return dispatch(target, { kind: "set_recording", recording });
     },
   };
 }

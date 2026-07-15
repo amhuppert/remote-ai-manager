@@ -62,6 +62,7 @@ const structuredResult: TaskRunResult = {
   text: "",
   usage: emptyUsage,
   backendRef: null,
+  continuationDisposition: "retain",
 };
 
 function makeDeps(
@@ -344,6 +345,7 @@ describe("createConversationCommandService eligible path", () => {
         text: "",
         usage: emptyUsage,
         backendRef: null,
+        continuationDisposition: "retain" as const,
       })),
     });
     const service = createConversationCommandService(deps);
@@ -367,6 +369,7 @@ describe("createConversationCommandService eligible path", () => {
         aborted: false,
         usage: emptyUsage,
         backendRef: null,
+        continuationDisposition: "retain" as const,
       })),
     });
     const service = createConversationCommandService(deps);
@@ -444,6 +447,7 @@ describe("createConversationCommandService eligible path", () => {
         aborted: false,
         usage: emptyUsage,
         backendRef: null,
+        continuationDisposition: "retain" as const,
       })),
     });
     const service = createConversationCommandService(deps);
@@ -641,7 +645,7 @@ describe("/align command", () => {
           return { ok: true, filePath: ".cc/session-alignment/charter.md" };
         },
       },
-      broadcast() {},
+      broadcast: () => ({ delivered: true }),
       promptQueue: {
         async enqueue() {},
       },
@@ -787,7 +791,7 @@ describe("/align command", () => {
           return { ok: true, filePath: "charter.md" };
         },
       },
-      broadcast() {},
+      broadcast: () => ({ delivered: true }),
       promptQueue: { async enqueue() {} },
       loadSession: () =>
         Promise.resolve({

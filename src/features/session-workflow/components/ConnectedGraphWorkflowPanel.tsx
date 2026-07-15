@@ -15,7 +15,7 @@ import {
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
-import type { WorkflowLiveEditOperation } from "@/lib/workflows/schemas";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import type { ExecutionControlAction } from "./ExecutionStatusBar";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";

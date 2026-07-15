@@ -24,12 +24,12 @@ import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.s
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { CodexConfig } from "@/lib/agent-backends/schemas";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import type {
-  GraphWorkflowAgentConfig,
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type { BuilderMobilePanel } from "./WorkflowBuilderEditor";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";

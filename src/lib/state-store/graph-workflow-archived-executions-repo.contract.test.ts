@@ -20,7 +20,7 @@ import { createSessionsRepo } from "./sessions-repo";
 import {
   graphWorkflowExecutionSchema,
   type GraphWorkflowExecution,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";

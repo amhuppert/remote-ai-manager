@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
+import { runAgent } from "./commands/agent";
 import { runAsk } from "./commands/ask";
 import { runCharter } from "./commands/charter";
-import { runCodex } from "./commands/codex";
 import { runConversation } from "./commands/conversation";
 import { runDecisions } from "./commands/decisions";
 import { runDev } from "./commands/dev";
@@ -241,7 +242,7 @@ async function runDoctor(
     return failure({
       exitCode: EXIT_CONNECTION,
       message: `cctl doctor: cannot reach the CC server at ${server} — is the CC server running?`,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: getErrorMessage(error),
       hint: "start the CC server, then re-run `cctl doctor`",
       json,
     });
@@ -352,7 +353,7 @@ export async function runCli(
   const result = await dispatchCli(parsed, env, host);
 
   // Soft location nudge for `--file` payloads, applied centrally so every
-  // payload command (workflow/charter/decisions/codex/ask) gets it without
+  // payload command (workflow/charter/decisions/agent/ask) gets it without
   // threading the advisory through each success return. Only on a successful
   // run — a failed invocation's payload location is moot.
   const fileFlag = parsed.values["file"];
@@ -421,8 +422,8 @@ async function dispatchCli(
     return runDecisions(positionals.slice(1), flags, values, env, host);
   }
 
-  if (command === "codex") {
-    return runCodex(positionals.slice(1), flags, values, env, host);
+  if (command === "agent") {
+    return runAgent(positionals.slice(1), flags, values, env, host);
   }
 
   if (command === "conversation") {

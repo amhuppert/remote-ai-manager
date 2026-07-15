@@ -10,10 +10,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { buildImplementerCollaborationContext } from "./implementer-collaboration-context";
-import type {
-  GraphWorkflowHaltReason,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 
 function resolvedCollaborationFixture(
   overrides?: Partial<ResolvedCollaborationConfig>,

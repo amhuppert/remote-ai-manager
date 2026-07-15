@@ -2,6 +2,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { mutationFetch } from "@/lib/api/fetcher";
+import {
+  cacheUpdate,
+  createOptimisticMutation,
+  type OptimisticCacheUpdate,
+} from "@/lib/api/optimistic";
 import { CONTEXT_ARTIFACT_SCHEMA_VERSION, type ArtifactKind } from "./schemas";
 import { contextArtifactKeys, type ContextArtifactTarget } from "./query-keys";
 import {
@@ -93,128 +98,120 @@ export function useCompactMutation(target: ContextArtifactTarget) {
   const queryClient = useQueryClient();
   const listKey = contextArtifactKeys.list(target);
 
-  return useMutation({
-    mutationFn: (variables: CompactVariables) =>
-      mutationFetch(
-        contextArtifactsBaseUrl(target),
-        "compact-conversation",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            kind: variables.kind,
-            messageIndex: variables.messageIndex,
-            mode: "create_or_refresh",
-            force: variables.force,
-          }),
-        },
-        compactResponseSchema,
-      ),
-    onMutate: async (variables) => {
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const previous =
-        queryClient.getQueryData<ContextArtifactListItem[]>(listKey);
-      const messageIndex = variables.messageIndex ?? null;
-      queryClient.setQueryData<ContextArtifactListItem[]>(listKey, (old) => {
-        const rows = old ?? [];
-        if (
-          rows.some((row) =>
-            matchesLogicalKey(row, variables.kind, messageIndex),
-          )
-        ) {
-          return rows.map((row) =>
-            matchesLogicalKey(row, variables.kind, messageIndex)
-              ? { ...row, status: "pending" as const, error: null }
-              : row,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (variables: CompactVariables) =>
+        mutationFetch(
+          contextArtifactsBaseUrl(target),
+          "compact-conversation",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind: variables.kind,
+              messageIndex: variables.messageIndex,
+              mode: "create_or_refresh",
+              force: variables.force,
+            }),
+          },
+          compactResponseSchema,
+        ),
+      updates: [
+        cacheUpdate<CompactVariables, ContextArtifactListItem[]>({
+          key: () => listKey,
+          update: (old, variables) => {
+            const messageIndex = variables.messageIndex ?? null;
+            const rows = old ?? [];
+            if (
+              rows.some((row) =>
+                matchesLogicalKey(row, variables.kind, messageIndex),
+              )
+            ) {
+              return rows.map((row) =>
+                matchesLogicalKey(row, variables.kind, messageIndex)
+                  ? { ...row, status: "pending" as const, error: null }
+                  : row,
+              );
+            }
+            return [...rows, makeOptimisticRow(target, variables)];
+          },
+        }),
+      ],
+      invalidateKeys: () => [contextArtifactKeys.conversation(target)],
+      onSuccess: (data, variables) => {
+        const messageIndex = variables.messageIndex ?? null;
+        if ("artifact" in data) {
+          const { artifact } = data;
+          queryClient.setQueryData(
+            contextArtifactKeys.detail(target, artifact.id),
+            artifact,
           );
+          // Zod strips keys the list-item schema omits, i.e. the payload.
+          const listItem = contextArtifactListItemSchema.parse(artifact);
+          queryClient.setQueryData<ContextArtifactListItem[]>(
+            listKey,
+            (old) => {
+              if (!old) return old;
+              return old.map((row) =>
+                matchesLogicalKey(row, variables.kind, messageIndex)
+                  ? listItem
+                  : row,
+              );
+            },
+          );
+          return;
         }
-        return [...rows, makeOptimisticRow(target, variables)];
-      });
-      return { previous };
-    },
-    onSuccess: (data, variables) => {
-      const messageIndex = variables.messageIndex ?? null;
-      if ("artifact" in data) {
-        const { artifact } = data;
-        queryClient.setQueryData(
-          contextArtifactKeys.detail(target, artifact.id),
-          artifact,
-        );
-        // Zod strips keys the list-item schema omits, i.e. the payload.
-        const listItem = contextArtifactListItemSchema.parse(artifact);
         queryClient.setQueryData<ContextArtifactListItem[]>(listKey, (old) => {
           if (!old) return old;
+          // The SSE status event may have already adopted the server id.
+          if (old.some((row) => row.id === data.artifactId)) return old;
           return old.map((row) =>
             matchesLogicalKey(row, variables.kind, messageIndex)
-              ? listItem
+              ? { ...row, id: data.artifactId }
               : row,
           );
         });
-        return;
-      }
-      queryClient.setQueryData<ContextArtifactListItem[]>(listKey, (old) => {
-        if (!old) return old;
-        // The SSE status event may have already adopted the server id.
-        if (old.some((row) => row.id === data.artifactId)) return old;
-        return old.map((row) =>
-          matchesLogicalKey(row, variables.kind, messageIndex)
-            ? { ...row, id: data.artifactId }
-            : row,
-        );
-      });
-    },
-    onError: (_err, _variables, context) => {
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData(listKey, context.previous);
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: contextArtifactKeys.conversation(target),
-      });
-    },
-  });
+      },
+    }),
+  );
 }
 
 export function useDeleteArtifactMutation(target: ContextArtifactTarget) {
   const queryClient = useQueryClient();
   const listKey = contextArtifactKeys.list(target);
 
-  return useMutation({
-    mutationFn: (artifactId: string) =>
-      mutationFetch(
-        `${contextArtifactsBaseUrl(target)}/${encodeURIComponent(artifactId)}`,
-        "delete-context-artifact",
-        { method: "DELETE" },
-        deleteResponseSchema,
-      ),
-    onMutate: async (artifactId) => {
-      await queryClient.cancelQueries({ queryKey: listKey });
-      const detailKey = contextArtifactKeys.detail(target, artifactId);
-      const previousList =
-        queryClient.getQueryData<ContextArtifactListItem[]>(listKey);
-      const previousDetail = queryClient.getQueryData(detailKey);
-      queryClient.setQueryData<ContextArtifactListItem[]>(listKey, (old) =>
-        old?.filter((row) => row.id !== artifactId),
-      );
-      queryClient.removeQueries({ queryKey: detailKey });
-      return { previousList, previousDetail };
-    },
-    onError: (_err, artifactId, context) => {
-      if (context?.previousList !== undefined) {
-        queryClient.setQueryData(listKey, context.previousList);
-      }
-      if (context?.previousDetail !== undefined) {
-        queryClient.setQueryData(
-          contextArtifactKeys.detail(target, artifactId),
-          context.previousDetail,
-        );
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: contextArtifactKeys.conversation(target),
+  // The detail entry is dropped outright (not patched); an error rollback
+  // restores its snapshot like any other touched key.
+  const detailRemoval: OptimisticCacheUpdate<string> = {
+    cancelKey: (artifactId) => contextArtifactKeys.detail(target, artifactId),
+    snapshotKeys: (_client, artifactId) => [
+      contextArtifactKeys.detail(target, artifactId),
+    ],
+    apply: (client, artifactId) => {
+      client.removeQueries({
+        queryKey: contextArtifactKeys.detail(target, artifactId),
       });
     },
-  });
+  };
+
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (artifactId: string) =>
+        mutationFetch(
+          `${contextArtifactsBaseUrl(target)}/${encodeURIComponent(artifactId)}`,
+          "delete-context-artifact",
+          { method: "DELETE" },
+          deleteResponseSchema,
+        ),
+      updates: [
+        cacheUpdate<string, ContextArtifactListItem[]>({
+          key: () => listKey,
+          update: (old, artifactId) =>
+            old?.filter((row) => row.id !== artifactId),
+        }),
+        detailRemoval,
+      ],
+      invalidateKeys: () => [contextArtifactKeys.conversation(target)],
+    }),
+  );
 }

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type {
   GraphWorkflowExecution,
-  GraphWorkflowExecutionLaneState,
   GraphWorkflowExecutionJoinState,
-} from "@/lib/workflows/schemas";
+  GraphWorkflowExecutionLaneState,
+} from "@/lib/workflow-graph/schemas";
 import {
   classifyContextSchedulability,
   isContextOutputCommittedToLane,

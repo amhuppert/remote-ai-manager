@@ -29,7 +29,7 @@ import {
   queuedBatchToSubmitPrompt,
   type ConversationQueueDeps,
   type DrainSelf,
-} from "@/lib/workflows/conversation/manager";
+} from "./message-queue-drain";
 import type { ConversationContext } from "@/lib/workflows/conversation/types";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 

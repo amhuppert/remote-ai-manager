@@ -13,7 +13,7 @@
 
 import { getRuntime as defaultGetRuntime } from "@/lib/agent-backends/runtime-registry";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
-import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/capabilities-descriptor";
+import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
   saveTranscriptImage as defaultSaveTranscriptImage,

@@ -10,6 +10,11 @@ import {
   type McpOverrideOperation,
 } from "./schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
+import {
+  cachePrefixUpdate,
+  createOptimisticMutation,
+  type OptimisticCacheUpdate,
+} from "@/lib/api/optimistic";
 
 export type McpMutationScope =
   | { level: "global" }
@@ -71,38 +76,29 @@ function scopedInvalidations(scope: McpMutationScope): readonly QueryKey[] {
   }
 }
 
-/**
- * Optimistically edit every matching cached MCP view at the given scope and
- * return a rollback function.
- */
-function applyOptimisticViewUpdate(
-  queryClient: ReturnType<typeof useQueryClient>,
-  scopeKey: QueryKey,
-  edit: (
-    server: McpConfigViewResponse["servers"][number],
-  ) => McpConfigViewResponse["servers"][number],
-  shouldEdit: (server: McpConfigViewResponse["servers"][number]) => boolean,
-): () => void {
-  const snapshots: Array<readonly [QueryKey, McpConfigViewResponse]> = [];
-  const caches = queryClient.getQueryCache().findAll({ queryKey: scopeKey });
-  for (const entry of caches) {
-    const data = entry.state.data as McpConfigViewResponse | undefined;
-    if (!data) continue;
-    snapshots.push([entry.queryKey, data]);
-    queryClient.setQueryData<McpConfigViewResponse>(entry.queryKey, {
-      ...data,
-      servers: data.servers.map((s) => (shouldEdit(s) ? edit(s) : s)),
-    });
-  }
-  return () => {
-    for (const [key, value] of snapshots) {
-      queryClient.setQueryData(key, value);
-    }
-  };
-}
+type McpServerView = McpConfigViewResponse["servers"][number];
 
-interface PatchContext {
-  rollback: () => void;
+/**
+ * Optimistic edit over every cached MCP view under the scope key (the view is
+ * cached per concrete scope, so a scope-level mutation must patch them all).
+ */
+function serverEditUpdate<TVars>(
+  scopeKey: QueryKey,
+  shouldEdit: (server: McpServerView, vars: TVars) => boolean,
+  edit: (server: McpServerView, vars: TVars) => McpServerView,
+): OptimisticCacheUpdate<TVars> {
+  return cachePrefixUpdate<TVars, McpConfigViewResponse>({
+    prefix: () => scopeKey,
+    update: (old, vars) =>
+      old
+        ? {
+            ...old,
+            servers: old.servers.map((s) =>
+              shouldEdit(s, vars) ? edit(s, vars) : s,
+            ),
+          }
+        : undefined,
+  });
 }
 
 function readEffectiveConfigHash(
@@ -135,165 +131,144 @@ export function useToggleMcpServerMutation(scope: McpMutationScope) {
   const queryClient = useQueryClient();
   const scopeKey = mcpScopeQueryKey(scope);
 
-  return useMutation<
-    void,
-    Error,
-    { serverKey: string; enabled: boolean },
-    PatchContext
-  >({
-    mutationFn: ({ serverKey, enabled }) =>
-      patchMcp(
-        scope,
-        [{ type: "set-server-enabled", serverKey, enabled }],
-        "mcp-toggle-server",
-        readEffectiveConfigHash(queryClient, scopeKey),
-      ),
-    onMutate: async ({ serverKey, enabled }) => {
-      await queryClient.cancelQueries({ queryKey: scopeKey });
-      const rollback = applyOptimisticViewUpdate(
-        queryClient,
-        scopeKey,
-        (s) => ({ ...s, enabled, pending: true }),
-        (s) => s.serverKey === serverKey,
-      );
-      return { rollback };
-    },
-    onError: (_err, _vars, context) => {
-      context?.rollback();
-    },
-    onSettled: () => {
-      for (const key of scopedInvalidations(scope)) {
-        void queryClient.invalidateQueries({ queryKey: key });
-      }
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
+        serverKey,
+        enabled,
+      }: {
+        serverKey: string;
+        enabled: boolean;
+      }) =>
+        patchMcp(
+          scope,
+          [{ type: "set-server-enabled", serverKey, enabled }],
+          "mcp-toggle-server",
+          readEffectiveConfigHash(queryClient, scopeKey),
+        ),
+      updates: [
+        serverEditUpdate<{ serverKey: string; enabled: boolean }>(
+          scopeKey,
+          (s, vars) => s.serverKey === vars.serverKey,
+          (s, vars) => ({ ...s, enabled: vars.enabled, pending: true }),
+        ),
+      ],
+      invalidateKeys: () => scopedInvalidations(scope),
+    }),
+  );
 }
 
 export function useResetMcpServerMutation(scope: McpMutationScope) {
   const queryClient = useQueryClient();
   const scopeKey = mcpScopeQueryKey(scope);
 
-  return useMutation<void, Error, { serverKey: string }, PatchContext>({
-    mutationFn: ({ serverKey }) =>
-      patchMcp(
-        scope,
-        [{ type: "reset-server", serverKey }],
-        "mcp-reset-server",
-        readEffectiveConfigHash(queryClient, scopeKey),
-      ),
-    onMutate: async ({ serverKey }) => {
-      await queryClient.cancelQueries({ queryKey: scopeKey });
-      const rollback = applyOptimisticViewUpdate(
-        queryClient,
-        scopeKey,
-        (s) => ({ ...s, pending: true }),
-        (s) => s.serverKey === serverKey,
-      );
-      return { rollback };
-    },
-    onError: (_err, _vars, context) => {
-      context?.rollback();
-    },
-    onSettled: () => {
-      for (const key of scopedInvalidations(scope)) {
-        void queryClient.invalidateQueries({ queryKey: key });
-      }
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({ serverKey }: { serverKey: string }) =>
+        patchMcp(
+          scope,
+          [{ type: "reset-server", serverKey }],
+          "mcp-reset-server",
+          readEffectiveConfigHash(queryClient, scopeKey),
+        ),
+      updates: [
+        serverEditUpdate<{ serverKey: string }>(
+          scopeKey,
+          (s, vars) => s.serverKey === vars.serverKey,
+          (s) => ({ ...s, pending: true }),
+        ),
+      ],
+      invalidateKeys: () => scopedInvalidations(scope),
+    }),
+  );
 }
 
 export function useToggleMcpToolMutation(scope: McpMutationScope) {
   const queryClient = useQueryClient();
   const scopeKey = mcpScopeQueryKey(scope);
 
-  return useMutation<
-    void,
-    Error,
-    { serverKey: string; toolName: string; enabled: boolean },
-    PatchContext
-  >({
-    mutationFn: ({ serverKey, toolName, enabled }) =>
-      patchMcp(
-        scope,
-        [{ type: "set-tool-enabled", serverKey, toolName, enabled }],
-        "mcp-toggle-tool",
-        readEffectiveConfigHash(queryClient, scopeKey),
-      ),
-    onMutate: async ({ serverKey, toolName, enabled }) => {
-      await queryClient.cancelQueries({ queryKey: scopeKey });
-      const rollback = applyOptimisticViewUpdate(
-        queryClient,
-        scopeKey,
-        (server) => ({
-          ...server,
-          pending: true,
-          tools: {
-            ...server.tools,
-            tools: server.tools.tools.map((t) =>
-              t.name === toolName ? { ...t, enabled, pending: true } : t,
-            ),
-          },
-        }),
-        (s) => s.serverKey === serverKey,
-      );
-      return { rollback };
-    },
-    onError: (_err, _vars, context) => {
-      context?.rollback();
-    },
-    onSettled: () => {
-      for (const key of scopedInvalidations(scope)) {
-        void queryClient.invalidateQueries({ queryKey: key });
-      }
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
+        serverKey,
+        toolName,
+        enabled,
+      }: {
+        serverKey: string;
+        toolName: string;
+        enabled: boolean;
+      }) =>
+        patchMcp(
+          scope,
+          [{ type: "set-tool-enabled", serverKey, toolName, enabled }],
+          "mcp-toggle-tool",
+          readEffectiveConfigHash(queryClient, scopeKey),
+        ),
+      updates: [
+        serverEditUpdate<{
+          serverKey: string;
+          toolName: string;
+          enabled: boolean;
+        }>(
+          scopeKey,
+          (s, vars) => s.serverKey === vars.serverKey,
+          (server, vars) => ({
+            ...server,
+            pending: true,
+            tools: {
+              ...server.tools,
+              tools: server.tools.tools.map((t) =>
+                t.name === vars.toolName
+                  ? { ...t, enabled: vars.enabled, pending: true }
+                  : t,
+              ),
+            },
+          }),
+        ),
+      ],
+      invalidateKeys: () => scopedInvalidations(scope),
+    }),
+  );
 }
 
 export function useResetMcpToolMutation(scope: McpMutationScope) {
   const queryClient = useQueryClient();
   const scopeKey = mcpScopeQueryKey(scope);
 
-  return useMutation<
-    void,
-    Error,
-    { serverKey: string; toolName: string },
-    PatchContext
-  >({
-    mutationFn: ({ serverKey, toolName }) =>
-      patchMcp(
-        scope,
-        [{ type: "reset-tool", serverKey, toolName }],
-        "mcp-reset-tool",
-        readEffectiveConfigHash(queryClient, scopeKey),
-      ),
-    onMutate: async ({ serverKey, toolName }) => {
-      await queryClient.cancelQueries({ queryKey: scopeKey });
-      const rollback = applyOptimisticViewUpdate(
-        queryClient,
-        scopeKey,
-        (server) => ({
-          ...server,
-          pending: true,
-          tools: {
-            ...server.tools,
-            tools: server.tools.tools.map((t) =>
-              t.name === toolName ? { ...t, pending: true } : t,
-            ),
-          },
-        }),
-        (s) => s.serverKey === serverKey,
-      );
-      return { rollback };
-    },
-    onError: (_err, _vars, context) => {
-      context?.rollback();
-    },
-    onSettled: () => {
-      for (const key of scopedInvalidations(scope)) {
-        void queryClient.invalidateQueries({ queryKey: key });
-      }
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
+        serverKey,
+        toolName,
+      }: {
+        serverKey: string;
+        toolName: string;
+      }) =>
+        patchMcp(
+          scope,
+          [{ type: "reset-tool", serverKey, toolName }],
+          "mcp-reset-tool",
+          readEffectiveConfigHash(queryClient, scopeKey),
+        ),
+      updates: [
+        serverEditUpdate<{ serverKey: string; toolName: string }>(
+          scopeKey,
+          (s, vars) => s.serverKey === vars.serverKey,
+          (server, vars) => ({
+            ...server,
+            pending: true,
+            tools: {
+              ...server.tools,
+              tools: server.tools.tools.map((t) =>
+                t.name === vars.toolName ? { ...t, pending: true } : t,
+              ),
+            },
+          }),
+        ),
+      ],
+      invalidateKeys: () => scopedInvalidations(scope),
+    }),
+  );
 }
 
 function mcpScopeToolsUrl(scope: McpMutationScope, serverKey: string): string {

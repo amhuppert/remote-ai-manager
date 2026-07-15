@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { type ReactNode } from "react";
+import { Dialog, DialogContent } from "@/components/ui/Dialog";
 import "./styles/cockpit.css";
 
 export interface DiffSlideoverProps {
@@ -58,38 +59,21 @@ export default function DiffSlideover({
   onClose,
   projectName,
   children,
-}: DiffSlideoverProps): React.JSX.Element | null {
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    closeRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  // Migration deferred (overlay-consumer dispositions): this is a full-height,
-  // right-edge slide-over rendered via preserved `cockpit.css`
-  // (`.plc-diff-overlay`/`.plc-diff-slideover`), not a centred modal card. The
-  // shipped `ui/Dialog` primitive's `DialogContent` only models the standard
-  // centred padded card, so adopting it would change the slide-over appearance
-  // (parity criterion). A clean migration needs an edge-anchored/unstyled content
-  // variant on the Dialog primitive — out of this consumer-migration context's
-  // scope. The manual Escape/scrim-click handling is retained meanwhile.
-
-  if (!open) return null;
-
+}: DiffSlideoverProps): React.JSX.Element {
+  // Right-edge slide-over composing the `ui/Dialog` unstyled/edge-anchored
+  // variant: Radix owns the focus trap, focus return, Escape/outside-press
+  // dismissal, and scroll-lock, while the preserved `cockpit.css`
+  // (`.plc-diff-overlay` scrim + self-positioning `.plc-diff-slideover` card)
+  // keeps the slide-in appearance. The visible header context doubles as the
+  // accessible title.
   return (
-    <div className="plc-diff-overlay" onMouseDown={onClose}>
-      <div
-        className="plc-diff-slideover"
-        role="dialog"
-        aria-modal="true"
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        unstyled
+        anchor="stretch"
+        scrimClassName="plc-diff-overlay"
+        contentClassName="plc-diff-slideover"
         aria-label="Main worktree diff"
-        onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={HEADER_CLASS}>
           <span className={CONTEXT_CLASS}>
@@ -98,7 +82,6 @@ export default function DiffSlideover({
           </span>
           <span className={SUBTITLE_CLASS}>Read-only review</span>
           <button
-            ref={closeRef}
             type="button"
             className={CLOSE_CLASS}
             onClick={onClose}
@@ -109,7 +92,7 @@ export default function DiffSlideover({
           </button>
         </header>
         <div className={BODY_CLASS}>{children}</div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

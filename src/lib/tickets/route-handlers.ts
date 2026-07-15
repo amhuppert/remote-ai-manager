@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { ApiError } from "@/lib/api/errors";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { createLogger, withTracing } from "@/lib/logging";
+import { notFound } from "@/lib/shared/route-resolution";
 import { parseTicketNumberSegment } from "./ticket-number";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type {
@@ -27,6 +28,7 @@ import {
   updateTicketServiceInputSchema,
   type TicketService,
 } from "./service";
+import { resolveTicketProjectOr404 } from "./route-resolution";
 
 const logger = createLogger("tickets.routes");
 
@@ -55,16 +57,6 @@ export type RouteContext = {
 // Shared response mapping
 // ---------------------------------------------------------------------------
 
-export function projectNotFoundResponse(projectName: string): Response {
-  return NextResponse.json(
-    {
-      error: `Project not found: ${projectName}`,
-      code: "project_not_found",
-    } satisfies ApiError,
-    { status: 404 },
-  );
-}
-
 export function validationFailedResponse(
   issues: TicketValidationIssue[],
 ): Response {
@@ -84,18 +76,12 @@ export function ticketErrorResponse(error: TicketError): Response {
     case "validation_failed":
       return validationFailedResponse(error.issues);
     case "ticket_not_found":
-      return NextResponse.json(
-        { error: `Ticket not found: ${error.identifier}`, code: error.code },
-        { status: 404 },
-      );
+      return notFound(`Ticket not found: ${error.identifier}`, error.code);
     case "attachment_not_found":
-      return NextResponse.json(
-        {
-          error: `Attachment not found on ${error.identifier}: ${error.attachmentId}`,
-          code: error.code,
-          details: { attachmentId: error.attachmentId },
-        },
-        { status: 404 },
+      return notFound(
+        `Attachment not found on ${error.identifier}: ${error.attachmentId}`,
+        error.code,
+        { attachmentId: error.attachmentId },
       );
     case "active_session":
       return NextResponse.json(
@@ -279,9 +265,11 @@ export function createTicketsRouteHandlers(
       const name = parseProjectNameParam(await context.params);
       if (!name.ok) return name.response;
       const { projectName } = name;
-      if ((await deps.resolveProjectPath(projectName)) === null) {
-        return projectNotFoundResponse(projectName);
-      }
+      const project = await resolveTicketProjectOr404(
+        { resolveProjectPath: deps.resolveProjectPath },
+        projectName,
+      );
+      if (!project.ok) return project.response;
       return listTickets(request, projectName);
     },
 
@@ -292,9 +280,11 @@ export function createTicketsRouteHandlers(
       const name = parseProjectNameParam(await context.params);
       if (!name.ok) return name.response;
       const { projectName } = name;
-      if ((await deps.resolveAvailableProjectPath(projectName)) === null) {
-        return projectNotFoundResponse(projectName);
-      }
+      const project = await resolveTicketProjectOr404(
+        { resolveProjectPath: deps.resolveAvailableProjectPath },
+        projectName,
+      );
+      if (!project.ok) return project.response;
       const body = await jsonBodyOrNull(request);
       if (body === null) {
         return validationFailedResponse([

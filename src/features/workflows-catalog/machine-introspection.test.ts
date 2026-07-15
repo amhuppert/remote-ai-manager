@@ -9,12 +9,11 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { and, setup } from "xstate";
 
 import { conversationMachine } from "@/lib/workflows/conversation/machine";
 import { mergeMachine } from "@/lib/workflows/merge/machine";
 import { commitMachine } from "@/lib/workflows/commit/machine";
-import { optimisticMachine } from "@/lib/workflows/optimistic/machine";
-import { createRetryMachine } from "@/lib/workflows/retry-machine";
 
 import { introspectMachine } from "./machine-introspection";
 import { machineSpecs, getMachineSpec } from "./machine-specs";
@@ -23,8 +22,6 @@ const machineFixtures = {
   conversation: conversationMachine,
   "smart-merge": mergeMachine,
   "smart-commit": commitMachine,
-  optimistic: optimisticMachine,
-  retry: createRetryMachine<unknown, unknown>(),
 } as const;
 
 describe("introspectMachine", () => {
@@ -43,32 +40,37 @@ describe("introspectMachine", () => {
       "finalizingTurn",
       "waitingForInput",
       "debug",
-      "debug.hypothesizing",
-      "debug.awaitingReproduction",
-      "debug.analyzingEvidence",
-      "debug.awaitingVerification",
-      "debug.cleanupInstrumentation",
-      "debug.verifyingCleanup",
-      "debug.error",
     ]);
     expect(result.actors).toEqual([
       "executePrompt",
       "prepareTurn",
       "runTaskRun",
-      "verifyCleanup",
     ]);
   });
 
-  it("conversation: composite guard renders as 'a && b'", () => {
-    const result = introspectMachine(conversationMachine);
-    const finalizing = result.states.find((s) => s.id === "finalizingTurn");
-    const composite = finalizing?.events.find(
-      (e) =>
-        e.guard ===
-        "isDebugAnalyzing && lastTurnProducedStructuredOutput && analysisOutcomeIsMoreInstrumentation",
-    );
+  it("composite guard renders as 'a && b'", () => {
+    const compositeMachine = setup({
+      guards: {
+        first: () => true,
+        second: () => true,
+      },
+    }).createMachine({
+      id: "composite",
+      initial: "start",
+      states: {
+        start: {
+          on: {
+            GO: { guard: and(["first", "second"]), target: "done" },
+          },
+        },
+        done: {},
+      },
+    });
+    const result = introspectMachine(compositeMachine);
+    const start = result.states.find((s) => s.id === "start");
+    const composite = start?.events.find((e) => e.guard === "first && second");
     expect(composite).toBeDefined();
-    expect(composite?.target).toBe("debug.awaitingReproduction");
+    expect(composite?.target).toBe("done");
   });
 
   it("conversation: parentId is set on nested states", () => {
@@ -77,10 +79,8 @@ describe("introspectMachine", () => {
       (s) => s.id === "executing.conversationTurn",
     );
     expect(conversationTurn?.parentId).toBe("executing");
-    const hypothesizing = result.states.find(
-      (s) => s.id === "debug.hypothesizing",
-    );
-    expect(hypothesizing?.parentId).toBe("debug");
+    const taskRun = result.states.find((s) => s.id === "executing.taskRun");
+    expect(taskRun?.parentId).toBe("executing");
   });
 
   it("conversation: absolute target '#conversation.x' resolves to 'x'", () => {
@@ -128,47 +128,10 @@ describe("introspectMachine", () => {
     expect(byId.get("publishing")?.invokes).toEqual(["publish"]);
     expect(byId.get("discarding")?.invokes).toEqual(["discardParkedRef"]);
   });
-
-  it("optimistic: minimal machine — actors/guards/actions counts", () => {
-    const result = introspectMachine(optimisticMachine);
-    expect(result.machineId).toBe("optimistic");
-    expect(result.actors).toEqual(["dispatchMerge", "executePrompt"]);
-    expect(result.guards).toEqual([]);
-    expect(result.actions).toEqual(["notifyFailure"]);
-  });
-
-  it("retry (factory): four states, one guard", () => {
-    const result = introspectMachine(createRetryMachine<unknown, unknown>());
-    expect(result.machineId).toBe("retry");
-    expect(result.initialState).toBe("attempting");
-    expect(result.states.map((s) => s.id)).toEqual([
-      "attempting",
-      "fixing",
-      "succeeded",
-      "exhausted",
-    ]);
-    expect(result.guards).toEqual(["hasRetriesLeft"]);
-    expect(result.actors).toEqual(["fix", "work"]);
-  });
-
-  it("retry: classifies final states correctly", () => {
-    const result = introspectMachine(createRetryMachine<unknown, unknown>());
-    const byId = new Map(result.states.map((s) => [s.id, s]));
-    expect(byId.get("succeeded")?.kind).toBe("final");
-    expect(byId.get("exhausted")?.kind).toBe("final");
-    expect(byId.get("attempting")?.kind).toBe("atomic");
-    expect(byId.get("fixing")?.kind).toBe("atomic");
-  });
 });
 
 describe("machine-specs metadata coverage", () => {
-  for (const id of [
-    "conversation",
-    "smart-merge",
-    "smart-commit",
-    "optimistic",
-    "retry",
-  ] as const) {
+  for (const id of ["conversation", "smart-merge", "smart-commit"] as const) {
     describe(id, () => {
       const spec = getMachineSpec(id);
       const machine = machineFixtures[id];
@@ -215,13 +178,11 @@ describe("machine-specs metadata coverage", () => {
     });
   }
 
-  it("the registry has all 5 machines", () => {
+  it("the registry has all 3 machines", () => {
     expect(machineSpecs.map((s) => s.id)).toEqual([
       "conversation",
       "smart-merge",
       "smart-commit",
-      "optimistic",
-      "retry",
     ]);
   });
 });

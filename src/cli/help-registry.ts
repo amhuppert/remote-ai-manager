@@ -16,7 +16,7 @@
 
 import { askHelpEntries } from "./commands/ask.help";
 import { charterHelpEntries } from "./commands/charter.help";
-import { codexHelpEntries } from "./commands/codex.help";
+import { agentHelpEntries } from "./commands/agent.help";
 import { conversationHelpEntries } from "./commands/conversation.help";
 import { decisionsHelpEntries } from "./commands/decisions.help";
 import { docsHelpEntries } from "./commands/docs.help";
@@ -173,7 +173,7 @@ const ENTRIES: CommandHelpEntry[] = [
   ...workflowHelpEntries,
   ...charterHelpEntries,
   ...decisionsHelpEntries,
-  ...codexHelpEntries,
+  ...agentHelpEntries,
   ...conversationHelpEntries,
   ...ticketHelpEntries,
   ...metaHelpEntries,

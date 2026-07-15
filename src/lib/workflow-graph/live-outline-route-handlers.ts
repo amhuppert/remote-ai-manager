@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createLogger, withTracing } from "@/lib/logging";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
@@ -7,7 +11,7 @@ import {
 } from "@/lib/state-store";
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { projectLiveOutline, type LiveOutlineSelector } from "./live-outline";
 
 const logger = createLogger("workflow.live-edit");
@@ -34,12 +38,6 @@ const defaultDeps: GraphWorkflowLiveOutlineRouteDeps = {
   getActiveExecution: getActiveGraphWorkflowExecution,
 };
 
-function notFound(message: string): Response {
-  return NextResponse.json({ error: message } satisfies ApiError, {
-    status: 404,
-  });
-}
-
 async function resolveSession(
   context: RouteContext,
   deps: GraphWorkflowLiveOutlineRouteDeps,
@@ -47,15 +45,13 @@ async function resolveSession(
   const params = await context.params;
   const projectName = params["name"] ?? "";
   const sessionName = decodeURIComponent(params["session"] ?? "");
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return { error: notFound("Project not found") };
-  }
-  const session = await deps.getSession(projectPath, sessionName);
-  if (!session) {
-    return { error: notFound("Session not found") };
-  }
-  return { projectPath, sessionName };
+  const resolved = await resolveProjectSessionOr404(
+    deps,
+    projectName,
+    sessionName,
+  );
+  if (!resolved.ok) return { error: resolved.response };
+  return { projectPath: resolved.value.projectPath, sessionName };
 }
 
 /**

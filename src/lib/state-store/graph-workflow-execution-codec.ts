@@ -2,8 +2,8 @@ import {
   migrateLegacyExecution,
   needsLegacyMigration,
 } from "@/lib/workflow-graph/migrate-legacy-execution";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { getErrorMessage } from "../shared/errors";
 import { stableStringify } from "./serialization";
 
@@ -72,7 +72,9 @@ export function decodeGraphWorkflowExecution(
     }
   }
 
-  const parseResult = graphWorkflowExecutionSchema.nullable().safeParse(upgraded);
+  const parseResult = graphWorkflowExecutionSchema
+    .nullable()
+    .safeParse(upgraded);
   if (!parseResult.success) {
     return { ok: false, issues: parseResult.error.issues };
   }

@@ -2,6 +2,7 @@
 // file only adapts process argv/env/stdio and must stay this thin.
 import { readFile } from "node:fs/promises";
 import os from "node:os";
+import { sleep } from "@/lib/shared/sleep";
 import { runCli } from "./core";
 
 const result = await runCli(process.argv.slice(2), process.env, {
@@ -38,7 +39,7 @@ const result = await runCli(process.argv.slice(2), process.env, {
       return null;
     }
   },
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep,
   platform: os.platform(),
   homedir: os.homedir(),
 });

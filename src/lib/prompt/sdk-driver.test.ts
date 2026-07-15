@@ -3,6 +3,11 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationTurnExecution,
+  ConversationTurnProjection,
+  ExecuteConversationTurnInput,
+} from "@/lib/workflows/conversation/manager";
 
 // ---------------------------------------------------------------------------
 // Infrastructure mocks (module-level side effects only)
@@ -153,9 +158,88 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-function createTestDeps(overrides: Partial<PromptDeps> = {}): PromptDeps {
-  const conversation = makeConversation();
+interface LegacyPromptTestDeps {
+  ensureConversationActor(...args: unknown[]): Promise<typeof mockActor>;
+  attachPromptStream(...args: unknown[]): void;
+  detachPromptStream(...args: unknown[]): void;
+  sendConversationEvent(...args: unknown[]): boolean;
+}
+
+type TestPromptDeps = PromptDeps & LegacyPromptTestDeps;
+
+function projectMockTurn(): ConversationTurnProjection {
+  const context = mockActor.getSnapshot().context as {
+    totals?: {
+      contextTokens?: number | null;
+      contextWindowMax?: number | null;
+    };
+    lastResult?: {
+      structuredOutput?: unknown;
+      aborted?: boolean;
+      compacted?: boolean;
+      abortReason?: "timeout" | "user" | "shutdown";
+      timeoutMs?: number;
+      error?: string | null;
+      backgroundWait?: ConversationTurnProjection["backgroundWait"];
+    };
+    lastError?: string | null;
+  };
   return {
+    contextTokens: context.totals?.contextTokens ?? null,
+    contextWindowMax: context.totals?.contextWindowMax ?? null,
+    structuredOutput: context.lastResult?.structuredOutput,
+    aborted: context.lastResult?.aborted ?? false,
+    compacted: context.lastResult?.compacted ?? false,
+    ...(context.lastResult?.abortReason !== undefined
+      ? { abortReason: context.lastResult.abortReason }
+      : {}),
+    ...(context.lastResult?.timeoutMs !== undefined
+      ? { timeoutMs: context.lastResult.timeoutMs }
+      : {}),
+    error: context.lastResult?.error ?? context.lastError ?? null,
+    ...(context.lastResult?.backgroundWait !== undefined
+      ? { backgroundWait: context.lastResult.backgroundWait }
+      : {}),
+  };
+}
+
+function waitForMockTurnCompletion(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const initial = mockActor.getSnapshot();
+    const isSettled = (value: unknown): boolean =>
+      value === "idle" ||
+      value === "waitingForInput" ||
+      value === "debug" ||
+      (typeof value === "object" && value !== null && "debug" in value);
+    let sawTransition = !isSettled(initial.value);
+    const subscription = mockActor.subscribe((snapshotValue) => {
+      const snapshot = snapshotValue as {
+        value: unknown;
+        status: "active" | "done" | "error";
+      };
+      if (!sawTransition && !isSettled(snapshot.value)) sawTransition = true;
+      if (snapshot.status === "error") {
+        subscription.unsubscribe();
+        reject(new Error("Conversation lifecycle errored"));
+        return;
+      }
+      if (
+        snapshot.status === "done" ||
+        (sawTransition && isSettled(snapshot.value))
+      ) {
+        subscription.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+function createTestDeps(
+  overrides: Partial<TestPromptDeps> = {},
+): TestPromptDeps {
+  const conversation = makeConversation();
+  const deps = {} as TestPromptDeps;
+  Object.assign(deps, {
     getConversation: vi.fn().mockResolvedValue(conversation),
     createConversation: vi.fn().mockResolvedValue(conversation),
     setConversationBackend: vi.fn().mockResolvedValue(undefined),
@@ -166,15 +250,69 @@ function createTestDeps(overrides: Partial<PromptDeps> = {}): PromptDeps {
     attachPromptStream: vi.fn(),
     detachPromptStream: vi.fn(),
     sendConversationEvent: vi.fn(() => true),
-    ...overrides,
-  } as PromptDeps;
+    ensureConversationLifecycle: vi.fn(async (...args: unknown[]) => {
+      await deps.ensureConversationActor(...args);
+    }),
+    executeConversationTurn: vi.fn(
+      async (
+        input: ExecuteConversationTurnInput,
+      ): Promise<ConversationTurnExecution> => {
+        deps.attachPromptStream(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+          input.streamId,
+          input.emit,
+        );
+        try {
+          const accepted = deps.sendConversationEvent(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+            {
+              type: "SUBMIT_PROMPT",
+              ...input.turn,
+              streamId: input.streamId,
+            },
+          );
+          if (!accepted) {
+            return {
+              status: "rejected",
+              reason: "not_ready",
+              result: projectMockTurn(),
+            };
+          }
+          await input.onAccepted?.();
+          try {
+            await waitForMockTurnCompletion();
+            return { status: "completed", result: projectMockTurn() };
+          } catch (err) {
+            return {
+              status: "failed",
+              error: err instanceof Error ? err.message : "Prompt failed",
+              result: projectMockTurn(),
+            };
+          }
+        } finally {
+          deps.detachPromptStream(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+            input.streamId,
+          );
+        }
+      },
+    ),
+  });
+  Object.assign(deps, overrides);
+  return deps;
 }
 
 // ---------------------------------------------------------------------------
 // Reset
 // ---------------------------------------------------------------------------
 
-let deps: PromptDeps;
+let deps: TestPromptDeps;
 let executePromptStream: ReturnType<
   typeof createPromptExecutor
 >["executePromptStream"];
@@ -1635,6 +1773,7 @@ describe("conversation command interception", () => {
           cachedInputTokens: null,
         },
         backendRef: null,
+        continuationDisposition: "retain" as const,
       })),
       dispatchCommitJob: vi.fn(() => ({
         ok: true as const,

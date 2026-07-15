@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
@@ -37,15 +38,14 @@ export async function runCharter(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure("charter requires a subcommand: write", json);
-  }
-  if (sub === "write") {
-    return runCharterWrite(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown charter subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["charter"],
+    rest,
+    json: flags.json,
+    handlers: {
+      write: (r) => runCharterWrite(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runCharterWrite(

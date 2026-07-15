@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
+import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   workflowGeneratedDraftSchema,
   workflowPlanRequestSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import type { ApiError } from "@/lib/api/errors";
 import type {
   WorkflowGeneratedDraft,
   WorkflowPlanRequest,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { createWorkflowPlannerService } from "@/lib/workflow-graph/planner";
 import {
   ensurePlannerSession as defaultEnsurePlannerSession,
@@ -48,13 +49,9 @@ export function createWorkflowGenerateRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     let body: WorkflowPlanRequest;
     try {

@@ -13,6 +13,7 @@ import {
   listActiveGraphWorkflowExecutions as defaultListActiveGraphWorkflowExecutions,
 } from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
+import { truncate } from "@/lib/shared/truncate";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/prompt/transcript";
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import type {
@@ -28,13 +29,15 @@ import type {
 import type { ManagerState } from "@/lib/projects/schemas";
 import type {
   GraphWorkflowCleanupStatusValue,
+  GraphWorkflowMergeStatusValue,
+} from "@/lib/workflow-graph/event-schemas";
+import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
-  GraphWorkflowMergeStatusValue,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { ApiError } from "@/lib/api/errors";
 
 const logger = createLogger("active-conversations.route");
@@ -317,11 +320,6 @@ function collapseWhitespace(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + "…";
-}
-
 function summarizeToolUse(block: {
   name: string;
   input?: Record<string, unknown>;
@@ -366,7 +364,9 @@ export function deriveLastActivitySummary(
   if (convo.status === "awaiting" || convo.status === "waiting_for_input") {
     const q = convo.pendingQuestions?.[0]?.question;
     if (!q) return null;
-    return truncate(collapseWhitespace(q), LAST_ACTIVITY_MAX);
+    return truncate(collapseWhitespace(q), LAST_ACTIVITY_MAX, {
+      countEllipsisInBudget: true,
+    });
   }
 
   // status === "running"
@@ -378,7 +378,9 @@ export function deriveLastActivitySummary(
     if (block?.type === "tool_use") {
       const summary = summarizeToolUse(block);
       if (summary)
-        return truncate(collapseWhitespace(summary), LAST_ACTIVITY_MAX);
+        return truncate(collapseWhitespace(summary), LAST_ACTIVITY_MAX, {
+          countEllipsisInBudget: true,
+        });
     }
   }
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -386,7 +388,9 @@ export function deriveLastActivitySummary(
     if (block?.type === "text") {
       const text = collapseWhitespace(block.text);
       if (text.length === 0) continue;
-      return truncate(text, LAST_ACTIVITY_MAX);
+      return truncate(text, LAST_ACTIVITY_MAX, {
+        countEllipsisInBudget: true,
+      });
     }
   }
   return null;

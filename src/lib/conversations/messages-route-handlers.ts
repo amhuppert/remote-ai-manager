@@ -8,6 +8,10 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
@@ -68,25 +72,12 @@ export function createMessagesRouteHandlers(
   ): Promise<Response> {
     const resolvedParams = await context.params;
     const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
+    const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
     const conversationId = resolvedParams["conversationId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const sessionState = await deps.getSession(projectPath, sessionName);
-    if (!sessionState) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const projectPath = resolved.value.projectPath;
 
     const conversation = await deps.getConversation(
       projectPath,
@@ -94,10 +85,7 @@ export function createMessagesRouteHandlers(
       conversationId,
     );
     if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Conversation not found");
     }
 
     try {

@@ -7,6 +7,7 @@ const meta = {
   component: ModelSelector,
   args: {
     value: "sonnet",
+    backend: "claude",
     onChange: fn(),
   },
   decorators: [
@@ -30,24 +31,27 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default = {
-  args: {},
+  args: { backend: "claude" },
 } satisfies Story;
 
 export const Opus = {
   args: {
     value: "opus",
+    backend: "claude",
   },
 } satisfies Story;
 
 export const Haiku = {
   args: {
     value: "haiku",
+    backend: "claude",
   },
 } satisfies Story;
 
 export const Disabled = {
   args: {
     disabled: true,
+    backend: "claude",
   },
 } satisfies Story;
 

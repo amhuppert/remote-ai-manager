@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import {
   Select,
   SelectTrigger,
@@ -8,46 +9,12 @@ import {
   SelectItem,
 } from "@/components/ui/Select";
 
-interface ModelOption {
-  id: string;
-  label: string;
-  description: string;
-}
-
-const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
-  { id: "fable", label: "Fable", description: "Most capable" },
-  { id: "opus", label: "Opus", description: "Highly capable" },
-  { id: "sonnet", label: "Sonnet", description: "Balanced" },
-  { id: "haiku", label: "Haiku", description: "Fastest" },
-];
-
-const CODEX_MODEL_OPTIONS: ModelOption[] = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "Flagship" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "Balanced" },
-  {
-    id: "gpt-5.6-luna",
-    label: "GPT-5.6 Luna",
-    description: "Fast & affordable",
-  },
-  { id: "gpt-5.5", label: "GPT-5.5", description: "Previous flagship" },
-  { id: "gpt-5.4", label: "GPT-5.4", description: "Previous generation" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", description: "Balanced" },
-  { id: "gpt-5.4-nano", label: "GPT-5.4 Nano", description: "Fastest" },
-];
-
-/** Returns the model options for the given backend. */
-export function getModelsForBackend(
-  backend: AgentBackendId = "claude",
-): ModelOption[] {
-  return backend === "codex" ? CODEX_MODEL_OPTIONS : CLAUDE_MODEL_OPTIONS;
-}
-
 interface ModelSelectorProps {
   value: string;
   /** Bivariant via method syntax — callers can pass `(model: ModelId) => void` */
   onChange(model: string): void;
   disabled?: boolean;
-  backend?: AgentBackendId;
+  backend: AgentBackendId;
   /**
    * Reports the dropdown's open-state. The composer-focus hook uses it to hold
    * `composerFocused` true while this portaled popup (rendered outside the
@@ -60,10 +27,15 @@ export default function ModelSelector({
   value,
   onChange,
   disabled = false,
-  backend = "claude",
+  backend,
   onOpenChange,
 }: ModelSelectorProps): React.JSX.Element {
-  const options = getModelsForBackend(backend);
+  const { data: backends } = useBackendCatalogQuery();
+  const entry = backends.find((b) => b.id === backend);
+  if (!entry) {
+    throw new Error(`Unknown agent backend: ${backend}`);
+  }
+  const options = entry.models;
   // Fall back to the first option (the most capable of the set) when `value`
   // does not match the current backend's set — e.g. mid backend-switch.
   const selected = options.find((m) => m.id === value) ?? options[0]!;

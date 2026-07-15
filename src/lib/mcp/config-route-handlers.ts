@@ -11,6 +11,12 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  jsonError,
+  notFound,
+  resolveProjectOr404,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 
 import { createLogger } from "@/lib/logging";
 import type { GlobalOverrideStore } from "@/lib/mcp/global-store";
@@ -42,6 +48,7 @@ import {
 import { type AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 /**
  * Per-project override reader. Used at project / session / conversation scopes
  * so the resolver chain includes the just-written project overrides (which
@@ -151,10 +158,6 @@ interface RouteContext {
   params: Promise<Record<string, string>>;
 }
 
-function jsonError(message: string, status: number): Response {
-  return NextResponse.json({ error: message }, { status });
-}
-
 async function fanOutRuntimeApply(input: {
   targets: readonly RuntimeTarget[];
   changedServerKeys: readonly string[];
@@ -176,7 +179,7 @@ async function fanOutRuntimeApply(input: {
         conversationId: target.conversationId,
         backend: target.backend,
         changedServerKeys: input.changedServerKeys,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   }
@@ -373,8 +376,9 @@ export function createProjectMcpConfigHandlers(
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
     try {
       const { name } = (await ctx.params) as ProjectRouteParams;
-      const projectPath = await deps.resolveProjectPath(name);
-      if (!projectPath) return jsonError("Project not found", 404);
+      const project = await resolveProjectOr404(deps, name);
+      if (!project.ok) return project.response;
+      const projectPath = project.value;
       const view = await resolveCurrent({
         projectName: name,
         projectPath,
@@ -391,8 +395,9 @@ export function createProjectMcpConfigHandlers(
 
     try {
       const { name } = (await ctx.params) as ProjectRouteParams;
-      const projectPath = await deps.resolveProjectPath(name);
-      if (!projectPath) return jsonError("Project not found", 404);
+      const project = await resolveProjectOr404(deps, name);
+      if (!project.ok) return project.response;
+      const projectPath = project.value;
 
       const result = await deps.mutationService.patchProject({
         projectName: name,
@@ -510,14 +515,13 @@ export function createSessionMcpConfigHandlers(
     | { ok: true; projectPath: string; session: SessionState }
     | { ok: false; response: Response }
   > {
-    const projectPath = await deps.resolveProjectPath(params.name);
-    if (!projectPath) {
-      return { ok: false, response: jsonError("Project not found", 404) };
-    }
-    const session = await deps.getSession(projectPath, params.session);
-    if (!session) {
-      return { ok: false, response: jsonError("Session not found", 404) };
-    }
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      params.name,
+      params.session,
+    );
+    if (!resolved.ok) return resolved;
+    const { projectPath, session } = resolved.value;
     return { ok: true, projectPath, session };
   }
 
@@ -575,7 +579,7 @@ export function createSessionMcpConfigHandlers(
         params.session,
       );
       if (!refreshedSession) {
-        return jsonError("Session not found", 404);
+        return notFound("Session not found");
       }
       const next = await resolveCurrent({
         projectName: params.name,
@@ -692,22 +696,18 @@ export function createConversationMcpConfigHandlers(
       }
     | { ok: false; response: Response }
   > {
-    const projectPath = await deps.resolveProjectPath(params.name);
-    if (!projectPath) {
-      return { ok: false, response: jsonError("Project not found", 404) };
-    }
-    const session = await deps.getSession(projectPath, params.session);
-    if (!session) {
-      return { ok: false, response: jsonError("Session not found", 404) };
-    }
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      params.name,
+      params.session,
+    );
+    if (!resolved.ok) return resolved;
+    const { projectPath, session } = resolved.value;
     const conversation = session.conversations.find(
       (c) => c.id === params.conversationId,
     );
     if (!conversation) {
-      return {
-        ok: false,
-        response: jsonError("Conversation not found", 404),
-      };
+      return { ok: false, response: notFound("Conversation not found") };
     }
     return { ok: true, projectPath, session, conversation };
   }
@@ -846,22 +846,18 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
     | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
-    const projectPath = await deps.resolveProjectPath(params.name);
-    if (!projectPath) {
-      return { ok: false, response: jsonError("Project not found", 404) };
-    }
-    const session = await deps.getSession(projectPath, params.session);
-    if (!session) {
-      return { ok: false, response: jsonError("Session not found", 404) };
-    }
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      params.name,
+      params.session,
+    );
+    if (!resolved.ok) return resolved;
+    const { session } = resolved.value;
     const conversation = session.conversations.find(
       (c) => c.id === params.conversationId,
     );
     if (!conversation) {
-      return {
-        ok: false,
-        response: jsonError("Conversation not found", 404),
-      };
+      return { ok: false, response: notFound("Conversation not found") };
     }
     const discovery = await deps.discoverAllSources({
       globalConfigPath: deps.globalConfigPath(),
@@ -871,10 +867,7 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
       (s) => s.serverKey === params.serverKey,
     );
     if (!definition) {
-      return {
-        ok: false,
-        response: jsonError("MCP server not found", 404),
-      };
+      return { ok: false, response: notFound("MCP server not found") };
     }
     return { ok: true, definition };
   }
@@ -1023,7 +1016,7 @@ export function createGlobalToolInventoryHandlers(
       (s) => s.serverKey === serverKey,
     );
     if (!definition) {
-      return { ok: false, response: jsonError("MCP server not found", 404) };
+      return { ok: false, response: notFound("MCP server not found") };
     }
     return { ok: true, definition };
   }
@@ -1075,10 +1068,9 @@ export function createProjectToolInventoryHandlers(
     | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
-    const projectPath = await deps.resolveProjectPath(params.name);
-    if (!projectPath) {
-      return { ok: false, response: jsonError("Project not found", 404) };
-    }
+    const project = await resolveProjectOr404(deps, params.name);
+    if (!project.ok) return project;
+    const projectPath = project.value;
     const discovery = await deps.discoverAllSources({
       globalConfigPath: deps.globalConfigPath(),
       worktreePath: projectPath,
@@ -1087,7 +1079,7 @@ export function createProjectToolInventoryHandlers(
       (s) => s.serverKey === params.serverKey,
     );
     if (!definition) {
-      return { ok: false, response: jsonError("MCP server not found", 404) };
+      return { ok: false, response: notFound("MCP server not found") };
     }
     return { ok: true, definition };
   }
@@ -1146,14 +1138,13 @@ export function createSessionToolInventoryHandlers(
     | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
-    const projectPath = await deps.resolveProjectPath(params.name);
-    if (!projectPath) {
-      return { ok: false, response: jsonError("Project not found", 404) };
-    }
-    const session = await deps.getSession(projectPath, params.session);
-    if (!session) {
-      return { ok: false, response: jsonError("Session not found", 404) };
-    }
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      params.name,
+      params.session,
+    );
+    if (!resolved.ok) return resolved;
+    const { session } = resolved.value;
     const discovery = await deps.discoverAllSources({
       globalConfigPath: deps.globalConfigPath(),
       worktreePath: session.worktreePath,
@@ -1162,7 +1153,7 @@ export function createSessionToolInventoryHandlers(
       (s) => s.serverKey === params.serverKey,
     );
     if (!definition) {
-      return { ok: false, response: jsonError("MCP server not found", 404) };
+      return { ok: false, response: notFound("MCP server not found") };
     }
     return { ok: true, definition };
   }
@@ -1201,7 +1192,7 @@ export function createSessionToolInventoryHandlers(
 // ---------------------------------------------------------------------------
 
 function handleUnexpected(label: string, err: unknown): Response {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = getErrorMessage(err);
   log.error(`${label}.error`, { error: message });
   return jsonError(message, 500);
 }

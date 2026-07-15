@@ -2,7 +2,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import AutoLayout from "./AutoLayout";
-import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 type MeasuredNode = {
   id: string;

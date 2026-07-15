@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createLogger, withTracing } from "@/lib/logging";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
@@ -11,16 +15,15 @@ import {
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
 } from "@/lib/state-store";
-import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowExecutionEvent,
   WorkflowGraphValidationError,
-  WorkflowLiveEditRequest,
-} from "@/lib/workflows/schemas";
-import { workflowLiveEditRequestSchema } from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
+import type { WorkflowLiveEditRequest } from "@/lib/workflows/edit-schemas";
+import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type PublishLiveEditAppliedInput,
@@ -264,12 +267,6 @@ function respondLiveEditFailure(failure: LiveEditFailure): Response {
   return NextResponse.json(body, { status: failure.status });
 }
 
-function notFound(message: string): Response {
-  return NextResponse.json({ error: message } satisfies ApiError, {
-    status: 404,
-  });
-}
-
 async function resolveSession(
   context: RouteContext,
   deps: GraphWorkflowRuntimeEditRouteDeps,
@@ -277,17 +274,13 @@ async function resolveSession(
   const params = await context.params;
   const projectName = params["name"] ?? "";
   const sessionName = decodeURIComponent(params["session"] ?? "");
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return { error: notFound("Project not found") };
-  }
-
-  const session = await deps.getSession(projectPath, sessionName);
-  if (!session) {
-    return { error: notFound("Session not found") };
-  }
-
-  return { projectPath, sessionName };
+  const resolved = await resolveProjectSessionOr404(
+    deps,
+    projectName,
+    sessionName,
+  );
+  if (!resolved.ok) return { error: resolved.response };
+  return { projectPath: resolved.value.projectPath, sessionName };
 }
 
 export function createGraphWorkflowRuntimeEditRouteHandlers(

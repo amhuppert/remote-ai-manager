@@ -3,58 +3,37 @@ import Database from "better-sqlite3";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  createNotification,
-  createProjectConversationNotification,
-  getNotifications,
-  deleteNotification,
-  markAsRead,
-  markAllAsRead,
-  getUnreadCount,
-  cleanupOldNotifications,
-  notificationExists,
-  deleteNotificationsForSession,
-  deleteNotificationsForProject,
-  _createTestDb,
-  _installTestDb,
-  _resetForTesting,
-} from "./repo";
-import { recoverStaleJobs } from "@/lib/jobs/repo";
+import { createNotificationsRepo, type NotificationsRepo } from "./repo";
+import { createJobsRepo } from "@/lib/jobs/repo";
 import {
   _createTestDb as createSharedStateDb,
   _createTestDbAtPath as createSharedStateDbAtPath,
+  _installTestDb,
+  _resetForTesting,
   getDb as getSharedStateDb,
 } from "@/lib/state-store/state-db";
 import { PersistenceError } from "@/lib/shared/errors";
 import { notificationSchema } from "@/lib/notifications/schemas";
-import { dispatchPushForNotification } from "@/lib/push-notification/dispatcher";
 import { randomUUID } from "node:crypto";
 
-// Prevent tests from sending real push notifications to ntfy
-vi.mock("@/lib/push-notification/dispatcher");
-
-// Injected spy for broadcast (no vi.mock needed)
-const mockBroadcast = vi.fn();
+let repo: NotificationsRepo;
 
 // ============================================================
 // Helpers
 // ============================================================
 
 function createTestNotification(overrides: Record<string, unknown> = {}) {
-  return createNotification(
-    {
-      type: "merge-completed",
-      title: "Merge completed",
-      message: "Branch csm/feature merged successfully",
-      projectName: "my-project",
-      sessionName: "feature",
-      branchName: "csm/feature",
-      jobId: "job-1",
-      jobType: "merge",
-      ...overrides,
-    },
-    mockBroadcast,
-  );
+  return repo.createJobNotification({
+    type: "merge-completed",
+    title: "Merge completed",
+    message: "Branch csm/feature merged successfully",
+    projectName: "my-project",
+    sessionName: "feature",
+    branchName: "csm/feature",
+    jobId: "job-1",
+    jobType: "merge",
+    ...overrides,
+  });
 }
 
 // ============================================================
@@ -62,7 +41,9 @@ function createTestNotification(overrides: Record<string, unknown> = {}) {
 // ============================================================
 
 beforeEach(() => {
-  _createTestDb();
+  const db = createSharedStateDb({ inMemory: true });
+  _installTestDb(db);
+  repo = createNotificationsRepo(db);
   vi.clearAllMocks();
 });
 
@@ -86,13 +67,13 @@ describe("rowToNotification — production parse skip", () => {
 
   it("throws on a schema-violating row outside production", () => {
     insertRawNotification("bogus-type");
-    expect(() => getNotifications()).toThrow(PersistenceError);
+    expect(() => repo.getNotifications()).toThrow(PersistenceError);
   });
 
   it("returns the row as-is without validating in production", () => {
     vi.stubEnv("NODE_ENV", "production");
     insertRawNotification("bogus-type");
-    const result = getNotifications();
+    const result = repo.getNotifications();
     expect(result.notifications).toHaveLength(1);
     expect(result.notifications[0]?.type as string).toBe("bogus-type");
   });
@@ -105,7 +86,7 @@ describe("rowToNotification — production parse skip", () => {
 describe("schema initialization", () => {
   it("creates notifications and job_records tables", () => {
     // If we can create and query, tables exist
-    const result = getNotifications();
+    const result = repo.getNotifications();
     expect(result.notifications).toEqual([]);
     expect(result.total).toBe(0);
     expect(result.unreadCount).toBe(0);
@@ -116,7 +97,7 @@ describe("schema initialization", () => {
 // Notification CRUD (Task 2.2)
 // ============================================================
 
-describe("createNotification", () => {
+describe("createJobNotification", () => {
   it("creates a notification and returns it with all fields", () => {
     const notification = createTestNotification();
 
@@ -152,15 +133,6 @@ describe("createNotification", () => {
       "file3.ts",
     ]);
     expect(notification.errorMessage).toBe("Something went wrong");
-  });
-
-  it("broadcasts a notification-created SSE event", () => {
-    const notification = createTestNotification();
-
-    expect(mockBroadcast).toHaveBeenCalledWith({
-      type: "notification-created",
-      notification,
-    });
   });
 
   it("defaults read to false", () => {
@@ -232,7 +204,7 @@ describe("job notification variant regressions", () => {
       expect("status" in notification).toBe(false);
     }
 
-    const queried = getNotifications({ limit: 10 });
+    const queried = repo.getNotifications({ limit: 10 });
     expect(queried.total).toBe(inputs.length);
     expect(queried.unreadCount).toBe(inputs.length);
     expect(queried.notifications.every((n) => n.source === "job")).toBe(true);
@@ -257,9 +229,9 @@ describe("job notification variant regressions", () => {
       expect(row.dedupe_key).toBeNull();
     }
 
-    const readCount = markAllAsRead(mockBroadcast);
+    const readCount = repo.markAllAsRead();
     expect(readCount).toBe(inputs.length);
-    expect(getUnreadCount()).toBe(0);
+    expect(repo.getUnreadCount()).toBe(0);
   });
 });
 
@@ -292,8 +264,8 @@ describe("project-conversation notifications", () => {
   });
 
   it("creates, queries, marks read, and dismisses without session fields", () => {
-    const notification = createProjectConversationNotification(
-      {
+    const { notification, created } =
+      repo.createProjectConversationNotification({
         type: "project-conversation-ready",
         title: "Agent finished",
         message: "Project conversation is ready",
@@ -302,10 +274,9 @@ describe("project-conversation notifications", () => {
         conversationName: "Architecture pass",
         status: "awaiting",
         dedupeKey: "my-project:conversation-1:ready:turn-1",
-      },
-      mockBroadcast,
-    );
+      });
 
+    expect(created).toBe(true);
     expect(notification.source).toBe("project-conversation");
     expect(notification.read).toBe(false);
     expect(notification.projectName).toBe("my-project");
@@ -317,34 +288,19 @@ describe("project-conversation notifications", () => {
     expect("jobId" in notification).toBe(false);
     expect("jobType" in notification).toBe(false);
 
-    const queried = getNotifications();
+    const queried = repo.getNotifications();
     expect(queried.total).toBe(1);
     expect(queried.unreadCount).toBe(1);
     expect(queried.notifications[0]).toEqual(notification);
 
-    expect(markAsRead(notification.id, mockBroadcast)).toBe(true);
-    expect(getNotifications().notifications[0]!.read).toBe(true);
+    expect(repo.markAsRead(notification.id)).toEqual({
+      updated: true,
+      exists: true,
+    });
+    expect(repo.getNotifications().notifications[0]!.read).toBe(true);
 
-    expect(deleteNotification(notification.id)).toBe(true);
-    expect(getNotifications().total).toBe(0);
-  });
-
-  it("dispatches configured push handling for a new project-conversation notification", () => {
-    const notification = createProjectConversationNotification(
-      {
-        type: "project-conversation-ready",
-        title: "Agent finished",
-        message: "Project conversation is ready",
-        projectName: "my-project",
-        conversationId: "conversation-1",
-        conversationName: "Architecture pass",
-        status: "awaiting",
-        dedupeKey: "my-project:conversation-1:ready:turn-1",
-      },
-      mockBroadcast,
-    );
-
-    expect(dispatchPushForNotification).toHaveBeenCalledWith(notification);
+    expect(repo.deleteNotification(notification.id)).toBe(true);
+    expect(repo.getNotifications().total).toBe(0);
   });
 
   it("returns the existing project-conversation row for a duplicate transition key", () => {
@@ -359,22 +315,17 @@ describe("project-conversation notifications", () => {
       dedupeKey: "my-project:conversation-1:input:turn-2",
     };
 
-    const first = createProjectConversationNotification(input, mockBroadcast);
-    mockBroadcast.mockClear();
-    vi.mocked(dispatchPushForNotification).mockClear();
-    const duplicate = createProjectConversationNotification(
-      {
-        ...input,
-        title: "Input still needed",
-        message: "Duplicate transition",
-      },
-      mockBroadcast,
-    );
+    const first = repo.createProjectConversationNotification(input);
+    const duplicate = repo.createProjectConversationNotification({
+      ...input,
+      title: "Input still needed",
+      message: "Duplicate transition",
+    });
 
-    expect(duplicate).toEqual(first);
-    expect(getNotifications().total).toBe(1);
-    expect(mockBroadcast).not.toHaveBeenCalled();
-    expect(dispatchPushForNotification).not.toHaveBeenCalled();
+    expect(first.created).toBe(true);
+    expect(duplicate.created).toBe(false);
+    expect(duplicate.notification).toEqual(first.notification);
+    expect(repo.getNotifications().total).toBe(1);
   });
 });
 
@@ -384,7 +335,7 @@ describe("getNotifications", () => {
     createTestNotification({ jobId: "job-2" });
     createTestNotification({ jobId: "job-3" });
 
-    const result = getNotifications();
+    const result = repo.getNotifications();
     expect(result.notifications).toHaveLength(3);
     expect(result.total).toBe(3);
   });
@@ -392,9 +343,9 @@ describe("getNotifications", () => {
   it("filters by unread=true", () => {
     const n1 = createTestNotification({ jobId: "job-1" });
     createTestNotification({ jobId: "job-2" });
-    markAsRead(n1.id, mockBroadcast);
+    repo.markAsRead(n1.id);
 
-    const result = getNotifications({ unread: true });
+    const result = repo.getNotifications({ unread: true });
     expect(result.notifications).toHaveLength(1);
     expect(result.total).toBe(1);
     expect(result.unreadCount).toBe(1);
@@ -405,14 +356,14 @@ describe("getNotifications", () => {
       createTestNotification({ jobId: `job-${i}` });
     }
 
-    const page1 = getNotifications({ limit: 2, offset: 0 });
+    const page1 = repo.getNotifications({ limit: 2, offset: 0 });
     expect(page1.notifications).toHaveLength(2);
     expect(page1.total).toBe(5);
 
-    const page2 = getNotifications({ limit: 2, offset: 2 });
+    const page2 = repo.getNotifications({ limit: 2, offset: 2 });
     expect(page2.notifications).toHaveLength(2);
 
-    const page3 = getNotifications({ limit: 2, offset: 4 });
+    const page3 = repo.getNotifications({ limit: 2, offset: 4 });
     expect(page3.notifications).toHaveLength(1);
   });
 
@@ -420,12 +371,12 @@ describe("getNotifications", () => {
     const n1 = createTestNotification({ jobId: "job-1" });
     createTestNotification({ jobId: "job-2" });
     createTestNotification({ jobId: "job-3" });
-    markAsRead(n1.id, mockBroadcast);
+    repo.markAsRead(n1.id);
 
-    const all = getNotifications();
+    const all = repo.getNotifications();
     expect(all.unreadCount).toBe(2);
 
-    const unreadOnly = getNotifications({ unread: true });
+    const unreadOnly = repo.getNotifications({ unread: true });
     expect(unreadOnly.unreadCount).toBe(2);
   });
 });
@@ -433,14 +384,14 @@ describe("getNotifications", () => {
 describe("deleteNotification", () => {
   it("deletes an existing notification and returns true", () => {
     const notification = createTestNotification();
-    const deleted = deleteNotification(notification.id);
+    const deleted = repo.deleteNotification(notification.id);
 
     expect(deleted).toBe(true);
-    expect(getNotifications().total).toBe(0);
+    expect(repo.getNotifications().total).toBe(0);
   });
 
   it("returns false for non-existent notification", () => {
-    const deleted = deleteNotification("non-existent-id");
+    const deleted = repo.deleteNotification("non-existent-id");
     expect(deleted).toBe(false);
   });
 });
@@ -448,11 +399,11 @@ describe("deleteNotification", () => {
 describe("notificationExists", () => {
   it("returns true for existing notification", () => {
     const notification = createTestNotification();
-    expect(notificationExists(notification.id)).toBe(true);
+    expect(repo.notificationExists(notification.id)).toBe(true);
   });
 
   it("returns false for non-existent notification", () => {
-    expect(notificationExists("non-existent")).toBe(false);
+    expect(repo.notificationExists("non-existent")).toBe(false);
   });
 });
 
@@ -463,39 +414,24 @@ describe("notificationExists", () => {
 describe("markAsRead", () => {
   it("marks an unread notification as read", () => {
     const notification = createTestNotification();
-    const result = markAsRead(notification.id, mockBroadcast);
+    const result = repo.markAsRead(notification.id);
 
-    expect(result).toBe(true);
-    const updated = getNotifications();
+    expect(result).toEqual({ updated: true, exists: true });
+    const updated = repo.getNotifications();
     expect(updated.notifications[0]!.read).toBe(true);
   });
 
-  it("broadcasts notification-updated SSE event", () => {
+  it("reports an already-read notification as existing but not updated", () => {
     const notification = createTestNotification();
-    mockBroadcast.mockClear();
-    markAsRead(notification.id, mockBroadcast);
+    repo.markAsRead(notification.id);
 
-    expect(mockBroadcast).toHaveBeenCalledWith({
-      type: "notification-updated",
-      id: notification.id,
-      read: true,
-    });
+    const result = repo.markAsRead(notification.id);
+    expect(result).toEqual({ updated: false, exists: true });
   });
 
-  it("returns true for already-read notification (exists but no change)", () => {
-    const notification = createTestNotification();
-    markAsRead(notification.id, mockBroadcast);
-    mockBroadcast.mockClear();
-
-    const result = markAsRead(notification.id, mockBroadcast);
-    expect(result).toBe(true);
-    // Should NOT broadcast again
-    expect(mockBroadcast).not.toHaveBeenCalled();
-  });
-
-  it("returns false for non-existent notification", () => {
-    const result = markAsRead("non-existent-id", mockBroadcast);
-    expect(result).toBe(false);
+  it("reports a non-existent notification as missing", () => {
+    const result = repo.markAsRead("non-existent-id");
+    expect(result).toEqual({ updated: false, exists: false });
   });
 });
 
@@ -505,30 +441,14 @@ describe("markAllAsRead", () => {
     createTestNotification({ jobId: "job-2" });
     createTestNotification({ jobId: "job-3" });
 
-    const count = markAllAsRead(mockBroadcast);
+    const count = repo.markAllAsRead();
     expect(count).toBe(3);
-    expect(getUnreadCount()).toBe(0);
-  });
-
-  it("broadcasts notification-updated with id='all'", () => {
-    createTestNotification({ jobId: "job-1" });
-    mockBroadcast.mockClear();
-
-    markAllAsRead(mockBroadcast);
-    expect(mockBroadcast).toHaveBeenCalledWith({
-      type: "notification-updated",
-      id: "all",
-      read: true,
-    });
+    expect(repo.getUnreadCount()).toBe(0);
   });
 
   it("returns 0 when no unread notifications exist", () => {
-    const count = markAllAsRead(mockBroadcast);
+    const count = repo.markAllAsRead();
     expect(count).toBe(0);
-    // Should NOT broadcast when nothing changed
-    expect(mockBroadcast).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "notification-updated" }),
-    );
   });
 });
 
@@ -538,14 +458,14 @@ describe("getUnreadCount", () => {
     createTestNotification({ jobId: "job-2" });
     createTestNotification({ jobId: "job-3" });
 
-    expect(getUnreadCount()).toBe(3);
+    expect(repo.getUnreadCount()).toBe(3);
 
-    markAsRead(getNotifications().notifications[0]!.id, mockBroadcast);
-    expect(getUnreadCount()).toBe(2);
+    repo.markAsRead(repo.getNotifications().notifications[0]!.id);
+    expect(repo.getUnreadCount()).toBe(2);
   });
 
   it("returns 0 when no notifications exist", () => {
-    expect(getUnreadCount()).toBe(0);
+    expect(repo.getUnreadCount()).toBe(0);
   });
 });
 
@@ -558,17 +478,17 @@ describe("cleanupOldNotifications", () => {
     // Create a notification (it'll have current timestamp)
     createTestNotification();
     // Cleanup with 0 days retention should delete everything
-    const cleaned = cleanupOldNotifications(0);
+    const cleaned = repo.cleanupOldNotifications(0);
     expect(cleaned).toBe(1);
-    expect(getNotifications().total).toBe(0);
+    expect(repo.getNotifications().total).toBe(0);
   });
 
   it("preserves recent notifications", () => {
     createTestNotification();
     // Default 7 day retention — recent notification should survive
-    const cleaned = cleanupOldNotifications(7);
+    const cleaned = repo.cleanupOldNotifications(7);
     expect(cleaned).toBe(0);
-    expect(getNotifications().total).toBe(1);
+    expect(repo.getNotifications().total).toBe(1);
   });
 });
 
@@ -599,10 +519,11 @@ describe("deleteNotificationsForSession", () => {
       jobId: "job-other-project",
     });
 
-    const deleted = deleteNotificationsForSession("proj-a", "doomed");
+    const deleted = repo.deleteNotificationsForSession("proj-a", "doomed");
 
     expect(deleted).toBe(2);
-    const remaining = getNotifications()
+    const remaining = repo
+      .getNotifications()
       .notifications.filter((n) => n.source === "job")
       .map((n) => n.jobId);
     expect(remaining.sort()).toEqual(["job-keep", "job-other-project"]);
@@ -610,8 +531,8 @@ describe("deleteNotificationsForSession", () => {
 
   it("returns 0 when no rows match", () => {
     createTestNotification({ projectName: "p", sessionName: "s" });
-    expect(deleteNotificationsForSession("p", "missing")).toBe(0);
-    expect(getNotifications().total).toBe(1);
+    expect(repo.deleteNotificationsForSession("p", "missing")).toBe(0);
+    expect(repo.getNotifications().total).toBe(1);
   });
 });
 
@@ -633,10 +554,11 @@ describe("deleteNotificationsForProject", () => {
       jobId: "b1",
     });
 
-    const deleted = deleteNotificationsForProject("proj-a");
+    const deleted = repo.deleteNotificationsForProject("proj-a");
 
     expect(deleted).toBe(2);
-    const remaining = getNotifications()
+    const remaining = repo
+      .getNotifications()
       .notifications.filter((n) => n.source === "job")
       .map((n) => n.jobId);
     expect(remaining).toEqual(["b1"]);
@@ -667,7 +589,7 @@ describe("schema validation at the persistence boundary", () => {
 
     let caught: unknown;
     try {
-      getNotifications();
+      repo.getNotifications();
     } catch (err) {
       caught = err;
     }
@@ -718,9 +640,10 @@ describe("notification table migration", () => {
 
     const migratedDb = createSharedStateDbAtPath(dbPath);
     _installTestDb(migratedDb);
+    const migratedRepo = createNotificationsRepo(migratedDb);
 
-    const projectNotification = createProjectConversationNotification(
-      {
+    const { notification: projectNotification } =
+      migratedRepo.createProjectConversationNotification({
         type: "project-conversation-ready",
         title: "Agent finished",
         message: "Project conversation is ready",
@@ -729,11 +652,9 @@ describe("notification table migration", () => {
         conversationName: null,
         status: "awaiting",
         dedupeKey: "my-project:conversation-1:ready:turn-1",
-      },
-      mockBroadcast,
-    );
+      });
 
-    const result = getNotifications();
+    const result = migratedRepo.getNotifications();
     expect(result.total).toBe(2);
     expect(result.notifications).toEqual(
       expect.arrayContaining([
@@ -754,26 +675,23 @@ describe("notification table migration", () => {
 });
 
 describe("schema validation on the write path", () => {
-  it("rejects createNotification when input fails notificationSchema BEFORE the INSERT commits", () => {
+  it("rejects createJobNotification when input fails notificationSchema BEFORE the INSERT commits", () => {
     const db = getSharedStateDb();
 
     let caught: unknown;
     try {
-      createNotification(
-        {
-          // Type assertion bypasses the compile-time guard so we can simulate
-          // a runtime caller that hands us an invalid enum value.
-          type: "not-a-real-notification-type" as unknown as "merge-completed",
-          title: "x",
-          message: "x",
-          projectName: "p",
-          sessionName: "s",
-          branchName: "csm/s",
-          jobId: "job-write-bad",
-          jobType: "merge",
-        },
-        mockBroadcast,
-      );
+      repo.createJobNotification({
+        // Type assertion bypasses the compile-time guard so we can simulate
+        // a runtime caller that hands us an invalid enum value.
+        type: "not-a-real-notification-type" as unknown as "merge-completed",
+        title: "x",
+        message: "x",
+        projectName: "p",
+        sessionName: "s",
+        branchName: "csm/s",
+        jobId: "job-write-bad",
+        jobType: "merge",
+      });
     } catch (err) {
       caught = err;
     }
@@ -788,7 +706,6 @@ describe("schema validation on the write path", () => {
       .prepare("SELECT COUNT(*) AS count FROM notifications")
       .get() as { count: number };
     expect(row.count).toBe(0);
-    expect(mockBroadcast).not.toHaveBeenCalled();
   });
 });
 
@@ -797,11 +714,12 @@ describe("schema validation on the write path", () => {
 // ============================================================
 
 describe("boot-order integration", () => {
-  it("initialises schema, then performs createNotification + recoverStaleJobs without errors", () => {
+  it("initialises schema, then performs createJobNotification + recoverStaleJobs without errors", () => {
     // Reset the singleton so this test owns the full boot path.
     _resetForTesting();
     const db = createSharedStateDb({ inMemory: true });
     _installTestDb(db);
+    const bootRepo = createNotificationsRepo(db);
 
     // Sanity: tables exist after schema init
     const tables = db
@@ -813,25 +731,22 @@ describe("boot-order integration", () => {
     expect(tableNames.has("notifications")).toBe(true);
     expect(tableNames.has("job_records")).toBe(true);
 
-    const notification = createNotification(
-      {
-        type: "merge-completed",
-        title: "Merge completed",
-        message: "ok",
-        projectName: "p",
-        sessionName: "s",
-        branchName: "csm/s",
-        jobId: "job-boot",
-        jobType: "merge",
-      },
-      mockBroadcast,
-    );
+    const notification = bootRepo.createJobNotification({
+      type: "merge-completed",
+      title: "Merge completed",
+      message: "ok",
+      projectName: "p",
+      sessionName: "s",
+      branchName: "csm/s",
+      jobId: "job-boot",
+      jobType: "merge",
+    });
     expect(notification.id).toBeDefined();
 
-    const recovered = recoverStaleJobs();
+    const recovered = createJobsRepo(db).recoverStaleJobs();
     expect(recovered).toBe(0);
 
-    const result = getNotifications();
+    const result = bootRepo.getNotifications();
     expect(result.total).toBe(1);
     expect(result.notifications[0]!.id).toBe(notification.id);
   });

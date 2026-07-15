@@ -15,8 +15,8 @@ function claudeLane(overrides: Partial<LaneState> = {}): LaneState {
     backend: "claude",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
-    backendState: { backend: "claude", conversationId: "conv-1" },
-    metrics: { backend: "claude", rotateBeforeNextTurn: false },
+    ref: "conv-1",
+    metrics: { rotateBeforeNextTurn: false },
     lastUsedAt: NOW,
     ...overrides,
   };
@@ -43,7 +43,7 @@ describe("createInMemoryLaneStore", () => {
     const b = claudeLane({
       workflowId: "wf-B",
       laneId: "shared",
-      backendState: { backend: "claude", conversationId: "conv-B" },
+      ref: "conv-B",
     });
     await store.write(a);
     await store.write(b);
@@ -51,8 +51,8 @@ describe("createInMemoryLaneStore", () => {
     const readA = await store.read({ workflowId: "wf-A", laneId: "shared" });
     const readB = await store.read({ workflowId: "wf-B", laneId: "shared" });
 
-    expect(readA?.backendState).toMatchObject({ conversationId: "conv-1" });
-    expect(readB?.backendState).toMatchObject({ conversationId: "conv-B" });
+    expect(readA?.ref).toBe("conv-1");
+    expect(readB?.ref).toBe("conv-B");
   });
 
   it("distinguishes lanes within the same workflow by laneId", async () => {
@@ -61,9 +61,8 @@ describe("createInMemoryLaneStore", () => {
     const secondary = claudeLane({ laneId: "secondary", backend: "codex" });
     const codexLane: LaneState = {
       ...secondary,
-      backendState: { backend: "codex", threadId: "thr-9" },
+      ref: "thr-9",
       metrics: {
-        backend: "codex",
         lastTurnUsage: null,
         rotateBeforeNextTurn: false,
       },
@@ -90,7 +89,6 @@ describe("createInMemoryLaneStore", () => {
     const updated = claudeLane({
       lastUsedAt: "2026-04-28T11:00:00.000Z",
       metrics: {
-        backend: "claude",
         contextTokens: 50_000,
         contextWindowMax: 200_000,
         rotateBeforeNextTurn: false,
@@ -100,17 +98,15 @@ describe("createInMemoryLaneStore", () => {
 
     const read = await store.read({ workflowId: "wf-A", laneId: "primary" });
     expect(read?.lastUsedAt).toBe("2026-04-28T11:00:00.000Z");
-    if (read?.metrics.backend === "claude") {
-      expect(read.metrics.contextTokens).toBe(50_000);
-    }
+    expect(read?.metrics.contextTokens).toBe(50_000);
   });
 
-  it("rejects writes whose payload tag mismatches do not pass the schema", async () => {
+  it("rejects writes that do not pass the lane schema (empty continuity handle)", async () => {
     const store = createInMemoryLaneStore();
     await expect(
       store.write({
         ...claudeLane(),
-        backend: "codex",
+        ref: "",
       } as unknown as LaneState),
     ).rejects.toThrow();
   });

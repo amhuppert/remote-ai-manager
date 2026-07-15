@@ -16,9 +16,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 const PROJECT_PATH = "/p1";
 const SESSION_NAME = "s1";

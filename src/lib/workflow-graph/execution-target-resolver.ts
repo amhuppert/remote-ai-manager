@@ -1,6 +1,6 @@
 import { createLogger } from "@/lib/logging";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 const logger = createLogger("graph-workflow-execution-target-resolver");
 
 export interface ExecutionTarget {

@@ -23,7 +23,7 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { runCli } from "../core";
 import type { CliEnv, CliHost } from "../shared";
 
@@ -47,17 +47,16 @@ const sessionTarget: ExecutionTarget = {
 
 function makeClaudeLane(): GraphWorkflowAgentSessionState {
   return {
-    engine: "claude",
+    backend: "claude",
     lane: "implementer",
     contextId: "context-plan",
+    refKind: "conversation",
+    workflowConversationId: "conv-bound",
     sessionRef: {
-      engine: "claude",
-      lane: "implementer",
-      conversationId: "conv-bound",
+      backend: "claude",
+      ref: "conv-bound",
     },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    metrics: { rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: "2026-03-27T11:00:00.000Z",
   };

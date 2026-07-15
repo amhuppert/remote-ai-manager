@@ -8,11 +8,11 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
-  GraphWorkflowSSEEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { _resetRegistryForTesting } from "./execution-logger";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
@@ -20,9 +20,9 @@ import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrat
 import { createWorkflowExecution } from "./test-fixtures";
 import { createUserInputGateService } from "./user-input-gate";
 import type {
-  RecordClaudeLaneTurnInput,
+  RecordLaneTurnOutcomeInput,
   ResolveImplementerCallInput,
-} from "./workflow-continuity-service";
+} from "./lane-continuity";
 
 /**
  * Task 6.1 — Prove the full ask → park → answer → resume cycle against real
@@ -83,16 +83,11 @@ function claudeLaneState(input: {
   return {
     lane: input.lane,
     contextId: CONTEXT_ID,
-    engine: "claude",
+    backend: "claude",
+    refKind: "conversation",
     workflowConversationId: input.conversationId,
-    sessionRef: {
-      engine: "claude",
-      lane: input.lane,
-      conversationId: input.conversationId,
-    },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    sessionRef: { backend: "claude", ref: input.conversationId },
+    metrics: { rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: NOW,
   };
@@ -315,10 +310,9 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       readLaneConversation,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome: vi.fn(
-          async (turnInput: RecordClaudeLaneTurnInput) => turnInput.execution,
+        recordLaneTurnOutcome: vi.fn(
+          async (turnInput: RecordLaneTurnOutcomeInput) => turnInput.execution,
         ),
-        recordCodexTurnOutcome: vi.fn(),
       },
       eventPublisher,
       now: () => NOW,

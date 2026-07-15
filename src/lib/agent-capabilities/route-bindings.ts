@@ -1,5 +1,5 @@
 import { withTracing } from "@/lib/logging";
-import { broadcast } from "@/lib/events/broadcaster";
+import { publishEvent } from "@/lib/events/publication";
 
 import { defaultCapabilityRouteDeps } from "./route-defaults";
 import {
@@ -12,28 +12,28 @@ import {
 
 const globalHandlers = createGlobalCapabilityHandlers({
   ...defaultCapabilityRouteDeps,
-  broadcast,
+  broadcast: publishEvent,
 });
 
 const projectHandlers = createProjectCapabilityHandlers({
   ...defaultCapabilityRouteDeps,
-  broadcast,
+  broadcast: publishEvent,
 });
 
 const sessionHandlers = createSessionCapabilityHandlers({
   ...defaultCapabilityRouteDeps,
-  broadcast,
+  broadcast: publishEvent,
 });
 
 const conversationHandlers = createConversationCapabilityHandlers({
   ...defaultCapabilityRouteDeps,
-  broadcast,
+  broadcast: publishEvent,
 });
 
 const projectConversationHandlers = createProjectConversationCapabilityHandlers(
   {
     ...defaultCapabilityRouteDeps,
-    broadcast,
+    broadcast: publishEvent,
   },
 );
 

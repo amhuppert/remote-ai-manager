@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
-import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { runDefinitionEditRequest } from "./definition-edit-handler";
 
 function bodyOf(response: Response): Promise<unknown> {

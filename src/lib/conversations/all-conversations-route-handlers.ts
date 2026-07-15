@@ -13,6 +13,7 @@ import {
 } from "./cross-project-list";
 import { createLogger } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const log = createLogger("all-conversations-route-handlers");
 
@@ -36,7 +37,7 @@ export function createAllConversationsRouteHandlers(
       const result = await deps.listAllConversations({ includeArchived });
       return NextResponse.json(result);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.error("listAllConversations failed", { err: message });
       return NextResponse.json({ error: message } satisfies ApiError, {
         status: 500,

@@ -4,25 +4,27 @@ import type {
   ExecutionTargetResolver,
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
-import {
-  applyJoinProgress,
-  planContextJoin,
-} from "@/lib/workflow-graph/lane-join";
+import { planContextJoin } from "@/lib/workflow-graph/lane-join";
+import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
-import type { SessionGitLock } from "@/lib/workflow-graph/session-git-lock";
+import type { SessionGitLock } from "@/lib/shared/lock-retry";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalResolvedEvent,
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowHaltReason,
   GraphWorkflowUserInputResolvedEvent,
+} from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   createUserInputGateService,
@@ -1016,17 +1018,13 @@ describe("execution loop", () => {
       laneStates: {
         "ctx-1": {
           implementer: {
-            engine: "claude",
+            backend: "claude",
+            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
-            sessionRef: {
-              engine: "claude",
-              lane: "implementer",
-              conversationId: "conv-1",
-            },
-            lastContextTokens: null,
-            lastContextWindowMax: null,
-            rotateBeforeNextTurn: false,
+            workflowConversationId: "conv-1",
+            sessionRef: { backend: "claude", ref: "conv-1" },
+            metrics: { rotateBeforeNextTurn: false },
             limitEvaluation: "disabled",
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -1045,8 +1043,8 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.engine === "claude") {
-          lane.rotateBeforeNextTurn = true;
+        if (lane?.backend === "claude") {
+          lane.metrics.rotateBeforeNextTurn = true;
         }
         harness.setCurrent(next);
         return next;
@@ -1125,17 +1123,13 @@ describe("execution loop", () => {
       laneStates: {
         "ctx-1": {
           implementer: {
-            engine: "claude",
+            backend: "claude",
+            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
-            sessionRef: {
-              engine: "claude",
-              lane: "implementer",
-              conversationId: "conv-1",
-            },
-            lastContextTokens: null,
-            lastContextWindowMax: null,
-            rotateBeforeNextTurn: false,
+            workflowConversationId: "conv-1",
+            sessionRef: { backend: "claude", ref: "conv-1" },
+            metrics: { rotateBeforeNextTurn: false },
             limitEvaluation: "disabled",
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -1153,8 +1147,8 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.engine === "claude") {
-          lane.rotateBeforeNextTurn = true;
+        if (lane?.backend === "claude") {
+          lane.metrics.rotateBeforeNextTurn = true;
         }
         harness.setCurrent(next);
         return next;
@@ -1240,17 +1234,13 @@ describe("execution loop", () => {
         laneStates: {
           "ctx-1": {
             implementer: {
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               lane: "implementer",
               contextId: "ctx-1",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-1",
-              },
-              lastContextTokens: null,
-              lastContextWindowMax: null,
-              rotateBeforeNextTurn: false,
+              workflowConversationId: "conv-1",
+              sessionRef: { backend: "claude", ref: "conv-1" },
+              metrics: { rotateBeforeNextTurn: false },
               limitEvaluation: "disabled",
               lastUsedAt: "2026-03-27T12:00:00.000Z",
             },
@@ -1268,8 +1258,8 @@ describe("execution loop", () => {
           const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.status = "ready";
           const lane = next.laneStates["ctx-1"]?.["implementer"];
-          if (lane?.engine === "claude") {
-            lane.rotateBeforeNextTurn = true;
+          if (lane?.backend === "claude") {
+            lane.metrics.rotateBeforeNextTurn = true;
           }
           harness.setCurrent(next);
           return next;

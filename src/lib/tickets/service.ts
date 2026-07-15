@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { SSEEvent } from "@/lib/api/sse-events";
+import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { TicketsRepo } from "@/lib/state-store/tickets-repo";
 import { publishTicketChange } from "./events";
@@ -68,7 +68,7 @@ export interface TicketServiceDeps {
   /** Resolves only a currently available checkout that can own new work. */
   resolveAvailableProjectPath(projectName: string): Promise<string | null>;
   deleteTicketContent(ticketId: string): Promise<void>;
-  broadcast(event: SSEEvent): void;
+  publish: PublishFn;
   /** Serializes ticket mutations against deletion of their owning project. */
   runProjectTicketOperation<T>(
     projectPath: string,
@@ -123,7 +123,7 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
     listItem: TicketListItem | null,
   ): void {
     publishTicketChange({
-      broadcast: deps.broadcast,
+      publish: deps.publish,
       logger,
       change,
       projectName,

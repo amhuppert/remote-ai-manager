@@ -9,7 +9,7 @@ import {
   _resetRegistryForTesting,
   type ExecutionLogger,
 } from "./execution-logger";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createWorkflowDefinition } from "./test-fixtures";
 
 const TEST_DIR = path.join(__dirname, "__test-logs__");

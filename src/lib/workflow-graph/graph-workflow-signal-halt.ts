@@ -1,8 +1,9 @@
 import { createLogger } from "@/lib/logging";
+import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import type {
   RecordPendingHaltReasonInput,
   RecordPendingHaltReasonResult,
@@ -41,7 +42,9 @@ export function createGraphWorkflowSignalHaltHandler(
 
         const contextState = execution.contextStates[contextId];
         if (contextState && contextState.status !== "completed") {
-          contextState.status = "halted";
+          transitionContextStatus(execution, contextId, "halted", {
+            reason: `signal_halt.${input.reason.type}`,
+          });
         }
         execution.activeContextIds = execution.activeContextIds.filter(
           (activeContextId) => activeContextId !== contextId,

@@ -1,11 +1,13 @@
 import { z } from "zod";
-import { getStateDb } from "../state-store/store";
+import type Database from "better-sqlite3";
 import { createLogger } from "../logging";
 import { timedSync } from "../logging/timed";
 import { PersistenceError } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import { mergeIntentSchema } from "./schemas";
 import type { MergeIntent, MergeIntentSource } from "./schemas";
+
+type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.merge-intents");
 
@@ -70,50 +72,54 @@ export interface RecordMergeIntentInput {
   source: MergeIntentSource;
 }
 
-export function recordMergeIntent(input: RecordMergeIntentInput): void {
-  timedSync(
-    logger,
-    "state-db.recordMergeIntent",
-    { commitSha: input.commitSha, source: input.source },
-    () => {
-      const validated = parseMergeIntentOrFail(
-        { ...input, createdAt: new Date().toISOString() },
-        input.commitSha,
-      );
-      const db = getStateDb();
-      db.prepare(
-        `INSERT OR REPLACE INTO merge_intents (project_path, commit_sha, intent, source, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-      ).run(
-        validated.projectPath,
-        validated.commitSha,
-        validated.intent,
-        validated.source,
-        validated.createdAt,
-      );
-    },
-  );
+export interface MergeIntentsRepo {
+  recordMergeIntent(input: RecordMergeIntentInput): void;
+  getMergeIntents(projectPath: string, commitShas: string[]): MergeIntent[];
 }
 
-export function getMergeIntents(
-  projectPath: string,
-  commitShas: string[],
-): MergeIntent[] {
-  if (commitShas.length === 0) return [];
-  return timedSync(
-    logger,
-    "state-db.getMergeIntents",
-    { shaCount: commitShas.length },
-    () => {
-      const db = getStateDb();
-      const placeholders = commitShas.map(() => "?").join(", ");
-      const rawRows = db
-        .prepare(
-          `SELECT * FROM merge_intents WHERE project_path = ? AND commit_sha IN (${placeholders})`,
-        )
-        .all(projectPath, ...commitShas) as unknown[];
-      return rawRows.map(rowToMergeIntent);
+export function createMergeIntentsRepo(db: Db): MergeIntentsRepo {
+  return {
+    recordMergeIntent(input) {
+      timedSync(
+        logger,
+        "state-db.recordMergeIntent",
+        { commitSha: input.commitSha, source: input.source },
+        () => {
+          const validated = parseMergeIntentOrFail(
+            { ...input, createdAt: new Date().toISOString() },
+            input.commitSha,
+          );
+          db.prepare(
+            `INSERT OR REPLACE INTO merge_intents (project_path, commit_sha, intent, source, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+          ).run(
+            validated.projectPath,
+            validated.commitSha,
+            validated.intent,
+            validated.source,
+            validated.createdAt,
+          );
+        },
+      );
     },
-    (result) => ({ foundCount: result.length }),
-  );
+
+    getMergeIntents(projectPath, commitShas) {
+      if (commitShas.length === 0) return [];
+      return timedSync(
+        logger,
+        "state-db.getMergeIntents",
+        { shaCount: commitShas.length },
+        () => {
+          const placeholders = commitShas.map(() => "?").join(", ");
+          const rawRows = db
+            .prepare(
+              `SELECT * FROM merge_intents WHERE project_path = ? AND commit_sha IN (${placeholders})`,
+            )
+            .all(projectPath, ...commitShas) as unknown[];
+          return rawRows.map(rowToMergeIntent);
+        },
+        (result) => ({ foundCount: result.length }),
+      );
+    },
+  };
 }

@@ -1097,6 +1097,68 @@ describe("copyTranscriptUpTo", () => {
       .map((l) => JSON.parse(l) as TranscriptEntry);
   }
 
+  // ---- Copy projection: slash-command unit boundary ----
+  // A slash-command user entry starts its own logical unit even when the
+  // PRECEDING visible entry is the same role. Because the copy path derives its
+  // merged index from the shared grouping owner (transcript-logical-units), a
+  // fork index means the same thing as the merged-message index the UI shows.
+  it("breaks the merged index on a slash command so the copy matches the UI index", async () => {
+    const entries: TranscriptEntry[] = [
+      // Merged msg 0: plain user text.
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hi there" }],
+      },
+      // Merged msg 1: slash command — its own unit even though the previous
+      // entry was also role=user.
+      {
+        timestamp: "t1",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "/commit now" }],
+      },
+      // Merged msg 2: assistant turn.
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "answer" }],
+      },
+    ];
+    const sourcePath = await writeTranscript("slash-boundary-copy", entries);
+
+    // Exclusive copy up to merged index 2 (the assistant turn) includes both
+    // user units (plain + command) and stops before the assistant.
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "slash-boundary-target",
+      upToMessageIndex: 2,
+      mode: "exclusive",
+      configDir: TEST_DIR,
+    });
+
+    const copied = await readTarget("slash-boundary-target");
+    expect(
+      copied.map((e) => (e.content?.[0] as { text?: string })?.text),
+    ).toEqual(["Hi there", "/commit now"]);
+
+    // And exclusive copy up to merged index 1 (the command) includes only the
+    // plain user unit — the command is a distinct index, not merged with it.
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "slash-boundary-target-1",
+      upToMessageIndex: 1,
+      mode: "exclusive",
+      configDir: TEST_DIR,
+    });
+    const copiedTo1 = await readTarget("slash-boundary-target-1");
+    expect(
+      copiedTo1.map((e) => (e.content?.[0] as { text?: string })?.text),
+    ).toEqual(["Hi there"]);
+  });
+
   // ---- The red test: exposes merged vs raw counting mismatch ----
 
   it("uses merged message indices when assistant has multiple JSONL lines", async () => {
@@ -1778,6 +1840,7 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     setTranscriptDeps({
       broadcast: (event: SSEEvent) => {
         captured.push(event);
+        return { delivered: true };
       },
     });
   });
@@ -1942,6 +2005,7 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
       }),
       broadcast: () => {
         order.push("broadcast");
+        return { delivered: true };
       },
     });
 
@@ -2074,6 +2138,7 @@ describe("system notices", () => {
     setTranscriptDeps({
       broadcast: (event: SSEEvent) => {
         captured.push(event);
+        return { delivered: true };
       },
     });
   });

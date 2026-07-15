@@ -15,6 +15,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectOr404,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createLogger, withTracing } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -105,15 +110,11 @@ async function resolveSessionParams(
     };
   }
 
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return {
-      error: NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      ),
-    };
+  const project = await resolveProjectOr404(deps, projectName);
+  if (!project.ok) {
+    return { error: project.response };
   }
+  const projectPath = project.value;
 
   return { projectName, projectPath, sessionName };
 }
@@ -166,15 +167,11 @@ async function resolveWorkflowParams(
     };
   }
 
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return {
-      error: NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      ),
-    };
+  const project = await resolveProjectOr404(deps, projectName);
+  if (!project.ok) {
+    return { error: project.response };
   }
+  const projectPath = project.value;
 
   return { projectPath, sessionName, workflowId };
 }
@@ -367,14 +364,10 @@ export function createCollaborationRouteHandlers(
         );
       } catch (err) {
         if (err instanceof CollaborationSessionNotFoundError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 404,
-          });
+          return notFound(err.message);
         }
         if (err instanceof CollaborationConversationNotFoundError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 404,
-          });
+          return notFound(err.message);
         }
         if (err instanceof CollaborationStartConflictError) {
           return NextResponse.json(
@@ -439,10 +432,7 @@ export function createCollaborationRouteHandlers(
           workflowId: workflowResolution.workflowId,
         });
         if (!envelope) {
-          return NextResponse.json(
-            { error: "Collaboration run not found" } satisfies ApiError,
-            { status: 404 },
-          );
+          return notFound("Collaboration run not found");
         }
         return NextResponse.json({ envelope });
       } catch (err) {
@@ -498,21 +488,13 @@ export function createCollaborationRouteHandlers(
         );
       }
 
-      const projectPath = await deps.resolveProjectPath(projectName);
-      if (!projectPath) {
-        return NextResponse.json(
-          { error: "Project not found" } satisfies ApiError,
-          { status: 404 },
-        );
-      }
-
-      const sessionState = await deps.getSession(projectPath, sessionName);
-      if (!sessionState) {
-        return NextResponse.json(
-          { error: "Session not found" } satisfies ApiError,
-          { status: 404 },
-        );
-      }
+      const resolved = await resolveProjectSessionOr404(
+        deps,
+        projectName,
+        sessionName,
+      );
+      if (!resolved.ok) return resolved.response;
+      const sessionState = resolved.value.session;
 
       const relativePath = path.posix.join(
         "memory-bank",
@@ -537,10 +519,7 @@ export function createCollaborationRouteHandlers(
           "code" in err &&
           (err as NodeJS.ErrnoException).code === "ENOENT"
         ) {
-          return NextResponse.json(
-            { error: "Artifact not found" } satisfies ApiError,
-            { status: 404 },
-          );
+          return notFound("Artifact not found");
         }
         logger.error("collaboration.route.artifact_read_failed", {
           workflowId,
@@ -584,10 +563,7 @@ export function createCollaborationRouteHandlers(
         workflowResolution.sessionName,
       );
       if (!sessionState) {
-        return NextResponse.json(
-          { error: "Session not found" } satisfies ApiError,
-          { status: 404 },
-        );
+        return notFound("Session not found");
       }
 
       const absolutePath = path.join(sessionState.worktreePath, relativePath);
@@ -606,10 +582,7 @@ export function createCollaborationRouteHandlers(
           "code" in err &&
           (err as NodeJS.ErrnoException).code === "ENOENT"
         ) {
-          return NextResponse.json(
-            { error: "Artifact not found" } satisfies ApiError,
-            { status: 404 },
-          );
+          return notFound("Artifact not found");
         }
         logger.error("collaboration.route.artifact_file_read_failed", {
           workflowId: workflowResolution.workflowId,
@@ -652,9 +625,7 @@ export function createCollaborationRouteHandlers(
         return NextResponse.json(result, { status: 200 });
       } catch (err) {
         if (err instanceof CollaborationWorkflowNotFoundError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 404,
-          });
+          return notFound(err.message);
         }
         if (err instanceof CollaborationConversationMismatchError) {
           return NextResponse.json({ error: err.message } satisfies ApiError, {
@@ -713,9 +684,7 @@ export function createCollaborationRouteHandlers(
         return NextResponse.json(result, { status: 200 });
       } catch (err) {
         if (err instanceof CollaborationWorkflowNotFoundError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 404,
-          });
+          return notFound(err.message);
         }
         if (err instanceof CollaborationConversationMismatchError) {
           return NextResponse.json({ error: err.message } satisfies ApiError, {

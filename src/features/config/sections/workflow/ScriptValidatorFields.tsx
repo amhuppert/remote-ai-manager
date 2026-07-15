@@ -1,4 +1,4 @@
-import type { GraphWorkflowScriptValidatorConfig } from "@/lib/workflows/schemas";
+import type { GraphWorkflowScriptValidatorConfig } from "@/lib/workflow-graph/config-schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigToggle } from "../../components/ConfigToggle";
 
@@ -18,6 +18,7 @@ export function ScriptValidatorFields({
       hint="Run the project's preMergeCommand before agent validation."
     >
       <ConfigToggle
+        label="Script validator enabled"
         value={value.enabled}
         onChange={(enabled) => onChange({ enabled })}
       />

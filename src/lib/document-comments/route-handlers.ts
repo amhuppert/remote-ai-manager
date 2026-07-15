@@ -18,6 +18,11 @@
 
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import {
+  jsonError,
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -34,7 +39,7 @@ import {
   type DocumentComment,
 } from "./schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ApiError } from "@/lib/api/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("document-comments-route");
 
@@ -81,10 +86,6 @@ type RouteContext = { params: Promise<Record<string, string>> };
 // Helpers
 // ---------------------------------------------------------------------------
 
-function jsonError(message: string, status: number): NextResponse {
-  return NextResponse.json({ error: message } satisfies ApiError, { status });
-}
-
 /** HTTP status for a `normalizeDocPath` rejection: traversal/non-markdown are
  * client errors (400); an absolute path outside the worktree is unavailable
  * (404). */
@@ -92,25 +93,6 @@ function docPathRejectionStatus(
   reason: "non-markdown" | "traversal" | "outside-worktree",
 ): number {
   return reason === "outside-worktree" ? 404 : 400;
-}
-
-interface ResolvedScope {
-  projectPath: string;
-  session: SessionState;
-}
-
-/** Resolve project→session (the ownership chain). Returns an error response on
- * a miss so callers can early-return. */
-async function resolveScope(
-  deps: DocumentCommentsRouteDeps,
-  name: string,
-  sessionName: string,
-): Promise<ResolvedScope | NextResponse> {
-  const projectPath = await deps.resolveProjectPath(name);
-  if (!projectPath) return jsonError("Project not found", 404);
-  const session = await deps.getSession(projectPath, sessionName);
-  if (!session) return jsonError("Session not found", 404);
-  return { projectPath, session };
 }
 
 // ---------------------------------------------------------------------------
@@ -128,8 +110,9 @@ export function createDocumentCommentsRouteHandlers(
     const name = resolvedParams["name"] ?? "";
     const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
 
-    const scope = await resolveScope(deps, name, sessionName);
-    if (scope instanceof NextResponse) return scope;
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.value;
 
     const rawDocPath = new URL(request.url).searchParams.get("docPath");
     if (!rawDocPath) return jsonError("docPath query is required", 400);
@@ -151,7 +134,7 @@ export function createDocumentCommentsRouteHandlers(
       return NextResponse.json(comments);
     } catch (err) {
       logger.error("document-comments.list.failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return jsonError("Failed to list comments", 500);
     }
@@ -166,8 +149,9 @@ export function createDocumentCommentsRouteHandlers(
     const name = resolvedParams["name"] ?? "";
     const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
 
-    const scope = await resolveScope(deps, name, sessionName);
-    if (scope instanceof NextResponse) return scope;
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.value;
 
     const parsed = createDocumentCommentRequestSchema.safeParse(
       await bodyPromise,
@@ -210,7 +194,7 @@ export function createDocumentCommentsRouteHandlers(
       return NextResponse.json(comment, { status: 201 });
     } catch (err) {
       logger.error("document-comments.create.failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return jsonError("Failed to create comment", 500);
     }
@@ -226,8 +210,9 @@ export function createDocumentCommentsRouteHandlers(
     const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
     const id = decodeURIComponent(resolvedParams["id"] ?? "");
 
-    const scope = await resolveScope(deps, name, sessionName);
-    if (scope instanceof NextResponse) return scope;
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.value;
 
     const parsed = updateDocumentCommentRequestSchema.safeParse(
       await bodyPromise,
@@ -239,7 +224,7 @@ export function createDocumentCommentsRouteHandlers(
       sessionName,
       id,
     );
-    if (!existing) return jsonError("Comment not found", 404);
+    if (!existing) return notFound("Comment not found");
 
     const nextNote = parsed.data.note ?? existing.note;
     const nextStatus = parsed.data.status ?? existing.status;
@@ -264,7 +249,7 @@ export function createDocumentCommentsRouteHandlers(
       return NextResponse.json(updated);
     } catch (err) {
       logger.error("document-comments.update.failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return jsonError("Failed to update comment", 500);
     }
@@ -279,15 +264,16 @@ export function createDocumentCommentsRouteHandlers(
     const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
     const id = decodeURIComponent(resolvedParams["id"] ?? "");
 
-    const scope = await resolveScope(deps, name, sessionName);
-    if (scope instanceof NextResponse) return scope;
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.value;
 
     const existing = await deps.getDocumentCommentInScope(
       scope.projectPath,
       sessionName,
       id,
     );
-    if (!existing) return jsonError("Comment not found", 404);
+    if (!existing) return notFound("Comment not found");
 
     try {
       await deps.deleteDocumentComment(id);
@@ -295,7 +281,7 @@ export function createDocumentCommentsRouteHandlers(
       return NextResponse.json({ ok: true });
     } catch (err) {
       logger.error("document-comments.delete.failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return jsonError("Failed to delete comment", 500);
     }

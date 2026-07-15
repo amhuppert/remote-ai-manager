@@ -1,10 +1,20 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
 import { WorkflowSection } from "./WorkflowSection";
 import { makeController } from "./test-controller";
+
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return rtlRender(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+}
 
 describe("WorkflowSection", () => {
   it("renders all eight default sub-sections with DEFAULT badges when matching seed", () => {

@@ -1,5 +1,6 @@
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 export type DirtyPath = {
   path: string;
   statusCode: string;
@@ -8,14 +9,14 @@ export type DirtyPath = {
 
 type AgentTurnFailedInit = {
   contextId: string;
-  engine: "claude" | "codex";
+  engine: AgentBackendId;
   cause: "sdk_error" | "abort" | "timeout" | "unknown";
   originalMessage: string;
 };
 
 export class AgentTurnFailedError extends Error {
   readonly contextId: string;
-  readonly engine: "claude" | "codex";
+  readonly engine: AgentBackendId;
   readonly cause: "sdk_error" | "abort" | "timeout" | "unknown";
   readonly originalMessage: string;
 

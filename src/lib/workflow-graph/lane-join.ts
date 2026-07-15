@@ -3,9 +3,11 @@ import type {
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { reachableLanesFrom } from "./lane-readiness";
 
 /**
@@ -40,14 +42,6 @@ export interface MaterializeSessionLaneInput {
   branchName: string;
   worktreePath: string;
   now(): string;
-}
-
-export interface ApplyJoinProgressPatch {
-  status?: GraphWorkflowExecutionJoinState["status"];
-  addMergedSourceLaneId?: string;
-  errorMessage?: string | null;
-  conflicts?: GraphWorkflowExecutionJoinState["conflicts"];
-  conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"];
 }
 
 /**
@@ -318,97 +312,6 @@ export function remainingSourceLanes(
   return join.sourceLaneIds.filter(
     (laneId) => laneId !== join.targetLaneId && !merged.has(laneId),
   );
-}
-
-export function applyJoinProgress(
-  execution: GraphWorkflowExecution,
-  joinId: string,
-  now: string,
-  patch: ApplyJoinProgressPatch,
-): GraphWorkflowExecution {
-  const join = execution.joins[joinId];
-  if (!join) {
-    throw new Error(
-      `applyJoinProgress: join ${JSON.stringify(joinId)} not found`,
-    );
-  }
-  const mergedSourceLaneIds =
-    patch.addMergedSourceLaneId &&
-    !join.mergedSourceLaneIds.includes(patch.addMergedSourceLaneId)
-      ? [...join.mergedSourceLaneIds, patch.addMergedSourceLaneId]
-      : join.mergedSourceLaneIds;
-
-  const status = patch.status ?? join.status;
-  const completedAt =
-    status === "succeeded" || status === "failed" || status === "conflicts"
-      ? now
-      : join.completedAt;
-
-  return {
-    ...execution,
-    joins: {
-      ...execution.joins,
-      [joinId]: {
-        ...join,
-        status,
-        mergedSourceLaneIds,
-        errorMessage:
-          patch.errorMessage !== undefined
-            ? patch.errorMessage
-            : join.errorMessage,
-        conflicts:
-          patch.conflicts !== undefined ? patch.conflicts : join.conflicts,
-        conflictGuidance:
-          patch.conflictGuidance !== undefined
-            ? patch.conflictGuidance
-            : join.conflictGuidance,
-        updatedAt: now,
-        completedAt,
-      },
-    },
-  };
-}
-
-/**
- * Reset a failed/conflicts join back to `pending` so the loop re-runs it,
- * preserving per-lane merge progress (`mergedSourceLaneIds`). Optional
- * operator guidance is attached for the next conflict-resolution attempt.
- * Joins in any other status are returned unchanged — resume treats the reset
- * as a manual retry decision that only applies to concluded failures.
- */
-export function resetJoinForRetry(
-  execution: GraphWorkflowExecution,
-  joinId: string,
-  now: string,
-  conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"],
-): GraphWorkflowExecution {
-  const join = execution.joins[joinId];
-  if (!join) {
-    throw new Error(
-      `resetJoinForRetry: join ${JSON.stringify(joinId)} not found`,
-    );
-  }
-  if (join.status !== "failed" && join.status !== "conflicts") {
-    return execution;
-  }
-  return {
-    ...execution,
-    joins: {
-      ...execution.joins,
-      [joinId]: {
-        ...join,
-        status: "pending",
-        errorMessage: null,
-        conflicts: null,
-        conflictGuidance:
-          conflictGuidance !== undefined
-            ? conflictGuidance
-            : join.conflictGuidance,
-        updatedAt: now,
-        completedAt: null,
-      },
-    },
-  };
 }
 
 /**

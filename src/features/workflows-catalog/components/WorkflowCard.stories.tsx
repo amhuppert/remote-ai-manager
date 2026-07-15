@@ -6,8 +6,7 @@ import type { MachineSpec } from "../machine-spec-types";
  * Storybook fixtures: minimal hand-crafted specs that exercise WorkflowCard's
  * surface (machineId, character, name, tagline, and the 5-stat strip). The
  * production specs are server-only because they import the live XState
- * machines, so stories can't import them. The numbers below are pinned by the
- * `machine-specs.test.ts` snapshot — update both together.
+ * machines, so stories can't import them.
  */
 
 function fixture(
@@ -60,10 +59,11 @@ const conversationFixture = fixture({
   character: "hierarchical",
   tagline:
     "The full life of a conversation turn — prompt → SDK → ask question → finalize.",
-  states: 14,
+  states: 10,
   eventTypes: [
     "SUBMIT_PROMPT",
-    "ENTER_DEBUG_MODE",
+    "SUBMIT_TASK_RUN",
+    "DEBUG_COMMAND",
     "EXTERNAL_TURN_STARTED",
     "EXTERNAL_TURN_COMPLETED",
     "PROMPT_COMPLETED",
@@ -71,15 +71,11 @@ const conversationFixture = fixture({
     "ABORT_TURN",
     "BACKEND_INIT",
     "ASK_QUESTION",
-    "EXIT_DEBUG_MODE",
-    "SET_DEBUG_RECORDING",
-    "CLEAR_DEBUG_LOGS",
-    "MARK_REPRODUCED",
-    "MARK_FIX_VERIFIED",
+    "CLEAR_PENDING_QUESTION",
   ],
-  actors: 2,
-  guards: 8,
-  actions: 7,
+  actors: 3,
+  guards: 1,
+  actions: 15,
 });
 
 const smartMergeFixture = fixture({
@@ -109,34 +105,6 @@ const smartCommitFixture = fixture({
   actions: 1,
 });
 
-const optimisticFixture = fixture({
-  id: "optimistic",
-  name: "Optimistic",
-  machineId: "optimistic",
-  character: "linear",
-  tagline:
-    "Execute a prompt autonomously, then dispatch a merge — the simplest workflow.",
-  states: 4,
-  eventTypes: [],
-  actors: 2,
-  guards: 0,
-  actions: 1,
-});
-
-const retryFixture = fixture({
-  id: "retry",
-  name: "Retry",
-  machineId: "retry",
-  character: "factory · cycle",
-  tagline:
-    "Generic attempt → fix → reattempt cycle. A reusable child machine for any workflow.",
-  states: 4,
-  eventTypes: [],
-  actors: 2,
-  guards: 1,
-  actions: 0,
-});
-
 const meta = {
   title: "Workflows/WorkflowCard",
   component: WorkflowCard,
@@ -162,12 +130,4 @@ export const SmartMerge = {
 
 export const SmartCommit = {
   args: { spec: smartCommitFixture },
-} satisfies Story;
-
-export const Optimistic = {
-  args: { spec: optimisticFixture },
-} satisfies Story;
-
-export const Retry = {
-  args: { spec: retryFixture },
 } satisfies Story;

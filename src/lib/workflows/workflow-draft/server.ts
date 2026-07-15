@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { workflowSemanticDefinitionSchema } from "@/lib/workflows/schemas";
+import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("mcp-workflow-draft");

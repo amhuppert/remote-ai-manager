@@ -27,7 +27,7 @@ import {
   createGraphWorkflowExecutionsRepo,
   type GraphWorkflowExecutionsRepo,
 } from "./graph-workflow-executions-repo";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 type Db = InstanceType<typeof Database>;
 
@@ -441,12 +441,17 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
     expect(execution.laneStates).toEqual({
       "execution-loop-fan-out-fan-in": {
         context_validator: expect.objectContaining({
-          engine: "codex",
+          backend: "codex",
           lane: "context_validator",
+          refKind: "backend",
+          sessionRef: { backend: "codex", ref: "thread-1" },
         }),
         implementer: expect.objectContaining({
-          engine: "claude",
+          backend: "claude",
           lane: "implementer",
+          refKind: "conversation",
+          sessionRef: { backend: "claude", ref: "conv-1" },
+          workflowConversationId: "conv-1",
         }),
       },
     });

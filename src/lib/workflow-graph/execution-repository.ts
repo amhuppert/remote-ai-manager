@@ -1,7 +1,7 @@
 import { readConfig } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { ensureCcArtifactsExcluded } from "@/lib/git/worktree";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
   StaleLoopFenceError,
   getCurrentLoopFence,
@@ -29,13 +29,14 @@ import {
 } from "./validation";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
   GraphWorkflowStatus,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { WorkflowStartGuardError } from "./workflow-manager";
+import { getErrorMessage } from "@/lib/shared/errors";
 export { GraphWorkflowValidationError } from "./validation";
 
 const logger = createLogger("graph-workflow-execution-repository");
@@ -260,7 +261,7 @@ export function createGraphWorkflowExecutionRepository(
         projectPath,
         sessionName,
         worktreePath: session.worktreePath,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
 

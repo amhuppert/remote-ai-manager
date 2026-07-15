@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { TESTFAKE_BACKEND_ID } from "@/lib/agent-backends/testing/testfake-backend";
 import {
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowExecutionEventSchema,
   graphWorkflowLiveEditAppliedEventSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 
@@ -236,6 +237,68 @@ describe("graph workflow execution event publisher", () => {
         reopenTaskIds: ["task-plan-1"],
       }),
     );
+  });
+
+  it("publishes the validator's semantic lane reference unchanged", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher();
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+      laneStates: {
+        "context-plan": {
+          context_validator: {
+            lane: "context_validator",
+            contextId: "context-plan",
+            backend: TESTFAKE_BACKEND_ID,
+            refKind: "conversation",
+            workflowConversationId: "workflow-conversation-1",
+            sessionRef: {
+              backend: TESTFAKE_BACKEND_ID,
+              ref: "testfake-validator-ref",
+            },
+            metrics: { rotateBeforeNextTurn: false },
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-28T10:04:00.000Z",
+          },
+        },
+      },
+    });
+
+    const updatedExecution = publisher.publishValidationResult({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      validatorType: "context",
+      pass: true,
+      summary: "Validation passed.",
+      sessionRef: {
+        backend: TESTFAKE_BACKEND_ID,
+        ref: "workflow-conversation-1",
+        lane: "context_validator",
+        refKind: "conversation",
+        workflowConversationId: "workflow-conversation-1",
+      },
+    });
+
+    expect(updatedExecution[0]?.event).toMatchObject({
+      type: "graph-workflow-validation-result",
+      sessionRef: {
+        backend: TESTFAKE_BACKEND_ID,
+        ref: "workflow-conversation-1",
+        lane: "context_validator",
+        refKind: "conversation",
+        workflowConversationId: "workflow-conversation-1",
+      },
+    });
+    expect(
+      graphWorkflowExecutionEventSchema.parse(updatedExecution[0]).event,
+    ).toMatchObject({
+      sessionRef: {
+        backend: TESTFAKE_BACKEND_ID,
+        workflowConversationId: "workflow-conversation-1",
+      },
+    });
   });
 
   it("publishes task status events when task conversation metadata changes", () => {

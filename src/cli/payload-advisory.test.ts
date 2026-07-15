@@ -63,7 +63,7 @@ function payloadHost(): CliHost {
 describe("cctl --file payload location advisory (integration)", () => {
   it("prints the .cc/temp advisory on stderr for a worktree-root payload, without touching stdout or exit code", async () => {
     const result = await runCli(
-      ["codex", "run", "--file", "doc.json"],
+      ["agent", "run", "--file", "doc.json"],
       baseEnv,
       payloadHost(),
     );
@@ -74,7 +74,7 @@ describe("cctl --file payload location advisory (integration)", () => {
 
   it("stays silent when the payload already lives under .cc/temp/", async () => {
     const result = await runCli(
-      ["codex", "run", "--file", ".cc/temp/doc.json"],
+      ["agent", "run", "--file", ".cc/temp/doc.json"],
       baseEnv,
       payloadHost(),
     );

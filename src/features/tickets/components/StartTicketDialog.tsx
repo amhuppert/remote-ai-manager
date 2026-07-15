@@ -28,8 +28,8 @@ import { useDialogRequestGeneration } from "@/hooks/use-dialog-request-generatio
 import {
   getDefaultModelForBackend,
   getEffortLevelsForBackend,
-  type EffortLevel,
-} from "@/lib/agent-backends/schemas";
+} from "@/lib/agent-backends/catalog";
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { useStartTicketMutation } from "@/lib/tickets/mutations";
 import type { TicketStartMode } from "@/lib/tickets/schemas";

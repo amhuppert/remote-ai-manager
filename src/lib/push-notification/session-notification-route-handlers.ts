@@ -8,6 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { resolveProjectSessionOr404 } from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { resolveProjectPath } from "@/lib/projects/resolver";
@@ -57,21 +58,13 @@ export function createSessionNotificationHandlers(
     const projectName = name ?? "";
     const sessionName = session ?? "";
 
-    const projectPath = await deps.resolveProjectPath(projectName);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const sessionState = await deps.getSession(projectPath, sessionName);
-    if (!sessionState) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      projectName,
+      sessionName,
+    );
+    if (!resolved.ok) return resolved.response;
+    const sessionState = resolved.value.session;
 
     let rawBody: unknown;
     try {

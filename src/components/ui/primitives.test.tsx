@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { Button } from "./Button";
 import { Badge } from "./Badge";
 import { Spinner } from "./Spinner";
 import { StatusDot } from "./StatusDot";
+import { StatusChip } from "./StatusChip";
 import { Tabs, Tab, TabCount } from "./Tabs";
 import {
   SectionHeader,
@@ -305,6 +307,16 @@ describe("Badge", () => {
     expectAll(codex, ["bg-violet-glow", "text-violet"]);
   });
 
+  it("a backend id outside the catalog renders flagged neutral, never a coerced identity tone", () => {
+    const unknown = root(
+      <Badge backend={"mystery" as AgentBackendId}>mystery</Badge>,
+    );
+    expect(unknown.getAttribute("data-backend-unknown")).toBe("true");
+    expectAll(unknown, ["bg-bg-raised", "text-text-secondary"]);
+    expect(unknown.className).not.toContain("text-cyan");
+    expect(unknown.className).not.toContain("text-violet");
+  });
+
   it("subtle renders the neutral muted palette (no opacity fade) and layoutClassName is appended last", () => {
     const el = root(
       <Badge status="running" subtle layoutClassName="ml-1">
@@ -369,6 +381,91 @@ describe("StatusDot", () => {
     const el = root(<StatusDot layoutClassName="mr-1" />);
     expect(el.getAttribute("data-tone")).toBe("green");
     expect(el.className.trim().endsWith("mr-1")).toBe(true);
+  });
+});
+
+describe("StatusChip", () => {
+  const baseSet = [
+    "inline-flex",
+    "items-center",
+    "gap-[4px]",
+    "rounded-full",
+    "border",
+    "border-solid",
+    "px-[8px]",
+    "py-[2px]",
+    "font-mono",
+    "text-[0.7rem]",
+    "font-medium",
+    "leading-[1.3]",
+  ];
+
+  it.each([
+    ["neutral", ["border-border-subtle", "text-text-tertiary"]],
+    ["cyan", ["border-[var(--cc-cyan-a25)]", "bg-cyan-glow", "text-cyan"]],
+    ["amber", ["border-[var(--cc-amber-a25)]", "bg-amber-glow", "text-amber"]],
+    ["green", ["border-[var(--cc-green-a20)]", "bg-green-glow", "text-green"]],
+    ["red", ["border-[var(--cc-red-a40)]", "bg-red-glow", "text-red"]],
+    [
+      "violet",
+      ["border-[var(--cc-codex-violet-a35)]", "bg-violet-glow", "text-violet"],
+    ],
+  ] as const)("tone %s renders the pill + tone triple", (tone, toneClasses) => {
+    const el = root(<StatusChip tone={tone}>Label</StatusChip>);
+    expect(el.tagName).toBe("SPAN");
+    expect(el.getAttribute("data-tone")).toBe(tone);
+    expect(el.textContent).toBe("Label");
+    expectAll(el, [...baseSet, ...toneClasses]);
+  });
+
+  it("defaults to the neutral tone and appends layoutClassName last", () => {
+    const el = root(<StatusChip layoutClassName="ml-1">X</StatusChip>);
+    expect(el.getAttribute("data-tone")).toBe("neutral");
+    expect(el.className.trim().endsWith("ml-1")).toBe(true);
+  });
+
+  it("stays single-line by default; wrap lets long content break inside the row", () => {
+    const nowrap = root(<StatusChip>Fresh</StatusChip>);
+    expectAll(nowrap, ["whitespace-nowrap"]);
+    expect(classes(nowrap)).not.toContain("[overflow-wrap:anywhere]");
+
+    const wrapped = root(<StatusChip wrap>Set on at project</StatusChip>);
+    expectAll(wrapped, ["[overflow-wrap:anywhere]"]);
+    expect(classes(wrapped)).not.toContain("whitespace-nowrap");
+  });
+
+  it("renders the leading icon before the label", () => {
+    const { getByTestId, container } = render(
+      <StatusChip tone="cyan" icon={<i data-testid="chip-icon" />}>
+        Compacting
+      </StatusChip>,
+    );
+    const chip = container.firstElementChild as HTMLElement;
+    expect(getByTestId("chip-icon")).toBe(chip.firstElementChild);
+    expect(chip.textContent).toBe("Compacting");
+  });
+
+  it("as=button renders an interactive button with type=button by default", () => {
+    const el = root(
+      <StatusChip as="button" tone="amber" aria-label="Open">
+        Stale
+      </StatusChip>,
+    );
+    expect(el.tagName).toBe("BUTTON");
+    expect(el.getAttribute("type")).toBe("button");
+    expect(el.getAttribute("aria-label")).toBe("Open");
+    expectAll(el, ["cursor-pointer"]);
+  });
+
+  it("as=button forwards onClick", () => {
+    let clicked = 0;
+    const el = root(
+      <StatusChip as="button" onClick={() => (clicked += 1)}>
+        Go
+      </StatusChip>,
+    );
+    (el as HTMLButtonElement).click();
+    expect(clicked).toBe(1);
   });
 });
 

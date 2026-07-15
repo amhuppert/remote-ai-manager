@@ -9,7 +9,7 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { recordMergeIntent, getMergeIntents } from "./repo";
+import { createMergeIntentsRepo, type MergeIntentsRepo } from "./repo";
 import {
   _createTestDb,
   _installTestDb,
@@ -19,8 +19,12 @@ import { mergeIntentSchema } from "./schemas";
 import type { MergeIntent } from "./schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 
+let repo: MergeIntentsRepo;
+
 beforeEach(() => {
-  _installTestDb(_createTestDb({ inMemory: true }));
+  const db = _createTestDb({ inMemory: true });
+  _installTestDb(db);
+  repo = createMergeIntentsRepo(db);
 });
 
 afterEach(() => {
@@ -55,13 +59,13 @@ describe("merge-intents durability contract", () => {
       schema: mergeIntentSchema,
       buildMaximalFixture: buildMaximalMergeIntent,
       persist: (fixture) => {
-        recordMergeIntent({
+        repo.recordMergeIntent({
           projectPath: fixture.projectPath,
           commitSha: fixture.commitSha,
           intent: fixture.intent,
           source: fixture.source,
         });
-        const expected = getMergeIntents(fixture.projectPath, [
+        const expected = repo.getMergeIntents(fixture.projectPath, [
           fixture.commitSha,
         ])[0];
         if (expected === undefined) {
@@ -72,7 +76,8 @@ describe("merge-intents durability contract", () => {
         return expected;
       },
       reload: (expected) =>
-        getMergeIntents(expected.projectPath, [expected.commitSha])[0] ?? null,
+        repo.getMergeIntents(expected.projectPath, [expected.commitSha])[0] ??
+        null,
       fieldPolicies,
     });
   });

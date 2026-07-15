@@ -88,11 +88,7 @@ function MobileInfoPanel({
   }, [buildContext]);
 
   const backendRefDisplay = activeConversation?.backendRef
-    ? activeConversation.backendRef.backend === "claude"
-      ? activeConversation.backendRef.sessionId
-      : activeConversation.backendRef.backend === "codex"
-        ? activeConversation.backendRef.threadId
-        : "—"
+    ? activeConversation.backendRef.ref
     : "—";
 
   return (

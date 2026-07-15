@@ -5,7 +5,6 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   useProjectConversationsQuery,
-  useProjectOpenCountQuery,
   useProjectConversationMessagesQuery,
   isOpenProjectConversation,
 } from "./queries";
@@ -121,26 +120,6 @@ describe("useProjectConversationsQuery", () => {
       wrapper: wrapperFor(makeClient()),
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
-  });
-});
-
-describe("useProjectOpenCountQuery", () => {
-  const fetchSpy = vi.fn<typeof fetch>();
-  beforeEach(() => {
-    fetchSpy.mockReset();
-    vi.stubGlobal("fetch", fetchSpy);
-  });
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("derives the open count from the open-PLC list", async () => {
-    fetchSpy.mockResolvedValue(
-      jsonResponse([conv("a"), conv("b"), conv("c", { open: false })]),
-    );
-    const { result } = renderHook(() => useProjectOpenCountQuery("proj"), {
-      wrapper: wrapperFor(makeClient()),
-    });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toBe(2);
   });
 });
 

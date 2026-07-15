@@ -2,7 +2,7 @@ import type {
   ParameterDeclaration,
   WorkflowDefinitionRecord,
   WorkflowPrerequisite,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { createLogger } from "../logging";
 import {
   createWorkflowStorageService,

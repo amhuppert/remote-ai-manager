@@ -1,21 +1,24 @@
+/**
+ * Notifications persistence — a standalone repo factory over the shared
+ * `command-center.db` connection.
+ *
+ * Pure persistence only: SSE publication and web-push dispatch are owned by
+ * the notifications service (`@/lib/notifications/service`), never by repo
+ * writes. Every row is validated through the notification schemas at the
+ * boundary — on read via `rowToNotification`, and on write BEFORE the INSERT
+ * commits so an invalid candidate never reaches the table.
+ */
+
 import type Database from "better-sqlite3";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { getStateDb } from "@/lib/state-store/store";
-import {
-  _createTestDb as _createSharedStateDb,
-  _installTestDb as _installSharedStateDb,
-  _resetForTesting as _resetSharedStateDb,
-} from "@/lib/state-store/state-db";
-import type { BroadcastFn } from "@/lib/events/broadcaster";
-import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 import { createLogger } from "@/lib/logging";
 import { timedSync } from "@/lib/logging/timed";
 import {
   jobNotificationSchema,
   notificationSchema,
 } from "@/lib/notifications/schemas";
-import { recoverStaleJobs } from "@/lib/jobs/repo";
 import type { JobType } from "@/lib/jobs/schemas";
 import type {
   JobNotification,
@@ -29,11 +32,6 @@ import {
   parseTrusted,
   registerTrustedSchema,
 } from "@/lib/shared/parse-trusted";
-import { dispatchPushForNotification } from "@/lib/push-notification/dispatcher";
-
-const defaultBroadcast: BroadcastFn = (event) => {
-  publishSessionStatus(event);
-};
 
 type Db = InstanceType<typeof Database>;
 
@@ -154,7 +152,7 @@ function parseConflictFilesColumn(
         {
           code: "invalid_json",
           path: ["conflictFiles"],
-          message: err instanceof Error ? err.message : String(err),
+          message: getErrorMessage(err),
           identifier,
         },
       ],
@@ -233,7 +231,7 @@ function rowToNotification(rawRow: unknown): Notification {
 }
 
 // ============================================================
-// Notification CRUD
+// Repo surface
 // ============================================================
 
 export interface CreateNotificationInput {
@@ -253,87 +251,6 @@ export interface CreateNotificationInput {
   errorMessage?: string;
 }
 
-export function createNotification(
-  input: CreateNotificationInput,
-  broadcast: BroadcastFn = defaultBroadcast,
-): JobNotification {
-  const id = randomUUID();
-  return timedSync(
-    notificationLogger,
-    "state-db.createNotification",
-    {
-      notificationId: id,
-      notificationType: input.type,
-      projectName: input.projectName,
-      sessionName: input.sessionName,
-    },
-    () => {
-      const createdAt = sqliteUtcNow();
-
-      const candidate: Record<string, unknown> = {
-        id,
-        source: "job",
-        type: input.type,
-        title: input.title,
-        message: input.message,
-        read: false,
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        branchName: input.branchName,
-        jobId: input.jobId,
-        jobType: input.jobType,
-        createdAt,
-      };
-      if (input.mergeHash !== undefined) candidate.mergeHash = input.mergeHash;
-      if (input.commitHash !== undefined)
-        candidate.commitHash = input.commitHash;
-      if (input.conflictCount !== undefined)
-        candidate.conflictCount = input.conflictCount;
-      if (input.conflictFiles !== undefined)
-        candidate.conflictFiles = input.conflictFiles;
-      if (input.targetBranch !== undefined)
-        candidate.targetBranch = input.targetBranch;
-      if (input.errorMessage !== undefined)
-        candidate.errorMessage = input.errorMessage;
-
-      const validated = parseJobNotificationOrFail(candidate, id);
-
-      const db = getStateDb();
-      db.prepare(
-        `INSERT INTO notifications (id, source, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        validated.id,
-        validated.source,
-        validated.type,
-        validated.title,
-        validated.message,
-        validated.read ? 1 : 0,
-        validated.projectName,
-        validated.sessionName,
-        validated.branchName,
-        validated.jobId,
-        validated.jobType,
-        validated.mergeHash ?? null,
-        validated.commitHash ?? null,
-        validated.conflictCount ?? null,
-        validated.conflictFiles
-          ? JSON.stringify(validated.conflictFiles)
-          : null,
-        validated.targetBranch ?? null,
-        validated.errorMessage ?? null,
-        validated.createdAt,
-      );
-
-      broadcast({ type: "notification-created", notification: validated });
-
-      dispatchPushForNotification(validated);
-
-      return validated;
-    },
-  );
-}
-
 export interface CreateProjectConversationNotificationInput {
   type: ProjectConversationNotificationType;
   title: string;
@@ -344,110 +261,6 @@ export interface CreateProjectConversationNotificationInput {
   status: ProjectConversationNotification["status"];
   errorMessage?: string;
   dedupeKey: string;
-}
-
-function getProjectConversationNotificationByDedupeKey(
-  dedupeKey: string,
-): ProjectConversationNotification | undefined {
-  const db = getStateDb();
-  const row = db
-    .prepare(
-      "SELECT * FROM notifications WHERE source = 'project-conversation' AND dedupe_key = ?",
-    )
-    .get(dedupeKey) as unknown;
-  if (row === undefined) return undefined;
-  const notification = rowToNotification(row);
-  if (notification.source === "project-conversation") return notification;
-  return logAndThrowNotificationValidationFailure(notification.id, [
-    {
-      code: "invalid_source",
-      message: "Expected project-conversation notification for dedupe key",
-    },
-  ]);
-}
-
-export function createProjectConversationNotification(
-  input: CreateProjectConversationNotificationInput,
-  broadcast: BroadcastFn = defaultBroadcast,
-): ProjectConversationNotification {
-  const existing = getProjectConversationNotificationByDedupeKey(
-    input.dedupeKey,
-  );
-  if (existing !== undefined) return existing;
-
-  const id = randomUUID();
-  return timedSync(
-    notificationLogger,
-    "state-db.createProjectConversationNotification",
-    {
-      notificationId: id,
-      notificationType: input.type,
-      projectName: input.projectName,
-      conversationId: input.conversationId,
-    },
-    () => {
-      const createdAt = sqliteUtcNow();
-      const candidate: Record<string, unknown> = {
-        id,
-        source: "project-conversation",
-        type: input.type,
-        title: input.title,
-        message: input.message,
-        read: false,
-        projectName: input.projectName,
-        conversationId: input.conversationId,
-        conversationName: input.conversationName ?? null,
-        status: input.status,
-        createdAt,
-      };
-      if (input.errorMessage !== undefined) {
-        candidate.errorMessage = input.errorMessage;
-      }
-
-      const validated = parseNotificationOrFail(candidate, id);
-      if (validated.source !== "project-conversation") {
-        return logAndThrowNotificationValidationFailure(id, [
-          {
-            code: "invalid_source",
-            message: "Expected project-conversation notification",
-          },
-        ]);
-      }
-
-      const db = getStateDb();
-      const result = db
-        .prepare(
-          `INSERT OR IGNORE INTO notifications (id, source, type, title, message, read, project_name, conversation_id, conversation_name, conversation_status, dedupe_key, error_message, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          validated.id,
-          validated.source,
-          validated.type,
-          validated.title,
-          validated.message,
-          validated.read ? 1 : 0,
-          validated.projectName,
-          validated.conversationId,
-          validated.conversationName,
-          validated.status,
-          input.dedupeKey,
-          validated.errorMessage ?? null,
-          validated.createdAt,
-        );
-
-      if (result.changes === 0) {
-        const duplicate = getProjectConversationNotificationByDedupeKey(
-          input.dedupeKey,
-        );
-        if (duplicate !== undefined) return duplicate;
-      }
-
-      broadcast({ type: "notification-created", notification: validated });
-      dispatchPushForNotification(validated);
-      return validated;
-    },
-  );
 }
 
 export interface GetNotificationsOptions {
@@ -462,189 +275,341 @@ export interface PaginatedNotifications {
   unreadCount: number;
 }
 
-export function getNotifications(
-  options: GetNotificationsOptions = {},
-): PaginatedNotifications {
-  const db = getStateDb();
-  const { unread, limit = 50, offset = 0 } = options;
+export interface MarkAsReadResult {
+  /** The row transitioned unread → read by this call. */
+  updated: boolean;
+  /** A row with the id exists (whether or not it was already read). */
+  exists: boolean;
+}
 
-  const whereClauses: string[] = [];
-  const params: unknown[] = [];
+export interface CreateProjectConversationNotificationResult {
+  notification: ProjectConversationNotification;
+  /**
+   * False when the dedupe key matched an existing row and that row was
+   * returned instead of inserting a new one.
+   */
+  created: boolean;
+}
 
-  if (unread === true) {
-    whereClauses.push("read = 0");
-  } else if (unread === false) {
-    whereClauses.push("read = 1");
+export interface NotificationsRepo {
+  createJobNotification(input: CreateNotificationInput): JobNotification;
+  createProjectConversationNotification(
+    input: CreateProjectConversationNotificationInput,
+  ): CreateProjectConversationNotificationResult;
+  getNotifications(options?: GetNotificationsOptions): PaginatedNotifications;
+  deleteNotification(id: string): boolean;
+  markAsRead(id: string): MarkAsReadResult;
+  /** Returns the number of rows transitioned unread → read. */
+  markAllAsRead(): number;
+  deleteAllNotifications(): number;
+  deleteNotificationsForSession(
+    projectName: string,
+    sessionName: string,
+  ): number;
+  deleteNotificationsForProject(projectName: string): number;
+  getUnreadCount(): number;
+  /** Delete notifications older than the retention window; returns the count. */
+  cleanupOldNotifications(retentionDays?: number): number;
+  notificationExists(id: string): boolean;
+}
+
+export function createNotificationsRepo(db: Db): NotificationsRepo {
+  function getProjectConversationNotificationByDedupeKey(
+    dedupeKey: string,
+  ): ProjectConversationNotification | undefined {
+    const row = db
+      .prepare(
+        "SELECT * FROM notifications WHERE source = 'project-conversation' AND dedupe_key = ?",
+      )
+      .get(dedupeKey) as unknown;
+    if (row === undefined) return undefined;
+    const notification = rowToNotification(row);
+    if (notification.source === "project-conversation") return notification;
+    return logAndThrowNotificationValidationFailure(notification.id, [
+      {
+        code: "invalid_source",
+        message: "Expected project-conversation notification for dedupe key",
+      },
+    ]);
   }
 
-  const where =
-    whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  function createJobNotification(
+    input: CreateNotificationInput,
+  ): JobNotification {
+    const id = randomUUID();
+    return timedSync(
+      notificationLogger,
+      "state-db.createNotification",
+      {
+        notificationId: id,
+        notificationType: input.type,
+        projectName: input.projectName,
+        sessionName: input.sessionName,
+      },
+      () => {
+        const createdAt = sqliteUtcNow();
 
-  const totalRow = db
-    .prepare(`SELECT COUNT(*) as count FROM notifications ${where}`)
-    .get(...params) as { count: number };
+        const candidate: Record<string, unknown> = {
+          id,
+          source: "job",
+          type: input.type,
+          title: input.title,
+          message: input.message,
+          read: false,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          branchName: input.branchName,
+          jobId: input.jobId,
+          jobType: input.jobType,
+          createdAt,
+        };
+        if (input.mergeHash !== undefined)
+          candidate.mergeHash = input.mergeHash;
+        if (input.commitHash !== undefined)
+          candidate.commitHash = input.commitHash;
+        if (input.conflictCount !== undefined)
+          candidate.conflictCount = input.conflictCount;
+        if (input.conflictFiles !== undefined)
+          candidate.conflictFiles = input.conflictFiles;
+        if (input.targetBranch !== undefined)
+          candidate.targetBranch = input.targetBranch;
+        if (input.errorMessage !== undefined)
+          candidate.errorMessage = input.errorMessage;
 
-  const unreadRow = db
-    .prepare("SELECT COUNT(*) as count FROM notifications WHERE read = 0")
-    .get() as { count: number };
+        const validated = parseJobNotificationOrFail(candidate, id);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    )
-    .all(...params, limit, offset) as unknown[];
+        db.prepare(
+          `INSERT INTO notifications (id, source, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          validated.id,
+          validated.source,
+          validated.type,
+          validated.title,
+          validated.message,
+          validated.read ? 1 : 0,
+          validated.projectName,
+          validated.sessionName,
+          validated.branchName,
+          validated.jobId,
+          validated.jobType,
+          validated.mergeHash ?? null,
+          validated.commitHash ?? null,
+          validated.conflictCount ?? null,
+          validated.conflictFiles
+            ? JSON.stringify(validated.conflictFiles)
+            : null,
+          validated.targetBranch ?? null,
+          validated.errorMessage ?? null,
+          validated.createdAt,
+        );
+
+        return validated;
+      },
+    );
+  }
+
+  function createProjectConversationNotification(
+    input: CreateProjectConversationNotificationInput,
+  ): CreateProjectConversationNotificationResult {
+    const existing = getProjectConversationNotificationByDedupeKey(
+      input.dedupeKey,
+    );
+    if (existing !== undefined) {
+      return { notification: existing, created: false };
+    }
+
+    const id = randomUUID();
+    return timedSync(
+      notificationLogger,
+      "state-db.createProjectConversationNotification",
+      {
+        notificationId: id,
+        notificationType: input.type,
+        projectName: input.projectName,
+        conversationId: input.conversationId,
+      },
+      () => {
+        const createdAt = sqliteUtcNow();
+        const candidate: Record<string, unknown> = {
+          id,
+          source: "project-conversation",
+          type: input.type,
+          title: input.title,
+          message: input.message,
+          read: false,
+          projectName: input.projectName,
+          conversationId: input.conversationId,
+          conversationName: input.conversationName ?? null,
+          status: input.status,
+          createdAt,
+        };
+        if (input.errorMessage !== undefined) {
+          candidate.errorMessage = input.errorMessage;
+        }
+
+        const validated = parseNotificationOrFail(candidate, id);
+        if (validated.source !== "project-conversation") {
+          return logAndThrowNotificationValidationFailure(id, [
+            {
+              code: "invalid_source",
+              message: "Expected project-conversation notification",
+            },
+          ]);
+        }
+
+        const result = db
+          .prepare(
+            `INSERT OR IGNORE INTO notifications (id, source, type, title, message, read, project_name, conversation_id, conversation_name, conversation_status, dedupe_key, error_message, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            validated.id,
+            validated.source,
+            validated.type,
+            validated.title,
+            validated.message,
+            validated.read ? 1 : 0,
+            validated.projectName,
+            validated.conversationId,
+            validated.conversationName,
+            validated.status,
+            input.dedupeKey,
+            validated.errorMessage ?? null,
+            validated.createdAt,
+          );
+
+        if (result.changes === 0) {
+          const duplicate = getProjectConversationNotificationByDedupeKey(
+            input.dedupeKey,
+          );
+          if (duplicate !== undefined) {
+            return { notification: duplicate, created: false };
+          }
+        }
+
+        return { notification: validated, created: true };
+      },
+    );
+  }
 
   return {
-    notifications: rows.map(rowToNotification),
-    total: totalRow.count,
-    unreadCount: unreadRow.count,
-  };
-}
+    createJobNotification,
+    createProjectConversationNotification,
 
-export function deleteNotification(id: string): boolean {
-  const db = getStateDb();
-  const result = db.prepare("DELETE FROM notifications WHERE id = ?").run(id);
-  return result.changes > 0;
-}
+    getNotifications(options: GetNotificationsOptions = {}) {
+      const { unread, limit = 50, offset = 0 } = options;
 
-export function markAsRead(
-  id: string,
-  broadcast: BroadcastFn = defaultBroadcast,
-): boolean {
-  const db = getStateDb();
-  const result = db
-    .prepare("UPDATE notifications SET read = 1 WHERE id = ? AND read = 0")
-    .run(id);
-  if (result.changes > 0) {
-    broadcast({ type: "notification-updated", id, read: true });
-    return true;
-  }
-  const exists = db
-    .prepare("SELECT id FROM notifications WHERE id = ?")
-    .get(id);
-  return exists != null;
-}
+      const whereClauses: string[] = [];
+      const params: unknown[] = [];
 
-export function markAllAsRead(
-  broadcast: BroadcastFn = defaultBroadcast,
-): number {
-  const db = getStateDb();
-  const result = db
-    .prepare("UPDATE notifications SET read = 1 WHERE read = 0")
-    .run();
-  if (result.changes > 0) {
-    broadcast({ type: "notification-updated", id: "all", read: true });
-  }
-  return result.changes;
-}
+      if (unread === true) {
+        whereClauses.push("read = 0");
+      } else if (unread === false) {
+        whereClauses.push("read = 1");
+      }
 
-export function deleteAllNotifications(): number {
-  const db = getStateDb();
-  const result = db.prepare("DELETE FROM notifications").run();
-  return result.changes;
-}
+      const where =
+        whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-export function deleteNotificationsForSession(
-  projectName: string,
-  sessionName: string,
-): number {
-  const db = getStateDb();
-  const result = db
-    .prepare(
-      "DELETE FROM notifications WHERE project_name = ? AND session_name = ?",
-    )
-    .run(projectName, sessionName);
-  return result.changes;
-}
+      const totalRow = db
+        .prepare(`SELECT COUNT(*) as count FROM notifications ${where}`)
+        .get(...params) as { count: number };
 
-export function deleteNotificationsForProject(projectName: string): number {
-  const db = getStateDb();
-  const result = db
-    .prepare("DELETE FROM notifications WHERE project_name = ?")
-    .run(projectName);
-  return result.changes;
-}
+      const unreadRow = db
+        .prepare("SELECT COUNT(*) as count FROM notifications WHERE read = 0")
+        .get() as { count: number };
 
-export function getUnreadCount(): number {
-  const db = getStateDb();
-  const row = db
-    .prepare("SELECT COUNT(*) as count FROM notifications WHERE read = 0")
-    .get() as { count: number };
-  return row.count;
-}
-
-// ============================================================
-// Retention cleanup
-// ============================================================
-
-export function cleanupOldNotifications(retentionDays = 7): number {
-  return timedSync(
-    notificationLogger,
-    "state-db.cleanupOldNotifications",
-    { retentionDays },
-    () => {
-      const db = getStateDb();
-      // Use <= for the boundary so that retentionDays=0 correctly deletes everything
-      const result = db
+      const rows = db
         .prepare(
-          `DELETE FROM notifications WHERE created_at <= datetime('now', ? || ' days')`,
+          `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
         )
-        .run(`-${retentionDays}`);
+        .all(...params, limit, offset) as unknown[];
+
+      return {
+        notifications: rows.map(rowToNotification),
+        total: totalRow.count,
+        unreadCount: unreadRow.count,
+      };
+    },
+
+    deleteNotification(id) {
+      const result = db
+        .prepare("DELETE FROM notifications WHERE id = ?")
+        .run(id);
+      return result.changes > 0;
+    },
+
+    markAsRead(id) {
+      const result = db
+        .prepare("UPDATE notifications SET read = 1 WHERE id = ? AND read = 0")
+        .run(id);
+      if (result.changes > 0) {
+        return { updated: true, exists: true };
+      }
+      const exists =
+        db.prepare("SELECT id FROM notifications WHERE id = ?").get(id) != null;
+      return { updated: false, exists };
+    },
+
+    markAllAsRead() {
+      const result = db
+        .prepare("UPDATE notifications SET read = 1 WHERE read = 0")
+        .run();
       return result.changes;
     },
-    (deleted) => ({ deleted }),
-  );
-}
 
-// ============================================================
-// Initialization (called on startup)
-// ============================================================
+    deleteAllNotifications() {
+      const result = db.prepare("DELETE FROM notifications").run();
+      return result.changes;
+    },
 
-export function initialize(): void {
-  // getStateDb() initializes the schema if needed (via state-store/state-db.ts).
-  getStateDb();
-  const recovered = recoverStaleJobs();
-  const cleaned = cleanupOldNotifications();
-  notificationLogger.info("notification-db.initialized", {
-    recoveredJobs: recovered,
-    cleanedNotifications: cleaned,
-  });
-}
+    deleteNotificationsForSession(projectName, sessionName) {
+      const result = db
+        .prepare(
+          "DELETE FROM notifications WHERE project_name = ? AND session_name = ?",
+        )
+        .run(projectName, sessionName);
+      return result.changes;
+    },
 
-/**
- * Check if a notification exists by id.
- */
-export function notificationExists(id: string): boolean {
-  const db = getStateDb();
-  const row = db.prepare("SELECT id FROM notifications WHERE id = ?").get(id);
-  return row != null;
-}
+    deleteNotificationsForProject(projectName) {
+      const result = db
+        .prepare("DELETE FROM notifications WHERE project_name = ?")
+        .run(projectName);
+      return result.changes;
+    },
 
-// ============================================================
-// Test helpers — delegate to the shared state-db singleton
-// ============================================================
+    getUnreadCount() {
+      const row = db
+        .prepare("SELECT COUNT(*) as count FROM notifications WHERE read = 0")
+        .get() as { count: number };
+      return row.count;
+    },
 
-/**
- * Test helper: reset the shared state-db singleton, closing any open
- * connection. Re-exported from `state-store/state-db.ts` for backward
- * compatibility with `notification-db.test.ts`.
- */
-export const _resetForTesting = _resetSharedStateDb;
+    cleanupOldNotifications(retentionDays = 7) {
+      return timedSync(
+        notificationLogger,
+        "state-db.cleanupOldNotifications",
+        { retentionDays },
+        () => {
+          // Use <= for the boundary so that retentionDays=0 correctly deletes everything
+          const result = db
+            .prepare(
+              `DELETE FROM notifications WHERE created_at <= datetime('now', ? || ' days')`,
+            )
+            .run(`-${retentionDays}`);
+          return result.changes;
+        },
+        (deleted) => ({ deleted }),
+      );
+    },
 
-/**
- * Test helper: install a caller-provided `Database` into the shared singleton.
- * Re-exported for tests that need to point notification-db at a specific
- * connection (e.g. boot-order integration tests).
- */
-export const _installTestDb = _installSharedStateDb;
-
-/**
- * Test helper: open a fresh in-memory `command-center.db` connection and
- * install it onto the shared state-db singleton so that subsequent module-level
- * functions (which call `getStateDb()`) target an isolated database.
- */
-export function _createTestDb(): Db {
-  const db = _createSharedStateDb({ inMemory: true });
-  _installSharedStateDb(db);
-  return db;
+    notificationExists(id) {
+      const row = db
+        .prepare("SELECT id FROM notifications WHERE id = ?")
+        .get(id);
+      return row != null;
+    },
+  };
 }

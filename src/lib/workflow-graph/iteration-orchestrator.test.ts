@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowAgentSessionState,
   GraphWorkflowSSEEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowAgentSessionState,
+  GraphWorkflowExecution,
+} from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import {
   _resetRegistryForTesting,
@@ -16,7 +18,7 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
   appendFailureHistory,
   createGraphWorkflowIterationOrchestrator,
@@ -27,10 +29,12 @@ import { StaleLoopFenceError, runWithLoopFence } from "./loop-fence";
 import { AgentTurnFailedError } from "./errors";
 import type {
   ResolveImplementerCallInput,
-  RecordClaudeLaneTurnInput,
-  RecordCodexLaneTurnInput,
-} from "./workflow-continuity-service";
-import { createWorkflowContinuityService } from "./workflow-continuity-service";
+  RecordLaneTurnOutcomeInput,
+  GraphLaneContinuityDeps,
+} from "./lane-continuity";
+import { createGraphLaneContinuity } from "./lane-continuity";
+import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createUserInputGateService } from "./user-input-gate";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import type {
@@ -127,6 +131,27 @@ function createRepository(
     },
     appendedEvents,
   };
+}
+
+/**
+ * Real graph lane continuity over an in-memory lane store, persisting through
+ * the same in-memory repository the orchestrator under test mutates.
+ */
+function makeLaneContinuityService(
+  repository: InMemoryExecutionRepository,
+  deps: Partial<GraphLaneContinuityDeps> = {},
+): ReturnType<typeof createGraphLaneContinuity> {
+  return createGraphLaneContinuity({
+    laneService: createLaneService({
+      store: createInMemoryLaneStore(),
+      now: () => "2026-03-27T16:00:00.000Z",
+    }),
+    executionRepository: repository,
+    createConversation: vi.fn(),
+    getConversation: vi.fn(),
+    now: () => "2026-03-27T16:00:00.000Z",
+    ...deps,
+  });
 }
 
 function createExecutionWithPlanTasks(
@@ -1046,30 +1071,32 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
 
-    // After each turn, signal that rotation is needed
-    const recordClaudeTurnOutcome = vi.fn(
-      async (input: RecordClaudeLaneTurnInput) => ({
-        ...input.execution,
+    // After each turn, signal that rotation is needed. The continuity service
+    // persists the rotation flag itself, so the fake writes through the
+    // repository the orchestrator re-reads between turns.
+    const recordLaneTurnOutcome = vi.fn(async () =>
+      repository.mutateActive("/repo", "session-1", (latest) => ({
+        ...latest,
         laneStates: {
           "context-plan": {
             implementer: {
-              engine: "claude" as const,
+              backend: "claude" as const,
+              refKind: "conversation" as const,
               lane: "implementer" as const,
               contextId: "context-plan",
-              sessionRef: {
-                engine: "claude" as const,
-                lane: "implementer" as const,
-                conversationId: "conv-rotate",
+              workflowConversationId: "conv-rotate",
+              sessionRef: { backend: "claude" as const, ref: "conv-rotate" },
+              metrics: {
+                contextTokens: 180_000,
+                contextWindowMax: 200_000,
+                rotateBeforeNextTurn: true,
               },
-              lastContextTokens: 180_000,
-              lastContextWindowMax: 200_000,
-              rotateBeforeNextTurn: true,
               limitEvaluation: "supported" as const,
               lastUsedAt: "2026-03-27T16:00:00.000Z",
             },
           },
         },
-      }),
+      })),
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1081,8 +1108,7 @@ describe("graph workflow iteration orchestrator", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome: vi.fn(),
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1125,8 +1151,8 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
 
-    const recordClaudeTurnOutcome = vi.fn(
-      async (input: RecordClaudeLaneTurnInput) => input.execution,
+    const recordLaneTurnOutcome = vi.fn(
+      async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1138,8 +1164,7 @@ describe("graph workflow iteration orchestrator", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome: vi.fn(),
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1219,8 +1244,8 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
 
-    const recordClaudeTurnOutcome = vi.fn(
-      async (input: RecordClaudeLaneTurnInput) => input.execution,
+    const recordLaneTurnOutcome = vi.fn(
+      async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1232,8 +1257,7 @@ describe("graph workflow iteration orchestrator", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome: vi.fn(),
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1348,8 +1372,8 @@ describe("graph workflow iteration orchestrator", () => {
         promptMode: "iteration_seed" as const,
       }),
     );
-    const recordClaudeTurnOutcome = vi.fn(
-      async (input: RecordClaudeLaneTurnInput) => input.execution,
+    const recordLaneTurnOutcome = vi.fn(
+      async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1361,8 +1385,7 @@ describe("graph workflow iteration orchestrator", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome: vi.fn(),
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1380,14 +1403,16 @@ describe("graph workflow iteration orchestrator", () => {
     expect(createConversation).not.toHaveBeenCalled();
     expect(resolveImplementerCall).toHaveBeenCalledOnce();
     expect(result.conversationId).toBe("continuity-conv-id");
-    // recordClaudeTurnOutcome should be called after each agent run
-    expect(recordClaudeTurnOutcome).toHaveBeenCalledOnce();
-    expect(recordClaudeTurnOutcome).toHaveBeenCalledWith(
+    // The turn outcome is recorded once per agent run, as a neutral outcome.
+    expect(recordLaneTurnOutcome).toHaveBeenCalledOnce();
+    expect(recordLaneTurnOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
         lane: "implementer",
-        contextTokens: 50000,
-        contextWindowMax: 200000,
-        compacted: false,
+        outcome: expect.objectContaining({
+          backend: "claude",
+          contextTokens: 50000,
+          contextWindowMax: 200000,
+        }),
       }),
     );
   });
@@ -1440,8 +1465,8 @@ describe("graph workflow iteration orchestrator", () => {
         promptMode: "follow_up" as const,
       }),
     );
-    const recordClaudeTurnOutcome = vi.fn(
-      async (input: RecordClaudeLaneTurnInput) => input.execution,
+    const recordLaneTurnOutcome = vi.fn(
+      async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1453,8 +1478,7 @@ describe("graph workflow iteration orchestrator", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome: vi.fn(),
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1597,17 +1621,17 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
 
     // Simulate validator-runner persisting updated lane states mid-validation
     const validatorLaneState: GraphWorkflowAgentSessionState = {
-      engine: "claude",
+      backend: "claude",
+      refKind: "conversation",
       lane: "context_validator",
       contextId: "context-plan",
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "validator-conv",
+      workflowConversationId: "validator-conv",
+      sessionRef: { backend: "claude", ref: "validator-conv" },
+      metrics: {
+        contextTokens: 10_000,
+        contextWindowMax: 200_000,
+        rotateBeforeNextTurn: false,
       },
-      lastContextTokens: 10_000,
-      lastContextWindowMax: 200_000,
-      rotateBeforeNextTurn: false,
       limitEvaluation: "disabled",
       lastUsedAt: "2026-03-27T16:01:00.000Z",
     };
@@ -1627,7 +1651,13 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
         feedback: "Context validation passed.",
         issues: [] as never[],
         reopenTaskIds: [],
-        sessionRef: { backend: "claude" as const, sessionId: "validator-conv" },
+        sessionRef: {
+          backend: "claude" as const,
+          ref: "validator-conv",
+          lane: "context_validator" as const,
+          refKind: "conversation" as const,
+          workflowConversationId: "validator-conv",
+        },
         reviewArtifact: null,
       };
     });
@@ -1678,11 +1708,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
           "context_validator"
         ] as typeof validatorLaneState
       ).sessionRef,
-    ).toEqual({
-      engine: "claude",
-      lane: "context_validator",
-      conversationId: "validator-conv",
-    });
+    ).toEqual({ backend: "claude", ref: "validator-conv" });
   });
 });
 
@@ -1700,17 +1726,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       laneStates: {
         "context-plan": {
           implementer: {
-            engine: "claude",
+            backend: "claude",
+            refKind: "conversation",
             lane: "implementer",
             contextId: "context-plan",
-            sessionRef: {
-              engine: "claude",
-              lane: "implementer",
-              conversationId: "conv-existing",
+            workflowConversationId: "conv-existing",
+            sessionRef: { backend: "claude", ref: "conv-existing" },
+            metrics: {
+              contextTokens: 50_000,
+              contextWindowMax: 200_000,
+              rotateBeforeNextTurn: false,
             },
-            lastContextTokens: 50_000,
-            lastContextWindowMax: 200_000,
-            rotateBeforeNextTurn: false,
             limitEvaluation: "disabled",
             lastUsedAt: NOW,
           },
@@ -1740,11 +1766,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       };
     });
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       now: () => NOW,
     });
 
@@ -1830,11 +1854,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       };
     });
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       now: () => NOW,
     });
 
@@ -1888,17 +1910,13 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       laneStates: {
         "context-plan": {
           implementer: {
-            engine: "claude",
+            backend: "claude",
+            refKind: "conversation",
             lane: "implementer",
             contextId: "context-plan",
-            sessionRef: {
-              engine: "claude",
-              lane: "implementer",
-              conversationId: "conv-old",
-            },
-            lastContextTokens: null,
-            lastContextWindowMax: null,
-            rotateBeforeNextTurn: false,
+            workflowConversationId: "conv-old",
+            sessionRef: { backend: "claude", ref: "conv-old" },
+            metrics: { rotateBeforeNextTurn: false },
             limitEvaluation: "disabled",
             lastUsedAt: NOW,
           },
@@ -1928,11 +1946,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       };
     });
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       now: () => NOW,
     });
 
@@ -1983,11 +1999,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       compacted: false,
     }));
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       now: () => NOW,
     });
 
@@ -2074,11 +2088,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
           };
     });
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       now: () => NOW,
     });
 
@@ -2109,7 +2121,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     // After the second call the fresh session has not exceeded the limit
     const laneState =
       repository.read().laneStates["context-plan"]?.["implementer"];
-    expect(laneState?.rotateBeforeNextTurn).toBe(false);
+    expect(laneState?.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
   it("injects the retiring conversation's handoff note into the rotation seed prompt", async () => {
@@ -2159,11 +2171,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       };
     });
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       loadRotationHandoff: vi
         .fn()
         .mockResolvedValue(
@@ -2225,11 +2235,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       compacted: false,
     }));
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
       now: () => NOW,
     });
 
@@ -2298,7 +2306,10 @@ describe("task validation event publishing (fix-30388517)", () => {
 
     const sessionRef = {
       backend: "claude" as const,
-      sessionId: "validator-conv",
+      ref: "validator-conv",
+      lane: "context_validator" as const,
+      refKind: "conversation" as const,
+      workflowConversationId: "validator-conv",
     };
 
     const validateContextCompletion = vi.fn(async () => ({
@@ -2309,8 +2320,9 @@ describe("task validation event publishing (fix-30388517)", () => {
       reopenTaskIds: [],
       sessionRef,
       reviewArtifact: {
-        engine: "claude" as const,
-        conversationId: "validator-conv",
+        backend: "claude" as const,
+        kind: "conversation" as const,
+        ref: "validator-conv",
       },
     }));
 
@@ -2353,15 +2365,14 @@ describe("task validation event publishing (fix-30388517)", () => {
       (entry) => entry.event.type === "graph-workflow-validation-result",
     );
     expect(validationHistoryEntry).toBeDefined();
-    // The persisted event uses GraphWorkflowExecutionSessionRef (converted from AgentSessionRef)
+    // Validation history preserves the backend-neutral session envelope.
     expect(validationHistoryEntry?.event).toMatchObject({
       type: "graph-workflow-validation-result",
       validatorType: "context",
       pass: true,
       sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "validator-conv",
+        backend: "claude",
+        ref: "validator-conv",
       },
     });
   });
@@ -2858,7 +2869,7 @@ describe("codex implementer continuity", () => {
         contextTokens: null,
         contextWindowMax: null,
         compacted: false,
-        sessionRef: { backend: "codex" as const, threadId: "thread-real-123" },
+        sessionRef: { backend: "codex" as const, ref: "thread-real-123" },
       };
     });
 
@@ -2870,11 +2881,8 @@ describe("codex implementer continuity", () => {
         promptMode: "iteration_seed" as const,
       }),
     );
-    const recordCodexTurnOutcome = vi.fn(
-      async (input: RecordCodexLaneTurnInput) => input.execution,
-    );
-    const recordClaudeTurnOutcome = vi.fn(
-      async (input: RecordClaudeLaneTurnInput) => input.execution,
+    const recordLaneTurnOutcome = vi.fn(
+      async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2886,8 +2894,7 @@ describe("codex implementer continuity", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome,
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -2903,16 +2910,18 @@ describe("codex implementer continuity", () => {
 
     // resolveImplementerCall must receive the context backend
     expect(resolveImplementerCall).toHaveBeenCalledWith(
-      expect.objectContaining({ engine: "codex" }),
+      expect.objectContaining({ backend: "codex" }),
     );
-    // Codex turn outcome should be recorded, not Claude
-    expect(recordCodexTurnOutcome).toHaveBeenCalledOnce();
-    expect(recordCodexTurnOutcome).toHaveBeenCalledWith(
+    // The neutral outcome carries the lane backend and the advanced thread ref
+    expect(recordLaneTurnOutcome).toHaveBeenCalledOnce();
+    expect(recordLaneTurnOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
-        newThreadId: "thread-real-123",
+        outcome: expect.objectContaining({
+          backend: "codex",
+          ref: "thread-real-123",
+        }),
       }),
     );
-    expect(recordClaudeTurnOutcome).not.toHaveBeenCalled();
     expect(result.conversationId).toBe("conv-codex-impl");
   });
 
@@ -2938,32 +2947,30 @@ describe("codex implementer continuity", () => {
     );
 
     // Codex normally keeps rotateBeforeNextTurn false, but if somehow set, the guard should trigger
-    const recordCodexTurnOutcome = vi.fn(
-      async (input: RecordCodexLaneTurnInput) => ({
-        ...input.execution,
+    const recordLaneTurnOutcome = vi.fn(async () =>
+      repository.mutateActive("/repo", "session-1", (latest) => ({
+        ...latest,
         laneStates: {
           "context-plan": {
             implementer: {
-              engine: "codex" as const,
+              backend: "codex" as const,
+              refKind: "backend" as const,
               lane: "implementer" as const,
               contextId: "context-plan",
-              sessionRef: {
-                engine: "codex" as const,
-                lane: "implementer" as const,
-                threadId: "thread-1",
-              },
-              lastTurnUsage: null,
+              sessionRef: { backend: "codex" as const, ref: "thread-1" },
               // Defense-in-depth: Codex schema defines this as literal false, but
               // the rotation guard should still stop follow-ups if the value is true
-              rotateBeforeNextTurn: true as boolean as false,
+              metrics: {
+                lastTurnUsage: null,
+                rotateBeforeNextTurn: true,
+              },
               limitEvaluation: "disabled" as const,
               lastUsedAt: "2026-03-27T16:00:00.000Z",
             },
           },
         },
-      }),
+      })),
     );
-    const recordClaudeTurnOutcome = vi.fn();
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
@@ -2974,8 +2981,7 @@ describe("codex implementer continuity", () => {
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
-        recordClaudeTurnOutcome,
-        recordCodexTurnOutcome,
+        recordLaneTurnOutcome,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -3006,24 +3012,35 @@ describe("codex implementer continuity", () => {
     const getConversation = vi.fn(
       async (_p: string, _s: string, id: string) => ({ id }),
     );
-    const startCodexThread = vi.fn(async () => ({
-      threadId: `thread-${++convCounter}`,
+    const adapterStart = vi.fn(async () => ({
+      backend: "codex" as const,
+      ref: `thread-${++convCounter}`,
     }));
-    const resumeCodexThread = vi.fn(async (threadId: string) => ({ threadId }));
+    const adapterResume = vi.fn(
+      async (ref: { backend: "codex"; ref: string }) => ({
+        ref,
+        recovered: false,
+      }),
+    );
     const createToolServer = vi.fn(() => ({ server: {} }));
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: null,
       contextWindowMax: null,
       compacted: false,
-      sessionRef: { backend: "codex" as const, threadId: "thread-real-1" },
+      sessionRef: { backend: "codex" as const, ref: "thread-real-1" },
     }));
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      startCodexThread,
-      resumeCodexThread,
+      continuityAdapter: () => ({
+        backend: "codex",
+        start: adapterStart,
+        resumeOrRecover: adapterResume,
+        validate: vi.fn(async () => ({ status: "valid" as const })),
+        fork: vi.fn(),
+      }),
       now: () => NOW,
     });
 
@@ -3060,8 +3077,8 @@ describe("codex implementer continuity", () => {
     expect(result1.conversationId).toBe(result2.conversationId);
     // Only one CC conversation created — the second call reused
     expect(createConversation).toHaveBeenCalledOnce();
-    expect(startCodexThread).not.toHaveBeenCalled();
-    expect(resumeCodexThread).not.toHaveBeenCalled();
+    expect(adapterStart).not.toHaveBeenCalled();
+    expect(adapterResume).not.toHaveBeenCalled();
   });
 });
 

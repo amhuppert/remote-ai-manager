@@ -14,18 +14,21 @@ import type {
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
 import { getConfigDirPath } from "@/lib/config/loader";
-import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
+import { projectStoredToolResultBlocks } from "@/lib/agent-backends/transcript-projections";
 import { resolveImageRefs } from "@/lib/images/transcript-images";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
 const transcriptLogger = createLogger("transcript");
 import { getErrorMessage } from "@/lib/shared/errors";
-import { parseCommandContent } from "@/lib/commands/parsing";
+import { parseJsonl } from "@/lib/shared/read-jsonl";
 import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "@/lib/events/broadcaster";
+  groupLogicalUnits,
+  iterateLineClassifications,
+  type LogicalUnitEntry,
+  type LogicalUnitRole,
+} from "@/lib/conversations/transcript-logical-units";
+import { publishEvent, type PublishFn } from "@/lib/events/publication";
 import {
   messageAppendedEventSchema,
   type MessageAppendedEvent,
@@ -122,7 +125,7 @@ export interface TranscriptBroadcastMeta {
 }
 
 interface TranscriptDeps {
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
   indexMarkdownDocuments(input: {
     projectName: string;
     sessionName: string;
@@ -132,7 +135,7 @@ interface TranscriptDeps {
 }
 
 const productionDeps: TranscriptDeps = {
-  broadcast: defaultBroadcast,
+  broadcast: publishEvent,
   indexMarkdownDocuments: defaultIndexMarkdownDocuments,
 };
 
@@ -250,7 +253,7 @@ export async function appendTranscriptEntry(
     }
   }
 
-  // direct broadcast (not StatusBus): clients register
+  // wire-only publication (no lifecycle envelope): clients register
   // `es.addEventListener('message-appended', ...)`, which requires a dedicated
   // event-name frame line that StatusBus's generic envelope does not provide.
   if (meta && isVisibleEntry(entry)) {
@@ -355,6 +358,43 @@ export async function appendNotice(input: AppendNoticeInput): Promise<void> {
 // Fork / Copy Operations
 // ============================================================
 
+/**
+ * Project already-split, non-blank JSONL lines into the grouping owner's
+ * normalized entry shape for the raw-line walk. `seq` is the index into the
+ * passed `lines` array (not the original file line index), so a cutoff `seq`
+ * slices `lines` directly. Unparseable lines are skipped entirely — they never
+ * become a boundary but a later cutoff still slices over them.
+ */
+function* toCopyEntries(
+  lines: string[],
+  isVisible: (entry: TranscriptEntry) => entry is TranscriptEntry & {
+    role: "user" | "assistant" | "notice";
+    content: MessageContentBlock[];
+  },
+): Generator<LogicalUnitEntry> {
+  for (let i = 0; i < lines.length; i++) {
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(lines[i]!) as TranscriptEntry;
+    } catch {
+      continue;
+    }
+    if (isVisible(entry)) {
+      yield {
+        seq: i,
+        kind: "message",
+        role: entry.role,
+        content: entry.content,
+        entryId: entry.id ?? null,
+        timestamp: entry.timestamp ?? null,
+        ...(entry.uuid !== undefined ? { uuid: entry.uuid } : {}),
+      };
+    } else {
+      yield { seq: i, kind: "nonvisible" };
+    }
+  }
+}
+
 /** How the cutoff at `upToMessageIndex` is interpreted. */
 export type CopyTranscriptMode = "exclusive" | "inclusive";
 
@@ -397,41 +437,30 @@ export async function copyTranscriptUpTo(
   const raw = await readFile(sourceTranscriptPath, "utf-8");
   const lines = raw.split("\n").filter((line) => line.trim().length > 0);
 
-  // Find the raw line index boundaries based on merged visible message counting.
-  // Consecutive JSONL entries with the same role are merged into a single logical
-  // message (matching readConversationMessages), so we only increment the merged
-  // index on role transitions.
-  let mergedIndex = -1;
-  let lastVisibleRole: string | null = null;
+  // Walk the raw lines through the shared grouping owner
+  // (transcript-logical-units), which threads the merged-visible-message index
+  // and unit boundary onto every line — the same rule the read/render grouping
+  // uses, so a fork index means the same thing here as in the UI that produced
+  // it. The classification's `mergedIndex` on a visible line already reflects
+  // the unit that line would land in.
   let cutoffLineIndex = -1;
+  let includedAnyVisible = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    let entry: TranscriptEntry;
-    try {
-      entry = JSON.parse(lines[i]!) as TranscriptEntry;
-    } catch {
-      continue;
-    }
-
-    if (isVisibleEntry(entry)) {
-      const wouldBeMergedIndex =
-        entry.role !== lastVisibleRole ? mergedIndex + 1 : mergedIndex;
-
+  for (const row of iterateLineClassifications(
+    toCopyEntries(lines, isVisibleEntry),
+  )) {
+    if (row.visible) {
       const stop =
         mode === "exclusive"
-          ? wouldBeMergedIndex >= upToMessageIndex
-          : wouldBeMergedIndex > upToMessageIndex;
-      if (stop) {
-        break;
-      }
-
-      mergedIndex = wouldBeMergedIndex;
-      lastVisibleRole = entry.role ?? null;
-      cutoffLineIndex = i;
-    } else if (mergedIndex >= 0 && cutoffLineIndex >= 0) {
+          ? row.mergedIndex >= upToMessageIndex
+          : row.mergedIndex > upToMessageIndex;
+      if (stop) break;
+      cutoffLineIndex = row.seq;
+      includedAnyVisible = true;
+    } else if (includedAnyVisible) {
       // Non-visible lines (system, tool_result, etc.) get included if they
       // come within the already-included range.
-      cutoffLineIndex = i;
+      cutoffLineIndex = row.seq;
     }
   }
 
@@ -478,40 +507,47 @@ export async function findForkAnchorUuid(
   },
 ): Promise<string | null> {
   const raw = await readFile(transcriptPath, "utf-8");
-  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
 
-  let mergedIndex = -1;
-  let lastVisibleRole: string | null = null;
   let lastAssistantUuidBefore: string | null = null;
-  let targetMergedRole: TranscriptEntry["role"] | null = null;
+  let targetMergedRole: LogicalUnitRole | null = null;
   let inclusiveAnchorUuid: string | null = null;
 
-  for (const line of lines) {
-    let entry: TranscriptEntry;
-    try {
-      entry = JSON.parse(line) as TranscriptEntry;
-    } catch {
-      continue;
+  // Reuse the shared grouping owner's line walk so the merged-index the anchor
+  // resolves against is identical to the one the copy path slices and the UI
+  // counts.
+  const forkEntries = (function* (): Generator<LogicalUnitEntry> {
+    for (const parsed of parseJsonl(raw)) {
+      const entry = parsed as TranscriptEntry;
+      if (!isVisibleEntry(entry)) {
+        yield { seq: 0, kind: "nonvisible" };
+        continue;
+      }
+      yield {
+        seq: 0,
+        kind: "message",
+        role: entry.role,
+        content: entry.content,
+        entryId: entry.id ?? null,
+        timestamp: entry.timestamp ?? null,
+        ...(entry.uuid !== undefined ? { uuid: entry.uuid } : {}),
+      };
     }
+  })();
 
-    if (!isVisibleEntry(entry)) continue;
-
-    if (entry.role !== lastVisibleRole) {
-      mergedIndex++;
-      lastVisibleRole = entry.role ?? null;
-    }
+  for (const row of iterateLineClassifications(forkEntries)) {
+    if (!row.visible) continue;
 
     if (opts.mode === "exclusive") {
-      if (mergedIndex >= opts.atMessageIndex) break;
-      if (entry.role === "assistant" && entry.uuid) {
-        lastAssistantUuidBefore = entry.uuid;
+      if (row.mergedIndex >= opts.atMessageIndex) break;
+      if (row.role === "assistant" && row.uuid) {
+        lastAssistantUuidBefore = row.uuid;
       }
     } else {
-      if (mergedIndex > opts.atMessageIndex) break;
-      if (mergedIndex === opts.atMessageIndex) {
-        targetMergedRole = entry.role ?? null;
-        if (entry.role === "assistant" && entry.uuid) {
-          inclusiveAnchorUuid = entry.uuid;
+      if (row.mergedIndex > opts.atMessageIndex) break;
+      if (row.mergedIndex === opts.atMessageIndex) {
+        targetMergedRole = row.role;
+        if (row.role === "assistant" && row.uuid) {
+          inclusiveAnchorUuid = row.uuid;
         }
       }
     }
@@ -574,19 +610,12 @@ async function readLastAssistantContentFromTail(
       text = text.slice(firstNewline + 1);
     }
 
-    const lines = text.split("\n");
+    const entries = parseJsonl(text);
     const collected: MessageContentBlock[] = [];
     let foundAssistant = false;
 
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (!line || line.trim().length === 0) continue;
-      let entry: TranscriptEntry;
-      try {
-        entry = JSON.parse(line) as TranscriptEntry;
-      } catch {
-        continue;
-      }
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i] as TranscriptEntry;
       if (entry.role === "assistant") {
         if (entry.content && entry.content.length > 0) {
           // Walking backward — prepend to keep chronological order across
@@ -754,10 +783,17 @@ async function readConversationMessagesWithSeqImpl(
 ): Promise<Array<TranscriptMessage & { seq: number }>> {
   const raw = await readFile(transcriptPath, "utf-8");
   const lines = raw.split("\n");
-  const messages: Array<TranscriptMessage & { seq: number }> = [];
 
-  // Track the most recent model/effort from user entries so assistant
-  // messages can inherit the settings that were active for their turn.
+  // Parse the raw lines into the grouping owner's normalized entry shape,
+  // tracking each visible line's per-turn model/effort so a merged unit can
+  // resolve the settings active for its turn (assistant units inherit the most
+  // recent user entry's; notices carry neither). The map is keyed by the raw
+  // line index the owner threads through on every part.
+  const entries: LogicalUnitEntry[] = [];
+  const turnMetaBySeq = new Map<
+    number,
+    { model: string | undefined; effort: string | undefined }
+  >();
   let currentModel: string | undefined;
   let currentEffort: string | undefined;
 
@@ -773,7 +809,6 @@ async function readConversationMessagesWithSeqImpl(
 
     if (!isVisibleEntry(entry)) continue;
 
-    // Update tracking when we see a user entry with model/effort metadata
     if (entry.role === "user") {
       if (entry.model !== undefined) {
         currentModel = entry.model;
@@ -781,51 +816,52 @@ async function readConversationMessagesWithSeqImpl(
       // Always reset effort when we see a new user entry — if the entry
       // has no effort field, the model didn't support it for this turn.
       currentEffort = entry.effort;
-    }
-
-    // Check for slash command invocations in user text messages
-    if (entry.role === "user" && entry.content.length === 1) {
-      const block = entry.content[0];
-      if (block && block.type === "text" && "text" in block) {
-        const commandBlock = parseCommandContent(block.text);
-        if (commandBlock) {
-          messages.push({
-            ...(entry.id !== undefined ? { id: entry.id } : {}),
-            role: "user",
-            content: [commandBlock],
-            timestamp: entry.timestamp ?? null,
-            model: entry.model,
-            effort: entry.effort,
-            seq: lineIndex,
-          });
-          continue;
-        }
-      }
-    }
-
-    const prev = messages[messages.length - 1];
-    if (prev && prev.role === entry.role) {
-      // Merge consecutive messages from the same role into one
-      prev.content = [...prev.content, ...entry.content];
-      prev.seq = lineIndex;
-    } else {
-      messages.push({
-        ...(entry.id !== undefined ? { id: entry.id } : {}),
-        role: entry.role,
-        content: entry.content,
-        timestamp: entry.timestamp ?? null,
-        // User entries carry their own metadata; assistant entries inherit.
-        // CC-authored notices are not agent turns and carry neither.
-        ...(entry.role === "notice"
-          ? {}
-          : {
-              model: entry.role === "user" ? entry.model : currentModel,
-              effort: entry.role === "user" ? entry.effort : currentEffort,
-            }),
-        seq: lineIndex,
+      turnMetaBySeq.set(lineIndex, {
+        model: entry.model,
+        effort: entry.effort,
+      });
+    } else if (entry.role === "assistant") {
+      turnMetaBySeq.set(lineIndex, {
+        model: currentModel,
+        effort: currentEffort,
       });
     }
+
+    entries.push({
+      seq: lineIndex,
+      kind: "message",
+      role: entry.role,
+      content: entry.content,
+      entryId: entry.id ?? null,
+      timestamp: entry.timestamp ?? null,
+    });
   }
+
+  const units = groupLogicalUnits(entries);
+  const messages: Array<TranscriptMessage & { seq: number }> = units.map(
+    (unit) => {
+      // A unit's content is the concatenation of its parts (the first part
+      // already carries the parsed command block when the unit is a command).
+      const content = unit.parts.flatMap((part) => part.content);
+      const lastPart = unit.parts[unit.parts.length - 1]!;
+      const meta = turnMetaBySeq.get(unit.parts[0]!.seq);
+      return {
+        ...(unit.messageId !== null ? { id: unit.messageId } : {}),
+        role: unit.role,
+        content,
+        timestamp: unit.timestamp ?? null,
+        // User entries carry their own metadata; assistant entries inherit.
+        // CC-authored notices are not agent turns and carry neither.
+        ...(unit.role === "notice"
+          ? {}
+          : {
+              model: meta?.model,
+              effort: meta?.effort,
+            }),
+        seq: lastPart.seq,
+      };
+    },
+  );
 
   // Resolve image_ref blocks back to inline image blocks
   for (const message of messages) {
@@ -862,11 +898,13 @@ export interface TranscriptMessageEntryWithSeq extends TranscriptEntryBaseWithSe
 }
 
 /**
- * A stored `{type:"tool_result", raw:<SDK user message>}` JSONL line. These
- * lines are NOT visible messages (no role/content), so the merged reader and
- * message counting ignore them, but the compact-transcript renderer folds
- * them into the assistant turn they interleave with (design §4 tool_result
- * row). `content` holds `tool_result` blocks parsed defensively from `raw`.
+ * A stored `{type:"tool_result", raw:<backend-native payload>}` JSONL line.
+ * These lines are NOT visible messages (no role/content), so the merged
+ * reader and message counting ignore them, but the compact-transcript
+ * renderer folds them into the assistant turn they interleave with (design §4
+ * tool_result row). `content` holds `tool_result` blocks projected from the
+ * frame by the backend-owned decoders behind
+ * `agent-backends/transcript-projections`.
  */
 export interface TranscriptToolResultEntryWithSeq extends TranscriptEntryBaseWithSeq {
   kind: "tool_result";
@@ -963,93 +1001,6 @@ export async function readTranscriptEntriesWithSeq(
   );
 }
 
-/**
- * Defensively parse a stored tool_result line's `raw` payload into
- * `tool_result` content blocks. The production shape (written by
- * `processMessage`) is the full SDK user message —
- * `{ type:"user", message:{ content:[{type:"tool_result", tool_use_id,
- * content, is_error}] } }` where `content` is a string or an array of
- * `{type:"text"|"tool_reference", …}` blocks. Legacy/fabricated lines may
- * store the bare block itself. Anything unrecognizable becomes a single
- * generic block — this function never throws.
- *
- * The raw payload carries no tool name, so metrics are recovered by pairing
- * `tool_use_id` with the preceding assistant `tool_use` blocks
- * (`toolNamesById`) and re-running `parseToolResultMetrics`, exactly like the
- * live Claude turn path (`query-session.ts` `buildToolResultBlock`).
- */
-function parseStoredToolResultBlocks(
-  raw: unknown,
-  toolNamesById: ReadonlyMap<string, string>,
-): MessageContentBlock[] {
-  const candidates: unknown[] = [];
-  if (raw !== null && typeof raw === "object") {
-    const rawObj = raw as { message?: unknown; content?: unknown };
-    const message = rawObj.message;
-    const messageContent =
-      message !== null && typeof message === "object"
-        ? (message as { content?: unknown }).content
-        : undefined;
-    if (Array.isArray(messageContent)) {
-      candidates.push(...messageContent);
-    } else if (Array.isArray(rawObj.content)) {
-      candidates.push(...rawObj.content);
-    } else {
-      candidates.push(raw);
-    }
-  }
-
-  const blocks: MessageContentBlock[] = [];
-  for (const candidate of candidates) {
-    if (candidate === null || typeof candidate !== "object") continue;
-    const record = candidate as {
-      type?: unknown;
-      tool_use_id?: unknown;
-      is_error?: unknown;
-      content?: unknown;
-    };
-    if (typeof record.tool_use_id !== "string") continue;
-    if (record.type !== undefined && record.type !== "tool_result") continue;
-    const text = extractStoredToolResultText(record.content);
-    const toolName = toolNamesById.get(record.tool_use_id);
-    const metrics = toolName ? parseToolResultMetrics(toolName, text) : {};
-    blocks.push({
-      type: "tool_result",
-      tool_use_id: record.tool_use_id,
-      ...(text !== undefined ? { content: text } : {}),
-      ...(record.is_error === true ? { isError: true } : {}),
-      ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
-    });
-  }
-
-  if (blocks.length === 0) {
-    return [
-      {
-        type: "tool_result",
-        tool_use_id: "",
-        content: "[unrecognized tool_result payload]",
-      },
-    ];
-  }
-  return blocks;
-}
-
-function extractStoredToolResultText(content: unknown): string | undefined {
-  if (typeof content === "string") {
-    return content.length > 0 ? content : undefined;
-  }
-  if (!Array.isArray(content)) return undefined;
-  const parts: string[] = [];
-  for (const block of content) {
-    if (block === null || typeof block !== "object") continue;
-    const record = block as { type?: unknown; text?: unknown };
-    if (record.type === "text" && typeof record.text === "string") {
-      parts.push(record.text);
-    }
-  }
-  return parts.length > 0 ? parts.join("\n") : undefined;
-}
-
 async function readTranscriptEntriesWithSeqImpl(
   transcriptPath: string,
 ): Promise<TranscriptEntriesResult> {
@@ -1094,7 +1045,7 @@ async function readTranscriptEntriesWithSeqImpl(
         seq: lineIndex,
         entryId: entry.id ?? null,
         timestamp: entry.timestamp ?? null,
-        content: parseStoredToolResultBlocks(entry.raw, toolNamesById),
+        content: projectStoredToolResultBlocks(entry, toolNamesById),
       });
     }
   }

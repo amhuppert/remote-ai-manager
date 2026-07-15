@@ -7,7 +7,7 @@ import { createSharedDocumentStore } from "./shared-document-store";
 import { createWorkflowDocumentMaterializer } from "./document-materialization";
 import { renderCharterMarkdown } from "./charter/render";
 import { createWorkflowExecution } from "./test-fixtures";
-import type { GraphWorkflowSharedDocumentEntry } from "@/lib/workflows/schemas";
+import type { GraphWorkflowSharedDocumentEntry } from "@/lib/workflow-graph/definition-schemas";
 
 const CHARTER_PATH = ".cc/graph-workflow-docs/charter.md";
 const PLAN_PATH = ".cc/graph-workflow-docs/plan.md";

@@ -23,8 +23,8 @@ export default function WorkflowsCatalogPage(): React.JSX.Element {
             </span>
           </h1>
           <p className="font-mono text-[0.82rem] font-normal text-text-secondary">
-            The XState machines that orchestrate Command Center. Pick one to see
-            its states, transitions, actors, and guards.
+            The 3 XState machines that orchestrate Command Center. Pick one to
+            see its states, transitions, actors, and guards.
           </p>
         </div>
         <div className="stagger-in mt-xl grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-lg">

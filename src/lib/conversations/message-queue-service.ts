@@ -3,7 +3,7 @@ import {
   getConversation as defaultGetConversation,
   mutateConversation as defaultMutateConversation,
 } from "@/lib/state-store";
-import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import { publishEvent } from "@/lib/events/publication";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { createLogger } from "@/lib/logging";
 
@@ -19,6 +19,19 @@ import type {
 } from "@/lib/conversations/message-queue-schemas";
 
 const logger = createLogger("message-queue");
+
+/**
+ * Maximum delivery attempts a queued message may consume. Each claim increments
+ * `attemptCount`; a recoverable failure (`markPending`) returns the row to
+ * `pending` with the count retained, so a poison message that fails every
+ * delivery would otherwise cycle pending → delivering → pending forever. Once a
+ * row reaches this cap, the claim paths refuse it: the row leaves the queue as
+ * `failed` with QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON recorded in `error`
+ * and broadcast to the client — never a silent drop.
+ */
+export const MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS = 5;
+
+export const QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON = `Delivery refused: message reached the maximum of ${MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS} delivery attempts`;
 
 interface ConversationKey {
   projectPath: string;
@@ -97,6 +110,28 @@ function detachQueueRow(entry: PendingQueuedMessage): PendingQueuedMessage {
   return pendingQueuedMessageSchema.parse(JSON.parse(JSON.stringify(entry)));
 }
 
+function isAttemptLimitReached(entry: PendingQueuedMessage): boolean {
+  return entry.attemptCount >= MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS;
+}
+
+/**
+ * Terminal refusal for a row at the attempt cap: `failed` with the refusal
+ * reason recorded. Detached (see `detachQueueRow`) because the row is pruned
+ * from the persisted queue and only survives on the broadcast.
+ */
+function refuseAttemptLimitEntry(
+  entry: PendingQueuedMessage,
+  now: string,
+): PendingQueuedMessage {
+  return detachQueueRow({
+    ...entry,
+    status: "failed",
+    failedAt: now,
+    error: QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON,
+    updatedAt: now,
+  });
+}
+
 /** Active rows are `pending` and `delivering`; order is preserved. Pure. */
 export function listActiveEntries(
   queue: readonly PendingQueuedMessage[],
@@ -155,19 +190,33 @@ export function coalesceContent(
 
 /**
  * Claim a single `pending` row by id into `delivering` under `attemptId`. Only
- * a row whose status is `pending` is claimable. Returns the next queue and the
- * claimed row (or `null` if the id is absent or not pending). Pure.
+ * a row whose status is `pending` is claimable. A pending row already at the
+ * attempt cap is refused instead: pruned from the queue as `failed` with the
+ * refusal reason and returned as `refused` so the caller can broadcast the
+ * terminal outcome. Returns the next queue and the claimed row (or `null` if
+ * the id is absent, not pending, or refused). Pure.
  */
 export function claimLiveDeliveryTransform(
   queue: readonly PendingQueuedMessage[],
   id: string,
   attemptId: string,
   now: string,
-): { queue: PendingQueuedMessage[]; claimed: PendingQueuedMessage | null } {
+): {
+  queue: PendingQueuedMessage[];
+  claimed: PendingQueuedMessage | null;
+  refused: PendingQueuedMessage | null;
+} {
   let claimed: PendingQueuedMessage | null = null;
-  const next = queue.map((entry) => {
+  let refused: PendingQueuedMessage | null = null;
+  const next: PendingQueuedMessage[] = [];
+  for (const entry of queue) {
     if (entry.id !== id || entry.status !== "pending") {
-      return entry;
+      next.push(entry);
+      continue;
+    }
+    if (isAttemptLimitReached(entry)) {
+      refused = refuseAttemptLimitEntry(entry, now);
+      continue;
     }
     claimed = {
       ...entry,
@@ -177,9 +226,9 @@ export function claimLiveDeliveryTransform(
       updatedAt: now,
       attemptCount: entry.attemptCount + 1,
     };
-    return claimed;
-  });
-  return { queue: next, claimed };
+    next.push(claimed);
+  }
+  return { queue: next, claimed, refused };
 }
 
 /**
@@ -189,8 +238,11 @@ export function claimLiveDeliveryTransform(
  *       turn by the caller — stopping before the first conversation command, or
  *   (b) a single command row at the head of the pending queue, claimed alone
  *       so the drain routes it to the command service (req 8.3).
- * Returns the next queue, the claimed rows in order, and the parsed command
- * for case (b) (`null` for plain batches). Pure.
+ * Pending rows at the attempt cap are refused first — pruned from the queue as
+ * `failed` with the refusal reason — so a poison row can never jam the head of
+ * the queue; the batch is computed from the remaining rows.
+ * Returns the next queue, the claimed rows in order, the refused rows, and the
+ * parsed command for case (b) (`null` for plain batches). Pure.
  */
 export function claimNextTurnBatchTransform(
   queue: readonly PendingQueuedMessage[],
@@ -200,11 +252,22 @@ export function claimNextTurnBatchTransform(
   queue: PendingQueuedMessage[];
   claimed: PendingQueuedMessage[];
   command: ParsedConversationCommand | null;
+  refused: PendingQueuedMessage[];
 } {
-  const pending = queue.filter((entry) => entry.status === "pending");
+  const refused: PendingQueuedMessage[] = [];
+  const survivors: PendingQueuedMessage[] = [];
+  for (const entry of queue) {
+    if (entry.status === "pending" && isAttemptLimitReached(entry)) {
+      refused.push(refuseAttemptLimitEntry(entry, now));
+      continue;
+    }
+    survivors.push(entry);
+  }
+
+  const pending = survivors.filter((entry) => entry.status === "pending");
   const head = pending[0];
   if (!head) {
-    return { queue: [...queue], claimed: [], command: null };
+    return { queue: survivors, claimed: [], command: null, refused };
   }
 
   const headCommand = parseConversationCommand(contentToText(head.content));
@@ -219,7 +282,7 @@ export function claimNextTurnBatchTransform(
   }
 
   const claimed: PendingQueuedMessage[] = [];
-  const next = queue.map((entry) => {
+  const next = survivors.map((entry) => {
     if (entry.status !== "pending" || !claimIds.has(entry.id)) {
       return entry;
     }
@@ -234,7 +297,7 @@ export function claimNextTurnBatchTransform(
     claimed.push(updated);
     return updated;
   });
-  return { queue: next, claimed, command: headCommand };
+  return { queue: next, claimed, command: headCommand, refused };
 }
 
 /**
@@ -604,6 +667,31 @@ export function createMessageQueueService(
     }
   }
 
+  /**
+   * Broadcast rows refused at the attempt cap (terminal `failed` with the
+   * refusal reason) and log the refusal — the row already left the persisted
+   * queue in the same durable write as the claim.
+   */
+  function reportRefused(
+    key: ConversationKey,
+    projectName: string,
+    refused: readonly PendingQueuedMessage[],
+  ): void {
+    if (refused.length === 0) {
+      return;
+    }
+    broadcastUpdated(key, projectName, refused);
+    logger.warn("queue.refused", {
+      projectName,
+      sessionName: key.sessionName,
+      conversationId: key.conversationId,
+      messageIds: refused.map((row) => row.id),
+      status: "failed",
+      reason: QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON,
+      maxAttempts: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+    });
+  }
+
   async function claimLiveDelivery(
     input: ConversationKey & { id: string },
   ): Promise<PendingQueuedMessage | null> {
@@ -611,7 +699,7 @@ export function createMessageQueueService(
     const attemptId = deps.newId();
     const now = deps.now();
 
-    const claimed = await deps.mutateConversation(
+    const { claimed, refused } = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
@@ -624,15 +712,17 @@ export function createMessageQueueService(
           now,
         );
         conversation.pendingQueue = result.queue;
-        return result.claimed;
+        return { claimed: result.claimed, refused: result.refused };
       },
     );
+
+    const projectName = deps.getProjectDisplayName(projectPath);
+    reportRefused(input, projectName, refused ? [refused] : []);
 
     if (!claimed) {
       return null;
     }
 
-    const projectName = deps.getProjectDisplayName(projectPath);
     broadcastUpdated(input, projectName, [claimed]);
 
     logger.info("queue.claim", {
@@ -655,7 +745,7 @@ export function createMessageQueueService(
     const attemptId = deps.newId();
     const now = deps.now();
 
-    const { claimed, command } = await deps.mutateConversation(
+    const { claimed, command, refused } = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
@@ -667,15 +757,21 @@ export function createMessageQueueService(
           now,
         );
         conversation.pendingQueue = result.queue;
-        return { claimed: result.claimed, command: result.command };
+        return {
+          claimed: result.claimed,
+          command: result.command,
+          refused: result.refused,
+        };
       },
     );
+
+    const projectName = deps.getProjectDisplayName(projectPath);
+    reportRefused(input, projectName, refused);
 
     if (claimed.length === 0) {
       return null;
     }
 
-    const projectName = deps.getProjectDisplayName(projectPath);
     broadcastUpdated(input, projectName, claimed);
 
     const messageIds = claimed.map((row) => row.id);
@@ -934,7 +1030,7 @@ export const messageQueueService = createMessageQueueService({
   getConversation: defaultGetConversation,
   getProjectDisplayName: defaultGetProjectDisplayName,
   broadcast: (event) => {
-    publishSessionStatus(event);
+    publishEvent(event);
   },
   now: () => new Date().toISOString(),
   newId: () => crypto.randomUUID(),

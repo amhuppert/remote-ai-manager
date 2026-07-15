@@ -1,5 +1,7 @@
 # Activity Panel Rework — Locked Design
 
+**Status:** Implemented; retained as the decision record for the app-wide conversations sidebar and bounded Active Work surface.
+
 Full design rationale and negotiation history: `memory-bank/collaboration/bb7eb154-8f40-447d-9aca-04e30968ed84/round-1/agent_one/final_answer/answer.md`. This document is the implementation-facing spec, updated with Alex's gate decisions (2026-07-11).
 
 ## Locked decisions

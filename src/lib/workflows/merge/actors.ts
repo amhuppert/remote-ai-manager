@@ -11,7 +11,7 @@ import { createLogger } from "@/lib/logging";
 import {
   acquireProjectLockWithRetry,
   type AcquireProjectLockOptions,
-} from "@/lib/prompt/project-lock-retry";
+} from "@/lib/shared/lock-retry";
 import type {
   PrepareResult,
   PrepareSquashMergeInput,
@@ -19,62 +19,20 @@ import type {
   PublishResult,
   TargetCheckoutState,
 } from "@/lib/git/worktree";
+import { resolveSessionConversationId } from "../validation-fix/actors";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("smart-merge-actors");
 
 // ============================================================
-// Helpers
-// ============================================================
-
-/**
- * Fallback conversation for conflict-resolution and validation-fix turns
- * when the machine input carries no explicit `conversationId`: the session's
- * most-recently-active conversation. Only safe when every session
- * conversation shares the session worktree (user-driven Smart Merge); graph
- * joins must pass the source lane's conversation explicitly instead. Throws
- * when the session has no conversation so the merge fails loudly rather than
- * dispatching against an undefined identifier.
- */
-async function resolveSessionConversationId(
-  projectPath: string,
-  sessionName: string,
-): Promise<string> {
-  const { getSessionConversations } = await import("@/lib/state-store");
-  const conversations = await getSessionConversations(projectPath, sessionName);
-  const id = conversations[0]?.id;
-  if (!id) {
-    throw new Error(
-      `No conversation found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,
-    );
-  }
-  return id;
-}
-
-// ============================================================
 // Actor Input/Output Types
 // ============================================================
-
-export interface CheckUncommittedInput {
-  worktreePath: string;
-}
-export interface CheckUncommittedOutput {
-  hasChanges: boolean;
-}
 
 export interface GetCurrentBranchInput {
   worktreePath: string;
 }
 export interface GetCurrentBranchOutput {
   branch: string | null;
-}
-
-export interface CommitChangesInput {
-  worktreePath: string;
-  message: string;
-  skipHooks?: boolean;
-}
-export interface CommitChangesOutput {
-  hash: string;
 }
 
 export interface MergeMainInput {
@@ -119,37 +77,6 @@ export interface AnalyzeConflictsInput {
 export interface AnalyzeConflictsOutput {
   status: "analyzed" | "failed";
   conflicts: ConflictEntry[];
-}
-
-export interface RunValidationInput {
-  projectPath: string;
-  worktreePath: string;
-  sessionName: string;
-  branchName: string;
-  /**
-   * Branch the work merges into, forwarded to the validation script as
-   * `TARGET_BRANCH` so it scopes checks to the diff against that base. Omitted
-   * by callers that have no distinct target (e.g. Smart Commit), letting the
-   * script default to main.
-   */
-  targetBranch?: string;
-  timeoutMs: number;
-}
-export type RunValidationOutput = void;
-
-export interface FixValidationInput {
-  worktreePath: string;
-  validationOutput: string;
-  projectPath: string;
-  sessionName: string;
-  /** See {@link ResolveConflictsInput.conversationId}. */
-  conversationId?: string;
-  branchName: string;
-  isRetry: boolean;
-}
-export interface FixValidationOutput {
-  status: "fixed" | "failed";
-  error?: string;
 }
 
 export interface PrepareActorInput {
@@ -212,16 +139,6 @@ export type PublishActorOutput =
 // Actor Definitions
 // ============================================================
 
-/** Check if a worktree has uncommitted changes. */
-export const checkUncommitted = fromPromise<
-  CheckUncommittedOutput,
-  CheckUncommittedInput
->(async ({ input }) => {
-  const { hasUncommittedChanges } = await import("@/lib/git/commits");
-  const hasChanges = await hasUncommittedChanges(input.worktreePath);
-  return { hasChanges };
-});
-
 /** Read the worktree's currently checked-out branch (null = detached HEAD). */
 export const getCurrentBranchActor = fromPromise<
   GetCurrentBranchOutput,
@@ -230,18 +147,6 @@ export const getCurrentBranchActor = fromPromise<
   const { getCurrentBranch } = await import("@/lib/git/commits");
   const branch = await getCurrentBranch(input.worktreePath);
   return { branch };
-});
-
-/** Commit changes in a worktree. */
-export const commitChangesActor = fromPromise<
-  CommitChangesOutput,
-  CommitChangesInput
->(async ({ input }) => {
-  const { commitChanges } = await import("@/lib/git/commits");
-  const { hash } = await commitChanges(input.worktreePath, input.message, {
-    skipHooks: input.skipHooks,
-  });
-  return { hash };
 });
 
 /** Merge target branch into the feature branch. */
@@ -308,126 +213,6 @@ export const analyzeConflictsActor = fromPromise<
   return {
     status: result.status,
     conflicts: result.status === "analyzed" ? result.conflicts : [],
-  };
-});
-
-export interface RunValidationDeps {
-  readGlobalConfig(): Promise<{ preMergeTimeoutMs?: number }>;
-  readRepoConfig(
-    projectPath: string,
-  ): Promise<{ preMergeTimeoutMs?: number } | null>;
-  runPreMergeValidation(params: {
-    projectPath: string;
-    worktreePath: string;
-    sessionName: string;
-    branchName: string;
-    targetBranch?: string;
-    timeoutMs: number;
-  }): Promise<void>;
-}
-
-/**
- * Resolve the pre-merge validation timeout, then run validation.
- *
- * Precedence: per-repo `CommandCenter.json` `preMergeTimeoutMs` > global config
- * ("Limits and Timeouts") `preMergeTimeoutMs` > the machine's hardcoded default
- * (`input.timeoutMs`). Both config reads are best-effort — an unreadable config
- * falls through to the next source rather than failing the merge. Reading the
- * global config here is what lets the UI's global timeout govern every merge
- * path (manual and graph join), since no dispatch site passes an explicit
- * `validationTimeoutMs` into the machine.
- */
-export async function runValidationInner(
-  deps: RunValidationDeps,
-  input: RunValidationInput,
-): Promise<void> {
-  let globalTimeoutMs: number | undefined;
-  try {
-    globalTimeoutMs = (await deps.readGlobalConfig()).preMergeTimeoutMs;
-  } catch {
-    // Best-effort: fall through to the next timeout source.
-  }
-
-  let perRepoTimeoutMs: number | undefined;
-  try {
-    perRepoTimeoutMs = (await deps.readRepoConfig(input.projectPath))
-      ?.preMergeTimeoutMs;
-  } catch {
-    // Best-effort: fall through to the next timeout source.
-  }
-
-  const timeoutMs = perRepoTimeoutMs ?? globalTimeoutMs ?? input.timeoutMs;
-
-  await deps.runPreMergeValidation({
-    projectPath: input.projectPath,
-    worktreePath: input.worktreePath,
-    sessionName: input.sessionName,
-    branchName: input.branchName,
-    targetBranch: input.targetBranch,
-    timeoutMs,
-  });
-}
-
-/** Run pre-merge validation (typecheck + tests). */
-export const runValidation = fromPromise<
-  RunValidationOutput,
-  RunValidationInput
->(async ({ input }) => {
-  const { runPreMergeValidation, readRepoConfig } =
-    await import("@/lib/projects/repo-config");
-  const { readConfig } = await import("@/lib/config/loader");
-
-  await runValidationInner(
-    {
-      readGlobalConfig: readConfig,
-      readRepoConfig,
-      runPreMergeValidation,
-    },
-    input,
-  );
-});
-
-/** Fix validation errors via the conversation actor. */
-export const fixValidation = fromPromise<
-  FixValidationOutput,
-  FixValidationInput
->(async ({ input }) => {
-  const { fixValidationErrors } =
-    await import("@/lib/workflows/validation-fix");
-  const { readRepoConfig } = await import("@/lib/projects/repo-config");
-  const path = await import("node:path");
-
-  // Resolve the validation command so the agent can verify its own fixes
-  let validationCommand: string | undefined;
-  try {
-    const repoConfig = await readRepoConfig(input.projectPath);
-    if (repoConfig?.preMergeCommand) {
-      const scriptPath = path.default.isAbsolute(repoConfig.preMergeCommand)
-        ? repoConfig.preMergeCommand
-        : path.default.join(input.projectPath, repoConfig.preMergeCommand);
-      validationCommand = scriptPath;
-    }
-  } catch {
-    // Best-effort: if we can't read the config, the agent just won't verify
-  }
-
-  const conversationId =
-    input.conversationId ??
-    (await resolveSessionConversationId(input.projectPath, input.sessionName));
-
-  const result = await fixValidationErrors({
-    worktreePath: input.worktreePath,
-    validationOutput: input.validationOutput,
-    validationCommand,
-    projectPath: input.projectPath,
-    sessionName: input.sessionName,
-    conversationId,
-    branchName: input.branchName,
-    isRetry: input.isRetry,
-  });
-  return {
-    status: result.status === "fixed" ? "fixed" : "failed",
-    error: result.status === "failed" ? result.error : undefined,
   };
 });
 
@@ -527,7 +312,7 @@ async function finalizeSessionSideEffects(
     logger.warn("publishActor.stop_dev_servers_failed", {
       projectPath,
       sessionName,
-      err: err instanceof Error ? err.message : String(err),
+      err: getErrorMessage(err),
     });
   }
 

@@ -5,12 +5,10 @@ import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-  GraphWorkflowVisualLayout,
-  WorkflowLiveEditOperation,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowVisualLayout } from "@/lib/workflow-graph/definition-schemas";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import ExecutionStatusBar, {
@@ -20,7 +18,7 @@ import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
-import { useUserInputGate } from "@/features/session/hooks/use-user-input-gate";
+import { useUserInputGate } from "@/hooks/use-user-input-gate";
 
 interface GraphWorkflowPanelProps {
   projectName: string;

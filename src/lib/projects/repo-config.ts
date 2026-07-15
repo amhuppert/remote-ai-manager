@@ -4,10 +4,6 @@ import path from "node:path";
 import { execFileGroup as timedExecFileGroup } from "../shared/exec";
 import { buildChildEnv as defaultBuildChildEnv } from "../shared/child-env";
 import { perRepoConfigSchema, type PerRepoConfig } from "../config/schemas";
-import {
-  hasUncommittedChanges as defaultHasUncommittedChanges,
-  commitChanges as defaultCommitChanges,
-} from "../git/commits";
 import { createLogger } from "../logging";
 
 const logger = createLogger("repo-config");
@@ -42,8 +38,6 @@ export interface RepoConfigDeps {
   readFile: typeof defaultReadFile;
   execFileAsync: typeof defaultExecFileAsync;
   buildChildEnv: typeof defaultBuildChildEnv;
-  hasUncommittedChanges: typeof defaultHasUncommittedChanges;
-  commitChanges: typeof defaultCommitChanges;
 }
 
 export interface RepoValidationCommandResult {
@@ -61,8 +55,6 @@ const defaultDeps: RepoConfigDeps = {
   readFile: defaultReadFile,
   execFileAsync: defaultExecFileAsync,
   buildChildEnv: defaultBuildChildEnv,
-  hasUncommittedChanges: defaultHasUncommittedChanges,
-  commitChanges: defaultCommitChanges,
 };
 
 // ============================================================
@@ -70,14 +62,7 @@ const defaultDeps: RepoConfigDeps = {
 // ============================================================
 
 export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
-  const {
-    existsSync,
-    readFile,
-    execFileAsync,
-    buildChildEnv,
-    hasUncommittedChanges,
-    commitChanges,
-  } = deps;
+  const { existsSync, readFile, execFileAsync, buildChildEnv } = deps;
 
   function resolveValidationScriptPath(
     projectPath: string,
@@ -204,67 +189,9 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     return perRepoConfigSchema.parse(JSON.parse(raw));
   }
 
-  /**
-   * Run the pre-merge validation command configured in CommandCenter.json.
-   * No-op if `preMergeCommand` is absent or null.
-   * After the script runs, any uncommitted changes (auto-fixes) are committed
-   * with `skipHooks: true` so they are included in the squash merge.
-   */
-  async function runPreMergeValidation(params: {
-    projectPath: string;
-    worktreePath: string;
-    sessionName: string;
-    branchName: string;
-    targetBranch?: string;
-    timeoutMs: number;
-  }): Promise<void> {
-    const result = await executeRepoValidationCommand(params);
-    if (!result.executed) {
-      return;
-    }
-
-    if (!result.pass) {
-      const newErr = new Error(
-        result.message ?? "Pre-merge validation failed",
-      ) as Error & { gitOutput?: string; timedOut?: boolean };
-      newErr.gitOutput = result.output || undefined;
-      // Preserve timeout-ness on the thrown error so the merge machine can
-      // short-circuit the fix loop — an agent can't fix a timeout.
-      newErr.timedOut = result.timedOut;
-      if (result.timedOut) {
-        logger.warn("pre-merge.timeout", {
-          sessionName: params.sessionName,
-          worktreePath: params.worktreePath,
-          timeoutMs: params.timeoutMs,
-        });
-      }
-      throw newErr;
-    }
-
-    // Auto-commit any changes the script made (e.g. prettier/eslint auto-fixes)
-    if (await hasUncommittedChanges(params.worktreePath)) {
-      logger.info("pre-merge.auto_commit_fixes", {
-        sessionName: params.sessionName,
-        worktreePath: params.worktreePath,
-      });
-      await commitChanges(
-        params.worktreePath,
-        "auto-fix: pre-merge validation",
-        {
-          skipHooks: true,
-        },
-      );
-    }
-
-    logger.info("pre-merge.validation_complete", {
-      sessionName: params.sessionName,
-    });
-  }
-
   return {
     readRepoConfig,
     executeRepoValidationCommand,
-    runPreMergeValidation,
   };
 }
 
@@ -277,4 +204,3 @@ const defaultInstance = createRepoConfig();
 export const readRepoConfig = defaultInstance.readRepoConfig;
 export const executeRepoValidationCommand =
   defaultInstance.executeRepoValidationCommand;
-export const runPreMergeValidation = defaultInstance.runPreMergeValidation;

@@ -13,7 +13,9 @@ import {
   ArtifactRequiredFailure,
   type ArtifactRegistry,
 } from "@/lib/workflows/primitives/artifact-registry";
+import type { ScriptValidationOutcome } from "@/lib/workflows/primitives/script-validation-gate";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("script-validator-runner");
 
@@ -42,20 +44,18 @@ export interface ScriptValidatorInput {
   executionTarget?: ExecutionTarget;
 }
 
+/**
+ * The shared script-validation gate vocabulary, narrowed to this runner's
+ * guarantee: every failure it reports has a persisted log artifact, so
+ * downstream remediation (the reopened graph task) can point the implementer
+ * at the full output.
+ */
 export type ScriptValidatorOutcome =
-  | { kind: "pass" }
-  | {
-      kind: "fail";
-      summary: string;
+  | Exclude<ScriptValidationOutcome, { kind: "fail" }>
+  | (Extract<ScriptValidationOutcome, { kind: "fail" }> & {
       logFilePath: string;
       logRelativePath: string;
-      timedOut: boolean;
-    }
-  | {
-      kind: "infra_error";
-      reason: "missing_pre_merge_command" | "exception";
-      message: string;
-    };
+    });
 
 export interface ScriptValidatorDeps {
   executeRepoValidationCommand(params: {
@@ -136,7 +136,7 @@ export function createScriptValidatorRunner(
         timeoutMs: input.timeoutMs,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       logger.error("script_validator.exception", {
         executionId: input.executionId,
         contextId: input.contextId,
@@ -201,13 +201,12 @@ export function createScriptValidatorRunner(
         relativePath: logRelativePath,
         contents: content,
         audience: "internal_log",
-        required: true,
         source: { workflowId: input.executionId },
       });
     } catch (err) {
       const cause =
         err instanceof ArtifactRequiredFailure ? (err.cause ?? err) : err;
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = getErrorMessage(cause);
       logger.error("script_validator.write_log_failed", {
         executionId: input.executionId,
         contextId: input.contextId,

@@ -3,7 +3,7 @@ import {
   effortLevelSchema,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
-import type { SSEEvent } from "@/lib/api/sse-events";
+import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
@@ -157,7 +157,7 @@ export interface TicketStartServiceDeps {
    * Handling: Dispatch).
    */
   queueKickoff(input: TicketKickoffInput): Promise<boolean>;
-  broadcast(event: SSEEvent): void;
+  publish: PublishFn;
   now(): string;
   generateId(): string;
 }
@@ -545,7 +545,7 @@ export function createTicketStartService(
         );
         if (listItem === null) continue;
         publishTicketChange({
-          broadcast: deps.broadcast,
+          publish: deps.publish,
           logger,
           change: "session",
           projectName: detail.projectName,
@@ -778,7 +778,7 @@ export function createTicketStartService(
     try {
       const listItem = await deps.repo.findListItem(projectPath, number);
       publishTicketChange({
-        broadcast: deps.broadcast,
+        publish: deps.publish,
         logger,
         change: "session",
         projectName,

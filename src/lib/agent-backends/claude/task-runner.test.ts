@@ -16,10 +16,6 @@ vi.mock("@/lib/logging", () => ({
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
-vi.mock("../registry-core", () => ({
-  registerTaskRunner: vi.fn(),
-}));
-
 const childEnvState = vi.hoisted(() => ({
   env: {} as Record<string, string>,
 }));
@@ -28,7 +24,6 @@ vi.mock("@/lib/shared/child-env", () => ({
 }));
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { registerTaskRunner } from "../registry-core";
 import { ClaudeTaskRunner } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
 
@@ -70,13 +65,6 @@ function successResultMessage(sessionId = "session-abc") {
     errors: [],
   };
 }
-
-// Verify registration happened at module load (before any clearAllMocks())
-it("registers the claude task runner in the registry on module load", () => {
-  expect(vi.mocked(registerTaskRunner)).toHaveBeenCalledWith(
-    expect.objectContaining({ backend: "claude" }),
-  );
-});
 
 describe("ClaudeTaskRunner", () => {
   let runner: ClaudeTaskRunner;
@@ -143,7 +131,7 @@ describe("ClaudeTaskRunner", () => {
 
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "session-abc",
+      ref: "session-abc",
     });
     expect(result.text).toBe("Hello world");
     expect(result.usage).toEqual({
@@ -153,6 +141,44 @@ describe("ClaudeTaskRunner", () => {
     });
     expect(result.error).toBeNull();
     expect(result.timedOut).toBe(false);
+    expect(result.failure).toBeNull();
+    expect(result.continuationDisposition).toBe("retain");
+  });
+
+  it("maps isolated one-shot execution to the Claude SDK isolation controls", async () => {
+    mockQuery.mockReturnValue(
+      makeStream([successResultMessage()]) as ReturnType<typeof query>,
+    );
+
+    const result = await runner.run(
+      makeRequest({
+        executionProfile: "isolated-one-shot",
+        resumeRef: { backend: "codex", ref: "foreign-thread" },
+        tooling: {
+          portableMcp: {
+            servers: [
+              {
+                id: "must-not-load",
+                transport: "stdio",
+                command: "node",
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const options = mockQuery.mock.calls[0]?.[0]?.options;
+    expect(options).toMatchObject({
+      maxTurns: 1,
+      tools: [],
+      mcpServers: {},
+      settingSources: [],
+      persistSession: false,
+      strictMcpConfig: true,
+      env: { CLAUDECODE: "" },
+    });
+    expect(result.backendRef).toBeNull();
   });
 
   it("concatenates multiple text blocks from assistant messages", async () => {
@@ -187,7 +213,7 @@ describe("ClaudeTaskRunner", () => {
 
     await runner.run(
       makeRequest({
-        resumeRef: { backend: "claude", sessionId: "old-session-id" },
+        resumeRef: { backend: "claude", ref: "old-session-id" },
       }),
     );
 
@@ -213,7 +239,7 @@ describe("ClaudeTaskRunner", () => {
   it("fails fast with error when resumeRef.backend is not claude", async () => {
     const result = await runner.run(
       makeRequest({
-        resumeRef: { backend: "codex", threadId: "thread-xyz" },
+        resumeRef: { backend: "codex", ref: "thread-xyz" },
       }),
     );
 
@@ -357,8 +383,42 @@ describe("ClaudeTaskRunner", () => {
     expect(result.timedOut).toBe(false);
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "session-err",
+      ref: "session-err",
     });
+    expect(result.failure?.kind).toBe("backend_error");
+    expect(result.continuationDisposition).toBe("retain");
+  });
+
+  it("clears a stale Claude resume ref from a failed result message", async () => {
+    mockQuery.mockReturnValue(
+      makeStream([
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          session_id: "session-gone",
+          total_cost_usd: 0,
+          num_turns: 0,
+          duration_ms: 10,
+          usage: {
+            input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          errors: ["Session session-gone does not exist"],
+        },
+      ]) as ReturnType<typeof query>,
+    );
+
+    const result = await runner.run(
+      makeRequest({
+        resumeRef: { backend: "claude", ref: "session-gone" },
+      }),
+    );
+
+    expect(result.failure?.kind).toBe("stale_resume_ref");
+    expect(result.continuationDisposition).toBe("clear");
+    expect(result.backendRef).toBeNull();
   });
 
   it("passes outputFormat when outputSchema is provided", async () => {
@@ -385,6 +445,43 @@ describe("ClaudeTaskRunner", () => {
       schema,
     });
     expect(result.structuredOutput).toEqual({ answer: 42 });
+  });
+
+  it("projects the outputSchema for Claude: unsupported keywords are stripped at the SDK boundary, everything else preserved (T3.1)", async () => {
+    mockQuery.mockReturnValue(
+      makeStream([successResultMessage()]) as ReturnType<typeof query>,
+    );
+
+    const schema = {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", minLength: 2 },
+        },
+        count: { type: "integer", minimum: 0, description: "non-negative" },
+      },
+      required: ["items", "count"],
+      additionalProperties: false,
+    };
+    await runner.run(makeRequest({ outputSchema: schema }));
+
+    const callArg = mockQuery.mock.calls[0]?.[0] as {
+      options: { outputFormat?: { type: string; schema: unknown } };
+    };
+    expect(callArg.options.outputFormat).toEqual({
+      type: "json_schema",
+      schema: {
+        type: "object",
+        properties: {
+          items: { type: "array", items: { type: "string" } },
+          count: { type: "integer", description: "non-negative" },
+        },
+        required: ["items", "count"],
+        additionalProperties: false,
+      },
+    });
   });
 
   it("logs dropped Codex-only fields when non-default values are supplied", async () => {

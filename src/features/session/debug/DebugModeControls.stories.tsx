@@ -2,8 +2,8 @@
 
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import DebugModeToggle from "@/features/session/debug/DebugModeToggle";
-import DebugStatusStrip from "@/features/session/debug/DebugStatusStrip";
+import DebugModeToggle from "@/components/session/DebugModeToggle";
+import DebugStatusStrip from "@/components/session/DebugStatusStrip";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import type { ConversationState } from "@/lib/conversations/schemas";
 // ---------------------------------------------------------------------------

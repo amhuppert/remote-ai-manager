@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
-import type { WorkflowCollaborationConfig } from "@/lib/workflows/schemas";
+import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 describe("graph workflow runtime edit service", () => {
   it("appends agent-created tasks to the active execution context", () => {
     const service = createGraphWorkflowRuntimeEditService({

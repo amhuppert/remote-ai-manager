@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import type { NodeTypes, EdgeTypes, Node, Edge } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import type { GraphWorkflowContextStatus } from "@/lib/workflows/schemas";
+import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { ExecutionContextNodeData, ContextEdgeData } from "./derive-graph";
 import ExecutionContextNode from "./ExecutionContextNode";
 import ContextEdge from "./ContextEdge";

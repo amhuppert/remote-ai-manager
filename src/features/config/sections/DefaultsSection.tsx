@@ -1,12 +1,10 @@
 import { useMemo } from "react";
+import { effortLevelsForCatalogEntry } from "@/lib/agent-backends/catalog";
+import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
 import { SettingsPage } from "../components/SettingsPage";
 import { SettingsSubSection } from "../components/SettingsSubSection";
-import {
-  getEffortOptionsForBackend,
-  getModelOptionsForBackend,
-} from "../config-helpers";
 import type { ConfigFormController } from "./types";
 
 export function DefaultsSection({
@@ -17,31 +15,30 @@ export function DefaultsSection({
   const { formState, handleChange, handleChangeMulti, isDefault, isModified } =
     controller;
 
-  const isCodexBackend = formState.defaultAgentBackend === "codex";
+  const { data: backends } = useBackendCatalogQuery();
+  const entry = backends.find((b) => b.id === formState.defaultAgentBackend);
+  if (!entry) {
+    throw new Error(`Unknown agent backend: ${formState.defaultAgentBackend}`);
+  }
+
+  // The on-disk config stores Codex model/effort under the `codex` block while
+  // Claude uses the top-level defaults (config.json shape is frozen, D7) — the
+  // storage path is config-schema-shaped, not catalog-driven.
+  const isCodexBackend = entry.id === "codex";
   const coreModelPath = isCodexBackend ? "codex.model" : "defaultModel";
   const coreEffortPath = isCodexBackend
     ? "codex.reasoningEffort"
     : "defaultEffort";
-  const coreModelValue = isCodexBackend
-    ? (formState.codex?.model ?? "gpt-5.4")
-    : (formState.defaultModel ?? "opus");
+  const coreModelValue =
+    (isCodexBackend ? formState.codex?.model : formState.defaultModel) ??
+    entry.defaultModelId;
   const coreEffortValue = isCodexBackend
     ? (formState.codex?.reasoningEffort ?? "medium")
     : (formState.defaultEffort ?? "medium");
 
   const effortOptions = useMemo(
-    () =>
-      getEffortOptionsForBackend(
-        formState.defaultAgentBackend,
-        formState.defaultAgentBackend === "codex"
-          ? (formState.codex?.model ?? "gpt-5.4")
-          : formState.defaultModel,
-      ),
-    [
-      formState.defaultAgentBackend,
-      formState.codex?.model,
-      formState.defaultModel,
-    ],
+    () => effortLevelsForCatalogEntry(entry, coreModelValue),
+    [entry, coreModelValue],
   );
 
   return (
@@ -62,7 +59,7 @@ export function DefaultsSection({
         >
           <ConfigPillGroup
             value={formState.defaultAgentBackend}
-            options={["claude", "codex"] as const}
+            options={backends.map((b) => b.id)}
             onChange={(value) => {
               handleChangeMulti([
                 ["defaultAgentBackend", value],
@@ -82,7 +79,7 @@ export function DefaultsSection({
         >
           <ConfigPillGroup
             value={coreModelValue}
-            options={getModelOptionsForBackend(formState.defaultAgentBackend)}
+            options={entry.models.map((m) => m.id)}
             onChange={(value) => handleChange(coreModelPath, value)}
           />
         </ConfigField>

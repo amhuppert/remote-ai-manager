@@ -6,7 +6,7 @@ import type {
   WorkflowGeneratedDraft,
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 enableMapSet();
 
 interface PersistedWorkflowDraft {

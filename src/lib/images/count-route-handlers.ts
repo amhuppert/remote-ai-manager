@@ -6,11 +6,11 @@
  */
 
 import { NextResponse } from "next/server";
+import { resolveProjectSessionOr404 } from "@/lib/shared/route-resolution";
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
 import { getNextImageIndex as defaultGetNextImageIndex } from "@/lib/images/transcript-images";
-import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 export interface ImageCountRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
@@ -44,21 +44,8 @@ export function createImageCountRouteHandlers(
     const sessionName = decodeURIComponent(sessionSlug);
     const conversationId = resolvedParams["conversationId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
 
     const nextIndex = await deps.getNextImageIndex(conversationId);
     return NextResponse.json({ count: Math.max(0, nextIndex - 1) });

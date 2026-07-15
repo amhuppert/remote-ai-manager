@@ -13,6 +13,12 @@
 
 import { readFile as defaultReadFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
+import {
+  jsonError,
+  notFound,
+  resolveProjectSessionOr404,
+  type RouteResolution,
+} from "@/lib/shared/route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -31,8 +37,8 @@ import {
   type DocumentContentResponse,
 } from "./schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ApiError } from "@/lib/api/errors";
 import { mergeMarkdownDocuments } from "./markdown-document-list";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("documents-content-route");
 
@@ -68,10 +74,6 @@ const defaultDeps: DocumentsRouteDeps = {
 
 type RouteContext = { params: Promise<Record<string, string>> };
 
-function jsonError(message: string, status: number): NextResponse {
-  return NextResponse.json({ error: message } satisfies ApiError, { status });
-}
-
 function isEnoent(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -88,29 +90,27 @@ export function createDocumentsRouteHandlers(
   deps: DocumentsRouteDeps = defaultDeps,
 ) {
   async function resolveScope(context: RouteContext): Promise<
-    | {
-        projectPath: string;
-        sessionName: string;
-        session: SessionState;
-      }
-    | NextResponse
+    RouteResolution<{
+      projectPath: string;
+      sessionName: string;
+      session: SessionState;
+    }>
   > {
     const resolvedParams = await context.params;
     const name = resolvedParams["name"] ?? "";
     const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) return jsonError("Project not found", 404);
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) return jsonError("Session not found", 404);
-    return { projectPath, sessionName, session };
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved;
+    return { ok: true, value: { ...resolved.value, sessionName } };
   }
 
   async function GET(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const scope = await resolveScope(context);
-    if (scope instanceof NextResponse) return scope;
+    const resolved = await resolveScope(context);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.value;
 
     const rawPath = documentContentPathSchema.safeParse(
       new URL(request.url).searchParams.get("path"),
@@ -144,7 +144,7 @@ export function createDocumentsRouteHandlers(
         );
         return ref.ok && ref.docPath === normalized.docPath;
       });
-      if (!indexed && !registered) return jsonError("Document not found", 404);
+      if (!indexed && !registered) return notFound("Document not found");
       absPath = normalized.docPath;
     }
     if (!absPath) return jsonError("Invalid path", 400);
@@ -158,12 +158,12 @@ export function createDocumentsRouteHandlers(
       return NextResponse.json(body);
     } catch (err) {
       if (isEnoent(err)) {
-        return jsonError("Document file not found", 404);
+        return notFound("Document file not found");
       }
       logger.error("documents-content.read.failed", {
         docPath: normalized.docPath,
         location: normalized.location,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return jsonError("Failed to read document", 500);
     }
@@ -173,8 +173,9 @@ export function createDocumentsRouteHandlers(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const scope = await resolveScope(context);
-    if (scope instanceof NextResponse) return scope;
+    const resolved = await resolveScope(context);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.value;
     try {
       const indexed = await deps.getSessionMarkdownDocuments(
         scope.projectPath,
@@ -191,7 +192,7 @@ export function createDocumentsRouteHandlers(
     } catch (err) {
       logger.error("documents-list.read.failed", {
         sessionName: scope.sessionName,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return jsonError("Failed to list Markdown documents", 500);
     }

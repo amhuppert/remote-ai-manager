@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import type { ConversationBackendCapabilities } from "@/lib/agent-backends/types";
 import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
 import { createClaudeRuntimeToolSource } from "./tool-discovery-runtime";
 
@@ -12,18 +11,9 @@ function makeRuntime(
     ) => Promise<McpDiscoveredTool[] | undefined>;
   },
 ): ConversationBackendRuntime {
-  const caps: ConversationBackendCapabilities = {
-    queueWhileRunning: true,
-    askUserQuestion: true,
-    preciseFork: false,
-    portableMcpAtStart: true,
-    portableMcpBetweenTurns: true,
-    contextWindowMetrics: true,
-  };
   return {
     backend: partial.backend ?? "claude",
     status: partial.status ?? "alive",
-    capabilities: partial.capabilities ?? caps,
     modelId: partial.modelId,
     reasoningEffort: partial.reasoningEffort,
     outputFormat: partial.outputFormat,

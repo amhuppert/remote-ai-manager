@@ -27,7 +27,11 @@ import {
   type RenderOptions,
 } from "@/lib/conversations/transcript-render";
 import { resolveSessionRoute } from "@/lib/conversations/route-resolution";
-import { resolveProjectOr404, jsonError } from "@/lib/shared/route-resolution";
+import {
+  jsonError,
+  notFound,
+  resolveProjectOr404,
+} from "@/lib/shared/route-resolution";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -182,13 +186,7 @@ export function parseReadQuery(url: string): ParsedReadQuery {
 }
 
 function conversationNotFound(): Response {
-  return NextResponse.json(
-    {
-      error: "Conversation not found",
-      code: "conversation_not_found",
-    } satisfies ApiError,
-    { status: 404 },
-  );
+  return notFound("Conversation not found", "conversation_not_found");
 }
 
 function invalidQueryResponse(issues: ReadQueryIssue[]): Response {

@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID, createHash } from "node:crypto";
 import { unlink as unlinkDefault } from "node:fs/promises";
 import type { SessionDiff, FileDiff, DiffHunk, DiffLine } from "./schemas";
+import { defaultGitClient, type GitClient } from "./client";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
-const execFileAsyncDefault = promisify(execFile);
 const logger = createLogger("diff");
 
 const MAX_BUFFER = 10 * 1024 * 1024;
@@ -18,16 +16,12 @@ const MAX_BUFFER = 10 * 1024 * 1024;
 /* ------------------------------------------------------------------ */
 
 export interface ComputeDiffDeps {
-  execFileAsync: (
-    cmd: string,
-    args: string[],
-    opts: { cwd: string; maxBuffer: number; env?: NodeJS.ProcessEnv },
-  ) => Promise<{ stdout: string; stderr: string }>;
-  unlink: (path: string) => Promise<void>;
+  gitClient: GitClient;
+  unlink(path: string): Promise<void>;
 }
 
 const defaultComputeDiffDeps: ComputeDiffDeps = {
-  execFileAsync: execFileAsyncDefault,
+  gitClient: defaultGitClient,
   unlink: unlinkDefault,
 };
 
@@ -55,11 +49,15 @@ async function computeCacheToken(
   deps: ComputeDiffDeps,
 ): Promise<string | null> {
   try {
-    const opts = { cwd: worktreePath, maxBuffer: MAX_BUFFER };
-    const head = await deps.execFileAsync("git", ["rev-parse", "HEAD"], opts);
-    const status = await deps.execFileAsync(
-      "git",
+    const opts = { maxBuffer: MAX_BUFFER };
+    const head = await deps.gitClient.git(
+      ["rev-parse", "HEAD"],
+      worktreePath,
+      opts,
+    );
+    const status = await deps.gitClient.git(
       ["status", "--porcelain=v1", "-z"],
+      worktreePath,
       opts,
     );
     const statusHash = createHash("sha1").update(status.stdout).digest("hex");
@@ -115,18 +113,19 @@ async function computeDiffImpl(
   let rawDiff: string;
   const tmpIndex = join(tmpdir(), `cc-diff-${randomUUID()}`);
   try {
-    const opts = { cwd: worktreePath, maxBuffer: MAX_BUFFER };
-    const tmpEnv = { ...process.env, GIT_INDEX_FILE: tmpIndex };
-    const tmpOpts = { ...opts, env: tmpEnv };
+    const tmpOpts = {
+      maxBuffer: MAX_BUFFER,
+      env: { GIT_INDEX_FILE: tmpIndex },
+    };
 
     // Build a temp index: seed from HEAD tree, then update with working tree
-    await deps.execFileAsync("git", ["read-tree", "HEAD"], tmpOpts);
-    await deps.execFileAsync("git", ["add", "-A"], tmpOpts);
+    await deps.gitClient.git(["read-tree", "HEAD"], worktreePath, tmpOpts);
+    await deps.gitClient.git(["add", "-A"], worktreePath, tmpOpts);
 
     // Diff the temp index (working tree) against HEAD — uncommitted changes only
-    const { stdout } = await deps.execFileAsync(
-      "git",
+    const { stdout } = await deps.gitClient.git(
       ["diff", "--cached", "HEAD", "--unified=3"],
+      worktreePath,
       tmpOpts,
     );
     rawDiff = stdout;

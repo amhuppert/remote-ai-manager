@@ -71,6 +71,23 @@ fi
 # TypeScript: always full-project — scoping is unsafe (see header).
 npx tsc --noEmit --pretty false
 
+# Seam-adoption ratchet: always full-repo — observed counts must equal the
+# committed ceilings in scripts/seam-baselines.json, so any subset scan would
+# report false drift. Fails the merge if a seam count exceeds or drifts below
+# its baseline without the baseline being updated.
+bun run seams:check
+
+# Production build: always full-project — a client-bundle break is cross-file and
+# only the bundler surfaces it. The canonical example: a client-reachable module
+# statically importing the SERVER logging barrel (@/lib/logging) drags
+# node:async_hooks into the browser chunk, which typecheck/lint/jsdom tests all
+# pass but Turbopack rejects ("chunking context does not support external
+# modules: node:async_hooks"). The architecture-seams/no-server-logging-in-client
+# lint rule now catches the common shape early; this build gate is the backstop
+# for any break lint cannot statically see. Matches the plan's per-work-item
+# definition of done, which lists `bun run build` among the required gates.
+bun run build >/dev/null
+
 # Vitest: AI-optimized via CLAUDECODE detection in vitest.config.ts.
 # --changed runs only unit tests whose module graph includes a changed file;
 # --passWithNoTests so a change touching only untested files doesn't fail the merge.

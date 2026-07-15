@@ -27,9 +27,15 @@ export type ScriptValidationOutcome =
   | {
       kind: "fail";
       summary: string;
-      logFilePath: string;
-      logRelativePath: string;
       timedOut: boolean;
+      /**
+       * Present when the runner persisted the failing output as a log
+       * artifact (the graph script validator). The merge/commit fix loop
+       * surfaces the output through its thrown loop error instead and omits
+       * these fields.
+       */
+      logFilePath?: string;
+      logRelativePath?: string;
     }
   | {
       kind: "infra_error";
@@ -39,6 +45,12 @@ export type ScriptValidationOutcome =
 
 export type ScriptValidationGateResult = GatePassResult | GateFailResult;
 
+export function scriptValidationGateFromOutcome(
+  outcome: Exclude<ScriptValidationOutcome, { kind: "pass" }>,
+): GateFailResult;
+export function scriptValidationGateFromOutcome(
+  outcome: ScriptValidationOutcome,
+): ScriptValidationGateResult;
 export function scriptValidationGateFromOutcome(
   outcome: ScriptValidationOutcome,
 ): ScriptValidationGateResult {
@@ -52,9 +64,13 @@ export function scriptValidationGateFromOutcome(
       reason: outcome.summary,
       details: {
         failureClass: "validation_failed",
-        logFilePath: outcome.logFilePath,
-        logRelativePath: outcome.logRelativePath,
         timedOut: outcome.timedOut,
+        ...(outcome.logFilePath !== undefined
+          ? { logFilePath: outcome.logFilePath }
+          : {}),
+        ...(outcome.logRelativePath !== undefined
+          ? { logRelativePath: outcome.logRelativePath }
+          : {}),
       },
     });
   }

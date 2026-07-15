@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
-import type {
-  GraphWorkflowResolvedContext,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
+import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
 import {
   resolveLaneToolCollaborationConfig,
   type LaneCollaborationFallbackInputs,

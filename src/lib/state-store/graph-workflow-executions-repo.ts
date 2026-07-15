@@ -1,13 +1,14 @@
 import type Database from "better-sqlite3";
 import { createLogger } from "@/lib/logging";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { PersistenceError } from "../shared/errors";
 import {
   decodeGraphWorkflowExecution,
   type GraphWorkflowExecutionMigration,
 } from "./graph-workflow-execution-codec";
 import { stableStringify } from "./serialization";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 type Db = InstanceType<typeof Database>;
 
@@ -184,7 +185,7 @@ function mergeRow(
       {
         code: "invalid_json",
         path: ["definition_json"],
-        message: err instanceof Error ? err.message : String(err),
+        message: getErrorMessage(err),
       },
     ]);
   }
@@ -195,7 +196,7 @@ function mergeRow(
       {
         code: "invalid_json",
         path: ["runtime_json"],
-        message: err instanceof Error ? err.message : String(err),
+        message: getErrorMessage(err),
       },
     ]);
   }
@@ -495,7 +496,7 @@ export function createGraphWorkflowExecutionsRepo(
           {
             code: "invalid_json",
             path: ["upgradedJson"],
-            message: err instanceof Error ? err.message : String(err),
+            message: getErrorMessage(err),
           },
         ]);
       }

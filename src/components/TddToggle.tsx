@@ -1,6 +1,7 @@
 "use client";
 
 import { Switch } from "@/components/ui/Switch";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { cn } from "@/lib/ui/cn";
 
 interface TddToggleProps {
@@ -70,39 +71,39 @@ export default function TddToggle({
   const toggle = (): void => {
     if (!disabled) onChange(!enabled);
   };
+  const tooltip = compact
+    ? enabled
+      ? "Red-green TDD enabled (click to disable)"
+      : "Red-green TDD disabled (click to enable)"
+    : null;
   return (
-    <span
-      className={cn(
-        rootShared,
-        hostOverrides,
-        compact ? rootCompact : rootDefault,
-      )}
-      data-on={enabled}
-      data-disabled={disabled || undefined}
-      data-tooltip={
-        compact
-          ? enabled
-            ? "Red-green TDD enabled (click to disable)"
-            : "Red-green TDD disabled (click to enable)"
-          : undefined
-      }
-      onClick={(e) => {
-        e.stopPropagation();
-        toggle();
-      }}
-    >
-      <Switch
-        tone="green"
-        size={compact ? "compact" : "sm"}
-        checked={enabled}
-        disabled={disabled}
-        aria-label="Toggle red-green TDD"
-        onCheckedChange={(next) => {
-          if (!disabled) onChange(next);
+    <WithTooltip label={tooltip}>
+      <span
+        className={cn(
+          rootShared,
+          hostOverrides,
+          compact ? rootCompact : rootDefault,
+        )}
+        data-on={enabled}
+        data-disabled={disabled || undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggle();
         }}
-        onClick={(e) => e.stopPropagation()}
-      />
-      <span className={labelClass}>{compact ? "TDD" : "Red-green TDD"}</span>
-    </span>
+      >
+        <Switch
+          tone="green"
+          size={compact ? "compact" : "sm"}
+          checked={enabled}
+          disabled={disabled}
+          aria-label="Toggle red-green TDD"
+          onCheckedChange={(next) => {
+            if (!disabled) onChange(next);
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <span className={labelClass}>{compact ? "TDD" : "Red-green TDD"}</span>
+      </span>
+    </WithTooltip>
   );
 }

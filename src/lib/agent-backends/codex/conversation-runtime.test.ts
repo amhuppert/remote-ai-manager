@@ -28,7 +28,6 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { getConversationBackendFactory } from "../registry-core";
 import {
   CodexConversationRuntime,
   codexConversationBackendFactory,
@@ -42,7 +41,7 @@ import type {
 } from "../conversation";
 import type { PortableMcpConfig } from "../portable-mcp";
 import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
-import { backendCapabilities } from "../capabilities-descriptor";
+import { turnContinuationSchema } from "../errors";
 
 // ============================================================
 // Helpers
@@ -396,15 +395,16 @@ describe("CodexConversationRuntime", () => {
       // Should emit backend_init with the thread ID
       expect(onEvent).toHaveBeenCalledWith({
         type: "backend_init",
-        backendRef: { backend: "codex", threadId: "thread-123" },
+        backendRef: { backend: "codex", ref: "thread-123" },
       });
 
       // Should return a valid backendRef
       expect(result.backendRef).toEqual({
         backend: "codex",
-        threadId: "thread-123",
+        ref: "thread-123",
       });
-      expect(result.error).toBeNull();
+      expect(result.failure).toBeNull();
+      expect(result.continuationDisposition).toBe("retain");
       expect(result.aborted).toBe(false);
     });
 
@@ -588,7 +588,7 @@ describe("CodexConversationRuntime", () => {
       setupThread(minimalSuccessEvents("thread-resumed"));
       const runtime = new CodexConversationRuntime(
         makeCreateInput({
-          persistedRef: { backend: "codex", threadId: "thread-existing" },
+          persistedRef: { backend: "codex", ref: "thread-existing" },
         }),
         deps,
       );
@@ -610,7 +610,7 @@ describe("CodexConversationRuntime", () => {
 
       const runtime = new CodexConversationRuntime(
         makeCreateInput({
-          persistedRef: { backend: "codex", threadId: "thread-existing" },
+          persistedRef: { backend: "codex", ref: "thread-existing" },
           sessionInstructions: ["Rule A"],
         }),
         deps,
@@ -1027,7 +1027,8 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.error).toContain("Model overloaded");
+      expect(result.failure?.message).toContain("Model overloaded");
+      expect(result.continuationDisposition).toBe("retain");
       // Partial content should be preserved
       expect(result.contentBlocks).toContainEqual({
         type: "text",
@@ -1035,8 +1036,14 @@ describe("CodexConversationRuntime", () => {
       });
       expect(result.backendRef).toEqual({
         backend: "codex",
-        threadId: "thread-123",
+        ref: "thread-123",
       });
+      expect(
+        turnContinuationSchema.safeParse({
+          backendRef: result.backendRef,
+          continuationDisposition: result.continuationDisposition,
+        }).success,
+      ).toBe(true);
     });
 
     it("handles top-level error event", async () => {
@@ -1047,7 +1054,12 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.error).toContain("Stream error");
+      expect(result.failure?.message).toContain("Stream error");
+      expect(result.continuationDisposition).toBe("retain");
+      expect(result.backendRef).toEqual({
+        backend: "codex",
+        ref: "thread-123",
+      });
     });
   });
 
@@ -1083,7 +1095,7 @@ describe("CodexConversationRuntime", () => {
       const onEvent = vi.fn();
       const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
 
-      expect(result.error).toContain("spawn codex ENOENT");
+      expect(result.failure?.message).toContain("spawn codex ENOENT");
       expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
     });
 
@@ -1096,14 +1108,16 @@ describe("CodexConversationRuntime", () => {
 
       const runtime = new CodexConversationRuntime(
         makeCreateInput({
-          persistedRef: { backend: "codex", threadId: "t-gone" },
+          persistedRef: { backend: "codex", ref: "t-gone" },
         }),
         deps,
       );
       const onEvent = vi.fn();
       const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
 
-      expect(result.error).toContain("Failed to resume Codex thread");
+      expect(result.failure?.message).toContain(
+        "Failed to resume Codex thread",
+      );
       expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
     });
 
@@ -1138,7 +1152,7 @@ describe("CodexConversationRuntime", () => {
       });
       expect(result.backendRef).toEqual({
         backend: "codex",
-        threadId: "thread-123",
+        ref: "thread-123",
       });
     });
 
@@ -1152,7 +1166,7 @@ describe("CodexConversationRuntime", () => {
       const result = await runtime.sendTurn(makeTurnInput());
 
       expect(result.backendRef).toBeNull();
-      expect(result.error).toContain("Spawn failed");
+      expect(result.failure?.message).toContain("Spawn failed");
       // isFirstTurn should remain true so next attempt can retry
     });
 
@@ -1188,23 +1202,72 @@ describe("CodexConversationRuntime", () => {
 
       const runtime = new CodexConversationRuntime(
         makeCreateInput({
-          persistedRef: { backend: "codex", threadId: "thread-gone" },
+          persistedRef: { backend: "codex", ref: "thread-gone" },
         }),
         deps,
       );
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.error).toContain("Failed to resume Codex thread");
-      expect(result.error).toContain("thread-gone");
+      expect(result.failure?.message).toContain(
+        "Failed to resume Codex thread",
+      );
+      expect(result.failure?.message).toContain("thread-gone");
+      expect(result.failure?.kind).toBe("stale_resume_ref");
       expect(startThreadFn).not.toHaveBeenCalled();
-      // Should still return the attempted threadId in backendRef
+      // "clear" must clear: returning the attempted stale id here would make
+      // the orchestrator retry the missing rollout forever.
+      expect(result.backendRef).toBeNull();
+      expect(result.continuationDisposition).toBe("clear");
+      expect(
+        turnContinuationSchema.safeParse({
+          backendRef: result.backendRef,
+          continuationDisposition: result.continuationDisposition,
+        }).success,
+      ).toBe(true);
+    });
+
+    it("starts a fresh thread on the turn after a stale resume", async () => {
+      const staleThread = makeThread([], {
+        runStreamedThrows: new Error(
+          'thread/resume: no rollout found for thread id "thread-gone"',
+        ),
+      });
+      resumeThreadFn.mockReturnValue(staleThread);
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          persistedRef: { backend: "codex", ref: "thread-gone" },
+          sessionInstructions: ["Be helpful"],
+        }),
+        deps,
+      );
+      await runtime.sendTurn(makeTurnInput());
+
+      const freshThread = makeCapturingThread(
+        minimalSuccessEvents("thread-new"),
+      );
+      startThreadFn.mockReturnValue(freshThread);
+
+      const result = await runtime.sendTurn(
+        makeTurnInput({ promptText: "Try again" }),
+      );
+
+      // The stale ref was invalidated: the runtime must not attempt the same
+      // missing rollout again.
+      expect(resumeThreadFn).toHaveBeenCalledTimes(1);
+      expect(startThreadFn).toHaveBeenCalledTimes(1);
+      // Effectively a fresh start — instructions are delivered again.
+      expect(freshThread.capturedInput as string).toContain(
+        "## System Instructions",
+      );
+      expect(result.failure).toBeNull();
       expect(result.backendRef).toEqual({
         backend: "codex",
-        threadId: "thread-gone",
+        ref: "thread-new",
       });
     });
 
-    it("does not rethrow SDK errors — returns them as result.error", async () => {
+    it("does not rethrow SDK errors — returns them as result.failure", async () => {
       const thread = makeThread([], {
         runStreamedThrows: new Error("Unexpected SDK failure"),
       });
@@ -1213,7 +1276,7 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       // Should not throw
       const result = await runtime.sendTurn(makeTurnInput());
-      expect(result.error).toContain("Unexpected SDK failure");
+      expect(result.failure?.message).toContain("Unexpected SDK failure");
     });
 
     it("preserves turn.failed error when process also crashes with exit code", async () => {
@@ -1235,10 +1298,37 @@ describe("CodexConversationRuntime", () => {
       const result = await runtime.sendTurn(makeTurnInput());
 
       // Should keep the informative turn.failed message, not the generic exit code error
-      expect(result.error).toContain(
+      expect(result.failure?.message).toContain(
         "model gpt-5.4-nano is temporarily unavailable",
       );
-      expect(result.error).not.toContain("Reading prompt from stdin");
+      expect(result.failure?.message).not.toContain(
+        "Reading prompt from stdin",
+      );
+      expect(result.continuationDisposition).toBe("clear");
+      expect(result.backendRef).toBeNull();
+    });
+
+    it("retains a resumed thread when the local Codex process crashes", async () => {
+      const thread = makeCrashingThread(
+        [threadStarted("thread-existing")],
+        new Error("Codex Exec exited with code 1"),
+      );
+      resumeThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          persistedRef: { backend: "codex", ref: "thread-existing" },
+        }),
+        deps,
+      );
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.failure?.kind).toBe("backend_error");
+      expect(result.continuationDisposition).toBe("retain");
+      expect(result.backendRef).toEqual({
+        backend: "codex",
+        ref: "thread-existing",
+      });
     });
 
     it("resets to fresh state after thread.started received but turn crashes", async () => {
@@ -1256,7 +1346,8 @@ describe("CodexConversationRuntime", () => {
         deps,
       );
       const result1 = await runtime.sendTurn(makeTurnInput());
-      expect(result1.error).toBeTruthy();
+      expect(result1.failure).toBeTruthy();
+      expect(result1.continuationDisposition).toBe("clear");
 
       // Second turn: should start a fresh thread, not try to resume the dead one
       const thread2 = makeCapturingThread(minimalSuccessEvents("thread-new"));
@@ -1276,10 +1367,10 @@ describe("CodexConversationRuntime", () => {
       expect(inputStr).toContain("Be helpful");
 
       // Second turn should succeed
-      expect(result2.error).toBeNull();
+      expect(result2.failure).toBeNull();
       expect(result2.backendRef).toEqual({
         backend: "codex",
-        threadId: "thread-new",
+        ref: "thread-new",
       });
     });
 
@@ -1794,27 +1885,9 @@ describe("CodexConversationRuntime", () => {
   // --------------------------------------------------------
 
   describe("capabilities", () => {
-    it("reports correct capabilities", () => {
-      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
-      expect(runtime.capabilities).toEqual({
-        queueWhileRunning: false,
-        askUserQuestion: true,
-        preciseFork: false,
-        portableMcpAtStart: true,
-        portableMcpBetweenTurns: true,
-        contextWindowMetrics: false,
-      });
-    });
-
     it("has backend set to codex", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       expect(runtime.backend).toBe("codex");
-    });
-
-    it("sources capabilities from the backend descriptor", () => {
-      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
-      expect(runtime.capabilities).toEqual(backendCapabilities("codex"));
-      expect(runtime.capabilities.queueWhileRunning).toBe(false);
     });
 
     it("exposes no in-turn queue path", () => {
@@ -1874,12 +1947,6 @@ describe("CodexConversationRuntime", () => {
 // ============================================================
 
 describe("codexConversationBackendFactory", () => {
-  it("registers the factory on module load", () => {
-    const factory = getConversationBackendFactory("codex");
-    expect(factory.backend).toBe("codex");
-    expect(factory).toBe(codexConversationBackendFactory);
-  });
-
   it("has backend set to codex", () => {
     expect(codexConversationBackendFactory.backend).toBe("codex");
   });

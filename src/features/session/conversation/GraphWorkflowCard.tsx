@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type {
   TemplateLibraryItem,
   TemplateTier,

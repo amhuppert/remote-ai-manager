@@ -123,7 +123,7 @@ describe("errorAssign", () => {
 // ============================================================
 
 describe("createTerminalStates", () => {
-  it("generates terminal states with finalStatus and onTerminal entry", () => {
+  it("generates final states for each requested status", () => {
     const terminals = createTerminalStates(["completed", "failed"] as const);
     // Cast to inspect runtime shape (return type is `never` for XState compatibility)
     const raw = terminals as unknown as Record<string, { type: string }>;
@@ -135,9 +135,7 @@ describe("createTerminalStates", () => {
     expect(raw.failed!.type).toBe("final");
   });
 
-  it("works in a real machine — sets finalStatus and calls onTerminal", async () => {
-    let called = false;
-
+  it("works in a real machine — sets finalStatus on entry", async () => {
     const terminals = createTerminalStates(["completed", "failed"] as const);
 
     const machine = setup({
@@ -146,11 +144,6 @@ describe("createTerminalStates", () => {
           finalStatus: "completed" | "failed" | null;
         },
         events: {} as { type: "GO" },
-      },
-      actions: {
-        onTerminal: () => {
-          called = true;
-        },
       },
     }).createMachine({
       id: "test-terminal",
@@ -172,7 +165,6 @@ describe("createTerminalStates", () => {
     await toPromise(actor);
 
     expect(actor.getSnapshot().context.finalStatus).toBe("completed");
-    expect(called).toBe(true);
   });
 
   it("supports custom terminal statuses like 'conflicts'", () => {
@@ -201,9 +193,6 @@ describe("createTerminalStates", () => {
       },
       guards: {
         shouldFail: ({ context }) => context.shouldFail,
-      },
-      actions: {
-        onTerminal: () => {},
       },
     }).createMachine({
       id: "test-terminal-failed",

@@ -164,6 +164,74 @@ describe("render — reminders tier (tier 2)", () => {
   });
 });
 
+describe("render — instruction tier (obey-first; suppresses the hint)", () => {
+  it("suppresses the hint when an instruction is present (text mode, doc 01 §6)", () => {
+    // The instruction's human phrasing lives in the caller's primary body; the
+    // renderer's job is to ensure a "continue" hint never sits beside it.
+    const out = render(
+      false,
+      "completed impl-1\nCONTEXT LIMIT REACHED — end your turn.\n",
+      {
+        ok: true,
+        stopInstruction: "CONTEXT LIMIT REACHED — end your turn.",
+        hint: "3 tasks remain",
+      },
+    );
+    expect(out).toBe(
+      "completed impl-1\nCONTEXT LIMIT REACHED — end your turn.\n",
+    );
+    expect(out).not.toContain("hint:");
+  });
+
+  it("still renders reminders before the (suppressed) hint slot", () => {
+    const out = render(false, "completed impl-1\nend your turn\n", {
+      ok: true,
+      instruction: "end your turn",
+      reminders: ["stay in your worktree"],
+      hint: "3 tasks remain",
+    });
+    expect(out).toBe(
+      "completed impl-1\n" +
+        "end your turn\n" +
+        "reminder: stay in your worktree\n",
+    );
+    expect(out).not.toContain("hint:");
+  });
+
+  it("carries the instruction in the JSON envelope", () => {
+    const out = render(true, "ignored\n", {
+      ok: true,
+      instruction: "End your turn now.",
+    });
+    const parsed = JSON.parse(out) as JsonEnvelope;
+    expect(parsed.instruction).toBe("End your turn now.");
+  });
+
+  it("strips the hint from the JSON envelope when an instruction is present", () => {
+    // The caller may pass both (its remaining-count hint plus a rotation
+    // stopInstruction); the renderer drops the hint so the two tiers never
+    // co-occur in the structured envelope either (workflow.test.ts:778).
+    const out = render(true, "ignored\n", {
+      ok: true,
+      remainingTaskCount: 2,
+      stopInstruction: "end your turn",
+      hint: "2 tasks remain",
+    });
+    const parsed = JSON.parse(out) as JsonEnvelope;
+    expect(parsed.stopInstruction).toBe("end your turn");
+    expect(parsed.hint).toBeUndefined();
+    expect(parsed.remainingTaskCount).toBe(2);
+  });
+
+  it("renders the hint normally when no instruction is present", () => {
+    const out = render(false, "completed impl-1\n", {
+      ok: true,
+      hint: "3 tasks remain",
+    });
+    expect(out).toBe("completed impl-1\nhint: 3 tasks remain\n");
+  });
+});
+
 describe("failure — reminders tier ordering", () => {
   it("orders message -> detail -> reminders -> hint (text mode)", () => {
     const result = failure({

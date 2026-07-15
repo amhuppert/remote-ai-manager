@@ -1,6 +1,7 @@
 "use client";
 
 import { EffortLabel } from "@/components/conversation/EffortLabel";
+import { backendLabel } from "@/lib/agent-backends/catalog";
 import type {
   CollaborationAgent,
   CollaborationAgentModelSettings,
@@ -8,8 +9,8 @@ import type {
 
 /** Display names for the two collaboration backends, shared by every card. */
 export const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
+  claude: backendLabel("claude"),
+  codex: backendLabel("codex"),
 };
 
 export interface CollabAgentModelMetaProps {

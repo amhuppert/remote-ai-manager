@@ -8,13 +8,65 @@
 
 import type { Snapshot } from "xstate";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import {
   getConversation as defaultGetConversation,
   mutateConversation as defaultMutateConversation,
 } from "@/lib/state-store";
 import { createLogger } from "@/lib/logging";
+import {
+  canonicalizeSessionRefsForStorageDeep,
+  normalizeSessionRefsDeepInPlace,
+} from "@/lib/shared/session-ref-codec";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 const logger = createLogger("conversation-persistence");
+
+// ============================================================
+// AgentSessionRef codec at the snapshot boundary
+// ============================================================
+
+/**
+ * Canonicalize every session ref in the snapshot before it is persisted. The
+ * live actor snapshot is already canonical, so this is a no-op unless the tree
+ * carries a legacy ref (e.g. from an unmigrated child snapshot). The walk is
+ * recursive because refs live beyond the root context: an active XState child
+ * snapshot carries `input.backendRef` (and `input.forkedFrom`). Clones on
+ * rewrite — the live actor snapshot stays untouched.
+ */
+function withCanonicalRefs(
+  conversationId: string,
+  snapshot: Snapshot<unknown>,
+): Snapshot<unknown> {
+  const { value, rewrittenRefs } =
+    canonicalizeSessionRefsForStorageDeep(snapshot);
+  if (rewrittenRefs > 0) {
+    logger.debug("conversation-persistence.snapshot_refs_canonicalized", {
+      conversationId,
+      rewrittenRefs,
+    });
+  }
+  return value;
+}
+
+/**
+ * Normalize persisted session refs (legacy or shadow-superset shapes,
+ * anywhere in the tree — root context and child snapshot inputs) back to the
+ * canonical `{ backend, ref }` before the actor is created. Mutates in place,
+ * mirroring `coerceLegacyActiveTurn`.
+ */
+function normalizeSnapshotRefs(
+  conversationId: string,
+  snapshot: unknown,
+): void {
+  const rewrittenRefs = normalizeSessionRefsDeepInPlace(snapshot);
+  if (rewrittenRefs > 0) {
+    logger.debug("conversation-persistence.snapshot_refs_normalized", {
+      conversationId,
+      rewrittenRefs,
+    });
+  }
+}
 
 // ============================================================
 // Legacy ActiveTurn coercion
@@ -55,6 +107,33 @@ function coerceLegacyActiveTurn(snapshot: unknown): void {
   if (parsed.success) {
     context.activeTurn = parsed.data;
   }
+}
+
+function normalizeSnapshotDebugGeneration(
+  conversationId: string,
+  snapshot: unknown,
+): void {
+  if (!snapshot || typeof snapshot !== "object") return;
+  const context = (snapshot as { context?: Record<string, unknown> }).context;
+  if (!context || typeof context !== "object") return;
+  const debugMode = context.debugMode;
+  if (!debugMode || typeof debugMode !== "object") return;
+  const record = debugMode as Record<string, unknown>;
+  if (record.active !== true) return;
+  if (
+    typeof record.debugSessionId === "string" &&
+    record.debugSessionId.length > 0
+  ) {
+    return;
+  }
+
+  const debugSessionId = randomUUID();
+  record.debugSessionId = debugSessionId;
+  context.debugGenerationNeedsPersistence = true;
+  logger.info("conversation-persistence.debug_session_id_minted", {
+    conversationId,
+    debugSessionId,
+  });
 }
 
 // ============================================================
@@ -105,8 +184,8 @@ function debounceKey(
  * A transient lane (see `ConversationContext.transient`) has no
  * ConversationState record, so persisting its snapshot would fail with
  * `snapshot_save_failed` on every write. The flag travels inside the
- * snapshot's machine context, so both the debounced action path and the
- * terminal flush hit this one gate.
+ * snapshot's machine context, so the gate sits ahead of the debounce and
+ * covers every persist call.
  */
 function isTransientSnapshot(snapshot: Snapshot<unknown>): boolean {
   const context = (snapshot as { context?: { transient?: unknown } }).context;
@@ -114,15 +193,17 @@ function isTransientSnapshot(snapshot: Snapshot<unknown>): boolean {
 }
 
 /**
- * Persist a conversation machine snapshot.
- * Debounced by default; use `immediate: true` for terminal states.
+ * Persist a conversation machine snapshot, debounced (500 ms default).
+ * Conversation actors are long-lived with zero final states, so there is no
+ * terminal flush: the machine's `persistSnapshot` action fires on every
+ * durable transition and the debounce collapses bursts into one write.
  */
 export function persistConversationSnapshot(
   projectPath: string,
   sessionName: string,
   conversationId: string,
   snapshot: Snapshot<unknown>,
-  options?: { debounceMs?: number; immediate?: boolean },
+  options?: { debounceMs?: number },
 ): void {
   if (isTransientSnapshot(snapshot)) {
     logger.debug("conversation-persistence.snapshot_skipped_transient", {
@@ -143,12 +224,48 @@ export function persistConversationSnapshot(
     void writeSnapshot(projectPath, sessionName, conversationId, snapshot);
   };
 
-  if (options?.immediate) {
-    debounceTimers.delete(key);
-    doWrite();
-  } else {
-    debounceTimers.set(key, setTimeout(doWrite, debounceMs));
-  }
+  debounceTimers.set(key, setTimeout(doWrite, debounceMs));
+}
+
+/**
+ * The machine's `persistSnapshot` action body: capture and persist the
+ * actor's snapshot for the transition that is currently settling.
+ *
+ * XState executes transition actions while the macrostep is still being
+ * resolved — the actor's committed snapshot is only swapped in after the
+ * transition returns — so a synchronous `getPersistedSnapshot()` here would
+ * capture the PREVIOUS macrostep and the durable snapshot would lag one event
+ * behind (e.g. a BACKEND_INIT persist would miss the just-assigned
+ * backendRef). Deferring the capture to a microtask samples the actor after
+ * the transition has settled; the debounce then collapses multiple captures
+ * from one event burst into a single write of the freshest snapshot.
+ */
+export function persistSnapshotAfterTransition(
+  identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  },
+  actor: { getPersistedSnapshot(): Snapshot<unknown> },
+  options?: { debounceMs?: number },
+): void {
+  queueMicrotask(() => {
+    try {
+      persistConversationSnapshot(
+        identity.projectPath,
+        identity.sessionName,
+        identity.conversationId,
+        actor.getPersistedSnapshot(),
+        options,
+      );
+    } catch (err) {
+      // Fire-and-forget — snapshot persistence must not halt the machine.
+      logger.warn("conversation-persistence.snapshot_capture_failed", {
+        conversationId: identity.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  });
 }
 
 async function writeSnapshot(
@@ -164,7 +281,10 @@ async function writeSnapshot(
       conversationId,
       "conversation-persistence.save",
       (conversation: ConversationState) => {
-        conversation.machineSnapshot = snapshot;
+        conversation.machineSnapshot = withCanonicalRefs(
+          conversationId,
+          snapshot,
+        );
       },
     );
 
@@ -174,7 +294,7 @@ async function writeSnapshot(
   } catch (err) {
     logger.error("conversation-persistence.snapshot_save_failed", {
       conversationId,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 }
@@ -204,6 +324,8 @@ export function validateRestoredSnapshot(
   }
 
   coerceLegacyActiveTurn(snapshot);
+  normalizeSnapshotRefs(conversationId, snapshot);
+  normalizeSnapshotDebugGeneration(conversationId, snapshot);
 
   logger.info("conversation-persistence.snapshot_restored", {
     conversationId,
@@ -237,7 +359,7 @@ export async function restoreConversationSnapshot(
   } catch (err) {
     logger.error("conversation-persistence.snapshot_restore_failed", {
       conversationId,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     return null;
   }
@@ -264,7 +386,7 @@ export async function clearConversationSnapshot(
   } catch (err) {
     logger.error("conversation-persistence.snapshot_clear_failed", {
       conversationId,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 }

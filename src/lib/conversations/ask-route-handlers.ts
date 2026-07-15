@@ -25,6 +25,7 @@ import {
 } from "@/lib/state-store";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
+import { resolveSessionConversationRoute } from "./route-resolution";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
@@ -80,36 +81,10 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
     const denied = await deps.auth.requireToken(request);
     if (denied) return denied;
 
-    const resolvedParams = await params;
-    const projectName = resolvedParams["name"] ?? "";
-    const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
-    const conversationId = resolvedParams["conversationId"] ?? "";
-
-    const projectPath = await deps.resolveProjectPath(projectName);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const conversation = session.conversations.find(
-      (c) => c.id === conversationId,
-    );
-    if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveSessionConversationRoute(deps, { params });
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId, conversation } =
+      resolved.value;
 
     // Mode gate. A graph-workflow lane conversation (role "iteration" =
     // implementer, or "validator") may ask only when its context's resolved

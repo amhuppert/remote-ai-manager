@@ -8,11 +8,10 @@ import type {
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
-import type { ConversationBackendCapabilities } from "@/lib/agent-backends/types";
 import type { McpApplyResult } from "@/lib/agent-backends/portable-mcp";
 import { createConfigReader } from "@/lib/config/loader";
 import type { ManagerState } from "@/lib/projects/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { createStateStore as createStateManager } from "@/lib/state-store";
 import {
   _createTestDb,
   _installTestDb,
@@ -122,18 +121,9 @@ function makeFakeRuntime(options: {
   isTurnActive: boolean;
 } {
   const applyCalls: PortableMcpConfig[] = [];
-  const capabilities: ConversationBackendCapabilities = {
-    queueWhileRunning: options.backend === "claude",
-    askUserQuestion: options.backend === "claude",
-    preciseFork: options.backend === "claude",
-    portableMcpAtStart: true,
-    portableMcpBetweenTurns: options.backend === "claude",
-    contextWindowMetrics: options.backend === "claude",
-  };
   const runtime = {
     backend: options.backend,
     status: "alive" as const,
-    capabilities,
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,

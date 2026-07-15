@@ -48,6 +48,8 @@ import {
   markDeliveredTransform,
   markFailedTransform,
   markPendingTransform,
+  MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+  QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON,
   recoverAbandonedDeliveriesTransform,
   toQueuedMessageView,
   type MessageQueueServiceDeps,
@@ -1267,5 +1269,173 @@ describe("messageQueueService.cancel", () => {
       messageIds: ["p1"],
       status: "cancelled",
     });
+  });
+});
+
+describe("delivery attempt cap", () => {
+  it("claimLiveDeliveryTransform refuses a pending row at the attempt cap", () => {
+    const poison = makeEntry({
+      id: "p1",
+      status: "pending",
+      attemptCount: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+    });
+    const queue = [poison];
+
+    const {
+      queue: next,
+      claimed,
+      refused,
+    } = claimLiveDeliveryTransform(queue, "p1", "attempt-A", NOW);
+
+    expect(claimed).toBeNull();
+    expect(next).toHaveLength(0);
+    expect(refused?.id).toBe("p1");
+    expect(refused?.status).toBe("failed");
+    expect(refused?.failedAt).toBe(NOW);
+    expect(refused?.error).toBe(QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON);
+  });
+
+  it("claimLiveDeliveryTransform still claims a row one attempt below the cap", () => {
+    const nearCap = makeEntry({
+      id: "p1",
+      status: "pending",
+      attemptCount: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS - 1,
+    });
+
+    const { claimed, refused } = claimLiveDeliveryTransform(
+      [nearCap],
+      "p1",
+      "attempt-A",
+      NOW,
+    );
+
+    expect(refused).toBeNull();
+    expect(claimed?.status).toBe("delivering");
+    expect(claimed?.attemptCount).toBe(MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS);
+  });
+
+  it("claimNextTurnBatchTransform refuses at-cap rows and claims the remaining pending rows", () => {
+    const poison = makeEntry({
+      id: "poison",
+      status: "pending",
+      attemptCount: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+      content: [textBlock("stuck")],
+    });
+    const healthy = makeEntry({
+      id: "ok",
+      status: "pending",
+      content: [textBlock("fine")],
+    });
+
+    const {
+      queue: next,
+      claimed,
+      refused,
+    } = claimNextTurnBatchTransform([poison, healthy], "attempt-A", NOW);
+
+    expect(refused.map((row) => row.id)).toEqual(["poison"]);
+    expect(refused[0]?.status).toBe("failed");
+    expect(refused[0]?.error).toBe(QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON);
+    expect(claimed.map((row) => row.id)).toEqual(["ok"]);
+    // The refused row is pruned; only the claimed row remains.
+    expect(next.map((row) => row.id)).toEqual(["ok"]);
+  });
+
+  it("claimNextTurnBatchTransform with only a poison row refuses it and claims nothing", () => {
+    const poison = makeEntry({
+      id: "poison",
+      status: "pending",
+      attemptCount: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+    });
+
+    const {
+      queue: next,
+      claimed,
+      refused,
+    } = claimNextTurnBatchTransform([poison], "attempt-A", NOW);
+
+    expect(claimed).toHaveLength(0);
+    expect(refused.map((row) => row.id)).toEqual(["poison"]);
+    expect(next).toHaveLength(0);
+  });
+
+  it("a message that keeps failing delivery leaves the queue after the cap instead of looping", async () => {
+    const store: FakeStore = { conversation: makeConversation() };
+    const { deps, broadcasts } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+
+    await service.enqueue({ ...KEY, content: [textBlock("poison")] });
+
+    // Each cycle: claim → recoverable failure → back to pending. Without a cap
+    // this loops forever; with the cap the row is claimable exactly
+    // MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS times.
+    for (let i = 0; i < MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS; i += 1) {
+      const batch = await service.claimNextTurnBatch(KEY);
+      expect(batch).not.toBeNull();
+      await service.markPending({
+        ...KEY,
+        ids: batch?.messageIds ?? [],
+        deliveryAttemptId: batch?.deliveryAttemptId ?? "",
+        error: "transient",
+      });
+    }
+
+    broadcasts.length = 0;
+    capturedLogs.length = 0;
+
+    const refusedBatch = await service.claimNextTurnBatch(KEY);
+
+    expect(refusedBatch).toBeNull();
+    // The poison row left the queue — not silently: the terminal outcome rides
+    // on a failed broadcast carrying the refusal reason.
+    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    const updates = broadcasts.filter(
+      (e) => e.type === "message-queue-updated",
+    );
+    expect(updates).toHaveLength(1);
+    const msg =
+      updates[0]?.type === "message-queue-updated" ? updates[0].message : null;
+    expect(msg?.status).toBe("failed");
+    expect(msg?.error).toBe(QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON);
+
+    const refusedLog = capturedLogs.find(
+      (entry) => entry.message === "queue.refused",
+    );
+    expect(refusedLog?.level).toBe("warn");
+    expect(refusedLog?.data).toMatchObject({
+      projectName: "my-project",
+      sessionName: "csm/feature",
+      conversationId: "conv-1",
+      reason: QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON,
+      maxAttempts: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+    });
+  });
+
+  it("claimLiveDelivery refuses a poison row: returns null, prunes it, and broadcasts the failed outcome", async () => {
+    const store: FakeStore = {
+      conversation: conversationWith([
+        makeEntry({
+          id: "p1",
+          status: "pending",
+          attemptCount: MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS,
+        }),
+      ]),
+    };
+    const { deps, broadcasts } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+
+    const claimed = await service.claimLiveDelivery({ ...KEY, id: "p1" });
+
+    expect(claimed).toBeNull();
+    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    const updates = broadcasts.filter(
+      (e) => e.type === "message-queue-updated",
+    );
+    expect(updates).toHaveLength(1);
+    const msg =
+      updates[0]?.type === "message-queue-updated" ? updates[0].message : null;
+    expect(msg?.id).toBe("p1");
+    expect(msg?.status).toBe("failed");
+    expect(msg?.error).toBe(QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON);
   });
 });

@@ -7,7 +7,7 @@ import { createLogger } from "@/lib/logging";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionLaneCommitSnapshot,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 const logger = createLogger("graph-workflow-lane-commit");
 
 interface LaneCommitterInput {

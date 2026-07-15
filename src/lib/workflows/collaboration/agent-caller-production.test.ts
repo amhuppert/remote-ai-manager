@@ -66,14 +66,6 @@ function makeRecordingClaudeFactory(
       return {
         backend: "claude",
         status: "alive",
-        capabilities: {
-          queueWhileRunning: true,
-          askUserQuestion: true,
-          preciseFork: true,
-          portableMcpAtStart: true,
-          portableMcpBetweenTurns: true,
-          contextWindowMetrics: true,
-        },
         modelId: input.modelId,
         reasoningEffort: input.reasoningEffort,
         outputFormat: input.outputFormat,
@@ -87,7 +79,7 @@ function makeRecordingClaudeFactory(
         async sendTurn(): Promise<ConversationBackendTurnResult> {
           const structuredOutput = draftOutput(1);
           return {
-            backendRef: { backend: "claude", sessionId: "real-session-1" },
+            backendRef: { backend: "claude", ref: "real-session-1" },
             costUsd: null,
             durationMs: 10,
             numTurns: 1,
@@ -97,7 +89,8 @@ function makeRecordingClaudeFactory(
             structuredOutput,
             aborted: false,
             compacted: false,
-            error: null,
+            failure: null,
+            continuationDisposition: "retain",
           };
         },
         close: () => undefined,
@@ -115,8 +108,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -130,14 +123,6 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          capabilities: {
-            queueWhileRunning: true,
-            askUserQuestion: true,
-            preciseFork: true,
-            portableMcpAtStart: true,
-            portableMcpBetweenTurns: true,
-            contextWindowMetrics: true,
-          },
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: undefined,
@@ -151,7 +136,7 @@ describe("createCollaborationProductionCallAgent", () => {
           async sendTurn(): Promise<ConversationBackendTurnResult> {
             const structuredOutput = draftOutput(1);
             return {
-              backendRef: { backend: "claude", sessionId: "real-session-1" },
+              backendRef: { backend: "claude", ref: "real-session-1" },
               costUsd: null,
               durationMs: 10,
               numTurns: 1,
@@ -161,7 +146,8 @@ describe("createCollaborationProductionCallAgent", () => {
               structuredOutput,
               aborted: false,
               compacted: false,
-              error: null,
+              failure: null,
+              continuationDisposition: "retain",
             };
           },
           close: () => undefined,
@@ -207,8 +193,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -221,14 +207,6 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          capabilities: {
-            queueWhileRunning: true,
-            askUserQuestion: true,
-            preciseFork: true,
-            portableMcpAtStart: true,
-            portableMcpBetweenTurns: true,
-            contextWindowMetrics: true,
-          },
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: undefined,
@@ -248,7 +226,7 @@ describe("createCollaborationProductionCallAgent", () => {
             return {
               backendRef: {
                 backend: "claude",
-                sessionId: `real-session-${callCount}`,
+                ref: `real-session-${callCount}`,
               },
               costUsd: null,
               durationMs: 10,
@@ -259,7 +237,8 @@ describe("createCollaborationProductionCallAgent", () => {
               structuredOutput,
               aborted: false,
               compacted: false,
-              error: null,
+              failure: null,
+              continuationDisposition: "retain",
             };
           },
           close: () => undefined,
@@ -298,7 +277,7 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(persistedRefs[0]).toBeNull();
     expect(persistedRefs[1]).toEqual({
       backend: "claude",
-      sessionId: "real-session-1",
+      ref: "real-session-1",
     });
   });
 
@@ -310,8 +289,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -323,14 +302,6 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          capabilities: {
-            queueWhileRunning: true,
-            askUserQuestion: true,
-            preciseFork: true,
-            portableMcpAtStart: true,
-            portableMcpBetweenTurns: true,
-            contextWindowMetrics: true,
-          },
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: input.outputFormat,
@@ -347,7 +318,7 @@ describe("createCollaborationProductionCallAgent", () => {
             return {
               backendRef: {
                 backend: "claude",
-                sessionId: "real-session-output-format",
+                ref: "real-session-output-format",
               },
               costUsd: null,
               durationMs: 10,
@@ -358,7 +329,8 @@ describe("createCollaborationProductionCallAgent", () => {
               structuredOutput,
               aborted: false,
               compacted: false,
-              error: null,
+              failure: null,
+              continuationDisposition: "retain",
             };
           },
           close: () => undefined,
@@ -410,8 +382,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -426,13 +398,15 @@ describe("createCollaborationProductionCallAgent", () => {
         return {
           backendRef: {
             backend: "codex",
-            threadId: `real-thread-${callCount}`,
+            ref: `real-thread-${callCount}`,
           },
           text: JSON.stringify(structuredOutput),
           structuredOutput,
           usage: null,
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -474,13 +448,13 @@ describe("createCollaborationProductionCallAgent", () => {
     // Round 1 format turn resumes the work turn's thread.
     expect(taskRequests[1]?.resumeRef).toEqual({
       backend: "codex",
-      threadId: "real-thread-1",
+      ref: "real-thread-1",
     });
     expect(taskRequests[1]?.prompt).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
     // Round 2 work turn resumes the latest recorded thread.
     expect(taskRequests[2]?.resumeRef).toEqual({
       backend: "codex",
-      threadId: "real-thread-2",
+      ref: "real-thread-2",
     });
     expect(taskRequests[2]?.prompt).toBe("round 2");
   });
@@ -493,8 +467,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: false },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -509,13 +483,15 @@ describe("createCollaborationProductionCallAgent", () => {
         return {
           backendRef: {
             backend: "codex",
-            threadId: `real-thread-${callCount}`,
+            ref: `real-thread-${callCount}`,
           },
           text: JSON.stringify(structuredOutput),
           structuredOutput,
           usage: null,
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -559,8 +535,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -573,14 +549,6 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          capabilities: {
-            queueWhileRunning: true,
-            askUserQuestion: true,
-            preciseFork: true,
-            portableMcpAtStart: true,
-            portableMcpBetweenTurns: true,
-            contextWindowMetrics: true,
-          },
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: undefined,
@@ -595,7 +563,7 @@ describe("createCollaborationProductionCallAgent", () => {
             sendTurnCount += 1;
             if (sendTurnCount === 2) {
               return {
-                backendRef: { backend: "claude", sessionId: "stale-session" },
+                backendRef: { backend: "claude", ref: "stale-session" },
                 costUsd: null,
                 durationMs: 10,
                 numTurns: 1,
@@ -604,7 +572,12 @@ describe("createCollaborationProductionCallAgent", () => {
                 contentBlocks: [],
                 aborted: false,
                 compacted: false,
-                error: "resume session not found",
+                failure: {
+                  kind: "stale_resume_ref",
+                  message: "resume session not found",
+                  retryable: true,
+                },
+                continuationDisposition: "retain",
               };
             }
             const structuredOutput: CollaborationInitialDraftContent =
@@ -612,8 +585,7 @@ describe("createCollaborationProductionCallAgent", () => {
             return {
               backendRef: {
                 backend: "claude",
-                sessionId:
-                  sendTurnCount === 1 ? "stale-session" : "fresh-session",
+                ref: sendTurnCount === 1 ? "stale-session" : "fresh-session",
               },
               costUsd: null,
               durationMs: 10,
@@ -624,7 +596,8 @@ describe("createCollaborationProductionCallAgent", () => {
               structuredOutput,
               aborted: false,
               compacted: false,
-              error: null,
+              failure: null,
+              continuationDisposition: "retain",
             };
           },
           close: () => undefined,
@@ -662,7 +635,7 @@ describe("createCollaborationProductionCallAgent", () => {
 
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "fresh-session",
+      ref: "fresh-session",
     });
     // Round 1 work turn creates fresh (null); the format turn resumes that
     // session (stale-session), the resume fails as stale, and the caller
@@ -670,10 +643,10 @@ describe("createCollaborationProductionCallAgent", () => {
     // resumes the recovered session for both of its turns.
     expect(persistedRefs).toEqual([
       null,
-      { backend: "claude", sessionId: "stale-session" },
+      { backend: "claude", ref: "stale-session" },
       null,
-      { backend: "claude", sessionId: "fresh-session" },
-      { backend: "claude", sessionId: "fresh-session" },
+      { backend: "claude", ref: "fresh-session" },
+      { backend: "claude", ref: "fresh-session" },
     ]);
   });
 
@@ -685,8 +658,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -697,12 +670,14 @@ describe("createCollaborationProductionCallAgent", () => {
         taskRequests.push(request);
         const structuredOutput = draftOutput(1);
         return {
-          backendRef: { backend: "codex", threadId: "real-thread-1" },
+          backendRef: { backend: "codex", ref: "real-thread-1" },
           text: JSON.stringify(structuredOutput),
           structuredOutput,
           usage: null,
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -745,8 +720,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -757,12 +732,14 @@ describe("createCollaborationProductionCallAgent", () => {
         taskRequests.push(request);
         const structuredOutput = draftOutput(1);
         return {
-          backendRef: { backend: "codex", threadId: "real-thread-1" },
+          backendRef: { backend: "codex", ref: "real-thread-1" },
           text: JSON.stringify(structuredOutput),
           structuredOutput,
           usage: null,
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -804,8 +781,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -852,8 +829,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -899,8 +876,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -919,7 +896,7 @@ describe("createCollaborationProductionCallAgent", () => {
         return {
           backendRef: {
             backend: "codex",
-            threadId: `real-thread-${callCount}`,
+            ref: `real-thread-${callCount}`,
           },
           text: structuredOutput
             ? JSON.stringify(structuredOutput)
@@ -928,6 +905,8 @@ describe("createCollaborationProductionCallAgent", () => {
           usage: null,
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -975,7 +954,7 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(taskRequests[1]?.outputSchema).toEqual(schema);
     expect(taskRequests[1]?.resumeRef).toEqual({
       backend: "codex",
-      threadId: "real-thread-1",
+      ref: "real-thread-1",
     });
     // The returned result is the format turn's structured output.
     expect(result.outcome.kind).toBe("completed");
@@ -992,8 +971,8 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1003,11 +982,13 @@ describe("createCollaborationProductionCallAgent", () => {
       async run(request): Promise<AgentTaskResult> {
         taskRequests.push(request);
         return {
-          backendRef: { backend: "codex", threadId: "real-thread-1" },
+          backendRef: { backend: "codex", ref: "real-thread-1" },
           text: "prose answer",
           usage: null,
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -1033,5 +1014,47 @@ describe("createCollaborationProductionCallAgent", () => {
 
     expect(taskRequests).toHaveLength(1);
     expect(taskRequests[0]?.prompt).toBe("no schema here");
+  });
+
+  it("rejects a lane-less request loudly instead of running an unscheduled direct backend call", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    let runnerInvoked = false;
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(): Promise<AgentTaskResult> {
+        runnerInvoked = true;
+        return {
+          backendRef: { backend: "codex", ref: "real-thread-1" },
+          text: "prose answer",
+          usage: null,
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-lane-less",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getTaskRunner: () => runner,
+    });
+
+    await expect(
+      callAgent({
+        kind: "task_run",
+        backend: "codex",
+        prompt: "no lane here",
+        writeCapability: "write_capable",
+      }),
+    ).rejects.toThrow(/requires a laneRef/);
+    // The scheduler is never bypassed: no backend call ran.
+    expect(runnerInvoked).toBe(false);
   });
 });

@@ -9,15 +9,19 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { recordMergeIntent, getMergeIntents } from "./repo";
+import { createMergeIntentsRepo, type MergeIntentsRepo } from "./repo";
 import {
   _createTestDb,
   _installTestDb,
   _resetForTesting,
 } from "../state-store/state-db";
 
+let repo: MergeIntentsRepo;
+
 beforeEach(() => {
-  _installTestDb(_createTestDb({ inMemory: true }));
+  const db = _createTestDb({ inMemory: true });
+  _installTestDb(db);
+  repo = createMergeIntentsRepo(db);
 });
 
 afterEach(() => {
@@ -26,26 +30,30 @@ afterEach(() => {
 
 describe("merge-intents repo", () => {
   it("returns only the intents matching the requested shas for the project", () => {
-    recordMergeIntent({
+    repo.recordMergeIntent({
       projectPath: "/p1",
       commitSha: "sha-a",
       intent: "intent a",
       source: "session-merge",
     });
-    recordMergeIntent({
+    repo.recordMergeIntent({
       projectPath: "/p1",
       commitSha: "sha-b",
       intent: "intent b",
       source: "graph-join",
     });
-    recordMergeIntent({
+    repo.recordMergeIntent({
       projectPath: "/p2",
       commitSha: "sha-a",
       intent: "other project",
       source: "session-merge",
     });
 
-    const intents = getMergeIntents("/p1", ["sha-a", "sha-b", "sha-missing"]);
+    const intents = repo.getMergeIntents("/p1", [
+      "sha-a",
+      "sha-b",
+      "sha-missing",
+    ]);
 
     expect(intents).toHaveLength(2);
     expect(intents.map((i) => i.intent).sort()).toEqual([
@@ -56,24 +64,24 @@ describe("merge-intents repo", () => {
   });
 
   it("returns an empty array without touching the DB for an empty sha list", () => {
-    expect(getMergeIntents("/p1", [])).toEqual([]);
+    expect(repo.getMergeIntents("/p1", [])).toEqual([]);
   });
 
   it("replaces the intent when the same commit is recorded twice", () => {
-    recordMergeIntent({
+    repo.recordMergeIntent({
       projectPath: "/p1",
       commitSha: "sha-a",
       intent: "first",
       source: "session-merge",
     });
-    recordMergeIntent({
+    repo.recordMergeIntent({
       projectPath: "/p1",
       commitSha: "sha-a",
       intent: "second",
       source: "session-merge",
     });
 
-    const intents = getMergeIntents("/p1", ["sha-a"]);
+    const intents = repo.getMergeIntents("/p1", ["sha-a"]);
     expect(intents).toHaveLength(1);
     expect(intents[0]?.intent).toBe("second");
   });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getErrorMessage } from "@/lib/shared/errors";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
@@ -6,10 +7,8 @@ import {
   createArtifactRegistry,
   type ArtifactRegistry,
 } from "@/lib/workflows/primitives/artifact-registry";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowSharedDocumentEntry,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowSharedDocumentEntry } from "@/lib/workflow-graph/definition-schemas";
 const logger = createLogger("graph-workflow-shared-documents");
 
 const SHARED_DOCUMENT_DIRECTORY = path.join(".cc", "graph-workflow-docs");
@@ -180,7 +179,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       logger.warn("graph-workflow.shared_document.capture_failed", {
         executionId: nextExecution.id,
         relativePath: record.relativePath,
-        warning: err instanceof Error ? err.message : String(err),
+        warning: getErrorMessage(err),
       });
     }
 
@@ -204,7 +203,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       const nextExecution = await performUpsert(worktreePath, execution, input);
       return { status: "registered", nextExecution };
     } catch (err) {
-      const warning = err instanceof Error ? err.message : String(err);
+      const warning = getErrorMessage(err);
       logger.warn("graph-workflow.shared_document.optional_skipped", {
         executionId: execution.id,
         relativePath: input.relativePath,

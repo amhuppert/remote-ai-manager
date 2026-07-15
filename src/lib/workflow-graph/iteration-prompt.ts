@@ -5,13 +5,13 @@ import {
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowCollaborationContinuation } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
-  GraphWorkflowCollaborationContinuation,
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
-  GraphWorkflowTaskState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 /**
  * The command that advances the workflow. `<taskId>` is the task's id from the

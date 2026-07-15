@@ -83,6 +83,7 @@ describe("deriveLaneTargets", () => {
       projectPath: "/repo",
       sessionDir: "feature-session",
       laneId: "lane-a",
+      branchPrefix: "csm",
     });
 
     expect(targets.worktreePath).toBe(
@@ -96,11 +97,13 @@ describe("deriveLaneTargets", () => {
       projectPath: "/r",
       sessionDir: "s",
       laneId: "lane-x",
+      branchPrefix: "csm",
     });
     const b = deriveLaneTargets({
       projectPath: "/r",
       sessionDir: "s",
       laneId: "lane-x",
+      branchPrefix: "csm",
     });
     expect(a).toEqual(b);
   });
@@ -122,6 +125,8 @@ describe("createParallelWorktrees.provisionLane", () => {
     const pwt = createParallelWorktrees({
       gitClient: fakeClient,
       existsSync: () => false,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
     });
 
     const result = await pwt.provisionLane({
@@ -156,6 +161,8 @@ describe("createParallelWorktrees.provisionLane", () => {
     const pwt = createParallelWorktrees({
       gitClient: fakeClient,
       existsSync: () => true,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
       logger,
     });
 
@@ -223,6 +230,8 @@ describe("createParallelWorktrees.provisionLane", () => {
     const pwt = createParallelWorktrees({
       gitClient: fakeClient,
       existsSync: () => false,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
       logger,
     });
 
@@ -262,6 +271,8 @@ describe("createParallelWorktrees.provisionLane", () => {
     const pwt = createParallelWorktrees({
       gitClient: fakeClient,
       existsSync: () => false,
+      readGlobalConfig: async () => ({}),
+      readRepoConfig: async () => null,
     });
 
     const fromContext = await pwt.provision({
@@ -276,6 +287,7 @@ describe("createParallelWorktrees.provisionLane", () => {
       projectPath: "/repo",
       sessionDir: "session-1",
       laneId: "ctx-foo",
+      branchPrefix: "csm",
     });
 
     expect(fromContext).toEqual(fromLane);
@@ -295,6 +307,7 @@ describe("createParallelWorktrees.provisionLane", () => {
       gitClient: fakeClient,
       // Worktree dir absent (so provisioning proceeds); init script present.
       existsSync: (p: string) => p.includes("init.sh"),
+      readGlobalConfig: async () => ({}),
       readRepoConfig: async () => ({ initScriptPath: "./init.sh" }),
       buildChildEnv: () => ({ NODE_ENV: "test" as const }),
       execFileAsync: async (cmd, args, opts) => {

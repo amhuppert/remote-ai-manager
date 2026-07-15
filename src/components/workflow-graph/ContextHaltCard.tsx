@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import { cn } from "@/lib/ui/cn";
 
 const haltCardBase =

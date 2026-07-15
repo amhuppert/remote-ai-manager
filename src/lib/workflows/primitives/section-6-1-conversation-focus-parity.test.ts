@@ -19,7 +19,7 @@
  *    path so a stale Claude query session is retried transparently.
  *  - Conversation status events (`conversation-status`, `ask-question`,
  *    `debug-mode-status`, `debug-log-received`) publish through
- *    `publishSessionStatus`, which routes them through the shared
+ *    `publishEvent`, which routes them through the shared
  *    SessionStatusBus and preserves the wire payload for existing UI
  *    consumers.
  *  - Focus-mode initialization registers `memory-bank/focus.md` as a
@@ -53,12 +53,12 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 import {
-  publishSessionStatus,
-  setDefaultSessionStatusBusBroadcastForTesting,
-  subscribeSessionStatus,
-  _resetDefaultSessionStatusBusForTesting,
-} from "./default-session-status-bus";
-import type { StatusBusEnvelope } from "./status-bus";
+  publishEvent,
+  setPublicationBroadcastForTesting,
+  subscribeLifecycle,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
+import type { StatusBusEnvelope } from "@/lib/events/status-bus";
 import type {
   ArtifactRegistry,
   ArtifactRecord,
@@ -67,7 +67,7 @@ import type {
   ArtifactRegisterRequest,
   ArtifactWriteOutcome,
 } from "./artifact-registry";
-import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/actor-implementations";
+import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/pre-turn/focus-memory";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   AskQuestionEvent,
@@ -119,13 +119,13 @@ function makeRecordingArtifactRegistry(): {
 
 function captureWire() {
   const wire = vi.fn<(event: SSEEvent) => void>();
-  setDefaultSessionStatusBusBroadcastForTesting(wire);
+  setPublicationBroadcastForTesting(wire);
   return wire;
 }
 
 function captureEnvelopes() {
   const envelopes: StatusBusEnvelope[] = [];
-  const unsubscribe = subscribeSessionStatus((envelope) => {
+  const unsubscribe = subscribeLifecycle((envelope) => {
     envelopes.push(envelope);
   });
   return { envelopes, unsubscribe };
@@ -135,34 +135,26 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
   let workingDir: string;
 
   beforeEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     workingDir = await fs.mkdtemp(path.join(os.tmpdir(), "section6-1-parity-"));
   });
 
   afterEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
-  describe("conversation status events route through publishSessionStatus", () => {
-    // The session-status-bus maps the feature-level conversation status onto
-    // the primitive lifecycle vocabulary: every non-pause status reports as
-    // "running" so the StatusBus envelope stays terse, while "awaiting" /
-    // "waiting_for_input" surface as "paused" for primitive subscribers.
+  describe("conversation status events route through publishEvent", () => {
+    // The lifecycle projection maps the feature-level conversation status onto
+    // the primitive lifecycle vocabulary: "running" stays running, while
+    // "awaiting" / "waiting_for_input" surface as paused for subscribers.
     // The wire SSEEvent payload preserves the original feature status field
     // unchanged so existing UI consumers see no observable change.
     const conversationStatusCases: Array<{
-      raw:
-        | "running"
-        | "completed"
-        | "failed"
-        | "awaiting"
-        | "waiting_for_input";
+      raw: "running" | "awaiting" | "waiting_for_input";
       expected: "running" | "paused";
     }> = [
       { raw: "running", expected: "running" },
-      { raw: "completed", expected: "running" },
-      { raw: "failed", expected: "running" },
       { raw: "awaiting", expected: "paused" },
       { raw: "waiting_for_input", expected: "paused" },
     ];
@@ -180,7 +172,7 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
           status: raw,
         } as unknown as ConversationStatusEvent;
 
-        const outcome = publishSessionStatus(event);
+        const outcome = publishEvent(event);
         unsubscribe();
 
         expect(outcome.delivered).toBe(true);
@@ -201,11 +193,11 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
         projectName: "acme",
         sessionName: "session-1",
         conversationId: "conv-1",
-        status: "failed",
+        status: "awaiting",
         error: "Backend timed out",
       } as unknown as ConversationStatusEvent;
 
-      publishSessionStatus(event);
+      publishEvent(event);
       unsubscribe();
 
       expect(wire.mock.calls[0]?.[0]).toEqual(event);
@@ -213,7 +205,7 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
     });
   });
 
-  it("ask-question events publish through publishSessionStatus and preserve every field", () => {
+  it("ask-question events publish through publishEvent and preserve every field", () => {
     const wire = captureWire();
     const { envelopes, unsubscribe } = captureEnvelopes();
 
@@ -238,7 +230,7 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
       ],
     };
 
-    const outcome = publishSessionStatus(event);
+    const outcome = publishEvent(event);
     unsubscribe();
 
     expect(outcome.delivered).toBe(true);
@@ -248,7 +240,7 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
     expect(envelopes[0]?.payload).toEqual(event);
   });
 
-  it("debug-mode-status events publish through publishSessionStatus and route under the dedicated debug scope (preserves wire payload unchanged)", () => {
+  it("debug-mode-status events publish through publishEvent and route under the dedicated debug scope (preserves wire payload unchanged)", () => {
     const wire = captureWire();
     const { envelopes, unsubscribe } = captureEnvelopes();
 
@@ -261,7 +253,7 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
       recording: false,
     };
 
-    const outcome = publishSessionStatus(event);
+    const outcome = publishEvent(event);
     unsubscribe();
 
     expect(outcome.delivered).toBe(true);

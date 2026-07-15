@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
-import { createPortal } from "react-dom";
 import { CloseIcon, StopIcon } from "@/components/icons";
+import { Dialog, DialogContent } from "@/components/ui/Dialog";
 import { cn } from "@/lib/ui/cn";
 import {
   isStopAvailable,
@@ -36,8 +35,10 @@ const STATUS_LABEL: Record<CollabPhaseStripPhase["status"], string> = {
 
 // Secondary controls for the mobile collaboration surface: the full phase
 // timeline (which the compact bar reduces to one pip), expand/collapse-all, and
-// the stop action. Portaled to the document body so it escapes the transformed
-// docked stage (see docked-stage-transform-breaks-fixed).
+// the stop action. Composes the `ui/Dialog` unstyled/edge-anchored variant: Radix
+// portals it to the body (escaping the transformed docked stage — see
+// docked-stage-transform-breaks-fixed) and owns the focus trap + Escape/
+// outside-press dismissal, while the card docks to the bottom as a sheet.
 export default function CollabControlSheet({
   phases,
   verdict,
@@ -45,33 +46,18 @@ export default function CollabControlSheet({
   onCollapseAll,
   onStop,
   onClose,
-}: CollabControlSheetProps): React.JSX.Element | null {
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  if (typeof document === "undefined") return null;
-
+}: CollabControlSheetProps): React.JSX.Element {
   const stopVisible = onStop != null && isStopAvailable(phases);
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-tooltip flex flex-col justify-end"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Collaboration controls"
-    >
-      <button
-        type="button"
-        className="absolute inset-0 animate-[fadeIn_0.15s_ease] cursor-default appearance-none border-0 bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]"
-        aria-label="Close controls"
-        onClick={onClose}
-      />
-      <div className="relative flex max-h-[70vh] animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]">
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        unstyled
+        anchor="stretch"
+        scrimClassName="fixed inset-0 z-tooltip motion-safe:animate-[fadeIn_0.15s_ease] bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]"
+        contentClassName="fixed inset-x-0 bottom-0 z-tooltip flex max-h-[70vh] motion-safe:animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]"
+        aria-label="Collaboration controls"
+      >
         <div className="relative mb-xs flex shrink-0 items-center justify-center">
           <div className="h-[4px] w-[36px] shrink-0 rounded-[2px] bg-border-default" />
           <button
@@ -205,8 +191,7 @@ export default function CollabControlSheet({
             </button>
           </>
         ) : null}
-      </div>
-    </div>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }

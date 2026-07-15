@@ -33,7 +33,7 @@ import {
 } from "./manager";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { CollaborationArtifact } from "./types";
 import type {
   AsymmetricCollaborationSliceDeps,
@@ -46,7 +46,7 @@ import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envel
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
-import type { PublishScopedStatusEventInput } from "@/lib/workflows/primitives/default-session-status-bus";
+import type { PublishScopedStatusInput } from "@/lib/events/publication";
 import { makeFinalAnswer } from "./test-fixtures";
 import { buildCollaborationUserTranscriptEntry } from "./transcript";
 import { _createTestDb } from "@/lib/state-store/state-db";
@@ -205,7 +205,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   }>;
   publishedStatuses: Array<
     Omit<
-      PublishScopedStatusEventInput,
+      PublishScopedStatusInput,
       "scope" | "scopeId" | "projectName" | "sessionName"
     > & {
       projectPath: string;
@@ -237,7 +237,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   }> = [];
   const publishedStatuses: Array<
     Omit<
-      PublishScopedStatusEventInput,
+      PublishScopedStatusInput,
       "scope" | "scopeId" | "projectName" | "sessionName"
     > & {
       projectPath: string;
@@ -1025,7 +1025,7 @@ describe("createCollaborationManager.start", () => {
   it("threads conversation.backendRef into sliceInput.priorBackendRef when present", async () => {
     const savedRef: AgentSessionRef = {
       backend: "claude",
-      sessionId: "claude-saved-session",
+      ref: "claude-saved-session",
     };
     const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
       resolveSessionResult: { worktreePath: "/wt/abc" },
@@ -1081,7 +1081,7 @@ describe("createCollaborationManager.start", () => {
   it("threads a codex-typed conversation.backendRef into sliceInput.priorBackendRef", async () => {
     const savedRef: AgentSessionRef = {
       backend: "codex",
-      threadId: "codex-saved-thread",
+      ref: "codex-saved-thread",
     };
     const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
       resolveSessionResult: { worktreePath: "/wt/abc" },

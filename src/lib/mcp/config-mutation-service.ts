@@ -16,7 +16,7 @@ import type {
   McpServerView,
   McpToolInventoryResult,
 } from "@/lib/mcp/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { createStateStore as createStateManager } from "@/lib/state-store";
 import { withWriteQueue } from "@/lib/state-store/write-queue";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";

@@ -29,13 +29,13 @@ import type {
 } from "./schemas";
 import type { ProjectState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { getStateStore, type StateStore } from "@/lib/state-store";
 
 import { applyCapabilityOperations } from "./patch";
 
 const logger = createLogger("agent-capabilities.scope-store");
 
-type StateManager = ReturnType<typeof createStateManager>;
+type StateManager = StateStore;
 
 export interface ScopeCapabilityOverrideStoreDeps {
   stateManager: StateManager;
@@ -250,4 +250,4 @@ function logPatch(
 }
 
 export const defaultScopeCapabilityOverrideStore: ScopeCapabilityOverrideStore =
-  createScopeCapabilityOverrideStore({ stateManager: createStateManager() });
+  createScopeCapabilityOverrideStore({ stateManager: getStateStore() });

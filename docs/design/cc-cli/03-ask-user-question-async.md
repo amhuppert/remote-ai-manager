@@ -1,5 +1,7 @@
 # AskUserQuestion — Async Redesign
 
+**Status:** Implemented; retained as the question-lifecycle design record. `cctl ask` is asynchronous and answers return as a later user turn.
+
 Phase 3 of the [CC CLI migration](./README.md). This is the highest-risk piece of the migration:
 it changes conversation-machine turn-end semantics, not just a transport.
 

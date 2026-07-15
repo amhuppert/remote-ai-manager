@@ -1,4 +1,5 @@
-import { workflowAgentValidatorResultSchema } from "@/lib/workflows/schemas";
+import { workflowAgentValidatorResultSchema } from "@/lib/workflow-graph/definition-schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
 import { createLogger } from "@/lib/logging";
@@ -7,19 +8,26 @@ import {
   createExecutionIndex,
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
+import {
+  buildGraphWorkflowValidationReviewArtifact,
+  type GraphWorkflowValidationEventSessionRef,
+  type GraphWorkflowValidationReviewArtifact,
+} from "@/lib/workflow-graph/event-schemas";
 import type {
-  GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
-  GraphWorkflowResolvedContext,
   GraphWorkflowLaneKind,
-  GraphWorkflowTaskDefinition,
-  GraphWorkflowValidationReviewArtifact,
-  WorkflowValidatorIssue,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import {
+  resolveGraphWorkflowValidatorExecutionPlan,
+  type GraphWorkflowAgentValidatorConfig,
+} from "@/lib/workflow-graph/config-schemas";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import type {
-  AgentBackendId,
-  AgentSessionRef,
-} from "@/lib/agent-backends/types";
+  GraphWorkflowResolvedContext,
+  GraphWorkflowTaskDefinition,
+  WorkflowValidatorIssue,
+} from "@/lib/workflow-graph/definition-schemas";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
 import type {
@@ -32,9 +40,9 @@ import type { GraphWorkflowContextValidatorInput } from "./execution-validation"
 import type {
   ResolveValidatorCallInput,
   ResolvedValidatorCall,
-  RecordClaudeLaneTurnInput,
-  RecordCodexLaneTurnInput,
-} from "@/lib/workflow-graph/workflow-continuity-service";
+  RecordLaneTurnOutcomeInput,
+  ValidatorExecutionStrategy,
+} from "@/lib/workflow-graph/lane-continuity";
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
@@ -48,6 +56,10 @@ import {
   renderDiffScopeSection,
   type ValidationDiffScope,
 } from "./validation-diff-scope";
+import {
+  validateStructuredOutput,
+  type StructuredOutputSource,
+} from "@/lib/agent-backends/structured-output";
 
 export const VALIDATOR_OUTPUT_SCHEMA = {
   type: "object",
@@ -92,27 +104,32 @@ export interface BuildContextValidationPromptInput {
     answers: Record<string, AskQuestionAnswer>;
   };
   /**
-   * Effective ask-user-questions availability for this validator turn. Only a
-   * Claude validator lane holds a real CC conversation, so a Codex validator is
-   * suppressed even when the toggle is on (see
-   * `resolveValidatorAskUserQuestionsEnabled`). When true a short ask-protocol
-   * reminder section is added; otherwise none (Req 8.1-8.4).
+   * Effective ask-user-questions availability for this validator turn. It is
+   * enabled only for a conversation strategy whose backend declares native
+   * mid-turn asking (see `resolveValidatorAskUserQuestionsEnabled`). When true
+   * a short ask-protocol reminder section is added; otherwise none (Req
+   * 8.1-8.4).
    */
   askUserQuestionsEnabled?: boolean;
 }
 
 /**
  * The effective ask-user-questions flag for a context validator turn: the
- * context's resolved toggle AND the lane holding a real CC conversation. Only a
- * Claude validator lane holds one; a Codex validator runs headless, so it is
- * always suppressed regardless of the toggle (Req 8.1). Pure so the suppression
- * rule is unit-testable in isolation.
+ * context's resolved toggle AND a conversation strategy whose backend supports
+ * native mid-turn asking (Req 8.1). Pure so the suppression rule is
+ * unit-testable in isolation.
  */
 export function resolveValidatorAskUserQuestionsEnabled(
-  validatorType: "claude" | "codex",
+  validator: GraphWorkflowAgentValidatorConfig,
   context: GraphWorkflowResolvedContext,
 ): boolean {
-  return validatorType === "claude" && context.askUserQuestions.enabled;
+  const plan = resolveGraphWorkflowValidatorExecutionPlan(validator);
+  return (
+    plan.strategy === "conversation" &&
+    context.askUserQuestions.enabled &&
+    getBackendDescriptor(plan.backend).conversation?.capabilities
+      .nativeMidTurnAskUser === true
+  );
 }
 
 function buildCharterSection(charter: WorkflowCharter): string {
@@ -225,7 +242,7 @@ export type ValidatorOutcome =
       kind: "infra_error";
       reason: "exception" | "unparseable" | "schema_mismatch";
       message: string;
-      engine: "claude" | "codex";
+      engine: AgentBackendId;
     }
   // The validator turn ended with a pending question batch on its lane
   // conversation and no verdict. Detected before verdict parsing (a pending
@@ -282,7 +299,7 @@ function wireResultToOutcome(
     summary: string;
     issues: WorkflowValidatorIssue[];
   },
-  engine: "claude" | "codex",
+  engine: AgentBackendId,
   allowedTaskIds: Set<string> | null,
 ): ValidatorOutcome {
   const invalidIssueTaskIds = validateIssueTaskIds(
@@ -315,106 +332,68 @@ function wireResultToOutcome(
   };
 }
 
-export function extractValidatorResult(
-  text: string,
-  engine: "claude" | "codex",
-  allowedTaskIds?: string[],
-): ValidatorOutcome {
-  const jsonBlocks = [...text.matchAll(/```json\s*\n([\s\S]*?)```/g)];
-  if (jsonBlocks.length === 0) {
-    return {
-      kind: "infra_error",
-      reason: "unparseable",
-      message: "Validator agent did not return a JSON block",
-      engine,
-    };
-  }
-
-  const lastBlock = jsonBlocks[jsonBlocks.length - 1]!;
-  const raw = lastBlock[1]!.trim();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    return {
-      kind: "infra_error",
-      reason: "unparseable",
-      message:
-        error instanceof Error
-          ? `JSON parse failed: ${error.message}`
-          : "JSON parse failed",
-      engine,
-    };
-  }
-
-  const result = workflowAgentValidatorResultSchema.safeParse(parsed);
-  if (!result.success) {
-    return {
-      kind: "infra_error",
-      reason: "schema_mismatch",
-      message: `Validator output did not match schema: ${result.error.message}`,
-      engine,
-    };
-  }
-
-  return wireResultToOutcome(
-    result.data,
-    engine,
-    allowedTaskIds ? new Set(allowedTaskIds) : null,
-  );
-}
-
 export interface ParsedValidatorResponse {
   result: ValidatorOutcome;
   parsePath:
     | "structured_output"
     | "raw_json"
     | "fenced_json_block"
-    | "fenced_json_block_fallback"
     | "runner_error";
 }
 
+const PARSE_PATH_BY_SOURCE: Record<
+  StructuredOutputSource,
+  Exclude<ParsedValidatorResponse["parsePath"], "runner_error">
+> = {
+  native: "structured_output",
+  raw_json: "raw_json",
+  fenced: "fenced_json_block",
+};
+
+/**
+ * Maps a validator turn's output onto a `ValidatorOutcome` via the shared
+ * structured-output module (extraction precedence native → raw JSON → last
+ * fenced block, first schema-passing candidate wins), then applies the
+ * validator-specific task-id containment check.
+ */
 export function parseValidatorResponse(
   text: string,
-  engine: "claude" | "codex",
+  engine: AgentBackendId,
   structuredOutput?: unknown,
   allowedTaskIds?: string[],
 ): ParsedValidatorResponse {
   const allowedTaskIdSet = allowedTaskIds ? new Set(allowedTaskIds) : null;
 
-  if (structuredOutput != null) {
-    const result =
-      workflowAgentValidatorResultSchema.safeParse(structuredOutput);
-    if (result.success) {
-      return {
-        result: wireResultToOutcome(result.data, engine, allowedTaskIdSet),
-        parsePath: "structured_output",
-      };
-    }
-  }
+  const validated = validateStructuredOutput(
+    workflowAgentValidatorResultSchema,
+    {
+      ...(structuredOutput != null ? { native: structuredOutput } : {}),
+      text,
+    },
+  );
 
-  try {
-    const parsed = JSON.parse(text);
-    const result = workflowAgentValidatorResultSchema.safeParse(parsed);
-    if (result.success) {
-      return {
-        result: wireResultToOutcome(result.data, engine, allowedTaskIdSet),
-        parsePath: "raw_json",
-      };
-    }
-  } catch {
-    // Fall through to fenced JSON extraction.
+  if (!validated.ok) {
+    return {
+      result: {
+        kind: "infra_error",
+        reason:
+          validated.stage === "extraction" ? "unparseable" : "schema_mismatch",
+        message: validated.error,
+        engine,
+      },
+      // No candidate was accepted; log the terminal fallback path.
+      parsePath: "fenced_json_block",
+    };
   }
 
   return {
-    result: extractValidatorResult(text, engine, allowedTaskIds),
-    parsePath: "fenced_json_block",
+    result: wireResultToOutcome(validated.value, engine, allowedTaskIdSet),
+    parsePath: PARSE_PATH_BY_SOURCE[validated.source],
   };
 }
 
 export interface ValidatorExecutionMetadata {
-  sessionRef: AgentSessionRef | null;
+  sessionRef: GraphWorkflowValidationEventSessionRef | null;
   reviewArtifact: GraphWorkflowValidationReviewArtifact | null;
   limitEvaluation:
     | "disabled"
@@ -433,11 +412,8 @@ interface ValidatorContinuityService {
   resolveValidatorCall(
     input: ResolveValidatorCallInput,
   ): Promise<ResolvedValidatorCall>;
-  recordClaudeTurnOutcome(
-    input: RecordClaudeLaneTurnInput,
-  ): Promise<GraphWorkflowExecution>;
-  recordCodexTurnOutcome(
-    input: RecordCodexLaneTurnInput,
+  recordLaneTurnOutcome(
+    input: RecordLaneTurnOutcomeInput,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -456,16 +432,16 @@ export interface ValidatorRunnerDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string>;
-  resolveTimeoutMs(validatorType: "claude" | "codex"): Promise<number>;
+  resolveTimeoutMs(backend: AgentBackendId): Promise<number>;
   continuityService?: ValidatorContinuityService;
   executionRepository?: ValidatorContinuityRepository;
   /**
    * Optional override for the conversation entrypoint that the validator
    * uses to drive each `task_run` turn. Every validator turn flows through
    * the conversation actor — there is no direct AgentCall facade call in
-   * this module — so the actor handles transcript persistence, codex
-   * thread continuity (via context.backendRef), and structured-output
-   * dispatch in one place.
+   * this module — so the actor handles transcript persistence, backend-native
+   * continuity (via context.backendRef), and structured-output dispatch in one
+   * place.
    */
   executeWorkflowTaskRun?: (
     input: ExecuteWorkflowTaskRunInput,
@@ -487,9 +463,8 @@ export interface ValidatorRunnerDeps {
    * Read the post-turn pending-question state of the validator's lane
    * conversation. Runs before verdict parsing so a question-ending turn yields
    * `asked_user` instead of an unparseable verdict (Req 3.2). Returns null when
-   * the conversation is unknown — Codex validator lanes dispatch against a
-   * synthetic id with no CC conversation, so they never produce `asked_user`.
-   * Defaults to reading the conversation via the state store.
+   * the strategy has no CC conversation and therefore cannot produce
+   * `asked_user`. Defaults to reading the conversation via the state store.
    */
   readLaneConversation?(
     projectPath: string,
@@ -498,32 +473,58 @@ export interface ValidatorRunnerDeps {
   ): Promise<LaneConversationPendingState | null>;
 }
 
-const backendRefCache = new Map<string, AgentSessionRef>();
-
-function refCacheKey(executionId: string, lane: string): string {
-  return `${executionId}:${lane}`;
-}
-
 const validatorLogger = createLogger("graph-workflow-validator");
 
+/**
+ * Resume reference for a reused validator lane, sourced entirely from durable
+ * state. Task strategies resume through the lane's opaque backend ref;
+ * conversation strategies resume through the CC conversation's persisted
+ * state, so no ref is passed here. No in-memory ref cache exists — a process
+ * restart resumes exactly what was persisted (bug §1.9.4).
+ */
 function resolvedCallToResumeRef(
   resolved: ResolvedValidatorCall,
-  executionId: string,
-  lane: string,
 ): AgentSessionRef | null {
-  if (resolved.sessionAction === "create") {
-    backendRefCache.delete(refCacheKey(executionId, lane));
+  if (resolved.sessionAction === "create") return null;
+  return resolved.strategy === "task" ? resolved.backendRef : null;
+}
+
+function buildConversationValidationSessionRef(
+  backend: AgentBackendId,
+  lane: GraphWorkflowLaneKind,
+  conversationId: string,
+): GraphWorkflowValidationEventSessionRef {
+  return {
+    backend,
+    ref: conversationId,
+    lane,
+    refKind: "conversation",
+    workflowConversationId: conversationId,
+  };
+}
+
+function buildTaskValidationSessionRef(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+  lane: GraphWorkflowLaneKind,
+  backend: AgentBackendId,
+  continuationDisposition: TaskRunResult["continuationDisposition"],
+): GraphWorkflowValidationEventSessionRef | null {
+  if (continuationDisposition === "clear") return null;
+
+  const laneState = execution.laneStates[contextId]?.[lane];
+  if (
+    laneState?.refKind !== "backend" ||
+    laneState.sessionRef?.backend !== backend
+  ) {
     return null;
   }
 
-  const cached = backendRefCache.get(refCacheKey(executionId, lane));
-  if (cached) return cached;
-
-  if (resolved.engine === "codex") {
-    return { backend: "codex", threadId: resolved.threadId };
-  }
-
-  return null;
+  return {
+    ...laneState.sessionRef,
+    lane,
+    refKind: "backend",
+  };
 }
 
 function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
@@ -543,6 +544,7 @@ interface ValidatorTaskResult {
   error: string | null;
   timedOut: boolean;
   backendRef: AgentSessionRef | null;
+  continuationDisposition: TaskRunResult["continuationDisposition"];
   usage: {
     inputTokens: number | null;
     outputTokens: number | null;
@@ -553,7 +555,7 @@ interface ValidatorTaskResult {
 
 interface ValidatorTaskInvocation {
   prompt: string;
-  backend: "claude" | "codex";
+  backend: AgentBackendId;
   workingDirectory: string;
   modelId: string | undefined;
   reasoningEffort: string | undefined;
@@ -622,6 +624,7 @@ function taskRunResultToValidatorTaskResult(
       error: result.error,
       timedOut: /timed out after/i.test(result.error),
       backendRef: result.backendRef ?? null,
+      continuationDisposition: result.continuationDisposition,
       usage,
     };
   }
@@ -635,6 +638,7 @@ function taskRunResultToValidatorTaskResult(
       error: null,
       timedOut: false,
       backendRef: result.backendRef ?? null,
+      continuationDisposition: result.continuationDisposition,
       usage,
     };
   }
@@ -646,6 +650,7 @@ function taskRunResultToValidatorTaskResult(
     error: null,
     timedOut: false,
     backendRef: result.backendRef ?? null,
+    continuationDisposition: result.continuationDisposition,
     usage,
   };
 }
@@ -681,7 +686,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           "graph-workflow.validator.read_lane_conversation_failed",
           {
             conversationId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           },
         );
         return null;
@@ -711,11 +716,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       ...(invocation.reasoningEffort !== undefined
         ? { effort: invocation.reasoningEffort }
         : {}),
-      // The validator parses fenced JSON, raw JSON, and structured output
-      // via `parseValidatorResponse`, so the post-dispatch structured-output
-      // gate is intentionally bypassed — schema enforcement still happens
-      // at the runner level via the forwarded `outputFormat` schema.
-      skipStructuredOutputGate: true,
       actorInput,
       origin: {
         source: "workflow",
@@ -735,8 +735,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
    * Validator"). Reads the lane conversation the turn dispatched against; if a
    * question batch is pending, returns an `asked_user` outcome so the caller
    * short-circuits before verdict parsing and the orchestrator maps it to the
-   * park path. Null → parse the verdict as normal. Codex validator lanes have no
-   * real conversation → the reader returns null → never `asked_user`.
+   * park path. Null → parse the verdict as normal. Strategies without a real CC
+   * conversation return null and therefore never produce `asked_user`.
    */
   async function checkValidatorPendingQuestion(
     projectPath: string,
@@ -744,7 +744,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     executionId: string,
     contextId: string,
     conversationId: string,
-    engine: "claude" | "codex",
+    engine: AgentBackendId,
   ): Promise<Extract<ValidatorOutcome, { kind: "asked_user" }> | null> {
     const laneConversation = await readLaneConversation(
       projectPath,
@@ -819,7 +819,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
     return {
       limitEvaluation: laneState.limitEvaluation,
-      rotateBeforeNextTurn: laneState.rotateBeforeNextTurn,
+      rotateBeforeNextTurn: laneState.metrics.rotateBeforeNextTurn,
     };
   }
 
@@ -829,7 +829,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     execution: GraphWorkflowExecution,
     contextId: string,
     lane: "context_validator",
-    validatorType: "claude" | "codex",
+    strategy: ValidatorExecutionStrategy,
+    backend: AgentBackendId,
     prompt: string,
     modelId: string | undefined,
     reasoningEffort: string | undefined,
@@ -842,17 +843,18 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const worktreePath =
       overrideWorktreePath ??
       (await deps.resolveWorktreePath(projectPath, sessionName));
-    const timeoutMs = await deps.resolveTimeoutMs(validatorType);
+    const timeoutMs = await deps.resolveTimeoutMs(backend);
 
     execLogger?.validation(contextId, "validator.invoked", {
       lane,
-      engine: validatorType,
+      engine: backend,
       hasContinuityService: !!deps.continuityService,
     });
     validatorLogger.info("graph-workflow.validator.invoked", {
       executionId: execution.id,
       lane,
-      engine: validatorType,
+      engine: backend,
+      strategy,
     });
 
     if (!deps.continuityService) {
@@ -860,11 +862,11 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         execution.id,
         contextId,
         lane,
-        validatorType,
+        backend,
       );
       const taskResult = await dispatchValidatorTurn({
         prompt,
-        backend: validatorType,
+        backend,
         workingDirectory: worktreePath,
         modelId,
         reasoningEffort,
@@ -879,7 +881,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       if (taskResult.transcript) {
         execLogger?.writeValidatorTranscript(
           contextId,
-          { lane, engine: validatorType },
+          { lane, engine: backend },
           taskResult.transcript,
         );
       }
@@ -890,7 +892,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         execution.id,
         contextId,
         noServiceConversationId,
-        validatorType,
+        backend,
       );
       if (askedUser) {
         return {
@@ -904,11 +906,11 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           kind: "infra_error",
           reason: "exception",
           message: taskResult.error,
-          engine: validatorType,
+          engine: backend,
         };
         execLogger?.validation(contextId, "validator.result_parsed", {
           lane,
-          engine: validatorType,
+          engine: backend,
           parsePath: "runner_error" as const,
           kind: outcome.kind,
           issueCount: 0,
@@ -923,14 +925,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       const text = taskResult.text ?? "";
       const { result: parsed, parsePath } = parseValidatorResponse(
         text,
-        validatorType,
+        backend,
         taskResult.structuredOutput,
         allowedTaskIds,
       );
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
-        engine: validatorType,
+        engine: backend,
         parsePath,
         kind: parsed.kind,
         ...validatorOutcomeLogFields(parsed),
@@ -948,7 +950,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionName,
       contextId,
       lane,
-      engine: validatorType,
+      backend,
+      strategy,
       pinnedConversationId,
     });
 
@@ -971,21 +974,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    const resumeRef = resolvedCallToResumeRef(resolved, execution.id, lane);
+    const resumeRef = resolvedCallToResumeRef(resolved);
     const dispatchConversationId =
-      resolved.engine === "claude"
+      resolved.strategy === "conversation"
         ? resolved.conversationId
         : syntheticValidatorConversationId(
             execution.id,
             contextId,
             lane,
-            validatorType,
+            backend,
           );
     // Persist the lane binding BEFORE dispatch. Active cancellation
     // (pause/abort/halt/resume) collects abortable conversations from
     // execution.laneStates; a lane resolved only in local state — every
-    // first or rotated Claude turn, and every Codex turn (whose synthetic
-    // dispatch id is never part of continuity state) — would otherwise be
+    // first or rotated conversation turn, and every task-strategy turn (whose
+    // synthetic dispatch id is never part of continuity state) — would otherwise be
     // undiscoverable for the whole run, letting the turn burn to completion.
     if (resolvedLaneState) {
       const laneStateForDispatch = {
@@ -1005,7 +1008,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
     const taskResult = await dispatchValidatorTurn({
       prompt,
-      backend: validatorType,
+      backend,
       workingDirectory: worktreePath,
       modelId,
       reasoningEffort,
@@ -1020,15 +1023,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     if (taskResult.transcript) {
       execLogger?.writeValidatorTranscript(
         contextId,
-        { lane, engine: validatorType },
+        { lane, engine: backend },
         taskResult.transcript,
-      );
-    }
-
-    if (taskResult.backendRef) {
-      backendRefCache.set(
-        refCacheKey(execution.id, lane),
-        taskResult.backendRef,
       );
     }
 
@@ -1041,13 +1037,26 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       execution.id,
       contextId,
       dispatchConversationId,
-      validatorType,
+      backend,
     );
     if (askedUser) {
       return {
         result: askedUser,
         metadata: {
-          sessionRef: taskResult.backendRef ?? null,
+          sessionRef:
+            resolved.strategy === "conversation"
+              ? buildConversationValidationSessionRef(
+                  backend,
+                  lane,
+                  resolved.conversationId,
+                )
+              : buildTaskValidationSessionRef(
+                  resolved.execution,
+                  contextId,
+                  lane,
+                  backend,
+                  taskResult.continuationDisposition,
+                ),
           reviewArtifact: null,
           limitEvaluation: "disabled",
           rotateBeforeNextTurn: false,
@@ -1063,21 +1072,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
             kind: "infra_error",
             reason: "exception",
             message: runnerError,
-            engine: validatorType,
+            engine: backend,
           },
           parsePath: "runner_error",
         }
       : parseValidatorResponse(
           text,
-          validatorType,
+          backend,
           taskResult.structuredOutput,
           allowedTaskIds,
         );
 
-    if (validatorType === "codex") {
-      const newThreadId =
-        taskResult.backendRef?.backend === "codex"
-          ? taskResult.backendRef.threadId
+    if (resolved.strategy === "task") {
+      const updatedRef =
+        taskResult.backendRef?.backend === backend
+          ? (taskResult.backendRef?.ref ?? null)
           : null;
       const usage = taskResult.usage
         ? {
@@ -1087,22 +1096,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           }
         : null;
 
-      const continuityService = deps.continuityService;
-      const persistedExecution = await applyLaneStateUpdate(
-        projectPath,
-        sessionName,
-        async (latest) =>
-          continuityService.recordCodexTurnOutcome({
-            execution: applyResolvedLaneState(latest),
-            contextId,
-            lane,
-            usage,
-            contextLimitTokens,
-            newThreadId,
-            failed: runnerError != null,
-          }),
-      );
-      const updatedExecution = persistedExecution ?? execution;
+      const updatedExecution =
+        await deps.continuityService.recordLaneTurnOutcome({
+          execution: applyResolvedLaneState(execution),
+          projectPath,
+          sessionName,
+          contextId,
+          lane,
+          outcome: {
+            backend,
+            lastTurnUsage: usage,
+            ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
+            ...(updatedRef != null ? { ref: updatedRef } : {}),
+            continuationDisposition: taskResult.continuationDisposition,
+          },
+        });
 
       const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
         updatedExecution,
@@ -1110,30 +1118,40 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         lane,
       );
 
-      const codexThreadId =
-        taskResult.backendRef?.backend === "codex"
-          ? taskResult.backendRef.threadId
-          : (newThreadId ?? null);
-      const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
-        codexThreadId
-          ? {
-              engine: "codex",
-              threadId: codexThreadId,
-              response: text,
-              usage: usage
-                ? { ...usage, costUsd: taskResult.usage?.costUsd ?? null }
-                : null,
-            }
-          : null;
+      const sessionRef = buildTaskValidationSessionRef(
+        updatedExecution,
+        contextId,
+        lane,
+        backend,
+        taskResult.continuationDisposition,
+      );
+      const responseRef =
+        taskResult.backendRef?.backend === backend
+          ? taskResult.backendRef.ref
+          : updatedExecution.laneStates[contextId]?.[lane]?.sessionRef
+                ?.backend === backend
+            ? (updatedExecution.laneStates[contextId]?.[lane]?.sessionRef
+                ?.ref ?? null)
+            : null;
+
+      const reviewArtifact = buildGraphWorkflowValidationReviewArtifact({
+        backend,
+        strategy,
+        ref: responseRef,
+        response: text,
+        usage: usage
+          ? { ...usage, costUsd: taskResult.usage?.costUsd ?? null }
+          : null,
+      });
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
-        engine: "codex",
+        engine: backend,
         parsePath,
         kind: parsed.kind,
         ...validatorOutcomeLogFields(parsed),
         sessionAction: resolved.sessionAction,
-        threadId: codexThreadId,
+        threadId: responseRef,
       });
       execLogger?.writeValidatorResponse(contextId, "context-validator.json", {
         raw: text,
@@ -1144,7 +1162,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       return {
         result: parsed,
         metadata: {
-          sessionRef: taskResult.backendRef ?? null,
+          sessionRef,
           reviewArtifact,
           limitEvaluation,
           rotateBeforeNextTurn,
@@ -1152,21 +1170,19 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    const continuityService = deps.continuityService;
-    const persistedExecution = await applyLaneStateUpdate(
-      projectPath,
-      sessionName,
-      async (latest) =>
-        continuityService.recordClaudeTurnOutcome({
-          execution: applyResolvedLaneState(latest),
-          contextId,
-          lane,
-          contextTokens: null,
-          contextWindowMax: null,
-          contextLimitTokens,
-        }),
+    const updatedExecution = await deps.continuityService.recordLaneTurnOutcome(
+      {
+        execution: applyResolvedLaneState(execution),
+        projectPath,
+        sessionName,
+        contextId,
+        lane,
+        outcome: {
+          backend,
+          ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
+        },
+      },
     );
-    const updatedExecution = persistedExecution ?? execution;
 
     const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
       updatedExecution,
@@ -1174,23 +1190,30 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       lane,
     );
 
-    const backendSessionId =
-      taskResult.backendRef?.backend === "claude"
-        ? taskResult.backendRef.sessionId
-        : "";
-    const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
-      backendSessionId
-        ? { engine: "claude", conversationId: backendSessionId }
-        : null;
+    const backendSessionId = Object.is(taskResult.backendRef?.backend, backend)
+      ? (taskResult.backendRef?.ref ?? null)
+      : null;
+    const conversationSessionRef = buildConversationValidationSessionRef(
+      backend,
+      lane,
+      resolved.conversationId,
+    );
+    const reviewArtifact = buildGraphWorkflowValidationReviewArtifact({
+      backend,
+      strategy,
+      ref: resolved.conversationId,
+      response: text,
+      usage: null,
+    });
 
     execLogger?.validation(contextId, "validator.result_parsed", {
       lane,
-      engine: "claude",
+      engine: backend,
       parsePath,
       kind: parsed.kind,
       ...validatorOutcomeLogFields(parsed),
       sessionAction: resolved.sessionAction,
-      backendSessionId: backendSessionId || null,
+      backendSessionId,
     });
     execLogger?.writeValidatorResponse(contextId, "context-validator.json", {
       raw: text,
@@ -1201,7 +1224,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     return {
       result: parsed,
       metadata: {
-        sessionRef: taskResult.backendRef ?? null,
+        sessionRef: conversationSessionRef,
         reviewArtifact,
         limitEvaluation,
         rotateBeforeNextTurn,
@@ -1218,6 +1241,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     );
     const contextTasks = index.tasksByContext.get(input.context.id) ?? [];
     const execLogger = getExecutionLogger(input.execution.id);
+    const validatorPlan = resolveGraphWorkflowValidatorExecutionPlan(
+      input.validator,
+    );
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
     const allowedTaskIds = getContextTaskIds(index, input.context.id);
 
@@ -1236,9 +1262,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     } catch (error) {
       diffScope = {
         kind: "unavailable",
-        reason: `scope computation error: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        reason: `scope computation error: ${getErrorMessage(error)}`,
       };
     }
 
@@ -1294,10 +1318,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
       ...(input.context.charter ? { charter: input.context.charter } : {}),
       diffScopeSection: renderedDiffScope.section,
-      // A Codex validator lane holds no CC conversation, so the tool is
-      // suppressed even when the toggle is on (Req 8.1).
       askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
-        input.validator.type,
+        input.validator,
         input.context,
       ),
       ...(input.resumeUserInput
@@ -1312,7 +1334,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
     execLogger?.writePrompt(input.context.id, "context-validator.md", prompt);
     execLogger?.validation(input.context.id, "context_validator.started", {
-      engine: input.validator.type,
+      engine: validatorPlan.backend,
+      strategy: validatorPlan.strategy,
       promptLength: prompt.length,
       taskCount: contextTasks.length,
     });
@@ -1323,49 +1346,31 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const overrideWorktreePath = resolvedWorktreePath ?? targetWorktreePath;
 
     try {
-      if (input.validator.type === "codex") {
-        return await runValidatorTurn(
-          input.projectPath,
-          input.sessionName,
-          input.execution,
-          input.context.id,
-          "context_validator",
-          "codex",
-          prompt,
-          input.validator.codex.model,
-          input.validator.codex.reasoningEffort,
-          contextLimitTokens,
-          allowedTaskIds,
-          overrideWorktreePath,
-          input.resumeUserInput?.conversationId,
-        );
-      }
-
       return await runValidatorTurn(
         input.projectPath,
         input.sessionName,
         input.execution,
         input.context.id,
         "context_validator",
-        "claude",
+        validatorPlan.strategy,
+        validatorPlan.backend,
         prompt,
-        input.validator.agent.model,
-        input.validator.agent.reasoningEffort,
+        validatorPlan.modelId,
+        validatorPlan.reasoningEffort,
         contextLimitTokens,
         allowedTaskIds,
         overrideWorktreePath,
         input.resumeUserInput?.conversationId,
       );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       execLogger?.validation(input.context.id, "context_validator.error", {
-        engine: input.validator.type,
+        engine: validatorPlan.backend,
         error: errorMessage,
       });
       execLogger?.validation(input.context.id, "validator.infra_error", {
         lane: "context_validator",
-        engine: input.validator.type,
+        engine: validatorPlan.backend,
         reason: "exception",
         message: errorMessage,
       });
@@ -1380,7 +1385,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           kind: "infra_error",
           reason: "exception",
           message: errorMessage,
-          engine: input.validator.type,
+          engine: validatorPlan.backend,
         },
         metadata: buildNoServiceMetadata(),
       };

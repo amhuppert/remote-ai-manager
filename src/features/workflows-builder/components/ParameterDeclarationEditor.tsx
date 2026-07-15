@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import { cn } from "@/lib/ui/cn";
 
 type ParameterType = ParameterDeclaration["type"];

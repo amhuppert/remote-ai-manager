@@ -150,9 +150,10 @@ function DebugActionCard({
     toggleMutation.mutate("exit");
   };
 
-  // When the last debug turn failed the conversation is parked in `debug.error`.
-  // The only valid action there is RETRY_DEBUG_TURN — phase advancement buttons
-  // would dispatch invalid events, so they're hidden until retry succeeds.
+  // When the last debug turn failed the conversation is parked in the
+  // failed-turn state. The only valid action there is retry — phase
+  // advancement buttons would dispatch illegal commands, so they're hidden
+  // until retry succeeds.
   const lastTurnFailed = debugMode.lastTurnFailed === true;
   const showMarkReproduced =
     !lastTurnFailed && phase === "awaiting_reproduction";

@@ -21,18 +21,15 @@ interface LayoutProps {
 const SPINE_W = 260;
 const NODE_H = 84;
 const TRANSIENT_H = 68;
-const DEBUG_W = 260;
 
 /**
- * Conversation — the most spatially complex of the five. Three logical zones:
+ * Conversation — three logical zones:
  *   • Spine (left): idle → acquiringResources → executing → finalizingTurn
  *     → waitingForInput (when a registered question survives the turn)
  *   • externalExecuting branches off idle to the right of the spine
- *   • Debug compound (right): six phases stacked vertically
- *
- * finalizingTurn fans out to six visual destinations (idle + waitingForInput
- * + four debug targets); the individual `always` transitions are consolidated
- * by shared target so guard text remains readable.
+ *   • debug (right): the attached debug workflow's flat parking state —
+ *     the 6-phase progression lives in context.debugMode, driven by
+ *     DEBUG_COMMAND events
  */
 export default function ConversationLayout({
   selectedStateId,
@@ -53,13 +50,8 @@ export default function ConversationLayout({
   // externalExecuting branches off the spine
   const external = box(400, 100, SPINE_W, NODE_H);
 
-  // Debug compound (right column)
-  const debugGroup = box(640, 60, 360, 920);
-  const hyp = box(680, 140, DEBUG_W, NODE_H);
-  const awRepro = box(680, 280, DEBUG_W, NODE_H);
-  const analyzing = box(680, 420, DEBUG_W, NODE_H);
-  const awVerify = box(680, 560, DEBUG_W, NODE_H);
-  const cleanup = box(680, 700, DEBUG_W, NODE_H);
+  // debug parking state (right column)
+  const debug = box(680, 360, SPINE_W + 40, NODE_H + 40);
 
   const edges: EdgeSpec[] = [
     // Initial entry
@@ -93,11 +85,11 @@ export default function ConversationLayout({
     },
     {
       id: "idle-debug",
-      from: { x: idle.x + idle.width, y: idle.y + 20 },
-      to: { x: debugGroup.x, y: debugGroup.y + 30 },
+      from: { x: idle.x + idle.width, y: idle.y + 60 },
+      to: topAnchor(debug),
       routing: "curve",
       bow: "v",
-      label: "ENTER_DEBUG_MODE",
+      label: "DEBUG_COMMAND · enter",
       fromStateId: "idle",
       toStateId: "debug",
       labelOffset: { x: 110, y: -30 },
@@ -157,25 +149,26 @@ export default function ConversationLayout({
       toStateId: "finalizingTurn",
     },
 
-    // debug compound → idle (EXIT_DEBUG_MODE)
+    // debug → idle (exit command / passed cleanup verification clears
+    // debugMode; the always-transition settles back to idle)
     {
       id: "debug-idle-exit",
-      from: { x: debugGroup.x, y: debugGroup.y + 60 },
+      from: { x: debug.x + 60, y: debug.y },
       to: rightAnchor(idle),
       routing: "curve",
       bow: "v",
-      control: { x: (debugGroup.x + idle.x + idle.width) / 2, y: 50 },
-      label: "EXIT_DEBUG_MODE",
+      control: { x: (debug.x + idle.x + idle.width) / 2, y: 120 },
+      label: "always · !debugMode.active",
       fromStateId: "debug",
       toStateId: "idle",
       labelOffset: { x: 0, y: -48 },
     },
 
-    // debug compound → acquiringResources (consolidated SUBMIT_PROMPT
-    // edge representing the per-phase transitions back through the spine)
+    // debug → acquiringResources (next debug turn, or retry of the
+    // preserved failed turn)
     {
       id: "debug-acquiring-submit",
-      from: { x: debugGroup.x, y: debugGroup.y + debugGroup.height - 80 },
+      from: leftAnchor(debug),
       to: {
         x: acquiring.x + acquiring.width,
         y: acquiring.y + acquiring.height - 18,
@@ -183,32 +176,12 @@ export default function ConversationLayout({
       routing: "curve",
       bow: "v",
       control: {
-        x: (debugGroup.x + acquiring.x + acquiring.width) / 2,
-        y: 1010,
+        x: (debug.x + acquiring.x + acquiring.width) / 2,
+        y: 480,
       },
-      label: "SUBMIT_PROMPT (any phase)",
+      label: "SUBMIT_PROMPT / retry_turn",
       fromStateId: "debug",
       toStateId: "acquiringResources",
-    },
-
-    // Debug internal transitions
-    {
-      id: "awRepro-analyzing",
-      from: bottomAnchor(awRepro),
-      to: topAnchor(analyzing),
-      routing: "straight",
-      label: "MARK_REPRODUCED",
-      fromStateId: "debug.awaitingReproduction",
-      toStateId: "debug.analyzingEvidence",
-    },
-    {
-      id: "awVerify-cleanup",
-      from: bottomAnchor(awVerify),
-      to: topAnchor(cleanup),
-      routing: "straight",
-      label: "MARK_FIX_VERIFIED",
-      fromStateId: "debug.awaitingVerification",
-      toStateId: "debug.cleanupInstrumentation",
     },
 
     // finalizingTurn → waitingForInput (a registered question survived the turn)
@@ -239,7 +212,7 @@ export default function ConversationLayout({
       labelOffset: { x: 70, y: 40 },
     },
 
-    // finalizingTurn → idle (default + cleanup consolidated)
+    // finalizingTurn → idle (default)
     {
       id: "finalizing-idle",
       from: leftAnchor(finalizing),
@@ -248,61 +221,29 @@ export default function ConversationLayout({
       bow: "h",
       control: { x: 20, y: (finalizing.y + idle.y) / 2 },
       label: "always",
-      guard: "default · isDebugCleanup",
+      guard: "default",
       dashed: true,
       fromStateId: "finalizingTurn",
       toStateId: "idle",
       labelOffset: { x: 90, y: 30 },
     },
 
-    // finalizingTurn → debug.hypothesizing
+    // finalizingTurn → debug (debug workflow interprets the turn outcome)
     {
-      id: "finalizing-hyp",
-      from: { x: finalizing.x + finalizing.width, y: finalizing.y + 12 },
-      to: leftAnchor(hyp),
-      routing: "curve",
-      bow: "v",
-      control: { x: (finalizing.x + finalizing.width + hyp.x) / 2, y: 200 },
-      label: "always",
-      guard: "isDebugAnalyzing && loopBack",
-      dashed: true,
-      fromStateId: "finalizingTurn",
-      toStateId: "debug.hypothesizing",
-      labelOffset: { x: 0, y: -10 },
-    },
-
-    // finalizingTurn → debug.awaitingReproduction
-    {
-      id: "finalizing-awRepro",
+      id: "finalizing-debug",
       from: { x: finalizing.x + finalizing.width, y: finalizing.y + 24 },
-      to: leftAnchor(awRepro),
-      routing: "curve",
-      bow: "v",
-      control: { x: (finalizing.x + finalizing.width + awRepro.x) / 2, y: 350 },
-      label: "always",
-      guard: "isDebugHypothesizing · awaitingRepro",
-      dashed: true,
-      fromStateId: "finalizingTurn",
-      toStateId: "debug.awaitingReproduction",
-      labelOffset: { x: -20, y: 0 },
-    },
-
-    // finalizingTurn → debug.awaitingVerification (analysis applied a fix)
-    {
-      id: "finalizing-awVerify",
-      from: { x: finalizing.x + finalizing.width, y: finalizing.y + 52 },
-      to: leftAnchor(awVerify),
+      to: bottomAnchor(debug),
       routing: "curve",
       bow: "v",
       control: {
-        x: (finalizing.x + finalizing.width + awVerify.x) / 2,
-        y: 620,
+        x: (finalizing.x + finalizing.width + debug.x) / 2,
+        y: 700,
       },
       label: "always",
-      guard: "isDebugAnalyzing · fixApplied",
+      guard: "debugMode.active",
       dashed: true,
       fromStateId: "finalizingTurn",
-      toStateId: "debug.awaitingVerification",
+      toStateId: "debug",
       labelOffset: { x: -20, y: 0 },
     },
   ];
@@ -411,78 +352,18 @@ export default function ConversationLayout({
         selected={selectedStateId === "waitingForInput"}
         onClick={onSelectState}
       />
-      <CompoundGroup
-        x={debugGroup.x}
-        y={debugGroup.y}
-        width={debugGroup.width}
-        height={debugGroup.height}
+      <StateNode
+        id="debug"
         label="debug"
-        hint="compound · 6-phase workflow"
+        kind="atomic"
         status="warning"
-        stateId="debug"
-        onClickHeader={onSelectState}
+        x={debug.x}
+        y={debug.y}
+        width={debug.width}
+        height={debug.height}
         selected={selectedStateId === "debug"}
-      >
-        <StateNode
-          id="debug.hypothesizing"
-          label="hypothesizing"
-          kind="atomic"
-          status="initial"
-          x={hyp.x}
-          y={hyp.y}
-          width={hyp.width}
-          height={hyp.height}
-          selected={selectedStateId === "debug.hypothesizing"}
-          onClick={onSelectState}
-        />
-        <StateNode
-          id="debug.awaitingReproduction"
-          label="awaitingReproduction"
-          kind="atomic"
-          status="warning"
-          x={awRepro.x}
-          y={awRepro.y}
-          width={awRepro.width}
-          height={awRepro.height}
-          selected={selectedStateId === "debug.awaitingReproduction"}
-          onClick={onSelectState}
-        />
-        <StateNode
-          id="debug.analyzingEvidence"
-          label="analyzingEvidence"
-          kind="atomic"
-          x={analyzing.x}
-          y={analyzing.y}
-          width={analyzing.width}
-          height={analyzing.height}
-          selected={selectedStateId === "debug.analyzingEvidence"}
-          onClick={onSelectState}
-        />
-        <StateNode
-          id="debug.awaitingVerification"
-          label="awaitingVerification"
-          kind="atomic"
-          status="warning"
-          x={awVerify.x}
-          y={awVerify.y}
-          width={awVerify.width}
-          height={awVerify.height}
-          selected={selectedStateId === "debug.awaitingVerification"}
-          onClick={onSelectState}
-        />
-        <StateNode
-          id="debug.cleanupInstrumentation"
-          label="cleanupInstrumentation"
-          kind="atomic"
-          status="success"
-          x={cleanup.x}
-          y={cleanup.y}
-          width={cleanup.width}
-          height={cleanup.height}
-          selected={selectedStateId === "debug.cleanupInstrumentation"}
-          onClick={onSelectState}
-        />
-      </CompoundGroup>
+        onClick={onSelectState}
+      />
     </MachineCanvas>
   );
 }

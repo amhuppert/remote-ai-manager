@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildSessionContext, buildConversationContext } from "./copy-context";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 // ---------------------------------------------------------------------------
 // Helpers

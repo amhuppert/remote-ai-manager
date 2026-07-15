@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/ui/cn";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -423,9 +424,11 @@ export default function MergeConflictsPage({
       {/* ── Page header ── */}
       <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-start">
         <div className="flex items-center gap-md">
-          <IconButton variant="square" onClick={onBack} data-tooltip="Back">
-            <ArrowLeftIcon size={14} />
-          </IconButton>
+          <WithTooltip label="Back">
+            <IconButton variant="square" onClick={onBack} aria-label="Back">
+              <ArrowLeftIcon size={14} />
+            </IconButton>
+          </WithTooltip>
           <div className="flex flex-col gap-[2px]">
             <h1 className="font-display text-[1.2rem] leading-[1.2] font-bold text-text-primary max-768:text-[1rem]">
               Merge Conflicts

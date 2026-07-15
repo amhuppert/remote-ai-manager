@@ -6,7 +6,7 @@ import type {
   TemplateLibraryItem,
   TemplateTier,
 } from "@/lib/workflow-graph/template-library-service";
-import type { WorkflowPrerequisite } from "@/lib/workflows/schemas";
+import type { WorkflowPrerequisite } from "@/lib/workflow-graph/definition-schemas";
 import { Badge } from "@/components/ui/Badge";
 import {
   EmptyState,

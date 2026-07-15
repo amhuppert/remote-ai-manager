@@ -1,7 +1,7 @@
 "use client";
 
-import type { GraphWorkflowLifecycleSnapshot } from "@/lib/workflow-graph/workflow-manager";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 function getMachineSnapshot(
   execution: GraphWorkflowExecution,
 ): GraphWorkflowLifecycleSnapshot | null {

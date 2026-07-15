@@ -44,7 +44,6 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   resolvedCollaborationConfigSchema,
-  workflowCollaborationResultSchema,
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationCounterProposalOutput,
   type CollaborationCrossReviewOutput,
@@ -55,10 +54,11 @@ import {
   type ResolvedCollaborationConfig,
   type WorkflowCollaborationOpenConflict,
   type WorkflowCollaborationResult,
-} from "@/lib/workflows/schemas";
+  workflowCollaborationResultSchema,
+} from "@/lib/workflow-graph/collaboration-schemas";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import type { WorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
-import type { StatusBus } from "@/lib/workflows/primitives/status-bus";
+import type { StatusBus } from "@/lib/events/status-bus";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type {
   CollaborationFeatureSnapshotWorkflow,
@@ -73,7 +73,7 @@ const WORKFLOW_TYPE = "workflow_collaboration";
 const PHASE_RUNNING = "workflow_collaboration_running";
 const PHASE_COMPLETED = "workflow_collaboration_completed";
 // Use the same StatusBus scope as the user-triggered envelope so the SSE
-// bridge (`publishScopedStatusEvent`) emits a `scoped-status` event whose
+// bridge (`publishScopedStatus`) emits a `scoped-status` event whose
 // `scope` field the dashboard's `NotificationListener` already routes to
 // conversation/session/active-collaboration query invalidations. The
 // `scopeId` is the workflow's `workflowId`; payload `kind` strings remain

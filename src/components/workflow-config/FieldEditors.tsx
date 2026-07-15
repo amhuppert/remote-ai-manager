@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/ui/cn";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/schemas";
+import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
 import type {
   ClaudeModel,
   CodexModel,
@@ -16,12 +16,14 @@ import type {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   CollaborationAutonomousResolutionThreshold,
+  WorkflowCollaborationConfig,
+} from "@/lib/workflow-graph/collaboration-schemas";
+import type {
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
-  WorkflowCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/config-schemas";
 
 // Reusable, feature-agnostic config field editors (docs/design/cc-cli/06 "UI
 // plan"). Each is a controlled value+onChange component with no feature-level

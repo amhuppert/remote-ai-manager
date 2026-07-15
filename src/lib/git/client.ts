@@ -16,11 +16,17 @@ interface GitResult {
 }
 
 export interface GitClient {
-  /** Execute a git command with the given args in the given working directory. */
+  /**
+   * Execute a git command with the given args in the given working directory.
+   *
+   * `env` entries are merged on top of the sanitized child env AFTER inherited
+   * git vars are stripped, so a caller can scope a command to e.g. a temporary
+   * `GIT_INDEX_FILE` without re-exposing whatever the parent process inherited.
+   */
   git(
     args: string[],
     cwd: string,
-    options?: { maxBuffer?: number },
+    options?: { maxBuffer?: number; env?: Record<string, string> },
   ): Promise<GitResult>;
 }
 
@@ -29,12 +35,14 @@ class ExecFileGitClient implements GitClient {
   async git(
     args: string[],
     cwd: string,
-    options?: { maxBuffer?: number },
+    options?: { maxBuffer?: number; env?: Record<string, string> },
   ): Promise<GitResult> {
     return execFile("git", args, {
       cwd,
       maxBuffer: options?.maxBuffer,
-      env: buildChildEnv(),
+      env: options?.env
+        ? { ...buildChildEnv(), ...options.env }
+        : buildChildEnv(),
       eventPrefix: "git",
     });
   }

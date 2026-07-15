@@ -3,6 +3,7 @@ import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
 import { createLogger } from "../logging";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("git-worktree");
 
@@ -270,7 +271,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
         return parseGitVersion(stdout);
       } catch (err) {
         logger.warn("git.version.probe_failed", {
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
         return null;
       }
@@ -497,7 +498,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
         logger.warn("git.prepareSquashMerge.fallback.cleanup_failed", {
           projectPath,
           tempWorktreePath,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       });
     }
@@ -554,7 +555,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
         targetBranch,
         expectedTargetSha,
         actualTargetSha,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return { kind: "cas-lost", actualTargetSha };
     }
@@ -566,7 +567,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
         await git(cleanTargetWorktreePath, ["reset", "--hard", preparedSha]);
       } catch (err) {
         const stderr = isExecError(err) ? (err.stderr ?? "") : "";
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         refreshWarning =
           (stderr || message).trim() || "worktree refresh failed";
         logger.warn("git.publishPreparedMerge.refresh_failed", {
@@ -585,7 +586,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
           projectPath,
           parkedRef,
           preparedSha,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       },
     );

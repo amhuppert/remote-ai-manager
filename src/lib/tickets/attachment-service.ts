@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { SSEEvent } from "@/lib/api/sse-events";
+import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import {
   projectNameFromPath,
@@ -177,7 +177,7 @@ export interface TicketAttachmentServiceDeps {
    * when this settles, so a deferred blob is reclaimed rather than orphaned.
    */
   onTicketStartReleased(ticketId: string): Promise<void>;
-  broadcast(event: SSEEvent): void;
+  publish: PublishFn;
   now(): string;
   generateId(): string;
 }
@@ -254,7 +254,7 @@ export function createTicketAttachmentService(
       return;
     }
     publishTicketChange({
-      broadcast: deps.broadcast,
+      publish: deps.publish,
       logger,
       change: "attachments",
       projectName,

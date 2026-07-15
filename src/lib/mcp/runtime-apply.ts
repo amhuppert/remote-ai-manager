@@ -31,6 +31,7 @@ import type {
   PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { createLogger } from "@/lib/logging";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
@@ -38,7 +39,8 @@ import type {
   McpRuntimeApplicationState,
 } from "@/lib/mcp/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { createStateStore as createStateManager } from "@/lib/state-store";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("mcp.runtime-apply");
 
@@ -256,7 +258,8 @@ export function createMcpRuntimeApplyService(
       };
     }
 
-    // Claude idle or Codex (staging). Both go through applyPortableMcpConfig.
+    // Live idle apply or next-turn staging. Both go through
+    // applyPortableMcpConfig; the runtime reports which one happened.
     let applyResult: McpApplyResult;
     try {
       applyResult = await runtime.applyPortableMcpConfig(phase1.portable);
@@ -303,8 +306,8 @@ export function createMcpRuntimeApplyService(
       };
     }
 
-    // Final disposition reflects the runtime's actual behavior. A Claude idle
-    // apply returns `applied_now`; Codex staging returns
+    // Final disposition reflects the runtime's actual behavior: a live idle
+    // apply returns `applied_now`; a staging backend returns
     // `deferred_to_next_turn`.
     await recordFinalDispositionAfterOverride(
       stateManager,
@@ -498,24 +501,25 @@ function decideApplyDisposition(input: {
     return { kind: "no-runtime" };
   }
 
-  if (backend === "codex") {
-    // Codex always stages — its per-turn instance reconstruction picks up the
-    // new portable at the start of the next turn.
-    return { kind: "stage" };
+  // The backend's declared between-turn apply mode is the sole decision
+  // input — never backend identity.
+  const betweenTurnApply = getBackendDescriptor(backend).mcp.betweenTurnApply;
+  switch (betweenTurnApply) {
+    case "next-turn":
+      // Always stages — the backend's per-turn reconstruction picks up the
+      // new portable at the start of the next turn, so a running turn is
+      // never interrupted and staging is safe mid-turn.
+      return { kind: "stage" };
+    case "unsupported":
+      // No between-turn mechanism at all: record pending only; the turn-start
+      // apply owns delivery.
+      return { kind: "defer-running" };
+    case "live-when-idle":
+      // Live when idle, defer while running. Turn activity is the runtime's
+      // declared `isTurnActive`; absent means not-active.
+      if (runtime.isTurnActive === true) return { kind: "defer-running" };
+      return { kind: "apply-live" };
   }
-
-  // Claude: live when idle, defer while running.
-  const isTurnActive = isClaudeTurnActive(runtime);
-  if (isTurnActive) return { kind: "defer-running" };
-  return { kind: "apply-live" };
-}
-
-function isClaudeTurnActive(runtime: ConversationBackendRuntime): boolean {
-  // The Claude runtime exposes `isTurnActive` as a read-only property on its
-  // internal query session; surfaced through the runtime as a read in tests.
-  const candidate = (runtime as unknown as { isTurnActive?: unknown })
-    .isTurnActive;
-  return candidate === true;
 }
 
 // ===========================================================================
@@ -607,7 +611,7 @@ async function recordFinalDispositionAfterOverride(
 // ===========================================================================
 
 function sanitizeErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
+  const raw = getErrorMessage(err);
   return redactSecrets(raw);
 }
 

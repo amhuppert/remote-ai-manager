@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "../config/loader";
-import { createStateManager } from ".";
+import { createStateStore } from ".";
 import {
   _createTestDb,
   _installTestDb,
@@ -14,7 +14,7 @@ const TEST_DIR = path.join("/tmp", "cc-refdoc-test-" + Date.now());
 
 function createTestStateManager() {
   const configReader = createConfigReader(TEST_DIR);
-  return createStateManager({
+  return createStateStore({
     readConfig: () => configReader.readConfig(),
   });
 }

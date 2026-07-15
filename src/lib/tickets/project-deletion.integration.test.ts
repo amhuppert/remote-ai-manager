@@ -75,8 +75,9 @@ describe("ticket operations racing project deletion", () => {
       deleteTicketContent(ticketId) {
         return contentStore.deleteTicket(ticketId);
       },
-      broadcast(event) {
+      publish(event) {
         events.push(event);
+        return { delivered: true };
       },
       runProjectTicketOperation(projectPath, operation) {
         return gate.runTicketOperation(projectPath, operation);
@@ -122,8 +123,9 @@ describe("ticket operations racing project deletion", () => {
       getSessionOverview: async () => null,
       isTicketStartActive: () => false,
       onTicketStartReleased: async () => {},
-      broadcast(event) {
+      publish(event) {
         events.push(event);
+        return { delivered: true };
       },
       now,
       generateId: () => `attachment-${++idSequence}`,
@@ -143,8 +145,9 @@ describe("ticket operations racing project deletion", () => {
 
     const lifecycle = createTicketLifecycleObserver({
       repo,
-      broadcast(event) {
+      publish(event) {
         events.push(event);
+        return { delivered: true };
       },
       now,
     });

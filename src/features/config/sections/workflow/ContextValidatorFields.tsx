@@ -1,4 +1,5 @@
-import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflows/schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigNumericInput } from "../../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../../components/ConfigPillGroup";
@@ -50,7 +51,7 @@ export function ContextValidatorFields({
       >
         <ConfigPillGroup
           value={type}
-          options={["claude", "codex"] as const}
+          options={agentBackendSchema.options}
           onChange={handleTypeChange}
         />
       </ConfigField>
@@ -62,6 +63,7 @@ export function ContextValidatorFields({
         isModified={false}
       >
         <ConfigToggle
+          label="Context validator enabled"
           value={value.enabled}
           onChange={(v) => onChange({ ...value, enabled: v })}
         />
@@ -103,6 +105,7 @@ export function ContextValidatorFields({
         isModified={false}
       >
         <ConfigToggle
+          label="Context validator continuity"
           value={continuityEnabled}
           onChange={(v) =>
             onChange({

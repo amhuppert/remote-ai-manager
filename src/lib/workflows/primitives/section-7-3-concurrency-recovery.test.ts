@@ -562,7 +562,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
           relativePath: "memory-bank/collaboration/wf-A/merged-design.md",
           contents: "design A",
           audience: "user_facing",
-          required: true,
           description: "merged design A",
           source: { workflowId: "wf-A", laneId: "lane-claude", round: 3 },
         }),
@@ -572,7 +571,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
           relativePath: ".cc/graph-workflow-docs/graph-B-plan.md",
           contents: "plan B",
           audience: "user_facing",
-          required: true,
           description: "graph plan B",
           readWhen: "before implementing",
           source: { workflowId: "wf-B", laneId: "lane-planner", round: 1 },
@@ -583,7 +581,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
           relativePath: ".cc/workflow/wf-C/validation.log",
           contents: "log C",
           audience: "internal_log",
-          required: true,
           source: { workflowId: "wf-C", laneId: "lane-validator", round: 2 },
         }),
         registry.write({
@@ -592,7 +589,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
           relativePath: "memory-bank/codex/wf-D/output.md",
           contents: "codex out D",
           audience: "user_facing",
-          required: true,
           source: { workflowId: "wf-D", laneId: "lane-codex", round: 1 },
         }),
       ];
@@ -657,7 +653,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
         relativePath: "memory-bank/wrong-path.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "wf-failing" },
       });
 
@@ -668,7 +663,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
         relativePath: ".cc/workflow/wf-ok/validation.log",
         contents: "ok",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-ok" },
       });
 
@@ -729,7 +723,6 @@ describe("section 7.3 — concurrency and recovery under multi-lane load (Task 7
         relativePath: ".cc/workflow/wf-req-ok/log.txt",
         contents: "log",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-req-ok" },
       });
 

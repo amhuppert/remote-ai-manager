@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getErrorMessage } from "@/lib/shared/errors";
+import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import {
   resolveProjectPath as defaultResolveProjectPath,
   getProjectDisplayName as defaultGetProjectDisplayName,
@@ -57,20 +59,13 @@ export function createSpawnRouteHandlers(
     const name = params["name"] ?? "";
     const conversationId = params["conversationId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const plc = await deps.getProjectConversation(projectPath, conversationId);
     if (!plc) {
-      return NextResponse.json(
-        { error: "Project conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Project conversation not found");
     }
 
     let rawBody: unknown;
@@ -111,7 +106,7 @@ export function createSpawnRouteHandlers(
       logger.error("chat-spawning.route_failure", {
         projectName,
         conversationId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return NextResponse.json(
         { error: "Failed to spawn sessions" } satisfies ApiError,

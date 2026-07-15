@@ -9,31 +9,22 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
+import { createNotificationsRepo, type NotificationsRepo } from "./repo";
 import {
-  createNotification,
-  getNotifications,
   _createTestDb,
+  _installTestDb,
   _resetForTesting,
-} from "./repo";
-import { setConfigReader } from "@/lib/push-notification/dispatcher";
+} from "@/lib/state-store/state-db";
 import { jobNotificationSchema } from "@/lib/notifications/schemas";
 import type { JobNotification } from "@/lib/notifications/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 
-// createNotification fires `dispatchPushForNotification`, which otherwise reads
-// global config from disk and could emit a real push. Inject a config reader
-// that yields no push config so the dispatch is a no-op (DI seam, not a mock of
-// an internal module).
-const noPushConfigReader = () => Promise.resolve({});
-
-// The broadcast dependency is injected per call, so a spy avoids touching the
-// real session-status bus.
-const noopBroadcast = vi.fn();
+let repo: NotificationsRepo;
 
 beforeEach(() => {
-  _createTestDb();
-  setConfigReader(noPushConfigReader);
-  vi.clearAllMocks();
+  const db = _createTestDb({ inMemory: true });
+  _installTestDb(db);
+  repo = createNotificationsRepo(db);
 });
 
 afterEach(() => {
@@ -51,10 +42,10 @@ afterEach(() => {
  * `conflictFiles` carries a multi-element array so its JSON serialization is
  * exercised.
  *
- * `id`, `read`, and `createdAt` are produced by `createNotification` on write
- * (generated UUID, `read=false`, generated timestamp), so the fixture seeds
- * placeholder values to satisfy `parse`; the harness `persist()` returns the
- * actually-created notification as the `expected` value (see the
+ * `id`, `read`, and `createdAt` are produced by `createJobNotification` on
+ * write (generated UUID, `read=false`, generated timestamp), so the fixture
+ * seeds placeholder values to satisfy `parse`; the harness `persist()` returns
+ * the actually-created notification as the `expected` value (see the
  * `derived-on-write` policies below).
  */
 function buildMaximalNotification(): JobNotification {
@@ -87,57 +78,55 @@ describe("notifications durability contract", () => {
       schema: jobNotificationSchema,
       buildMaximalFixture: buildMaximalNotification,
       persist: (fixture) => {
-        // createNotification generates id/createdAt and forces read=false, so it
-        // returns the authoritative persisted notification — use it as expected.
-        return createNotification(
-          {
-            type: fixture.type,
-            title: fixture.title,
-            message: fixture.message,
-            projectName: fixture.projectName,
-            sessionName: fixture.sessionName,
-            branchName: fixture.branchName,
-            jobId: fixture.jobId,
-            jobType: fixture.jobType,
-            ...(fixture.mergeHash !== undefined
-              ? { mergeHash: fixture.mergeHash }
-              : {}),
-            ...(fixture.commitHash !== undefined
-              ? { commitHash: fixture.commitHash }
-              : {}),
-            ...(fixture.conflictCount !== undefined
-              ? { conflictCount: fixture.conflictCount }
-              : {}),
-            ...(fixture.conflictFiles !== undefined
-              ? { conflictFiles: fixture.conflictFiles }
-              : {}),
-            ...(fixture.targetBranch !== undefined
-              ? { targetBranch: fixture.targetBranch }
-              : {}),
-            ...(fixture.errorMessage !== undefined
-              ? { errorMessage: fixture.errorMessage }
-              : {}),
-          },
-          noopBroadcast,
-        );
+        // createJobNotification generates id/createdAt and forces read=false,
+        // so it returns the authoritative persisted notification — use it as
+        // expected.
+        return repo.createJobNotification({
+          type: fixture.type,
+          title: fixture.title,
+          message: fixture.message,
+          projectName: fixture.projectName,
+          sessionName: fixture.sessionName,
+          branchName: fixture.branchName,
+          jobId: fixture.jobId,
+          jobType: fixture.jobType,
+          ...(fixture.mergeHash !== undefined
+            ? { mergeHash: fixture.mergeHash }
+            : {}),
+          ...(fixture.commitHash !== undefined
+            ? { commitHash: fixture.commitHash }
+            : {}),
+          ...(fixture.conflictCount !== undefined
+            ? { conflictCount: fixture.conflictCount }
+            : {}),
+          ...(fixture.conflictFiles !== undefined
+            ? { conflictFiles: fixture.conflictFiles }
+            : {}),
+          ...(fixture.targetBranch !== undefined
+            ? { targetBranch: fixture.targetBranch }
+            : {}),
+          ...(fixture.errorMessage !== undefined
+            ? { errorMessage: fixture.errorMessage }
+            : {}),
+        });
       },
       reload: (expected) => {
-        const { notifications } = getNotifications({ limit: 100 });
+        const { notifications } = repo.getNotifications({ limit: 100 });
         const found = notifications.find((n) => n.id === expected.id);
         // The fixture only persists job notifications; narrow the union back to
         // the job variant the durability harness is parameterized on.
         return found && found.source === "job" ? found : null;
       },
       fieldPolicies: {
-        // id is a UUID generated by createNotification; validated against the
-        // reloaded `expected` returned by persist().
+        // id is a UUID generated by createJobNotification; validated against
+        // the reloaded `expected` returned by persist().
         id: "derived-on-write",
-        // read is forced to false by createNotification on create; validated
+        // read is forced to false by createJobNotification on create; validated
         // against `expected` (the schema has no ZodDefault on read, so false is
         // accepted as a present, non-default value by the completeness guard).
         read: "derived-on-write",
-        // createdAt is generated by createNotification (sqliteUtcNow()) on write;
-        // validated against `expected`.
+        // createdAt is generated by createJobNotification (sqliteUtcNow()) on
+        // write; validated against `expected`.
         createdAt: "derived-on-write",
       },
     });

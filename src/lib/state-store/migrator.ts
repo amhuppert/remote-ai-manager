@@ -1,5 +1,6 @@
 import { Umzug, type UmzugStorage } from "umzug";
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { migrations as defaultMigrations } from "./migrations";
 import type {
   MigrationContext,
@@ -67,6 +68,14 @@ export function createMigrator(
  * The synchronous schema floor in `state-db.ts` has already guaranteed current
  * table shapes, so a fresh database records every migration as a fast no-op and
  * is stamped; only an older on-disk database does real work here.
+ *
+ * A migration failure rejects (the startup registrar treats it as fatal). The
+ * failed migration is not ledgered — Umzug writes the ledger after `up` — so
+ * the next startup retries it; that is also why every migration must be
+ * idempotent. Concurrent workers racing this runner over one file-backed DB
+ * are safe for the same two reasons: an overlapping worker at worst replays
+ * an idempotent `up` (identical to a crash-replay), and the `INSERT OR
+ * IGNORE` ledger records each migration exactly once.
  */
 export async function runMigrations(
   context: MigrationContext,
@@ -74,7 +83,17 @@ export async function runMigrations(
 ): Promise<string[]> {
   const migrator = createMigrator(context, migrationList);
   const pending = await migrator.pending();
-  const applied = await migrator.up();
+  let applied;
+  try {
+    applied = await migrator.up();
+  } catch (err) {
+    logger.error("state-store.migrations_failed", {
+      pendingCount: pending.length,
+      pending: pending.map((migration) => migration.name),
+      error: getErrorMessage(err),
+    });
+    throw err;
+  }
   const names = applied.map((migration) => migration.name);
   logger.info("state-store.migrations_run", {
     pendingCount: pending.length,

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/ui/cn";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import {
   EmptyState,
   EmptyStateTitle,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/sessions/derived";
 import { buildSessionContext } from "@/lib/conversations/copy-context";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
+import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
@@ -43,17 +45,6 @@ import GraphWorkflowCard from "@/features/session/conversation/GraphWorkflowCard
 interface Props {
   projectName: string;
   sessionName: string;
-}
-
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
 }
 
 function formatDate(iso: string): string {
@@ -287,16 +278,17 @@ export default function ConversationList({
               {displayStatus}
             </div>
             <div className="topbar-sep" />
-            <IconButton
-              variant="square"
-              tone="danger"
-              layoutClassName="max-768:hidden"
-              data-tooltip="Delete session"
-              aria-label="Delete session"
-              onClick={() => setShowDeleteConfirm(true)}
-            >
-              <CloseIcon />
-            </IconButton>
+            <WithTooltip label="Delete session">
+              <IconButton
+                variant="square"
+                tone="danger"
+                layoutClassName="max-768:hidden"
+                aria-label="Delete session"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                <CloseIcon />
+              </IconButton>
+            </WithTooltip>
           </>
         }
       />
@@ -355,15 +347,18 @@ export default function ConversationList({
                     </span>
                   </div>
                   <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
-                  <button
-                    className="relative cursor-pointer rounded-sm border border-solid border-border-subtle bg-transparent px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase transition-colors duration-150 hover:border-border-default hover:text-text-secondary"
-                    onClick={handleCopyContext}
-                    data-tooltip={
+                  <WithTooltip
+                    label={
                       contextCopied ? "Copied ✓" : "Copy context to clipboard"
                     }
                   >
-                    {contextCopied ? "\u2713" : "\u2398"} Context
-                  </button>
+                    <button
+                      className="relative cursor-pointer rounded-sm border border-solid border-border-subtle bg-transparent px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase transition-colors duration-150 hover:border-border-default hover:text-text-secondary"
+                      onClick={handleCopyContext}
+                    >
+                      {contextCopied ? "\u2713" : "\u2398"} Context
+                    </button>
+                  </WithTooltip>
                   <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
                   <ScopedAgentCapabilitiesConfig
                     level="session"
@@ -502,30 +497,36 @@ export default function ConversationList({
                       >
                         {convo.id.slice(0, 8)}
                       </span>
-                      <IconButton
-                        variant="square"
-                        layoutClassName="ml-auto"
-                        data-tooltip="Rename"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleRenameStart(convo);
-                        }}
+                      <WithTooltip label="Rename">
+                        <IconButton
+                          variant="square"
+                          layoutClassName="ml-auto"
+                          aria-label="Rename"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRenameStart(convo);
+                          }}
+                        >
+                          &#9998;
+                        </IconButton>
+                      </WithTooltip>
+                      <WithTooltip
+                        label={convo.archived ? "Unarchive" : "Archive"}
                       >
-                        &#9998;
-                      </IconButton>
-                      <IconButton
-                        variant="square"
-                        layoutClassName="ml-auto"
-                        data-tooltip={convo.archived ? "Unarchive" : "Archive"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleArchive(convo.id, !convo.archived);
-                        }}
-                      >
-                        {convo.archived ? "\u21A9" : "\u2913"}
-                      </IconButton>
+                        <IconButton
+                          variant="square"
+                          layoutClassName="ml-auto"
+                          aria-label={convo.archived ? "Unarchive" : "Archive"}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleArchive(convo.id, !convo.archived);
+                          }}
+                        >
+                          {convo.archived ? "\u21A9" : "\u2913"}
+                        </IconButton>
+                      </WithTooltip>
                     </div>
                   </Link>
                 ))}

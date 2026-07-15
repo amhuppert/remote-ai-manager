@@ -73,7 +73,7 @@ describe("graph workflow implementer runner", () => {
     }));
     const getConversation = vi.fn(async () =>
       makeConversation({
-        backendRef: { backend: "claude" as const, sessionId: "sdk-session-1" },
+        backendRef: { backend: "claude" as const, ref: "sdk-session-1" },
       }),
     );
 
@@ -137,7 +137,7 @@ describe("graph workflow implementer runner", () => {
       contextTokens: 12_345,
       contextWindowMax: 200_000,
       compacted: false,
-      sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
+      sessionRef: { backend: "claude", ref: "sdk-session-1" },
     });
   });
 
@@ -151,7 +151,7 @@ describe("graph workflow implementer runner", () => {
     const getConversation = vi.fn(async () =>
       makeConversation({
         agentBackend: "codex",
-        backendRef: { backend: "codex" as const, threadId: "thread-codex-1" },
+        backendRef: { backend: "codex" as const, ref: "thread-codex-1" },
       }),
     );
 
@@ -200,7 +200,7 @@ describe("graph workflow implementer runner", () => {
       contextTokens: null,
       contextWindowMax: null,
       compacted: false,
-      sessionRef: { backend: "codex", threadId: "thread-codex-1" },
+      sessionRef: { backend: "codex", ref: "thread-codex-1" },
     });
   });
 
@@ -428,7 +428,7 @@ describe("graph workflow implementer runner", () => {
     }));
     const getConversation = vi.fn(async () =>
       makeConversation({
-        backendRef: { backend: "claude" as const, sessionId: "sdk-session-1" },
+        backendRef: { backend: "claude" as const, ref: "sdk-session-1" },
       }),
     );
 
@@ -455,7 +455,7 @@ describe("graph workflow implementer runner", () => {
       contextTokens: 100,
       contextWindowMax: 200_000,
       compacted: false,
-      sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
+      sessionRef: { backend: "claude", ref: "sdk-session-1" },
       backgroundWait,
     });
   });

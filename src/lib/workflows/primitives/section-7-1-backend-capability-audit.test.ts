@@ -29,10 +29,9 @@
  *     `evaluation: "unsupported"` for backends with
  *     `contextMetricsAvailable: false`; the lane-metrics schema rejects
  *     context-window fields on those backends.
- *  6. Native mid-turn ask-user      — `askUserGateFromPause` projects only
- *     `mid_turn` paused outcomes into ask-user gate pauses; post-turn pauses
- *     and non-pause outcomes return `null` so workflows cannot accidentally
- *     treat an approval pause as an ask-user pause.
+ *  6. Native mid-turn ask-user      — task dispatch has no mid-turn ask-user
+ *     channel, so Codex task results are completed or failed, never
+ *     `mid_turn` paused.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -40,17 +39,13 @@ import type {
   ConversationBackendRuntime,
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type {
   AgentTaskRunner,
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
-import {
-  CLAUDE_CAPABILITY_VIEW,
-  CODEX_CAPABILITY_VIEW,
-  capabilityViewForBackend,
-} from "./backend-capabilities";
+import { capabilityViewForBackend } from "./backend-capabilities";
 import { backendCapabilityViewSchema } from "./agent-call-vocabulary";
 import { dispatchConversationTurn } from "./agent-call-conversation";
 import { dispatchTaskRun } from "./agent-call-task";
@@ -59,12 +54,14 @@ import {
   type AgentCallFacadeDeps,
 } from "./agent-call-facade";
 import { runContextLimitGate } from "./context-limit-gate";
-import { askUserGateFromPause } from "./ask-user-gate";
-import { laneMetricsSchema, laneStateSchema } from "./lane-vocabulary";
+import { laneStateSchema } from "./lane-vocabulary";
 import { runStructuredOutputGate } from "./structured-output-gate";
 
+const CLAUDE_CAPABILITY_VIEW = capabilityViewForBackend("claude");
+const CODEX_CAPABILITY_VIEW = capabilityViewForBackend("codex");
+
 describe("section 7.1 — capability view canonical identity", () => {
-  it("CLAUDE_CAPABILITY_VIEW reflects every supported Claude capability dimension", () => {
+  it("the derived Claude view reflects every supported Claude capability dimension", () => {
     expect(() =>
       backendCapabilityViewSchema.parse(CLAUDE_CAPABILITY_VIEW),
     ).not.toThrow();
@@ -78,7 +75,7 @@ describe("section 7.1 — capability view canonical identity", () => {
     });
   });
 
-  it("CODEX_CAPABILITY_VIEW reflects Codex's actual unsupported-capability surface", () => {
+  it("the derived Codex view reflects Codex's actual unsupported-capability surface", () => {
     expect(() =>
       backendCapabilityViewSchema.parse(CODEX_CAPABILITY_VIEW),
     ).not.toThrow();
@@ -92,9 +89,9 @@ describe("section 7.1 — capability view canonical identity", () => {
     });
   });
 
-  it("capabilityViewForBackend returns the canonical view object for every backend", () => {
-    expect(capabilityViewForBackend("claude")).toBe(CLAUDE_CAPABILITY_VIEW);
-    expect(capabilityViewForBackend("codex")).toBe(CODEX_CAPABILITY_VIEW);
+  it("capabilityViewForBackend returns the canonical view for every backend", () => {
+    expect(capabilityViewForBackend("claude")).toEqual(CLAUDE_CAPABILITY_VIEW);
+    expect(capabilityViewForBackend("codex")).toEqual(CODEX_CAPABILITY_VIEW);
   });
 
   it("Claude and Codex views differ on every meaningful dimension so workflows can branch", () => {
@@ -116,76 +113,44 @@ describe("section 7.1 — capability view canonical identity", () => {
   });
 });
 
-describe("section 7.1 — continuation strength remains observable and branchable", () => {
-  it("Claude lane state requires Claude-shape continuity reference (conversationId, never threadId)", () => {
-    const claudeOk = laneStateSchema.safeParse({
-      workflowId: "wf-1",
-      laneId: "claude-lane",
-      backend: "claude",
-      writeCapability: "write_capable",
-      policy: { continuityEnabled: true },
-      backendState: { backend: "claude", conversationId: "conv-1" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
-      lastUsedAt: "2026-04-28T10:00:00.000Z",
-    });
-    expect(claudeOk.success).toBe(true);
+describe("section 7.1 — lane continuity handles are opaque and backend-owned", () => {
+  it("lane state carries an opaque {backend, ref} pair — the same shape for every backend, null before the first session", () => {
+    for (const backend of ["claude", "codex"] as const) {
+      const withRef = laneStateSchema.safeParse({
+        workflowId: "wf-1",
+        laneId: `${backend}-lane`,
+        backend,
+        ref: "handle-1",
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        metrics: { rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-04-28T10:00:00.000Z",
+      });
+      expect(withRef.success).toBe(true);
 
-    const claudeWithThreadId = laneStateSchema.safeParse({
-      workflowId: "wf-1",
-      laneId: "claude-lane",
-      backend: "claude",
-      writeCapability: "write_capable",
-      policy: { continuityEnabled: true },
-      backendState: { backend: "claude", threadId: "thr-1" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
-      lastUsedAt: "2026-04-28T10:00:00.000Z",
-    });
-    expect(claudeWithThreadId.success).toBe(false);
+      const withoutRef = laneStateSchema.safeParse({
+        workflowId: "wf-1",
+        laneId: `${backend}-lane`,
+        backend,
+        ref: null,
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        metrics: { rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-04-28T10:00:00.000Z",
+      });
+      expect(withoutRef.success).toBe(true);
+    }
   });
 
-  it("Codex lane state requires Codex-shape continuity reference (threadId, never conversationId)", () => {
-    const codexOk = laneStateSchema.safeParse({
-      workflowId: "wf-1",
-      laneId: "codex-lane",
-      backend: "codex",
-      writeCapability: "read_only",
-      policy: { continuityEnabled: false },
-      backendState: { backend: "codex", threadId: "thr-1" },
-      metrics: {
-        backend: "codex",
-        lastTurnUsage: null,
-        rotateBeforeNextTurn: false,
-      },
-      lastUsedAt: "2026-04-28T10:00:00.000Z",
-    });
-    expect(codexOk.success).toBe(true);
-
-    const codexWithConversationId = laneStateSchema.safeParse({
-      workflowId: "wf-1",
-      laneId: "codex-lane",
-      backend: "codex",
-      writeCapability: "read_only",
-      policy: { continuityEnabled: false },
-      backendState: { backend: "codex", conversationId: "conv-1" },
-      metrics: {
-        backend: "codex",
-        lastTurnUsage: null,
-        rotateBeforeNextTurn: false,
-      },
-      lastUsedAt: "2026-04-28T10:00:00.000Z",
-    });
-    expect(codexWithConversationId.success).toBe(false);
-  });
-
-  it("lane state cross-tag mismatch (claude wrapper, codex backendState) is rejected by superRefine", () => {
+  it("an empty-string handle is rejected — a lane either has a real handle or null", () => {
     const result = laneStateSchema.safeParse({
       workflowId: "wf-1",
       laneId: "lane-x",
       backend: "claude",
+      ref: "",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex", threadId: "thr-1" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
     expect(result.success).toBe(false);
@@ -198,12 +163,14 @@ describe("section 7.1 — structured-output enforcement always flows through the
       backend: "codex",
       async run(): Promise<AgentTaskResult> {
         return {
-          backendRef: { backend: "codex", threadId: "th-1" } as AgentSessionRef,
+          backendRef: { backend: "codex", ref: "th-1" } as AgentSessionRef,
           text: "shaped",
           structuredOutput: { wrong: "shape" },
           usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -241,14 +208,6 @@ describe("section 7.1 — structured-output enforcement always flows through the
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      capabilities: {
-        queueWhileRunning: true,
-        askUserQuestion: true,
-        preciseFork: true,
-        portableMcpAtStart: true,
-        portableMcpBetweenTurns: true,
-        contextWindowMetrics: true,
-      },
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
@@ -257,7 +216,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         return {
           backendRef: {
             backend: "claude",
-            sessionId: "sess-1",
+            ref: "sess-1",
           } as AgentSessionRef,
           costUsd: null,
           durationMs: 50,
@@ -268,7 +227,8 @@ describe("section 7.1 — structured-output enforcement always flows through the
           structuredOutput: { wrong: "shape" },
           aborted: false,
           compacted: false,
-          error: null,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
       close() {},
@@ -306,14 +266,6 @@ describe("section 7.1 — structured-output enforcement always flows through the
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      capabilities: {
-        queueWhileRunning: true,
-        askUserQuestion: true,
-        preciseFork: true,
-        portableMcpAtStart: true,
-        portableMcpBetweenTurns: true,
-        contextWindowMetrics: true,
-      },
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
@@ -322,7 +274,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         return {
           backendRef: {
             backend: "claude",
-            sessionId: "sess-1",
+            ref: "sess-1",
           } as AgentSessionRef,
           costUsd: null,
           durationMs: 50,
@@ -333,7 +285,8 @@ describe("section 7.1 — structured-output enforcement always flows through the
           structuredOutput: undefined,
           aborted: false,
           compacted: false,
-          error: null,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
       close() {},
@@ -376,14 +329,6 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     const runtime: ConversationBackendRuntime = {
       backend: "codex",
       status: "alive",
-      capabilities: {
-        queueWhileRunning: false,
-        askUserQuestion: false,
-        preciseFork: false,
-        portableMcpAtStart: false,
-        portableMcpBetweenTurns: false,
-        contextWindowMetrics: false,
-      },
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
@@ -392,7 +337,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
         return {
           backendRef: {
             backend: "codex",
-            threadId: "th-1",
+            ref: "th-1",
           } as AgentSessionRef,
           costUsd: null,
           durationMs: 50,
@@ -403,7 +348,8 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
           structuredOutput: undefined,
           aborted: false,
           compacted: false,
-          error: null,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
       close() {},
@@ -433,14 +379,6 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      capabilities: {
-        queueWhileRunning: true,
-        askUserQuestion: true,
-        preciseFork: true,
-        portableMcpAtStart: false,
-        portableMcpBetweenTurns: false,
-        contextWindowMetrics: true,
-      },
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
@@ -449,7 +387,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
         return {
           backendRef: {
             backend: "claude",
-            sessionId: "sess-1",
+            ref: "sess-1",
           } as AgentSessionRef,
           costUsd: null,
           durationMs: 50,
@@ -460,7 +398,8 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
           structuredOutput: undefined,
           aborted: false,
           compacted: false,
-          error: null,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
       close() {},
@@ -492,12 +431,14 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
       async run(input): Promise<AgentTaskResult> {
         captured = input;
         return {
-          backendRef: { backend: "codex", threadId: "th-1" } as AgentSessionRef,
+          backendRef: { backend: "codex", ref: "th-1" } as AgentSessionRef,
           text: "ok",
           structuredOutput: undefined,
           usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -532,21 +473,19 @@ describe("section 7.1 — context metrics availability gates rotation safely on 
     }
   });
 
-  it("Codex metrics may not carry contextTokens or contextWindowMax (no fake fields allowed)", () => {
-    expect(
-      laneMetricsSchema.safeParse({
+  it("a metrics-less backend stays unsupported even when a bogus contextTokens value is present (capability wins over data)", () => {
+    const gate = runContextLimitGate({
+      metrics: {
         backend: "codex",
-        contextTokens: 5,
+        contextTokens: 5_000_000,
         rotateBeforeNextTurn: false,
-      }).success,
-    ).toBe(false);
-    expect(
-      laneMetricsSchema.safeParse({
-        backend: "codex",
-        contextWindowMax: 200_000,
-        rotateBeforeNextTurn: false,
-      }).success,
-    ).toBe(false);
+      },
+      policy: { contextLimitTokens: 100_000 },
+    });
+    expect(gate.status).toBe("pass");
+    if (gate.status === "pass") {
+      expect(gate.details).toMatchObject({ evaluation: "unsupported" });
+    }
   });
 
   it("Claude metrics may carry context-window numbers but the limit gate evaluates them", () => {
@@ -554,7 +493,6 @@ describe("section 7.1 — context metrics availability gates rotation safely on 
       metrics: {
         backend: "claude",
         contextTokens: 200_000,
-        contextWindowMax: 200_000,
         rotateBeforeNextTurn: false,
       },
       policy: { contextLimitTokens: 150_000 },
@@ -580,84 +518,19 @@ describe("section 7.1 — context metrics availability gates rotation safely on 
 });
 
 describe("section 7.1 — native mid-turn ask-user is observable only on backends that support it", () => {
-  it("askUserGateFromPause projects a mid_turn paused outcome into a gate pause", () => {
-    const gate = askUserGateFromPause({
-      backend: "claude",
-      backendRef: null,
-      capabilities: CLAUDE_CAPABILITY_VIEW,
-      usage: {},
-      artifacts: [],
-      outcome: {
-        kind: "paused",
-        pauseKind: "mid_turn",
-        resumeToken: "tok-1",
-        details: { questions: [] },
-      },
-    });
-    expect(gate).not.toBeNull();
-    expect(gate?.status).toBe("pause");
-    if (gate?.status === "pause") {
-      expect(gate.pauseKind).toBe("mid_turn");
-      expect(gate.kind).toBe("ask_user");
-    }
-  });
-
-  it("askUserGateFromPause returns null for a post_turn pause so workflows cannot mistake approval for ask-user", () => {
-    const gate = askUserGateFromPause({
-      backend: "claude",
-      backendRef: null,
-      capabilities: CLAUDE_CAPABILITY_VIEW,
-      usage: {},
-      artifacts: [],
-      outcome: {
-        kind: "paused",
-        pauseKind: "post_turn",
-        resumeToken: "tok-1",
-      },
-    });
-    expect(gate).toBeNull();
-  });
-
-  it("askUserGateFromPause returns null for completed and failed outcomes", () => {
-    const completed = askUserGateFromPause({
-      backend: "codex",
-      backendRef: null,
-      capabilities: CODEX_CAPABILITY_VIEW,
-      usage: {},
-      artifacts: [],
-      outcome: { kind: "completed", text: "ok" },
-    });
-    expect(completed).toBeNull();
-
-    const failed = askUserGateFromPause({
-      backend: "codex",
-      backendRef: null,
-      capabilities: CODEX_CAPABILITY_VIEW,
-      usage: {},
-      artifacts: [],
-      outcome: {
-        kind: "failed",
-        error: {
-          failureKind: "backend_error",
-          backend: "codex",
-          message: "boom",
-        },
-      },
-    });
-    expect(failed).toBeNull();
-  });
-
   it("task dispatch has no mid-turn ask-user channel — Codex task results are completed or failed, never mid_turn paused", async () => {
     const runner: AgentTaskRunner = {
       backend: "codex",
       async run(): Promise<AgentTaskResult> {
         return {
-          backendRef: { backend: "codex", threadId: "th-1" } as AgentSessionRef,
+          backendRef: { backend: "codex", ref: "th-1" } as AgentSessionRef,
           text: "done",
           structuredOutput: undefined,
           usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };
@@ -679,14 +552,6 @@ describe("section 7.1 — capability view is attached to every dispatched result
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      capabilities: {
-        queueWhileRunning: true,
-        askUserQuestion: true,
-        preciseFork: true,
-        portableMcpAtStart: true,
-        portableMcpBetweenTurns: true,
-        contextWindowMetrics: true,
-      },
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
@@ -695,7 +560,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
         return {
           backendRef: {
             backend: "claude",
-            sessionId: "sess-1",
+            ref: "sess-1",
           } as AgentSessionRef,
           costUsd: null,
           durationMs: 50,
@@ -706,7 +571,8 @@ describe("section 7.1 — capability view is attached to every dispatched result
           structuredOutput: undefined,
           aborted: false,
           compacted: false,
-          error: null,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
       close() {},
@@ -727,12 +593,14 @@ describe("section 7.1 — capability view is attached to every dispatched result
       backend: "codex",
       async run(): Promise<AgentTaskResult> {
         return {
-          backendRef: { backend: "codex", threadId: "th-1" } as AgentSessionRef,
+          backendRef: { backend: "codex", ref: "th-1" } as AgentSessionRef,
           text: "ok",
           structuredOutput: undefined,
           usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
           error: null,
           timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
         };
       },
     };

@@ -6,11 +6,14 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { getConflictAnalysis } from "@/lib/jobs/queue";
 import { withTracing } from "@/lib/logging";
-import type { ApiError } from "@/lib/api/errors";
 
 /** GET /api/projects/[name]/sessions/[session]/conflicts — get conflict analysis */
 export const getSessionConflicts = withTracing(async (_request, { params }) => {
@@ -19,30 +22,17 @@ export const getSessionConflicts = withTracing(async (_request, { params }) => {
   const sessionSlug = resolvedParams["session"] ?? "";
   const sessionName = decodeURIComponent(sessionSlug);
 
-  const projectPath = await resolveProjectPath(name);
-  if (!projectPath) {
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const session = await getSession(projectPath, sessionName);
-  if (!session) {
-    return NextResponse.json(
-      { error: "Session not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
+  const resolved = await resolveProjectSessionOr404(
+    { resolveProjectPath, getSession },
+    name,
+    sessionName,
+  );
+  if (!resolved.ok) return resolved.response;
+  const { projectPath } = resolved.value;
 
   const analysis = getConflictAnalysis(projectPath, sessionName);
   if (!analysis) {
-    return NextResponse.json(
-      {
-        error: "No conflict analysis found for this session",
-      } satisfies ApiError,
-      { status: 404 },
-    );
+    return notFound("No conflict analysis found for this session");
   }
 
   return NextResponse.json(analysis);

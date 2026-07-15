@@ -1,11 +1,14 @@
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import type { ClaudeModel, EffortLevel } from "@/lib/agent-backends/schemas";
+import { effortLevelsForCatalogEntry } from "@/lib/agent-backends/catalog";
+import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { GraphWorkflowAgentConfig } from "@/lib/workflows/schemas";
+import {
+  graphWorkflowAgentConfigSchema,
+  type GraphWorkflowAgentConfig,
+} from "@/lib/workflow-graph/config-schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigPillGroup } from "../../components/ConfigPillGroup";
-import { getEffortOptionsForBackend } from "../../config-helpers";
 
 export function AgentConfigFields({
   value,
@@ -17,23 +20,28 @@ export function AgentConfigFields({
   fieldPathPrefix: string;
 }) {
   const backend = value.backend;
-  const effortOptions = getEffortOptionsForBackend(backend, value.model);
+  const { data: backends } = useBackendCatalogQuery();
+  const entry = backends.find((b) => b.id === backend);
+  if (!entry) {
+    throw new Error(`Unknown agent backend: ${backend}`);
+  }
+  const effortOptions = effortLevelsForCatalogEntry(entry, value.model);
 
   const handleBackendChange = (next: AgentBackendId) => {
     if (next === value.backend) return;
-    if (next === "codex") {
-      onChange({
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-      });
-    } else {
-      onChange({
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      });
+    const nextEntry = backends.find((b) => b.id === next);
+    if (!nextEntry) {
+      throw new Error(`Unknown agent backend: ${next}`);
     }
+    // The agent config is a per-backend discriminated union; parsing through
+    // the schema keeps the construction typed without per-backend literals.
+    onChange(
+      graphWorkflowAgentConfigSchema.parse({
+        backend: next,
+        model: nextEntry.defaultModelId,
+        reasoningEffort: "medium",
+      }),
+    );
   };
 
   return (
@@ -46,7 +54,7 @@ export function AgentConfigFields({
       >
         <ConfigPillGroup
           value={backend}
-          options={["claude", "codex"] as const}
+          options={backends.map((b) => b.id)}
           onChange={handleBackendChange}
         />
       </ConfigField>
@@ -61,19 +69,13 @@ export function AgentConfigFields({
           value={value.model}
           backend={backend}
           onChange={(model) => {
-            if (backend === "codex") {
-              onChange({
-                backend: "codex",
-                model: model as GraphWorkflowAgentConfig["model"],
+            onChange(
+              graphWorkflowAgentConfigSchema.parse({
+                backend,
+                model,
                 reasoningEffort: value.reasoningEffort,
-              } as GraphWorkflowAgentConfig);
-            } else {
-              onChange({
-                backend: "claude",
-                model: model as ClaudeModel,
-                reasoningEffort: value.reasoningEffort as EffortLevel,
-              });
-            }
+              }),
+            );
           }}
         />
       </ConfigField>
@@ -85,13 +87,16 @@ export function AgentConfigFields({
         isModified={false}
       >
         <ReasoningLevelSelector
-          value={value.reasoningEffort as EffortLevel}
+          value={value.reasoningEffort}
           availableLevels={effortOptions}
           onChange={(level) =>
-            onChange({
-              ...value,
-              reasoningEffort: level,
-            } as GraphWorkflowAgentConfig)
+            onChange(
+              graphWorkflowAgentConfigSchema.parse({
+                backend,
+                model: value.model,
+                reasoningEffort: level,
+              }),
+            )
           }
         />
       </ConfigField>

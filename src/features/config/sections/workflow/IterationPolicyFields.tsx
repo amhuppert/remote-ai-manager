@@ -1,4 +1,4 @@
-import type { GraphWorkflowIterationPolicy } from "@/lib/workflows/schemas";
+import type { GraphWorkflowIterationPolicy } from "@/lib/workflow-graph/config-schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigNumericInput } from "../../components/ConfigNumericInput";
 import { ConfigToggle } from "../../components/ConfigToggle";
@@ -43,6 +43,7 @@ export function IterationPolicyFields({
         isModified={false}
       >
         <ConfigToggle
+          label="Iteration policy continuity"
           value={continuityEnabled}
           onChange={(v) =>
             onChange({

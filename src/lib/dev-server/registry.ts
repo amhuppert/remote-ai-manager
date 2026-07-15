@@ -9,8 +9,7 @@ import {
   type SessionEnv,
 } from "@/lib/agent-gateway/session-env";
 import { createLogger } from "../logging";
-import type { BroadcastFn } from "../events/broadcaster";
-import { publishSessionStatus } from "../workflows/primitives/default-session-status-bus";
+import { publishEvent, type PublishFn } from "../events/publication";
 import * as defaultTailscale from "../shared/tailscale";
 import * as liveness from "./liveness";
 import { readConfig as defaultReadConfig } from "../config/loader";
@@ -21,6 +20,7 @@ import {
   setGlobalValue,
 } from "../shared/global-singleton";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { sleep } from "@/lib/shared/sleep";
 import {
   defaultPortOwnershipService,
   type PortOwnershipInput,
@@ -121,12 +121,66 @@ export interface DevServerEntry {
   _stderrRemainder: string;
 }
 
+function broadcastEntryStatus(
+  entry: DevServerEntry,
+  broadcast: PublishFn,
+): void {
+  const event: DevServerStatusEvent = {
+    type: "dev-server-status",
+    projectName: entry.projectPath,
+    sessionName: entry.sessionName,
+    serverName: entry.serverName,
+    status: entry.status,
+    port: entry.port,
+    remoteUrl: entry.remoteUrl,
+    errorMessage: entry.errorMessage,
+    ownedByThisSession: entry.ownedByThisSession,
+    worktreePath: entry.worktreePath,
+    ownerPid: entry.ownerPid,
+    logFilePath: entry.logFilePath,
+  };
+  broadcast(event);
+}
+
+export interface DevServerTransitionExtra {
+  errorMessage?: string | null;
+  port?: number;
+  remoteUrl?: string | null;
+}
+
+/**
+ * Single transition owner for a dev-server entry's status. Every status
+ * change — registry lifecycle, liveness poller, reconciliation — routes
+ * through here so the entry mutation and the status broadcast can never
+ * diverge.
+ */
+export function transitionEntryTo(
+  entry: DevServerEntry,
+  status: DevServerStatus,
+  broadcast: PublishFn,
+  extra?: DevServerTransitionExtra,
+): void {
+  const previousStatus = entry.status;
+  entry.status = status;
+  if (extra?.errorMessage !== undefined)
+    entry.errorMessage = extra.errorMessage;
+  if (extra?.port !== undefined) entry.port = extra.port;
+  if (extra?.remoteUrl !== undefined) entry.remoteUrl = extra.remoteUrl;
+  logger.debug("dev-server.status_transition", {
+    serverName: entry.serverName,
+    sessionName: entry.sessionName,
+    from: previousStatus,
+    to: status,
+  });
+  broadcastEntryStatus(entry, broadcast);
+}
+
 // ============================================================
 // Dependency Injection
 // ============================================================
 
 export interface DevServerRegistryDeps {
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
   tailscale: {
     register: typeof defaultTailscale.register;
     unregister: typeof defaultTailscale.unregister;
@@ -151,9 +205,7 @@ export interface DevServerRegistryDeps {
   killGraceMs: number;
 }
 
-const defaultRegistryBroadcast: BroadcastFn = (event) => {
-  publishSessionStatus(event);
-};
+const defaultRegistryBroadcast: PublishFn = publishEvent;
 
 const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
   broadcast: defaultRegistryBroadcast,
@@ -197,21 +249,7 @@ export function createDevServerRegistry(
   }
 
   function broadcastStatus(entry: DevServerEntry): void {
-    const event: DevServerStatusEvent = {
-      type: "dev-server-status",
-      projectName: entry.projectPath,
-      sessionName: entry.sessionName,
-      serverName: entry.serverName,
-      status: entry.status,
-      port: entry.port,
-      remoteUrl: entry.remoteUrl,
-      errorMessage: entry.errorMessage,
-      ownedByThisSession: entry.ownedByThisSession,
-      worktreePath: entry.worktreePath,
-      ownerPid: entry.ownerPid,
-      logFilePath: entry.logFilePath,
-    };
-    deps.broadcast(event);
+    broadcastEntryStatus(entry, deps.broadcast);
   }
 
   function writeChunkToLog(
@@ -260,18 +298,9 @@ export function createDevServerRegistry(
   function transitionTo(
     entry: DevServerEntry,
     status: DevServerStatus,
-    extra?: {
-      errorMessage?: string;
-      port?: number;
-      remoteUrl?: string | null;
-    },
+    extra?: DevServerTransitionExtra,
   ): void {
-    entry.status = status;
-    if (extra?.errorMessage !== undefined)
-      entry.errorMessage = extra.errorMessage;
-    if (extra?.port !== undefined) entry.port = extra.port;
-    if (extra?.remoteUrl !== undefined) entry.remoteUrl = extra.remoteUrl;
-    broadcastStatus(entry);
+    transitionEntryTo(entry, status, deps.broadcast, extra);
   }
 
   /**
@@ -362,7 +391,7 @@ export function createDevServerRegistry(
         return;
       }
 
-      await new Promise((r) => setTimeout(r, TAILSCALE_POLL_INTERVAL_MS));
+      await sleep(TAILSCALE_POLL_INTERVAL_MS);
     }
 
     // Timeout — server never started listening. Register anyway so remote URL
@@ -435,7 +464,7 @@ export function createDevServerRegistry(
         return;
       }
 
-      await new Promise((r) => setTimeout(r, READINESS_POLL_INTERVAL_MS));
+      await sleep(READINESS_POLL_INTERVAL_MS);
     }
 
     if (entry.status !== "starting") return;
@@ -920,7 +949,7 @@ export function createDevServerRegistry(
     const deadline = Date.now() + deps.killGraceMs;
     while (Date.now() < deadline) {
       if (!deps.isProcessAlive(pid)) break;
-      await new Promise((r) => setTimeout(r, 50));
+      await sleep(50);
     }
 
     if (deps.isProcessAlive(pid)) {
@@ -1025,7 +1054,7 @@ async function killProcessGroup(pid: number): Promise<void> {
     } catch {
       return; // Group has fully exited
     }
-    await new Promise((r) => setTimeout(r, 500));
+    await sleep(500);
   }
 
   // Force-kill remaining processes in the group

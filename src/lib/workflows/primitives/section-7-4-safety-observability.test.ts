@@ -36,10 +36,13 @@ import {
   ArtifactRequiredFailure,
   createArtifactRegistry,
 } from "./artifact-registry";
-import { createStatusBus, type StatusBusEnvelope } from "./status-bus";
+import {
+  createStatusBus,
+  type StatusBusEnvelope,
+} from "@/lib/events/status-bus";
 import { dispatchTaskRun } from "./agent-call-task";
 import { dispatchConversationTurn } from "./agent-call-conversation";
-import { CLAUDE_CAPABILITY_VIEW } from "./backend-capabilities";
+import { capabilityViewForBackend } from "./backend-capabilities";
 import {
   createInMemoryWorkflowEnvelopeStore,
   writeFeatureSnapshotAsArtifact,
@@ -48,6 +51,8 @@ import { createWorkflowEnvelopeRepository } from "./workflow-envelope-repository
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
+
+const CLAUDE_CAPABILITY_VIEW = capabilityViewForBackend("claude");
 
 interface CapturedLog {
   level: "debug" | "info" | "warn" | "error";
@@ -233,7 +238,6 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
         relativePath: ".cc/workflow/wf-X/log.txt",
         contents: SECRET_CONTENTS,
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-X", laneId: "lane-validator" },
       });
 
@@ -277,7 +281,6 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           relativePath: ".cc/workflow/wf-fail/log.txt",
           contents: SECRET_CONTENTS,
           audience: "internal_log",
-          required: true,
           source: { workflowId: "wf-fail", laneId: "lane-A" },
         }),
       ).rejects.toBeInstanceOf(ArtifactRequiredFailure);
@@ -497,7 +500,6 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           relativePath: "memory-bank/wrong-path.md",
           contents: "x",
           audience: "user_facing",
-          required: true,
           source: { workflowId: "wf-fail" },
         });
       } catch (err) {

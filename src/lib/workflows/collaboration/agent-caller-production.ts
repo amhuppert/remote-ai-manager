@@ -14,10 +14,12 @@
  *     session returned by the SDK and recorded on lane state.
  *  3. The composition runs through `WorkflowAgentCaller` so the lane
  *     service tracks backend continuity, rotation flags, and post-turn
- *     usage on the lane (`LaneOutcome`). A no-op inner `LaneScheduler` is
- *     supplied because the slice already serializes write-capable lanes at
- *     the round level on the same `sessionKey`; a second scheduler with
- *     the same key would deadlock against the outer one.
+ *     usage on the lane (`LaneOutcome`). The `WorkflowAgentCaller` is also
+ *     the ONE place the `LaneScheduler` is acquired (D16): write-capable
+ *     lanes sharing a session serialize here, and nothing above this seam
+ *     schedules again. The default scheduler instance is module-shared so
+ *     concurrent collaboration runs in the same session serialize against
+ *     each other.
  *
  * Splitting this out from `deps-factory.ts` keeps the deps factory's
  * concerns focused on lane / envelope / artifact / status wiring while
@@ -28,12 +30,17 @@
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import {
+  getBackendDescriptor,
   getConversationBackendFactory as defaultGetConversationBackendFactory,
   getTaskRunner as defaultGetTaskRunner,
 } from "@/lib/agent-backends/registry";
+import {
+  assertRefOwnedBy,
+  type BackendContinuityAdapter,
+} from "@/lib/agent-backends/continuity";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
-import type { AgentBackendId } from "@/lib/agent-backends/types";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   executeAgentCall,
   type AgentCallFacadeDeps,
@@ -49,7 +56,10 @@ import type {
   AgentCallRequest,
   AgentCallResult,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { LaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
+import {
+  createLaneScheduler,
+  type LaneScheduler,
+} from "@/lib/workflows/primitives/lane-scheduler";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import {
@@ -60,11 +70,12 @@ import {
 
 const logger = createLogger("workflows.collaboration.agent-caller-production");
 
-const NOOP_LANE_SCHEDULER: LaneScheduler = {
-  async schedule(_request, fn) {
-    return fn();
-  },
-};
+/**
+ * Shared production scheduler: one instance across every collaboration entry
+ * point (user envelope + graph workflow collab) so write-capable lane work in
+ * the same session serializes regardless of which flow scheduled it.
+ */
+const sharedCollaborationLaneScheduler = createLaneScheduler();
 
 export interface CollaborationProductionAgentCallerInput {
   workflowId: string;
@@ -84,6 +95,12 @@ export interface CollaborationProductionAgentCallerInput {
    * WorkflowAgentCaller land on the same `LaneState` the slice operates on.
    */
   laneService: LaneService;
+  /**
+   * Lane scheduler acquired by the WorkflowAgentCaller — the single
+   * acquisition point for lane scheduling (D16). Defaults to the shared
+   * production scheduler; tests inject an instrumented instance.
+   */
+  laneScheduler?: LaneScheduler;
   /**
    * Model the Codex lane runs with. The asymmetric slice builds Codex requests
    * without a per-call model, so without this the Codex SDK falls back to its
@@ -190,7 +207,7 @@ function buildInnerCallAgent(
         }),
       });
       const staleResumeMessage = codexResumeRef
-        ? getLikelyStaleResumeFailureMessage(result)
+        ? getStaleResumeFailureMessage(request.backend, result)
         : null;
       if (staleResumeMessage) {
         throw markStaleBackendRefError(new Error(staleResumeMessage));
@@ -213,7 +230,7 @@ function buildInnerCallAgent(
         : null;
     const factory = resolveConversationFactory(backend);
     const conversationId =
-      claudeResumeRef?.sessionId ?? `collab-${input.workflowId}-${newId()}`;
+      claudeResumeRef?.ref ?? `collab-${input.workflowId}-${newId()}`;
     const outputFormat = request.outputSchema
       ? { type: "json_schema" as const, schema: request.outputSchema }
       : undefined;
@@ -261,7 +278,7 @@ function buildInnerCallAgent(
         }),
       });
       const staleResumeMessage = claudeResumeRef
-        ? getLikelyStaleResumeFailureMessage(result)
+        ? getStaleResumeFailureMessage(backend, result)
         : null;
       if (staleResumeMessage) {
         throw markStaleBackendRefError(new Error(staleResumeMessage));
@@ -273,24 +290,56 @@ function buildInnerCallAgent(
   };
 }
 
-function getLikelyStaleResumeFailureMessage(
+/**
+ * Detect a failed resumed-lane call whose failure is a stale continuation
+ * ref, so the caller can mark it for the WorkflowAgentCaller fresh-retry
+ * path. The normalized `stale_resume_ref` kind is consumed directly; a
+ * `backend_error` message is re-classified through the backend's own
+ * classifier for adapters that report failures as bare messages. Richer
+ * kinds (timeout, abort, schema) already carry their own meaning.
+ */
+function getStaleResumeFailureMessage(
+  backend: AgentBackendId,
   result: AgentCallResult,
 ): string | null {
   if (result.outcome.kind !== "failed") return null;
-  if (result.outcome.error.failureKind !== "backend_error") return null;
-  const message = result.outcome.error.message.toLowerCase();
-  const mentionsResume =
-    message.includes("resume") ||
-    message.includes("session") ||
-    message.includes("thread");
-  const mentionsMissing =
-    message.includes("not found") ||
-    message.includes("does not exist") ||
-    message.includes("no rollout") ||
-    message.includes("expired");
-  return mentionsResume && mentionsMissing
-    ? result.outcome.error.message
-    : null;
+  const { failureKind, message } = result.outcome.error;
+  if (failureKind === "stale_resume_ref") return message;
+  if (failureKind !== "backend_error") return null;
+  const classification = getBackendDescriptor(backend).errors.classify(message);
+  return classification.kind === "stale_resume_ref" ? message : null;
+}
+
+/**
+ * Continuity adapter over collaboration's synthetic lane handles. A lane's
+ * handle is minted locally (`collab-…`) rather than by the backend: Claude
+ * lanes run against per-lane synthetic SDK session ids and Codex lanes learn
+ * their real thread id only after the first turn, so handles are always
+ * treated as valid and resume-as-is; staleness surfaces at call time through
+ * the WorkflowAgentCaller's stale-ref retry. Fork has no collaboration
+ * meaning.
+ */
+function makeSyntheticContinuityAdapter(
+  backend: AgentBackendId,
+  mintRef: () => string,
+): BackendContinuityAdapter {
+  return {
+    backend,
+    async start() {
+      return { backend, ref: mintRef() };
+    },
+    async validate(ref) {
+      assertRefOwnedBy(backend, ref);
+      return { status: "valid" };
+    },
+    async resumeOrRecover(ref) {
+      assertRefOwnedBy(backend, ref);
+      return { ref, recovered: false };
+    },
+    async fork() {
+      return { kind: "unsupported" };
+    },
+  };
 }
 
 export function createCollaborationProductionAgentCaller(
@@ -299,18 +348,36 @@ export function createCollaborationProductionAgentCaller(
   const newId = input.newId ?? (() => crypto.randomUUID().slice(0, 8));
   const innerCallAgent = buildInnerCallAgent(input);
 
+  const syntheticAdapters: Partial<
+    Record<AgentBackendId, BackendContinuityAdapter>
+  > = {
+    claude: makeSyntheticContinuityAdapter(
+      "claude",
+      () => `collab-${input.workflowId}-${newId()}`,
+    ),
+    codex: makeSyntheticContinuityAdapter(
+      "codex",
+      () => `collab-codex-${input.workflowId}-${newId()}`,
+    ),
+  };
+
   const callerDeps: Parameters<typeof createWorkflowAgentCaller>[0] = {
     callAgent: innerCallAgent,
     laneService: input.laneService,
-    laneScheduler: NOOP_LANE_SCHEDULER,
-    createClaudeConversation: async () => ({
-      conversationId: `collab-${input.workflowId}-${newId()}`,
-    }),
-    validateClaudeConversation: async () => true,
-    startCodexThread: async () => ({
-      threadId: `collab-codex-${input.workflowId}-${newId()}`,
-    }),
-    resumeCodexThread: async ({ threadId }) => ({ threadId }),
+    laneScheduler: input.laneScheduler ?? sharedCollaborationLaneScheduler,
+    continuityContext: {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+    },
+    continuityAdapter(backend) {
+      const adapter = syntheticAdapters[backend];
+      if (!adapter) {
+        throw new Error(
+          `collaboration agent caller: no synthetic continuity adapter for backend "${backend}"`,
+        );
+      }
+      return adapter;
+    },
   };
   if (input.now) {
     callerDeps.now = input.now;
@@ -328,70 +395,71 @@ export function createCollaborationProductionAgentCaller(
  * Adapts a `WorkflowAgentCaller` into the `(request) => Promise<AgentCallResult>`
  * signature the slice's `callAgent` dep expects.
  *
- * Lane-aware requests (every artifact-producing call in the asymmetric
- * negotiation flow carries a `laneRef`) flow through the WorkflowAgentCaller
- * so post-turn outcomes are recorded on the lane. Lane-less requests fall
- * back to a direct inner backend call under a synthetic per-workflow lane
- * key as a defensive path; the asymmetric slice itself always sets
- * `laneRef`, so this branch is not exercised in production.
+ * Every artifact-producing call in the asymmetric negotiation flow carries a
+ * `laneRef`, so a missing one is a programming error — the boundary rejects it
+ * loudly rather than falling back to an unscheduled direct backend call, which
+ * would bypass the single scheduler acquisition point (D16).
+ *
+ * A schema-bearing request becomes ONE two-turn caller request (prose work
+ * turn + format follow-up), so the whole prose→format repair is a single
+ * serialized semantic operation: the scheduler is acquired exactly once around
+ * both underlying backend turns and no competing same-session writer can
+ * interleave between them.
  */
 export function createCollaborationProductionCallAgent(
   input: CollaborationProductionAgentCallerInput,
 ): AsymmetricCollaborationSliceDeps["callAgent"] {
   const caller = createCollaborationProductionAgentCaller(input);
-  const innerCallAgent = buildInnerCallAgent(input);
   return async (request) => {
     if (!request.laneRef) {
-      const scribeLaneRef = {
-        workflowId: input.workflowId,
-        laneId: `scribe-${input.workflowId}`,
-      };
-      return innerCallAgent(request, {
-        laneRef: scribeLaneRef,
-        resumeRef: null,
-        laneAction: "create",
-      });
+      throw new Error(
+        "collaboration production callAgent requires a laneRef; every artifact-producing collaboration call is lane-scoped and scheduled through the WorkflowAgentCaller",
+      );
     }
-
     const laneRef = request.laneRef;
-    const callOnLane = (agentCallRequest: AgentCallRequest) =>
-      caller.call({
+
+    // A request without a structured-output schema is a single turn.
+    if (request.outputSchema === undefined) {
+      return caller.call({
         laneRef,
         sessionKey: input.sessionKey,
         ...(request.writeCapability !== undefined
           ? { writeCapability: request.writeCapability }
           : {}),
-        agentCallRequest,
+        agentCallRequest: request,
       });
-
-    // A request without a structured-output schema is a single turn.
-    if (request.outputSchema === undefined) {
-      return callOnLane(request);
     }
 
-    // Two-step structured output: the agent first answers in prose (work turn,
-    // schema stripped, the JSON reminder swapped for a prose directive), then a
-    // format turn on the same lane restates that answer as schema-conforming
-    // JSON under backend enforcement. The format turn resumes the work turn's
-    // session via the lane's continuity ref, so the model formats an answer it
-    // has already produced instead of reasoning and conforming to the schema in
-    // a single pass — which fails when the task is large enough that the agent
-    // is still mid-reasoning at enforcement time.
-    const workResult = await callOnLane({
+    // Two-step structured output. The work turn answers in prose (schema
+    // stripped, the JSON reminder swapped for a prose directive); the format
+    // follow-up restates that answer as schema-conforming JSON under backend
+    // enforcement. Both turns run inside ONE scheduled critical section — the
+    // format turn resumes the work turn's session via the lane's continuity
+    // ref, so the model formats an answer it has already produced instead of
+    // reasoning and conforming to the schema in a single pass (which fails when
+    // the task is large enough that the agent is still mid-reasoning at
+    // enforcement time).
+    const workTurn: AgentCallRequest = {
       ...request,
       outputSchema: undefined,
       prompt: request.prompt.replace(
         COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
         COLLABORATION_PROSE_TURN_INSTRUCTION,
       ),
-    });
-    if (workResult.outcome.kind !== "completed") {
-      return workResult;
-    }
-    return callOnLane({
+    };
+    const formatTurn: AgentCallRequest = {
       ...request,
       imageRefs: undefined,
       prompt: COLLABORATION_FORMAT_TURN_INSTRUCTION,
+    };
+    return caller.call({
+      laneRef,
+      sessionKey: input.sessionKey,
+      ...(request.writeCapability !== undefined
+        ? { writeCapability: request.writeCapability }
+        : {}),
+      agentCallRequest: workTurn,
+      formatFollowUp: formatTurn,
     });
   };
 }

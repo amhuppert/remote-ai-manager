@@ -1,22 +1,22 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { getModelsForBackend } from "@/components/ModelSelector";
+import {
+  getEffortLevelsForBackend,
+  getModelsForBackend,
+} from "@/lib/agent-backends/catalog";
 import {
   effortLevelSchema,
   type EffortLevel,
-  getEffortLevelsForBackend,
 } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 export interface UseBackendModelEffortArgs {
   conversationId: string;
   activeConversation: ConversationState | undefined;
-  defaultModel: string;
-  defaultEffort: EffortLevel;
-  defaultCodexModel: string;
-  defaultCodexEffort: EffortLevel;
+  backendDefaults: BackendSelectionDefaultsById;
   lastUsedModelId?: string;
   lastUsedEffort?: string;
 }
@@ -71,35 +71,26 @@ function pickModel(
 
 function resolveModelEffortSelection({
   backend,
-  defaultModel,
-  defaultEffort,
-  defaultCodexModel,
-  defaultCodexEffort,
+  backendDefaults,
   lastUsedModelId,
   lastUsedEffort,
 }: {
   backend: AgentBackendId;
-  defaultModel: string;
-  defaultEffort: EffortLevel;
-  defaultCodexModel: string;
-  defaultCodexEffort: EffortLevel;
+  backendDefaults: BackendSelectionDefaultsById;
   lastUsedModelId: string | undefined;
   lastUsedEffort: string | undefined;
 }): {
   model: string;
   effort: EffortLevel;
 } {
-  const backendDefaultModel =
-    backend === "codex" ? defaultCodexModel : defaultModel;
-  const backendDefaultEffort =
-    backend === "codex" ? defaultCodexEffort : defaultEffort;
-  const model = pickModel(backend, lastUsedModelId, backendDefaultModel);
+  const defaults = backendDefaults[backend];
+  const model = pickModel(backend, lastUsedModelId, defaults.modelId);
   return {
     model,
     effort: pickEffort(
       backend,
       model,
-      parseEffort(lastUsedEffort) ?? backendDefaultEffort,
+      parseEffort(lastUsedEffort) ?? defaults.effort,
     ),
   };
 }
@@ -110,20 +101,14 @@ function resolveModelEffortSelection({
 export function useBackendModelEffort({
   conversationId,
   activeConversation,
-  defaultModel,
-  defaultEffort,
-  defaultCodexModel,
-  defaultCodexEffort,
+  backendDefaults,
   lastUsedModelId,
   lastUsedEffort,
 }: UseBackendModelEffortArgs): UseBackendModelEffortResult {
   const initialBackend = activeConversation?.agentBackend ?? "claude";
   const initialSelection = resolveModelEffortSelection({
     backend: initialBackend,
-    defaultModel,
-    defaultEffort,
-    defaultCodexModel,
-    defaultCodexEffort,
+    backendDefaults,
     lastUsedModelId,
     lastUsedEffort,
   });
@@ -152,10 +137,7 @@ export function useBackendModelEffort({
   const rememberedSettingsKey = JSON.stringify([
     conversationId,
     activeBackend,
-    defaultModel,
-    defaultEffort,
-    defaultCodexModel,
-    defaultCodexEffort,
+    backendDefaults,
     lastUsedModelId,
     lastUsedEffort,
   ]);
@@ -175,10 +157,7 @@ export function useBackendModelEffort({
       const backend = activeConversation.agentBackend ?? "claude";
       const nextSelection = resolveModelEffortSelection({
         backend,
-        defaultModel,
-        defaultEffort,
-        defaultCodexModel,
-        defaultCodexEffort,
+        backendDefaults,
         lastUsedModelId,
         lastUsedEffort,
       });
@@ -198,10 +177,7 @@ export function useBackendModelEffort({
     (backend: AgentBackendId) => {
       const nextSelection = resolveModelEffortSelection({
         backend,
-        defaultModel,
-        defaultEffort,
-        defaultCodexModel,
-        defaultCodexEffort,
+        backendDefaults,
         lastUsedModelId: undefined,
         lastUsedEffort: undefined,
       });
@@ -209,7 +185,7 @@ export function useBackendModelEffort({
       setSelectedModel(nextSelection.model);
       setSelectedEffort(nextSelection.effort);
     },
-    [defaultCodexEffort, defaultCodexModel, defaultEffort, defaultModel],
+    [backendDefaults],
   );
 
   const handleModelChange = useCallback(

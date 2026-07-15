@@ -109,6 +109,29 @@ describe("Popover", () => {
     expect(screen.getByRole("dialog").getAttribute("data-side")).toBe("bottom");
   });
 
+  it("drops the padded floating-surface recipe in the unstyled variant, keeping Portal + role", () => {
+    render(
+      <Popover open>
+        <PopoverTrigger>trigger</PopoverTrigger>
+        <PopoverContent
+          unstyled
+          contentClassName="flex w-[480px] flex-col overflow-hidden rounded-[8px] bg-bg-elevated"
+        >
+          <p>custom-box</p>
+        </PopoverContent>
+      </Popover>,
+    );
+    const panel = screen.getByRole("dialog");
+    // The consumer owns the box model — no padded surface recipe leaks in.
+    expect(panel.className).not.toContain("p-3");
+    expect(panel.className).not.toContain("shadow-menu");
+    expect(panel.className).not.toContain("border-border-default");
+    // But it is still portaled by Radix and carries the consumer's box model.
+    expect(document.body.contains(panel)).toBe(true);
+    expect(panel.className).toContain("w-[480px]");
+    expect(panel.className).toContain("flex-col");
+  });
+
   it("composes with the Button primitive as an asChild trigger (focus ring + open state)", () => {
     render(
       <Popover defaultOpen>

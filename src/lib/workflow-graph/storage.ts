@@ -1,21 +1,15 @@
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
 import type {
   GraphWorkflowVisualLayout,
   ParameterDeclaration,
   WorkflowDefinitionRecord,
   WorkflowPrerequisite,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { getConfigDirPath } from "../config/loader";
 import { createLogger } from "../logging";
 import { timed } from "../logging/timed";
@@ -75,23 +69,6 @@ function getScopeStorageDir(configDir: string, scope: WorkflowScope): string {
       ? GLOBAL_SCOPE_KEY
       : Buffer.from(scope.projectPath).toString("base64url");
   return path.join(configDir, "workflows", scopeKey);
-}
-
-async function ensureDir(dir: string): Promise<void> {
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-}
-
-async function writeJsonAtomically(
-  filePath: string,
-  value: unknown,
-): Promise<void> {
-  const dir = path.dirname(filePath);
-  await ensureDir(dir);
-  const tmpPath = `${filePath}.tmp.${Date.now()}`;
-  await writeFile(tmpPath, JSON.stringify(value, null, 2), "utf-8");
-  await rename(tmpPath, filePath);
 }
 
 async function readRecord(filePath: string): Promise<WorkflowDefinitionRecord> {
@@ -207,7 +184,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
           getScopeStorageDir(resolveConfigDir(), scope),
           `${workflowId}.json`,
         );
-        await writeJsonAtomically(filePath, record);
+        await atomicWriteJson(filePath, record);
         return record;
       },
     );
@@ -251,7 +228,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
           getScopeStorageDir(resolveConfigDir(), scope),
           `${workflowId}.json`,
         );
-        await writeJsonAtomically(filePath, record);
+        await atomicWriteJson(filePath, record);
         return record;
       },
       (record) => ({ revision: record.revision }),

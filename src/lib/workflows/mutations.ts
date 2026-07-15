@@ -20,12 +20,12 @@ import {
 } from "@/lib/collaboration/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type {
-  WorkflowDefinitionRecord,
   WorkflowLiveEditOperation,
   WorkflowLiveEditRequest,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflows/edit-schemas";
 interface WorkflowDefinitionDraftInput {
   name: string;
   description?: string | null;

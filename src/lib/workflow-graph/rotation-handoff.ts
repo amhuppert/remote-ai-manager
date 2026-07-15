@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import {
   getTranscriptPath,
@@ -68,7 +69,7 @@ export async function loadRotationHandoffNote(
   } catch (error) {
     logger.warn("rotation_handoff.read_failed", {
       conversationId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return null;
   }

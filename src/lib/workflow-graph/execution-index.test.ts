@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
-  GraphWorkflowTaskState,
   ResolvedWorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createExecutionIndex } from "./execution-index";
 

@@ -12,7 +12,10 @@ import {
   planMissingTargetCascadeAfterMutation,
 } from "../apply-planner";
 import { recordApplyOutcome, sanitizeApplyError } from "../runtime-hashes";
-import type { AgentCapabilityMetadataRegistry } from "../metadata";
+import {
+  applyTimingForCascade,
+  type AgentCapabilityMetadataRegistry,
+} from "../metadata";
 
 import {
   composeFailureDiagnostic,
@@ -222,10 +225,10 @@ export async function handleComposeThrow(input: {
 
 function isPendingForLifecycleComposeFailure(input: {
   trigger: "idle-drain" | "turn-start";
-  conversation: AffectedConversation;
+  cascadeKind: AgentCapabilityCascadeKind;
   previous: AgentCapabilityCascadeRuntimeState;
 }): boolean {
-  const { trigger, conversation, previous } = input;
+  const { trigger, cascadeKind, previous } = input;
   if (previous.pendingHash === undefined) return false;
   if (trigger === "idle-drain") {
     return (
@@ -234,8 +237,11 @@ function isPendingForLifecycleComposeFailure(input: {
     );
   }
   if (previous.lastApplyStatus === "staged-next-turn") return true;
+  // Only next-turn cascades retry rejected records at turn start (mirrors
+  // planTurnStartCascadeApply's retryable-rejected read).
   return (
-    conversation.backend === "codex" && previous.lastApplyStatus === "rejected"
+    applyTimingForCascade(cascadeKind) === "next_turn" &&
+    previous.lastApplyStatus === "rejected"
   );
 }
 
@@ -266,7 +272,7 @@ async function persistLifecycleComposeFailure(input: {
     if (
       !isPendingForLifecycleComposeFailure({
         trigger,
-        conversation,
+        cascadeKind,
         previous,
       })
     ) {

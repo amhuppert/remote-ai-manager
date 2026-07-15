@@ -13,7 +13,7 @@ import type {
   WorkflowDefinitionSummary,
   WorkflowScope,
 } from "@/lib/workflow-graph/storage";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import {
   createWorkflowDefinition,

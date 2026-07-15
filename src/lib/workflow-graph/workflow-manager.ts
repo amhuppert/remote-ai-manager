@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getErrorMessage } from "@/lib/shared/errors";
 import path from "node:path";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import {
@@ -25,7 +26,13 @@ import {
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
-import { resetJoinForRetry } from "@/lib/workflow-graph/lane-join";
+import {
+  buildLifecycleSnapshot,
+  resetJoinForRetry,
+  resetRunningJoinsToPending,
+  transitionContextMergeStatus,
+  transitionContextStatus,
+} from "@/lib/workflow-graph/context-transitions";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import {
   validateLaunchInputs,
@@ -45,10 +52,12 @@ import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   GraphWorkflowStatus,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
   definitionId: string;
@@ -88,21 +97,6 @@ interface GraphWorkflowExecutionRepository {
     executionId: string,
     contextId: string,
   ): Promise<number>;
-}
-
-export type GraphWorkflowRecoveryMode =
-  | "none"
-  | "rehydrated"
-  | "interrupted_task"
-  | "restart_normalized"
-  | "restart_drain_resumed";
-
-export interface GraphWorkflowLifecycleSnapshot {
-  schemaVersion: 1;
-  lifecycleStatus: GraphWorkflowStatus;
-  activeContextId: string | null;
-  recoveryMode: GraphWorkflowRecoveryMode;
-  hasLiveIteration: boolean;
 }
 
 export interface GraphWorkflowStartInput {
@@ -367,21 +361,6 @@ function getExecutionId(deps: GraphWorkflowManagerDeps): string {
   return deps.createExecutionId?.() ?? randomUUID();
 }
 
-function buildMachineSnapshot(
-  execution: GraphWorkflowExecution,
-  lifecycleStatus: GraphWorkflowStatus,
-  recoveryMode: GraphWorkflowRecoveryMode,
-  hasLiveIteration: boolean,
-): GraphWorkflowLifecycleSnapshot {
-  return {
-    schemaVersion: 1,
-    lifecycleStatus,
-    activeContextId: execution.activeContextIds[0] ?? null,
-    recoveryMode,
-    hasLiveIteration,
-  };
-}
-
 function requireRunningExecution(
   execution: GraphWorkflowExecution,
 ): GraphWorkflowExecution {
@@ -441,7 +420,9 @@ function markActiveContextReady(execution: GraphWorkflowExecution): void {
     }
 
     if (activeContext.status === "running") {
-      activeContext.status = "ready";
+      transitionContextStatus(execution, activeContextId, "ready", {
+        reason: "manager.mark_active_context_ready",
+      });
     }
   }
 }
@@ -502,9 +483,6 @@ function collectLaneConversationIds(
       if (laneState.workflowConversationId) {
         ids.add(laneState.workflowConversationId);
       }
-      if (laneState.sessionRef?.engine === "claude") {
-        ids.add(laneState.sessionRef.conversationId);
-      }
     }
   }
   return [...ids].filter((id) => !parked.has(id));
@@ -545,12 +523,11 @@ function transitionToNonRunningState(
   nextExecution.status = status;
   nextExecution.completedAt = completedAt;
   nextExecution.haltReason = haltReason;
-  nextExecution.machineSnapshot = buildMachineSnapshot(
-    nextExecution,
-    status,
-    hadRunningTasks ? "interrupted_task" : "none",
-    false,
-  );
+  nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
+    lifecycleStatus: status,
+    recoveryMode: hadRunningTasks ? "interrupted_task" : "none",
+    hasLiveIteration: false,
+  });
   return nextExecution;
 }
 
@@ -578,7 +555,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           projectPath,
           sessionName,
           conversationId,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       }
     }
@@ -615,7 +592,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       logger.warn("graph-workflow.start.dirty_check_failed", {
         projectPath,
         sessionName,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return [];
     }
@@ -760,12 +737,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       input.sessionName,
       (execution) => {
         execution.status = "running";
-        execution.machineSnapshot = buildMachineSnapshot(
-          execution,
-          "running",
-          "none",
-          false,
-        );
+        execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+          lifecycleStatus: "running",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        });
         return execution;
       },
     );
@@ -858,12 +834,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           execution.status = "completed";
           execution.completedAt = now;
           execution.haltReason = null;
-          execution.machineSnapshot = buildMachineSnapshot(
-            execution,
-            "completed",
-            "none",
-            false,
-          );
+          execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+            lifecycleStatus: "completed",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
           return execution;
         },
       );
@@ -984,7 +959,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             contextState.mergeStatus === "merged-failed" ||
             contextState.mergeStatus === "in-progress"
           ) {
-            contextState.mergeStatus = "pending";
+            transitionContextMergeStatus(
+              execution,
+              contextState.contextId,
+              "pending",
+              { reason: "manager.resume_merge_retry" },
+            );
             contextState.lastMergeError = null;
             retryIds.push(contextState.contextId);
             continue;
@@ -996,7 +976,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           // immediately on resume. Resume is a manual retry decision, so clear
           // the failure counter for every retryable context.
           if (contextState.status === "halted") {
-            contextState.status = "ready";
+            transitionContextStatus(
+              execution,
+              contextState.contextId,
+              "ready",
+              {
+                reason: "manager.resume_halted_context",
+              },
+            );
           }
           if (contextState.status === "ready") {
             contextState.consecutiveFailureCount = 0;
@@ -1008,12 +995,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         hasInterrupted = Object.values(execution.taskStates).some(
           (ts) => ts.status === "interrupted",
         );
-        execution.machineSnapshot = buildMachineSnapshot(
-          execution,
-          "running",
-          hasInterrupted ? "interrupted_task" : "none",
-          false,
-        );
+        execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+          lifecycleStatus: "running",
+          recoveryMode: hasInterrupted ? "interrupted_task" : "none",
+          hasLiveIteration: false,
+        });
         return execution;
       },
     );
@@ -1105,12 +1091,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
         const timestamp = getNow(deps);
         const resetRunningJoins = (execution: GraphWorkflowExecution): void => {
-          for (const join of Object.values(execution.joins)) {
-            if (join.status !== "running") continue;
-            join.status = "pending";
-            join.updatedAt = timestamp;
-            normalizedJoinIds.push(join.joinId);
-          }
+          normalizedJoinIds.push(
+            ...resetRunningJoinsToPending(execution, timestamp),
+          );
         };
 
         if (current.pendingHaltReason !== null) {
@@ -1123,12 +1106,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           );
           transitioned.pendingHaltReason = null;
           resetRunningJoins(transitioned);
-          transitioned.machineSnapshot = buildMachineSnapshot(
-            transitioned,
-            "halted",
-            "restart_drain_resumed",
-            false,
-          );
+          transitioned.machineSnapshot = buildLifecycleSnapshot(transitioned, {
+            lifecycleStatus: "halted",
+            recoveryMode: "restart_drain_resumed",
+            hasLiveIteration: false,
+          });
           return transitioned;
         }
 
@@ -1139,12 +1121,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           null,
         );
         resetRunningJoins(nextExecution);
-        nextExecution.machineSnapshot = buildMachineSnapshot(
-          nextExecution,
-          "paused",
-          "restart_normalized",
-          false,
-        );
+        nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
+          lifecycleStatus: "paused",
+          recoveryMode: "restart_normalized",
+          hasLiveIteration: false,
+        });
         return nextExecution;
       },
     );
@@ -1200,18 +1181,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         );
 
         for (const contextId of eligibleContextIds) {
-          const contextState = running.contextStates[contextId];
-          if (!contextState) {
+          if (!running.contextStates[contextId]) {
             continue;
           }
 
-          contextState.status = "ready";
+          transitionContextStatus(running, contextId, "ready", {
+            reason: "manager.schedule_next_context.eligible",
+          });
         }
 
         const nextContextId = eligibleContextIds[0] ?? null;
         running.activeContextIds = nextContextId ? [nextContextId] : [];
         if (nextContextId) {
-          running.contextStates[nextContextId]!.status = "running";
+          transitionContextStatus(running, nextContextId, "running", {
+            reason: "manager.schedule_next_context.activate",
+          });
           const clearedLanes = Object.keys(running.laneStates);
           running.laneStates = {};
 
@@ -1220,12 +1204,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           scheduledClearedLanes = clearedLanes;
         }
 
-        running.machineSnapshot = buildMachineSnapshot(
-          running,
-          "running",
-          "none",
-          false,
-        );
+        running.machineSnapshot = buildLifecycleSnapshot(running, {
+          lifecycleStatus: "running",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        });
         return running;
       },
     );
@@ -1305,12 +1288,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // execution inside the repository transaction is the only way to
         // guarantee the invariant holds under event-driven rescheduling.
         if (running.pendingHaltReason !== null) {
-          running.machineSnapshot = buildMachineSnapshot(
-            running,
-            "running",
-            "none",
-            false,
-          );
+          running.machineSnapshot = buildLifecycleSnapshot(running, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
           outcome.value = { kind: "none" };
           return running;
         }
@@ -1322,20 +1304,20 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         readySetEligibleContextIds = [...eligibleContextIds];
 
         if (eligibleContextIds.length === 0) {
-          running.machineSnapshot = buildMachineSnapshot(
-            running,
-            "running",
-            "none",
-            false,
-          );
+          running.machineSnapshot = buildLifecycleSnapshot(running, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
           outcome.value = { kind: "none" };
           return running;
         }
 
         for (const contextId of eligibleContextIds) {
-          const contextState = running.contextStates[contextId];
-          if (contextState) {
-            contextState.status = "ready";
+          if (running.contextStates[contextId]) {
+            transitionContextStatus(running, contextId, "ready", {
+              reason: "manager.schedule_eligible_contexts.eligible",
+            });
           }
         }
 
@@ -1477,12 +1459,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         }
 
         if (schedulableEntries.length === 0) {
-          running.machineSnapshot = buildMachineSnapshot(
-            running,
-            "running",
-            "none",
-            false,
-          );
+          running.machineSnapshot = buildLifecycleSnapshot(running, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
           outcome.value = { kind: "none" };
           return running;
         }
@@ -1507,7 +1488,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         if (isSoloSession && soloEntry) {
           const soloContextId = soloEntry.contextId;
           const contextState = running.contextStates[soloContextId]!;
-          contextState.status = "running";
+          transitionContextStatus(running, soloContextId, "running", {
+            reason: "manager.schedule_eligible_contexts.solo_session",
+          });
           contextState.isolation = "session";
           contextState.worktreePath = null;
           contextState.branchName = null;
@@ -1521,12 +1504,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           const clearedLanes = clearLaneStatesFor(running, [soloContextId]);
           scheduledClearedLanes = clearedLanes;
 
-          running.machineSnapshot = buildMachineSnapshot(
-            running,
-            "running",
-            "none",
-            false,
-          );
+          running.machineSnapshot = buildLifecycleSnapshot(running, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
           outcome.value = { kind: "solo", contextId: soloContextId };
           return running;
         }
@@ -1603,7 +1585,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         for (const entry of schedulableEntries) {
           const { classification, contextId, forkFromLane } = entry;
           const contextState = running.contextStates[contextId]!;
-          contextState.status = "running";
+          transitionContextStatus(running, contextId, "running", {
+            reason: "manager.schedule_eligible_contexts.batch",
+          });
           contextState.batchId = batchId;
 
           if (forkFromLane !== null) {
@@ -1747,12 +1731,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         );
         scheduledClearedLanes = clearedLanes;
 
-        running.machineSnapshot = buildMachineSnapshot(
-          running,
-          "running",
-          "none",
-          false,
-        );
+        running.machineSnapshot = buildLifecycleSnapshot(running, {
+          lifecycleStatus: "running",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        });
 
         outcome.value = {
           kind: "parallel",
@@ -1859,7 +1842,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           );
         }
 
-        contextState.status = "ready";
+        transitionContextStatus(running, input.contextId, "ready", {
+          reason: "manager.recover_retryable_iteration_error",
+        });
         if (!running.activeContextIds.includes(input.contextId)) {
           running.activeContextIds = [
             ...running.activeContextIds,
@@ -1868,21 +1853,20 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         }
         running.completedAt = null;
         running.haltReason = null;
-        running.machineSnapshot = buildMachineSnapshot(
-          running,
-          "running",
-          "none",
-          false,
-        );
+        running.machineSnapshot = buildLifecycleSnapshot(running, {
+          lifecycleStatus: "running",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        });
 
         const implementerLane =
           running.laneStates[input.contextId]?.["implementer"];
         rotationScheduled =
-          implementerLane?.engine === "claude" &&
+          implementerLane?.refKind === "conversation" &&
           implementerLane.contextId === input.contextId;
 
         if (rotationScheduled && implementerLane) {
-          implementerLane.rotateBeforeNextTurn = true;
+          implementerLane.metrics.rotateBeforeNextTurn = true;
           implementerLane.lastUsedAt = now;
         }
 

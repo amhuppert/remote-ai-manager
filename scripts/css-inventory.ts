@@ -130,7 +130,7 @@ const OWNERS: readonly OwnerSpec[] = [
       "PRESERVED: Tiptap `.ProseMirror` editor DOM; Mermaid output (`.mermaid*`, `mermaid-overlay-fadein`); rendered markdown/code; one `::-webkit-scrollbar`; `@media (prefers-reduced-motion)`; AskQuestion overlay/scrim portal positioning; atmospheric `rainbow-*` keyframes. Only the authored conversation chrome migrates.",
   },
   {
-    path: "src/features/session/sidebar/styles/PeekPopover.css",
+    path: "src/components/session/sidebar/styles/PeekPopover.css",
     taxonomy: "feature-layout",
     alsoContains: ["vendor", "animation"],
     residual:

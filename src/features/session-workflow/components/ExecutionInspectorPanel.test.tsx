@@ -2,22 +2,37 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   fireEvent,
-  render,
+  render as rtlRender,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
+import { TESTFAKE_BACKEND_ID } from "@/lib/agent-backends/testing/testfake-backend";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
 import { askQuestionItemSchema } from "@/lib/conversations/schemas";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowValidationEventSessionRef,
+  GraphWorkflowValidationReviewArtifact,
   GraphWorkflowValidationResultEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 // Radix-backed tabs activate on pointer-down (automatic activation), not on a
 // bare synthetic click event.
 function selectDetailTab(name: RegExp | string) {
@@ -53,6 +68,42 @@ function makeValidationEvent(
   };
 }
 
+function conversationValidationRef(
+  ref: string,
+): GraphWorkflowValidationEventSessionRef {
+  return {
+    backend: "claude",
+    ref,
+    lane: "context_validator",
+    refKind: "conversation",
+    workflowConversationId: ref,
+  };
+}
+
+function responseValidationRef(
+  ref: string,
+): GraphWorkflowValidationEventSessionRef {
+  return {
+    backend: "codex",
+    ref,
+    lane: "context_validator",
+    refKind: "backend",
+  };
+}
+
+function responseReviewArtifact(
+  ref: string,
+  response: string,
+): GraphWorkflowValidationReviewArtifact {
+  return {
+    backend: "codex",
+    kind: "response",
+    ref,
+    response,
+    usage: null,
+  };
+}
+
 function makeExecutionWithHistory(
   events: GraphWorkflowValidationResultEvent[],
 ): {
@@ -72,11 +123,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         summary: "All 23 tests passed via `bunx vitest run`",
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-md",
-        },
+        sessionRef: conversationValidationRef("conv-md"),
       }),
     ]);
 
@@ -110,11 +157,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
             description: "No tests for `handleSubmit` function",
           },
         ],
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-md-2",
-        },
+        sessionRef: conversationValidationRef("conv-md-2"),
       }),
     ]);
 
@@ -144,9 +187,11 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
           },
         ],
         sessionRef: {
-          engine: "claude",
+          backend: "claude",
+          ref: "conv-canonical",
           lane: "context_validator",
-          conversationId: "conv-canonical",
+          refKind: "conversation",
+          workflowConversationId: "conv-canonical",
         },
       }),
     ]);
@@ -171,15 +216,11 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
   });
 });
 
-describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", () => {
+describe("ExecutionInspectorPanel — ValidationCard lane and backend badges", () => {
   it("renders Context badge for context_validator lane", () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-1",
-        },
+        sessionRef: conversationValidationRef("conv-1"),
       }),
     ]);
 
@@ -195,14 +236,10 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
     expect(screen.getByText("Context")).toBeInTheDocument();
   });
 
-  it("renders engine badge showing claude", () => {
+  it("renders backend badge showing claude", () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-1",
-        },
+        sessionRef: conversationValidationRef("conv-1"),
       }),
     ]);
 
@@ -218,20 +255,11 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
     expect(screen.getByText("claude")).toBeInTheDocument();
   });
 
-  it("renders engine badge showing codex", () => {
+  it("renders backend badge showing codex", () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        reviewArtifact: {
-          engine: "codex",
-          threadId: "thread-xyz",
-          response: "Looks good",
-          usage: null,
-        },
-        sessionRef: {
-          engine: "codex",
-          lane: "context_validator",
-          threadId: "thread-xyz",
-        },
+        reviewArtifact: responseReviewArtifact("thread-xyz", "Looks good"),
+        sessionRef: responseValidationRef("thread-xyz"),
       }),
     ]);
 
@@ -249,15 +277,45 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
 });
 
 describe("ExecutionInspectorPanel — View Transcript button", () => {
+  it("opens the workflow conversation owned by a provider-neutral validator ref", () => {
+    const onViewConversation = vi.fn();
+    const { execution, events } = makeExecutionWithHistory([
+      makeValidationEvent({
+        contextId: "context-plan",
+        sessionRef: {
+          backend: TESTFAKE_BACKEND_ID,
+          ref: "testfake-native-ref",
+          lane: "context_validator",
+          refKind: "conversation",
+          workflowConversationId: "workflow-conversation-1",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId={null}
+        onViewConversation={onViewConversation}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("testfake")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /View Transcript/i }));
+    expect(onViewConversation).toHaveBeenCalledWith(
+      "workflow-conversation-1",
+      "context_validator",
+      "context-plan",
+    );
+  });
+
   it("shows View Transcript button for claude validation when handler is provided", () => {
     const onViewConversation = vi.fn();
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-abc",
-        },
+        sessionRef: conversationValidationRef("conv-abc"),
       }),
     ]);
 
@@ -281,11 +339,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         contextId: "context-plan",
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-abc",
-        },
+        sessionRef: conversationValidationRef("conv-abc"),
       }),
     ]);
 
@@ -311,11 +365,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
   it("does not show View Transcript button when onViewConversation is not provided", () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-abc",
-        },
+        sessionRef: conversationValidationRef("conv-abc"),
       }),
     ]);
 
@@ -335,20 +385,40 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
 });
 
 describe("ExecutionInspectorPanel — Codex review artifact", () => {
-  it("displays codex thread ID in artifact section", () => {
+  it("renders a response artifact under its actual backend identity", () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
-          engine: "codex",
-          threadId: "thread-codex-99",
-          response: "Code looks correct",
+          backend: TESTFAKE_BACKEND_ID,
+          kind: "response",
+          ref: "testfake-review-ref",
+          response: "Testfake review response",
           usage: null,
         },
-        sessionRef: {
-          engine: "codex",
-          lane: "context_validator",
-          threadId: "thread-codex-99",
-        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("Testfake Review")).toBeInTheDocument();
+    expect(screen.getByText("testfake-review-ref")).toBeInTheDocument();
+  });
+
+  it("displays codex thread ID in artifact section", () => {
+    const { execution, events } = makeExecutionWithHistory([
+      makeValidationEvent({
+        reviewArtifact: responseReviewArtifact(
+          "thread-codex-99",
+          "Code looks correct",
+        ),
+        sessionRef: responseValidationRef("thread-codex-99"),
       }),
     ]);
 
@@ -367,17 +437,11 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
   it("displays codex response text in artifact section", async () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        reviewArtifact: {
-          engine: "codex",
-          threadId: "thread-1",
-          response: "Everything checks out.",
-          usage: null,
-        },
-        sessionRef: {
-          engine: "codex",
-          lane: "context_validator",
-          threadId: "thread-1",
-        },
+        reviewArtifact: responseReviewArtifact(
+          "thread-1",
+          "Everything checks out.",
+        ),
+        sessionRef: responseValidationRef("thread-1"),
       }),
     ]);
 
@@ -413,17 +477,8 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     });
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        reviewArtifact: {
-          engine: "codex",
-          threadId: "thread-json-1",
-          response: jsonResponse,
-          usage: null,
-        },
-        sessionRef: {
-          engine: "codex",
-          lane: "context_validator",
-          threadId: "thread-json-1",
-        },
+        reviewArtifact: responseReviewArtifact("thread-json-1", jsonResponse),
+        sessionRef: responseValidationRef("thread-json-1"),
       }),
     ]);
 
@@ -464,17 +519,8 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     });
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        reviewArtifact: {
-          engine: "codex",
-          threadId: "thread-json-2",
-          response: jsonResponse,
-          usage: null,
-        },
-        sessionRef: {
-          engine: "codex",
-          lane: "context_validator",
-          threadId: "thread-json-2",
-        },
+        reviewArtifact: responseReviewArtifact("thread-json-2", jsonResponse),
+        sessionRef: responseValidationRef("thread-json-2"),
       }),
     ]);
 
@@ -502,17 +548,11 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
   it("renders non-JSON codex response as markdown", async () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
-        reviewArtifact: {
-          engine: "codex",
-          threadId: "thread-plain",
-          response: "All tests pass with `vitest` runner.",
-          usage: null,
-        },
-        sessionRef: {
-          engine: "codex",
-          lane: "context_validator",
-          threadId: "thread-plain",
-        },
+        reviewArtifact: responseReviewArtifact(
+          "thread-plain",
+          "All tests pass with `vitest` runner.",
+        ),
+        sessionRef: responseValidationRef("thread-plain"),
       }),
     ]);
 
@@ -539,18 +579,10 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
     // Two events in the same lane with the same conversationId — the newer one (index 0
     // in the reversed display) gets the badge when the older one set the session.
     const olderEvent = makeValidationEvent({
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "conv-shared",
-      },
+      sessionRef: conversationValidationRef("conv-shared"),
     });
     const newerEvent = makeValidationEvent({
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "conv-shared",
-      },
+      sessionRef: conversationValidationRef("conv-shared"),
     });
     const history = [
       {
@@ -580,20 +612,51 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
     expect(screen.getByText("↺ continued")).toBeInTheDocument();
   });
 
+  it("uses workflow conversation ownership when a legacy native ref rotates", () => {
+    const legacyConversationRef = (
+      ref: string,
+    ): GraphWorkflowValidationEventSessionRef => ({
+      backend: "claude",
+      ref,
+      lane: "context_validator",
+      refKind: "conversation",
+      workflowConversationId: "conv-shared",
+    });
+    const history = [
+      {
+        occurredAt: "2026-03-27T10:00:00.000Z",
+        event: makeValidationEvent({
+          sessionRef: legacyConversationRef("sdk-session-1"),
+        }),
+        preReset: false,
+      },
+      {
+        occurredAt: "2026-03-27T10:01:00.000Z",
+        event: makeValidationEvent({
+          sessionRef: legacyConversationRef("sdk-session-2"),
+        }),
+        preReset: false,
+      },
+    ];
+
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={history}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("↺ continued")).toBeInTheDocument();
+  });
+
   it("does not show continued badge when sessions differ between validations", () => {
     const firstEvent = makeValidationEvent({
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "conv-1",
-      },
+      sessionRef: conversationValidationRef("conv-1"),
     });
     const secondEvent = makeValidationEvent({
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "conv-2",
-      },
+      sessionRef: conversationValidationRef("conv-2"),
     });
     const history = [
       {
@@ -628,19 +691,11 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
 
     const olderEvent = makeValidationEvent({
       contextId: "context-plan",
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: sharedConvId,
-      },
+      sessionRef: conversationValidationRef(sharedConvId),
     });
     const newerEvent = makeValidationEvent({
       contextId: "context-plan",
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: sharedConvId,
-      },
+      sessionRef: conversationValidationRef(sharedConvId),
     });
     const history = [
       {
@@ -689,11 +744,7 @@ describe("ExecutionInspectorPanel — reopened tasks", () => {
       makeValidationEvent({
         pass: false,
         reopenTaskIds: ["task-plan-1", "task-implement-1"],
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-reopen",
-        },
+        sessionRef: conversationValidationRef("conv-reopen"),
       }),
     ]);
 
@@ -1623,7 +1674,7 @@ describe("ExecutionInspectorPanel — brief markdown + focus modal", () => {
 
     const strip = container.querySelector('[data-section="resolved-setup"]');
     expect(strip).not.toBeNull();
-    expect(strip!.textContent).toContain("claude opus · high");
+    expect(strip!.textContent).toContain("Claude opus · high");
     expect(strip!.textContent).toContain("Approval");
     // Disabled gates render no chip.
     expect(strip!.textContent).not.toContain("Script");

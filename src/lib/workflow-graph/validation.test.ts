@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,

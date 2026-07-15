@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { truncate } from "@/lib/shared/truncate";
 import type {
   SourceOfTruth,
   WorkflowCharter,
@@ -24,17 +25,13 @@ function rankedSources(charter: WorkflowCharter): SourceOfTruth[] {
   return [...charter.sourcesOfTruth].sort((a, b) => a.rank - b.rank);
 }
 
-function truncate(value: string, budget: number): string {
-  if (value.length <= budget) {
-    return value;
-  }
-  return `${value.slice(0, budget - 1).trimEnd()}…`;
-}
-
 function renderDigestSourceLine(source: SourceOfTruth): string {
   const parts = [
     `${source.rank}. **${source.label}** (${source.type}, \`${source.locator}\`)`,
-    `   ${truncate(source.description, DIGEST_DESCRIPTION_BUDGET)}`,
+    `   ${truncate(source.description, DIGEST_DESCRIPTION_BUDGET, {
+      countEllipsisInBudget: true,
+      trimEnd: true,
+    })}`,
   ];
   if (source.appliesTo) {
     parts.push(`   Applies to: ${source.appliesTo}`);

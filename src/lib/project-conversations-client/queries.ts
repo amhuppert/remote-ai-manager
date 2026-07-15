@@ -16,7 +16,8 @@ import { projectConversationKeys } from "./query-keys";
 
 /**
  * A project conversation is "open" (i.e. rendered as a cockpit tab and counted
- * by the open-count) when it has not been closed and is not archived. The
+ * toward the list-derived open count) when it has not been closed and is not
+ * archived. The
  * foundation persists `open` explicitly on project conversations; a missing
  * `open` is treated as open so a record predating the column still surfaces.
  * `closed = open === false && !archived`.
@@ -60,21 +61,6 @@ export function useProjectConversationsQuery(
 }
 
 /**
- * The open-conversation count, derived from the same open-PLC list fetch (shared
- * query key → no extra request). This is the first-run↔cockpit driver; it never
- * invents lifecycle state, it counts the foundation's open conversations.
- */
-export function useProjectOpenCountQuery(
-  projectName: string,
-): UseQueryResult<number> {
-  return useQuery({
-    queryKey: projectConversationKeys.list(projectName),
-    queryFn: () => fetchProjectConversations(projectName),
-    select: (all) => all.filter(isOpenProjectConversation).length,
-  });
-}
-
-/**
  * GET an active project conversation's transcript messages. Returns `[]` when
  * the route is absent (404) so the transcript shows its empty state instead of
  * erroring. Disabled until a conversation is selected.
@@ -114,9 +100,6 @@ export function useRefetchProjectConversationsOnFocus(
     const onFocus = () => {
       void queryClient.invalidateQueries({
         queryKey: projectConversationKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: projectConversationKeys.openCount(projectName),
       });
     };
     window.addEventListener("focus", onFocus);

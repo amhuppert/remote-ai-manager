@@ -15,7 +15,7 @@ import {
   createTurnDispatcher,
   type ToolUseBlock,
 } from "./tool-dispatcher";
-import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 
 const HALT_REASON: GraphWorkflowHaltReason = {
   type: "collaboration_failure",

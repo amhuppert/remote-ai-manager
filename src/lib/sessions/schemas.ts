@@ -4,7 +4,7 @@ import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
 import { mcpOverridesSchema } from "@/lib/mcp/schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentCapabilityOverridesSchema } from "@/lib/agent-capabilities/schemas";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 
 /** Layout mode for the session detail view */
 export type LayoutMode =

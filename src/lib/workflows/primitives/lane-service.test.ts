@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInMemoryLaneStore } from "./lane-store";
-import { createLaneService } from "./lane-service";
+import { createLaneService, deriveLaneOutcome } from "./lane-service";
 import type { LaneOutcome } from "./lane-service";
 import type { LaneState } from "./lane-vocabulary";
 
@@ -18,8 +18,8 @@ function buildClaudeLane(overrides: Partial<LaneState> = {}): LaneState {
     backend: "claude",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true, contextLimitTokens: 150_000 },
-    backendState: { backend: "claude", conversationId: "conv-1" },
-    metrics: { backend: "claude", rotateBeforeNextTurn: false },
+    ref: "conv-1",
+    metrics: { rotateBeforeNextTurn: false },
     lastUsedAt: T0,
     ...overrides,
   };
@@ -32,9 +32,8 @@ function buildCodexLane(overrides: Partial<LaneState> = {}): LaneState {
     backend: "codex",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
-    backendState: { backend: "codex", threadId: "thr-1" },
+    ref: "thr-1",
     metrics: {
-      backend: "codex",
       lastTurnUsage: null,
       rotateBeforeNextTurn: false,
     },
@@ -64,7 +63,7 @@ describe("createLaneService — resolve", () => {
       workflowId: "wf-A",
       laneId: "primary",
     });
-    expect(result?.backendState).toMatchObject({ conversationId: "conv-1" });
+    expect(result?.ref).toBe("conv-1");
     expect(result?.metrics).toMatchObject({ rotateBeforeNextTurn: false });
   });
 
@@ -75,14 +74,14 @@ describe("createLaneService — resolve", () => {
       buildClaudeLane({
         workflowId: "wf-B",
         laneId: "p",
-        backendState: { backend: "claude", conversationId: "conv-B" },
+        ref: "conv-B",
       }),
     );
     const service = createLaneService({ store, now: clockOnce(T1) });
     const fromA = await service.resolve({ workflowId: "wf-A", laneId: "p" });
     const fromB = await service.resolve({ workflowId: "wf-B", laneId: "p" });
-    expect(fromA?.backendState).toMatchObject({ conversationId: "conv-1" });
-    expect(fromB?.backendState).toMatchObject({ conversationId: "conv-B" });
+    expect(fromA?.ref).toBe("conv-1");
+    expect(fromB?.ref).toBe("conv-B");
   });
 });
 
@@ -92,7 +91,7 @@ describe("createLaneService — initialize", () => {
     const service = createLaneService({ store, now: clockOnce(T1) });
     const seeded = await service.initialize(buildCodexLane());
     expect(seeded.lastUsedAt).toBe(T1);
-    expect(seeded.backendState).toMatchObject({ threadId: "thr-1" });
+    expect(seeded.ref).toBe("thr-1");
     const reread = await service.resolve({
       workflowId: "wf-A",
       laneId: "secondary",
@@ -100,18 +99,27 @@ describe("createLaneService — initialize", () => {
     expect(reread?.lastUsedAt).toBe(T1);
   });
 
+  it("round-trips the optional CC dispatch conversation independently of the backend ref", async () => {
+    const service = createLaneService({
+      store: createInMemoryLaneStore(),
+      now: clockOnce(T1),
+    });
+    const seeded = await service.initialize(
+      buildCodexLane({ conversationId: "conv-dispatch-1" }),
+    );
+
+    expect(seeded.conversationId).toBe("conv-dispatch-1");
+    expect(seeded.ref).toBe("thr-1");
+  });
+
   it("replaces an existing lane state when re-initialized", async () => {
     const store = createInMemoryLaneStore();
     const service = createLaneService({ store, now: clockOnce(T1) });
     await service.initialize(buildClaudeLane());
     const replaced = await service.initialize(
-      buildClaudeLane({
-        backendState: { backend: "claude", conversationId: "conv-replaced" },
-      }),
+      buildClaudeLane({ ref: "conv-replaced" }),
     );
-    expect(replaced.backendState).toMatchObject({
-      conversationId: "conv-replaced",
-    });
+    expect(replaced.ref).toBe("conv-replaced");
   });
 });
 
@@ -134,11 +142,9 @@ describe("createLaneService — recordOutcome (Claude)", () => {
     );
     expect(contextLimitEvaluation).toBe("no_rotation");
     expect(state.lastUsedAt).toBe(T1);
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.contextTokens).toBe(50_000);
-      expect(state.metrics.contextWindowMax).toBe(200_000);
-      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
-    }
+    expect(state.metrics.contextTokens).toBe(50_000);
+    expect(state.metrics.contextWindowMax).toBe(200_000);
+    expect(state.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
   it("flags rotation and reports rotation_required when context tokens exceed the lane's configured limit", async () => {
@@ -158,9 +164,7 @@ describe("createLaneService — recordOutcome (Claude)", () => {
       },
     );
     expect(contextLimitEvaluation).toBe("rotation_required");
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(true);
   });
 
   it("reports metrics_unavailable without flagging rotation when a limit is configured but contextTokens is absent", async () => {
@@ -173,12 +177,10 @@ describe("createLaneService — recordOutcome (Claude)", () => {
     const service = createLaneService({ store, now: clockOnce(T1) });
     const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "primary" },
-      { backend: "claude", conversationId: "conv-validator" },
+      { backend: "claude", ref: "conv-validator" },
     );
     expect(contextLimitEvaluation).toBe("metrics_unavailable");
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
   it("reports disabled when no limit is configured", async () => {
@@ -190,9 +192,7 @@ describe("createLaneService — recordOutcome (Claude)", () => {
       { backend: "claude", contextTokens: 199_000, contextWindowMax: 200_000 },
     );
     expect(contextLimitEvaluation).toBe("disabled");
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
   it("captures an updated conversationId when the backend rotates the session reference", async () => {
@@ -201,11 +201,9 @@ describe("createLaneService — recordOutcome (Claude)", () => {
     const service = createLaneService({ store, now: clockOnce(T1) });
     const { state } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "primary" },
-      { backend: "claude", conversationId: "conv-rotated" },
+      { backend: "claude", ref: "conv-rotated" },
     );
-    expect(state.backendState).toMatchObject({
-      conversationId: "conv-rotated",
-    });
+    expect(state.ref).toBe("conv-rotated");
   });
 
   it("records stale-session recovery metadata when the outcome flags it", async () => {
@@ -216,7 +214,7 @@ describe("createLaneService — recordOutcome (Claude)", () => {
       { workflowId: "wf-A", laneId: "primary" },
       { backend: "claude", staleSession: true },
     );
-    expect(state.backendState).toMatchObject({ staleSession: true });
+    expect(state.staleSession).toBe(true);
   });
 
   it("flags rotation when the turn auto-compacted under a configured limit even with tokens below the limit", async () => {
@@ -237,9 +235,7 @@ describe("createLaneService — recordOutcome (Claude)", () => {
       },
     );
     expect(contextLimitEvaluation).toBe("rotation_required");
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(true);
   });
 
   it("does not flag rotation on compaction when no limit is configured (disabled short-circuits)", async () => {
@@ -256,9 +252,7 @@ describe("createLaneService — recordOutcome (Claude)", () => {
       },
     );
     expect(contextLimitEvaluation).toBe("disabled");
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(false);
   });
 });
 
@@ -271,7 +265,7 @@ describe("createLaneService — recordOutcome (Codex)", () => {
       { workflowId: "wf-A", laneId: "secondary" },
       {
         backend: "codex",
-        threadId: "thr-real",
+        ref: "thr-real",
         lastTurnUsage: {
           inputTokens: 100,
           cachedInputTokens: 10,
@@ -280,28 +274,24 @@ describe("createLaneService — recordOutcome (Codex)", () => {
       },
     );
     expect(contextLimitEvaluation).toBe("disabled");
-    expect(state.backendState).toMatchObject({ threadId: "thr-real" });
-    if (state.metrics.backend === "codex") {
-      expect(state.metrics.lastTurnUsage?.inputTokens).toBe(100);
-      expect(state.metrics).not.toHaveProperty("contextTokens");
-    }
+    expect(state.ref).toBe("thr-real");
+    expect(state.metrics.lastTurnUsage?.inputTokens).toBe(100);
+    expect(state.metrics).not.toHaveProperty("contextTokens");
   });
 
-  it("flags rotateBeforeNextTurn when the Codex turn failed while keeping the label disabled with no limit", async () => {
+  it("does not rotate a Codex lane for a retained failed turn", async () => {
     const store = createInMemoryLaneStore();
     await store.write(buildCodexLane());
     const service = createLaneService({ store, now: clockOnce(T1) });
     const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "secondary" },
-      { backend: "codex", failed: true },
+      { backend: "codex", continuationDisposition: "retain" },
     );
     expect(contextLimitEvaluation).toBe("disabled");
-    if (state.metrics.backend === "codex") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
-  it("reports unsupported when a limit is configured, without routing Codex rotation through the gate", async () => {
+  it("rotates only when the adapter explicitly clears the continuation", async () => {
     const store = createInMemoryLaneStore();
     await store.write(
       buildCodexLane({
@@ -311,12 +301,10 @@ describe("createLaneService — recordOutcome (Codex)", () => {
     const service = createLaneService({ store, now: clockOnce(T1) });
     const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "secondary" },
-      { backend: "codex", failed: true },
+      { backend: "codex", continuationDisposition: "clear" },
     );
     expect(contextLimitEvaluation).toBe("unsupported");
-    if (state.metrics.backend === "codex") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(true);
   });
 });
 
@@ -341,7 +329,7 @@ describe("createLaneService — invariants", () => {
     await expect(
       service.recordOutcome({ workflowId: "wf-A", laneId: "primary" }, {
         backend: "codex",
-        threadId: "thr-x",
+        ref: "thr-x",
       } as LaneOutcome),
     ).rejects.toThrow(/backend/i);
   });
@@ -352,7 +340,6 @@ describe("createLaneService — invariants", () => {
       buildClaudeLane({
         policy: { continuityEnabled: true, contextLimitTokens: 100_000 },
         metrics: {
-          backend: "claude",
           contextTokens: 120_000,
           contextWindowMax: 200_000,
           rotateBeforeNextTurn: true,
@@ -365,8 +352,32 @@ describe("createLaneService — invariants", () => {
       { backend: "claude", contextTokens: 80_000, contextWindowMax: 200_000 },
     );
     expect(contextLimitEvaluation).toBe("rotation_required");
-    if (state.metrics.backend === "claude") {
-      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
-    }
+    expect(state.metrics.rotateBeforeNextTurn).toBe(true);
+  });
+});
+
+describe("deriveLaneOutcome — pure decision", () => {
+  it("applies the outcome and returns the context-limit verdict against a supplied lane", () => {
+    const { state, contextLimitEvaluation } = deriveLaneOutcome(
+      buildClaudeLane({
+        policy: { continuityEnabled: true, contextLimitTokens: 100_000 },
+      }),
+      { backend: "claude", contextTokens: 120_000, contextWindowMax: 200_000 },
+      T1,
+    );
+    expect(contextLimitEvaluation).toBe("rotation_required");
+    expect(state.metrics.rotateBeforeNextTurn).toBe(true);
+    expect(state.metrics.contextTokens).toBe(120_000);
+    expect(state.lastUsedAt).toBe(T1);
+  });
+
+  it("rejects an outcome whose backend does not match the supplied lane's backend", () => {
+    expect(() =>
+      deriveLaneOutcome(
+        buildClaudeLane(),
+        { backend: "codex" } as LaneOutcome,
+        T1,
+      ),
+    ).toThrow(/backend/i);
   });
 });

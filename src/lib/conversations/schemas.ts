@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { agentBackendSchema } from "@/lib/shared/schemas";
-import { agentSessionRefSchema } from "@/lib/agent-backends/schemas";
+import {
+  agentBackendSchema,
+  agentSessionRefSchema,
+} from "@/lib/shared/schemas";
+import { persistedAgentSessionRefSchema } from "@/lib/shared/session-ref-codec";
 import {
   mcpOverridesSchema,
   mcpRuntimeApplicationStateSchema,
@@ -147,8 +150,10 @@ export const forkedFromSchema = z
     messageIndex: z.number().int().min(0),
     sourceBackend: agentBackendSchema.nullable().optional(),
     // Null when the fork is not derived from the source SDK session
-    // (e.g., user fork at index 0 — "edit and start over").
-    sourceBackendRef: agentSessionRefSchema.nullable().optional(),
+    // (e.g., user fork at index 0 — "edit and start over"). Decodes leniently:
+    // this schema sits directly on the persisted `forked_from` column, where
+    // legacy and shadow-superset ref shapes coexist (see session-ref-codec).
+    sourceBackendRef: persistedAgentSessionRefSchema.nullable().optional(),
     forkLocator: z.string().nullable().optional(),
     forkMode: z.enum(["native", "synthetic"]).nullable().default(null),
   })
@@ -445,7 +450,9 @@ export const conversationStatusEventSchema = z.discriminatedUnion("scope", [
   z.object({
     type: z.literal("conversation-status"),
     ...sessionEventIdentity,
-    conversationId: z.string(),
+    // Non-empty: the lifecycle projection uses conversationId as the StatusBus
+    // scopeId, which the envelope schema requires to be non-empty.
+    conversationId: z.string().min(1),
     status: z.enum(["running", "awaiting", "waiting_for_input"]),
     error: z.string().optional(),
   }),
@@ -453,7 +460,7 @@ export const conversationStatusEventSchema = z.discriminatedUnion("scope", [
     .object({
       type: z.literal("conversation-status"),
       ...projectEventIdentity,
-      conversationId: z.string(),
+      conversationId: z.string().min(1),
       status: z.enum(["running", "awaiting", "waiting_for_input"]),
       error: z.string().optional(),
     })
@@ -602,7 +609,9 @@ export const askQuestionEventSchema = z.discriminatedUnion("scope", [
   z.object({
     type: z.literal("ask-question"),
     ...sessionEventIdentity,
-    conversationId: z.string(),
+    // Non-empty: the lifecycle projection uses conversationId as the StatusBus
+    // scopeId, which the envelope schema requires to be non-empty.
+    conversationId: z.string().min(1),
     questionId: z.string(),
     questions: z.array(askQuestionItemSchema),
   }),
@@ -610,7 +619,7 @@ export const askQuestionEventSchema = z.discriminatedUnion("scope", [
     .object({
       type: z.literal("ask-question"),
       ...projectEventIdentity,
-      conversationId: z.string(),
+      conversationId: z.string().min(1),
       questionId: z.string(),
       questions: z.array(askQuestionItemSchema),
     })

@@ -1,10 +1,15 @@
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
+  ResolvedCapabilityCascade,
+  RuntimeConfigApplyResult,
+} from "@/lib/agent-backends/runtime-config";
+import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeRuntimeState,
 } from "../schemas";
 
+import { applyTimingForCascade } from "../metadata";
 import {
   planCascadeApply,
   planIdleDrainCascadeApply,
@@ -13,16 +18,12 @@ import {
   type CascadeApplyPlan,
 } from "../apply-planner";
 import { recordApplyOutcome, sanitizeApplyError } from "../runtime-hashes";
-import type { ClaudeRuntimeCapabilityConfig } from "../claude-runtime-translator";
-import type { CodexRuntimeCapabilityConfig } from "../codex-runtime-translator";
 
 import type {
   AffectedConversation,
   ApplyContext,
   ApplyOneCascadeResult,
   ApplyTrigger,
-  ClaudeApplyPortResult,
-  CodexApplyPortResult,
   ComposedCascadeInfo,
 } from "./helpers";
 import { conversationIdentityForPorts } from "./helpers";
@@ -41,8 +42,7 @@ export async function applyOneCascade(input: {
   conversation: AffectedConversation;
   composedCascades: Map<AgentCapabilityCascadeKind, ComposedCascadeInfo>;
   failedCascadeKinds: ReadonlySet<AgentCapabilityCascadeKind>;
-  claudeRuntimeConfig: ClaudeRuntimeCapabilityConfig | undefined;
-  codexRuntimeConfig: CodexRuntimeCapabilityConfig | undefined;
+  resolved: ResolvedCapabilityCascade | undefined;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
   trigger: ApplyTrigger;
   operationId?: string;
@@ -53,8 +53,7 @@ export async function applyOneCascade(input: {
     conversation,
     composedCascades,
     failedCascadeKinds,
-    claudeRuntimeConfig,
-    codexRuntimeConfig,
+    resolved,
     previous,
     trigger,
     operationId,
@@ -121,7 +120,7 @@ export async function applyOneCascade(input: {
       cascadeKind,
       conversation,
       composed,
-      claudeRuntimeConfig,
+      resolved,
       previous,
       operationId,
     });
@@ -133,7 +132,7 @@ export async function applyOneCascade(input: {
       cascadeKind,
       conversation,
       composed,
-      codexRuntimeConfig,
+      resolved,
       previous,
     });
   }
@@ -155,6 +154,7 @@ export async function applyOneCascade(input: {
 
   const plan = planCascadeApply({
     metadata,
+    applyTiming: applyTimingForCascade(cascadeKind),
     previous,
     attemptedHash: composed.attemptedHash,
     attemptedItemIds: composed.attemptedItemIds,
@@ -177,7 +177,7 @@ export async function applyOneCascade(input: {
     cascadeKind,
     conversation,
     composed,
-    claudeRuntimeConfig,
+    resolved,
     previous,
     operationId,
   });
@@ -189,7 +189,7 @@ async function executePlan(input: {
   cascadeKind: AgentCapabilityCascadeKind;
   conversation: AffectedConversation;
   composed: ComposedCascadeInfo;
-  claudeRuntimeConfig: ClaudeRuntimeCapabilityConfig | undefined;
+  resolved: ResolvedCapabilityCascade | undefined;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
   operationId?: string;
 }): Promise<ApplyOneCascadeResult> {
@@ -199,7 +199,7 @@ async function executePlan(input: {
     cascadeKind,
     conversation,
     composed,
-    claudeRuntimeConfig,
+    resolved,
     previous,
     operationId,
   } = input;
@@ -257,24 +257,24 @@ async function executePlan(input: {
         }),
       };
     case "try-live-apply":
-      return executeClaudeLiveApply({
+      return executeLiveApply({
         context,
         cascadeKind,
         conversation,
         composed,
-        claudeRuntimeConfig,
+        resolved,
         previous,
         operationId,
       });
   }
 }
 
-async function executeClaudeLiveApply(input: {
+async function executeLiveApply(input: {
   context: ApplyContext;
   cascadeKind: AgentCapabilityCascadeKind;
   conversation: AffectedConversation;
   composed: ComposedCascadeInfo;
-  claudeRuntimeConfig: ClaudeRuntimeCapabilityConfig | undefined;
+  resolved: ResolvedCapabilityCascade | undefined;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
   operationId?: string;
 }): Promise<ApplyOneCascadeResult> {
@@ -283,12 +283,12 @@ async function executeClaudeLiveApply(input: {
     cascadeKind,
     conversation,
     composed,
-    claudeRuntimeConfig,
+    resolved,
     previous,
     operationId,
   } = input;
-  const port = context.deps.applyClaudeRuntime;
-  if (!port || !claudeRuntimeConfig) {
+  const port = context.deps.applyRuntimeConfig;
+  if (!port || !resolved) {
     return {
       outcome: {
         cascadeKind,
@@ -305,18 +305,18 @@ async function executeClaudeLiveApply(input: {
         severity: "info",
         code: "agent-capability-apply-failed",
         message:
-          "Claude live-apply port unavailable; change staged for idle drain",
-        backend: "claude",
+          "Runtime-config apply port unavailable; change staged for idle drain",
+        backend: conversation.backend,
         cascadeKind,
       },
     };
   }
 
-  let result: ClaudeApplyPortResult;
+  let result: RuntimeConfigApplyResult;
   try {
     result = await port({
-      conversationId: conversation.conversationId,
-      config: claudeRuntimeConfig,
+      conversation: conversationIdentityForPorts(conversation),
+      resolved,
     });
   } catch (err) {
     const message = getErrorMessage(err);
@@ -343,14 +343,14 @@ async function executeClaudeLiveApply(input: {
       diagnostic: {
         severity: "error",
         code: "agent-capability-apply-failed",
-        message: `Claude apply failed: ${sanitizeApplyError(message)}`,
-        backend: "claude",
+        message: `Runtime-config apply failed: ${sanitizeApplyError(message)}`,
+        backend: conversation.backend,
         cascadeKind,
       },
     };
   }
 
-  if (result.status === "skipped-turn-active") {
+  if (result.status === "deferred") {
     return {
       outcome: {
         cascadeKind,
@@ -390,8 +390,8 @@ async function executeClaudeLiveApply(input: {
       diagnostic: {
         severity: "error",
         code: "agent-capability-apply-failed",
-        message: `Claude apply rejected: ${sanitizeApplyError(result.error)}`,
-        backend: "claude",
+        message: `Runtime-config apply rejected: ${sanitizeApplyError(result.error)}`,
+        backend: conversation.backend,
         cascadeKind,
       },
     };
@@ -422,7 +422,7 @@ async function handleIdleDrain(input: {
   cascadeKind: AgentCapabilityCascadeKind;
   conversation: AffectedConversation;
   composed: ComposedCascadeInfo | undefined;
-  claudeRuntimeConfig: ClaudeRuntimeCapabilityConfig | undefined;
+  resolved: ResolvedCapabilityCascade | undefined;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
   operationId?: string;
 }): Promise<ApplyOneCascadeResult> {
@@ -431,7 +431,7 @@ async function handleIdleDrain(input: {
     cascadeKind,
     conversation,
     composed,
-    claudeRuntimeConfig,
+    resolved,
     previous,
     operationId,
   } = input;
@@ -479,7 +479,7 @@ async function handleIdleDrain(input: {
     };
   }
 
-  return executeClaudeLiveApply({
+  return executeLiveApply({
     context,
     cascadeKind,
     conversation,
@@ -488,7 +488,7 @@ async function handleIdleDrain(input: {
       attemptedHash: plan.attemptedHash,
       attemptedItemIds: plan.attemptedItemIds,
     },
-    claudeRuntimeConfig,
+    resolved,
     previous,
     operationId,
   });
@@ -499,19 +499,13 @@ async function handleTurnStart(input: {
   cascadeKind: AgentCapabilityCascadeKind;
   conversation: AffectedConversation;
   composed: ComposedCascadeInfo | undefined;
-  codexRuntimeConfig: CodexRuntimeCapabilityConfig | undefined;
+  resolved: ResolvedCapabilityCascade | undefined;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
 }): Promise<ApplyOneCascadeResult> {
-  const {
-    context,
-    cascadeKind,
-    conversation,
-    composed,
-    codexRuntimeConfig,
-    previous,
-  } = input;
+  const { context, cascadeKind, conversation, composed, resolved, previous } =
+    input;
   const plan = planTurnStartCascadeApply({
-    backend: conversation.backend,
+    applyTiming: applyTimingForCascade(cascadeKind),
     previous,
     composed,
   });
@@ -560,11 +554,11 @@ async function handleTurnStart(input: {
           nextState: undefined,
         };
       }
-      return executeCodexTurnStartApply({
+      return executeTurnStartApply({
         context,
         cascadeKind,
         conversation,
-        codexRuntimeConfig,
+        resolved,
         attemptedHash: plan.attemptedHash,
         attemptedItemIds: plan.attemptedItemIds,
         previous,
@@ -586,11 +580,11 @@ async function handleTurnStart(input: {
   }
 }
 
-async function executeCodexTurnStartApply(input: {
+async function executeTurnStartApply(input: {
   context: ApplyContext;
   cascadeKind: AgentCapabilityCascadeKind;
   conversation: AffectedConversation;
-  codexRuntimeConfig: CodexRuntimeCapabilityConfig | undefined;
+  resolved: ResolvedCapabilityCascade | undefined;
   attemptedHash: string;
   attemptedItemIds: readonly string[];
   previous: AgentCapabilityCascadeRuntimeState;
@@ -599,17 +593,17 @@ async function executeCodexTurnStartApply(input: {
     context,
     cascadeKind,
     conversation,
-    codexRuntimeConfig,
+    resolved,
     attemptedHash,
     attemptedItemIds,
     previous,
   } = input;
-  const port = context.deps.applyCodexRuntime;
-  if (!port || !codexRuntimeConfig) {
+  const port = context.deps.applyRuntimeConfig;
+  if (!port || !resolved) {
     const reason = !port
-      ? "codex runtime apply port unavailable"
-      : "codex runtime composition missing";
-    logger.error("apply.codex_turn_start_unavailable", {
+      ? "runtime-config apply port unavailable"
+      : "runtime composition missing";
+    logger.error("apply.turn_start_unavailable", {
       cascadeKind,
       conversationId: conversation.conversationId,
       reason,
@@ -630,23 +624,23 @@ async function executeCodexTurnStartApply(input: {
       diagnostic: {
         severity: "error",
         code: "agent-capability-apply-failed",
-        message: `Codex turn-start apply failed: ${sanitizeApplyError(reason)}`,
-        backend: "codex",
+        message: `Turn-start apply failed: ${sanitizeApplyError(reason)}`,
+        backend: conversation.backend,
         cascadeKind,
       },
     };
   }
 
-  let result: CodexApplyPortResult;
+  let result: RuntimeConfigApplyResult;
   try {
     result = await port({
-      conversationId: conversation.conversationId,
-      config: codexRuntimeConfig,
+      conversation: conversationIdentityForPorts(conversation),
+      resolved,
     });
   } catch (err) {
     const message = getErrorMessage(err);
     const sanitized = sanitizeApplyError(message);
-    logger.error("apply.codex_turn_start_failed", {
+    logger.error("apply.turn_start_failed", {
       cascadeKind,
       conversationId: conversation.conversationId,
       error: sanitized,
@@ -667,16 +661,34 @@ async function executeCodexTurnStartApply(input: {
       diagnostic: {
         severity: "error",
         code: "agent-capability-apply-failed",
-        message: `Codex apply failed: ${sanitizeApplyError(message)}`,
-        backend: "codex",
+        message: `Turn-start apply failed: ${sanitizeApplyError(message)}`,
+        backend: conversation.backend,
         cascadeKind,
       },
     };
   }
 
+  if (result.status === "deferred") {
+    // A turn began between staging and this apply; keep the payload staged so
+    // the next turn boundary retries it.
+    return {
+      outcome: {
+        cascadeKind,
+        disposition: "staged-next-turn",
+        attemptedHash,
+      },
+      nextState: recordApplyOutcome({
+        previous,
+        attemptedHash,
+        attemptedItemIds,
+        outcome: { status: "staged-next-turn" },
+      }),
+    };
+  }
+
   if (result.status === "rejected") {
     const sanitized = sanitizeApplyError(result.error);
-    logger.error("apply.codex_turn_start_rejected", {
+    logger.error("apply.turn_start_rejected", {
       cascadeKind,
       conversationId: conversation.conversationId,
       error: sanitized,
@@ -697,14 +709,14 @@ async function executeCodexTurnStartApply(input: {
       diagnostic: {
         severity: "error",
         code: "agent-capability-apply-failed",
-        message: `Codex apply rejected: ${sanitizeApplyError(result.error)}`,
-        backend: "codex",
+        message: `Turn-start apply rejected: ${sanitizeApplyError(result.error)}`,
+        backend: conversation.backend,
         cascadeKind,
       },
     };
   }
 
-  logger.info("apply.codex_turn_start_succeeded", {
+  logger.info("apply.turn_start_succeeded", {
     cascadeKind,
     conversationId: conversation.conversationId,
   });

@@ -28,6 +28,12 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
+  getAbortHandle,
+  registerAbortHandle,
+  releaseAbortHandle,
+  type AbortHandleKey,
+} from "@/lib/shared/abort-registry";
+import {
   runAsymmetricCollaborationSlice,
   type AsymmetricCollaborationSliceDeps,
   type AsymmetricCollaborationSliceInput,
@@ -50,11 +56,8 @@ import {
 } from "@/lib/state-store";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
-import type { AgentBackendId } from "@/lib/shared/schemas";
-import {
-  getDefaultCodexModel,
-  type AgentSessionRef,
-} from "@/lib/agent-backends/schemas";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import {
@@ -72,9 +75,9 @@ import {
 import { readCollaborationArtifacts } from "./artifacts-store";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import {
-  publishScopedStatusEvent,
-  type PublishScopedStatusEventInput,
-} from "@/lib/workflows/primitives/default-session-status-bus";
+  publishScopedStatus,
+  type PublishScopedStatusInput,
+} from "@/lib/events/publication";
 import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
 import {
   appendTranscriptEntryOnce,
@@ -594,7 +597,7 @@ export interface CollaborationManagerDeps {
 
   publishStatus(
     input: Omit<
-      PublishScopedStatusEventInput,
+      PublishScopedStatusInput,
       "scope" | "scopeId" | "projectName" | "sessionName"
     > & {
       projectPath: string;
@@ -650,7 +653,38 @@ export function createInMemoryCollaborationStopRegistry(): CollaborationStopRegi
   };
 }
 
-const defaultStopRegistry = createInMemoryCollaborationStopRegistry();
+/**
+ * Production stop registry over the shared abort registry
+ * (`@/lib/shared/abort-registry`, scope `workflow:*`). Signalling retains the
+ * aborted handle — the running slice observes `signalFor` between rounds and
+ * would miss the stop if the entry were removed on abort — so removal happens
+ * only through `release` at slice teardown.
+ */
+export function createSharedCollaborationStopRegistry(): CollaborationStopRegistry {
+  const keyFor = (workflowId: string): AbortHandleKey =>
+    `workflow:${workflowId}`;
+  return {
+    register(workflowId) {
+      const controller = new AbortController();
+      registerAbortHandle(keyFor(workflowId), controller);
+      return controller;
+    },
+    signal(workflowId) {
+      const controller = getAbortHandle(keyFor(workflowId));
+      if (!controller) return false;
+      if (!controller.signal.aborted) controller.abort();
+      return true;
+    },
+    signalFor(workflowId) {
+      return getAbortHandle(keyFor(workflowId))?.signal ?? null;
+    },
+    release(workflowId) {
+      releaseAbortHandle(keyFor(workflowId));
+    },
+  };
+}
+
+const defaultStopRegistry = createSharedCollaborationStopRegistry();
 
 const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
   input,
@@ -756,7 +790,7 @@ const defaultDeps: CollaborationManagerDeps = {
   },
   publishStatus(input) {
     const projectName = path.basename(input.projectPath);
-    const outcome = publishScopedStatusEvent({
+    const outcome = publishScopedStatus({
       scope: "collaboration",
       scopeId: input.workflowId,
       status: input.status,
@@ -1170,11 +1204,12 @@ export function createCollaborationManager(
         typeof existingSnapshot["negotiationRounds"] === "number"
           ? (existingSnapshot["negotiationRounds"] as number)
           : 5;
-      const primaryAgentBackend: AgentBackendId =
-        existingSnapshot["primaryAgentBackend"] === "claude" ||
-        existingSnapshot["primaryAgentBackend"] === "codex"
-          ? (existingSnapshot["primaryAgentBackend"] as AgentBackendId)
-          : "claude";
+      const primaryBackendParse = agentBackendSchema.safeParse(
+        existingSnapshot["primaryAgentBackend"],
+      );
+      const primaryAgentBackend: AgentBackendId = primaryBackendParse.success
+        ? primaryBackendParse.data
+        : "claude";
       const autonomousResolutionThreshold =
         collaborationAutonomousResolutionThresholdSchema.safeParse(
           existingSnapshot["autonomousResolutionThreshold"],

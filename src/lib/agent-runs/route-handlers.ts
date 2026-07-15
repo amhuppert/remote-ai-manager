@@ -1,0 +1,345 @@
+/**
+ * Agent-facing agent-run job endpoints.
+ *
+ * - POST   /api/projects/[name]/sessions/[session]/agent-runs → { runId }
+ * - GET    /api/projects/[name]/sessions/[session]/agent-runs/[runId] → status
+ * - POST   /api/projects/[name]/sessions/[session]/agent-runs/[runId]/cancel
+ *
+ * Execution stays server-side: the run reuses the requested backend's task
+ * runner, config resolution, and artifact-registry document registration. The
+ * endpoints are token-gated; the browser UI never calls them.
+ */
+
+import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
+import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
+import { readConfig } from "@/lib/config/loader";
+import { resolveProjectPath } from "@/lib/projects/resolver";
+import { getSession } from "@/lib/state-store";
+import { createLogger, withTracing } from "@/lib/logging";
+import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
+import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
+import { resolveInsideWorktree } from "@/lib/sessions/reference-documents-route-handlers";
+import type { ApiError } from "@/lib/api/errors";
+import type { GlobalConfig } from "@/lib/config/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import {
+  cancelAgentRun,
+  createDefaultAgentRunServiceDeps,
+  getAgentRun,
+  startAgentRun,
+  type CancelResult,
+  type RunOwner,
+} from "./service";
+import { agentRunRequestSchema, type AgentRunStatusResponse } from "./schemas";
+
+const log = createLogger("agent-runs-route");
+
+interface StartRunInput {
+  backend: AgentBackendId;
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  prompt: string;
+  /** The session worktree — the anchor for returned reference-document paths. */
+  worktreePath: string;
+  /** Where the agent runs; defaults to the worktree, may be a subdirectory of it. */
+  workingDirectory: string;
+  timeoutMs: number;
+  model?: string;
+  reasoningEffort?: EffortLevel;
+}
+
+export interface AgentRunRouteDeps {
+  auth: AgentAuth;
+  resolveProjectPath(name: string): Promise<string | null>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{ sessionName: string; worktreePath: string } | null>;
+  readConfig(): Promise<GlobalConfig>;
+  startRun(input: StartRunInput): { runId: string };
+  getRun(runId: string, owner: RunOwner): AgentRunStatusResponse | null;
+  cancelRun(runId: string, owner: RunOwner): CancelResult;
+}
+
+interface RunDefaults {
+  model: string;
+  reasoningEffort?: EffortLevel;
+  timeoutMs: number;
+}
+
+/**
+ * The config edge where per-backend run policy lives — the run pipeline below
+ * it is backend-generic, so adding a backend means adding a row here, not a
+ * branch. `unavailableReason` gates opt-in providers (Codex requires
+ * `config.codex.enabled`; Claude is the instance's primary backend and is
+ * always available). `defaults` resolves the config-cascade fallbacks a
+ * request doesn't specify; every backend bottoms out at its catalog default
+ * model/timeout.
+ */
+const BACKEND_RUN_POLICY: Record<
+  AgentBackendId,
+  {
+    unavailableReason(config: GlobalConfig): string | null;
+    defaults(config: GlobalConfig): RunDefaults;
+  }
+> = {
+  claude: {
+    unavailableReason: () => null,
+    defaults: () => catalogRunDefaults("claude"),
+  },
+  codex: {
+    unavailableReason: (config) =>
+      config.codex?.enabled === true
+        ? null
+        : "Codex is not enabled for this instance — enable it in the CC config to run codex agent runs",
+    defaults: (config) => {
+      const catalog = catalogRunDefaults("codex");
+      if (config.codex === undefined) return catalog;
+      return {
+        model: config.codex.model ?? catalog.model,
+        ...(config.codex.reasoningEffort !== undefined
+          ? { reasoningEffort: config.codex.reasoningEffort }
+          : {}),
+        timeoutMs: resolveConfiguredTimeoutMs(config.codex.timeoutMs),
+      };
+    },
+  },
+};
+
+function catalogRunDefaults(backend: AgentBackendId): RunDefaults {
+  const entry = getBackendCatalogEntry(backend);
+  return {
+    model: entry.defaultModelId,
+    timeoutMs: resolveConfiguredTimeoutMs(entry.defaultTimeoutMs),
+  };
+}
+
+export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
+  async function resolveSession(
+    params: Promise<Record<string, string>>,
+  ): Promise<
+    | {
+        ok: true;
+        projectPath: string;
+        projectName: string;
+        sessionName: string;
+        worktreePath: string;
+      }
+    | { ok: false; response: Response }
+  > {
+    const { name, session } = await params;
+    const projectName = name ?? "";
+    const sessionName = session ?? "";
+
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      projectName,
+      sessionName,
+    );
+    if (!resolved.ok) return resolved;
+    const { projectPath, session: sessionState } = resolved.value;
+
+    return {
+      ok: true,
+      projectPath,
+      projectName,
+      sessionName: sessionState.sessionName,
+      worktreePath: sessionState.worktreePath,
+    };
+  }
+
+  async function post(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const resolved = await resolveSession(params);
+    if (!resolved.ok) return resolved.response;
+
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body must be JSON" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const parsed = agentRunRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid agent run payload",
+          issues: parsed.error.issues.map((i) => ({
+            path: i.path.join("."),
+            message: i.message,
+          })),
+        },
+        { status: 400 },
+      );
+    }
+
+    const config = await deps.readConfig();
+    const policy = BACKEND_RUN_POLICY[parsed.data.backend];
+    const unavailable = policy.unavailableReason(config);
+    if (unavailable !== null) {
+      return NextResponse.json({ error: unavailable } satisfies ApiError, {
+        status: 409,
+      });
+    }
+
+    let workingDirectory = resolved.worktreePath;
+    if (parsed.data.workingDirectory !== undefined) {
+      const inside = resolveInsideWorktree(
+        resolved.worktreePath,
+        parsed.data.workingDirectory,
+      );
+      if (inside === null) {
+        return NextResponse.json(
+          {
+            error: "workingDirectory must resolve inside the session worktree",
+            issues: [
+              {
+                path: "workingDirectory",
+                message: "path escapes the session worktree",
+              },
+            ],
+          },
+          { status: 400 },
+        );
+      }
+      workingDirectory = inside;
+    }
+
+    const defaults = policy.defaults(config);
+    const timeoutMs = parsed.data.timeoutMs ?? defaults.timeoutMs;
+    const model = parsed.data.model ?? defaults.model;
+    const reasoningEffort =
+      parsed.data.reasoning_effort ?? defaults.reasoningEffort;
+
+    const { runId } = deps.startRun({
+      backend: parsed.data.backend,
+      projectPath: resolved.projectPath,
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+      prompt: parsed.data.prompt,
+      worktreePath: resolved.worktreePath,
+      workingDirectory,
+      timeoutMs,
+      model,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    });
+
+    log.info("agent-run.created", {
+      backend: parsed.data.backend,
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+      runId,
+    });
+
+    return NextResponse.json({ runId });
+  }
+
+  async function get(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const resolved = await resolveSession(params);
+    if (!resolved.ok) return resolved.response;
+
+    const { runId } = await params;
+    const run = deps.getRun(runId ?? "", {
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+    });
+    if (!run) {
+      return notFound(`Agent run "${runId}" not found`);
+    }
+
+    return NextResponse.json(run);
+  }
+
+  async function cancel(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const resolved = await resolveSession(params);
+    if (!resolved.ok) return resolved.response;
+
+    const { runId } = await params;
+    const result = deps.cancelRun(runId ?? "", {
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+    });
+    if (!result.found) {
+      return notFound(`Agent run "${runId}" not found`);
+    }
+
+    log.info("agent-run.cancel_requested", {
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+      runId,
+    });
+
+    return NextResponse.json({ ok: true, status: result.status });
+  }
+
+  return { POST: post, GET: get, CANCEL: cancel };
+}
+
+function defaultStartRun(input: StartRunInput): { runId: string } {
+  const artifactRegistry = createSessionArtifactRegistryForProduction({
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+  });
+  const serviceDeps = createDefaultAgentRunServiceDeps({ artifactRegistry });
+  return startAgentRun(
+    {
+      backend: input.backend,
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+      prompt: input.prompt,
+      worktreePath: input.worktreePath,
+      workingDirectory: input.workingDirectory,
+      timeoutMs: input.timeoutMs,
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.reasoningEffort !== undefined
+        ? { reasoningEffort: input.reasoningEffort }
+        : {}),
+    },
+    serviceDeps,
+  );
+}
+
+const defaultHandlers = createAgentRunHandlers({
+  auth: createAgentAuth(),
+  resolveProjectPath,
+  getSession,
+  readConfig,
+  startRun: defaultStartRun,
+  getRun: getAgentRun,
+  cancelRun: cancelAgentRun,
+});
+
+/** POST /api/projects/[name]/sessions/[session]/agent-runs */
+export const createAgentRunRoute = withTracing(defaultHandlers.POST);
+/** GET /api/projects/[name]/sessions/[session]/agent-runs/[runId] */
+export const getAgentRunStatusRoute = withTracing(defaultHandlers.GET);
+/** POST /api/projects/[name]/sessions/[session]/agent-runs/[runId]/cancel */
+export const cancelAgentRunRoute = withTracing(defaultHandlers.CANCEL);

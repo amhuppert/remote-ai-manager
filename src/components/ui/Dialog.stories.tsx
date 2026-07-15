@@ -154,6 +154,43 @@ export const MobileSheet: Story = {
   ),
 };
 
+/**
+ * The `unstyled` + `anchor="stretch"` escape hatch: a right-edge slide-over that
+ * owns its own box model via `layoutClassName` while Radix keeps the focus trap,
+ * Escape/outside-press dismissal, scroll-lock, and `role="dialog"` wiring — the
+ * shape the bespoke `DiffSlideover`/agent-capabilities drawers now compose
+ * instead of hand-rolling a `role="dialog"` div with a manual keydown loop.
+ */
+export const UnstyledSlideOver: Story = {
+  render: () => (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button>Open slide-over</Button>
+      </DialogTrigger>
+      <DialogContent
+        unstyled
+        anchor="stretch"
+        scrimClassName="fixed inset-0 z-dropdown bg-[var(--cc-bg-void-a60)] [backdrop-filter:blur(4px)_saturate(120%)]"
+        contentClassName="fixed top-0 right-0 bottom-0 flex w-[min(480px,100vw)] flex-col border-y-0 border-r-0 border-l border-solid border-border-default bg-bg-base shadow-[-16px_0_48px_var(--cc-black-a55)]"
+        aria-label="Slide-over panel"
+      >
+        <div className="flex items-center gap-md border-x-0 border-t-0 border-b border-solid border-border-default px-lg py-md">
+          <DialogTitle layoutClassName="mb-0">Review</DialogTitle>
+          <DialogClose asChild>
+            <IconButton aria-label="Close" layoutClassName="ml-auto">
+              <CloseIcon size={16} />
+            </IconButton>
+          </DialogClose>
+        </div>
+        <div className="flex-1 overflow-y-auto px-lg py-md font-mono text-[0.85rem] text-text-secondary">
+          Edge-anchored body. The card positions itself; the primitive supplies
+          Portal + scrim + focus trap + dismissal.
+        </div>
+      </DialogContent>
+    </Dialog>
+  ),
+};
+
 /** Opened on mount so the card + scrim are reviewable without interaction. */
 export const StaticOpen: Story = {
   render: () => (

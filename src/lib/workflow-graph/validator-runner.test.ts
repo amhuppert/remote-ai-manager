@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildContextValidationPrompt,
   createValidatorRunner,
-  extractValidatorResult,
   parseValidatorResponse,
   resolveValidatorAskUserQuestionsEnabled,
   VALIDATOR_OUTPUT_SCHEMA,
@@ -24,20 +23,35 @@ import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { AgentSessionRef } from "@/lib/agent-backends/types";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
 import type {
-  GraphWorkflowAgentValidatorConfig,
-  GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
-import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import {
+  createGraphLaneContinuity,
+  type GraphLaneContinuityDeps,
+} from "@/lib/workflow-graph/lane-continuity";
+import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
+import type { BackendContinuityAdapter } from "@/lib/agent-backends/continuity";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import {
+  _registerBackendForTesting,
+  _resetBackendRegistryForTesting,
+} from "@/lib/agent-backends/registry-core";
+import { bootstrapBackends } from "@/lib/agent-backends/registry";
+import {
+  createTestFakeBackend,
+  TESTFAKE_BACKEND_ID,
+} from "@/lib/agent-backends/testing/testfake-backend";
 
 const emptyUsage = {
   costUsd: null,
@@ -51,6 +65,7 @@ const emptyUsage = {
 
 interface TaskRunResultOverrides {
   backendRef?: AgentSessionRef | null;
+  continuationDisposition?: "retain" | "clear";
 }
 
 function textTaskRun(
@@ -62,6 +77,7 @@ function textTaskRun(
     text,
     usage: emptyUsage,
     backendRef: overrides.backendRef ?? null,
+    continuationDisposition: overrides.continuationDisposition ?? "retain",
   };
 }
 
@@ -75,6 +91,7 @@ function errorTaskRun(
     aborted: false,
     usage: emptyUsage,
     backendRef: overrides.backendRef ?? null,
+    continuationDisposition: overrides.continuationDisposition ?? "retain",
   };
 }
 
@@ -254,7 +271,7 @@ function buildExecutionWithContextValidation(
   });
 }
 
-describe("extractValidatorResult", () => {
+describe("parseValidatorResponse fenced-block parsing", () => {
   it("returns kind=pass with empty reopenTaskIds when issues is empty", () => {
     const text = [
       "```json",
@@ -265,10 +282,10 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const outcome = extractValidatorResult(text, "claude", [
+    const outcome = parseValidatorResponse(text, "claude", undefined, [
       "task-1",
       "task-2",
-    ]);
+    ]).result;
     expect(outcome.kind).toBe("pass");
     if (outcome.kind === "pass") {
       expect(outcome.reopenTaskIds).toEqual([]);
@@ -292,10 +309,10 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const outcome = extractValidatorResult(text, "claude", [
+    const outcome = parseValidatorResponse(text, "claude", undefined, [
       "task-1",
       "task-2",
-    ]);
+    ]).result;
     expect(outcome.kind).toBe("fail");
     if (outcome.kind === "fail") {
       expect(outcome.reopenTaskIds).toEqual(["task-2"]);
@@ -328,10 +345,10 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const outcome = extractValidatorResult(text, "claude", [
+    const outcome = parseValidatorResponse(text, "claude", undefined, [
       "task-1",
       "task-2",
-    ]);
+    ]).result;
     expect(outcome.kind).toBe("fail");
     if (outcome.kind === "fail") {
       expect(outcome.reopenTaskIds).toEqual(["task-2", "task-1"]);
@@ -354,10 +371,10 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const outcome = extractValidatorResult(text, "claude", [
+    const outcome = parseValidatorResponse(text, "claude", undefined, [
       "task-1",
       "task-2",
-    ]);
+    ]).result;
     expect(outcome.kind).toBe("infra_error");
     if (outcome.kind === "infra_error") {
       expect(outcome.reason).toBe("schema_mismatch");
@@ -379,10 +396,10 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const outcome = extractValidatorResult(text, "claude", [
+    const outcome = parseValidatorResponse(text, "claude", undefined, [
       "task-1",
       "task-2",
-    ]);
+    ]).result;
     expect(outcome.kind).toBe("infra_error");
     if (outcome.kind === "infra_error") {
       expect(outcome.reason).toBe("schema_mismatch");
@@ -644,10 +661,7 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
       askUserQuestions: { enabled: true },
     };
     expect(
-      resolveValidatorAskUserQuestionsEnabled(
-        claudeValidator.type,
-        enabledContext,
-      ),
+      resolveValidatorAskUserQuestionsEnabled(claudeValidator, enabledContext),
     ).toBe(true);
   });
 
@@ -657,16 +671,13 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
       askUserQuestions: { enabled: true },
     };
     expect(
-      resolveValidatorAskUserQuestionsEnabled(
-        codexValidator.type,
-        enabledContext,
-      ),
+      resolveValidatorAskUserQuestionsEnabled(codexValidator, enabledContext),
     ).toBe(false);
   });
 
   it("is false for a claude validator when the toggle is disabled", () => {
     expect(
-      resolveValidatorAskUserQuestionsEnabled(claudeValidator.type, context),
+      resolveValidatorAskUserQuestionsEnabled(claudeValidator, context),
     ).toBe(false);
   });
 
@@ -676,7 +687,7 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
       askUserQuestions: { enabled: true },
     };
     const derived = resolveValidatorAskUserQuestionsEnabled(
-      codexValidator.type,
+      codexValidator,
       enabledContext,
     );
     const prompt = buildContextValidationPrompt({
@@ -710,9 +721,168 @@ describe("parseValidatorResponse", () => {
     }
     expect(result.parsePath).toBe("structured_output");
   });
+
+  // Pins the deliberate shared-chain widening for this consumer (Phase 3
+  // review F5, approved in the 2026-07-13 addendum to the Phase 1 slice
+  // designs): an INVALID native candidate does not hard-fail the turn — the
+  // chain falls through to a schema-valid fenced-JSON candidate in the same
+  // turn's text. Guards against a consumer-level "stop after invalid native"
+  // regression.
+  it("falls through an invalid native candidate to a valid fenced-JSON text candidate", () => {
+    const validFencedText = [
+      "Here is my verdict:",
+      "```json",
+      JSON.stringify({
+        summary: "Recovered via fenced JSON.",
+        issues: [{ taskId: "task-1", title: "Bug", description: "Fix" }],
+      }),
+      "```",
+    ].join("\n");
+
+    // Native payload omits the required `summary` field — invalid against the
+    // validator schema.
+    const result = parseValidatorResponse(
+      validFencedText,
+      "claude",
+      { issues: [] },
+      ["task-1", "task-2"],
+    );
+
+    expect(result.result.kind).toBe("fail");
+    if (result.result.kind === "fail") {
+      expect(result.result.reopenTaskIds).toEqual(["task-1"]);
+    }
+    expect(result.parsePath).toBe("fenced_json_block");
+  });
 });
 
 describe("createValidatorRunner", () => {
+  it("dispatches an agent validator through its configured backend instead of its legacy validator-type label", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+    const validator: GraphWorkflowAgentValidatorConfig = {
+      type: "claude",
+      enabled: true,
+      continuity: { enabled: true },
+      agent: {
+        backend: "codex",
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+      },
+    };
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator,
+    });
+
+    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorInput: expect.objectContaining({
+          conversation: expect.objectContaining({ agentBackend: "codex" }),
+        }),
+        modelId: "gpt-5.4",
+        effort: "high",
+      }),
+    );
+  });
+
+  it("dispatches a registered third backend through the semantic conversation strategy", async () => {
+    const fake = createTestFakeBackend();
+    _registerBackendForTesting(fake.descriptor);
+    try {
+      const executeWorkflowTaskRun = vi.fn(async () =>
+        textTaskRun(JSON.stringify({ summary: "All good", issues: [] }), {
+          backendRef: {
+            backend: TESTFAKE_BACKEND_ID,
+            ref: "testfake-review-ref",
+          },
+        }),
+      );
+      const runner = createValidatorRunner({
+        resolveWorktreePath: stubWorktreePath,
+        resolveTimeoutMs: stubTimeoutMs,
+        executeWorkflowTaskRun,
+        getProjectDisplayName: stubProjectDisplayName,
+        continuityService: {
+          async resolveValidatorCall(input) {
+            return {
+              execution: input.execution,
+              sessionAction: "create",
+              strategy: "conversation",
+              backend: input.backend,
+              conversationId: "testfake-conversation",
+            };
+          },
+          async recordLaneTurnOutcome(input) {
+            return input.execution;
+          },
+        },
+      });
+      const execution = buildExecutionWithContextValidation();
+      const contextDef = execution.workingDefinition.executionContexts.find(
+        (candidate) => candidate.id === "context-plan",
+      )!;
+      const validator = {
+        type: "claude",
+        enabled: true,
+        continuity: { enabled: true },
+        agent: {
+          backend: TESTFAKE_BACKEND_ID,
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      } as unknown as GraphWorkflowAgentValidatorConfig;
+
+      const result = await runner.runContextValidator({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        execution,
+        context: contextDef,
+        validator,
+      });
+
+      expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorInput: expect.objectContaining({
+            conversation: expect.objectContaining({
+              agentBackend: TESTFAKE_BACKEND_ID,
+            }),
+          }),
+        }),
+      );
+      expect(result.metadata.reviewArtifact).toEqual({
+        backend: TESTFAKE_BACKEND_ID,
+        kind: "conversation",
+        ref: "testfake-conversation",
+      });
+      expect(result.metadata.sessionRef).toEqual({
+        backend: TESTFAKE_BACKEND_ID,
+        ref: "testfake-conversation",
+        lane: "context_validator",
+        refKind: "conversation",
+        workflowConversationId: "testfake-conversation",
+      });
+    } finally {
+      _resetBackendRegistryForTesting();
+      bootstrapBackends();
+    }
+  });
+
   it("runContextValidator forwards the prompt and schema to executeWorkflowTaskRun and returns the parsed result", async () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
@@ -748,7 +918,6 @@ describe("createValidatorRunner", () => {
       kind: "task_run",
       modelId: "sonnet",
       effort: "medium",
-      skipStructuredOutputGate: true,
       outputFormat: {
         type: "json_schema",
         schema: VALIDATOR_OUTPUT_SCHEMA,
@@ -783,6 +952,7 @@ describe("createValidatorRunner", () => {
         transcript,
         usage: emptyUsage,
         backendRef: null,
+        continuationDisposition: "retain",
       }),
     );
     const runner = createValidatorRunner({
@@ -862,6 +1032,7 @@ describe("createValidatorRunner", () => {
         transcript,
         usage: emptyUsage,
         backendRef: null,
+        continuationDisposition: "retain",
       }),
     );
     const runner = createValidatorRunner({
@@ -1243,6 +1414,48 @@ describe("context validator continuity runtime integration", () => {
     };
   }
 
+  function makeThreadAdapter(
+    overrides: Partial<
+      Record<"start" | "resumeOrRecover", ReturnType<typeof vi.fn>>
+    > = {},
+  ) {
+    const start =
+      overrides.start ??
+      vi.fn(async () => ({ backend: "codex" as const, ref: "thread-1" }));
+    const resumeOrRecover =
+      overrides.resumeOrRecover ??
+      vi.fn(async (ref: { backend: "codex"; ref: string }) => ({
+        ref,
+        recovered: false,
+      }));
+    const adapter: BackendContinuityAdapter = {
+      backend: "codex",
+      start,
+      resumeOrRecover,
+      validate: vi.fn(async () => ({ status: "valid" as const })),
+      fork: vi.fn(),
+    };
+    return { adapter, start, resumeOrRecover };
+  }
+
+  function makeLaneContinuityService(
+    repo: ReturnType<typeof createInMemoryRepo>,
+    deps: Partial<GraphLaneContinuityDeps> = {},
+  ): ReturnType<typeof createGraphLaneContinuity> {
+    return createGraphLaneContinuity({
+      laneService: createLaneService({
+        store: createInMemoryLaneStore(),
+        now: () => NOW,
+      }),
+      executionRepository: repo,
+      createConversation: vi.fn(),
+      getConversation: vi.fn(),
+      continuityAdapter: () => makeThreadAdapter().adapter,
+      now: () => NOW,
+      ...deps,
+    });
+  }
+
   it("reuses the Claude context-validator session across consecutive calls", async () => {
     const execution = buildExecutionWithContextValidation();
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -1258,18 +1471,19 @@ describe("context validator continuity runtime integration", () => {
       async (_p: string, _s: string, id: string) => ({ id }),
     );
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repo, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
-      now: () => NOW,
     });
 
+    let sdkSessionCounter = 0;
     const executeWorkflowTaskRun = vi.fn(
       async (_input: ExecuteWorkflowTaskRunInput) =>
         textTaskRun(passResponseJson, {
-          backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+          backendRef: {
+            backend: "claude",
+            ref: `sdk-session-${++sdkSessionCounter}`,
+          },
         }),
     );
 
@@ -1290,13 +1504,21 @@ describe("context validator continuity runtime integration", () => {
       validator: contextDef.contextValidator!,
     });
 
-    expect(result1.metadata.sessionRef).toMatchObject({
+    expect(result1.metadata.sessionRef).toEqual({
       backend: "claude",
-      sessionId: "sdk-session-1",
+      ref: "conv-val-1",
+      lane: "context_validator",
+      refKind: "conversation",
+      workflowConversationId: "conv-val-1",
+    });
+    expect(result1.metadata.reviewArtifact).toEqual({
+      backend: "claude",
+      kind: "conversation",
+      ref: "conv-val-1",
     });
     expect(createConversation).toHaveBeenCalledOnce();
     expect(
-      repo.read().laneStates["context-plan"]?.["context_validator"]?.engine,
+      repo.read().laneStates["context-plan"]?.["context_validator"]?.backend,
     ).toBe("claude");
 
     const result2 = await runner.runContextValidator({
@@ -1308,9 +1530,17 @@ describe("context validator continuity runtime integration", () => {
     });
 
     expect(createConversation).toHaveBeenCalledOnce();
-    expect(result2.metadata.sessionRef).toMatchObject({
+    expect(result2.metadata.sessionRef).toEqual({
       backend: "claude",
-      sessionId: "sdk-session-1",
+      ref: "conv-val-1",
+      lane: "context_validator",
+      refKind: "conversation",
+      workflowConversationId: "conv-val-1",
+    });
+    expect(result2.metadata.reviewArtifact).toEqual({
+      backend: "claude",
+      kind: "conversation",
+      ref: "conv-val-1",
     });
     // Conversation actor handles resumeRef threading internally; the validator
     // routes through executeWorkflowTaskRun with the same conversationId across
@@ -1334,14 +1564,11 @@ describe("context validator continuity runtime integration", () => {
     const repo = createInMemoryRepo(execution);
 
     const createConversation = vi.fn(async () => ({ id: "conv-val-1" }));
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repo, {
       createConversation,
       getConversation: vi.fn(async (_p: string, _s: string, id: string) => ({
         id,
       })),
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
-      now: () => NOW,
     });
 
     let laneAtDispatch: unknown = null;
@@ -1352,7 +1579,7 @@ describe("context validator continuity runtime integration", () => {
           repo.read().laneStates["context-plan"]?.["context_validator"] ?? null;
         dispatchedConversationId = input.conversationId;
         return textTaskRun(passResponseJson, {
-          backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+          backendRef: { backend: "claude", ref: "sdk-session-1" },
         });
       },
     );
@@ -1377,7 +1604,7 @@ describe("context validator continuity runtime integration", () => {
     expect(dispatchedConversationId).toBe("conv-val-1");
     expect(laneAtDispatch).toMatchObject({
       lane: "context_validator",
-      engine: "claude",
+      backend: "claude",
       workflowConversationId: "conv-val-1",
     });
   });
@@ -1399,13 +1626,7 @@ describe("context validator continuity runtime integration", () => {
     )!;
     const repo = createInMemoryRepo(execution);
 
-    const continuityService = createWorkflowContinuityService({
-      createConversation: vi.fn(),
-      getConversation: vi.fn(),
-      startCodexThread: vi.fn(async () => ({ threadId: "thread-1" })),
-      resumeCodexThread: vi.fn(),
-      now: () => NOW,
-    });
+    const continuityService = makeLaneContinuityService(repo);
 
     let laneAtDispatch: unknown = null;
     let dispatchedConversationId: string | null = null;
@@ -1415,7 +1636,7 @@ describe("context validator continuity runtime integration", () => {
           repo.read().laneStates["context-plan"]?.["context_validator"] ?? null;
         dispatchedConversationId = input.conversationId;
         return textTaskRun(passResponseJson, {
-          backendRef: { backend: "codex", threadId: "thread-1" },
+          backendRef: { backend: "codex", ref: "thread-1" },
         });
       },
     );
@@ -1442,7 +1663,7 @@ describe("context validator continuity runtime integration", () => {
     );
     expect(laneAtDispatch).toMatchObject({
       lane: "context_validator",
-      engine: "codex",
+      backend: "codex",
       workflowConversationId:
         "__validator__:execution-1:context-plan:context_validator:codex",
     });
@@ -1471,17 +1692,14 @@ describe("context validator continuity runtime integration", () => {
       async (_p: string, _s: string, id: string) => ({ id }),
     );
 
-    const continuityService = createWorkflowContinuityService({
+    const continuityService = makeLaneContinuityService(repo, {
       createConversation,
       getConversation,
-      startCodexThread: vi.fn(),
-      resumeCodexThread: vi.fn(),
-      now: () => NOW,
     });
 
     const executeWorkflowTaskRun = vi.fn(async () =>
       textTaskRun(passResponseJson, {
-        backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+        backendRef: { backend: "claude", ref: "sdk-session-1" },
       }),
     );
 
@@ -1525,22 +1743,20 @@ describe("context validator continuity runtime integration", () => {
     )!;
     const repo = createInMemoryRepo(execution);
 
-    const startCodexThread = vi.fn(async () => ({
-      threadId: "thread-placeholder",
-    }));
-    const resumeCodexThread = vi.fn(async (id: string) => ({ threadId: id }));
+    const threadAdapter = makeThreadAdapter({
+      start: vi.fn(async () => ({
+        backend: "codex" as const,
+        ref: "thread-placeholder",
+      })),
+    });
 
-    const continuityService = createWorkflowContinuityService({
-      createConversation: vi.fn(),
-      getConversation: vi.fn(),
-      startCodexThread,
-      resumeCodexThread,
-      now: () => NOW,
+    const continuityService = makeLaneContinuityService(repo, {
+      continuityAdapter: () => threadAdapter.adapter,
     });
 
     const executeWorkflowTaskRun = vi.fn(async () =>
       textTaskRun(passResponseJson, {
-        backendRef: { backend: "codex", threadId: "thread-real-1" },
+        backendRef: { backend: "codex", ref: "thread-real-1" },
       }),
     );
 
@@ -1561,10 +1777,11 @@ describe("context validator continuity runtime integration", () => {
       validator: codexValidator,
     });
 
-    expect(startCodexThread).toHaveBeenCalledOnce();
+    expect(threadAdapter.start).toHaveBeenCalledOnce();
     expect(result1.metadata.reviewArtifact).toMatchObject({
-      engine: "codex",
-      threadId: "thread-real-1",
+      backend: "codex",
+      kind: "response",
+      ref: "thread-real-1",
     });
 
     const deserialized = graphWorkflowExecutionSchema.parse(
@@ -1580,10 +1797,14 @@ describe("context validator continuity runtime integration", () => {
       validator: codexValidator,
     });
 
-    expect(resumeCodexThread).toHaveBeenCalledWith("thread-real-1");
+    expect(threadAdapter.resumeOrRecover).toHaveBeenCalledWith(
+      { backend: "codex", ref: "thread-real-1" },
+      { projectPath: "/repo", sessionName: "session-1" },
+    );
     expect(result2.metadata.reviewArtifact).toMatchObject({
-      engine: "codex",
-      threadId: "thread-real-1",
+      backend: "codex",
+      kind: "response",
+      ref: "thread-real-1",
     });
   });
 
@@ -1600,12 +1821,14 @@ describe("context validator continuity runtime integration", () => {
     )!;
     const repo = createInMemoryRepo(execution);
 
-    const continuityService = createWorkflowContinuityService({
-      createConversation: vi.fn(),
-      getConversation: vi.fn(),
-      startCodexThread: vi.fn(async () => ({ threadId: "thread-usage-1" })),
-      resumeCodexThread: vi.fn(async (id: string) => ({ threadId: id })),
-      now: () => NOW,
+    const continuityService = makeLaneContinuityService(repo, {
+      continuityAdapter: () =>
+        makeThreadAdapter({
+          start: vi.fn(async () => ({
+            backend: "codex" as const,
+            ref: "thread-usage-1",
+          })),
+        }).adapter,
     });
 
     const executeWorkflowTaskRun = vi.fn(
@@ -1619,7 +1842,8 @@ describe("context validator continuity runtime integration", () => {
           outputTokens: 50,
           costUsd: 0.0042,
         },
-        backendRef: { backend: "codex", threadId: "thread-usage-1" },
+        backendRef: { backend: "codex", ref: "thread-usage-1" },
+        continuationDisposition: "retain",
       }),
     );
 
@@ -1641,7 +1865,8 @@ describe("context validator continuity runtime integration", () => {
     });
 
     expect(result.metadata.reviewArtifact).toMatchObject({
-      engine: "codex",
+      backend: "codex",
+      kind: "response",
       usage: {
         inputTokens: 1000,
         cachedInputTokens: 400,
@@ -1668,12 +1893,14 @@ describe("context validator continuity runtime integration", () => {
     )!;
     const repo = createInMemoryRepo(execution);
 
-    const continuityService = createWorkflowContinuityService({
-      createConversation: vi.fn(),
-      getConversation: vi.fn(),
-      startCodexThread: vi.fn(async () => ({ threadId: "thread-placeholder" })),
-      resumeCodexThread: vi.fn(async (id: string) => ({ threadId: id })),
-      now: () => NOW,
+    const continuityService = makeLaneContinuityService(repo, {
+      continuityAdapter: () =>
+        makeThreadAdapter({
+          start: vi.fn(async () => ({
+            backend: "codex" as const,
+            ref: "thread-placeholder",
+          })),
+        }).adapter,
     });
 
     const transcript = [
@@ -1696,7 +1923,8 @@ describe("context validator continuity runtime integration", () => {
         text: passResponseJson,
         transcript,
         usage: emptyUsage,
-        backendRef: { backend: "codex", threadId: "thread-real-1" },
+        backendRef: { backend: "codex", ref: "thread-real-1" },
+        continuationDisposition: "retain",
       }),
     );
 
@@ -1754,7 +1982,7 @@ describe("context validator continuity runtime integration", () => {
     }
   });
 
-  it("marks the Codex lane for rotation after a failed turn so phantom threads are not reused", async () => {
+  it("marks the Codex lane for rotation when the adapter clears continuation after a failed turn", async () => {
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
       type: "codex",
       enabled: true,
@@ -1767,21 +1995,20 @@ describe("context validator continuity runtime integration", () => {
     )!;
     const repo = createInMemoryRepo(execution);
 
-    const startCodexThread = vi.fn(async () => ({
-      threadId: "thread-placeholder",
-    }));
-    const resumeCodexThread = vi.fn(async (id: string) => ({ threadId: id }));
-
-    const continuityService = createWorkflowContinuityService({
-      createConversation: vi.fn(),
-      getConversation: vi.fn(),
-      startCodexThread,
-      resumeCodexThread,
-      now: () => NOW,
+    const continuityService = makeLaneContinuityService(repo, {
+      continuityAdapter: () =>
+        makeThreadAdapter({
+          start: vi.fn(async () => ({
+            backend: "codex" as const,
+            ref: "thread-placeholder",
+          })),
+        }).adapter,
     });
 
     const executeWorkflowTaskRun = vi.fn(async () =>
-      errorTaskRun("Codex Exec exited with code 1: schema invalid"),
+      errorTaskRun("Codex Exec exited with code 1: schema invalid", {
+        continuationDisposition: "clear",
+      }),
     );
 
     const runner = createValidatorRunner({
@@ -1807,9 +2034,63 @@ describe("context validator continuity runtime integration", () => {
       expect(result.result.engine).toBe("codex");
     }
     expect(
-      repo.read().laneStates["context-plan"]?.["context_validator"]
-        ?.rotateBeforeNextTurn,
+      repo.read().laneStates["context-plan"]?.["context_validator"]?.metrics
+        .rotateBeforeNextTurn,
     ).toBe(true);
+  });
+
+  it("retains a viable Codex validator thread when a failed turn carries the adapter retain verdict", async () => {
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+    };
+    const execution = buildExecutionWithContextValidation(codexValidator);
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+    const continuityService = makeLaneContinuityService(repo, {
+      continuityAdapter: () =>
+        makeThreadAdapter({
+          start: vi.fn(async () => ({
+            backend: "codex" as const,
+            ref: "thread-placeholder",
+          })),
+        }).adapter,
+    });
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      errorTaskRun("transient transport failure", {
+        backendRef: { backend: "codex", ref: "thread-still-viable" },
+        continuationDisposition: "retain",
+      }),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: codexValidator,
+    });
+
+    expect(result.result.kind).toBe("infra_error");
+    expect(
+      repo.read().laneStates["context-plan"]?.["context_validator"],
+    ).toMatchObject({
+      backend: "codex",
+      sessionRef: { backend: "codex", ref: "thread-still-viable" },
+      metrics: { rotateBeforeNextTurn: false },
+    });
   });
 });
 

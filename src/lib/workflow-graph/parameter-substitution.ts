@@ -1,4 +1,4 @@
-import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 
 import { mapScannedFields } from "./parameter-validation";
 

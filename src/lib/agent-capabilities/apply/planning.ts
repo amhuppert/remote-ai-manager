@@ -222,10 +222,7 @@ async function applyToConversation(input: {
       conversation,
       composedCascades,
       failedCascadeKinds,
-      claudeRuntimeConfig: composition.claudeRuntime,
-      codexRuntimeConfig: composition.codexRuntime
-        ? { config: composition.codexRuntime.config }
-        : undefined,
+      resolved: composition.capabilities,
       previous,
       trigger,
       operationId,

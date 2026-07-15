@@ -1,8 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { Dialog, DialogContent } from "@/components/ui/Dialog";
 import McpServerList from "./McpServerList";
 import type {
   McpServerCardActions,
@@ -35,37 +33,7 @@ export default function McpServersModal({
   subtitle,
   banner,
 }: McpServersModalProps): React.JSX.Element | null {
-  const handleKey = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    },
-    [onClose],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    document.addEventListener("keydown", handleKey, { capture: true });
-    return () =>
-      document.removeEventListener("keydown", handleKey, { capture: true });
-  }, [open, handleKey]);
-
-  useOverlayScope(open);
-
-  // Migration deferred (primitive-migration contract §1 / overlay-consumer
-  // dispositions): the shipped `ui/Dialog` primitive's `DialogContent` bakes the
-  // standard padded, centred card recipe (`p-xl`, max-w 480, motion). This modal
-  // is a borderless `p-0 flex flex-col overflow-hidden` scrollable card with a
-  // full-bleed sticky bordered header + a ≤640px full-screen variant — a box
-  // model `DialogContent` does not model, so adopting it would change the
-  // appearance and fail the parity criterion. Migrating cleanly requires a future
-  // unstyled-content escape hatch on the Dialog primitive (out of this
-  // consumer-migration context's scope); the Radix focus-trap/scroll-lock win is
-  // worth that follow-up. Until then the bespoke keydown/outside-click stays.
-
-  if (!open || typeof document === "undefined") return null;
+  if (!open) return null;
 
   const total = servers.length;
   const on = servers.filter((s) => s.enabled).length;
@@ -73,27 +41,19 @@ export default function McpServersModal({
     (s) => s.status.kind === "overridden" || s.status.kind === "disabled",
   ).length;
 
-  const overlay = (
-    <div
-      // Marks this full-viewport blur scrim so the global ambient-animation
-      // freeze (globals.css) pauses the page's perpetual status-dot animations
-      // while it is mounted — otherwise the backdrop blur re-rasterizes every
-      // frame behind them and saturates the compositor.
-      data-cc-modal-scrim=""
-      className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      {/* Self-contained modal card: reproduces the standard CC modal-card
-          appearance plus this modal's 720px / padding-0 / flex-column box model
-          and the ≤768px bottom-sheet / ≤640px full-screen behaviour as utilities.
-          The fixed `DialogContent` recipe cannot host this box model (see above),
-          so the card is hand-rolled until the unstyled-content escape hatch lands. */}
-      <div
-        className="flex max-h-[min(800px,calc(100vh-4rem))] w-[min(720px,calc(100vw-2rem))] max-w-[480px] animate-[slideUp_0.2s_ease] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-solid border-border-default bg-bg-surface max-640:h-screen max-640:max-h-screen max-640:w-screen max-640:rounded-none max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none"
-        role="dialog"
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      {/* The scrim, centring, Portal, focus trap, scroll-lock, and Escape/
+          outside-press dismissal come from the primitive; `unstyled` lets this
+          modal keep its own borderless `p-0 flex-column` scrollable box model
+          (a full-bleed sticky bordered header + ≤640px full-screen variant) that
+          the padded card recipe does not model. `mobileSheet` docks it as a
+          bottom sheet below 768px. */}
+      <DialogContent
+        unstyled
+        mobileSheet
         aria-label={title}
+        contentClassName="flex max-h-[min(800px,calc(100vh-4rem))] w-[min(720px,calc(100vw-2rem))] max-w-[480px] motion-safe:animate-[slideUp_0.2s_ease] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-solid border-border-default bg-bg-surface max-640:h-screen max-640:max-h-screen max-640:w-screen max-640:rounded-none max-768:max-w-full max-768:motion-safe:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none"
       >
         <header className="flex items-start gap-md border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-surface px-lg py-md">
           <div className="flex min-w-0 flex-1 flex-col gap-[0.15rem]">
@@ -143,9 +103,7 @@ export default function McpServersModal({
             actions={actions}
           />
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
-
-  return createPortal(overlay, document.body);
 }

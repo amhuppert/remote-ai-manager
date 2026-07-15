@@ -19,14 +19,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { parseJsonl } from "@/lib/shared/read-jsonl";
 import { resolveConfigDir } from "@/lib/config/loader";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
-import type { AgentBackendId } from "@/lib/agent-backends/types";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  ResolvedWorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { ResolvedWorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 // -- Configuration -----------------------------------------------------------
 
 const WORKFLOW_LOGS_DIR = "workflow-logs";
@@ -209,9 +210,8 @@ export function createExecutionLogger(
     let nextAttempt = 0;
     try {
       if (existsSync(filePath)) {
-        for (const line of readFileSync(filePath, "utf-8").split(/\r?\n/)) {
-          if (!line.trim()) continue;
-          const entry = JSON.parse(line) as Record<string, unknown>;
+        for (const parsed of parseJsonl(readFileSync(filePath, "utf-8"))) {
+          const entry = parsed as Record<string, unknown>;
           if (
             entry.event === "validator.transcript_begin" &&
             entry.contextId === contextId &&

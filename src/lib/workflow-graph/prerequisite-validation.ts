@@ -4,7 +4,7 @@ import {
   pathHasParentSegment,
   type WorkflowGraphValidationError,
   type WorkflowPrerequisite,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 import { containsPlaceholderOpener } from "./parameter-validation";
 

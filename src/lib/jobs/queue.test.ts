@@ -12,22 +12,14 @@ import {
 import { mergeMachine } from "../workflows/merge/machine";
 import { commitMachine } from "../workflows/commit/machine";
 import type {
-  CheckUncommittedInput,
-  CheckUncommittedOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
-  CommitChangesInput,
-  CommitChangesOutput,
   MergeMainInput,
   MergeMainOutput,
   ResolveConflictsInput,
   ResolveConflictsOutput,
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
-  RunValidationInput,
-  RunValidationOutput,
-  FixValidationInput,
-  FixValidationOutput,
   PrepareActorInput,
   PrepareActorOutput,
   PublishActorInput,
@@ -35,17 +27,42 @@ import type {
   DiscardParkedRefInput,
   DiscardParkedRefOutput,
 } from "../workflows/merge/actors";
+import type {
+  CheckUncommittedInput,
+  CheckUncommittedOutput,
+  CommitChangesInput,
+  CommitChangesOutput,
+  RunValidationInput,
+  RunValidationOutput,
+  FixValidationInput,
+  FixValidationOutput,
+} from "../workflows/validation-fix/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
 
-// ============================================================
-// Notification + job-record persistence is vi.mock()'d — legitimate DB
-// dependency that we don't want to hit from the unit test
-// ============================================================
+import {
+  createMergeIntentsRepo,
+  type MergeIntentsRepo,
+} from "../merge-intents/repo";
+import {
+  createNotificationsRepo,
+  type NotificationsRepo,
+} from "../notifications/repo";
+import { _createTestDb, _installTestDb } from "../state-store/state-db";
+import type { Db } from "../state-store/schemas";
 
-vi.mock("../notifications/repo");
-vi.mock("./repo");
-vi.mock("../merge-intents/repo");
+// The queue persists job records + merge intents through its real repos and
+// records terminal-state notifications through the real notification service,
+// all resolving `getStateDb()`. Installing a real in-memory SQLite DB (schema
+// floored on open) lets those production paths run end-to-end — no
+// internal-module mocks — so tests read the persisted rows back instead of
+// asserting on fakes. Push dispatch inside the service is fire-and-forget and
+// no-ops without push config, so it never reaches the network here. The DB is
+// (re)installed per test because the shared setup's beforeEach resets the
+// state-db singleton, which closes any previously installed connection.
+let testDb: Db;
+let mergeIntentsRepo: MergeIntentsRepo;
+let notificationsRepo: NotificationsRepo;
 
 // ============================================================
 // Actor mock fns — injected via mergeMachine.provide()
@@ -190,6 +207,14 @@ function broadcastAt(index: number): JobStatusEvent {
   return mockBroadcast.mock.calls[index]![0] as JobStatusEvent;
 }
 
+/** Total merge-intent rows persisted (no per-sha lookup needed). */
+function countMergeIntents(): number {
+  const row = testDb
+    .prepare("SELECT COUNT(*) AS count FROM merge_intents")
+    .get() as { count: number };
+  return row.count;
+}
+
 // ============================================================
 // Test Suite
 // ============================================================
@@ -202,6 +227,14 @@ describe("background-jobs", () => {
     await settle();
     vi.clearAllMocks();
     _resetForTesting();
+
+    // Fresh in-memory DB per test — installed AFTER the shared setup's
+    // beforeEach reset so the queue's real repos + notification service run
+    // against an isolated store this test can read back from.
+    testDb = _createTestDb({ inMemory: true });
+    _installTestDb(testDb);
+    mergeIntentsRepo = createMergeIntentsRepo(testDb);
+    notificationsRepo = createNotificationsRepo(testDb);
 
     releaseSession = vi.fn();
 
@@ -1245,8 +1278,6 @@ describe("background-jobs", () => {
     });
 
     it("records the merge intent against the landed commit when a merge with resolutionContext completes", async () => {
-      const { recordMergeIntent: mockRecordMergeIntent } =
-        await import("../merge-intents/repo");
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
         status: "completed" as const,
@@ -1259,17 +1290,21 @@ describe("background-jobs", () => {
       });
       await settle();
 
-      expect(mockRecordMergeIntent).toHaveBeenCalledWith({
-        projectPath: BASE_MERGE_PARAMS.projectPath,
-        commitSha: "landed-sha",
-        intent: "Session renamed SessionStore to SessionRepo.",
-        source: "session-merge",
-      });
+      const intents = mergeIntentsRepo.getMergeIntents(
+        BASE_MERGE_PARAMS.projectPath,
+        ["landed-sha"],
+      );
+      expect(intents).toEqual([
+        expect.objectContaining({
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          commitSha: "landed-sha",
+          intent: "Session renamed SessionStore to SessionRepo.",
+          source: "session-merge",
+        }),
+      ]);
     });
 
     it("does not record a merge intent when the merge completes without resolutionContext", async () => {
-      const { recordMergeIntent: mockRecordMergeIntent } =
-        await import("../merge-intents/repo");
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
         status: "completed" as const,
@@ -1279,12 +1314,14 @@ describe("background-jobs", () => {
       dispatchMergeJob(BASE_MERGE_PARAMS);
       await settle();
 
-      expect(mockRecordMergeIntent).not.toHaveBeenCalled();
+      expect(
+        mergeIntentsRepo.getMergeIntents(BASE_MERGE_PARAMS.projectPath, [
+          "landed-sha",
+        ]),
+      ).toEqual([]);
     });
 
     it("does not record a merge intent when the merge ends in conflicts", async () => {
-      const { recordMergeIntent: mockRecordMergeIntent } =
-        await import("../merge-intents/repo");
       mockMergeMain.mockResolvedValue({
         status: "conflicts",
         conflictFiles: ["src/a.ts"],
@@ -1301,12 +1338,10 @@ describe("background-jobs", () => {
       });
       await settle();
 
-      expect(mockRecordMergeIntent).not.toHaveBeenCalled();
+      expect(countMergeIntents()).toBe(0);
     });
 
     it("notification message includes target branch for merge completion", async () => {
-      const { createNotification: mockCreateNotification } =
-        await import("../notifications/repo");
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
         status: "completed" as const,
@@ -1319,16 +1354,11 @@ describe("background-jobs", () => {
       });
       await settle();
 
-      expect(mockCreateNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringContaining("csm/parent-branch"),
-        }),
-      );
+      const [notification] = notificationsRepo.getNotifications().notifications;
+      expect(notification?.message).toContain("csm/parent-branch");
     });
 
     it("notification message includes target branch for conflicts", async () => {
-      const { createNotification: mockCreateNotification } =
-        await import("../notifications/repo");
       mockMergeMain.mockResolvedValue({
         status: "conflicts",
         conflictFiles: ["file1.ts"],
@@ -1341,11 +1371,8 @@ describe("background-jobs", () => {
       });
       await settle();
 
-      expect(mockCreateNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringContaining("csm/parent-branch"),
-        }),
-      );
+      const [notification] = notificationsRepo.getNotifications().notifications;
+      expect(notification?.message).toContain("csm/parent-branch");
     });
   });
 

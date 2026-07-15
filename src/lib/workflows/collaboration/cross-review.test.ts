@@ -41,8 +41,7 @@ import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/
 import {
   createStatusBus,
   type StatusBusEnvelope,
-} from "@/lib/workflows/primitives/status-bus";
-import { createLaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
+} from "@/lib/events/status-bus";
 
 type Backend = "claude" | "codex";
 
@@ -54,8 +53,8 @@ function makeCompletedResult(
     backend,
     backendRef:
       backend === "claude"
-        ? { backend: "claude", sessionId: `sess-${backend}` }
-        : { backend: "codex", threadId: `th-${backend}` },
+        ? { backend: "claude", ref: `sess-${backend}` }
+        : { backend: "codex", ref: `th-${backend}` },
     capabilities: {
       backend,
       continuationStrength:
@@ -149,7 +148,6 @@ async function buildTestHarness(
   const statusBus = createStatusBus({
     broadcast: (e) => capturedEnvelopes.push(e),
   });
-  const laneScheduler = createLaneScheduler();
 
   const input: AsymmetricCollaborationSliceInput = {
     workflowId: "wf-cross-review-test",
@@ -169,7 +167,6 @@ async function buildTestHarness(
       return next;
     },
     laneService,
-    laneScheduler,
     envelopeStore,
     statusBus,
     now: () => "2026-05-01T00:00:00.000Z",
@@ -182,8 +179,8 @@ async function buildTestHarness(
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-05-01T00:00:00.000Z",
     },
     {
@@ -192,8 +189,8 @@ async function buildTestHarness(
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-05-01T00:00:00.000Z",
     },
   ];

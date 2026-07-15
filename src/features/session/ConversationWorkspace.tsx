@@ -17,17 +17,18 @@ import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import ConversationWorkspaceView from "@/features/session/ConversationWorkspaceView";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
-import { type EffortLevel } from "@/lib/agent-backends/schemas";
 import { useBackendModelEffort } from "@/features/session/hooks/use-backend-model-effort";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import { useDevServers } from "@/hooks/use-dev-servers";
-import { useClearInputHotkey } from "@/features/session/hooks/use-clear-input-hotkey";
+import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
 import { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page-display";
 import { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import { useSessionPageQueries } from "@/features/session/hooks/use-session-page-queries";
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
+import type { SessionWorkspaceSlices } from "@/features/session/hooks/session-workspace-slices";
 import { useApprovalGate } from "@/features/session/hooks/use-approval-gate";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
@@ -39,10 +40,7 @@ export interface ConversationWorkspaceProps {
   projectName: string;
   sessionName: string;
   conversationId: string;
-  defaultModel: string;
-  defaultEffort?: EffortLevel;
-  defaultCodexModel: string;
-  defaultCodexEffort?: EffortLevel;
+  backendDefaults: BackendSelectionDefaultsById;
   /** Part of the /conversations URL vocabulary (`autoFocus=true`); accepted here but not consumed. */
   autoFocus?: boolean;
   /**
@@ -77,10 +75,7 @@ export default function ConversationWorkspace({
   projectName,
   sessionName,
   conversationId,
-  defaultModel,
-  defaultEffort = "high",
-  defaultCodexModel,
-  defaultCodexEffort = "high",
+  backendDefaults,
   onOpenConversation,
   openTabs,
 }: ConversationWorkspaceProps): React.JSX.Element {
@@ -197,10 +192,7 @@ export default function ConversationWorkspace({
   } = useBackendModelEffort({
     conversationId,
     activeConversation,
-    defaultModel,
-    defaultEffort,
-    defaultCodexModel,
-    defaultCodexEffort,
+    backendDefaults,
     lastUsedModelId: lastUserTurnAgentSettings.modelId,
     lastUsedEffort: lastUserTurnAgentSettings.effort,
   });
@@ -347,89 +339,103 @@ export default function ConversationWorkspace({
     return <WorkspaceFallback title="Loading session..." />;
   }
 
-  return (
-    <WorkspaceContent
-      args={{
-        projectName,
-        sessionName,
-        conversationId,
-        session,
-        activeConversation,
-        conversations,
-        statusDotClass,
-        displayStatus,
-        contextPercent,
-        buildContext,
-        isFinished,
-        isReadOnly,
-        isBusy,
-        isWorkflowManagedConversation,
-        approvalGate,
-        targetBranch,
-        openTabs,
-        store,
-        local,
-        collab,
-        dsServers,
-        dsStartServer,
-        dsStopServer,
-        dsStartAll,
-        dsStopAll,
-        dsUnmanagedConflict,
-        dsDismissUnmanagedConflict,
-        dsStopUnmanagedAndRetry,
-        dsIsStoppingUnmanaged,
-        tddEnabled: session.tddEnabled,
-        onTddChange: (val) => tddMutation.mutate(val),
-        tddDisabled: tddMutation.isPending,
-        onLayoutChange: handleLayoutChange,
-        cumulativeImageCount,
-        messagesPending: messagesQuery.isPending,
-        messages: rawMessages,
-        worktreePath: session.worktreePath,
-        handleDebugPrompt,
-        handleFork,
-        hasActiveCollab,
-        hasCollabChip,
-        effectiveCollabConfig,
-        originatingCollabAgent,
-        setCollabConfigDraft,
-        clearCollabConfigDraft,
-        backendLocked,
-        selectedBackend,
-        selectedModel,
-        selectedEffort,
-        availableEffortLevels,
-        effortSupported,
-        setSelectedEffort,
-        handleBackendChange,
-        handleModelChange,
-        isRecording,
-        isProcessing,
-        voiceAvailable,
-        elapsedTime,
-        toggleRecording,
-        stopAndSubmit,
-        handleSendPrompt,
-        handlePromptTextChange,
-        canStop,
-        handleStopPrompt,
-        handleAnswerSubmit,
-        handleDelete,
-        handleConcurrentConfirm,
-        cancelConcurrentSubmission,
-        pendingConcurrentSubmission,
-        debugToggleMutation,
-      }}
-    />
-  );
+  const slices: SessionWorkspaceSlices = {
+    identity: {
+      projectName,
+      sessionName,
+      conversationId,
+      session,
+      activeConversation,
+      conversations,
+      statusDotClass,
+      displayStatus,
+      contextPercent,
+      buildContext,
+      isFinished,
+      isReadOnly,
+      isBusy,
+      isWorkflowManagedConversation,
+      targetBranch,
+      worktreePath: session.worktreePath,
+      messages: rawMessages,
+      messagesPending: messagesQuery.isPending,
+      cumulativeImageCount,
+    },
+    prompt: {
+      approvalGate,
+      handleSendPrompt,
+      handlePromptTextChange,
+      canStop,
+      handleStopPrompt,
+      handleAnswerSubmit,
+      handleDebugPrompt,
+      handleFork,
+      debugToggleMutation,
+    },
+    collaboration: {
+      hasActiveCollab,
+      hasCollabChip,
+      effectiveCollabConfig,
+      originatingCollabAgent,
+      setCollabConfigDraft,
+      clearCollabConfigDraft,
+    },
+    backendModelEffort: {
+      backendLocked,
+      selectedBackend,
+      selectedModel,
+      selectedEffort,
+      availableEffortLevels,
+      effortSupported,
+      setSelectedEffort,
+      handleBackendChange,
+      handleModelChange,
+    },
+    voice: {
+      isRecording,
+      isProcessing,
+      voiceAvailable,
+      elapsedTime,
+      toggleRecording,
+      stopAndSubmit,
+    },
+    devServers: {
+      dsServers,
+      dsStartServer,
+      dsStopServer,
+      dsStartAll,
+      dsStopAll,
+      dsUnmanagedConflict,
+      dsDismissUnmanagedConflict,
+      dsStopUnmanagedAndRetry,
+      dsIsStoppingUnmanaged,
+    },
+    layout: {
+      tddEnabled: session.tddEnabled,
+      onTddChange: (val) => tddMutation.mutate(val),
+      tddDisabled: tddMutation.isPending,
+      onLayoutChange: handleLayoutChange,
+      openTabs,
+    },
+    dialogActions: {
+      handleDelete,
+      handleConcurrentConfirm,
+      cancelConcurrentSubmission,
+      pendingConcurrentSubmission,
+    },
+    store,
+    local,
+    collab,
+  };
+
+  return <WorkspaceContent slices={slices} />;
 }
 
 function WorkspaceContent({
-  args,
+  slices,
 }: {
-  args: Parameters<typeof useSessionPageViewProps>[0];
+  slices: SessionWorkspaceSlices;
 }): React.JSX.Element {
-  const viewProps = useSessionPageViewProps(args);
+  const viewProps = useSessionPageViewProps(slices);
   return <ConversationWorkspaceView {...viewProps} />;
 }

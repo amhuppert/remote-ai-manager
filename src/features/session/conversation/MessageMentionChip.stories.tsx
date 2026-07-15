@@ -1,12 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import type { MessageMentionAttrs } from "@/lib/prompt-editor";
+import { truncate } from "@/lib/shared/truncate";
 
 const MAX_LABEL_LENGTH = 40;
-
-function truncate(label: string): string {
-  if (label.length <= MAX_LABEL_LENGTH) return label;
-  return label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
-}
 
 interface ChipPreviewProps {
   attrs: MessageMentionAttrs;
@@ -23,7 +19,11 @@ function ChipPreview({
     attrs.conversationName.length > 0
       ? attrs.conversationName
       : attrs.conversationId;
-  const label = truncate(`${conversationLabel} · msg ${attrs.messageIndex}`);
+  const label = truncate(
+    `${conversationLabel} · msg ${attrs.messageIndex}`,
+    MAX_LABEL_LENGTH,
+    { countEllipsisInBudget: true },
+  );
   const tooltip = [attrs.projectName, attrs.sessionName]
     .filter((part) => part.length > 0)
     .join(" · ");

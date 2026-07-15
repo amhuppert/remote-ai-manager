@@ -45,7 +45,6 @@ describe("createDefaultSessionArtifactRegistry", () => {
       relativePath: "memory-bank/focus.md",
       contents: "# Focus\nHello.\n",
       audience: "user_facing",
-      required: true,
       source: { workflowId: "wf-1", laneId: "lane-1" },
       description: "Current focus",
     });
@@ -82,7 +81,6 @@ describe("createDefaultSessionArtifactRegistry", () => {
       relativePath: "memory-bank/codex/run-001/notes.md",
       contents: "notes",
       audience: "internal_log",
-      required: true,
       source: { workflowId: "wf-2" },
     });
 
@@ -111,7 +109,6 @@ describe("createDefaultSessionArtifactRegistry", () => {
         relativePath: "../escape.log",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: {},
       }),
     ).rejects.toThrow(/outside the session worktree/);

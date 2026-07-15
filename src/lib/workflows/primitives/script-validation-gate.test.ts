@@ -48,6 +48,25 @@ describe("scriptValidationGateFromOutcome", () => {
     expect(gate.details).toMatchObject({ timedOut: true });
   });
 
+  it("maps a validation failure without a log artifact (merge/commit fix loop) omitting the log detail fields", () => {
+    const outcome: ScriptValidationOutcome = {
+      kind: "fail",
+      summary: "Pre-merge validation failed",
+      timedOut: false,
+    };
+    const gate = scriptValidationGateFromOutcome(outcome);
+    expect(() => gateResultSchema.parse(gate)).not.toThrow();
+    expect(gate.status).toBe("fail");
+    if (gate.status !== "fail") return;
+    expect(gate.reason).toBe("Pre-merge validation failed");
+    expect(gate.details).toMatchObject({
+      failureClass: "validation_failed",
+      timedOut: false,
+    });
+    expect(gate.details).not.toHaveProperty("logFilePath");
+    expect(gate.details).not.toHaveProperty("logRelativePath");
+  });
+
   it("returns a failing gate result with infrastructure class for a missing pre-merge command", () => {
     const outcome: ScriptValidationOutcome = {
       kind: "infra_error",

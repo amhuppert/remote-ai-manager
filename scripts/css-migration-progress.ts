@@ -139,7 +139,7 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
     note: "Diff slide-over portal positioning (`.plc-diff-*`) + prefers-reduced-motion block stay scoped (catalog residual).",
   },
   {
-    path: "src/features/session/sidebar/styles/PeekPopover.css",
+    path: "src/components/session/sidebar/styles/PeekPopover.css",
     preserved: true,
     floor: 6,
     note: "Tiptap `.ProseMirror` editor DOM + peek backdrop portal positioning + `peek-*` keyframes stay scoped.",

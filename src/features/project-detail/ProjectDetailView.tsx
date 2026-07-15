@@ -26,7 +26,7 @@ import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/Scope
 import CreateSessionModal from "./components/CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Topbar from "@/components/Topbar";
-import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
+import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {

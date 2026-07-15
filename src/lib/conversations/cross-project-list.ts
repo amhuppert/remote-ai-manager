@@ -1,21 +1,24 @@
 /**
  * Cross-project conversation enumeration for the `#`-trigger autocomplete.
  *
- * Walks the manager state — projects → sessions → conversations — and emits
- * one `ConversationListItem` per conversation. When a conversation has no
- * name and no summary, falls back to reading the first user turn from the
- * transcript to give the autocomplete a meaningful label.
+ * Walks the manager state — projects → sessions → conversations — plus the
+ * project-scoped conversation repo, and emits one `ConversationListItem` per
+ * conversation. When a conversation has no name and no summary, falls back to
+ * reading the first user turn from the transcript to give the autocomplete a
+ * meaningful label.
  */
 
 import path from "node:path";
 import {
   readState as defaultReadState,
   getConversationById as defaultGetConversationById,
+  listAllProjectConversations as defaultListAllProjectConversations,
   getStateDb,
 } from "@/lib/state-store";
 import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
 import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
 import { getFirstPromptSnippet as defaultGetFirstPromptSnippet } from "./first-prompt-snippet";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import { createLogger } from "@/lib/logging";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
@@ -38,6 +41,9 @@ export interface ListAllConversationsResult {
 
 export interface ListAllConversationsDeps {
   readState(): Promise<ManagerState>;
+  listAllProjectConversations(): Promise<
+    { projectPath: string; conversation: ConversationState }[]
+  >;
   getFirstPromptSnippet(transcriptPath: string): Promise<string | null>;
   findArtifactsByConversationIds(
     conversationIds: string[],
@@ -49,6 +55,7 @@ export interface ListAllConversationsDeps {
 
 const defaultDeps: ListAllConversationsDeps = {
   readState: defaultReadState,
+  listAllProjectConversations: defaultListAllProjectConversations,
   getFirstPromptSnippet: defaultGetFirstPromptSnippet,
   findArtifactsByConversationIds: (conversationIds) =>
     createContextArtifactsRepo(getStateDb()).findByConversationIds(
@@ -105,6 +112,20 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
 
     let projectCount = 0;
     let conversationCount = 0;
+    let projectConversationCount = 0;
+
+    const pushItem = (
+      projectPath: string,
+      session: Pick<SessionState, "sessionName" | "worktreePath">,
+      convo: ConversationState,
+    ) => {
+      const itemIndex = items.length;
+      items.push(buildConversationListItem(projectPath, session, convo));
+
+      if (needsSnippet(convo) && convo.transcriptPath !== null) {
+        pending.push({ itemIndex, transcriptPath: convo.transcriptPath });
+      }
+    };
 
     for (const [projectPath, project] of Object.entries(state.projects)) {
       if (!options.includeArchived && archivedProjects.has(projectPath))
@@ -117,20 +138,34 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
         for (const convo of session.conversations) {
           if (!options.includeArchived && convo.archived) continue;
           conversationCount += 1;
-
-          const itemIndex = items.length;
-          items.push(buildConversationListItem(projectPath, session, convo));
-
-          if (needsSnippet(convo) && convo.transcriptPath !== null) {
-            pending.push({ itemIndex, transcriptPath: convo.transcriptPath });
-          }
+          pushItem(projectPath, session, convo);
         }
       }
+    }
+
+    // Project-scoped conversations live in their own repo (not on any
+    // session), execute at the project root, and are addressed through the
+    // reserved sentinel session name.
+    const projectConversations = await deps.listAllProjectConversations();
+    for (const { projectPath, conversation } of projectConversations) {
+      if (!options.includeArchived && archivedProjects.has(projectPath))
+        continue;
+      if (!options.includeArchived && conversation.archived) continue;
+      projectConversationCount += 1;
+      pushItem(
+        projectPath,
+        {
+          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          worktreePath: projectPath,
+        },
+        conversation,
+      );
     }
 
     log.info("listing conversations", {
       projectCount,
       conversationCount,
+      projectConversationCount,
       includeArchived: options.includeArchived,
       snippetReads: pending.length,
     });

@@ -7,6 +7,13 @@ import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 
 expect.extend(matchers);
 
+// The drawer composes ui/Dialog (Radix) — it locks scroll / manages focus on
+// open, and jsdom implements none of the pointer-capture APIs it reaches for.
+Element.prototype.scrollIntoView = () => {};
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+
 vi.mock("./AgentCapabilitiesConfigurator", () => ({
   AgentCapabilitiesConfigurator: ({
     layerOptions,
@@ -82,7 +89,7 @@ describe("ScopedAgentCapabilitiesConfig — controlled mode", () => {
     expect(screen.queryByTestId("configurator-stub")).toBeNull();
   });
 
-  it("calls onOpenChange(false) when overlay is clicked", () => {
+  it("calls onOpenChange(false) when the drawer is dismissed with Escape", () => {
     const onOpenChange = vi.fn();
     render(
       <ScopedAgentCapabilitiesConfig
@@ -93,7 +100,12 @@ describe("ScopedAgentCapabilitiesConfig — controlled mode", () => {
         renderTrigger={false}
       />,
     );
-    fireEvent.click(screen.getByTestId("agent-capabilities-drawer-overlay"));
+    // Radix owns dismissal now (the drawer composes ui/Dialog's unstyled
+    // edge-anchored variant), so Escape drives onOpenChange(false).
+    fireEvent.keyDown(screen.getByRole("dialog"), {
+      key: "Escape",
+      code: "Escape",
+    });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

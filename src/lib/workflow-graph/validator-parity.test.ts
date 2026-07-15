@@ -14,11 +14,9 @@ import type {
   AgentCallResult,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
-import type {
-  GraphWorkflowAgentValidatorConfig,
-  GraphWorkflowExecution,
-  GraphWorkflowResolvedContext,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -308,6 +306,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
       text: "",
       usage: emptyTaskRunUsage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
 
     expect(next).toEqual(legacy);
@@ -329,6 +328,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
       text: rawJson,
       usage: emptyTaskRunUsage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
 
     expect(next).toEqual(legacy);
@@ -350,6 +350,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
       text,
       usage: emptyTaskRunUsage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
 
     expect(next).toEqual(legacy);
@@ -369,6 +370,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
       text,
       usage: emptyTaskRunUsage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
 
     expect(next).toEqual(legacy);
@@ -389,6 +391,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
       text: "",
       usage: emptyTaskRunUsage,
       backendRef: null,
+      continuationDisposition: "retain",
     });
 
     expect(next).toEqual(legacy);

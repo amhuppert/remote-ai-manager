@@ -7,7 +7,7 @@ import {
 } from "@/lib/conversations/mutations";
 import { useDeleteSessionMutation } from "@/lib/sessions/mutations";
 import { usePromptSubmission } from "@/features/session/hooks/use-prompt-submission";
-import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
+import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useSessionHandlers } from "@/features/session/hooks/use-session-handlers";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";

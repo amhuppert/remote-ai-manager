@@ -1,21 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createLogger } from "@/lib/logging";
+import { assertNever } from "@/lib/shared/assert-never";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
   createExecutionIndex,
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowContextEdge,
-  GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
-  WorkflowGraphValidationError,
   GraphWorkflowTaskDefinition,
+  WorkflowGraphValidationError,
+} from "@/lib/workflow-graph/definition-schemas";
+import type {
   WorkflowLiveEditOperation,
   WorkflowLiveEditRequest,
-} from "@/lib/workflows/schemas";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+} from "@/lib/workflows/edit-schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
   GraphWorkflowValidationError,
   validateResolvedWorkflow,
@@ -30,7 +33,7 @@ import {
   buildInitialTaskState,
 } from "./execution-state";
 import { computeLanePlan, recomputeLanePlanForSubgraph } from "./lane-plan";
-import type { DefinitionEditTaskPosition } from "@/lib/workflows/schemas";
+import type { DefinitionEditTaskPosition } from "@/lib/workflows/edit-schemas";
 
 const logger = createLogger("graph-workflow-runtime-edits");
 
@@ -624,12 +627,11 @@ function applyLiveEditOperation(
       return applyAddEdge(next, operation, index, ctx);
     case "remove-edge":
       return applyRemoveEdge(next, operation, index, ctx);
-    default: {
-      const exhaustive: never = operation;
-      throw new Error(
-        `unhandled live edit operation: ${String((exhaustive as { type: string }).type)}`,
+    default:
+      return assertNever(
+        operation,
+        `unhandled live edit operation: ${JSON.stringify(operation)}`,
       );
-    }
   }
 }
 

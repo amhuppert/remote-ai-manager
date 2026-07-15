@@ -1,11 +1,10 @@
 /**
  * WorkflowAgentCaller adapter tests.
  *
- * Validates the production composition point above AgentCall: lane resolution,
- * Claude conversation / Codex thread resume, post-turn outcomes, stale-ref
- * recovery, and LaneScheduler serialization. Mirrors the validation scenarios
- * named in `memory-bank/composable-workflow-primitives-integration-plan.md`
- * issues 2 and 3.
+ * Validates the production composition point above AgentCall: lane
+ * resolution, continuity resolution through injected backend continuity
+ * adapters (start / resumeOrRecover), post-turn outcomes, stale-ref
+ * recovery, and LaneScheduler serialization.
  */
 import { describe, it, expect } from "vitest";
 
@@ -28,15 +27,20 @@ import type {
   AgentCallResult,
   BackendCapabilityView,
 } from "./agent-call-vocabulary";
+import type {
+  BackendContinuityAdapter,
+  ContinuityContext,
+  ContinuityResumption,
+} from "@/lib/agent-backends/continuity";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 
 interface Recorded {
   continuities: WorkflowAgentCallContinuity[];
   agentRequests: AgentCallRequest[];
   scheduleRequests: LaneScheduleRequest[];
-  createClaudeCalls: number;
-  validateClaudeCalls: number;
-  startCodexCalls: number;
-  resumeCodexCalls: number;
+  starts: Record<string, number>;
+  resumes: Record<string, number>;
+  continuityContexts: ContinuityContext[];
 }
 
 interface Harness {
@@ -63,23 +67,30 @@ const codexCapabilities: BackendCapabilityView = {
   nativeMidTurnAskUser: false,
 };
 
+const CONTINUITY_CONTEXT: ContinuityContext = {
+  projectPath: "/projects/demo",
+  sessionName: "session-demo",
+};
+
 function buildHarness(
   opts: {
     callAgent?: WorkflowAgentCallerDeps["callAgent"];
-    validateClaudeConversation?: WorkflowAgentCallerDeps["validateClaudeConversation"];
-    resumeCodexThread?: WorkflowAgentCallerDeps["resumeCodexThread"];
-    createClaudeConversation?: WorkflowAgentCallerDeps["createClaudeConversation"];
-    startCodexThread?: WorkflowAgentCallerDeps["startCodexThread"];
+    /** Overrides the fake adapter's resumeOrRecover per backend. */
+    resumeOrRecover?: Partial<
+      Record<
+        AgentBackendId,
+        (ref: AgentSessionRef) => Promise<ContinuityResumption>
+      >
+    >;
   } = {},
 ): Harness {
   const recorded: Recorded = {
     continuities: [],
     agentRequests: [],
     scheduleRequests: [],
-    createClaudeCalls: 0,
-    validateClaudeCalls: 0,
-    startCodexCalls: 0,
-    resumeCodexCalls: 0,
+    starts: {},
+    resumes: {},
+    continuityContexts: [],
   };
   const fixedNow = "2026-04-28T00:00:00.000Z";
 
@@ -108,37 +119,49 @@ function buildHarness(
         request.kind === "task_run"
           ? request.backend
           : (request.backend ?? "claude");
-      return successResult(backend, continuity);
+      return successResult(backend as "claude" | "codex", continuity);
     });
+
+  function fakeAdapter(backend: AgentBackendId): BackendContinuityAdapter {
+    const prefix = backend === "claude" ? "claude-conv" : "codex-thread";
+    return {
+      backend,
+      async start(input) {
+        recorded.continuityContexts.push(input);
+        recorded.starts[backend] = (recorded.starts[backend] ?? 0) + 1;
+        return { backend, ref: `${prefix}-${recorded.starts[backend]}` };
+      },
+      async validate() {
+        return { status: "valid" };
+      },
+      async resumeOrRecover(ref, input) {
+        recorded.continuityContexts.push(input);
+        recorded.resumes[backend] = (recorded.resumes[backend] ?? 0) + 1;
+        const override = opts.resumeOrRecover?.[backend];
+        if (override) return override(ref);
+        return { ref, recovered: false };
+      },
+      async fork() {
+        return { kind: "unsupported" };
+      },
+    };
+  }
+
+  const adapters: Record<string, BackendContinuityAdapter> = {
+    claude: fakeAdapter("claude"),
+    codex: fakeAdapter("codex"),
+  };
 
   const deps: WorkflowAgentCallerDeps = {
     callAgent,
     laneService,
     laneScheduler,
-    createClaudeConversation:
-      opts.createClaudeConversation ??
-      (async () => {
-        recorded.createClaudeCalls++;
-        return { conversationId: `claude-conv-${recorded.createClaudeCalls}` };
-      }),
-    validateClaudeConversation:
-      opts.validateClaudeConversation ??
-      (async () => {
-        recorded.validateClaudeCalls++;
-        return true;
-      }),
-    startCodexThread:
-      opts.startCodexThread ??
-      (async () => {
-        recorded.startCodexCalls++;
-        return { threadId: `codex-thread-${recorded.startCodexCalls}` };
-      }),
-    resumeCodexThread:
-      opts.resumeCodexThread ??
-      (async ({ threadId }) => {
-        recorded.resumeCodexCalls++;
-        return { threadId };
-      }),
+    continuityContext: CONTINUITY_CONTEXT,
+    continuityAdapter(backend) {
+      const adapter = adapters[backend];
+      if (!adapter) throw new Error(`no fake adapter for ${backend}`);
+      return adapter;
+    },
     now: () => fixedNow,
   };
 
@@ -153,8 +176,8 @@ function successResult(
   const backendRef =
     continuity.resumeRef ??
     (backend === "claude"
-      ? { backend: "claude" as const, sessionId: "sess-default" }
-      : { backend: "codex" as const, threadId: "thread-default" });
+      ? { backend: "claude" as const, ref: "sess-default" }
+      : { backend: "codex" as const, ref: "thread-default" });
   return {
     backend,
     backendRef,
@@ -166,52 +189,30 @@ function successResult(
   };
 }
 
-async function seedClaudeLane(
+async function seedLane(
   deps: WorkflowAgentCallerDeps,
   laneRef: { workflowId: string; laneId: string },
-  conversationId: string | undefined,
-  options: { rotate?: boolean; contextLimitTokens?: number } = {},
+  backend: "claude" | "codex",
+  ref: string | null,
+  options: {
+    rotate?: boolean;
+    contextLimitTokens?: number;
+    continuityEnabled?: boolean;
+  } = {},
 ): Promise<void> {
   const seeded: LaneState = {
     workflowId: laneRef.workflowId,
     laneId: laneRef.laneId,
-    backend: "claude",
+    backend,
+    ref,
     writeCapability: "write_capable",
     policy: {
-      continuityEnabled: true,
+      continuityEnabled: options.continuityEnabled ?? true,
       ...(options.contextLimitTokens !== undefined
         ? { contextLimitTokens: options.contextLimitTokens }
         : {}),
     },
-    backendState: {
-      backend: "claude",
-      ...(conversationId !== undefined ? { conversationId } : {}),
-    },
-    metrics: {
-      backend: "claude",
-      rotateBeforeNextTurn: options.rotate === true,
-    },
-    lastUsedAt: "2026-04-28T00:00:00.000Z",
-  };
-  await deps.laneService.initialize(seeded);
-}
-
-async function seedCodexLane(
-  deps: WorkflowAgentCallerDeps,
-  laneRef: { workflowId: string; laneId: string },
-  threadId: string | undefined,
-): Promise<void> {
-  const seeded: LaneState = {
-    workflowId: laneRef.workflowId,
-    laneId: laneRef.laneId,
-    backend: "codex",
-    writeCapability: "write_capable",
-    policy: { continuityEnabled: true },
-    backendState: {
-      backend: "codex",
-      ...(threadId !== undefined ? { threadId } : {}),
-    },
-    metrics: { backend: "codex", rotateBeforeNextTurn: false },
+    metrics: { rotateBeforeNextTurn: options.rotate === true },
     lastUsedAt: "2026-04-28T00:00:00.000Z",
   };
   await deps.laneService.initialize(seeded);
@@ -259,90 +260,87 @@ describe("createWorkflowAgentCaller", () => {
     it("resumes the prior Claude conversation for a lane-backed call", async () => {
       const { deps, recorded } = buildHarness();
       const laneRef = { workflowId: "wf-1", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, "claude-prior-1");
+      await seedLane(deps, laneRef, "claude", "claude-prior-1");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildClaudeRequest(laneRef));
 
-      expect(recorded.validateClaudeCalls).toBe(1);
-      expect(recorded.createClaudeCalls).toBe(0);
+      expect(recorded.resumes["claude"]).toBe(1);
+      expect(recorded.starts["claude"]).toBeUndefined();
       expect(recorded.continuities).toHaveLength(1);
       expect(recorded.continuities[0]).toMatchObject({
         laneRef,
         laneAction: "reuse",
-        resumeRef: { backend: "claude", sessionId: "claude-prior-1" },
+        resumeRef: { backend: "claude", ref: "claude-prior-1" },
       });
     });
 
     it("resumes the prior Codex thread for a lane-backed call", async () => {
       const { deps, recorded } = buildHarness();
       const laneRef = { workflowId: "wf-1", laneId: "codex" };
-      await seedCodexLane(deps, laneRef, "codex-prior-1");
+      await seedLane(deps, laneRef, "codex", "codex-prior-1");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildCodexRequest(laneRef));
 
-      expect(recorded.resumeCodexCalls).toBe(1);
-      expect(recorded.startCodexCalls).toBe(0);
+      expect(recorded.resumes["codex"]).toBe(1);
+      expect(recorded.starts["codex"]).toBeUndefined();
       expect(recorded.continuities).toHaveLength(1);
       expect(recorded.continuities[0]).toMatchObject({
         laneRef,
         laneAction: "reuse",
-        resumeRef: { backend: "codex", threadId: "codex-prior-1" },
+        resumeRef: { backend: "codex", ref: "codex-prior-1" },
       });
     });
 
-    it("creates a fresh Claude conversation when the lane has no prior backend ref", async () => {
+    it("forwards the project/session continuity context to the adapter", async () => {
       const { deps, recorded } = buildHarness();
-      const laneRef = { workflowId: "wf-2", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, undefined);
+      const laneRef = { workflowId: "wf-ctx", laneId: "claude" };
+      await seedLane(deps, laneRef, "claude", null);
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildClaudeRequest(laneRef));
 
-      expect(recorded.createClaudeCalls).toBe(1);
-      expect(recorded.validateClaudeCalls).toBe(0);
+      expect(recorded.continuityContexts[0]).toEqual(CONTINUITY_CONTEXT);
+    });
+
+    it("starts a fresh backend session when the lane has no prior handle", async () => {
+      const { deps, recorded } = buildHarness();
+      const laneRef = { workflowId: "wf-2", laneId: "claude" };
+      await seedLane(deps, laneRef, "claude", null);
+      const caller = createWorkflowAgentCaller(deps);
+
+      await caller.call(buildClaudeRequest(laneRef));
+
+      expect(recorded.starts["claude"]).toBe(1);
+      expect(recorded.resumes["claude"]).toBeUndefined();
       const continuity = recorded.continuities[0];
       expect(continuity?.laneAction).toBe("create");
       expect(continuity?.resumeRef).toEqual({
         backend: "claude",
-        sessionId: "claude-conv-1",
+        ref: "claude-conv-1",
       });
-    });
-
-    it("creates a fresh Codex thread when the lane has no prior thread", async () => {
-      const { deps, recorded } = buildHarness();
-      const laneRef = { workflowId: "wf-2", laneId: "codex" };
-      await seedCodexLane(deps, laneRef, undefined);
-      const caller = createWorkflowAgentCaller(deps);
-
-      await caller.call(buildCodexRequest(laneRef));
-
-      expect(recorded.startCodexCalls).toBe(1);
-      expect(recorded.resumeCodexCalls).toBe(0);
-      const continuity = recorded.continuities[0];
-      expect(continuity?.laneAction).toBe("create");
-      expect(continuity?.resumeRef).toEqual({
-        backend: "codex",
-        threadId: "codex-thread-1",
-      });
+      const after = await deps.laneService.resolve(laneRef);
+      expect(after?.ref).toBe("claude-conv-1");
     });
 
     it("rotates to a fresh backend when rotateBeforeNextTurn is set", async () => {
       const { deps, recorded } = buildHarness();
       const laneRef = { workflowId: "wf-3", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, "old-claude-conv", { rotate: true });
+      await seedLane(deps, laneRef, "claude", "old-claude-conv", {
+        rotate: true,
+      });
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildClaudeRequest(laneRef));
 
-      expect(recorded.createClaudeCalls).toBe(1);
-      expect(recorded.validateClaudeCalls).toBe(0);
+      expect(recorded.starts["claude"]).toBe(1);
+      expect(recorded.resumes["claude"]).toBeUndefined();
       const continuity = recorded.continuities[0];
       expect(continuity?.laneAction).toBe("create");
       expect(continuity?.resumeRef).toEqual({
         backend: "claude",
-        sessionId: "claude-conv-1",
+        ref: "claude-conv-1",
       });
     });
 
@@ -356,63 +354,23 @@ describe("createWorkflowAgentCaller", () => {
       ).rejects.toThrow(/not initialized/);
     });
 
-    it("starts a fresh Claude conversation when the lane policy disables continuity, even if a prior conversationId is recorded", async () => {
-      const { deps, recorded } = buildHarness();
-      const laneRef = { workflowId: "wf-no-cont", laneId: "claude" };
-      await deps.laneService.initialize({
-        workflowId: laneRef.workflowId,
-        laneId: laneRef.laneId,
-        backend: "claude",
-        writeCapability: "write_capable",
-        policy: { continuityEnabled: false },
-        backendState: {
-          backend: "claude",
-          conversationId: "claude-prior-disabled",
-        },
-        metrics: { backend: "claude", rotateBeforeNextTurn: false },
-        lastUsedAt: "2026-04-28T00:00:00.000Z",
-      });
-      const caller = createWorkflowAgentCaller(deps);
-
-      await caller.call(buildClaudeRequest(laneRef));
-
-      expect(recorded.validateClaudeCalls).toBe(0);
-      expect(recorded.createClaudeCalls).toBe(1);
-      const continuity = recorded.continuities[0];
-      expect(continuity?.laneAction).toBe("create");
-      expect(continuity?.resumeRef).toEqual({
-        backend: "claude",
-        sessionId: "claude-conv-1",
-      });
-    });
-
-    it("starts a fresh Codex thread when the lane policy disables continuity, even if a prior threadId is recorded", async () => {
+    it("starts a fresh session when the lane policy disables continuity, even if a prior handle is recorded", async () => {
       const { deps, recorded } = buildHarness();
       const laneRef = { workflowId: "wf-no-cont", laneId: "codex" };
-      await deps.laneService.initialize({
-        workflowId: laneRef.workflowId,
-        laneId: laneRef.laneId,
-        backend: "codex",
-        writeCapability: "write_capable",
-        policy: { continuityEnabled: false },
-        backendState: {
-          backend: "codex",
-          threadId: "codex-prior-disabled",
-        },
-        metrics: { backend: "codex", rotateBeforeNextTurn: false },
-        lastUsedAt: "2026-04-28T00:00:00.000Z",
+      await seedLane(deps, laneRef, "codex", "codex-prior-disabled", {
+        continuityEnabled: false,
       });
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildCodexRequest(laneRef));
 
-      expect(recorded.resumeCodexCalls).toBe(0);
-      expect(recorded.startCodexCalls).toBe(1);
+      expect(recorded.resumes["codex"]).toBeUndefined();
+      expect(recorded.starts["codex"]).toBe(1);
       const continuity = recorded.continuities[0];
       expect(continuity?.laneAction).toBe("create");
       expect(continuity?.resumeRef).toEqual({
         backend: "codex",
-        threadId: "codex-thread-1",
+        ref: "codex-thread-1",
       });
     });
   });
@@ -431,11 +389,11 @@ describe("createWorkflowAgentCaller", () => {
           request.kind === "task_run"
             ? request.backend
             : (request.backend ?? "claude");
-        return successResult(backend, continuity);
+        return successResult(backend as "claude" | "codex", continuity);
       };
       const { deps } = buildHarness({ callAgent });
-      await seedClaudeLane(deps, { workflowId: "wf", laneId: "a" }, "ca");
-      await seedClaudeLane(deps, { workflowId: "wf", laneId: "b" }, "cb");
+      await seedLane(deps, { workflowId: "wf", laneId: "a" }, "claude", "ca");
+      await seedLane(deps, { workflowId: "wf", laneId: "b" }, "claude", "cb");
       const caller = createWorkflowAgentCaller(deps);
 
       await Promise.all([
@@ -469,11 +427,11 @@ describe("createWorkflowAgentCaller", () => {
           request.kind === "task_run"
             ? request.backend
             : (request.backend ?? "claude");
-        return successResult(backend, continuity);
+        return successResult(backend as "claude" | "codex", continuity);
       };
       const { deps } = buildHarness({ callAgent });
-      await seedClaudeLane(deps, { workflowId: "wf", laneId: "a" }, "ca");
-      await seedClaudeLane(deps, { workflowId: "wf", laneId: "b" }, "cb");
+      await seedLane(deps, { workflowId: "wf", laneId: "a" }, "claude", "ca");
+      await seedLane(deps, { workflowId: "wf", laneId: "b" }, "claude", "cb");
       const caller = createWorkflowAgentCaller(deps);
 
       await Promise.all([
@@ -507,11 +465,11 @@ describe("createWorkflowAgentCaller", () => {
           request.kind === "task_run"
             ? request.backend
             : (request.backend ?? "claude");
-        return successResult(backend, continuity);
+        return successResult(backend as "claude" | "codex", continuity);
       };
       const { deps, recorded } = buildHarness({ callAgent });
-      await seedClaudeLane(deps, { workflowId: "wf", laneId: "a" }, "ca");
-      await seedClaudeLane(deps, { workflowId: "wf", laneId: "b" }, "cb");
+      await seedLane(deps, { workflowId: "wf", laneId: "a" }, "claude", "ca");
+      await seedLane(deps, { workflowId: "wf", laneId: "b" }, "claude", "cb");
       const caller = createWorkflowAgentCaller(deps);
 
       await Promise.all([
@@ -555,7 +513,7 @@ describe("createWorkflowAgentCaller", () => {
       };
       const { deps } = buildHarness({ callAgent });
       const laneRef = { workflowId: "wf-rot", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, "claude-prior", {
+      await seedLane(deps, laneRef, "claude", "claude-prior", {
         contextLimitTokens: 150_000,
       });
       const caller = createWorkflowAgentCaller(deps);
@@ -566,16 +524,14 @@ describe("createWorkflowAgentCaller", () => {
 
       const after = await deps.laneService.resolve(laneRef);
       expect(after?.metrics.rotateBeforeNextTurn).toBe(true);
-      if (after?.metrics.backend === "claude") {
-        expect(after.metrics.contextTokens).toBe(200_000);
-        expect(after.metrics.contextWindowMax).toBe(250_000);
-      }
+      expect(after?.metrics.contextTokens).toBe(200_000);
+      expect(after?.metrics.contextWindowMax).toBe(250_000);
     });
 
     it("records the post-turn Codex thread id and turn usage", async () => {
       const callAgent: WorkflowAgentCallerDeps["callAgent"] = async () => ({
         backend: "codex",
-        backendRef: { backend: "codex", threadId: "codex-after-turn" },
+        backendRef: { backend: "codex", ref: "codex-after-turn" },
         capabilities: codexCapabilities,
         usage: { inputTokens: 50, outputTokens: 30, cachedInputTokens: 5 },
         artifacts: [],
@@ -583,26 +539,22 @@ describe("createWorkflowAgentCaller", () => {
       });
       const { deps } = buildHarness({ callAgent });
       const laneRef = { workflowId: "wf-codex-rec", laneId: "codex" };
-      await seedCodexLane(deps, laneRef, "codex-prior");
+      await seedLane(deps, laneRef, "codex", "codex-prior");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildCodexRequest(laneRef));
 
       const after = await deps.laneService.resolve(laneRef);
-      if (after?.backendState.backend === "codex") {
-        expect(after.backendState.threadId).toBe("codex-after-turn");
-      }
-      if (after?.metrics.backend === "codex") {
-        expect(after.metrics.lastTurnUsage).toEqual({
-          inputTokens: 50,
-          cachedInputTokens: 5,
-          outputTokens: 30,
-        });
-        expect(after.metrics.rotateBeforeNextTurn).toBe(false);
-      }
+      expect(after?.ref).toBe("codex-after-turn");
+      expect(after?.metrics.lastTurnUsage).toEqual({
+        inputTokens: 50,
+        cachedInputTokens: 5,
+        outputTokens: 30,
+      });
+      expect(after?.metrics.rotateBeforeNextTurn).toBe(false);
     });
 
-    it("flips Codex rotateBeforeNextTurn when the agent call fails", async () => {
+    it("retains a Codex lane when a failed call explicitly retains continuation", async () => {
       const callAgent: WorkflowAgentCallerDeps["callAgent"] = async () => ({
         backend: "codex",
         backendRef: null,
@@ -617,22 +569,52 @@ describe("createWorkflowAgentCaller", () => {
             message: "boom",
           },
         },
+        continuationDisposition: "retain",
       });
       const { deps } = buildHarness({ callAgent });
       const laneRef = { workflowId: "wf-fail", laneId: "codex" };
-      await seedCodexLane(deps, laneRef, "codex-prior");
+      await seedLane(deps, laneRef, "codex", "codex-prior");
+      const caller = createWorkflowAgentCaller(deps);
+
+      await caller.call(buildCodexRequest(laneRef));
+
+      const after = await deps.laneService.resolve(laneRef);
+      expect(after?.metrics.rotateBeforeNextTurn).toBe(false);
+    });
+
+    it("rotates a lane when the call explicitly clears continuation", async () => {
+      const callAgent: WorkflowAgentCallerDeps["callAgent"] = async () => ({
+        backend: "codex",
+        backendRef: null,
+        capabilities: codexCapabilities,
+        usage: {},
+        artifacts: [],
+        outcome: {
+          kind: "failed",
+          error: {
+            failureKind: "backend_error",
+            backend: "codex",
+            message: "boom",
+          },
+        },
+        continuationDisposition: "clear",
+      });
+      const { deps } = buildHarness({ callAgent });
+      const laneRef = { workflowId: "wf-clear", laneId: "codex" };
+      await seedLane(deps, laneRef, "codex", "codex-prior");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildCodexRequest(laneRef));
 
       const after = await deps.laneService.resolve(laneRef);
       expect(after?.metrics.rotateBeforeNextTurn).toBe(true);
+      expect(after?.ref).toBe("codex-prior");
     });
 
     it("propagates the error when recording the post-turn outcome fails", async () => {
       const { deps } = buildHarness();
       const laneRef = { workflowId: "wf-record-fail", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, "claude-prior-1");
+      await seedLane(deps, laneRef, "claude", "claude-prior-1");
       const failingLaneService: WorkflowAgentCallerDeps["laneService"] = {
         resolve: deps.laneService.resolve,
         initialize: deps.laneService.initialize,
@@ -652,63 +634,240 @@ describe("createWorkflowAgentCaller", () => {
     });
   });
 
+  describe("two-turn format follow-up (single scheduled operation)", () => {
+    it("acquires the scheduler once for a work turn plus a format follow-up, threading the work turn's advanced ref into the format turn", async () => {
+      const records: WorkflowAgentCallContinuity[] = [];
+      const prompts: string[] = [];
+      const callAgent: WorkflowAgentCallerDeps["callAgent"] = async (
+        request,
+        continuity,
+      ) => {
+        records.push(continuity);
+        prompts.push(
+          request.kind === "task_run" || request.kind === "conversation_turn"
+            ? request.prompt
+            : "",
+        );
+        // Each turn advances the codex thread so the format turn must resume
+        // the work turn's newly minted ref, not the seeded one.
+        return {
+          backend: "codex",
+          backendRef: {
+            backend: "codex",
+            ref: `thread-after-${records.length}`,
+          },
+          capabilities: codexCapabilities,
+          usage: {},
+          artifacts: [],
+          outcome: { kind: "completed", text: "ok" },
+        };
+      };
+      const { deps, recorded } = buildHarness({ callAgent });
+      const laneRef = { workflowId: "wf-two-turn", laneId: "codex" };
+      await seedLane(deps, laneRef, "codex", "codex-seed");
+      const caller = createWorkflowAgentCaller(deps);
+
+      const result = await caller.call({
+        laneRef,
+        sessionKey: "session-two-turn",
+        writeCapability: "write_capable",
+        agentCallRequest: {
+          kind: "task_run",
+          backend: "codex",
+          prompt: "work turn prompt",
+          laneRef,
+          writeCapability: "write_capable",
+        },
+        formatFollowUp: {
+          kind: "task_run",
+          backend: "codex",
+          prompt: "format turn prompt",
+          laneRef,
+          writeCapability: "write_capable",
+          outputSchema: { type: "object" },
+        },
+      });
+
+      // Two backend turns ran; ONE scheduler acquisition wrapped both.
+      expect(prompts).toEqual(["work turn prompt", "format turn prompt"]);
+      expect(recorded.scheduleRequests).toHaveLength(1);
+
+      // The work turn resumed the seeded ref; the format turn resumed the ref
+      // the work turn advanced (persisted between the two turns in one section).
+      expect(records[0]?.resumeRef).toEqual({
+        backend: "codex",
+        ref: "codex-seed",
+      });
+      expect(records[1]?.resumeRef).toEqual({
+        backend: "codex",
+        ref: "thread-after-1",
+      });
+
+      // The returned result is the format turn's.
+      expect(result.backendRef).toEqual({
+        backend: "codex",
+        ref: "thread-after-2",
+      });
+    });
+
+    it("does not resume the work turn's ref for the format turn when lane continuity is disabled", async () => {
+      const records: WorkflowAgentCallContinuity[] = [];
+      const callAgent: WorkflowAgentCallerDeps["callAgent"] = async (
+        _request,
+        continuity,
+      ) => {
+        records.push(continuity);
+        return {
+          backend: "codex",
+          backendRef: {
+            backend: "codex",
+            ref: `thread-after-${records.length}`,
+          },
+          capabilities: codexCapabilities,
+          usage: {},
+          artifacts: [],
+          outcome: { kind: "completed", text: "ok" },
+        };
+      };
+      const { deps } = buildHarness({ callAgent });
+      const laneRef = { workflowId: "wf-two-turn-no-cont", laneId: "codex" };
+      await seedLane(deps, laneRef, "codex", "codex-seed", {
+        continuityEnabled: false,
+      });
+      const caller = createWorkflowAgentCaller(deps);
+
+      await caller.call({
+        laneRef,
+        sessionKey: "session-two-turn-no-cont",
+        writeCapability: "write_capable",
+        agentCallRequest: {
+          kind: "task_run",
+          backend: "codex",
+          prompt: "work",
+          laneRef,
+          writeCapability: "write_capable",
+        },
+        formatFollowUp: {
+          kind: "task_run",
+          backend: "codex",
+          prompt: "format",
+          laneRef,
+          writeCapability: "write_capable",
+          outputSchema: { type: "object" },
+        },
+      });
+
+      // Continuity disabled: every turn starts a fresh backend session, so
+      // neither turn carries a resume ref (laneAction === "create").
+      expect(records[0]?.laneAction).toBe("create");
+      expect(records[1]?.laneAction).toBe("create");
+    });
+
+    it("skips the format turn and returns the work turn result when the work turn does not complete", async () => {
+      let callCount = 0;
+      const callAgent: WorkflowAgentCallerDeps["callAgent"] = async () => {
+        callCount++;
+        return {
+          backend: "codex",
+          backendRef: null,
+          capabilities: codexCapabilities,
+          usage: {},
+          artifacts: [],
+          outcome: {
+            kind: "failed",
+            error: {
+              failureKind: "backend_error",
+              backend: "codex",
+              message: "work turn boom",
+            },
+          },
+        };
+      };
+      const { deps } = buildHarness({ callAgent });
+      const laneRef = { workflowId: "wf-two-turn-fail", laneId: "codex" };
+      await seedLane(deps, laneRef, "codex", "codex-seed");
+      const caller = createWorkflowAgentCaller(deps);
+
+      const result = await caller.call({
+        laneRef,
+        sessionKey: "session-two-turn-fail",
+        writeCapability: "write_capable",
+        agentCallRequest: {
+          kind: "task_run",
+          backend: "codex",
+          prompt: "work",
+          laneRef,
+          writeCapability: "write_capable",
+        },
+        formatFollowUp: {
+          kind: "task_run",
+          backend: "codex",
+          prompt: "format",
+          laneRef,
+          writeCapability: "write_capable",
+          outputSchema: { type: "object" },
+        },
+      });
+
+      expect(callCount).toBe(1);
+      expect(result.outcome.kind).toBe("failed");
+    });
+  });
+
   describe("stale backend recovery", () => {
-    it("creates a fresh Claude conversation when validation reports the prior conversation is gone", async () => {
+    it("treats an adapter-recovered handle as a fresh session and persists it on the lane", async () => {
       const { deps, recorded } = buildHarness({
-        validateClaudeConversation: async () => {
-          recorded?.validateClaudeCalls;
-          return false;
+        resumeOrRecover: {
+          claude: async () => ({
+            ref: { backend: "claude", ref: "claude-recovered-1" },
+            recovered: true,
+          }),
         },
       });
       const laneRef = { workflowId: "wf-stale", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, "claude-deleted-1");
+      await seedLane(deps, laneRef, "claude", "claude-deleted-1");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildClaudeRequest(laneRef));
 
-      expect(recorded.createClaudeCalls).toBe(1);
       const continuity = recorded.continuities[0];
       expect(continuity?.laneAction).toBe("create");
       expect(continuity?.resumeRef).toEqual({
         backend: "claude",
-        sessionId: "claude-conv-1",
+        ref: "claude-recovered-1",
       });
       const after = await deps.laneService.resolve(laneRef);
       expect(after?.workflowId).toBe(laneRef.workflowId);
       expect(after?.laneId).toBe(laneRef.laneId);
-      if (after?.backendState.backend === "claude") {
-        expect(after.backendState.conversationId).toBe("claude-conv-1");
-      }
+      expect(after?.ref).toBe("claude-recovered-1");
     });
 
-    it("starts a fresh Codex thread when resume rejects (expired thread)", async () => {
+    it("starts a fresh session when resumeOrRecover rejects (expired handle)", async () => {
       let attempt = 0;
       const { deps, recorded } = buildHarness({
-        resumeCodexThread: async () => {
-          attempt++;
-          throw new Error("thread expired");
+        resumeOrRecover: {
+          codex: async () => {
+            attempt++;
+            throw new Error("thread expired");
+          },
         },
       });
       const laneRef = { workflowId: "wf-stale", laneId: "codex" };
-      await seedCodexLane(deps, laneRef, "codex-expired-1");
+      await seedLane(deps, laneRef, "codex", "codex-expired-1");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildCodexRequest(laneRef));
 
       expect(attempt).toBe(1);
-      expect(recorded.startCodexCalls).toBe(1);
+      expect(recorded.starts["codex"]).toBe(1);
       const continuity = recorded.continuities[0];
       expect(continuity?.laneAction).toBe("create");
       expect(continuity?.resumeRef).toEqual({
         backend: "codex",
-        threadId: "codex-thread-1",
+        ref: "codex-thread-1",
       });
       const after = await deps.laneService.resolve(laneRef);
-      expect(after?.workflowId).toBe(laneRef.workflowId);
-      expect(after?.laneId).toBe(laneRef.laneId);
-      if (after?.backendState.backend === "codex") {
-        expect(after.backendState.threadId).toBe("codex-thread-1");
-      }
+      expect(after?.ref).toBe("codex-thread-1");
     });
 
     it("retries once when callAgent throws a stale-backend-ref error", async () => {
@@ -729,7 +888,7 @@ describe("createWorkflowAgentCaller", () => {
       };
       const { deps, recorded } = buildHarness({ callAgent });
       const laneRef = { workflowId: "wf-mid-stale", laneId: "claude" };
-      await seedClaudeLane(deps, laneRef, "claude-pre-stale");
+      await seedLane(deps, laneRef, "claude", "claude-pre-stale");
       const caller = createWorkflowAgentCaller(deps);
 
       await caller.call(buildClaudeRequest(laneRef));
@@ -738,14 +897,14 @@ describe("createWorkflowAgentCaller", () => {
       expect(records[0]?.laneAction).toBe("reuse");
       expect(records[0]?.resumeRef).toEqual({
         backend: "claude",
-        sessionId: "claude-pre-stale",
+        ref: "claude-pre-stale",
       });
       expect(records[1]?.laneAction).toBe("create");
       expect(records[1]?.resumeRef).toEqual({
         backend: "claude",
-        sessionId: "claude-conv-1",
+        ref: "claude-conv-1",
       });
-      expect(recorded.createClaudeCalls).toBe(1);
+      expect(recorded.starts["claude"]).toBe(1);
     });
   });
 });

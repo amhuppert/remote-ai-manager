@@ -2,9 +2,6 @@ import { isCollabTriggerMessage } from "@/components/conversation/conversation-r
 import type { CollaborationArtifact } from "@/lib/workflows/collaboration/types";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 
-export const COLLAB_RUNNING_TOOLTIP =
-  "collaboration in progress \u00b7 stop the run to continue";
-
 export interface CollabEnvelopeLike {
   status: "running" | "paused" | "completed" | "failed";
   featureSnapshot: unknown;

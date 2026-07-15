@@ -13,10 +13,16 @@
  */
 
 import { z } from "zod";
-import { agentSessionRefSchema } from "@/lib/agent-backends/schemas";
+import {
+  agentBackendIdShapeSchema,
+  agentSessionRefSchema,
+} from "@/lib/shared/schemas";
 import { agentTranscriptEntrySchema } from "@/lib/agent-backends/transcript";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
+import { continuationDispositionSchema } from "@/lib/agent-backends/errors";
+import { messageContentBlockSchema } from "@/lib/conversations/message-content-schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 
 export const laneRefSchema = z.object({
   workflowId: z.string().min(1),
@@ -40,6 +46,15 @@ export const laneWriteCapabilitySchema = z.enum([
   "write_capable",
 ]);
 export type LaneWriteCapability = z.infer<typeof laneWriteCapabilitySchema>;
+
+/**
+ * The write capability assumed when a caller does not specify one. The single
+ * declaration every scheduling/continuity module imports: defaulting to
+ * `write_capable` preserves the single-flight safety model — the layer never
+ * silently relaxes worktree serialization for an unlabelled execution.
+ */
+export const DEFAULT_LANE_WRITE_CAPABILITY: LaneWriteCapability =
+  "write_capable";
 
 const conversationImageRefSchema = z.object({
   index: z.number().int().nonnegative(),
@@ -81,12 +96,12 @@ const baseRequestFields = {
 export const agentCallRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("conversation_turn"),
-    backend: agentBackendSchema.optional(),
+    backend: agentBackendIdShapeSchema.optional(),
     ...baseRequestFields,
   }),
   z.object({
     kind: z.literal("task_run"),
-    backend: agentBackendSchema,
+    backend: agentBackendIdShapeSchema,
     systemInstructions: z.string().optional(),
     ...baseRequestFields,
   }),
@@ -141,13 +156,18 @@ const artifactRefSchema = z.object({
 });
 export type ArtifactRef = z.infer<typeof artifactRefSchema>;
 
-const normalizedAgentCallFailureKindSchema = z.enum([
+export const normalizedAgentCallFailureKindSchema = z.enum([
   "timeout",
   "schema_validation",
   "backend_error",
   "aborted",
   "capability_unavailable",
+  "stale_resume_ref",
+  "session_died",
 ]);
+export type NormalizedAgentCallFailureKind = z.infer<
+  typeof normalizedAgentCallFailureKindSchema
+>;
 
 export const normalizedAgentCallErrorSchema = z.object({
   failureKind: normalizedAgentCallFailureKindSchema,
@@ -159,12 +179,37 @@ export const normalizedAgentCallErrorSchema = z.object({
 export const pauseKindSchema = z.enum(["mid_turn", "post_turn"]);
 export type PauseKind = z.infer<typeof pauseKindSchema>;
 
+/**
+ * Where the structured-output gate found the accepted payload, in the shared
+ * extraction-precedence vocabulary (`agent-backends/structured-output`).
+ */
+export const agentCallStructuredOutputParseSchema = z.object({
+  source: z.enum(["native", "raw_json", "fenced"]),
+});
+export type AgentCallStructuredOutputParse = z.infer<
+  typeof agentCallStructuredOutputParseSchema
+>;
+
+const backgroundWaitSummaryInputSchema = z.custom<BackgroundWaitSummary>(
+  (value) =>
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { waitedTaskIds?: unknown }).waitedTaskIds),
+  { message: "backgroundWait must be a BackgroundWaitSummary" },
+);
+
 const agentCallOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("completed"),
     text: z.string().nullable(),
     structuredOutput: z.unknown().optional(),
     transcript: agentTranscriptEntrySchema.array().optional(),
+    /** Number of agentic turns the backend reported for this call. */
+    numTurns: z.number().int().nonnegative().optional(),
+    /** Full assistant content of the turn, in transcript block vocabulary. */
+    contentBlocks: messageContentBlockSchema.array().optional(),
+    /** Set by the structured-output gate when it accepted a candidate. */
+    parse: agentCallStructuredOutputParseSchema.optional(),
   }),
   z.object({
     kind: z.literal("paused"),
@@ -176,6 +221,14 @@ const agentCallOutcomeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("failed"),
     transcript: agentTranscriptEntrySchema.array().optional(),
     error: normalizedAgentCallErrorSchema,
+    numTurns: z.number().int().nonnegative().optional(),
+    /**
+     * Partial assistant content produced before the failure. Present (possibly
+     * empty) exactly when the backend produced a turn result the failure was
+     * derived from; absent when dispatch failed without a turn result (thrown
+     * error, pre-dispatch gate).
+     */
+    contentBlocks: messageContentBlockSchema.array().optional(),
   }),
 ]);
 type AgentCallOutcome = z.infer<typeof agentCallOutcomeSchema>;
@@ -188,6 +241,16 @@ export const agentCallResultSchema = z.object({
   usage: agentCallUsageMetricsSchema,
   artifacts: z.array(artifactRefSchema),
   outcome: agentCallOutcomeSchema,
+  /**
+   * Whether the persisted continuation ref is still usable after this call:
+   * the adapter's own verdict when it produced a result. Turnless failures
+   * retain the prior continuation because no adapter invalidation exists.
+   */
+  continuationDisposition: continuationDispositionSchema.optional(),
+  /** True when the backend auto-compacted context at least once this call. */
+  compacted: z.boolean().optional(),
+  /** Bounded background-task wait the turn performed, when one occurred. */
+  backgroundWait: backgroundWaitSummaryInputSchema.optional(),
 });
 export type AgentCallResult = z.infer<typeof agentCallResultSchema>;
 

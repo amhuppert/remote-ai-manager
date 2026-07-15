@@ -702,6 +702,14 @@ export default function AskQuestionPanel({
         ref={sheetRef}
         tabIndex={-1}
         role="dialog"
+        // Sanctioned bespoke-overlay survivor (seam-adoption site marker): a
+        // dual-mode banner/max morph — this ONE element persists as an inline
+        // non-modal banner and morphs in place (CSS height transition) into the
+        // maximized sheet, so a portaled ui/Dialog cannot host it. Deletion
+        // condition: a persistent morphing-surface Dialog variant that keeps the
+        // in-place morph while owning Radix Tab-focus containment (the residual
+        // gap the maximized view still has; Escape + focus-move are handled here).
+        data-bespoke-overlay-justified=""
         aria-label="Agent question"
       >
         {view === "banner" ? (

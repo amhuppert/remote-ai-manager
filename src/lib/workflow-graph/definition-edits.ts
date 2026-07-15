@@ -1,14 +1,16 @@
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type {
-  DefinitionEditOperation,
-  DefinitionEditTaskPosition,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
   WorkflowDefinitionRecord,
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
-import { workflowSemanticDefinitionSchema } from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
+import type {
+  DefinitionEditOperation,
+  DefinitionEditTaskPosition,
+} from "@/lib/workflows/edit-schemas";
+import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import { validateAuthoredDefinition } from "./validation";
 import { generateWorkflowLayout } from "./layout";
 

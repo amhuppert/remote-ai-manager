@@ -1,4 +1,4 @@
-@import "../../session/sidebar/styles/PeekPopover.css";
+@import "../../../components/session/sidebar/styles/PeekPopover.css";
 
 /* ============================================================
    Conversation sidebar — fully migrated to Tailwind utilities (Stage B-3 + B-6).

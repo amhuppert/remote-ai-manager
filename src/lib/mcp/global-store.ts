@@ -1,10 +1,21 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+/**
+ * Global MCP override persistence.
+ *
+ * A thin domain adapter over the shared scoped-config file store
+ * (`@/lib/shared/scoped-config-store`), which owns the lazy file creation,
+ * atomic temp-then-rename writes, pre-commit re-validation, and the
+ * serialized write tail — so concurrent patches can never lose an update by
+ * reading the same snapshot and overwriting each other.
+ *
+ * Domain semantics stay here: the `mcpGlobalStateSchema` file format and
+ * patch application via `applyOperations`.
+ */
+
 import path from "node:path";
 
 import { resolveConfigDir } from "@/lib/config/loader";
-import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
+import { createScopedConfigFileStore } from "@/lib/shared/scoped-config-store";
 import {
   mcpGlobalStateSchema,
   type McpOverrideOperation,
@@ -49,88 +60,44 @@ export interface GlobalOverrideStore {
 export function createGlobalOverrideStore(
   deps: GlobalOverrideStoreDeps,
 ): GlobalOverrideStore {
-  const { filePath } = deps;
-
-  async function read(): Promise<McpOverrides> {
-    if (!existsSync(filePath)) {
-      return emptyOverrides();
-    }
-
-    let raw: string;
-    try {
-      raw = await readFile(filePath, "utf-8");
-    } catch (err) {
-      logger.error("global.read_failure", {
-        filePath,
-        error: getErrorMessage(err),
-      });
-      throw new Error(
-        `Failed to read MCP global override file ${filePath}: ${getErrorMessage(err)}`,
-      );
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      logger.error("global.parse_failure", {
-        filePath,
-        error: getErrorMessage(err),
-      });
-      throw new Error(
-        `MCP global override file contains invalid JSON: ${getErrorMessage(err)}`,
-      );
-    }
-
-    const result = mcpGlobalStateSchema.safeParse(parsed);
-    if (!result.success) {
-      logger.error("global.schema_validation_failure", {
-        filePath,
-        issueCount: result.error.issues.length,
-      });
-      throw new Error(
-        `MCP global override file failed schema validation: ${result.error.issues
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
-          .join("; ")}`,
-      );
-    }
-
-    return result.data.overrides;
-  }
+  const store = createScopedConfigFileStore<McpOverrides>({
+    filePath: deps.filePath,
+    entityLabel: "MCP global override",
+    logEventPrefix: "global",
+    logger,
+    emptyOverrides: () => ({ servers: {} }),
+    decodeState: (parsed) => {
+      const result = mcpGlobalStateSchema.safeParse(parsed);
+      if (!result.success) {
+        return {
+          ok: false,
+          error: result.error.issues
+            .map((i) => `${i.path.join(".")}: ${i.message}`)
+            .join("; "),
+        };
+      }
+      return { ok: true, overrides: result.data.overrides };
+    },
+    encodeState: (overrides) => ({
+      version: 1 as const,
+      overrides,
+      updatedAt: new Date().toISOString(),
+    }),
+  });
 
   async function patch(
     input: GlobalOverridePatchInput,
   ): Promise<GlobalOverridePatchResult> {
-    const current = await read();
-    const { overrides, changedServerKeys } = applyOperations(
-      current,
-      input.operations,
-    );
-
-    await writeAtomically(filePath, {
-      version: 1,
-      overrides,
-      updatedAt: new Date().toISOString(),
-    });
-
-    logger.info("global.patch", {
-      filePath,
-      operationCount: input.operations.length,
-      changedCount: changedServerKeys.length,
-    });
-
-    return { overrides, changedServerKeys };
-  }
-
-  async function replace(overrides: McpOverrides): Promise<void> {
-    await writeAtomically(filePath, {
-      version: 1,
-      overrides,
-      updatedAt: new Date().toISOString(),
+    return store.patch<GlobalOverridePatchResult>({
+      apply: (current) => applyOperations(current, input.operations),
+      logFields: (result) => ({
+        operationCount: input.operations.length,
+        changedCount: result.changedServerKeys.length,
+      }),
     });
   }
 
-  return { read, patch, replace };
+  return { read: store.read, patch, replace: store.replace };
 }
 
 /**
@@ -140,20 +107,3 @@ export function createGlobalOverrideStore(
  */
 export const defaultGlobalOverrideStore: GlobalOverrideStore =
   createGlobalOverrideStore({ filePath: getDefaultGlobalOverridesPath() });
-
-function emptyOverrides(): McpOverrides {
-  return { servers: {} };
-}
-
-async function writeAtomically(
-  filePath: string,
-  value: unknown,
-): Promise<void> {
-  const dir = path.dirname(filePath);
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-  const tmpPath = `${filePath}.tmp.${Date.now()}`;
-  await writeFile(tmpPath, JSON.stringify(value, null, 2), "utf-8");
-  await rename(tmpPath, filePath);
-}

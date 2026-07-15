@@ -25,12 +25,7 @@ vi.mock("@/lib/shared/child-env", () => ({
   buildChildEnv: () => ({}),
 }));
 
-vi.mock("../registry-core", () => ({
-  registerTaskRunner: vi.fn(),
-}));
-
 import { Codex } from "@openai/codex-sdk";
-import { registerTaskRunner } from "../registry-core";
 import { CodexTaskRunner, type CodexTaskRunnerDeps } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
 import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
@@ -44,12 +39,6 @@ function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
     ...overrides,
   };
 }
-
-it("registers the codex task runner in the registry on module load", () => {
-  expect(vi.mocked(registerTaskRunner)).toHaveBeenCalledWith(
-    expect.objectContaining({ backend: "codex" }),
-  );
-});
 
 describe("CodexTaskRunner", () => {
   let runner: CodexTaskRunner;
@@ -296,6 +285,46 @@ describe("CodexTaskRunner", () => {
     expect(passedOptions).not.toHaveProperty("config");
   });
 
+  it("returns unsupported before invoking Codex when isolated one-shot cannot be guaranteed", async () => {
+    listNativeCodexMcpServers.mockResolvedValue([
+      {
+        name: "native-tools",
+        configEntry: { command: "native-server" },
+      },
+    ]);
+
+    const result = await runner.run(
+      makeRequest({
+        executionProfile: "isolated-one-shot",
+        resumeRef: { backend: "codex", ref: "thread-old" },
+        sandboxMode: "danger-full-access",
+        networkAccessEnabled: true,
+        webSearchMode: "live",
+        tooling: {
+          portableMcp: {
+            servers: [
+              {
+                id: "managed-tools",
+                transport: "stdio",
+                command: "managed-server",
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(vi.mocked(Codex)).not.toHaveBeenCalled();
+    expect(startThreadMock).not.toHaveBeenCalled();
+    expect(resumeThreadMock).not.toHaveBeenCalled();
+    expect(listNativeCodexMcpServers).not.toHaveBeenCalled();
+    expect(result.backendRef).toBeNull();
+    expect(result.error).toBe(
+      'CodexTaskRunner does not support execution profile "isolated-one-shot"',
+    );
+    expect(result.failure?.kind).toBe("capability_unavailable");
+  });
+
   it("captures turn.items as a lossless transcript", async () => {
     const items = [
       { type: "reasoning", text: "weigh AC vs prototype" },
@@ -342,16 +371,92 @@ describe("CodexTaskRunner", () => {
     expect(runStreamedMock).toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
     expect(result.error).toBe("command failed");
+    expect(result.failure).toEqual({
+      kind: "backend_error",
+      message: "command failed",
+      retryable: false,
+    });
+    expect(result.backendRef).toEqual({
+      backend: "codex",
+      ref: "thread-abc",
+    });
+    expect(result.continuationDisposition).toBe("retain");
     expect(result.transcript).toEqual([
       { seq: 0, backend: "codex", type: "reasoning", raw: items[0] },
       { seq: 1, backend: "codex", type: "command_execution", raw: items[1] },
     ]);
   });
 
+  it("clears a stale resumed thread while preserving the typed classification", async () => {
+    resumeThreadMock.mockReturnValue({
+      id: "thread-gone",
+      run: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'thread/resume: no rollout found for thread id "thread-gone"',
+          ),
+        ),
+    });
+
+    const result = await runner.run(
+      makeRequest({
+        resumeRef: { backend: "codex", ref: "thread-gone" },
+      }),
+    );
+
+    expect(result.failure?.kind).toBe("stale_resume_ref");
+    expect(result.continuationDisposition).toBe("clear");
+    expect(result.backendRef).toBeNull();
+  });
+
+  it("retains a resumed thread after a transient process failure", async () => {
+    resumeThreadMock.mockReturnValue({
+      id: "thread-viable",
+      run: vi.fn().mockRejectedValue(new Error("local process crashed")),
+    });
+
+    const result = await runner.run(
+      makeRequest({
+        resumeRef: { backend: "codex", ref: "thread-viable" },
+      }),
+    );
+
+    expect(result.failure?.kind).toBe("backend_error");
+    expect(result.continuationDisposition).toBe("retain");
+    expect(result.backendRef).toEqual({
+      backend: "codex",
+      ref: "thread-viable",
+    });
+  });
+
   it("omits transcript when the turn returned no items", async () => {
     // Default runMock has no `items`.
     const result = await runner.run(makeRequest());
     expect(result.transcript).toBeUndefined();
+  });
+
+  it("passes the outputSchema to Codex unmodified — identity projection, no keyword stripping (T3.3)", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", minLength: 2 },
+        },
+        count: { type: "integer", minimum: 0 },
+      },
+      required: ["items", "count"],
+      additionalProperties: false,
+    };
+
+    await runner.run(makeRequest({ outputSchema: schema }));
+
+    const runOptions = runMock.mock.calls[0]?.[1] as {
+      outputSchema?: unknown;
+    };
+    expect(runOptions.outputSchema).toEqual(schema);
   });
 
   it("aborts the running thread when an external signal fires", async () => {

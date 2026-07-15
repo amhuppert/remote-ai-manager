@@ -6,8 +6,8 @@ import type { ReactNode } from "react";
 import type {
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinitionRecord,

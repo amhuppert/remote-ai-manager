@@ -3,8 +3,8 @@ import type {
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
   GraphWorkflowPendingApproval,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import {
   createPersistenceFixture,
   type PersistenceFixture,

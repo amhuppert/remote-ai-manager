@@ -9,11 +9,9 @@ import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type {
-  GraphWorkflowAgentValidatorConfig,
-  GraphWorkflowExecution,
-  GraphWorkflowResolvedContext,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 
@@ -199,6 +197,7 @@ function deferralTaskRun(): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 

@@ -1,12 +1,29 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render as rtlRender,
+  screen,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createWorkflowDefinition,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
+
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
 
 const defaultProps = {
   onSave: vi.fn(async () => {}),

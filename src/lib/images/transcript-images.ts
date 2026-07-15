@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { getConfigDirPath } from "../config/loader";
+import { parseJsonl } from "@/lib/shared/read-jsonl";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 // ============================================================
 // Path Helpers
@@ -216,16 +217,9 @@ export async function getNextImageIndex(
   if (!existsSync(filePath)) return 1;
 
   const raw = await readFile(filePath, "utf-8");
-  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
 
   let count = 0;
-  for (const line of lines) {
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of parseJsonl(raw)) {
     if (typeof entry !== "object" || entry === null) continue;
     const content = (entry as { content?: unknown }).content;
     if (!Array.isArray(content)) continue;

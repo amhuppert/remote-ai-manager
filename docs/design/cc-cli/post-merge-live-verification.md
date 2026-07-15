@@ -1,6 +1,6 @@
 # CC CLI Migration — Post-Merge Live Verification Checklist
 
-**Status:** REQUIRED before the migration is considered live.
+**Status:** Completed historical rollout checklist. The CLI migration is live; use current validation and `.kiro/steering/cli.md` for new work.
 **Why this document exists:** the migration workflow ran inside a session worktree while the live
 CC orchestrator executed the *main-worktree build* — a build that predates every endpoint and
 binary this migration ships. The workflow cannot restart its own orchestrator, so nothing below

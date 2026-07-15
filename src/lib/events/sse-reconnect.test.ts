@@ -190,13 +190,11 @@ describe("reconnectReconcile", () => {
     expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
   });
 
-  it("marks mounted project-conversation list, message, and open-count caches stale after reconciling", async () => {
+  it("marks mounted project-conversation list and message caches stale after reconciling", async () => {
     const client = makeClient();
     const listKey = projectConversationKeys.list("proj");
-    const openCountKey = projectConversationKeys.openCount("proj");
     const messagesKey = projectConversationKeys.messages("proj", "pc-1");
     client.setQueryData(listKey, []);
-    client.setQueryData(openCountKey, 1);
     client.setQueryData(messagesKey, [makeMsg(0, "cached")]);
 
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
@@ -208,7 +206,6 @@ describe("reconnectReconcile", () => {
     await reconnectReconcile(client, vi.fn(), fetchFn);
 
     expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
   });
 

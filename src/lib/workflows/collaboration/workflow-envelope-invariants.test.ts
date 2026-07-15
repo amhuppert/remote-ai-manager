@@ -48,7 +48,7 @@ import type {
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
   ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import {
   makeAgentOneInitialDraft,
   makeAgentOneProposedChanges,

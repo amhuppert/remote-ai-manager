@@ -17,7 +17,13 @@ import {
   type MessageContentBlock,
   type ToolResultMetrics,
 } from "@/lib/conversations/schemas";
-import { parseCommandContent } from "@/lib/commands/parsing";
+import {
+  groupLogicalUnits,
+  type LogicalUnit,
+  type LogicalUnitEntry,
+  type LogicalUnitPart,
+} from "@/lib/conversations/transcript-logical-units";
+import { truncate } from "@/lib/shared/truncate";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
 
 /**
@@ -101,94 +107,44 @@ export interface RenderTranscriptInput {
   maxSeq: number;
 }
 
-interface UnitPart {
-  seq: number;
-  entryId: string | null;
-  content: MessageContentBlock[];
-}
+type UnitPart = LogicalUnitPart;
 
 /** A logical (merged) message with per-entry coordinates preserved. */
-export interface TranscriptUnit {
-  messageIndex: number;
-  messageId: string | null;
-  role: "user" | "assistant" | "notice";
-  timestamp: string | null;
-  parts: UnitPart[];
+export type TranscriptUnit = LogicalUnit;
+
+/** Project a cached entry record into the grouping owner's normalized shape. */
+function toLogicalUnitEntry(entry: TranscriptEntryWithSeq): LogicalUnitEntry {
+  if (entry.kind === "tool_result") {
+    return {
+      seq: entry.seq,
+      kind: "tool_result",
+      entryId: entry.entryId,
+      timestamp: entry.timestamp,
+      content: entry.content,
+    };
+  }
+  return {
+    seq: entry.seq,
+    kind: "message",
+    role: entry.role,
+    content: entry.content,
+    entryId: entry.entryId,
+    timestamp: entry.timestamp,
+  };
 }
 
 /**
- * Group raw entries into logical messages with the exact merge semantics of
- * `readConversationMessagesWithSeqImpl` (transcript.ts): consecutive same-role
- * entries merge into one unit, and a single-text-block user entry that parses
- * as a slash command always starts a new unit (with the parsed command block
- * as its content) — subsequent same-role entries then merge into it.
- *
- * `kind:"tool_result"` entries are invisible to that merged reader, so they
- * never start or count as units (messageIndex parity holds); they fold into
- * the open unit — the assistant turn they interleave with — as parts carrying
- * their own seq. A tool_result with no open unit is dropped.
+ * Group raw entries into logical messages via the shared grouping owner
+ * ({@link groupLogicalUnits}): consecutive same-role entries merge into one
+ * unit, a slash-command user entry always starts its own unit, and
+ * `kind:"tool_result"` entries fold into the open unit as parts keeping their
+ * own seq (messageIndex parity with the read path holds). A tool_result with no
+ * open unit is dropped.
  */
 export function groupTranscriptEntries(
   entries: TranscriptEntryWithSeq[],
 ): TranscriptUnit[] {
-  const units: TranscriptUnit[] = [];
-
-  for (const entry of entries) {
-    if (entry.kind === "tool_result") {
-      const open = units[units.length - 1];
-      if (!open) continue;
-      open.parts.push({
-        seq: entry.seq,
-        entryId: entry.entryId,
-        content: entry.content,
-      });
-      continue;
-    }
-
-    if (entry.role === "user" && entry.content.length === 1) {
-      const block = entry.content[0];
-      if (block && block.type === "text") {
-        const commandBlock = parseCommandContent(block.text);
-        if (commandBlock) {
-          units.push({
-            messageIndex: units.length,
-            messageId: entry.entryId,
-            role: "user",
-            timestamp: entry.timestamp,
-            parts: [
-              {
-                seq: entry.seq,
-                entryId: entry.entryId,
-                content: [commandBlock],
-              },
-            ],
-          });
-          continue;
-        }
-      }
-    }
-
-    const prev = units[units.length - 1];
-    if (prev && prev.role === entry.role) {
-      prev.parts.push({
-        seq: entry.seq,
-        entryId: entry.entryId,
-        content: entry.content,
-      });
-    } else {
-      units.push({
-        messageIndex: units.length,
-        messageId: entry.entryId,
-        role: entry.role,
-        timestamp: entry.timestamp,
-        parts: [
-          { seq: entry.seq, entryId: entry.entryId, content: entry.content },
-        ],
-      });
-    }
-  }
-
-  return units;
+  return groupLogicalUnits(entries.map(toLogicalUnitEntry));
 }
 
 const OUTLINE_HEADLINE_MAX_CHARS = 120;
@@ -219,14 +175,10 @@ function byteLength(value: string): number {
   return textEncoder.encode(value).length;
 }
 
-function truncateWithEllipsis(value: string, maxChars: number): string {
-  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}…`;
-}
-
 function headline(text: string): string {
   const firstLine =
     text.split("\n").find((line) => line.trim().length > 0) ?? "";
-  return truncateWithEllipsis(firstLine.trim(), OUTLINE_HEADLINE_MAX_CHARS);
+  return truncate(firstLine.trim(), OUTLINE_HEADLINE_MAX_CHARS);
 }
 
 function toolPrimaryArg(input: Record<string, unknown> | undefined): string {
@@ -234,7 +186,7 @@ function toolPrimaryArg(input: Record<string, unknown> | undefined): string {
   for (const key of PRIMARY_ARG_KEYS) {
     const value = input[key];
     if (typeof value === "string" && value.length > 0) {
-      return truncateWithEllipsis(value, TOOL_PRIMARY_ARG_MAX_CHARS);
+      return truncate(value, TOOL_PRIMARY_ARG_MAX_CHARS);
     }
     if (typeof value === "number" || typeof value === "boolean") {
       return String(value);
@@ -242,7 +194,7 @@ function toolPrimaryArg(input: Record<string, unknown> | undefined): string {
   }
   for (const value of Object.values(input)) {
     if (typeof value === "string" && value.length > 0) {
-      return truncateWithEllipsis(value, TOOL_PRIMARY_ARG_MAX_CHARS);
+      return truncate(value, TOOL_PRIMARY_ARG_MAX_CHARS);
     }
   }
   return "";
@@ -250,7 +202,7 @@ function toolPrimaryArg(input: Record<string, unknown> | undefined): string {
 
 function toolInputGist(input: Record<string, unknown> | undefined): string {
   if (!input || Object.keys(input).length === 0) return "";
-  return truncateWithEllipsis(JSON.stringify(input), TOOL_INPUT_GIST_MAX_CHARS);
+  return truncate(JSON.stringify(input), TOOL_INPUT_GIST_MAX_CHARS);
 }
 
 function formatMetrics(metrics: ToolResultMetrics | undefined): string {
@@ -289,7 +241,7 @@ function renderBlockLines(
       if (block.redacted) return ["🧠 thinking: [redacted]"];
       const collapsed = block.text.replace(/\s+/g, " ").trim();
       return [
-        `🧠 thinking: ${truncateWithEllipsis(collapsed, THINKING_EXCERPT_MAX_CHARS)}`,
+        `🧠 thinking: ${truncate(collapsed, THINKING_EXCERPT_MAX_CHARS)}`,
       ];
     }
     case "tool_use": {
@@ -342,14 +294,14 @@ function renderBlockLines(
       if (options.outline || !options.includeDebug) return [];
       const payloadText = JSON.stringify(block.payload) ?? "";
       return [
-        `🐞 debug[${block.phase}]: ${truncateWithEllipsis(payloadText, DEBUG_PAYLOAD_MAX_CHARS)}`,
+        `🐞 debug[${block.phase}]: ${truncate(payloadText, DEBUG_PAYLOAD_MAX_CHARS)}`,
       ];
     }
     case "document_feedback": {
       if (options.outline) return [];
       return block.items.map(
         (item) =>
-          `📝 ${item.docPath}:${item.line} ${item.headingLabel} — ${truncateWithEllipsis(item.note, FEEDBACK_NOTE_MAX_CHARS)}`,
+          `📝 ${item.docPath}:${item.line} ${item.headingLabel} — ${truncate(item.note, FEEDBACK_NOTE_MAX_CHARS)}`,
       );
     }
   }

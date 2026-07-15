@@ -6,6 +6,10 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
@@ -42,10 +46,8 @@ import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { RunPromptRequest } from "@/lib/prompt/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 
 const logger = createLogger("prompt");
 
@@ -158,21 +160,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, session } = resolved.value;
 
     // Session-level POSTs create a fresh conversation, so there is nothing
     // to be busy. Concurrency across conversations within a session is
@@ -315,21 +305,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     const sessionName = decodeURIComponent(sessionSlug);
     const conversationId = resolvedParams["conversationId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, session } = resolved.value;
 
     const conversation = await deps.getConversation(
       projectPath,
@@ -337,10 +315,7 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       conversationId,
     );
     if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Conversation not found");
     }
 
     if (conversation.role === "iteration") {
@@ -442,14 +417,10 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
         );
       } catch (err) {
         if (err instanceof CollaborationSessionNotFoundError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 404,
-          });
+          return notFound(err.message);
         }
         if (err instanceof CollaborationConversationNotFoundError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 404,
-          });
+          return notFound(err.message);
         }
         if (err instanceof CollaborationStartConflictError) {
           return NextResponse.json(
@@ -584,30 +555,15 @@ export function createPendingPromptRouteHandlers(
     const sessionName = decodeURIComponent(sessionSlug);
     const conversationId = resolvedParams["conversationId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, session } = resolved.value;
 
     const conversation = session.conversations.find(
       (c) => c.id === conversationId,
     );
     if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Conversation not found");
     }
 
     let body: { text: string | null };

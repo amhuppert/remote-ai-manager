@@ -2,7 +2,7 @@
 
 import { type ComponentProps } from "react";
 import SessionContent from "@/features/session/conversation/SessionContent";
-import PromptInputSlot from "@/features/session/prompt/PromptInputSlot";
+import PromptInputSlot from "@/components/session/prompt/PromptInputSlot";
 import ConversationDialogs from "@/features/session/dialogs/ConversationDialogs";
 import MobileBottomBar from "@/features/session/mobile/MobileBottomBar";
 

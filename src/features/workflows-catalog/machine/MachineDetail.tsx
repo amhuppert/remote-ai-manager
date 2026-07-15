@@ -8,8 +8,6 @@ import type { MachineId, MachineSpec } from "../machine-spec-types";
 import ConversationLayout from "../layouts/ConversationLayout";
 import MergeLayout from "../layouts/MergeLayout";
 import CommitLayout from "../layouts/CommitLayout";
-import OptimisticLayout from "../layouts/OptimisticLayout";
-import RetryLayout from "../layouts/RetryLayout";
 import DetailRail from "./DetailRail";
 import WorkflowCanvasShell from "./WorkflowCanvasShell";
 
@@ -36,8 +34,6 @@ const layoutByMachine: Record<
   conversation: ConversationLayout,
   "smart-merge": MergeLayout,
   "smart-commit": CommitLayout,
-  optimistic: OptimisticLayout,
-  retry: RetryLayout,
 };
 
 type MobilePanel = "diagram" | "info";

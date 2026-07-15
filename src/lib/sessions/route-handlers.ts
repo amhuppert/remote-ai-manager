@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectOr404,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { readConfig } from "@/lib/config/loader";
 import { readRepoConfig } from "@/lib/projects/repo-config";
@@ -39,13 +44,9 @@ type RouteContext = {
 export const listSessions = withTracing(
   async (_request, { params }: RouteContext) => {
     const name = (await params)["name"] ?? "";
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const sessions = await getProjectSessionListItems(projectPath);
     const visible = sessions.filter(
@@ -63,13 +64,9 @@ export const listSessions = withTracing(
 export const getBranchPrefix = withTracing(
   async (_request, { params }: RouteContext) => {
     const name = (await params)["name"] ?? "";
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const [globalConfig, repoConfig] = await Promise.all([
       readConfig(),
@@ -129,13 +126,9 @@ export function createSessionRouteHandlers(
     const bodyPromise = request.json();
     const resolvedParams = await params;
     const name = resolvedParams["name"] ?? "";
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     // External/untrusted body: `safeParse`. The discriminated union only admits
     // `normal`/`optimistic`, so any other mode (e.g. the removed `focus`/`fast`)
@@ -234,13 +227,9 @@ export const createSession = withTracing(createSessionRouteHandlers().POST);
 export const deleteSessionRoute = withTracing(
   async (request, { params }: RouteContext) => {
     const name = (await params)["name"] ?? "";
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const url = new URL(request.url);
     const sessionName = url.searchParams.get("sessionName");
@@ -268,23 +257,14 @@ export const deleteSessionRoute = withTracing(
 export const getSessionRoute = withTracing(
   async (_request, { params }: RouteContext) => {
     const { name, session } = await params;
-    const projectPath = await resolveProjectPath(name ?? "");
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(
+      { resolveProjectPath, getSession },
+      name ?? "",
+      session ?? "",
+    );
+    if (!resolved.ok) return resolved.response;
 
-    const sessionState = await getSession(projectPath, session ?? "");
-    if (!sessionState) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    return NextResponse.json(sessionState);
+    return NextResponse.json(resolved.value.session);
   },
 );
 
@@ -296,20 +276,13 @@ export const archiveSession = withTracing(
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
 
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const session = await getSession(projectPath, sessionName);
     if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Session not found");
     }
 
     let body: { archived: boolean };
@@ -352,20 +325,13 @@ export const setSessionTdd = withTracing(
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
 
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const session = await getSession(projectPath, sessionName);
     if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Session not found");
     }
 
     let body: { tddEnabled: boolean };
@@ -405,20 +371,13 @@ export const finalizeSessionInit = withTracing(
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
 
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const session = await getSession(projectPath, sessionName);
     if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Session not found");
     }
 
     return NextResponse.json(
@@ -469,13 +428,9 @@ export function createBulkSessionsRouteHandlers(
     const resolvedParams = await context.params;
     const name = resolvedParams["name"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const parsed = bulkSessionsRequestSchema.safeParse(await request.json());
     if (!parsed.success) {

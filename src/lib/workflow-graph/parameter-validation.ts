@@ -4,7 +4,7 @@ import type {
   ParameterDeclaration,
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 function checkDuplicateNames(
   parameters: ParameterDeclaration[],

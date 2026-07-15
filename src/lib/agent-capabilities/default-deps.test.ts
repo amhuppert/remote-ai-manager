@@ -598,6 +598,7 @@ describe("agent-capabilities/default-deps runtime state accessors", () => {
 describe("agent-capabilities/default-deps project conversation composition", () => {
   it("builds a PLC override chain from global, project, and project conversation records only", async () => {
     let captured: ComposeConversationStartInput | undefined;
+    const requestedCascades: AgentCapabilityCascadeKind[] = [];
     const composer = createConversationStartCapabilityComposer({
       readGlobalOverrides: async () =>
         overridesFor("codex-skills", { alpha: false }),
@@ -635,29 +636,28 @@ describe("agent-capabilities/default-deps project conversation composition", () 
             alpha: true,
           }),
         }),
-      discoverClaudeSkills: async () => emptyDiscovery("claude-skills"),
-      discoverClaudePlugins: async () => ({
-        ...emptyDiscovery("claude-plugins"),
-        nativeRecords: [],
-      }),
-      discoverClaudeAgents: async () => emptyDiscovery("claude-agents"),
-      discoverCodexSkillsCanonical: async (input) => {
-        expect(input.worktreePath).toBe("/repo");
+      getDiscoveryProvider: (cascadeKind) => {
+        requestedCascades.push(cascadeKind);
+        if (cascadeKind === "codex-skills") {
+          return {
+            discover: async (input) => {
+              expect(input.worktreePath).toBe("/repo");
+              return {
+                ...emptyDiscovery("codex-skills"),
+                items: [codexSkill("alpha")],
+              };
+            },
+          };
+        }
         return {
-          ...emptyDiscovery("codex-skills"),
-          items: [codexSkill("alpha")],
+          discover: async () => emptyDiscovery(cascadeKind),
         };
       },
-      discoverCodexPluginsCanonical: async () => ({
-        ...emptyDiscovery("codex-plugins"),
-        discoverySupport: "available",
-      }),
       composeRuntime(input) {
         captured = input;
         return composeConversationStartRuntime(input);
       },
       homeDir: () => "/home/alex",
-      getClaudeRuntimeProbe: () => undefined,
       logDiscoveryFailure: () => undefined,
     });
 
@@ -685,6 +685,9 @@ describe("agent-capabilities/default-deps project conversation composition", () 
       enabled: true,
       originLayer: "conversation",
     });
+    // Discovery selection walks the backend's descriptor-declared cascades
+    // (plugin cascade first) — never a Claude-vs-Codex identity branch.
+    expect(requestedCascades).toEqual(["codex-plugins", "codex-skills"]);
   });
 
   it("uses the stored PLC backend and repo root worktree for the public project-conversation helper", async () => {
@@ -698,12 +701,24 @@ describe("agent-capabilities/default-deps project conversation composition", () 
         },
       },
     };
+    const codexCapabilities = {
+      backend: "codex" as const,
+      kinds: [
+        {
+          kind: "plugins" as const,
+          items: [
+            {
+              itemId: "codex-owner",
+              enabled: false,
+              originLayer: "global" as const,
+            },
+          ],
+        },
+      ],
+    };
     const resultForCodex: ComposeConversationStartResult = {
       backend: "codex",
-      codexRuntime: {
-        config: { plugins: { "codex-owner": { enabled: false } } },
-        applySemantics: "next-turn",
-      },
+      capabilities: codexCapabilities,
       diagnostics: [
         {
           severity: "warning",
@@ -747,7 +762,7 @@ describe("agent-capabilities/default-deps project conversation composition", () 
     expect("sessionName" in call).toBe(false);
     expect(result).toEqual({
       backend: "codex",
-      config: { config: resultForCodex.codexRuntime?.config },
+      capabilities: codexCapabilities,
       diagnostics: resultForCodex.diagnostics,
       runtimeState,
     });
@@ -765,6 +780,7 @@ describe("agent-capabilities/default-deps project conversation composition", () 
     ];
     const resultForCodex: ComposeConversationStartResult = {
       backend: "codex",
+      capabilities: { backend: "codex", kinds: [] },
       diagnostics,
       runtimeState: { cascades: {} },
       views: {},

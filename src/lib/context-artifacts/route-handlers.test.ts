@@ -173,6 +173,7 @@ function structuredResult(output: unknown): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 

@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
+import { notFound } from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import type { ApiError } from "@/lib/api/errors";
 import {
   applyDefinitionEdits,
   formatDefinitionEditIssue,
 } from "@/lib/workflow-graph/definition-edits";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
-import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
-import { workflowDefinitionEditRequestSchema } from "@/lib/workflows/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
+import { workflowDefinitionEditRequestSchema } from "@/lib/workflows/edit-schemas";
 
 const logger = createLogger("workflow-graph");
 
@@ -56,10 +56,7 @@ export async function runDefinitionEditRequest(
 
   const record = await params.loadRecord();
   if (!record) {
-    return NextResponse.json(
-      { error: params.notFoundError } satisfies ApiError,
-      { status: 404 },
-    );
+    return notFound(params.notFoundError);
   }
 
   if (record.revision !== parsed.data.baseRevision) {

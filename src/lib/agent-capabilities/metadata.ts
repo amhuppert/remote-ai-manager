@@ -14,9 +14,12 @@
  */
 
 import { type AgentBackendId } from "@/lib/shared/schemas";
+import type { CapabilityApplyTiming } from "@/lib/agent-backends/descriptor";
+import { conversationCapabilitiesForBackend } from "@/lib/agent-backends/catalog";
 import {
   AGENT_CAPABILITY_CASCADE_KINDS,
   agentCapabilityMetadataSchema,
+  decodeCascadeKind,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityMetadata,
 } from "./schemas";
@@ -28,6 +31,45 @@ export {
   type AgentCapabilityMetadata,
 };
 
+/**
+ * Apply timing for a cascade, read from the backend descriptor's declared
+ * `capabilityKinds` — the single source of truth for when a runtime-config
+ * change reaches the live agent. Throws for a pair no descriptor declares.
+ */
+export function applyTimingForCascade(
+  cascadeKind: AgentCapabilityCascadeKind,
+): CapabilityApplyTiming {
+  const ref = decodeCascadeKind(cascadeKind);
+  const support = conversationCapabilitiesForBackend(
+    ref.backend,
+  ).capabilityKinds.find((entry) => entry.kind === ref.kind);
+  if (!support) {
+    throw new Error(
+      `backend '${ref.backend}' does not declare capability kind '${ref.kind}'`,
+    );
+  }
+  return support.applyTiming;
+}
+
+/** Wire-shape projection of the descriptor's per-kind apply timing; the API
+ * view still serves `applySemantics`, but the descriptor owns the value. */
+const APPLY_SEMANTICS_FOR_TIMING: Readonly<
+  Record<
+    CapabilityApplyTiming,
+    "idle-live-apply" | "next-turn" | "next-conversation"
+  >
+> = {
+  idle_live: "idle-live-apply",
+  next_turn: "next-turn",
+  next_conversation: "next-conversation",
+};
+
+function applySemanticsForCascade(
+  cascadeKind: AgentCapabilityCascadeKind,
+): "idle-live-apply" | "next-turn" | "next-conversation" {
+  return APPLY_SEMANTICS_FOR_TIMING[applyTimingForCascade(cascadeKind)];
+}
+
 export interface AgentCapabilityMetadataRegistry {
   get(cascadeKind: AgentCapabilityCascadeKind): AgentCapabilityMetadata;
   listForBackend(backend: AgentBackendId): readonly AgentCapabilityMetadata[];
@@ -38,7 +80,7 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
     cascadeKind: "claude-skills",
     backend: "claude",
     capabilityKind: "skill",
-    applySemantics: "idle-live-apply",
+    applySemantics: applySemanticsForCascade("claude-skills"),
     discoverySupport: "available",
     runtimeVisibility: "sdk-runtime",
     compositionSupport: "translator",
@@ -47,7 +89,7 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
     cascadeKind: "claude-plugins",
     backend: "claude",
     capabilityKind: "plugin",
-    applySemantics: "idle-live-apply",
+    applySemantics: applySemanticsForCascade("claude-plugins"),
     discoverySupport: "available",
     runtimeVisibility: "sdk-runtime",
     compositionSupport: "translator",
@@ -55,14 +97,14 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
   // The installed Claude SDK `Settings` has no typed per-agent disable map.
   // Verified suppression strategy is permission-layer denial of Task tool
   // invocations on disabled agents; that callback is bound at session
-  // creation so live-flip during a turn is unsupported. Plugin-level disable
-  // remains the only path that drops a plugin-contributed agent mid-session
-  // via `reloadPlugins()`.
+  // creation so live-flip during a turn is unsupported (descriptor timing
+  // `next_conversation`). Plugin-level disable remains the only path that
+  // drops a plugin-contributed agent mid-session via `reloadPlugins()`.
   agentCapabilityMetadataSchema.parse({
     cascadeKind: "claude-agents",
     backend: "claude",
     capabilityKind: "agent",
-    applySemantics: "next-conversation",
+    applySemantics: applySemanticsForCascade("claude-agents"),
     discoverySupport: "available",
     runtimeVisibility: "sdk-runtime",
     compositionSupport: "translator",
@@ -71,7 +113,7 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
     cascadeKind: "codex-skills",
     backend: "codex",
     capabilityKind: "skill",
-    applySemantics: "next-turn",
+    applySemantics: applySemanticsForCascade("codex-skills"),
     discoverySupport: "available",
     runtimeVisibility: "source-only",
     compositionSupport: "translator",
@@ -80,7 +122,7 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
     cascadeKind: "codex-plugins",
     backend: "codex",
     capabilityKind: "plugin",
-    applySemantics: "next-turn",
+    applySemantics: applySemanticsForCascade("codex-plugins"),
     discoverySupport: "available",
     runtimeVisibility: "source-only",
     compositionSupport: "translator",

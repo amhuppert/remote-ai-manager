@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { CanvasZoomContext } from "../canvas/MachineCanvas";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { isEditableTarget } from "@/lib/shared/dom";
 import { isOverlayOpen } from "@/stores/overlay-scope.store";
 
@@ -429,41 +430,44 @@ export default function WorkflowCanvasShell({
           role="group"
           aria-label="Canvas zoom"
         >
-          <button
-            type="button"
-            className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
-            onClick={zoomOut}
-            data-tooltip="Zoom out (−)"
-            aria-label="Zoom out"
-            disabled={zoom <= MIN_ZOOM + 0.001}
-          >
-            −
-          </button>
+          <WithTooltip label="Zoom out (−)">
+            <button
+              type="button"
+              className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
+              onClick={zoomOut}
+              aria-label="Zoom out"
+              disabled={zoom <= MIN_ZOOM + 0.001}
+            >
+              −
+            </button>
+          </WithTooltip>
           <span
             className="min-w-[42px] text-center font-mono text-[0.72rem] text-text-secondary tabular-nums"
             aria-live="polite"
           >
             {zoomReadout}
           </span>
-          <button
-            type="button"
-            className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
-            onClick={zoomIn}
-            data-tooltip="Zoom in (+)"
-            aria-label="Zoom in"
-            disabled={zoom >= MAX_ZOOM - 0.001}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
-            onClick={reset}
-            data-tooltip="Reset (0)"
-            aria-label="Reset zoom and pan"
-          >
-            ⌖
-          </button>
+          <WithTooltip label="Zoom in (+)">
+            <button
+              type="button"
+              className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
+              onClick={zoomIn}
+              aria-label="Zoom in"
+              disabled={zoom >= MAX_ZOOM - 0.001}
+            >
+              +
+            </button>
+          </WithTooltip>
+          <WithTooltip label="Reset (0)">
+            <button
+              type="button"
+              className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
+              onClick={reset}
+              aria-label="Reset zoom and pan"
+            >
+              ⌖
+            </button>
+          </WithTooltip>
         </div>
       </header>
       <div
@@ -484,50 +488,54 @@ export default function WorkflowCanvasShell({
         </div>
       </div>
       <footer className="flex shrink-0 items-center justify-between gap-sm border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-raised px-md py-xs">
-        <button
-          type="button"
-          className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
-          onClick={onPrev}
-          disabled={!prev}
-          data-tooltip={prev ? `Previous: ${prev.name} ([)` : undefined}
-          aria-label={
-            prev ? `Previous workflow: ${prev.name}` : "No previous workflow"
-          }
-        >
-          <span
-            className="shrink-0 text-[0.85rem] text-cyan"
-            aria-hidden="true"
+        <WithTooltip label={prev ? `Previous: ${prev.name} ([)` : null}>
+          <button
+            type="button"
+            className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
+            onClick={onPrev}
+            disabled={!prev}
+            aria-label={
+              prev ? `Previous workflow: ${prev.name}` : "No previous workflow"
+            }
           >
-            ◀
-          </span>
-          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-            {prev ? prev.name : "—"}
-          </span>
-        </button>
+            <span
+              className="shrink-0 text-[0.85rem] text-cyan"
+              aria-hidden="true"
+            >
+              ◀
+            </span>
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+              {prev ? prev.name : "—"}
+            </span>
+          </button>
+        </WithTooltip>
         <span
           className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary tabular-nums"
           aria-label={`Workflow ${index} of ${total}`}
         >
           {index} / {total}
         </span>
-        <button
-          type="button"
-          className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
-          onClick={onNext}
-          disabled={!next}
-          data-tooltip={next ? `Next: ${next.name} (])` : undefined}
-          aria-label={next ? `Next workflow: ${next.name}` : "No next workflow"}
-        >
-          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-            {next ? next.name : "—"}
-          </span>
-          <span
-            className="shrink-0 text-[0.85rem] text-cyan"
-            aria-hidden="true"
+        <WithTooltip label={next ? `Next: ${next.name} (])` : null}>
+          <button
+            type="button"
+            className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
+            onClick={onNext}
+            disabled={!next}
+            aria-label={
+              next ? `Next workflow: ${next.name}` : "No next workflow"
+            }
           >
-            ▶
-          </span>
-        </button>
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+              {next ? next.name : "—"}
+            </span>
+            <span
+              className="shrink-0 text-[0.85rem] text-cyan"
+              aria-hidden="true"
+            >
+              ▶
+            </span>
+          </button>
+        </WithTooltip>
       </footer>
     </section>
   );

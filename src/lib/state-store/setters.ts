@@ -7,10 +7,8 @@ import type { DocumentComment } from "@/lib/document-comments/schemas";
 import type { SessionMarkdownDocument } from "@/lib/documents/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowArchivedExecutionRow } from "./graph-workflow-archived-executions-repo";
 import type { StateStoreCore } from "./schemas";
 

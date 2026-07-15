@@ -7,34 +7,54 @@
  * enforcement source, MCP application boundary, etc.) that workflows branch on
  * — see `agent-call-vocabulary.ts` for the field-level contract.
  *
- * Centralizing the per-backend constants in this module avoids drift between
- * the conversation actor, validator runner, implementer runner, and other
- * adapters that all need to populate the same fields with the same values.
+ * The view is derived from the backend's registered descriptor, so the
+ * conversation actor, validator runner, implementer runner, and other adapters
+ * all read the same declaration the backend registered — there is no second
+ * hand-maintained copy to drift.
  */
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentBackendDescriptor } from "@/lib/agent-backends/descriptor";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
+import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 
-export const CLAUDE_CAPABILITY_VIEW: BackendCapabilityView = {
-  backend: "claude",
-  continuationStrength: "precise_session",
-  structuredOutputEnforcement: "backend_native",
-  mcpApplicationBoundary: "between_turns",
-  contextMetricsAvailable: true,
-  nativeMidTurnAskUser: true,
-};
+function mcpApplicationBoundaryFor(
+  mcp: McpBackendCapabilities,
+): BackendCapabilityView["mcpApplicationBoundary"] {
+  switch (mcp.betweenTurnApply) {
+    case "live-when-idle":
+      return "between_turns";
+    case "next-turn":
+      return "per_request";
+    case "unsupported":
+      return "unsupported";
+  }
+}
 
-export const CODEX_CAPABILITY_VIEW: BackendCapabilityView = {
-  backend: "codex",
-  continuationStrength: "synthetic_thread",
-  structuredOutputEnforcement: "backend_native",
-  mcpApplicationBoundary: "per_request",
-  contextMetricsAvailable: false,
-  nativeMidTurnAskUser: false,
-};
+export function capabilityViewFromDescriptor(
+  descriptor: AgentBackendDescriptor,
+): BackendCapabilityView {
+  const conversation = descriptor.conversation;
+  if (!conversation) {
+    throw new Error(
+      `Backend "${descriptor.id}" declares no conversation facet; no capability view can be derived`,
+    );
+  }
+  const capabilities = conversation.capabilities;
+  return {
+    backend: descriptor.id,
+    continuationStrength: capabilities.continuationStrength,
+    structuredOutputEnforcement: capabilities.structuredOutput,
+    mcpApplicationBoundary: mcpApplicationBoundaryFor(descriptor.mcp),
+    contextMetricsAvailable: capabilities.contextWindowMetrics,
+    nativeMidTurnAskUser: capabilities.nativeMidTurnAskUser,
+  };
+}
 
+/** Throws for a backend without a registered descriptor — never falls back. */
 export function capabilityViewForBackend(
   backend: AgentBackendId,
 ): BackendCapabilityView {
-  return backend === "codex" ? CODEX_CAPABILITY_VIEW : CLAUDE_CAPABILITY_VIEW;
+  return capabilityViewFromDescriptor(getBackendDescriptor(backend));
 }

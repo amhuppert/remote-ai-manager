@@ -6,7 +6,7 @@ import {
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import { renderWithQuery } from "@/test/component-mocks";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";

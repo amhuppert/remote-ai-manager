@@ -81,7 +81,7 @@ export const InPromptArea = {
             <div className="prompt-toolbar">
               <div className="prompt-toolbar-start">
                 <Story />
-                <ModelSelector value="opus" onChange={fn()} />
+                <ModelSelector value="opus" backend="claude" onChange={fn()} />
                 <ReasoningLevelSelector value="high" onChange={fn()} />
               </div>
               <div className="prompt-toolbar-end">

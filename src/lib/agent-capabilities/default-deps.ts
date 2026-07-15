@@ -17,20 +17,26 @@ import os from "node:os";
 
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import type {
+  ResolvedCapabilityCascade,
+  RuntimeConfigApplyResult,
+} from "@/lib/agent-backends/runtime-config";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
-import { createStateManager } from "@/lib/state-store";
+import { getStateStore } from "@/lib/state-store";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
-import type {
-  AgentCapabilityCascadeKind,
-  AgentCapabilityCascadeLayer,
-  AgentCapabilityDiagnostic,
-  AgentCapabilityOverrides,
-  AgentCapabilityRuntimeApplicationState,
-  AgentCapabilityScopeContext,
+import {
+  decodeCascadeKind,
+  type AgentCapabilityCascadeKind,
+  type AgentCapabilityCascadeLayer,
+  type AgentCapabilityDiagnostic,
+  type AgentCapabilityOverrides,
+  type AgentCapabilityRuntimeApplicationState,
+  type AgentCapabilityScopeContext,
 } from "./schemas";
 
 import { defaultGlobalCapabilityOverrideStore } from "./global-store";
@@ -38,7 +44,7 @@ import {
   discoverClaudeAgents,
   discoverClaudePlugins,
   discoverClaudeSkills,
-  type ClaudeRuntimeProbe,
+  getClaudeRuntimeProbe,
 } from "./claude-discovery";
 import {
   discoverCodexPluginsCanonical,
@@ -46,6 +52,7 @@ import {
 } from "./codex-discovery";
 import {
   composeConversationStartRuntime,
+  ownedCascadesForBackend,
   type ComposeConversationStartCascadeInput,
   type ComposeConversationStartInput,
   type ComposeConversationStartResult,
@@ -55,13 +62,8 @@ import {
   type AffectedConversation,
   type ApplyConversationIdentity,
   type CapabilityRuntimeApplyService,
-  type ClaudeApplyPortInput,
-  type ClaudeApplyPortResult,
-  type CodexApplyPortInput,
-  type CodexApplyPortResult,
 } from "./apply";
-import type { ClaudeRuntimeCapabilityConfig } from "./claude-runtime-translator";
-import type { CodexRuntimeCapabilityConfig } from "./codex-runtime-translator";
+import { applyTimingForCascade } from "./metadata";
 import {
   createCapabilityMutationService,
   type CapabilityMutationService,
@@ -71,7 +73,7 @@ import { redactAgentCapabilityText } from "./redaction";
 import { defaultScopeCapabilityOverrideStore } from "./scope-store";
 
 const logger = createLogger("agent-capabilities.default-deps");
-const stateManager = createStateManager();
+const stateManager = getStateStore();
 
 export type ConversationStartCapabilityComposerInput =
   | SessionConversationStartCapabilityComposerInput
@@ -96,6 +98,34 @@ export interface ProjectConversationStartCapabilityComposerInput {
   backend: AgentBackendId;
 }
 
+/**
+ * Explicit per-cascade discovery seam. Each persisted cascade kind maps to
+ * one provider; the composer selects providers by walking the backend's
+ * descriptor-declared cascades (`ownedCascadesForBackend`) — never by
+ * branching on backend identity. Providers own their backend-specific
+ * inputs internally (e.g. the Claude live-runtime probe), so the composer
+ * hands every provider the same neutral input.
+ *
+ * The interface lives here rather than on the backend descriptor because
+ * discovery is expressed in this domain's vocabulary
+ * (`AgentCapabilityDiscoveredItem`/diagnostics) and `agent-backends` must not
+ * import `agent-capabilities`; population is the bootstrap-style data table
+ * below (`defaultDiscoveryProviders`), keyed exhaustively by the persisted
+ * cascade-kind enum so declaring a new backend's cascades forces a provider
+ * entry at compile time.
+ */
+export interface CascadeDiscoveryInput {
+  worktreePath: string;
+  home: string;
+  conversationId: string;
+}
+
+export interface CascadeDiscoveryProvider {
+  discover(
+    input: CascadeDiscoveryInput,
+  ): Promise<ComposeConversationStartCascadeInput>;
+}
+
 export interface ConversationStartCapabilityComposerDeps {
   readGlobalOverrides(): Promise<AgentCapabilityOverrides | undefined>;
   readState(): Promise<ManagerState>;
@@ -103,26 +133,13 @@ export interface ConversationStartCapabilityComposerDeps {
     projectPath: string,
     conversationId: string,
   ): Promise<ConversationState | null>;
-  discoverClaudeSkills(
-    input: Parameters<typeof discoverClaudeSkills>[0],
-  ): ReturnType<typeof discoverClaudeSkills>;
-  discoverClaudePlugins(
-    input: Parameters<typeof discoverClaudePlugins>[0],
-  ): ReturnType<typeof discoverClaudePlugins>;
-  discoverClaudeAgents(
-    input: Parameters<typeof discoverClaudeAgents>[0],
-  ): ReturnType<typeof discoverClaudeAgents>;
-  discoverCodexSkillsCanonical(
-    input: Parameters<typeof discoverCodexSkillsCanonical>[0],
-  ): ReturnType<typeof discoverCodexSkillsCanonical>;
-  discoverCodexPluginsCanonical(
-    input: Parameters<typeof discoverCodexPluginsCanonical>[0],
-  ): ReturnType<typeof discoverCodexPluginsCanonical>;
+  getDiscoveryProvider(
+    cascadeKind: AgentCapabilityCascadeKind,
+  ): CascadeDiscoveryProvider | undefined;
   composeRuntime(
     input: ComposeConversationStartInput,
   ): ComposeConversationStartResult;
   homeDir(): string;
-  getClaudeRuntimeProbe(conversationId: string): ClaudeRuntimeProbe | undefined;
   logDiscoveryFailure(input: DiscoveryFailureLogInput): void;
 }
 
@@ -210,130 +227,48 @@ export function createConversationStartCapabilityComposer(
     const failedCascadeKinds: AgentCapabilityCascadeKind[] = [];
     const conversationScope = conversationScopeForComposeInput(input);
 
-    if (input.backend === "claude") {
+    for (const { cascadeKind } of ownedCascadesForBackend(input.backend)) {
+      const provider = deps.getDiscoveryProvider(cascadeKind);
+      if (!provider) {
+        // A declared cascade without a discovery provider is a wiring gap,
+        // not an empty source: mark it failed so the apply layer surfaces a
+        // retryable rejection instead of silently composing native defaults.
+        logDiscoveryFailure(deps, {
+          event: "discovery.provider_missing",
+          backend: input.backend,
+          cascadeKind,
+          conversationScope,
+          worktreePath: input.worktreePath,
+          error: `no discovery provider registered for cascade '${cascadeKind}'`,
+        });
+        failedCascadeKinds.push(cascadeKind);
+        continue;
+      }
       try {
-        const skills = await deps.discoverClaudeSkills({
+        const discovered = await provider.discover({
           worktreePath: input.worktreePath,
           home,
-          runtimeProbe: deps.getClaudeRuntimeProbe(input.conversationId),
+          conversationId: input.conversationId,
         });
-        discoveryByCascade["claude-skills"] = {
-          items: skills.items,
-          diagnostics: skills.diagnostics,
+        discoveryByCascade[cascadeKind] = {
+          items: discovered.items,
+          diagnostics: discovered.diagnostics,
         };
       } catch (err) {
         logDiscoveryFailure(deps, {
-          event: "discovery.claude_skills_failed",
-          backend: "claude",
-          cascadeKind: "claude-skills",
+          event: "discovery.cascade_failed",
+          backend: input.backend,
+          cascadeKind,
           conversationScope,
           worktreePath: input.worktreePath,
           error: getErrorMessage(err),
         });
-        failedCascadeKinds.push("claude-skills");
+        failedCascadeKinds.push(cascadeKind);
       }
-
-      let nativePluginRecords:
-        | Awaited<ReturnType<typeof discoverClaudePlugins>>["nativeRecords"]
-        | undefined;
-      try {
-        const plugins = await deps.discoverClaudePlugins({
-          worktreePath: input.worktreePath,
-          home,
-        });
-        discoveryByCascade["claude-plugins"] = {
-          items: plugins.items,
-          diagnostics: plugins.diagnostics,
-        };
-        nativePluginRecords = plugins.nativeRecords;
-      } catch (err) {
-        logDiscoveryFailure(deps, {
-          event: "discovery.claude_plugins_failed",
-          backend: "claude",
-          cascadeKind: "claude-plugins",
-          conversationScope,
-          worktreePath: input.worktreePath,
-          error: getErrorMessage(err),
-        });
-        failedCascadeKinds.push("claude-plugins");
-      }
-
-      try {
-        const agents = await deps.discoverClaudeAgents({
-          worktreePath: input.worktreePath,
-          home,
-          runtimeProbe: deps.getClaudeRuntimeProbe(input.conversationId),
-        });
-        discoveryByCascade["claude-agents"] = {
-          items: agents.items,
-          diagnostics: agents.diagnostics,
-        };
-      } catch (err) {
-        logDiscoveryFailure(deps, {
-          event: "discovery.claude_agents_failed",
-          backend: "claude",
-          cascadeKind: "claude-agents",
-          conversationScope,
-          worktreePath: input.worktreePath,
-          error: getErrorMessage(err),
-        });
-        failedCascadeKinds.push("claude-agents");
-      }
-
-      return deps.composeRuntime({
-        backend: "claude",
-        scope: scopeContextForComposeInput(input),
-        overrideChain,
-        discoveryByCascade,
-        failedCascadeKinds,
-        nativePluginRecords: nativePluginRecords ?? [],
-      });
-    }
-
-    try {
-      const skills = await deps.discoverCodexSkillsCanonical({
-        worktreePath: input.worktreePath,
-        home,
-      });
-      discoveryByCascade["codex-skills"] = {
-        items: skills.items,
-        diagnostics: skills.diagnostics,
-      };
-    } catch (err) {
-      logDiscoveryFailure(deps, {
-        event: "discovery.codex_skills_failed",
-        backend: "codex",
-        cascadeKind: "codex-skills",
-        conversationScope,
-        worktreePath: input.worktreePath,
-        error: getErrorMessage(err),
-      });
-      failedCascadeKinds.push("codex-skills");
-    }
-
-    try {
-      const plugins = await deps.discoverCodexPluginsCanonical({
-        worktreePath: input.worktreePath,
-        home,
-      });
-      discoveryByCascade["codex-plugins"] = {
-        items: plugins.items,
-        diagnostics: plugins.diagnostics,
-      };
-    } catch (err) {
-      logDiscoveryFailure(deps, {
-        event: "discovery.codex_plugins_failed",
-        backend: "codex",
-        cascadeKind: "codex-plugins",
-        conversationScope,
-        worktreePath: input.worktreePath,
-        error: getErrorMessage(err),
-      });
-      failedCascadeKinds.push("codex-plugins");
     }
 
     return deps.composeRuntime({
-      backend: "codex",
+      backend: input.backend,
       scope: scopeContextForComposeInput(input),
       overrideChain,
       discoveryByCascade,
@@ -341,6 +276,53 @@ export function createConversationStartCapabilityComposer(
     });
   };
 }
+
+/**
+ * Production discovery providers, one per persisted cascade kind. Exhaustive
+ * over the enum: adding a cascade kind (the schema edit that admits a new
+ * backend's cascades) fails compilation here until its provider is wired.
+ */
+const defaultDiscoveryProviders: Readonly<
+  Record<AgentCapabilityCascadeKind, CascadeDiscoveryProvider>
+> = {
+  "claude-skills": {
+    discover: (input) =>
+      discoverClaudeSkills({
+        worktreePath: input.worktreePath,
+        home: input.home,
+        runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
+      }),
+  },
+  "claude-plugins": {
+    discover: (input) =>
+      discoverClaudePlugins({
+        worktreePath: input.worktreePath,
+        home: input.home,
+      }),
+  },
+  "claude-agents": {
+    discover: (input) =>
+      discoverClaudeAgents({
+        worktreePath: input.worktreePath,
+        home: input.home,
+        runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
+      }),
+  },
+  "codex-skills": {
+    discover: (input) =>
+      discoverCodexSkillsCanonical({
+        worktreePath: input.worktreePath,
+        home: input.home,
+      }),
+  },
+  "codex-plugins": {
+    discover: (input) =>
+      discoverCodexPluginsCanonical({
+        worktreePath: input.worktreePath,
+        home: input.home,
+      }),
+  },
+};
 
 function isProjectConversationComposeInput(
   input: ConversationStartCapabilityComposerInput,
@@ -390,14 +372,10 @@ const defaultComposeForConversation = createConversationStartCapabilityComposer(
     readState: () => stateManager.readState(),
     getProjectConversation: (projectPath, conversationId) =>
       stateManager.getProjectConversation(projectPath, conversationId),
-    discoverClaudeSkills,
-    discoverClaudePlugins,
-    discoverClaudeAgents,
-    discoverCodexSkillsCanonical,
-    discoverCodexPluginsCanonical,
+    getDiscoveryProvider: (cascadeKind) =>
+      defaultDiscoveryProviders[cascadeKind],
     composeRuntime: composeConversationStartRuntime,
     homeDir: () => os.homedir(),
-    getClaudeRuntimeProbe,
     logDiscoveryFailure(input) {
       logger.error(input.event, {
         backend: input.backend,
@@ -413,7 +391,7 @@ const defaultComposeForConversation = createConversationStartCapabilityComposer(
 interface RuntimeSnapshot {
   status: "alive" | "dead";
   backend: AgentBackendId;
-  isTurnActive?: unknown;
+  isTurnActive?: boolean;
 }
 
 export interface AffectedConversationListerDeps {
@@ -481,7 +459,7 @@ export function createAffectedConversationLister(
               conversationId: conv.id,
               worktreePath: session.worktreePath,
               backend: runtime.backend,
-              isTurnActive: isClaudeTurnActive(runtime),
+              isTurnActive: runtime.isTurnActive === true,
             });
           }
         }
@@ -548,7 +526,7 @@ export function createAffectedConversationLister(
         conversationId: conversation.id,
         worktreePath: projectPath,
         backend: runtime.backend,
-        isTurnActive: isClaudeTurnActive(runtime),
+        isTurnActive: runtime.isTurnActive === true,
       });
     }
 
@@ -787,35 +765,7 @@ function hasExplicitOverride(
 function cascadeBackend(
   cascadeKind: AgentCapabilityCascadeKind,
 ): AgentBackendId {
-  return cascadeKind.startsWith("claude-") ? "claude" : "codex";
-}
-
-function isClaudeTurnActive(runtime: {
-  backend: AgentBackendId;
-  isTurnActive?: unknown;
-}): boolean {
-  if (runtime.backend !== "claude") return false;
-  return (runtime as { isTurnActive?: unknown }).isTurnActive === true;
-}
-
-function getClaudeRuntimeProbe(
-  conversationId: string,
-): ClaudeRuntimeProbe | undefined {
-  const runtime = getRuntime(conversationId);
-  if (!runtime || runtime.backend !== "claude" || runtime.status !== "alive") {
-    return undefined;
-  }
-  if (!runtime.supportedCommands && !runtime.supportedAgents) {
-    return undefined;
-  }
-  return {
-    ...(runtime.supportedCommands
-      ? { supportedCommands: runtime.supportedCommands.bind(runtime) }
-      : {}),
-    ...(runtime.supportedAgents
-      ? { supportedAgents: runtime.supportedAgents.bind(runtime) }
-      : {}),
-  };
+  return decodeCascadeKind(cascadeKind).backend;
 }
 
 /**
@@ -837,78 +787,60 @@ export const defaultCapabilityRuntimeApplyService: CapabilityRuntimeApplyService
     listAffectedConversations: defaultListAffectedConversations,
     isTurnActive(conversation) {
       const runtime = getRuntime(conversation.conversationId);
-      if (!runtime) return false;
-      return isClaudeTurnActive(runtime);
+      return runtime?.isTurnActive === true;
     },
     composeForConversation: defaultComposeForConversation,
     readRuntimeState: defaultRuntimeStateAccessors.readRuntimeState,
     writeRuntimeState: defaultRuntimeStateAccessors.writeRuntimeState,
-    applyClaudeRuntime: defaultApplyClaudeRuntime,
-    applyCodexRuntime: defaultApplyCodexRuntime,
+    applyRuntimeConfig: applyRuntimeConfigToConversationRuntime,
   });
 
-async function defaultApplyClaudeRuntime(
-  input: ClaudeApplyPortInput,
-): Promise<ClaudeApplyPortResult> {
-  const runtime = getRuntime(input.conversationId);
+/**
+ * Default runtime-config apply port: resolves the conversation's live runtime
+ * and its backend descriptor, then hands both to the descriptor's neutral
+ * runtime-config adapter. Provider translation happens inside the adapter.
+ */
+export async function applyRuntimeConfigToConversationRuntime(input: {
+  conversation: ApplyConversationIdentity;
+  resolved: ResolvedCapabilityCascade;
+}): Promise<RuntimeConfigApplyResult> {
+  const runtime = getRuntime(input.conversation.conversationId);
   if (!runtime) {
-    return { status: "rejected", error: "claude runtime not registered" };
+    return { status: "rejected", error: "runtime not registered" };
   }
-  if (runtime.backend !== "claude") {
-    return { status: "rejected", error: "runtime is not a claude backend" };
-  }
-  if (runtime.status !== "alive") {
-    return { status: "rejected", error: "claude runtime is not alive" };
-  }
-  if (!runtime.applyClaudeCapabilityConfig) {
+  if (runtime.backend !== input.conversation.backend) {
     return {
       status: "rejected",
-      error: "claude runtime does not expose applyClaudeCapabilityConfig",
+      error: `runtime backend '${runtime.backend}' does not match conversation backend '${input.conversation.backend}'`,
     };
   }
-  return runtime.applyClaudeCapabilityConfig(input.config);
-}
-
-async function defaultApplyCodexRuntime(
-  input: CodexApplyPortInput,
-): Promise<CodexApplyPortResult> {
-  const runtime = getRuntime(input.conversationId);
-  if (!runtime) {
-    return { status: "rejected", error: "codex runtime not registered" };
-  }
-  if (runtime.backend !== "codex") {
-    return { status: "rejected", error: "runtime is not a codex backend" };
-  }
-  if (runtime.status !== "alive") {
-    return { status: "rejected", error: "codex runtime is not alive" };
-  }
-  if (!runtime.applyCodexCapabilityConfig) {
+  const descriptor = getBackendDescriptor(runtime.backend);
+  const adapter = descriptor.conversation?.runtimeConfig;
+  if (!adapter) {
     return {
       status: "rejected",
-      error: "codex runtime does not expose applyCodexCapabilityConfig",
+      error: `backend '${runtime.backend}' has no conversation runtime-config adapter`,
     };
   }
-  return runtime.applyCodexCapabilityConfig(input.config);
+  return adapter.apply({ runtime, resolved: input.resolved });
 }
 
-/** @public Referenced via `import("...").ComposedClaudeCapabilitySeed` in actor-implementations. */
-export interface ComposedClaudeCapabilitySeed {
-  config: ClaudeRuntimeCapabilityConfig;
+/** @public Referenced via `import("...").ComposedCapabilitySeed` in actor-implementations. */
+export interface ComposedCapabilitySeed {
+  /**
+   * Backend-neutral resolved cascade the actor seeds onto the backend factory
+   * via `tooling.capabilities`; the factory translates it into its provider
+   * payload internally at `createRuntime`.
+   */
+  capabilities: ResolvedCapabilityCascade;
   diagnostics?: readonly AgentCapabilityDiagnostic[];
   /**
-   * Initial capability runtime apply state for the new conversation. Each
-   * cascade the composer emitted is recorded as `applied` because the Claude
-   * SDK receives this config at session creation. The actor must persist this
-   * state via `mutateConversation` so the apply service can compare
-   * subsequent mutations against this baseline.
+   * Initial capability runtime apply state for the new conversation. Kinds
+   * delivered at session creation are recorded as `applied`; next-turn kinds
+   * stay `staged-next-turn` until the turn-start apply promotes them. The
+   * actor must persist this state via `mutateConversation` so the apply
+   * service can compare subsequent mutations against this baseline.
    */
-  runtimeState: AgentCapabilityRuntimeApplicationState;
-}
-
-/** @public Referenced via `import("...").ComposedCodexCapabilitySeed` in actor-implementations. */
-export interface ComposedCodexCapabilitySeed {
-  config: CodexRuntimeCapabilityConfig;
-  diagnostics?: readonly AgentCapabilityDiagnostic[];
   runtimeState: AgentCapabilityRuntimeApplicationState;
 }
 
@@ -919,18 +851,23 @@ export interface ComposedProjectConversationDiagnosticsSeed {
 }
 
 /**
- * Promote Claude composer-seeded cascades from `staged-next-turn` to
- * `applied`. Codex keeps the staged state until the turn-start apply service
- * pushes the config into the runtime and records the promotion.
+ * Promote composer-seeded cascades whose payload the backend receives at
+ * session creation from `staged-next-turn` to `applied`. Next-turn kinds
+ * (per the descriptor's declared apply timing) keep the staged state until
+ * the turn-start apply service pushes the config into the runtime and
+ * records the promotion.
  */
-function promoteClaudeSeededRuntimeState(
+function promoteSeededRuntimeState(
   state: AgentCapabilityRuntimeApplicationState,
 ): AgentCapabilityRuntimeApplicationState {
   const out: AgentCapabilityRuntimeApplicationState = { cascades: {} };
   for (const [rawKind, cascade] of Object.entries(state.cascades)) {
     if (!cascade) continue;
     const cascadeKind = rawKind as AgentCapabilityCascadeKind;
-    if (cascade.pendingHash !== undefined) {
+    if (
+      cascade.pendingHash !== undefined &&
+      applyTimingForCascade(cascadeKind) !== "next_turn"
+    ) {
       out.cascades[cascadeKind] = {
         appliedHash: cascade.pendingHash,
         lastApplyStatus: "applied",
@@ -945,12 +882,8 @@ function promoteClaudeSeededRuntimeState(
 export type ComposedProjectConversationCapabilitySeed =
   | ({
       kind?: "runtime";
-      backend: "claude";
-    } & ComposedClaudeCapabilitySeed)
-  | ({
-      kind?: "runtime";
-      backend: "codex";
-    } & ComposedCodexCapabilitySeed)
+      backend: AgentBackendId;
+    } & ComposedCapabilitySeed)
   | ComposedProjectConversationDiagnosticsSeed;
 
 function projectConversationDiagnosticsSeed(
@@ -1018,26 +951,14 @@ export function createProjectConversationCapabilityConfigComposer(
       backend,
     });
 
-    if (backend === "claude") {
-      if (!result.claudeRuntime) {
-        return projectConversationDiagnosticsSeed(backend, result);
-      }
-      return {
-        backend: "claude",
-        config: result.claudeRuntime,
-        diagnostics: result.diagnostics,
-        runtimeState: promoteClaudeSeededRuntimeState(result.runtimeState),
-      };
-    }
-
-    if (!result.codexRuntime) {
+    if (result.capabilities.kinds.length === 0) {
       return projectConversationDiagnosticsSeed(backend, result);
     }
     return {
-      backend: "codex",
-      config: { config: result.codexRuntime.config },
+      backend,
+      capabilities: result.capabilities,
       diagnostics: result.diagnostics,
-      runtimeState: result.runtimeState,
+      runtimeState: promoteSeededRuntimeState(result.runtimeState),
     };
   };
 }
@@ -1055,56 +976,35 @@ export const composeCapabilityConfigForProjectConversation =
   defaultProjectConversationCapabilityConfigComposer;
 
 /**
- * Compose the Claude capability runtime config + initial apply state for a new
- * conversation. The actor seeds `tooling.claudeCapabilityConfig` on the
- * backend factory with the returned `config` and writes `runtimeState` to
+ * Compose the neutral capability cascade + initial apply state for a new
+ * conversation. The actor seeds `tooling.capabilities` on the backend factory
+ * with the returned cascade and writes `runtimeState` to
  * `conversation.agentCapabilitiesRuntime` so the apply service can promote /
- * compare against this baseline on subsequent mutations.
+ * compare against this baseline on subsequent mutations. The factory form
+ * exists so tests can run the same seed projection over a composer built
+ * with injected deps instead of the module-level store wiring.
  */
-/** @public Accessed via dynamic `import()` in actor-implementations. */
-export async function composeClaudeCapabilityConfigForConversation(input: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  conversationId: string;
-  worktreePath: string;
-}): Promise<ComposedClaudeCapabilitySeed | undefined> {
-  const result = await defaultComposeForConversation({
-    ...input,
-    backend: "claude",
-  });
-  if (!result.claudeRuntime) return undefined;
-  return {
-    config: result.claudeRuntime,
-    diagnostics: result.diagnostics,
-    runtimeState: promoteClaudeSeededRuntimeState(result.runtimeState),
+export function createCapabilityConfigComposer(
+  composeForConversation: (
+    input: SessionConversationStartCapabilityComposerInput,
+  ) => Promise<ComposeConversationStartResult>,
+): (
+  input: SessionConversationStartCapabilityComposerInput,
+) => Promise<ComposedCapabilitySeed | undefined> {
+  return async function composeCapabilityConfig(input) {
+    const result = await composeForConversation(input);
+    if (result.capabilities.kinds.length === 0) return undefined;
+    return {
+      capabilities: result.capabilities,
+      diagnostics: result.diagnostics,
+      runtimeState: promoteSeededRuntimeState(result.runtimeState),
+    };
   };
 }
 
-/**
- * Compose the Codex capability runtime config + initial apply state for a new
- * conversation. See `composeClaudeCapabilityConfigForConversation` for the
- * actor wiring contract.
- */
 /** @public Accessed via dynamic `import()` in actor-implementations. */
-export async function composeCodexCapabilityConfigForConversation(input: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  conversationId: string;
-  worktreePath: string;
-}): Promise<ComposedCodexCapabilitySeed | undefined> {
-  const result = await defaultComposeForConversation({
-    ...input,
-    backend: "codex",
-  });
-  if (!result.codexRuntime) return undefined;
-  return {
-    config: { config: result.codexRuntime.config },
-    diagnostics: result.diagnostics,
-    runtimeState: result.runtimeState,
-  };
-}
+export const composeCapabilityConfigForConversation =
+  createCapabilityConfigComposer(defaultComposeForConversation);
 
 /**
  * Build a mutation service pre-wired to the default fanout hook. Routes that

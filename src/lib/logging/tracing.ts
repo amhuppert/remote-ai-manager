@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { runWithTrace, type TraceContext } from "./context";
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { ApiError } from "@/lib/api/errors";
 import { createLogger } from "./logger";
 
 const logger = createLogger("tracing");
@@ -57,6 +58,36 @@ type RouteContext = { params: Promise<RouteParams> };
  */
 type DefaultRouteContext = { params: Promise<Record<string, string>> };
 
+export interface WithTracingOptions {
+  /**
+   * Map a thrown error to a domain-shaped error Response (e.g. a 409 with a
+   * domain code). Return undefined to fall through to the generic
+   * `internal_error` 500 envelope.
+   */
+  mapError?(error: unknown): Response | undefined;
+}
+
+function buildErrorResponse(
+  err: unknown,
+  mapError: WithTracingOptions["mapError"],
+): Response {
+  if (mapError) {
+    try {
+      const mapped = mapError(err);
+      if (mapped) return mapped;
+    } catch (mapperErr) {
+      logger.warn("request.error_mapper_failed", {
+        error: getErrorMessage(mapperErr),
+      });
+    }
+  }
+  const envelope: ApiError = {
+    error: getErrorMessage(err),
+    code: "internal_error",
+  };
+  return Response.json(envelope, { status: 500 });
+}
+
 /**
  * Wrap a Next.js API route handler with tracing instrumentation.
  *
@@ -66,12 +97,15 @@ type DefaultRouteContext = { params: Promise<Record<string, string>> };
  * - Initializes ALS trace context for handler duration
  * - Logs request start (info) and completion (info / warn by duration; debug for SSE)
  * - Adds X-Trace-Id and Server-Timing to response header
- * - Catches unhandled errors, logs with full context, re-throws
+ * - Catches unhandled errors, logs with full context, and returns a shaped
+ *   `ApiError` envelope: the per-domain `mapError` response when one is
+ *   supplied and matches, otherwise a generic `internal_error` 500
  */
 export function withTracing<
   C extends RouteContext | undefined = DefaultRouteContext,
 >(
   handler: (request: Request, context: C) => Promise<Response>,
+  options?: WithTracingOptions,
 ): (request: Request, context: C) => Promise<Response> {
   return async (request, context) => {
     const start = Date.now();
@@ -152,14 +186,17 @@ export function withTracing<
         return response;
       } catch (err) {
         const durationMs = Date.now() - start;
+        const errorResponse = buildErrorResponse(err, options?.mapError);
         logger.error("request.error", {
           method: request.method,
           path: url.pathname,
+          status: errorResponse.status,
           durationMs,
           error: getErrorMessage(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
-        throw err;
+        errorResponse.headers.set("x-trace-id", traceId);
+        return errorResponse;
       }
     });
   };

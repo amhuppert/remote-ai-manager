@@ -13,6 +13,7 @@ import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import { IconButton } from "@/components/ui/IconButton";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { cn } from "@/lib/ui/cn";
 import {
   useSendProjectPrompt,
@@ -20,7 +21,7 @@ import {
   useCloseProjectConversation,
 } from "@/lib/project-conversations-client/mutations";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
-import { useConversationSpawnCards } from "@/features/_root/spawn-card/useConversationSpawnCards";
+import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/useConversationSpawnCards";
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
 import ConversationPane from "./ConversationPane";
@@ -455,28 +456,30 @@ export default function ProjectCockpit({
           >
             {railCollapsed ? (
               <div className="flex flex-col items-center py-sm">
-                <IconButton
-                  type="button"
-                  variant="square"
-                  aria-label="Expand conversations rail"
-                  data-tooltip="Expand rail"
-                  onClick={toggleRail}
-                >
-                  <ChevronGlyph dir="right" />
-                </IconButton>
+                <WithTooltip label="Expand rail">
+                  <IconButton
+                    type="button"
+                    variant="square"
+                    aria-label="Expand conversations rail"
+                    onClick={toggleRail}
+                  >
+                    <ChevronGlyph dir="right" />
+                  </IconButton>
+                </WithTooltip>
               </div>
             ) : (
               <>
                 <div className={RAIL_TOGGLE_ROW_CLASS}>
-                  <IconButton
-                    type="button"
-                    variant="square"
-                    aria-label="Collapse conversations rail"
-                    data-tooltip="Collapse rail"
-                    onClick={toggleRail}
-                  >
-                    <ChevronGlyph dir="left" />
-                  </IconButton>
+                  <WithTooltip label="Collapse rail">
+                    <IconButton
+                      type="button"
+                      variant="square"
+                      aria-label="Collapse conversations rail"
+                      onClick={toggleRail}
+                    >
+                      <ChevronGlyph dir="left" />
+                    </IconButton>
+                  </WithTooltip>
                 </div>
                 {rail}
               </>

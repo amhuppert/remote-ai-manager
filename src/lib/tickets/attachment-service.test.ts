@@ -134,8 +134,9 @@ function makeService(
     getSessionOverview: () => Promise.resolve(sessionOverview),
     isTicketStartActive: () => startActive,
     onTicketStartReleased: () => startReleased,
-    broadcast: (event) => {
+    publish: (event) => {
       events.push(event);
+      return { delivered: true };
     },
     now: () => {
       clock += 1;
@@ -315,9 +316,10 @@ describe("add file", () => {
         phases.push(`gate:${projectPath}:end`);
         return result;
       },
-      broadcast(event) {
+      publish(event) {
         phases.push("event");
         events.push(event);
+        return { delivered: true };
       },
     });
 

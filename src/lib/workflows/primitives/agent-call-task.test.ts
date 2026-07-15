@@ -45,13 +45,15 @@ function makeStubRunner(
   const baseResult: AgentTaskResult = {
     backendRef:
       backend === "claude"
-        ? { backend: "claude", sessionId: "task-1" }
-        : { backend: "codex", threadId: "thread-1" },
+        ? { backend: "claude", ref: "task-1" }
+        : { backend: "codex", ref: "thread-1" },
     text: "task done",
     structuredOutput: undefined,
     usage: { inputTokens: 100, outputTokens: 200, cachedInputTokens: 0 },
     error: null,
     timedOut: false,
+    failure: null,
+    continuationDisposition: "retain",
   };
 
   return {
@@ -215,7 +217,15 @@ describe("dispatchTaskRun", () => {
 
   it("normalizes a runner-reported error preserving backend identity", async () => {
     const { runner } = makeStubRunner("codex", {
-      result: { error: "runner exploded", text: null },
+      result: {
+        error: "runner exploded",
+        text: null,
+        failure: {
+          kind: "backend_error",
+          message: "runner exploded",
+          retryable: false,
+        },
+      },
     });
     const result = await dispatchTaskRun(
       { kind: "task_run", backend: "codex", prompt: "go" },
@@ -229,6 +239,96 @@ describe("dispatchTaskRun", () => {
     }
   });
 
+  it("preserves the task adapter's failure classification, ref, and explicit clear verdict", async () => {
+    const classifyFailure = vi.fn(() => ({
+      failure: {
+        kind: "backend_error" as const,
+        message: "caller must not reclassify adapter results",
+        retryable: false,
+      },
+      continuationDisposition: "retain" as const,
+    }));
+    const { runner } = makeStubRunner("codex", {
+      result: {
+        backendRef: null,
+        text: null,
+        error: "thread/resume: no rollout found for thread id stale",
+        failure: {
+          kind: "stale_resume_ref",
+          message: "thread/resume: no rollout found for thread id stale",
+          retryable: true,
+        },
+        continuationDisposition: "clear",
+      },
+    });
+
+    const result = await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+        classifyFailure,
+      },
+    );
+
+    expect(classifyFailure).not.toHaveBeenCalled();
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("stale_resume_ref");
+    }
+    expect(result.backendRef).toBeNull();
+    expect(result.continuationDisposition).toBe("clear");
+  });
+
+  it("retains the supplied resume ref when runner dispatch throws before an adapter result exists", async () => {
+    const { runner } = makeStubRunner("codex", {
+      throws: new Error("transport unavailable"),
+    });
+    const resumeRef = { backend: "codex" as const, ref: "thread-viable" };
+
+    const result = await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+        resumeRef,
+      },
+    );
+
+    expect(result.backendRef).toEqual(resumeRef);
+    expect(result.continuationDisposition).toBe("retain");
+  });
+
+  it("applies the adapter classifier's clear verdict when runner dispatch throws on a stale ref", async () => {
+    const { runner } = makeStubRunner("codex", {
+      throws: new Error("thread expired"),
+    });
+    const resumeRef = { backend: "codex" as const, ref: "thread-stale" };
+
+    const result = await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+        resumeRef,
+        classifyFailure: (error) => ({
+          failure: {
+            kind: "stale_resume_ref",
+            message: error instanceof Error ? error.message : String(error),
+            retryable: true,
+          },
+          continuationDisposition: "clear",
+        }),
+      },
+    );
+
+    expect(result.backendRef).toBeNull();
+    expect(result.continuationDisposition).toBe("clear");
+  });
+
   it("preserves a captured transcript on runner-reported errors", async () => {
     const transcript = [
       {
@@ -239,7 +339,16 @@ describe("dispatchTaskRun", () => {
       },
     ];
     const { runner } = makeStubRunner("claude", {
-      result: { error: "runner exploded", text: null, transcript },
+      result: {
+        error: "runner exploded",
+        text: null,
+        transcript,
+        failure: {
+          kind: "backend_error",
+          message: "runner exploded",
+          retryable: false,
+        },
+      },
     });
     const result = await dispatchTaskRun(
       { kind: "task_run", backend: "claude", prompt: "go" },
@@ -322,11 +431,13 @@ describe("dispatchTaskRun", () => {
         "backend",
         "backendRef",
         "capabilities",
+        "continuationDisposition",
         "outcome",
         "usage",
       ].sort(),
     );
     expect(result.outcome.kind).toBe("completed");
+    expect(result.continuationDisposition).toBe("retain");
   });
 
   it("emits the shared structured log field set including artifactKinds and outcome", async () => {

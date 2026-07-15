@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { createPortal } from "react-dom";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
 import { Button } from "@/components/ui/Button";
+import { Dialog, DialogContent } from "@/components/ui/Dialog";
 import { cn } from "@/lib/ui/cn";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 
@@ -264,9 +263,14 @@ function UnmanagedConflictDialog({
   isStopping: boolean;
 }) {
   return (
+    // An inline alert card rendered inside the drawer's dialog body — not a
+    // portaled overlay. `role="alert"` (a live region), not `role="dialog"`: it
+    // owns no focus trap/scrim/return of its own, and the enclosing DevServer
+    // drawer (ui/Dialog) already provides the modal focus context. The
+    // conflict message is announced as it appears.
     <div
       className={CONFLICT}
-      role="dialog"
+      role="alert"
       aria-label="Unmanaged dev server detected"
     >
       <div className="text-[0.85rem] font-semibold">
@@ -330,20 +334,11 @@ export function DevServerPanel({
   onDismissUnmanagedConflict,
   onStopUnmanagedAndRetry,
   isStoppingUnmanaged = false,
-}: DevServerPanelProps): React.JSX.Element | null {
+}: DevServerPanelProps): React.JSX.Element {
   const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({
     top: 0,
     right: 0,
   });
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -356,17 +351,6 @@ export function DevServerPanel({
     });
   }, [open, anchorRef]);
 
-  useOverlayScope(open);
-
-  // Migration deferred (overlay-consumer dispositions): this is an anchored
-  // drawer with a mobile backdrop + bottom-sheet variant and a bespoke status
-  // trigger, custom-positioned from the trigger rect. Its custom fixed
-  // positioning, backdrop, and slide animations are not modelled by the shipped
-  // `Popover` primitive's padded canonical floating surface, so the manual
-  // Escape/positioning is retained.
-
-  if (!open) return null;
-
   const hasStoppable = servers.some(
     (s) => s.status === "running" || s.status === "starting",
   );
@@ -374,14 +358,22 @@ export function DevServerPanel({
     (s) => s.status === "stopped" || s.status === "error",
   );
 
-  return createPortal(
-    <>
-      <div className={BACKDROP} onClick={onClose} />
-      <div
-        className={PANEL}
-        style={{ top: panelPos.top, right: panelPos.right }}
-        role="dialog"
+  // The panel is anchored to the status trigger by its measured rect on desktop
+  // and docks as a bottom sheet below 768px, so it self-positions via the
+  // `ui/Dialog` unstyled/edge-anchored variant rather than the centred card. The
+  // dev-server drawer already closed on any outside click (its full-viewport
+  // backdrop), so adopting the modal scrim keeps that behaviour while Radix now
+  // owns the focus trap and Escape/outside-press dismissal. The scrim is
+  // transparent on desktop and dims the page below 768px.
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        unstyled
+        anchor="stretch"
+        scrimClassName={BACKDROP}
         aria-label="Dev servers"
+        contentClassName={PANEL}
+        positionStyle={{ top: panelPos.top, right: panelPos.right }}
       >
         <div className={HEADER}>
           <span className={TITLE}>Dev Servers</span>
@@ -440,9 +432,8 @@ export function DevServerPanel({
             )}
           </div>
         )}
-      </div>
-    </>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }
 

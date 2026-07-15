@@ -82,7 +82,7 @@ beforeEach(async () => {
     resolveProjectPath,
     resolveAvailableProjectPath: resolveProjectPath,
     deleteTicketContent: () => Promise.resolve(),
-    broadcast: () => {},
+    publish: () => ({ delivered: true }),
     runProjectTicketOperation: (_projectPath, operation) =>
       operation({ projectDeletionPrecededOperation: false }),
     runTicketOperation: (_key, fn) => fn(),
@@ -127,7 +127,7 @@ beforeEach(async () => {
       }),
     isTicketStartActive: () => false,
     onTicketStartReleased: () => Promise.resolve(),
-    broadcast: () => {},
+    publish: () => ({ delivered: true }),
     now,
     generateId,
   });

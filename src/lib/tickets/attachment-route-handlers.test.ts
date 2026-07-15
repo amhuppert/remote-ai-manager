@@ -110,7 +110,7 @@ function buildAttachmentService(
       }),
     isTicketStartActive: overrides.isTicketStartActive ?? (() => false),
     onTicketStartReleased: () => Promise.resolve(),
-    broadcast: () => {},
+    publish: () => ({ delivered: true }),
     now: () => "2026-07-10T00:00:00.000Z",
     generateId: () => {
       idSeq += 1;
@@ -149,7 +149,7 @@ beforeEach(async () => {
     resolveProjectPath,
     resolveAvailableProjectPath: resolveProjectPath,
     deleteTicketContent: () => Promise.resolve(),
-    broadcast: () => {},
+    publish: () => ({ delivered: true }),
     runProjectTicketOperation: (_projectPath, operation) =>
       operation({ projectDeletionPrecededOperation: false }),
     runTicketOperation: (_key, fn) => fn(),
@@ -577,7 +577,11 @@ describe("resolve GET", () => {
     );
     expect(response.status).toBe(404);
     const body = await jsonOf(response);
-    expect(body["code"]).toBe("attachment_not_found");
+    expect(body).toEqual({
+      error: `Attachment not found on ${PROJECT_NAME}#${ticket.number}: missing`,
+      code: "attachment_not_found",
+      details: { attachmentId: "missing" },
+    });
   });
 });
 

@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { setProjectPinned as defaultSetProjectPinned } from "@/lib/state-store";
 import type { ApiError } from "@/lib/api/errors";
@@ -48,13 +49,9 @@ export function createPinRouteHandlers(deps: PinRouteDeps = defaultDeps) {
     const resolvedParams = await context.params;
     const name = resolvedParams["name"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     let body: { pinned: boolean };
     try {

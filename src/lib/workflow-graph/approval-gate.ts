@@ -1,11 +1,14 @@
 import { createLogger } from "@/lib/logging";
+import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
 import type {
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
+} from "@/lib/workflow-graph/schemas";
+import type {
   GraphWorkflowStatus,
   GraphWorkflowTaskDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 const logger = createLogger("workflow-graph.approval-gate");
 
@@ -176,7 +179,9 @@ export function createApprovalGateService(
     }
 
     const requestedAt = deps.now();
-    contextState.status = "awaiting_approval";
+    transitionContextStatus(execution, input.contextId, "awaiting_approval", {
+      reason: "approval_gate.enter_awaiting_approval",
+    });
     contextState.pendingApproval = {
       conversationId: input.conversationId,
       requestedAt,
@@ -347,7 +352,9 @@ export function createApprovalGateService(
     );
 
     contextState.pendingApproval = null;
-    contextState.status = "running";
+    transitionContextStatus(execution, contextId, "running", {
+      reason: "approval_gate.apply_rejected_decision",
+    });
 
     tasks.push(remediationTask);
     execution.taskStates[remediationTask.id] = {

@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type {
   GraphWorkflowAgentSessionState,
-  GraphWorkflowContextStatus,
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
   GraphWorkflowTaskState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 import {
   appendPendingJoin,
-  applyJoinProgress,
   findActiveJoin,
   findBusyJoinSourceLaneIds,
   materializeSessionLane,
@@ -17,9 +16,9 @@ import {
   planContextJoin,
   planFinalPublishJoin,
   remainingSourceLanes,
-  resetJoinForRetry,
   resolveLaneConversationId,
 } from "./lane-join";
+import { applyJoinProgress, resetJoinForRetry } from "./context-transitions";
 import { createWorkflowExecution } from "./test-fixtures";
 
 const t0 = "2026-03-27T12:00:00.000Z";
@@ -1128,16 +1127,11 @@ describe("resolveLaneConversationId", () => {
     return {
       lane: "implementer",
       contextId,
-      engine: "claude",
+      backend: "claude",
+      refKind: "conversation",
       workflowConversationId,
-      sessionRef: {
-        engine: "claude",
-        lane: "implementer",
-        conversationId: workflowConversationId,
-      },
-      lastContextTokens: null,
-      lastContextWindowMax: null,
-      rotateBeforeNextTurn: false,
+      sessionRef: { backend: "claude", ref: workflowConversationId },
+      metrics: { rotateBeforeNextTurn: false },
       limitEvaluation: "supported",
       lastUsedAt: t0,
     };
@@ -1236,16 +1230,11 @@ describe("resolveLaneConversationId", () => {
     const validatorState: GraphWorkflowAgentSessionState = {
       lane: "context_validator",
       contextId: "ctx-1",
-      engine: "claude",
+      backend: "claude",
+      refKind: "conversation",
       workflowConversationId: "conv-validator",
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "conv-validator",
-      },
-      lastContextTokens: null,
-      lastContextWindowMax: null,
-      rotateBeforeNextTurn: false,
+      sessionRef: { backend: "claude", ref: "conv-validator" },
+      metrics: { rotateBeforeNextTurn: false },
       limitEvaluation: "supported",
       lastUsedAt: t0,
     };

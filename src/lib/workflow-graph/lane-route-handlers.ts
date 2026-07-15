@@ -18,11 +18,11 @@
  */
 
 import { NextResponse } from "next/server";
+import { jsonError, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { createLogger, withTracing } from "@/lib/logging";
-import type { ApiError } from "@/lib/api/errors";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
 import {
   loadGraphWorkflowLaneToolContext,
@@ -83,10 +83,6 @@ export interface LaneRouteDeps {
   ): Promise<LoadLaneToolContextResult>;
 }
 
-function jsonError(error: string, status: number): Response {
-  return NextResponse.json({ error } satisfies ApiError, { status });
-}
-
 function invalidBody(error: z.ZodError): Response {
   return NextResponse.json(
     {
@@ -126,10 +122,9 @@ async function prepareContext(
   executionId: string,
   contextId: string,
 ): Promise<PreparedContext> {
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return { ok: false, response: jsonError("Project not found", 404) };
-  }
+  const project = await resolveProjectOr404(deps, projectName);
+  if (!project.ok) return project;
+  const projectPath = project.value;
 
   const result = await deps.loadLaneToolContext(
     projectPath,

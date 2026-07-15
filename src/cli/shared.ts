@@ -2,6 +2,7 @@ import path from "node:path";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { resolveConfigDirFrom } from "@/lib/config/config-dir";
 import { booleanFlagNames, renderTopUsage } from "./help-registry";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 export interface CliResult {
   exitCode: number;
@@ -215,15 +216,26 @@ export function checkFlags(
 }
 
 /**
- * The --json envelope shared by every command. `hint` is reserved for a
- * single advisory next-step line (doc 01 §6) — load-bearing protocol never
- * goes in it, so agents can ignore it safely.
+ * The --json envelope shared by every command. The three output tiers (doc 01
+ * §6 / steering `cli.md`) are typed here so every command shares one contract:
+ * `hint` is a single advisory next step (ignorable), `reminders` are invariants
+ * to keep true while work continues, and `instruction` is load-bearing do-now
+ * text the caller obeys first.
  */
 export interface JsonEnvelope {
   ok: boolean;
   error?: string;
   hint?: string;
   reminders?: string[];
+  /**
+   * Load-bearing do-now text (tier 3, "obey first"): `ask`'s end-turn note and a
+   * lane `task complete`'s context-rotation stop. When present, `render`/`failure`
+   * emit it as primary output and suppress any `hint` — a "continue" hint must
+   * never sit beside a "stop" instruction (doc 01 §6). `stopInstruction` is the
+   * retained legacy field name for the same tier.
+   */
+  instruction?: string;
+  stopInstruction?: string;
   /** Structured validation issues, when the server supplies them (doc 04 §5.1). */
   issues?: RequestIssue[];
   /** Machine-readable error code, when the server supplies one. */
@@ -231,19 +243,44 @@ export interface JsonEnvelope {
   [key: string]: unknown;
 }
 
+/** True when the envelope carries a tier-3 instruction (either field name). */
+function hasInstruction(envelope: JsonEnvelope): boolean {
+  return (
+    envelope.instruction !== undefined || envelope.stopInstruction !== undefined
+  );
+}
+
 export function render(
   json: boolean,
   humanStdout: string,
   envelope: JsonEnvelope,
 ): string {
-  if (json) return `${JSON.stringify(envelope)}\n`;
-  // Text tier order (doc 04 §1.2/§5.1): primary body, then each reminder as a
-  // `reminder:` line, then the advisory `hint:` line last.
+  // The one tier rule the renderer owns for every command: a load-bearing
+  // instruction suppresses the advisory hint, in BOTH modes — the two are
+  // mutually exclusive at the decision point (doc 01 §6). A command may pass its
+  // remaining-count `hint` and a rotation `instruction` together and trust the
+  // renderer to never surface both. The instruction's own HUMAN text stays in
+  // the caller's primary body (its phrasing is command-specific — e.g. `ask`'s
+  // doc-frozen multi-line end-turn note); the renderer only arbitrates the hint.
+  const instructionPresent = hasInstruction(envelope);
+  if (json) {
+    if (instructionPresent && envelope.hint !== undefined) {
+      const withoutHint: JsonEnvelope = { ...envelope };
+      delete withoutHint.hint;
+      return `${JSON.stringify(withoutHint)}\n`;
+    }
+    return `${JSON.stringify(envelope)}\n`;
+  }
+  // Text tier order (doc 04 §1.2/§5.1): primary body (which carries any
+  // instruction phrasing), then each reminder as a `reminder:` line, then the
+  // advisory `hint:` line last — omitted when an instruction is present.
   let out = humanStdout;
   if (envelope.reminders) {
     for (const reminder of envelope.reminders) out += `reminder: ${reminder}\n`;
   }
-  if (envelope.hint !== undefined) out += `hint: ${envelope.hint}\n`;
+  if (!instructionPresent && envelope.hint !== undefined) {
+    out += `hint: ${envelope.hint}\n`;
+  }
   return out;
 }
 
@@ -698,7 +735,7 @@ export async function cliRequest(
   } catch (error) {
     return {
       kind: "connection",
-      detail: error instanceof Error ? error.message : String(error),
+      detail: getErrorMessage(error),
     };
   }
 
@@ -744,7 +781,7 @@ export async function cliRequestText(
   } catch (error) {
     return {
       kind: "connection",
-      detail: error instanceof Error ? error.message : String(error),
+      detail: getErrorMessage(error),
     };
   }
 

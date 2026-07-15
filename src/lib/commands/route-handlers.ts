@@ -6,6 +6,10 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  resolveProjectOr404,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
@@ -63,21 +67,9 @@ export function createCommandsRouteHandlers(
     const backend: AgentBackendId =
       requestedBackend === "codex" ? "codex" : "claude";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { session } = resolved.value;
 
     try {
       const items = await deps.discoverCommands(session.worktreePath, backend);
@@ -124,13 +116,9 @@ export function createProjectCommandsRouteHandlers(
     const backend: AgentBackendId =
       requestedBackend === "codex" ? "codex" : "claude";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     try {
       const items = await deps.discoverCommands(projectPath, backend);

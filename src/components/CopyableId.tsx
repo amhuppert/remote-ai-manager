@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { CopyIcon, CheckIcon } from "@/components/icons";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { cn } from "@/lib/ui/cn";
 
 const COPY_ICON_SIZE = 14;
@@ -50,46 +51,47 @@ export default function CopyableId({
     (value.length > truncateAt ? `${value.slice(0, truncateAt)}\u2026` : value);
 
   return (
-    <div
-      className={cn(
-        "group/cid relative -mx-[4px] -my-px flex cursor-pointer items-center gap-[4px] rounded-sm px-[4px] py-px text-[0.72rem] transition-[background] duration-150 ease-[ease] hover:bg-bg-hover",
-        className,
-        copied && "copied",
-      )}
-      onClick={handleCopy}
-      data-tooltip={copied ? "Copied ✓" : value}
-      role="button"
-      tabIndex={0}
-      aria-label={ariaLabel}
-    >
-      {label && (
-        <span className="font-mono text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
-          {label}
+    <WithTooltip label={copied ? "Copied ✓" : value}>
+      <div
+        className={cn(
+          "group/cid relative -mx-[4px] -my-px flex cursor-pointer items-center gap-[4px] rounded-sm px-[4px] py-px text-[0.72rem] transition-[background] duration-150 ease-[ease] hover:bg-bg-hover",
+          className,
+          copied && "copied",
+        )}
+        onClick={handleCopy}
+        role="button"
+        tabIndex={0}
+        aria-label={ariaLabel}
+      >
+        {label && (
+          <span className="font-mono text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
+            {label}
+          </span>
+        )}
+        <span
+          className={cn(
+            "font-mono tracking-[0.02em] text-text-primary",
+            valueClassName,
+          )}
+        >
+          {display}
         </span>
-      )}
-      <span
-        className={cn(
-          "font-mono tracking-[0.02em] text-text-primary",
-          valueClassName,
-        )}
-      >
-        {display}
-      </span>
-      <span
-        className={cn(
-          "inline-flex items-center transition-opacity duration-150 ease-[ease]",
-          copied
-            ? "text-green opacity-100"
-            : "text-text-secondary opacity-0 group-hover/cid:opacity-100",
-        )}
-        aria-hidden="true"
-      >
-        {copied ? (
-          <CheckIcon size={COPY_ICON_SIZE} />
-        ) : (
-          <CopyIcon size={COPY_ICON_SIZE} />
-        )}
-      </span>
-    </div>
+        <span
+          className={cn(
+            "inline-flex items-center transition-opacity duration-150 ease-[ease]",
+            copied
+              ? "text-green opacity-100"
+              : "text-text-secondary opacity-0 group-hover/cid:opacity-100",
+          )}
+          aria-hidden="true"
+        >
+          {copied ? (
+            <CheckIcon size={COPY_ICON_SIZE} />
+          ) : (
+            <CopyIcon size={COPY_ICON_SIZE} />
+          )}
+        </span>
+      </div>
+    </WithTooltip>
   );
 }

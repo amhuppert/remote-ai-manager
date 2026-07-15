@@ -1,5 +1,7 @@
 # CC CLI Foundation (`cctl`)
 
+**Status:** Implemented; retained as the migration design record. Current extension rules live in `.kiro/steering/cli.md`.
+
 Phase 0 of the [CC CLI migration](./README.md). Everything in this document is prerequisite to
 migrating any tool.
 
@@ -13,7 +15,7 @@ migrating any tool.
 
 Command shape is `cctl <group> <verb> [flags]`, non-interactive always (no prompts, no TTY
 detection surprises). Groups: `ask`, `notify`, `docs`, `dev`, `workflow`, `charter`, `decisions`,
-`codex`, `doctor`. The `workflow` group nests both authoring/lifecycle verbs and the
+`agent`, `doctor`. The `workflow` group nests both authoring/lifecycle verbs and the
 graph-workflow lane verbs (`workflow task complete`, `workflow shared-doc upsert`,
 `workflow collab request`). Full command designs live in doc 02/03.
 
@@ -33,7 +35,7 @@ spawning any agent session:
 | `CC_CONVERSATION_ID` | conversation id | identity |
 | `CC_WORKFLOW_EXECUTION_ID`, `CC_WORKFLOW_CONTEXT_ID` | lane identity | only for graph-workflow lane conversations |
 | `PATH` | `<configDir>/bin:` prepended | makes `cctl` resolvable |
-| `BASH_MAX_TIMEOUT_MS` | e.g. `1800000` | raises the harness Bash ceiling so `--wait` flows (codex runs) don't hit the 10-minute default |
+| `BASH_MAX_TIMEOUT_MS` | e.g. `1800000` | raises the harness Bash ceiling so `--wait` flows (agent runs) don't hit the 10-minute default |
 
 Resolution order in the CLI: explicit flags (`--server`, `--project`, `--session`,
 `--conversation`, `--token`) > env vars > (token only) `<configDir>/api-token` file. With no

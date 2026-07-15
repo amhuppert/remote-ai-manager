@@ -214,7 +214,7 @@ describe("SessionContent", () => {
     ).toBe(true);
     expect(container.querySelector("main.main")).toBeNull();
     expect(
-      container.querySelector('[data-tooltip="Collapse sidebar"]'),
+      container.querySelector('[aria-label="Collapse sidebar"]'),
     ).toBeNull();
   });
 

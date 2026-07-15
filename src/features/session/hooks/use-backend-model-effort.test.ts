@@ -71,10 +71,10 @@ describe("useBackendModelEffort", () => {
       useBackendModelEffort({
         conversationId: "c1",
         activeConversation: makeConversation(),
-        defaultModel: "fable",
-        defaultEffort: "high",
-        defaultCodexModel: "gpt-5.4",
-        defaultCodexEffort: "high",
+        backendDefaults: {
+          claude: { modelId: "fable", effort: "high" },
+          codex: { modelId: "gpt-5.4", effort: "high" },
+        },
         lastUsedModelId: "sonnet",
         lastUsedEffort: "medium",
       }),
@@ -89,10 +89,10 @@ describe("useBackendModelEffort", () => {
       useBackendModelEffort({
         conversationId: "c1",
         activeConversation: makeConversation({ promptCount: 0 }),
-        defaultModel: "fable",
-        defaultEffort: "high",
-        defaultCodexModel: "gpt-5.6-terra",
-        defaultCodexEffort: "xhigh",
+        backendDefaults: {
+          claude: { modelId: "fable", effort: "high" },
+          codex: { modelId: "gpt-5.6-terra", effort: "xhigh" },
+        },
       }),
     );
 

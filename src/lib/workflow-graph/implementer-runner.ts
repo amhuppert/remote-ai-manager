@@ -4,19 +4,12 @@ import {
   executePromptStream as defaultExecutePromptStream,
   type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
-import type {
-  AgentBackendId,
-  AgentSessionRef,
-} from "@/lib/agent-backends/types";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
-
-function toAgentTurnEngine(backend: AgentBackendId): "claude" | "codex" {
-  return backend === "codex" ? "codex" : "claude";
-}
 
 const logger = createLogger("graph-workflow-implementer-runner");
 
@@ -172,7 +165,7 @@ export function createGraphWorkflowImplementerRunner(
       const message = `SDK error: ${result.error}`;
       throw new AgentTurnFailedError(message, {
         contextId: input.contextId,
-        engine: toAgentTurnEngine(input.backend),
+        engine: input.backend,
         cause: "sdk_error",
         originalMessage: result.error,
       });
@@ -198,7 +191,7 @@ export function createGraphWorkflowImplementerRunner(
       });
       throw new AgentTurnFailedError(message, {
         contextId: input.contextId,
-        engine: toAgentTurnEngine(input.backend),
+        engine: input.backend,
         cause: timedOut ? "timeout" : "abort",
         originalMessage: message,
       });

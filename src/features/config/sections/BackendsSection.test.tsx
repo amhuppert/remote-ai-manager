@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithQuery } from "@/test/component-mocks";
 import { BackendsSection } from "./BackendsSection";
 import { makeController } from "./test-controller";
 
 describe("BackendsSection", () => {
   it("renders Claude and Codex groups", () => {
     const { controller } = makeController();
-    render(<BackendsSection controller={controller} />);
+    renderWithQuery(<BackendsSection controller={controller} />);
     expect(
       screen.getByRole("heading", { name: /Agent backends/i }),
     ).toBeVisible();
@@ -18,7 +19,7 @@ describe("BackendsSection", () => {
 
   it("toggling Enable Codex flows through the controller", () => {
     const { controller, getState } = makeController();
-    render(<BackendsSection controller={controller} />);
+    renderWithQuery(<BackendsSection controller={controller} />);
     const toggle = screen
       .getByText("Enable Codex")
       .closest("[data-field]")!

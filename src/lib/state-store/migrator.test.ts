@@ -1,10 +1,13 @@
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
 import { createMigrator, runMigrations } from "./migrator";
 import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import { splitGraphWorkflowHistory } from "./migrations/0002-split-graph-workflow-history";
-import { _createTestDb } from "./state-db";
+import { _createTestDb, _createTestDbAtPath } from "./state-db";
 import type { StateMigration } from "./migrations/types";
 
 type Db = InstanceType<typeof Database>;
@@ -111,6 +114,126 @@ describe("state-store migrator runner", () => {
   });
 });
 
+describe("state-store migrator failure and replay", () => {
+  it("propagates a failing migration, keeps it out of the ledger, and retries it on the next run", async () => {
+    const db = freshDb();
+    let attempts = 0;
+    const flaky: StateMigration[] = [
+      { name: "0001-ok", up: async () => {} },
+      {
+        name: "0002-flaky",
+        up: async () => {
+          attempts++;
+          if (attempts === 1) throw new Error("simulated migration crash");
+        },
+      },
+    ];
+
+    await expect(runMigrations({ db, configDir: null }, flaky)).rejects.toThrow(
+      /simulated migration crash/,
+    );
+    // Migrations before the failure are ledgered; the failed one is not, so
+    // the next startup retries exactly the failed migration.
+    expect(ledgerNames(db)).toEqual(["0001-ok"]);
+
+    const retried = await runMigrations({ db, configDir: null }, flaky);
+    expect(retried).toEqual(["0002-flaky"]);
+    expect(attempts).toBe(2);
+    expect(ledgerNames(db)).toEqual(["0001-ok", "0002-flaky"]);
+  });
+
+  it("replays a migration that crashed after up but before the ledger write, converging idempotently", async () => {
+    const db = freshDb();
+    db.exec("CREATE TABLE IF NOT EXISTS replay_probe (id TEXT PRIMARY KEY)");
+    const migration: StateMigration = {
+      name: "0001-replay",
+      up: async ({ context }) => {
+        context.db
+          .prepare("INSERT OR IGNORE INTO replay_probe (id) VALUES ('row')")
+          .run();
+      },
+    };
+
+    // Crash simulation: up completed but the process died before Umzug's
+    // separate logMigration step recorded it in the ledger.
+    await migration.up({
+      name: migration.name,
+      context: { db, configDir: null },
+    });
+    expect(ledgerNames(db)).toEqual([]);
+
+    const applied = await runMigrations({ db, configDir: null }, [migration]);
+
+    expect(applied).toEqual(["0001-replay"]);
+    expect(ledgerNames(db)).toEqual(["0001-replay"]);
+    const { n } = db
+      .prepare("SELECT COUNT(*) AS n FROM replay_probe")
+      .get() as { n: number };
+    expect(n).toBe(1);
+  });
+});
+
+describe("state-store migrator racing workers", () => {
+  // Two server workers can open the same file-backed DB and run migrations
+  // concurrently. There is deliberately no cross-process mutex: safety comes
+  // from (1) every migration being idempotent — an overlapping worker replays
+  // the up body exactly like a crash-replay does — and (2) the ledger insert
+  // being `INSERT OR IGNORE` on the `name` primary key, so the migration is
+  // recorded exactly once and later runs see it as applied. This test pins
+  // that contract with two real connections to one file-backed DB, forcing
+  // the worst-case interleaving where both workers compute `pending` before
+  // either applies.
+  it("two concurrent runs converge: one ledger row, no duplicate data, both runs resolve", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-migrator-race-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const dbA = _createTestDbAtPath(dbPath);
+    openDbs.push(dbA);
+    const dbB = _createTestDbAtPath(dbPath);
+    openDbs.push(dbB);
+    dbA.exec("CREATE TABLE IF NOT EXISTS race_probe (id TEXT PRIMARY KEY)");
+
+    let upStarts = 0;
+    let openGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const migrationFor = (workerDb: Db): StateMigration => ({
+      name: "0001-race",
+      up: async () => {
+        upStarts++;
+        if (upStarts === 2) openGate();
+        // Hold both workers here until each has passed its pending() check,
+        // so neither ledger read can see the other's completed run.
+        await gate;
+        workerDb
+          .prepare("INSERT OR IGNORE INTO race_probe (id) VALUES ('row')")
+          .run();
+      },
+    });
+
+    const [appliedA, appliedB] = await Promise.all([
+      runMigrations({ db: dbA, configDir: null }, [migrationFor(dbA)]),
+      runMigrations({ db: dbB, configDir: null }, [migrationFor(dbB)]),
+    ]);
+
+    // Both workers executed the up body — the idempotence contract absorbs
+    // the overlap, exactly like a crash-replay.
+    expect(upStarts).toBe(2);
+    expect(appliedA).toEqual(["0001-race"]);
+    expect(appliedB).toEqual(["0001-race"]);
+    expect(ledgerNames(dbA)).toEqual(["0001-race"]);
+    const { n } = dbA.prepare("SELECT COUNT(*) AS n FROM race_probe").get() as {
+      n: number;
+    };
+    expect(n).toBe(1);
+
+    // A worker starting after the race sees the migration as applied.
+    await expect(
+      runMigrations({ db: dbB, configDir: null }, [migrationFor(dbB)]),
+    ).resolves.toEqual([]);
+  });
+});
+
 describe("0001-drop-legacy-roadmap-items (production registry)", () => {
   it("drops the legacy roadmap_items table and index when present", async () => {
     const db = freshDb();
@@ -205,7 +328,9 @@ function readActiveBlob(db: Db): Record<string, unknown> | null {
          FROM sessions WHERE project_path = ? AND session_name = ?`,
     )
     .get(PROJECT_PATH, SESSION_NAME) as { blob: string | null };
-  return row.blob === null ? null : (JSON.parse(row.blob) as Record<string, unknown>);
+  return row.blob === null
+    ? null
+    : (JSON.parse(row.blob) as Record<string, unknown>);
 }
 
 function readActiveExecutionRow(
@@ -272,9 +397,8 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     const applied = await runMigrations({ db, configDir: null });
     expect(applied).toContain("0002-split-graph-workflow-history");
 
-    const events = createGraphWorkflowEventsRepo(db).findByExecution(
-      "exec-active",
-    );
+    const events =
+      createGraphWorkflowEventsRepo(db).findByExecution("exec-active");
     expect(events.map((e) => e.event.type)).toEqual([
       "graph-workflow-status",
       "graph-workflow-context-status",
@@ -350,12 +474,12 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     });
 
     const eventsRepo = createGraphWorkflowEventsRepo(db);
-    expect(eventsRepo.findByExecution("exec-past-a").map((e) => e.event.type)).toEqual(
-      ["graph-workflow-status"],
-    );
-    expect(eventsRepo.findByExecution("exec-past-b").map((e) => e.event.type)).toEqual(
-      ["graph-workflow-context-status"],
-    );
+    expect(
+      eventsRepo.findByExecution("exec-past-a").map((e) => e.event.type),
+    ).toEqual(["graph-workflow-status"]);
+    expect(
+      eventsRepo.findByExecution("exec-past-b").map((e) => e.event.type),
+    ).toEqual(["graph-workflow-context-status"]);
 
     const archivedBlob = readArchivedBlob(db, "exec-past-a");
     expect(archivedBlob).toMatchObject({ id: "exec-past-a" });
@@ -378,9 +502,7 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
       status: "completed",
       startedAt: "2026-01-01T00:00:00Z",
       completedAt: "2026-01-01T01:00:00Z",
-      history: [
-        historyEntry(statusEvent("exec-past"), "2026-01-01T00:30:00Z"),
-      ],
+      history: [historyEntry(statusEvent("exec-past"), "2026-01-01T00:30:00Z")],
     };
     seedSessionWithLegacyBlobs(db, activeExecution, [past]);
 
@@ -425,9 +547,7 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
       status: "completed",
       startedAt: "2026-01-01T00:00:00Z",
       completedAt: "2026-01-01T01:00:00Z",
-      history: [
-        historyEntry(statusEvent("exec-past"), "2026-01-01T00:30:00Z"),
-      ],
+      history: [historyEntry(statusEvent("exec-past"), "2026-01-01T00:30:00Z")],
     };
     seedSessionWithLegacyBlobs(db, activeExecution, [past]);
 

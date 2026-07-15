@@ -1,32 +1,48 @@
 // @vitest-environment jsdom
-import { act } from "react";
-import { hydrateRoot } from "react-dom/client";
-import { renderToString } from "react-dom/server";
-import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
+import { hydrateRoot } from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import { conversationKeys } from "@/lib/conversations/query-keys";
 import Topbar from "./Topbar";
 import type {
   ActiveConversation,
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
 
-const queryMockState = vi.hoisted(() => ({
-  activeConversationsData: undefined as ActiveConversationsResponse | undefined,
-}));
-
-// Shared mocks
+// next/link is an external framework module, not an internal seam; the
+// sanctioned client-test pattern (@/test/fetch-fixture) covers only the network
+// boundary, so it keeps its component-mock stub. The Topbar's stores are real
+// Zustand (client state we own — default closed/empty), and its queries run for
+// real against the fetch fixture below.
 vi.mock(
   "next/link",
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
 
-// File-specific mocks
-vi.mock("@/lib/active-conversations/queries", () => ({
-  useActiveConversationsQuery: () => ({
-    data: queryMockState.activeConversationsData,
-  }),
-}));
+let api: FetchFixture;
+
+function makeActiveConversationsResponse(
+  conversations: ActiveConversation[],
+): ActiveConversationsResponse {
+  return {
+    conversations,
+    graphWorkflowExecutions: [],
+    activeCollaborationExecutions: [],
+  };
+}
+
+function setActiveConversations(conversations: ActiveConversation[]): void {
+  api.json(
+    "GET",
+    "/api/conversations/active",
+    makeActiveConversationsResponse(conversations),
+  );
+}
 
 function makeSessionConversation(
   overrides: Partial<Extract<ActiveConversation, { scope: "session" }>> = {},
@@ -85,14 +101,6 @@ function makeProjectConversation(
   };
 }
 
-function setActiveConversations(conversations: ActiveConversation[]): void {
-  queryMockState.activeConversationsData = {
-    conversations,
-    graphWorkflowExecutions: [],
-    activeCollaborationExecutions: [],
-  };
-}
-
 function getNeedsLink(): HTMLAnchorElement {
   const needsLabel = screen.getByText(/needs? you/);
   const link = needsLabel.closest("a");
@@ -100,9 +108,27 @@ function getNeedsLink(): HTMLAnchorElement {
   return link as HTMLAnchorElement;
 }
 
+/** Await the async attention link the active-conversations query drives. */
+async function findNeedsLink(): Promise<HTMLAnchorElement> {
+  await screen.findByText(/needs? you/);
+  return getNeedsLink();
+}
+
 describe("Topbar", () => {
   beforeEach(() => {
-    queryMockState.activeConversationsData = undefined;
+    api = installFetchFixture();
+    // Topbar always issues these two GETs; default them to empty so tests that
+    // don't care about attention state render a quiet bar.
+    api.json("GET", "/api/notifications", {
+      notifications: [],
+      total: 0,
+      unreadCount: 0,
+    });
+    setActiveConversations([]);
+  });
+
+  afterEach(() => {
+    api.restore();
   });
 
   // =========================================================================
@@ -110,13 +136,13 @@ describe("Topbar", () => {
   // =========================================================================
 
   it("renders CC logo linking to /projects (Req 5.1)", () => {
-    render(<Topbar breadcrumbs={[]} page="projects" />);
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
     const logo = screen.getByText("CC");
     expect(logo.closest("a")?.getAttribute("href")).toBe("/projects");
   });
 
   it("renders breadcrumb segments with correct labels and links (Req 5.2, 5.3)", () => {
-    render(
+    renderWithQuery(
       <Topbar
         breadcrumbs={[
           { label: "projects", href: "/projects" },
@@ -139,7 +165,7 @@ describe("Topbar", () => {
   });
 
   it("renders session controls on detail page (Req 5.4)", () => {
-    render(
+    renderWithQuery(
       <Topbar
         breadcrumbs={[]}
         page="detail"
@@ -150,7 +176,7 @@ describe("Topbar", () => {
   });
 
   it("renders global status on non-detail pages (Req 5.5)", () => {
-    render(
+    renderWithQuery(
       <Topbar
         breadcrumbs={[]}
         page="projects"
@@ -161,7 +187,7 @@ describe("Topbar", () => {
   });
 
   it("does not render global status on detail page", () => {
-    render(
+    renderWithQuery(
       <Topbar
         breadcrumbs={[]}
         page="detail"
@@ -172,14 +198,16 @@ describe("Topbar", () => {
   });
 
   it("renders a global Tickets destination linking to /tickets (ticket-system Req 9.1)", () => {
-    render(<Topbar breadcrumbs={[]} page="projects" />);
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
     const link = screen.getByTitle("Tickets");
     expect(link.getAttribute("href")).toBe("/tickets");
     expect(link).toHaveTextContent("Tickets");
   });
 
   it("keeps every global destination reachable without overflowing a 320px topbar", async () => {
-    render(<Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />);
+    renderWithQuery(
+      <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,
+    );
     const user = userEvent.setup();
 
     expect(screen.getByTitle("Workflow Atlas")).toHaveClass("max-768:hidden");
@@ -207,59 +235,29 @@ describe("Topbar", () => {
     expect(screen.getByRole("navigation")).toHaveClass("max-[360px]:hidden");
   });
 
-  it("hydrates when attention data reaches the client before the server markup", async () => {
-    const container = document.createElement("div");
-    container.innerHTML = renderToString(
-      <Topbar breadcrumbs={[]} page="tickets" />,
-    );
-    document.body.append(container);
-
-    setActiveConversations([
-      makeProjectConversation({
-        id: "client-cached-question",
-        status: "waiting_for_input",
-      }),
-    ]);
-    const hydrationErrors: unknown[][] = [];
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation((...args: unknown[]) => hydrationErrors.push(args));
-
-    const root = hydrateRoot(
-      container,
-      <Topbar breadcrumbs={[]} page="tickets" />,
-    );
-    await waitFor(() =>
-      expect(within(container).getByText("needs you")).toBeInTheDocument(),
-    );
-
-    expect(
-      hydrationErrors.some((args) =>
-        args.some(
-          (value) =>
-            typeof value === "string" &&
-            value.toLowerCase().includes("hydration"),
-        ),
-      ),
-    ).toBe(false);
-
-    await act(async () => root.unmount());
-    consoleError.mockRestore();
-    container.remove();
-  });
-
   it("hydrates without replacing the tree when attention data is already cached on the client", async () => {
+    // Server render sees the ready gate as false and produces a quiet bar.
+    const serverClient = createTestQueryClient();
     const serverHtml = renderToString(
-      <Topbar breadcrumbs={[]} page="projects" />,
+      <QueryClientProvider client={serverClient}>
+        <Topbar breadcrumbs={[]} page="projects" />
+      </QueryClientProvider>,
     );
-    setActiveConversations([
-      makeProjectConversation({
-        id: "project-unread",
-        projectName: "root-tools",
-        status: "awaiting",
-        unread: true,
-      }),
-    ]);
+
+    // "Already cached on the client": seed the query cache so the client render
+    // has attention data without a network round-trip.
+    const clientClient = createTestQueryClient();
+    clientClient.setQueryData(
+      conversationKeys.active(),
+      makeActiveConversationsResponse([
+        makeProjectConversation({
+          id: "project-unread",
+          projectName: "root-tools",
+          status: "awaiting",
+          unread: true,
+        }),
+      ]),
+    );
 
     const container = document.createElement("div");
     container.innerHTML = serverHtml;
@@ -268,7 +266,9 @@ describe("Topbar", () => {
 
     const root = hydrateRoot(
       container,
-      <Topbar breadcrumbs={[]} page="projects" />,
+      <QueryClientProvider client={clientClient}>
+        <Topbar breadcrumbs={[]} page="projects" />
+      </QueryClientProvider>,
       {
         onRecoverableError(error) {
           recoverableErrors.push(
@@ -290,7 +290,7 @@ describe("Topbar", () => {
     expect(renderedNeedsLink).toBe(true);
   });
 
-  it("counts project waiting_for_input rows and links to the project focus URL (Req 11.2, 12.1, 12.3)", () => {
+  it("counts project waiting_for_input rows and links to the project focus URL (Req 11.2, 12.1, 12.3)", async () => {
     setActiveConversations([
       makeProjectConversation({
         id: "project-question",
@@ -299,10 +299,11 @@ describe("Topbar", () => {
       }),
     ]);
 
-    render(<Topbar breadcrumbs={[]} page="projects" />);
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    expect(screen.getByText("1")).toBeInTheDocument();
-    expect(getNeedsLink().getAttribute("href")).toBe(
+    const link = await findNeedsLink();
+    expect(within(link).getByText("1")).toBeInTheDocument();
+    expect(link.getAttribute("href")).toBe(
       "/projects/root-tools?focus=project-question",
     );
     expect(
@@ -310,7 +311,7 @@ describe("Topbar", () => {
     ).toHaveClass("motion-reduce:[animation:none]");
   });
 
-  it("counts unread project awaiting rows as needing attention (Req 11.2, 11.3)", () => {
+  it("counts unread project awaiting rows as needing attention (Req 11.2, 11.3)", async () => {
     setActiveConversations([
       makeProjectConversation({
         id: "project-unread",
@@ -320,15 +321,16 @@ describe("Topbar", () => {
       }),
     ]);
 
-    render(<Topbar breadcrumbs={[]} page="projects" />);
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    expect(screen.getByText("1")).toBeInTheDocument();
-    expect(getNeedsLink().getAttribute("href")).toBe(
+    const link = await findNeedsLink();
+    expect(within(link).getByText("1")).toBeInTheDocument();
+    expect(link.getAttribute("href")).toBe(
       "/projects/root-tools?focus=project-unread",
     );
   });
 
-  it("targets the conversations page when the first attention target is a session row (Req 11.2, 12.4)", () => {
+  it("targets the conversations page when the first attention target is a session row (Req 11.2, 12.4)", async () => {
     setActiveConversations([
       makeSessionConversation({
         id: "session-question",
@@ -343,15 +345,14 @@ describe("Topbar", () => {
       }),
     ]);
 
-    render(<Topbar breadcrumbs={[]} page="projects" />);
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    expect(screen.getByText("2")).toBeInTheDocument();
-    expect(getNeedsLink().getAttribute("href")).toBe(
-      "/conversations?c=session-question",
-    );
+    const link = await findNeedsLink();
+    expect(within(link).getByText("2")).toBeInTheDocument();
+    expect(link.getAttribute("href")).toBe("/conversations?c=session-question");
   });
 
-  it("counts gated conversations as needing attention and calls out approvals distinctly", () => {
+  it("counts gated conversations as needing attention and calls out approvals distinctly", async () => {
     setActiveConversations([
       makeSessionConversation({
         id: "session-gated",
@@ -376,9 +377,10 @@ describe("Topbar", () => {
       }),
     ]);
 
-    render(<Topbar breadcrumbs={[]} page="projects" />);
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    expect(screen.getByText("2")).toBeInTheDocument();
+    const link = await findNeedsLink();
+    expect(within(link).getByText("2")).toBeInTheDocument();
     expect(screen.getByText("need you")).toBeInTheDocument();
     expect(screen.getByText("· 1 approval")).toBeInTheDocument();
   });

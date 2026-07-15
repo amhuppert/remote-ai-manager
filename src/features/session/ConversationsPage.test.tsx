@@ -123,8 +123,10 @@ function renderPage(args: {
   render(
     <QueryClientProvider client={queryClient}>
       <ConversationsPage
-        defaultModel="sonnet"
-        defaultCodexModel="gpt-5.6-sol"
+        backendDefaults={{
+          claude: { modelId: "sonnet", effort: "high" },
+          codex: { modelId: "gpt-5.6-sol", effort: "high" },
+        }}
       />
     </QueryClientProvider>,
   );
@@ -255,7 +257,7 @@ describe("ConversationsPage", () => {
 
       expect(screen.getByText("Select a conversation")).toBeInTheDocument();
       expect(
-        document.querySelector('[data-tooltip="Collapse sidebar"]'),
+        document.querySelector('[aria-label="Collapse sidebar"]'),
       ).not.toBeNull();
       expect(window.location.search).toBe("");
       expect(routerPushMock).not.toHaveBeenCalled();
@@ -273,7 +275,7 @@ describe("ConversationsPage", () => {
 
       expect(screen.getByText("Conversation not found")).toBeInTheDocument();
       expect(
-        document.querySelector('[data-tooltip="Collapse sidebar"]'),
+        document.querySelector('[aria-label="Collapse sidebar"]'),
       ).not.toBeNull();
       expect(window.location.search).toBe("?c=ghost");
       expect(routerPushMock).not.toHaveBeenCalled();

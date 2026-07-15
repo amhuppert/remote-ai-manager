@@ -1,7 +1,8 @@
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import { assertNever } from "@/lib/shared/assert-never";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import {
   buildInitialContextState,
@@ -131,9 +132,10 @@ export function classifyExecutionEditability(
       return { kind: "not-editable", reason: "completed" };
     case "aborted":
       return { kind: "not-editable", reason: "aborted" };
-    default: {
-      const exhaustive: never = execution.status;
-      throw new Error(`unhandled execution status: ${String(exhaustive)}`);
-    }
+    default:
+      return assertNever(
+        execution.status,
+        `unhandled execution status: ${String(execution.status)}`,
+      );
   }
 }

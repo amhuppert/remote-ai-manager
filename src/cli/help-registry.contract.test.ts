@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runCli, type CliHost } from "./core";
 import {
   allHelpEntries,
   childEntriesOf,
@@ -11,6 +12,25 @@ import {
 } from "./help-registry";
 import type { FlagSpec } from "./help-types";
 import { pathKey } from "./help-types";
+
+/**
+ * A host that never reaches the network: the dispatch-agreement checks below
+ * drive `runCli` only far enough to hit each group's `dispatchGroup` (which
+ * throws when its handler map disagrees with the registry) and its usage-error
+ * exit, never a real request.
+ */
+function offlineHost(): CliHost {
+  return {
+    fetch: async () => {
+      throw new Error("no network in dispatch-agreement test");
+    },
+    readTextFile: async () => null,
+    readFileBytes: async () => null,
+    sleep: async () => {},
+    platform: "darwin",
+    homedir: "/Users/test",
+  };
+}
 
 /**
  * The help-registry contract test (docs/design/cc-cli/04 §7.1) — the
@@ -31,101 +51,6 @@ const REPO_ROOT = path.resolve(
 
 const ENTRIES = allHelpEntries();
 const KEYS = new Set(ENTRIES.map((entry) => pathKey(entry.path)));
-
-/**
- * Every dispatchable command path that MUST have a registry entry — a
- * hard-coded mirror of `core.ts` dispatch plus each command's subcommand switch
- * (doc 04 §7.1 rule 1 / decision D14). The list IS the mirror: it is maintained
- * by hand and reviewed on change, so a future command added without a registry
- * entry fails this suite. Group nodes are included (doc 04 acceptance criterion
- * 1) — they must exist both as parents of their leaves and as `--help` hubs.
- */
-const COVERAGE: string[] = [
-  // top-level leaves
-  "ask",
-  "notify",
-  "doctor",
-  "version",
-  // docs
-  "docs",
-  "docs register",
-  "docs list",
-  "docs delete",
-  // dev
-  "dev",
-  "dev list",
-  "dev ensure",
-  "dev stop",
-  // fixture
-  "fixture",
-  "fixture session",
-  "fixture session create",
-  "fixture session delete",
-  "fixture prompt",
-  "fixture status",
-  // workflow — authoring/lifecycle
-  "workflow",
-  "workflow validate",
-  "workflow create",
-  "workflow replace",
-  "workflow edit",
-  "workflow list",
-  "workflow get",
-  "workflow status",
-  "workflow start",
-  "workflow delete",
-  "workflow templates",
-  // workflow — lane verbs
-  "workflow task",
-  "workflow task complete",
-  "workflow task add",
-  "workflow shared-doc",
-  "workflow shared-doc upsert",
-  "workflow collab",
-  "workflow collab request",
-  // workflow — live execution editing
-  "workflow live",
-  "workflow live get",
-  "workflow live edit",
-  "workflow live pause",
-  "workflow live resume",
-  // charter
-  "charter",
-  "charter write",
-  // decisions
-  "decisions",
-  "decisions propose",
-  // codex
-  "codex",
-  "codex run",
-  "codex status",
-  "codex cancel",
-  // conversation
-  "conversation",
-  "conversation read",
-  "conversation compact",
-  "conversation compaction",
-  "conversation compaction get",
-  "conversation compaction list",
-  // ticket
-  "ticket",
-  "ticket create",
-  "ticket list",
-  "ticket get",
-  "ticket update",
-  "ticket delete",
-  "ticket start",
-  "ticket attach",
-  "ticket attach file",
-  "ticket attach conversation",
-  "ticket attach session",
-  "ticket attach ticket",
-  "ticket attach note",
-  "ticket attachment",
-  "ticket attachment get",
-  "ticket attachment update",
-  "ticket attachment remove",
-];
 
 describe("help registry contract", () => {
   describe("every entry has non-empty summary/description/usage", () => {
@@ -251,13 +176,30 @@ describe("help registry contract", () => {
     ).toBe("value");
   });
 
-  describe("dispatchable command coverage", () => {
-    for (const command of COVERAGE) {
-      it(`"${command}" has a registry entry`, () => {
+  describe("dispatch agrees with the registry (doc 04 §7.1 / decision D14)", () => {
+    // The hand-maintained COVERAGE mirror is gone: `dispatchGroup` (src/cli/
+    // dispatch.ts) derives each group's verbs from its registry children AND
+    // throws when its handler map disagrees. Driving every registry group node
+    // through `runCli` with an unknown verb exercises that construction — a
+    // group whose handlers drift from the registry (a new verb wired into
+    // dispatch without an entry, or an entry with no handler) throws here
+    // instead of silently escaping. No network is touched: an unknown verb is a
+    // local exit-2 usage failure before any request.
+    const groupNodes = ENTRIES.filter((entry) => isGroup(entry));
+    for (const group of groupNodes) {
+      const key = pathKey(group.path);
+      it(`group "${key}" dispatch matches its registry children`, async () => {
+        const result = await runCli(
+          [...group.path, "__unknown_verb__"],
+          {},
+          offlineHost(),
+        );
         expect(
-          KEYS.has(command),
-          `dispatchable command "${command}" has no registry entry (doc 04 §7.1 coverage list)`,
-        ).toBe(true);
+          result.exitCode,
+          `dispatching "${key} __unknown_verb__" should be a clean exit-2 usage failure ` +
+            "(a thrown error means the group's handler map disagrees with the registry)",
+        ).toBe(2);
+        expect(result.stderr).toContain(key);
       });
     }
   });

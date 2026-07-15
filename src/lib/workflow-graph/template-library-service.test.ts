@@ -12,7 +12,7 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import type { WorkflowPrerequisite } from "@/lib/workflows/schemas";
+import type { WorkflowPrerequisite } from "@/lib/workflow-graph/definition-schemas";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,

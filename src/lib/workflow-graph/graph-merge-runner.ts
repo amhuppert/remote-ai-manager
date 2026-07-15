@@ -1,13 +1,20 @@
 import { createActor, toPromise } from "xstate";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
+import { observePhaseTransitions } from "@/lib/jobs/machine-host";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
-import { recordMergeIntent as defaultRecordMergeIntent } from "@/lib/merge-intents/repo";
+import { createMergeIntentsRepo } from "@/lib/merge-intents/repo";
 import type { RecordMergeIntentInput } from "@/lib/merge-intents/repo";
+import { getStateDb } from "@/lib/state-store/store";
 import {
   mergeMachine,
   type MergeMachineType,
 } from "@/lib/workflows/merge/machine";
-import type { MergeOutput, MergePhase } from "@/lib/workflows/merge/types";
+import type {
+  MergeContext,
+  MergeOutput,
+  MergePhase,
+} from "@/lib/workflows/merge/types";
 
 const logger = createLogger("graph-workflow-merge-runner");
 
@@ -72,7 +79,10 @@ export function createGraphWorkflowMergeRunner(
   deps: GraphMergeRunnerDeps = {},
 ): GraphMergeRunner {
   const buildMachine = deps.buildMachine ?? (() => mergeMachine);
-  const recordMergeIntent = deps.recordMergeIntent ?? defaultRecordMergeIntent;
+  const recordMergeIntent =
+    deps.recordMergeIntent ??
+    ((input: RecordMergeIntentInput) =>
+      createMergeIntentsRepo(getStateDb()).recordMergeIntent(input));
   const onPhase =
     deps.onPhase ??
     ((info: GraphMergePhaseInfo) =>
@@ -114,22 +124,37 @@ export function createGraphWorkflowMergeRunner(
           finalizeSessionOnPublish: false,
         },
       });
-      let lastPhase: MergePhase | null = null;
-      actor.subscribe((snapshot) => {
-        const phase = snapshot.context.phase;
-        if (phase && phase !== lastPhase) {
-          lastPhase = phase;
-          onPhase({
-            jobId: input.jobId,
-            contextId: input.contextId,
-            branchName: input.branchName,
-            targetBranch: input.targetBranch,
-            phase,
-          });
-        }
-      });
+      let lastEmittedPhase: MergePhase | undefined;
+      const emitPhase = (phase: MergePhase) => {
+        lastEmittedPhase = phase;
+        onPhase({
+          jobId: input.jobId,
+          contextId: input.contextId,
+          branchName: input.branchName,
+          targetBranch: input.targetBranch,
+          phase,
+        });
+      };
+      observePhaseTransitions(
+        actor,
+        (context: MergeContext) => context.phase ?? undefined,
+        (phase) => {
+          if (phase === undefined) return;
+          emitPhase(phase);
+        },
+      );
       actor.start();
       const output = await toPromise(actor);
+
+      // The shared observer only sees active snapshots, so a phase assigned
+      // on entry to a final state never reaches it. readyToLand is the one
+      // terminal state that retains a phase ("awaiting-land"); emit it here
+      // so the breadcrumb sequence covers the full walk. Phase-clearing
+      // terminals leave phase null and emit nothing.
+      const terminalPhase = actor.getSnapshot().context.phase;
+      if (terminalPhase !== null && terminalPhase !== lastEmittedPhase) {
+        emitPhase(terminalPhase);
+      }
 
       logger.info("graph_merge_finished", {
         jobId: input.jobId,
@@ -158,7 +183,7 @@ export function createGraphWorkflowMergeRunner(
           logger.error("graph_merge_record_intent_failed", {
             jobId: input.jobId,
             mergeHash: output.mergeHash,
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         }
       }

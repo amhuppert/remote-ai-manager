@@ -22,7 +22,7 @@ import {
   collaborationProposedChangesOutputSchema,
   collaborationResolutionDecisionOutputSchema,
   type CollaborationArtifact,
-} from "../schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import {
   COLLABORATION_COUNTER_PROPOSAL_OUTPUT_SCHEMA,
   COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA,
@@ -31,6 +31,7 @@ import {
   COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA,
   COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
 } from "./types";
+import { unsupportedStructuredOutputKeywordPaths } from "@/lib/agent-backends/structured-output";
 
 function strictRequiredGaps(schema: unknown, path = "$"): string[] {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
@@ -204,46 +205,6 @@ function validateAgainstJsonSchema(
   }
 
   return [];
-}
-
-// Claude's native structured-output enforcement (`outputFormat: { type:
-// "json_schema" }`) does NOT support these keywords: it validates the model's
-// output against them but cannot steer generation to satisfy them, so a schema
-// that carries them makes the claude_code backend loop and fail ("Failed to
-// provide valid structured output after N attempts"). The JSON Schema handed to
-// the backend must omit them; bounds live in field descriptions (advisory) and
-// CC's own Zod `safeParse` instead. See docs/structured-data-responses.md.
-const UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS = [
-  "minLength",
-  "maxLength",
-  "minItems",
-  "maxItems",
-  "minimum",
-  "maximum",
-  "pattern",
-] as const;
-
-function unsupportedStructuredOutputKeywordPaths(
-  schema: unknown,
-  path = "$",
-): string[] {
-  if (!schema || typeof schema !== "object") return [];
-  if (Array.isArray(schema)) {
-    return schema.flatMap((item, idx) =>
-      unsupportedStructuredOutputKeywordPaths(item, `${path}[${idx}]`),
-    );
-  }
-  const objectSchema = schema as Record<string, unknown>;
-  const hits: string[] = [];
-  for (const keyword of UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS) {
-    if (keyword in objectSchema) hits.push(`${path}.${keyword}`);
-  }
-  for (const [key, child] of Object.entries(objectSchema)) {
-    hits.push(
-      ...unsupportedStructuredOutputKeywordPaths(child, `${path}.${key}`),
-    );
-  }
-  return hits;
 }
 
 const agreement = {

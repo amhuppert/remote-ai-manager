@@ -9,7 +9,7 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 import {
   createPersistenceFixture,

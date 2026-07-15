@@ -9,10 +9,8 @@ import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-regi
 import type { ArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("graph-workflow-charter-service");
 
@@ -178,7 +176,6 @@ export function createWorkflowCharterService(
       relativePath: CHARTER_RELATIVE_PATH,
       contents: markdown,
       audience: "user_facing",
-      required: true,
       description: CHARTER_DESCRIPTION,
       readWhen: CHARTER_READ_WHEN,
       source: { workflowId: nextExecution.id },

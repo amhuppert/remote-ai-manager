@@ -2,26 +2,24 @@
  * Production composition point above the AgentCall primitive for lane-backed
  * agent calls.
  *
- * Centralises the work that graph workflow currently does manually in
- * `workflow-continuity-service`:
- *
  *  1. Resolve lane state by `(workflowId, laneId)` via `LaneService`.
- *  2. Create or resume the right backend runtime (Claude conversation /
- *     Codex thread) so the underlying `AgentCall` sees a continuity-aware
- *     resume reference.
+ *  2. Resolve the lane's continuity handle through the owning backend's
+ *     `BackendContinuityAdapter` (start / resumeOrRecover) so the underlying
+ *     `AgentCall` sees a continuity-aware resume reference. Backend identity
+ *     never branches here — the adapter owns handle semantics.
  *  3. Wrap the call with `LaneScheduler.schedule()` keyed on the session
- *     worktree so write-capable lanes sharing a session serialize while
- *     read-only calls overlap. Missing `writeCapability` is treated as
- *     `write_capable` per the integration plan.
- *  4. Record post-turn outcomes on the lane (backend ref, usage, rotation
- *     decisions) without inventing unsupported metrics on either backend.
- *  5. Recover from stale Claude/Codex references without losing the
- *     workflow-owned lane identity by creating a fresh backend session,
+ *     worktree. This is the ONE scheduler acquisition point (D16): write-
+ *     capable lanes sharing a session serialize while read-only /
+ *     artifact-only calls overlap. Missing `writeCapability` defaults to
+ *     `write_capable` via the shared vocabulary constant.
+ *  4. Record post-turn outcomes on the lane (continuity handle, normalized
+ *     usage metrics, rotation decisions) without inventing unsupported
+ *     metrics on any backend.
+ *  5. Recover from stale continuity handles without losing the
+ *     workflow-owned lane identity by starting a fresh backend session,
  *     updating lane state, and retrying the call once.
  *
- * `AgentCall` itself stays focused on execution normalization. This adapter
- * is the production seam the integration plan calls for; the existing
- * `workflow-continuity-service` is the legacy graph-only equivalent.
+ * `AgentCall` itself stays focused on execution normalization.
  *
  * Deps use method syntax to leverage TypeScript's bivariant parameter
  * checking (per CLAUDE.md testing rules), which keeps assignment of
@@ -29,21 +27,31 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import type {
-  AgentCallRequest,
-  AgentCallResult,
-  LaneWriteCapability,
+  BackendContinuityAdapter,
+  ContinuityContext,
+} from "@/lib/agent-backends/continuity";
+import { refValueForBackend } from "@/lib/agent-backends/continuity";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import {
+  DEFAULT_LANE_WRITE_CAPABILITY,
+  type AgentCallRequest,
+  type AgentCallResult,
+  type LaneWriteCapability,
 } from "./agent-call-vocabulary";
 import type { LaneScheduler } from "./lane-scheduler";
 import type { LaneOutcome, LaneService } from "./lane-service";
-import type { LaneRef, LaneState } from "./lane-vocabulary";
+import {
+  laneSessionRef,
+  type LaneRef,
+  type LaneState,
+} from "./lane-vocabulary";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const defaultLogger = createLogger(
   "workflows.primitives.workflow-agent-caller",
 );
-
-const DEFAULT_WRITE_CAPABILITY: LaneWriteCapability = "write_capable";
 
 /**
  * Continuity context the adapter hands to the underlying AgentCall so the
@@ -85,10 +93,27 @@ export interface WorkflowAgentCallerRequest {
   writeCapability?: LaneWriteCapability;
   agentCallRequest: AgentCallRequest;
   /**
-   * Optional Claude context-limit threshold forwarded into the lane outcome
-   * so the lane service can flip `rotateBeforeNextTurn` when the turn's
-   * `contextTokens` exceeds it. Codex lanes ignore this — Codex never
-   * exposes context-window metrics.
+   * Optional second backend turn run on the SAME lane inside the SAME
+   * scheduled critical section as `agentCallRequest`. This is the two-pass
+   * prose-then-format collaboration repair: the work turn (`agentCallRequest`)
+   * answers in prose, then this format turn restates the answer as
+   * schema-conforming JSON. Modeling it as one caller request keeps the whole
+   * prose→format operation a single serialized semantic phase — the scheduler
+   * is acquired exactly once around both turns (D16), so no competing
+   * same-session writer can interleave between them.
+   *
+   * The format turn resolves continuity independently, so on a
+   * continuity-enabled lane it resumes the ref the work turn advanced, and on
+   * a continuity-disabled lane it starts fresh (matching a lane's per-turn
+   * continuity policy). When the work turn does not `complete`, the format
+   * turn is skipped and the work result is returned.
+   */
+  formatFollowUp?: AgentCallRequest;
+  /**
+   * Optional context-limit threshold forwarded into the lane outcome so the
+   * lane service can flip `rotateBeforeNextTurn` when the turn's
+   * `contextTokens` exceeds it. Lanes on backends without context-window
+   * metrics record an honest `unsupported` evaluation instead.
    */
   contextLimitTokens?: number;
 }
@@ -107,27 +132,16 @@ export interface WorkflowAgentCallerDeps {
   laneService: LaneService;
   laneScheduler: LaneScheduler;
   /**
-   * Creates a fresh Claude conversation for the lane. The adapter calls this
-   * on the create path and on stale-recovery, and persists the new
-   * conversationId on lane state.
+   * Project/session scope forwarded to every continuity operation
+   * (start / resumeOrRecover).
    */
-  createClaudeConversation(input: {
-    laneRef: LaneRef;
-  }): Promise<{ conversationId: string }>;
+  continuityContext: ContinuityContext;
   /**
-   * Probes the backend for an existing Claude conversation; resolves `false`
-   * when stale so the adapter can swap to fresh-session before the call.
+   * Resolves the continuity adapter owning a backend's handles. Defaults to
+   * the registered descriptor's `conversation.continuity`; callers whose
+   * lanes use synthetic handles (collaboration) inject their own adapters.
    */
-  validateClaudeConversation(input: {
-    conversationId: string;
-  }): Promise<boolean>;
-  /** Creates a fresh Codex thread for the lane. */
-  startCodexThread(input: { laneRef: LaneRef }): Promise<{ threadId: string }>;
-  /**
-   * Resumes a Codex thread by id; rejects when the thread no longer exists
-   * so the adapter can swap to fresh-thread before the call.
-   */
-  resumeCodexThread(input: { threadId: string }): Promise<{ threadId: string }>;
+  continuityAdapter?(backend: AgentBackendId): BackendContinuityAdapter;
   now?(): string;
   logger?: Logger;
 }
@@ -136,16 +150,31 @@ export interface WorkflowAgentCaller {
   call(request: WorkflowAgentCallerRequest): Promise<AgentCallResult>;
 }
 
+export function descriptorContinuityAdapter(
+  backend: AgentBackendId,
+): BackendContinuityAdapter {
+  const descriptor = getBackendDescriptor(backend);
+  if (!descriptor.conversation) {
+    throw new Error(
+      `WorkflowAgentCaller: backend "${backend}" has no conversation facet, so no continuity adapter is available`,
+    );
+  }
+  return descriptor.conversation.continuity;
+}
+
 export function createWorkflowAgentCaller(
   deps: WorkflowAgentCallerDeps,
 ): WorkflowAgentCaller {
   const log = deps.logger ?? defaultLogger;
   const now = deps.now ?? (() => new Date().toISOString());
+  const resolveAdapter = deps.continuityAdapter
+    ? (backend: AgentBackendId) => deps.continuityAdapter!(backend)
+    : descriptorContinuityAdapter;
 
   return {
     async call(request) {
       const writeCapability =
-        request.writeCapability ?? DEFAULT_WRITE_CAPABILITY;
+        request.writeCapability ?? DEFAULT_LANE_WRITE_CAPABILITY;
 
       return deps.laneScheduler.schedule(
         {
@@ -154,7 +183,8 @@ export function createWorkflowAgentCaller(
           workflowId: request.laneRef.workflowId,
           laneId: request.laneRef.laneId,
         },
-        async () => executeWithContinuity(request, deps, log, now),
+        async () =>
+          executeWithContinuity(request, deps, resolveAdapter, log, now),
       );
     },
   };
@@ -163,6 +193,45 @@ export function createWorkflowAgentCaller(
 async function executeWithContinuity(
   request: WorkflowAgentCallerRequest,
   deps: WorkflowAgentCallerDeps,
+  resolveAdapter: (backend: AgentBackendId) => BackendContinuityAdapter,
+  log: Logger,
+  now: () => string,
+): Promise<AgentCallResult> {
+  const workResult = await runOneTurn(
+    request,
+    request.agentCallRequest,
+    deps,
+    resolveAdapter,
+    log,
+    now,
+  );
+
+  // The prose→format two-pass repair runs both turns in this same scheduled
+  // section (single acquisition, D16). The format turn only runs if the work
+  // turn completed; it re-resolves continuity so it resumes the ref the work
+  // turn advanced (continuity-enabled lane) or starts fresh (disabled).
+  if (
+    request.formatFollowUp === undefined ||
+    workResult.outcome.kind !== "completed"
+  ) {
+    return workResult;
+  }
+
+  return runOneTurn(
+    request,
+    request.formatFollowUp,
+    deps,
+    resolveAdapter,
+    log,
+    now,
+  );
+}
+
+async function runOneTurn(
+  request: WorkflowAgentCallerRequest,
+  agentCallRequest: AgentCallRequest,
+  deps: WorkflowAgentCallerDeps,
+  resolveAdapter: (backend: AgentBackendId) => BackendContinuityAdapter,
   log: Logger,
   now: () => string,
 ): Promise<AgentCallResult> {
@@ -173,13 +242,14 @@ async function executeWithContinuity(
     );
   }
 
-  const firstAttempt = await resolveContinuity(lane, deps, log);
+  const adapter = resolveAdapter(lane.backend);
+  const firstAttempt = await resolveContinuity(lane, adapter, deps, log);
   let activeContinuity = firstAttempt.continuity;
   let activeLane = firstAttempt.lane;
 
   let result: AgentCallResult;
   try {
-    result = await deps.callAgent(request.agentCallRequest, activeContinuity);
+    result = await deps.callAgent(agentCallRequest, activeContinuity);
   } catch (err) {
     if (!isStaleBackendRefError(err)) {
       throw err;
@@ -190,10 +260,10 @@ async function executeWithContinuity(
       backend: activeLane.backend,
       reason: "callAgent_threw_stale",
     });
-    const recovered = await recoverFreshBackend(activeLane, deps, log);
+    const recovered = await startFreshBackend(activeLane, adapter, deps, log);
     activeContinuity = recovered.continuity;
     activeLane = recovered.lane;
-    result = await deps.callAgent(request.agentCallRequest, activeContinuity);
+    result = await deps.callAgent(agentCallRequest, activeContinuity);
   }
 
   await applyPostTurnOutcome({
@@ -215,6 +285,7 @@ interface ContinuityResolution {
 
 async function resolveContinuity(
   lane: LaneState,
+  adapter: BackendContinuityAdapter,
   deps: WorkflowAgentCallerDeps,
   log: Logger,
 ): Promise<ContinuityResolution> {
@@ -224,7 +295,7 @@ async function resolveContinuity(
       laneId: lane.laneId,
       backend: lane.backend,
     });
-    return startFreshBackend(lane, deps, log);
+    return startFreshBackend(lane, adapter, deps, log);
   }
 
   if (!lane.policy.continuityEnabled) {
@@ -233,144 +304,99 @@ async function resolveContinuity(
       laneId: lane.laneId,
       backend: lane.backend,
     });
-    return startFreshBackend(lane, deps, log);
+    return startFreshBackend(lane, adapter, deps, log);
   }
 
-  if (lane.backend === "claude") {
-    if (lane.backendState.backend !== "claude") {
-      throw new Error(
-        "WorkflowAgentCaller: lane backendState branch mismatched at resolve time",
-      );
-    }
-    const conversationId = lane.backendState.conversationId;
-    if (!conversationId) {
-      return startFreshBackend(lane, deps, log);
-    }
-    const valid = await deps.validateClaudeConversation({ conversationId });
-    if (!valid) {
-      log.warn("workflow_agent_caller.stale_backend_ref.recovery", {
-        workflowId: lane.workflowId,
-        laneId: lane.laneId,
-        backend: "claude",
-        reason: "claude_conversation_not_found",
-        conversationId,
-      });
-      return startFreshBackend(lane, deps, log);
-    }
-    return {
-      lane,
-      continuity: {
-        laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
-        resumeRef: { backend: "claude", sessionId: conversationId },
-        laneAction: "reuse",
-      },
-    };
+  const persistedRef = laneSessionRef(lane);
+  if (persistedRef === null) {
+    return startFreshBackend(lane, adapter, deps, log);
   }
 
-  if (lane.backendState.backend !== "codex") {
-    throw new Error(
-      "WorkflowAgentCaller: lane backendState branch mismatched at resolve time",
-    );
-  }
-  const threadId = lane.backendState.threadId;
-  if (!threadId) {
-    return startFreshBackend(lane, deps, log);
-  }
   try {
-    const resumed = await deps.resumeCodexThread({ threadId });
+    const resumption = await adapter.resumeOrRecover(
+      persistedRef,
+      deps.continuityContext,
+    );
+    if (!resumption.recovered) {
+      return {
+        lane,
+        continuity: {
+          laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
+          resumeRef: resumption.ref,
+          laneAction: "reuse",
+        },
+      };
+    }
+    log.warn("workflow_agent_caller.stale_backend_ref.recovery", {
+      workflowId: lane.workflowId,
+      laneId: lane.laneId,
+      backend: lane.backend,
+      reason: "adapter_recovered_fresh_handle",
+      staleRef: persistedRef.ref,
+      freshRef: resumption.ref.ref,
+    });
+    const updated = await persistFreshLane(lane, resumption.ref.ref, deps);
     return {
-      lane,
+      lane: updated,
       continuity: {
         laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
-        resumeRef: { backend: "codex", threadId: resumed.threadId },
-        laneAction: "reuse",
+        resumeRef: resumption.ref,
+        laneAction: "create",
       },
     };
   } catch (err) {
     log.warn("workflow_agent_caller.stale_backend_ref.recovery", {
       workflowId: lane.workflowId,
       laneId: lane.laneId,
-      backend: "codex",
-      reason: "codex_resume_failed",
-      threadId,
-      error: err instanceof Error ? err.message : String(err),
+      backend: lane.backend,
+      reason: "resume_failed",
+      ref: persistedRef.ref,
+      error: getErrorMessage(err),
     });
-    return startFreshBackend(lane, deps, log);
+    return startFreshBackend(lane, adapter, deps, log);
   }
+}
+
+async function persistFreshLane(
+  lane: LaneState,
+  ref: string,
+  deps: WorkflowAgentCallerDeps,
+): Promise<LaneState> {
+  const fresh: LaneState = {
+    workflowId: lane.workflowId,
+    laneId: lane.laneId,
+    backend: lane.backend,
+    ref,
+    writeCapability: lane.writeCapability,
+    policy: lane.policy,
+    metrics: { rotateBeforeNextTurn: false },
+    lastUsedAt: lane.lastUsedAt,
+  };
+  return deps.laneService.initialize(fresh);
 }
 
 async function startFreshBackend(
   lane: LaneState,
+  adapter: BackendContinuityAdapter,
   deps: WorkflowAgentCallerDeps,
   log: Logger,
 ): Promise<ContinuityResolution> {
-  if (lane.backend === "claude") {
-    const { conversationId } = await deps.createClaudeConversation({
-      laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
-    });
-    log.info("workflow_agent_caller.lane.create_fresh", {
-      workflowId: lane.workflowId,
-      laneId: lane.laneId,
-      backend: "claude",
-      conversationId,
-    });
-    const fresh: LaneState = {
-      workflowId: lane.workflowId,
-      laneId: lane.laneId,
-      backend: "claude",
-      writeCapability: lane.writeCapability,
-      policy: lane.policy,
-      backendState: { backend: "claude", conversationId },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
-      lastUsedAt: lane.lastUsedAt,
-    };
-    const updated = await deps.laneService.initialize(fresh);
-    return {
-      lane: updated,
-      continuity: {
-        laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
-        resumeRef: { backend: "claude", sessionId: conversationId },
-        laneAction: "create",
-      },
-    };
-  }
-
-  const { threadId } = await deps.startCodexThread({
-    laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
-  });
+  const started = await adapter.start(deps.continuityContext);
   log.info("workflow_agent_caller.lane.create_fresh", {
     workflowId: lane.workflowId,
     laneId: lane.laneId,
-    backend: "codex",
-    threadId,
+    backend: lane.backend,
+    ref: started.ref,
   });
-  const fresh: LaneState = {
-    workflowId: lane.workflowId,
-    laneId: lane.laneId,
-    backend: "codex",
-    writeCapability: lane.writeCapability,
-    policy: lane.policy,
-    backendState: { backend: "codex", threadId },
-    metrics: { backend: "codex", rotateBeforeNextTurn: false },
-    lastUsedAt: lane.lastUsedAt,
-  };
-  const updated = await deps.laneService.initialize(fresh);
+  const updated = await persistFreshLane(lane, started.ref, deps);
   return {
     lane: updated,
     continuity: {
       laneRef: { workflowId: lane.workflowId, laneId: lane.laneId },
-      resumeRef: { backend: "codex", threadId },
+      resumeRef: started,
       laneAction: "create",
     },
   };
-}
-
-async function recoverFreshBackend(
-  lane: LaneState,
-  deps: WorkflowAgentCallerDeps,
-  log: Logger,
-): Promise<ContinuityResolution> {
-  return startFreshBackend(lane, deps, log);
 }
 
 interface ApplyPostTurnOutcomeInput {
@@ -388,9 +414,6 @@ async function applyPostTurnOutcome(
   const { lane, request, result, deps, log } = input;
   const ref = { workflowId: lane.workflowId, laneId: lane.laneId };
   const outcome = buildLaneOutcome(lane, request, result);
-  if (outcome === null) {
-    return;
-  }
   try {
     await deps.laneService.recordOutcome(ref, outcome);
   } catch (err) {
@@ -398,7 +421,7 @@ async function applyPostTurnOutcome(
       workflowId: lane.workflowId,
       laneId: lane.laneId,
       backend: lane.backend,
-      message: err instanceof Error ? err.message : String(err),
+      message: getErrorMessage(err),
     });
     throw err;
   }
@@ -408,33 +431,9 @@ function buildLaneOutcome(
   lane: LaneState,
   request: WorkflowAgentCallerRequest,
   result: AgentCallResult,
-): LaneOutcome | null {
-  const failed = result.outcome.kind === "failed";
-
-  if (lane.backend === "claude") {
-    const usage = result.usage;
-    const conversationId =
-      result.backendRef?.backend === "claude"
-        ? result.backendRef.sessionId
-        : undefined;
-    const claudeOutcome: LaneOutcome = {
-      backend: "claude",
-      ...(usage.contextTokens !== undefined
-        ? { contextTokens: usage.contextTokens }
-        : {}),
-      ...(usage.contextWindowMax !== undefined
-        ? { contextWindowMax: usage.contextWindowMax }
-        : {}),
-      ...(request.contextLimitTokens !== undefined
-        ? { contextLimitTokens: request.contextLimitTokens }
-        : {}),
-      ...(conversationId !== undefined ? { conversationId } : {}),
-      ...(failed ? { failed: true } : {}),
-    };
-    return claudeOutcome;
-  }
-
+): LaneOutcome {
   const usage = result.usage;
+  const advancedRef = refValueForBackend(result.backendRef, lane.backend);
   const lastTurnUsage =
     usage.inputTokens !== undefined ||
     usage.outputTokens !== undefined ||
@@ -445,15 +444,23 @@ function buildLaneOutcome(
           outputTokens: usage.outputTokens ?? 0,
         }
       : undefined;
-  const threadId =
-    result.backendRef?.backend === "codex"
-      ? result.backendRef.threadId
-      : undefined;
-  const codexOutcome: LaneOutcome = {
-    backend: "codex",
-    ...(threadId !== undefined ? { threadId } : {}),
+
+  return {
+    backend: lane.backend,
+    ...(advancedRef !== undefined ? { ref: advancedRef } : {}),
+    ...(usage.contextTokens !== undefined
+      ? { contextTokens: usage.contextTokens }
+      : {}),
+    ...(usage.contextWindowMax !== undefined
+      ? { contextWindowMax: usage.contextWindowMax }
+      : {}),
+    ...(request.contextLimitTokens !== undefined
+      ? { contextLimitTokens: request.contextLimitTokens }
+      : {}),
     ...(lastTurnUsage !== undefined ? { lastTurnUsage } : {}),
-    ...(failed ? { failed: true } : {}),
+    ...(result.continuationDisposition !== undefined
+      ? { continuationDisposition: result.continuationDisposition }
+      : {}),
+    ...(result.compacted === true ? { compactedThisTurn: true } : {}),
   };
-  return codexOutcome;
 }

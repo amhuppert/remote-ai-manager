@@ -2,7 +2,7 @@ import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { stopAllForWorktree as defaultStopAllForWorktree } from "@/lib/dev-server/registry";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("graph-workflow-dev-server-cleanup");
 

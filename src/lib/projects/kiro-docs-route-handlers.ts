@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { withTracing } from "@/lib/logging";
@@ -57,13 +58,9 @@ async function listSubdirs(dirPath: string): Promise<string[]> {
  */
 export const getProjectKiroDocs = withTracing(async (request, { params }) => {
   const { name } = await params;
-  const projectPath = await resolveProjectPath(name ?? "");
-  if (!projectPath) {
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
+  const project = await resolveProjectOr404({ resolveProjectPath }, name ?? "");
+  if (!project.ok) return project.response;
+  const projectPath = project.value;
 
   const url = new URL(request.url);
   const filePath = url.searchParams.get("path");
@@ -102,10 +99,7 @@ export const getProjectKiroDocs = withTracing(async (request, { params }) => {
         "code" in err &&
         (err as NodeJS.ErrnoException).code === "ENOENT"
       ) {
-        return NextResponse.json(
-          { error: "File not found" } satisfies ApiError,
-          { status: 404 },
-        );
+        return notFound("File not found");
       }
       return NextResponse.json(
         { error: "Failed to read file" } satisfies ApiError,

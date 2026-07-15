@@ -35,11 +35,11 @@ import { createWorkflowCollaborationEnvelope } from "@/lib/workflows/collaborati
 import { appendCollaborationArtifact } from "@/lib/workflows/collaboration/artifacts-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
-import { createStatusBus } from "@/lib/workflows/primitives/status-bus";
-import { publishScopedStatusEvent } from "@/lib/workflows/primitives/default-session-status-bus";
+import { createStatusBus } from "@/lib/events/status-bus";
+import { publishScopedStatus } from "@/lib/events/publication";
 import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import { createSessionWorkflowEnvelopeStoreForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 /**
  * Production loader for the graph-workflow lane tool context — the single
@@ -299,7 +299,7 @@ export async function loadGraphWorkflowLaneToolContext(
             });
             const statusBus = createStatusBus({
               broadcast: (envelopeEvent) => {
-                const outcome = publishScopedStatusEvent({
+                const outcome = publishScopedStatus({
                   scope: envelopeEvent.scope,
                   scopeId: envelopeEvent.scopeId,
                   status: envelopeEvent.status,

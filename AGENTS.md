@@ -1,14 +1,85 @@
-# AGENTS.md
+# Command Center
 
-`CLAUDE.md` is the canonical engineering guide for AI agents in this repository — read it for project context, structure, type-safety rules, the no-internal-`vi.mock()` rule, logging conventions, and the Kiro spec-driven workflow. The conventions there apply to every agent working in this repo, including this one.
+Command Center is a Next.js control plane for running Claude and Codex agent sessions in isolated git worktrees. This file is the tool-agnostic engineering contract for every agent in this repository.
 
-## Testing: persistence-dependent tests
+Address the user as Alex. Be direct about uncertainty or technical disagreement, and ask before making a consequential choice that the request does not settle.
 
-- **Use the real-store fixture, not a JS-object fake.** When a test's correctness depends on a value surviving the repository ↔ SQLite serialization round-trip (e.g. mutate a conversation, then read it back), inject `createPersistenceFixture()` from `src/lib/shared/testing/persistence-fixture.ts` (real repos over a fresh `:memory:` DB) and assert on the **reloaded** state. A hand-rolled in-memory `mutateConversation`/`getConversation` fake never serializes, so it cannot catch a dropped or default-masked field. Stub-only tests that only feed a crafted input (no read-back) may stay on lightweight fakes.
-- **Every state-store repo has a schema-driven durability backstop.** Each `*.contract.test.ts` round-trips a maximal fixture through the real repo via `assertRoundTripDurability` (`src/lib/shared/testing/round-trip-durability.ts`). When you add a persisted field or a new repo/table, extend or add that contract — and declare any intentionally non-persisted or derived-on-write field in its policy map — so a serialization drop fails the suite instead of escaping to live verification.
+## Commands
 
-## Worktree & git safety
+Run commands from the assigned session worktree root.
 
-Sessions run in isolated git worktrees that share one `.git` common directory (see CLAUDE.md → "Worktree Isolation" for the full set of rules).
+```bash
+bun install
+bun run dev
+bun run test
+bun run test scripts/instruction-docs.test.ts
+bun run test:watch
+bun run typecheck
+bun run lint
+bun run build
+bun run seams:check
+```
 
-- **Never `git stash pop` or `git stash apply` — and avoid `git stash` entirely.** The stash stack is shared repo-wide across *every* worktree, so the entry you pop may belong to another session: it dumps a stranger's changes into your tree as conflicts and can lose their work. `git stash push -- <paths>` also silently aborts if any listed path is invalid (e.g. an untracked file), so a later `pop` lands a foreign stash you never pushed. To compare against a clean baseline, inspect read-only (`git show HEAD:<path>`, `git diff`) or restore specific files you own with `git checkout HEAD -- <path>`; if you need an isolated baseline tree, `git worktree add` a throwaway — never stash.
+`bun run lint` runs ESLint and the architecture seam ratchet. Database migrations run during server startup; before changing persistence, follow `.kiro/steering/tech.md` and `src/lib/state-store/migrations/README.md`.
+
+In Command Center sessions, run `cctl dev ensure` before browser, Playwright, Storybook, or Next.js diagnostics. Use the returned session-scoped URL; never assume a port.
+
+## Worktree and live-state safety
+
+- Keep every file and git operation inside the assigned session worktree. Do not read from or modify the main worktree or another session's worktree unless Alex explicitly directs it.
+- Do not use `git stash`, `git checkout`, or `git reset` to clean or restore files unless Alex explicitly requests that exact operation. The stash is shared across worktrees. Compare read-only with `git diff`, `git log`, or `git show`.
+- Preserve unrelated and pre-existing changes. Do not discard or rewrite an implementation unless Alex explicitly approves it.
+- The OS-level CC config directory (`config.json`, `workflows/`, `command-center.db`) is shared live state, not worktree state. Change it only when the request explicitly places it in scope; otherwise ask first.
+- Backward-compatibility shims require Alex's explicit approval.
+
+## Development process
+
+- Use red-green TDD: add a failing behavior-level test, confirm the failure, implement the minimum fix, then run proportionate regression checks.
+- For work governed by `.kiro/specs/`, preserve the Requirements → Design → Tasks → Implementation approvals. Check the active spec before implementation and write spec artifacts in the language declared by its `spec.json`.
+- Prefer small, focused changes. When a request is an audit or diagnosis, report findings without mutating external state or implementing an unrequested fix.
+
+## Canonical architecture boundaries
+
+- Start with `CONTEXT.md` for current domain vocabulary and ownership. A decision has one canonical owner exposed through a deep semantic interface.
+- Backend-neutral code composes registered descriptors, conversation/task facets, capabilities, failure policy, and opaque continuity handles. Read `.kiro/steering/agent-backends.md` before changing agent execution, structured output, continuity, MCP behavior, models, or capabilities.
+- Workflow features compose the supported modules in `.kiro/steering/workflows.md`; the adoption matrix decides which paths are canonical, experimental, or migration-only. XState and other orchestration mechanisms stay private behind lifecycle modules.
+- Server events publish through `src/lib/events/publication.ts`; never import the raw broadcaster from domain code. Read `.kiro/steering/data-fetching-and-sse.md` before adding mutations, query hooks, or SSE behavior.
+- API handlers compose `RouteResolution` and domain route adapters rather than rebuilding project/session/ticket 404 ladders. See `.kiro/steering/structure.md`.
+- New UI uses existing primitives and Tailwind utilities. Tone-coded lifecycle/status pills use `src/components/ui/StatusChip.tsx`; `layoutClassName` is for external layout only. Read `docs/tailwind-conventions.md` before authoring or migrating UI.
+- Run `bun run seams:check` when touching any architecture boundary above. Do not raise a seam ceiling to make a failure disappear; migrate the new site or document an approved survivor and deletion condition.
+
+## TypeScript, schemas, and persistence
+
+- Keep strict typing. Do not use `any`, `!`, `@ts-ignore`, unchecked external casts, or hand-written types that duplicate Zod schemas. Narrow `unknown` with runtime checks.
+- Each domain owns its schemas in `src/lib/<domain>/schemas.ts`; derive types with `z.infer`. Shared primitives belong in `src/lib/shared/schemas.ts` only when genuinely cross-domain.
+- Persist through the state-store repositories and focused mutation APIs. Never instantiate a second state manager or write directly to the database from feature code.
+- A persisted-field change must update its repository mapping, maximal round-trip contract fixture, and migration/floor behavior as applicable.
+
+## Testing boundaries
+
+- Never use `vi.mock()` for internal project modules. Use dependency injection, factories, XState `.provide()`, or extracted pure functions. Infrastructure modules with import-time side effects are the narrow exception.
+- Dependency interfaces use method syntax when production functions must satisfy them.
+- If correctness depends on SQLite serialization, use `createPersistenceFixture()` from `src/lib/shared/testing/persistence-fixture.ts`, reload through the repository, and assert on the reloaded state. JS-object fakes cannot prove durability.
+- Every state-store repository has a `*.contract.test.ts` maximal round-trip backstop using `assertRoundTripDurability`. Extend it for every persisted field or table and declare intentionally derived/non-persisted fields in its policy.
+- Avoid tests that only prove one fake called another fake. Exercise production logic or extract a pure decision function.
+
+## Logging and comments
+
+- Before adding or changing logging, read `.kiro/steering/logs.md`. Use `createLogger` from `@/lib/logging`, stable event names, and structured fields; never log secrets, tokens, or full prompt contents.
+- Comments explain constraints, business reasons, or non-obvious edge cases. Do not narrate visible code, describe prior versions, or add temporal claims. Preserve existing comments unless they are demonstrably false.
+
+## Read on demand
+
+- `.kiro/steering/engineering-principles.md` — type safety, TDD, module depth, composition philosophy
+- `.kiro/steering/product.md` — current product scope and capabilities
+- `.kiro/steering/tech.md` — stack, migrations, commands, version-sensitive constraints
+- `.kiro/steering/structure.md` — directory, route, schema, and import boundaries
+- `.kiro/steering/agent-backends.md` — backend descriptors, facets, continuity, failures, structured output
+- `.kiro/steering/workflows.md` — lifecycle shapes, workflow modules, adoption matrix, graph configuration
+- `.kiro/steering/data-fetching-and-sse.md` — React Query, responsiveness, typed publication
+- `.kiro/steering/logs.md` — logging architecture and event conventions
+- `.kiro/steering/cli.md` — `cctl` command and output contracts
+- `.kiro/steering/notifications.md` — jobs, notifications, and their publication flow
+- `.kiro/steering/project-configuration.md` — `CommandCenter.json` and dev-server behavior
+
+When a command, path, or canonical boundary changes, update this file and the owning steering document in the same change. Add a root-level gotcha only after it prevents or explains a real recurring failure.

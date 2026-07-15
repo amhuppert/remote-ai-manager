@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createConfigReader } from "@/lib/config/loader";
 import type { ManagerState } from "@/lib/projects/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { createStateStore } from "@/lib/state-store";
 import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
 
 import { createScopeOverrideStore } from "./scope-store";
@@ -17,7 +17,7 @@ const TEST_DIR = path.join("/tmp", "cc-mcp-scope-test-" + Date.now());
 
 function createTestHarness() {
   const configReader = createConfigReader(TEST_DIR);
-  const state = createStateManager({
+  const state = createStateStore({
     readConfig: () => configReader.readConfig(),
   });
   const store = createScopeOverrideStore({ stateManager: state });

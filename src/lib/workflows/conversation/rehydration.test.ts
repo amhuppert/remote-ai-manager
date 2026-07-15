@@ -1,17 +1,25 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   collectRehydrationCandidates,
-  getConversationActor,
   rehydrateConversationActors,
-  setConversationQueueDeps,
+  rehydrateOneConversationActor,
+  shouldRehydrateSnapshot,
+  type RehydrateConversationActorsDeps,
+} from "./rehydration";
+import {
+  getConversationActor,
   setMachineFactory,
-  _resetConversationQueueDepsForTesting,
   _resetForTesting,
   _resetMachineFactoryForTesting,
-  type ConversationQueueDeps,
-  type RehydrateConversationActorsDeps,
 } from "./manager";
+import {
+  setConversationQueueDeps,
+  _resetConversationQueueDepsForTesting,
+  type ConversationQueueDeps,
+} from "@/lib/conversations/message-queue-drain";
+import { _resetForTesting as resetRuntime } from "./runtime-state";
 import { conversationMachine } from "./machine";
+import { validateRestoredSnapshot } from "./persistence";
 import type {
   ConversationInput,
   ExecutePromptInput,
@@ -34,6 +42,26 @@ import {
 } from "xstate";
 
 const ts = "2025-01-01T00:00:00.000Z";
+
+/**
+ * Build a Snapshot-typed value from parts without unchecked casts: the
+ * Snapshot union's own discriminant fields are written explicitly, and the
+ * machine-level fields (`value`, `context`) the rehydration policy reads
+ * arrive via spread, which the union admits as structural extras.
+ */
+function fakeSnapshot(parts: {
+  status: Snapshot<unknown>["status"];
+  value?: unknown;
+  context?: { pendingQuestion?: unknown };
+}): Snapshot<unknown> {
+  const machineParts = { value: parts.value, context: parts.context };
+  return {
+    status: parts.status,
+    output: undefined,
+    error: undefined,
+    ...machineParts,
+  };
+}
 
 function conv(
   overrides: Partial<ConversationState> & { id: string },
@@ -74,6 +102,7 @@ const emptyState = (): ManagerState =>
 
 afterEach(() => {
   _resetForTesting();
+  resetRuntime();
   _resetMachineFactoryForTesting();
   _resetConversationQueueDepsForTesting();
 });
@@ -132,11 +161,11 @@ describe("rehydrateConversationActors (project conversations)", () => {
       scope: "project",
       machineSnapshot: { x: 1 },
     });
-    const nonResumable = {
+    const nonResumable = fakeSnapshot({
       status: "active",
       value: "running",
       context: {},
-    } as unknown as Snapshot<unknown>;
+    });
     const count = await rehydrateConversationActors(
       makeDeps(
         [{ projectPath: "/repo", conversation: projConv }],
@@ -204,6 +233,7 @@ describe("waitingForInput rehydration contract", () => {
       aborted: false,
       compacted: false,
       error: null,
+      continuationDisposition: "retain",
       structuredOutput: undefined,
     };
   }
@@ -323,5 +353,300 @@ describe("waitingForInput rehydration contract", () => {
         conversationId: "c-wfi",
       });
     });
+  });
+
+  it("a legacy-shape snapshot rehydrates with a canonical backendRef in the actor context", async () => {
+    const persisted = await captureWaitingForInputSnapshot();
+    // Shape the snapshot the way a pre-migration build persisted it: a
+    // discriminated legacy ref in the machine context.
+    (persisted as { context: { backendRef: unknown } }).context.backendRef = {
+      backend: "claude",
+      sessionId: "sess-legacy-snap",
+    };
+    setMachineFactory(stubbedMachine);
+    setConversationQueueDeps(noopQueueDeps);
+
+    const conversation = conv({
+      id: "c-wfi",
+      status: "waiting_for_input",
+      machineSnapshot: persisted as ConversationState["machineSnapshot"],
+    });
+    const deps: RehydrateConversationActorsDeps = {
+      readState: async () => stateWith([conversation]),
+      listAllProjectConversations: async () => [],
+      getProjectDisplayName: () => "demo",
+      validateRestoredSnapshot,
+    };
+
+    const count = await rehydrateConversationActors(deps);
+    expect(count).toBe(1);
+
+    const actor = getConversationActor("/repo", "feat", "c-wfi");
+    expect(actor).toBeDefined();
+    expect(actor!.getSnapshot().context.backendRef).toEqual({
+      backend: "claude",
+      ref: "sess-legacy-snap",
+    });
+  });
+});
+
+describe("shouldRehydrateSnapshot", () => {
+  it("rehydrates active snapshots with a pending question", () => {
+    expect(
+      shouldRehydrateSnapshot(
+        fakeSnapshot({
+          status: "active",
+          value: "waiting_for_input",
+          context: {
+            pendingQuestion: {
+              questionId: "q1",
+              questions: [{ question: "?", options: [] }],
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("skips terminal snapshots regardless of pendingQuestion", () => {
+    expect(
+      shouldRehydrateSnapshot(
+        fakeSnapshot({
+          status: "done",
+          value: "idle",
+          context: {
+            pendingQuestion: {
+              questionId: "q1",
+              questions: [{ question: "?", options: [] }],
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("skips active snapshots without a pending question", () => {
+    expect(
+      shouldRehydrateSnapshot(
+        fakeSnapshot({
+          status: "active",
+          value: "idle",
+          context: { pendingQuestion: null },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldRehydrateSnapshot(
+        fakeSnapshot({
+          status: "active",
+          value: { executing: "running" },
+          context: { pendingQuestion: null },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldRehydrateSnapshot(
+        fakeSnapshot({
+          status: "active",
+          value: "acquiringResources",
+          context: {},
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rehydrateOneConversationActor startup recovery
+// ---------------------------------------------------------------------------
+
+const DEFAULT_INPUT = {
+  projectPath: "/test/project",
+  projectName: "test-project",
+  sessionName: "test-session",
+  worktreePath: "/test/project/.worktrees/test-session",
+  createdAt: "2026-01-01T00:00:00.000Z",
+};
+
+function createTestMachine() {
+  return conversationMachine.provide({
+    actors: {
+      prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
+        async () => ({ transcriptPath: "/test.jsonl" }),
+      ),
+      executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
+        async () => ({
+          backendRef: null,
+          costUsd: null,
+          durationMs: null,
+          numTurns: null,
+          contextTokens: null,
+          contextWindow: null,
+          inputTokens: null,
+          outputTokens: null,
+          cachedInputTokens: null,
+          contentBlocks: [],
+          aborted: false,
+          compacted: false,
+          error: null,
+          continuationDisposition: "retain",
+        }),
+      ),
+    },
+    actions: {
+      persistSnapshot: () => {},
+      syncDerivedFields: () => {},
+      broadcastConversationStatus: () => {},
+      broadcastAskQuestion: () => {},
+      broadcastDebugModeStatus: () => {},
+      releaseResources: () => {},
+      dispatchPushNotification: () => {},
+    },
+  });
+}
+
+function makeQueueDeps(
+  overrides: Partial<ConversationQueueDeps> = {},
+): ConversationQueueDeps {
+  return {
+    claimNextTurnBatch: vi.fn(async () => null),
+    markPending: vi.fn(async () => {}),
+    markDelivered: vi.fn(async () => {}),
+    markFailed: vi.fn(async () => {}),
+    recoverAbandonedDeliveries: vi.fn(async () => 0),
+    runConversationCommand: vi.fn(async () => ({
+      status: "dispatched" as const,
+      jobId: "job-1",
+      usedFallback: false,
+    })),
+    ...overrides,
+  };
+}
+
+describe("rehydrateOneConversationActor startup recovery", () => {
+  const CONV_ID = "conv-rehydrate";
+  const KEY = `${DEFAULT_INPUT.projectPath}::${DEFAULT_INPUT.sessionName}::${CONV_ID}`;
+
+  // A restorable snapshot produced by a real actor of the same machine the
+  // rehydrator restores onto: active, settled in `idle` with the machine's
+  // genuine persisted shape. `idle` resolves cleanly without re-invoking the
+  // executePrompt actor, and the recovery-ordering contract under test is
+  // independent of which resumable state the snapshot captured.
+  function makeResumableSnapshot(): Snapshot<unknown> {
+    const input: ConversationInput = {
+      projectPath: DEFAULT_INPUT.projectPath,
+      projectName: DEFAULT_INPUT.projectName,
+      sessionName: DEFAULT_INPUT.sessionName,
+      worktreePath: DEFAULT_INPUT.worktreePath,
+      conversationId: CONV_ID,
+      createdAt: DEFAULT_INPUT.createdAt,
+      forkedFrom: null,
+      role: null,
+      transcriptPath: "/t.jsonl",
+      agentBackend: "claude",
+      backendRef: null,
+      promptCount: 1,
+    };
+    const actor = createActor(createTestMachine(), { input });
+    actor.start();
+    const snapshot = actor.getPersistedSnapshot();
+    actor.stop();
+    return snapshot;
+  }
+
+  function rehydrateArgs(snapshot: Snapshot<unknown>) {
+    return {
+      key: KEY,
+      projectPath: DEFAULT_INPUT.projectPath,
+      projectName: DEFAULT_INPUT.projectName,
+      sessionName: DEFAULT_INPUT.sessionName,
+      worktreePath: DEFAULT_INPUT.worktreePath,
+      conversation: {
+        id: CONV_ID,
+        createdAt: DEFAULT_INPUT.createdAt,
+        forkedFrom: null,
+        role: null,
+        transcriptPath: "/t.jsonl",
+        agentBackend: "claude" as const,
+        backendRef: null,
+        promptCount: 1,
+      },
+      snapshot,
+    };
+  }
+
+  it("awaits recoverAbandonedDeliveries before starting the actor", async () => {
+    setMachineFactory(createTestMachine);
+
+    // Gate recovery on a deferred. `actor.start()` is the statement after the
+    // awaited recovery, so while the gate is unresolved the actor cannot have
+    // been started and rehydrate cannot have resolved. Resolving the gate is
+    // what unblocks both — the load-bearing ordering proof.
+    const order: string[] = [];
+    let resolveRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => {
+      resolveRecovery = resolve;
+    });
+    const recoverAbandonedDeliveries = vi.fn(async () => {
+      order.push("recover-called");
+      await recoveryGate;
+      return 1;
+    });
+    setConversationQueueDeps(makeQueueDeps({ recoverAbandonedDeliveries }));
+
+    const rehydratePromise = rehydrateOneConversationActor(
+      rehydrateArgs(makeResumableSnapshot()),
+    ).then((started) => {
+      order.push("rehydrate-resolved");
+      return started;
+    });
+
+    // Let microtasks flush. Recovery has been called but the gate is still
+    // pending, so the actor is not started and rehydrate has not resolved.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(recoverAbandonedDeliveries).toHaveBeenCalledWith({
+      projectPath: DEFAULT_INPUT.projectPath,
+      sessionName: DEFAULT_INPUT.sessionName,
+      conversationId: CONV_ID,
+    });
+    expect(order).toEqual(["recover-called"]);
+
+    resolveRecovery();
+    const started = await rehydratePromise;
+
+    expect(started).toBe(true);
+    expect(order).toEqual(["recover-called", "rehydrate-resolved"]);
+    // The actor became live only after recovery resolved.
+    expect(
+      getConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        CONV_ID,
+      ),
+    ).toBeDefined();
+  });
+
+  it("still starts the actor when recovery throws (recovery failure does not abort rehydrate)", async () => {
+    setMachineFactory(createTestMachine);
+
+    const recoverAbandonedDeliveries = vi.fn(async () => {
+      throw new Error("recover boom");
+    });
+    setConversationQueueDeps(makeQueueDeps({ recoverAbandonedDeliveries }));
+
+    const started = await rehydrateOneConversationActor(
+      rehydrateArgs(makeResumableSnapshot()),
+    );
+
+    expect(recoverAbandonedDeliveries).toHaveBeenCalledTimes(1);
+    expect(started).toBe(true);
+    expect(
+      getConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        CONV_ID,
+      )?.getSnapshot().status,
+    ).toBe("active");
   });
 });

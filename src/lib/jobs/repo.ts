@@ -1,22 +1,34 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { getStateDb } from "../state-store/store";
+import type Database from "better-sqlite3";
 import { createLogger } from "../logging";
 import { timedSync } from "../logging/timed";
 import { PersistenceError } from "../shared/errors";
+import { isProcessAlive } from "../shared/process-liveness";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
-import { jobNotificationSchema } from "../notifications/schemas";
+import { createNotificationsRepo } from "../notifications/repo";
 import {
   backgroundJobSchema,
   jobRecordSchema,
   jobStatusSchema,
 } from "./schemas";
 import type { BackgroundJob, JobRecord, JobType, JobStatus } from "./schemas";
-import type {
-  JobNotification,
-  JobNotificationType,
-} from "@/lib/notifications/schemas";
+import type { JobNotificationType } from "@/lib/notifications/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
+
+type Db = InstanceType<typeof Database>;
+
 const jobRecordLogger = createLogger("state-store.job-records");
+
+/**
+ * Lenient owner-pid read for the sweep — rows may predate the column, so the
+ * key may be absent (`undefined`) as well as SQL NULL. Effect-free on purpose:
+ * parseTrusted skips parsing in production, so a `.default()` would never
+ * apply there; the call site treats `undefined` and `null` identically.
+ */
+const staleJobOwnerPidSchema = registerTrustedSchema(
+  z.looseObject({ owner_pid: z.number().nullish() }),
+  "jobRecord.staleOwnerPid",
+);
 
 const jobRecordRowSchema = registerTrustedSchema(
   z.object({
@@ -113,7 +125,7 @@ function parseConflictFilesColumn(
         {
           code: "invalid_json",
           path: ["conflictFiles"],
-          message: err instanceof Error ? err.message : String(err),
+          message: getErrorMessage(err),
           identifier,
         },
       ],
@@ -125,17 +137,6 @@ function parseConflictFilesColumn(
     if (err instanceof z.ZodError) return { ok: false, issues: err.issues };
     throw err;
   }
-}
-
-/**
- * Render a UTC timestamp string in the same format as SQLite's `datetime('now')`
- * — `YYYY-MM-DD HH:MM:SS` — so notifications inserted from JS validate through
- * notificationSchema BEFORE the INSERT commits, while remaining lexicographically
- * comparable against retention queries that still use `datetime('now', ?)`.
- */
-function sqliteUtcNow(): string {
-  const iso = new Date().toISOString();
-  return iso.slice(0, 10) + " " + iso.slice(11, 19);
 }
 
 function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
@@ -192,131 +193,6 @@ export interface JobRecordUpdate {
   errorMessage?: string;
 }
 
-export function createJobRecord(job: BackgroundJob): void {
-  timedSync(
-    jobRecordLogger,
-    "state-db.createJobRecord",
-    { jobId: job.jobId, jobType: job.jobType },
-    () => {
-      const validated = parseBackgroundJobOrFail(job, job.jobId);
-      const db = getStateDb();
-      db.prepare(
-        `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        validated.jobId,
-        validated.jobType,
-        validated.status,
-        validated.projectName,
-        validated.sessionName,
-        validated.branchName,
-        validated.startedAt,
-      );
-    },
-  );
-}
-
-export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
-  timedSync(
-    jobRecordLogger,
-    "state-db.updateJobRecord",
-    { jobId, status: update.status },
-    () => {
-      const validated = parseJobRecordUpdateOrFail(update, jobId);
-      const db = getStateDb();
-      db.prepare(
-        `UPDATE job_records SET
-       status = ?,
-       completed_at = datetime('now'),
-       merge_hash = ?,
-       commit_hash = ?,
-       conflict_count = ?,
-       conflict_files = ?,
-       error_message = ?
-     WHERE job_id = ?`,
-      ).run(
-        validated.status,
-        validated.mergeHash ?? null,
-        validated.commitHash ?? null,
-        validated.conflictCount ?? null,
-        validated.conflictFiles
-          ? JSON.stringify(validated.conflictFiles)
-          : null,
-        validated.errorMessage ?? null,
-        jobId,
-      );
-    },
-  );
-}
-
-/**
- * Read a single durable job record by id through the production row->domain
- * deserialization boundary (`rowToBackgroundJob`). Returns the durable
- * {@link JobRecord} shape — including `completedAt`, which is generated on the
- * write path by {@link updateJobRecord} — not the live `BackgroundJob` runtime
- * shape. Live-only keys are dropped: `jobRecordSchema` is `.strict()`, so the
- * returned object contains only durable fields. Returns `null` when no row
- * matches the id.
- */
-export function getJobRecord(jobId: string): JobRecord | null {
-  return timedSync(
-    jobRecordLogger,
-    "state-db.getJobRecord",
-    { jobId },
-    () => {
-      const db = getStateDb();
-      const rawRow = db
-        .prepare("SELECT * FROM job_records WHERE job_id = ?")
-        .get(jobId);
-      if (rawRow === undefined) return null;
-
-      const job = rowToBackgroundJob(rawRow);
-      const durable: Record<string, unknown> = {
-        jobId: job.jobId,
-        jobType: job.jobType,
-        status: job.status,
-        projectName: job.projectName,
-        sessionName: job.sessionName,
-        branchName: job.branchName,
-        startedAt: job.startedAt,
-      };
-      if (job.completedAt !== undefined) durable.completedAt = job.completedAt;
-      if (job.mergeHash !== undefined) durable.mergeHash = job.mergeHash;
-      if (job.commitHash !== undefined) durable.commitHash = job.commitHash;
-      if (job.conflictCount !== undefined)
-        durable.conflictCount = job.conflictCount;
-      if (job.conflictFiles !== undefined)
-        durable.conflictFiles = job.conflictFiles;
-      if (job.errorMessage !== undefined)
-        durable.errorMessage = job.errorMessage;
-
-      return parseTrusted(jobRecordSchema, durable);
-    },
-    (result) => ({ found: result !== null }),
-  );
-}
-
-export function deleteJobRecordsForSession(
-  projectName: string,
-  sessionName: string,
-): number {
-  const db = getStateDb();
-  const result = db
-    .prepare(
-      "DELETE FROM job_records WHERE project_name = ? AND session_name = ?",
-    )
-    .run(projectName, sessionName);
-  return result.changes;
-}
-
-export function deleteJobRecordsForProject(projectName: string): number {
-  const db = getStateDb();
-  const result = db
-    .prepare("DELETE FROM job_records WHERE project_name = ?")
-    .run(projectName);
-  return result.changes;
-}
-
 /**
  * Derive the notification type from a job type and terminal status.
  */
@@ -366,77 +242,232 @@ export function deriveNotificationTitle(type: JobNotificationType): string {
   }
 }
 
-export function recoverStaleJobs(): number {
-  return timedSync(
-    jobRecordLogger,
-    "state-db.recoverStaleJobs",
-    {},
-    () => recoverStaleJobsImpl(),
-    (count) => ({ recoveredCount: count }),
-  );
+export interface JobsRepo {
+  createJobRecord(job: BackgroundJob): void;
+  updateJobRecord(jobId: string, update: JobRecordUpdate): void;
+  /**
+   * Read a single durable job record by id through the production row->domain
+   * deserialization boundary (`rowToBackgroundJob`). Returns the durable
+   * {@link JobRecord} shape — including `completedAt`, which is generated on
+   * the write path by `updateJobRecord` — not the live `BackgroundJob` runtime
+   * shape. Live-only keys are dropped: `jobRecordSchema` is `.strict()`, so
+   * the returned object contains only durable fields. Returns `null` when no
+   * row matches the id.
+   */
+  getJobRecord(jobId: string): JobRecord | null;
+  deleteJobRecordsForSession(projectName: string, sessionName: string): number;
+  deleteJobRecordsForProject(projectName: string): number;
+  /**
+   * Startup sweep: fail `running` rows whose owner process is dead and record
+   * an interruption notification for each (persist-only, via the notifications
+   * repo over the same connection). Returns the swept count.
+   */
+  recoverStaleJobs(): number;
 }
 
-function recoverStaleJobsImpl(): number {
-  const db = getStateDb();
+export function createJobsRepo(db: Db): JobsRepo {
+  function createJobRecord(job: BackgroundJob): void {
+    timedSync(
+      jobRecordLogger,
+      "state-db.createJobRecord",
+      { jobId: job.jobId, jobType: job.jobType },
+      () => {
+        const validated = parseBackgroundJobOrFail(job, job.jobId);
+        // owner_pid: jobs execute in-process in the worker that inserts them, so
+        // the inserting pid is the process holding the live machine actor. The
+        // startup sweep uses it to distinguish rows orphaned by a dead process
+        // from jobs still live in another worker sharing the file-backed DB.
+        db.prepare(
+          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          validated.jobId,
+          validated.jobType,
+          validated.status,
+          validated.projectName,
+          validated.sessionName,
+          validated.branchName,
+          validated.startedAt,
+          process.pid,
+        );
+      },
+    );
+  }
 
-  const rawStaleRows = db
-    .prepare("SELECT * FROM job_records WHERE status = 'running'")
-    .all() as unknown[];
+  function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
+    timedSync(
+      jobRecordLogger,
+      "state-db.updateJobRecord",
+      { jobId, status: update.status },
+      () => {
+        const validated = parseJobRecordUpdateOrFail(update, jobId);
+        db.prepare(
+          `UPDATE job_records SET
+       status = ?,
+       completed_at = datetime('now'),
+       merge_hash = ?,
+       commit_hash = ?,
+       conflict_count = ?,
+       conflict_files = ?,
+       error_message = ?
+     WHERE job_id = ?`,
+        ).run(
+          validated.status,
+          validated.mergeHash ?? null,
+          validated.commitHash ?? null,
+          validated.conflictCount ?? null,
+          validated.conflictFiles
+            ? JSON.stringify(validated.conflictFiles)
+            : null,
+          validated.errorMessage ?? null,
+          jobId,
+        );
+      },
+    );
+  }
 
-  if (rawStaleRows.length === 0) return 0;
+  function getJobRecord(jobId: string): JobRecord | null {
+    return timedSync(
+      jobRecordLogger,
+      "state-db.getJobRecord",
+      { jobId },
+      () => {
+        const rawRow = db
+          .prepare("SELECT * FROM job_records WHERE job_id = ?")
+          .get(jobId);
+        if (rawRow === undefined) return null;
 
-  const staleJobs = rawStaleRows.map(rowToBackgroundJob);
+        const job = rowToBackgroundJob(rawRow);
+        const durable: Record<string, unknown> = {
+          jobId: job.jobId,
+          jobType: job.jobType,
+          status: job.status,
+          projectName: job.projectName,
+          sessionName: job.sessionName,
+          branchName: job.branchName,
+          startedAt: job.startedAt,
+        };
+        if (job.completedAt !== undefined)
+          durable.completedAt = job.completedAt;
+        if (job.mergeHash !== undefined) durable.mergeHash = job.mergeHash;
+        if (job.commitHash !== undefined) durable.commitHash = job.commitHash;
+        if (job.conflictCount !== undefined)
+          durable.conflictCount = job.conflictCount;
+        if (job.conflictFiles !== undefined)
+          durable.conflictFiles = job.conflictFiles;
+        if (job.errorMessage !== undefined)
+          durable.errorMessage = job.errorMessage;
 
-  const updateStmt = db.prepare(
-    `UPDATE job_records SET status = 'failed', completed_at = datetime('now'), error_message = ? WHERE job_id = ?`,
-  );
-  const errorMsg = "Job interrupted by server restart";
+        return parseTrusted(jobRecordSchema, durable);
+      },
+      (result) => ({ found: result !== null }),
+    );
+  }
 
-  const insertNotification = db.prepare(`
-    INSERT INTO notifications (id, source, type, title, message, project_name, session_name, branch_name, job_id, job_type, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  function deleteJobRecordsForSession(
+    projectName: string,
+    sessionName: string,
+  ): number {
+    const result = db
+      .prepare(
+        "DELETE FROM job_records WHERE project_name = ? AND session_name = ?",
+      )
+      .run(projectName, sessionName);
+    return result.changes;
+  }
 
-  const recoverAll = db.transaction(() => {
-    for (const job of staleJobs) {
-      updateStmt.run(errorMsg, job.jobId);
-      const notifType = deriveNotificationType(job.jobType, "failed");
-      const candidateId = randomUUID();
-      const candidate: JobNotification = jobNotificationSchema.parse({
-        id: candidateId,
-        source: "job",
-        type: notifType,
-        title: deriveNotificationTitle(notifType),
-        message: `${job.jobType} job on ${job.branchName} was interrupted by server restart`,
-        read: false,
-        projectName: job.projectName,
-        sessionName: job.sessionName,
-        branchName: job.branchName,
-        jobId: job.jobId,
-        jobType: job.jobType,
-        errorMessage: errorMsg,
-        createdAt: sqliteUtcNow(),
-      });
-      insertNotification.run(
-        candidate.id,
-        candidate.source,
-        candidate.type,
-        candidate.title,
-        candidate.message,
-        candidate.projectName,
-        candidate.sessionName,
-        candidate.branchName,
-        candidate.jobId,
-        candidate.jobType,
-        candidate.errorMessage ?? null,
+  function deleteJobRecordsForProject(projectName: string): number {
+    const result = db
+      .prepare("DELETE FROM job_records WHERE project_name = ?")
+      .run(projectName);
+    return result.changes;
+  }
+
+  function recoverStaleJobs(): number {
+    return timedSync(
+      jobRecordLogger,
+      "state-db.recoverStaleJobs",
+      {},
+      () => recoverStaleJobsImpl(),
+      (count) => ({ recoveredCount: count }),
+    );
+  }
+
+  function recoverStaleJobsImpl(): number {
+    const rawStaleRows = db
+      .prepare("SELECT * FROM job_records WHERE status = 'running'")
+      .all() as unknown[];
+
+    if (rawStaleRows.length === 0) return 0;
+
+    // A job's machine actor lives only in the worker process that inserted the
+    // row, so a `running` row whose owner process is gone would report running
+    // forever. Multiple same-host workers (main server + session dev servers)
+    // share one file-backed DB, so another worker's startup must not fail a job
+    // still live elsewhere — only rows whose owner pid is dead or unrecorded
+    // (written before pids were persisted) are swept.
+    const orphanedRows = rawStaleRows.filter((rawRow) => {
+      const ownerPid = parseTrusted(staleJobOwnerPidSchema, rawRow).owner_pid;
+      return (
+        ownerPid === null || ownerPid === undefined || !isProcessAlive(ownerPid)
       );
-    }
-  });
+    });
+    if (orphanedRows.length === 0) return 0;
 
-  recoverAll();
+    const staleJobs = orphanedRows.map(rowToBackgroundJob);
 
-  jobRecordLogger.info("notification-db.stale_jobs_recovered", {
-    count: staleJobs.length,
-  });
-  return staleJobs.length;
+    jobRecordLogger.info("state-store.job-records.sweep_orphaned", {
+      jobIds: staleJobs.map((job) => job.jobId),
+    });
+
+    const updateStmt = db.prepare(
+      `UPDATE job_records SET status = 'failed', completed_at = datetime('now'), error_message = ? WHERE job_id = ? AND status = 'running'`,
+    );
+    const errorMsg = "Job interrupted by server restart";
+
+    // Notification rows go through the notifications repo (same connection, so
+    // the writes join this transaction). Startup recovery is persist-only: SSE
+    // clients and push targets predate a restarted server's sweep, so no service
+    // side effects fire here.
+    const notificationsRepo = createNotificationsRepo(db);
+
+    const recoverAll = db.transaction(() => {
+      let recoveredCount = 0;
+      for (const job of staleJobs) {
+        const update = updateStmt.run(errorMsg, job.jobId);
+        if (update.changes !== 1) continue;
+
+        const notifType = deriveNotificationType(job.jobType, "failed");
+        notificationsRepo.createJobNotification({
+          type: notifType,
+          title: deriveNotificationTitle(notifType),
+          message: `${job.jobType} job on ${job.branchName} was interrupted by server restart`,
+          projectName: job.projectName,
+          sessionName: job.sessionName,
+          branchName: job.branchName,
+          jobId: job.jobId,
+          jobType: job.jobType,
+          errorMessage: errorMsg,
+        });
+        recoveredCount += 1;
+      }
+      return recoveredCount;
+    });
+
+    const recoveredCount = recoverAll();
+
+    jobRecordLogger.info("notification-db.stale_jobs_recovered", {
+      count: recoveredCount,
+    });
+    return recoveredCount;
+  }
+
+  return {
+    createJobRecord,
+    updateJobRecord,
+    getJobRecord,
+    deleteJobRecordsForSession,
+    deleteJobRecordsForProject,
+    recoverStaleJobs,
+  };
 }

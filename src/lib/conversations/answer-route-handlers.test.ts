@@ -5,7 +5,6 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
 import type { RecordAnswersResult } from "@/lib/workflow-graph/user-input-gate";
 import {
   createAnswerHandlers,
@@ -233,7 +232,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      capabilities: backendCapabilities("claude"),
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,

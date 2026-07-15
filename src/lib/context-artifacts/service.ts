@@ -12,6 +12,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
+import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 import {
   groupTranscriptEntries,
   renderCompactTranscript,
@@ -54,6 +55,7 @@ import {
   type ContextArtifactStatusEvent,
 } from "./schemas";
 import type { ContextArtifactsRepo } from "./repo";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("context-artifacts");
 const genLogger = createLogger("context-artifacts.generation");
@@ -189,7 +191,7 @@ export function createCompactionService(
   // config reads before it registers the in-flight run, so a truly concurrent
   // trigger for the same slot must queue behind the first one's setup to see
   // the registration and coalesce instead of starting a second generation.
-  const triggerChains = new Map<string, Promise<void>>();
+  const triggerMutex = createKeyedMutex();
 
   function statusEvent(
     input: TriggerCompactionInput,
@@ -902,27 +904,15 @@ export function createCompactionService(
       if (err instanceof OversizeRenderError) {
         return failRun("transcript_too_large_for_single_pass");
       }
-      return failRun(err instanceof Error ? err.message : String(err));
+      return failRun(getErrorMessage(err));
     }
   }
 
-  async function trigger(
+  function trigger(
     input: TriggerCompactionInput,
   ): Promise<TriggerCompactionResult> {
     const key = flightKey(input);
-    const previous = triggerChains.get(key) ?? Promise.resolve();
-    const run = previous.then(() => runTrigger(input, key));
-    const tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    triggerChains.set(key, tail);
-    void tail.then(() => {
-      if (triggerChains.get(key) === tail) {
-        triggerChains.delete(key);
-      }
-    });
-    return run;
+    return triggerMutex.run(key, () => runTrigger(input, key));
   }
 
   async function runTrigger(

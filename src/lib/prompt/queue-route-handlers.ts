@@ -6,6 +6,10 @@
  */
 
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
 import {
   resolveProjectPath as defaultResolveProjectPath,
@@ -25,9 +29,9 @@ import {
   hasLiveConversationActor as defaultHasLiveConversationActor,
   ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
 } from "@/lib/workflows/conversation/manager";
-import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/capabilities-descriptor";
+import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { queueEnqueueRequestSchema } from "@/lib/prompt/schemas";
-import type { QueueCapability } from "@/lib/agent-backends/capabilities-descriptor";
+import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
@@ -43,7 +47,8 @@ import type { DocumentFeedbackPayload } from "@/lib/conversations/message-conten
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { QueueDeliveryTiming } from "@/lib/agent-backends/capabilities-descriptor";
+import type { QueueDeliveryTiming } from "@/lib/agent-backends/descriptor";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -167,21 +172,9 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       );
     }
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath } = resolved.value;
 
     const conversation = await deps.getConversation(
       projectPath,
@@ -189,10 +182,7 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       conversationId,
     );
     if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Conversation not found");
     }
 
     // Queuing is only for user-interactive conversations. A non-null role is a
@@ -282,7 +272,7 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
         sessionName,
         conversationId,
         messageIds: [result.entry.id],
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
 
@@ -306,21 +296,9 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     const conversationId = resolvedParams["conversationId"] ?? "";
     const messageId = resolvedParams["messageId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath } = resolved.value;
 
     const conversation = await deps.getConversation(
       projectPath,
@@ -328,10 +306,7 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       conversationId,
     );
     if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Conversation not found");
     }
 
     // Cancellation, like queuing, is only for user-interactive conversations.
@@ -383,10 +358,7 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     }
 
     if (result === "not_found") {
-      return NextResponse.json(
-        { error: "Queued message not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Queued message not found");
     }
 
     return queueError(

@@ -2,13 +2,13 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
+import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
-  WorkflowCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/config-schemas";
 import {
   CircuitBreakerEditor,
   CollaborationEditor,

@@ -1,4 +1,6 @@
 import type { HTMLAttributes } from "react";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import { cn } from "@/lib/ui/cn";
 
 export type BadgeTier = "status" | "type" | "count";
@@ -17,7 +19,6 @@ export type BadgeKind =
   | "research"
   | "tech_debt"
   | "performance";
-export type BadgeBackend = "claude" | "codex";
 
 const base =
   "inline-flex items-center justify-center font-mono text-[0.7rem] font-semibold px-[8px] py-[2px] rounded-full whitespace-nowrap leading-[1.3]";
@@ -46,9 +47,12 @@ const countAppearance = {
   active: "bg-cyan-glow text-cyan",
 } as const;
 
-const backendAppearance: Record<BadgeBackend, string> = {
-  claude: "bg-cyan-glow text-cyan",
-  codex: "bg-violet-glow text-violet",
+// Identity color keyed by the catalog's design-system tone token; the catalog
+// owns which backend maps to which tone. An id the catalog does not know
+// renders the neutral muted palette, flagged via data-backend-unknown.
+const backendToneAppearance: Record<string, string> = {
+  cyan: "bg-cyan-glow text-cyan",
+  violet: "bg-violet-glow text-violet",
 };
 
 // `subtle` de-emphasizes a badge in repetitive contexts. It renders the neutral
@@ -66,7 +70,7 @@ type BadgeCommon = Omit<
 > & {
   /** Agent identity, orthogonal to tier. When set it owns the badge color
    *  (legacy `.cc-badge[data-backend]` is sourced after the tier rules). */
-  backend?: BadgeBackend;
+  backend?: AgentBackendId;
   subtle?: boolean;
   /** External-geometry utilities only; appended after appearance. */
   layoutClassName?: string;
@@ -87,7 +91,13 @@ type BadgeAllProps = BadgeCommon & {
 };
 
 function resolveAppearance(p: BadgeAllProps): string {
-  if (p.backend) return backendAppearance[p.backend];
+  if (p.backend) {
+    const tone = findBackendCatalogEntry(p.backend)?.toneToken;
+    return (
+      (tone !== undefined ? backendToneAppearance[tone] : undefined) ??
+      subtleAppearance
+    );
+  }
   if (p.tier === "type") return typeAppearance[p.kind ?? "feature"];
   if (p.tier === "count")
     return p.active ? countAppearance.active : countAppearance.default;
@@ -119,6 +129,11 @@ export function Badge(props: BadgeProps) {
         resolvedTier === "count" ? String(active ?? false) : undefined
       }
       data-backend={backend}
+      data-backend-unknown={
+        backend !== undefined && findBackendCatalogEntry(backend) === null
+          ? "true"
+          : undefined
+      }
       className={cn(base, appearance, layoutClassName)}
     />
   );

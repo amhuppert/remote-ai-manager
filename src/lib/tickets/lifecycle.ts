@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { SSEEvent } from "@/lib/api/sse-events";
+import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type {
   EndSessionLinkInput,
@@ -47,7 +47,7 @@ export interface TicketProjectDeletionSnapshot {
 
 export interface TicketLifecycleObserverDeps {
   repo: TicketLifecycleRepo;
-  broadcast(event: SSEEvent): void;
+  publish: PublishFn;
   now(): string;
 }
 
@@ -62,7 +62,7 @@ function publishChange(
   },
 ): void {
   publishTicketChange({
-    broadcast: deps.broadcast,
+    publish: deps.publish,
     logger,
     change: input.change,
     projectName: input.projectName,
@@ -148,15 +148,13 @@ export function createTicketLifecycleObserver(
 }
 
 async function createProductionObserver() {
-  const [{ getTicketsRepo }, { publishSessionStatus }] = await Promise.all([
+  const [{ getTicketsRepo }, { publishEvent }] = await Promise.all([
     import("./service-factory"),
-    import("@/lib/workflows/primitives/default-session-status-bus"),
+    import("@/lib/events/publication"),
   ]);
   return createTicketLifecycleObserver({
     repo: getTicketsRepo() as TicketsRepo,
-    broadcast(event) {
-      publishSessionStatus(event);
-    },
+    publish: publishEvent,
     now: () => new Date().toISOString(),
   });
 }

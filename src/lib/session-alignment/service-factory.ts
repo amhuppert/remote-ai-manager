@@ -1,4 +1,4 @@
-import { broadcast } from "@/lib/events/broadcaster";
+import { publishEvent } from "@/lib/events/publication";
 import { enqueueConversationMessage } from "@/lib/prompt/enqueue-conversation-message";
 import { getSession } from "@/lib/state-store";
 import { getDb } from "@/lib/state-store/state-db";
@@ -30,7 +30,7 @@ export function createSessionAlignmentServiceForProduction(): SessionAlignmentSe
       scaffoldTemplate: SCAFFOLD_TEMPLATE,
     },
     mirror: createCharterMirrorWriter(),
-    broadcast,
+    broadcast: publishEvent,
     promptQueue: { enqueue: enqueueConversationMessage },
     async loadSession(projectPath, sessionName) {
       const session = await getSession(projectPath, sessionName);

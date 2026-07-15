@@ -1,28 +1,35 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { gateResultSchema } from "./gate-vocabulary";
 import {
   contextLimitEvaluationSchema,
   evaluateContextLimit,
   runContextLimitGate,
+  type ContextLimitMetrics,
 } from "./context-limit-gate";
-import type { LaneMetrics } from "./lane-vocabulary";
+import {
+  _registerBackendForTesting,
+  _resetBackendRegistryForTesting,
+} from "@/lib/agent-backends/registry-core";
+import { bootstrapBackends } from "@/lib/agent-backends/registry";
+import {
+  createTestFakeBackend,
+  TESTFAKE_BACKEND_ID,
+} from "@/lib/agent-backends/testing/testfake-backend";
 
 const claudeMetrics = (
   overrides: Partial<{
     contextTokens: number;
-    contextWindowMax: number;
     rotateBeforeNextTurn: boolean;
   }> = {},
-): LaneMetrics => ({
+): ContextLimitMetrics => ({
   backend: "claude",
   contextTokens: overrides.contextTokens,
-  contextWindowMax: overrides.contextWindowMax,
   rotateBeforeNextTurn: overrides.rotateBeforeNextTurn ?? false,
 });
 
 const codexMetrics = (
   overrides: { rotateBeforeNextTurn?: boolean } = {},
-): LaneMetrics => ({
+): ContextLimitMetrics => ({
   backend: "codex",
   rotateBeforeNextTurn: overrides.rotateBeforeNextTurn ?? false,
 });
@@ -243,6 +250,69 @@ describe("runContextLimitGate", () => {
     expect(gate.status).toBe("fail");
     if (gate.status === "fail") {
       expect(gate.details).toMatchObject({ evaluation: "rotation_required" });
+    }
+  });
+});
+
+describe("descriptor-driven metric support (consumer locality)", () => {
+  afterEach(() => {
+    _resetBackendRegistryForTesting();
+    bootstrapBackends();
+  });
+
+  it("returns unsupported for a registered backend whose descriptor declares no context-window metrics", () => {
+    const fake = createTestFakeBackend();
+    _resetBackendRegistryForTesting();
+    _registerBackendForTesting(fake.descriptor);
+
+    expect(
+      evaluateContextLimit({
+        metrics: { backend: TESTFAKE_BACKEND_ID, rotateBeforeNextTurn: false },
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("unsupported");
+  });
+
+  it("evaluates occupancy for a registered backend whose descriptor declares context-window metrics", () => {
+    const fake = createTestFakeBackend({
+      capabilities: { contextWindowMetrics: true },
+    });
+    _resetBackendRegistryForTesting();
+    _registerBackendForTesting(fake.descriptor);
+
+    expect(
+      evaluateContextLimit({
+        metrics: { backend: TESTFAKE_BACKEND_ID, rotateBeforeNextTurn: false },
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("metrics_unavailable");
+
+    expect(
+      evaluateContextLimit({
+        metrics: {
+          backend: TESTFAKE_BACKEND_ID,
+          contextTokens: 200_000,
+          rotateBeforeNextTurn: false,
+        },
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("rotation_required");
+
+    const gate = runContextLimitGate({
+      metrics: {
+        backend: TESTFAKE_BACKEND_ID,
+        contextTokens: 50_000,
+        rotateBeforeNextTurn: false,
+      },
+      policy: { contextLimitTokens: 100_000 },
+    });
+    expect(gate.status).toBe("pass");
+    if (gate.status === "pass") {
+      expect(gate.details).toMatchObject({
+        evaluation: "no_rotation",
+        contextTokens: 50_000,
+        limit: 100_000,
+      });
     }
   });
 });

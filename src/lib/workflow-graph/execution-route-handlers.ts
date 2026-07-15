@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { readConfig } from "@/lib/config/loader";
-import { resetExecutionContextRequestSchema } from "@/lib/workflows/schemas";
+import { resetExecutionContextRequestSchema } from "@/lib/workflow-graph/schemas";
 import {
   createConversation,
   getConversation,
@@ -20,22 +24,27 @@ import {
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
   findLatestGraphWorkflowContextEvent,
+  listActiveGraphWorkflowExecutions,
   listArchivedGraphWorkflowExecutions,
   getGraphWorkflowEventsTail,
 } from "@/lib/state-store";
+import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
 import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowCleanupStatusValue,
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowMergeStatusValue,
+} from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecution,
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
-  GraphWorkflowMergeStatusValue,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { loadRotationHandoffNote } from "./rotation-handoff";
@@ -75,13 +84,14 @@ import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflig
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
-import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
+import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import { createSharedDocumentStore } from "./shared-document-store";
 import { createWorkflowDocumentMaterializer } from "./document-materialization";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
-import { createSessionGitLock } from "./session-git-lock";
+import { createSessionGitLock } from "@/lib/shared/lock-retry";
+import { acquireSessionLock } from "@/lib/prompt/single-flight";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
 import { createExecutionTargetResolver } from "./execution-target-resolver";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
@@ -95,6 +105,7 @@ import {
 import { createSoloContextCommitter } from "./solo-context-committer";
 import { createLaneCommitter } from "./lane-committer";
 import { createJoinRunner } from "./join-runner";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -178,11 +189,25 @@ const workflowManager = createGraphWorkflowManager({
   },
 });
 
-const continuityService = createWorkflowContinuityService({
+/**
+ * Durable lane continuity: lane state lives on the execution row
+ * (`laneStates`) and every read/write goes through the workflow manager's
+ * `mutateActive` — the same critical section (and loop fence) as every other
+ * execution mutation — so backend continuity handles survive restarts.
+ */
+const graphLaneService = createLaneService({
+  store: createGraphLaneStore({
+    listActiveExecutions: async () => listActiveGraphWorkflowExecutions(),
+    mutateActiveExecution: (projectPath, sessionName, fn) =>
+      workflowManager.mutateActive(projectPath, sessionName, fn),
+  }),
+});
+
+const continuityService = createGraphLaneContinuity({
+  laneService: graphLaneService,
+  executionRepository: workflowManager,
   createConversation,
   getConversation,
-  startCodexThread: async () => ({ threadId: crypto.randomUUID() }),
-  resumeCodexThread: async (threadId) => ({ threadId }),
   loadRotationHandoff: (conversationId) =>
     loadRotationHandoffNote(conversationId),
   retireLaneConversation: ({ projectPath, sessionName, conversationId }) =>
@@ -344,7 +369,9 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
     readConversationTelemetry(conversationId),
 });
 const mergeMutex = createPerSessionMergeMutex();
-const sessionGitLock = createSessionGitLock();
+// The global single-flight lock so graph git operations share state with
+// user commit/merge jobs on the same session.
+const sessionGitLock = createSessionGitLock({ acquireSessionLock });
 const mergeRunner = createGraphWorkflowMergeRunner();
 const soloContextCommitter = createSoloContextCommitter();
 const laneCommitter = createLaneCommitter();
@@ -681,27 +708,19 @@ async function resolveSession(
   const projectName = params["name"] ?? "";
   const sessionName = decodeURIComponent(params["session"] ?? "");
 
-  const projectPath = await deps.resolveProjectPath(projectName);
-  if (!projectPath) {
-    return {
-      error: NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      ),
-    };
-  }
+  const resolved = await resolveProjectSessionOr404(
+    deps,
+    projectName,
+    sessionName,
+  );
+  if (!resolved.ok) return { error: resolved.response };
 
-  const session = await deps.getSession(projectPath, sessionName);
-  if (!session) {
-    return {
-      error: NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      ),
-    };
-  }
-
-  return { projectName, projectPath, sessionName, session };
+  return {
+    projectName,
+    projectPath: resolved.value.projectPath,
+    sessionName,
+    session: resolved.value.session,
+  };
 }
 
 function resolveApprovalConflictMessage(
@@ -744,9 +763,7 @@ function respondToManagerError(error: unknown): Response {
     (message.startsWith('Workflow definition "') &&
       message.endsWith('" was not found'))
   ) {
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 404,
-    });
+    return notFound(message);
   }
 
   if (
@@ -765,9 +782,7 @@ function respondToManagerError(error: unknown): Response {
     message.startsWith("Execution context") &&
     message.includes("not found")
   ) {
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 404,
-    });
+    return notFound(message);
   }
 
   return NextResponse.json({ error: message } satisfies ApiError, {
@@ -839,8 +854,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
         phase: input.phase,
         haltReasonType: reason.type,
         hasActiveExecution: true,
-        haltError:
-          haltError instanceof Error ? haltError.message : String(haltError),
+        haltError: getErrorMessage(haltError),
       });
     }
   }
@@ -940,7 +954,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
         logger.warn("graph-workflow.execution_loop_start_failed", {
           projectPath,
           sessionName,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
         await reportExecutionLoopFailure({
           projectPath,
@@ -1003,7 +1017,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       logger.warn("graph-workflow.execution_loop_start_failed", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       await reportExecutionLoopFailure({
         projectPath: input.projectPath,
@@ -1192,7 +1206,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
         logger.warn("graph-workflow.execution_loop_resume_failed", {
           projectPath: resolved.projectPath,
           sessionName: resolved.sessionName,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
         await reportExecutionLoopFailure({
           projectPath: resolved.projectPath,
@@ -1263,11 +1277,8 @@ export function createGraphWorkflowExecutionRouteHandlers(
       resolved.sessionName,
     );
     if (!activeExecution) {
-      return NextResponse.json(
-        {
-          error: "Session does not have an active graph workflow execution",
-        } satisfies ApiError,
-        { status: 404 },
+      return notFound(
+        "Session does not have an active graph workflow execution",
       );
     }
 
@@ -1334,11 +1345,8 @@ export function createGraphWorkflowExecutionRouteHandlers(
 
     if (!result.ok) {
       if (result.reason === "no_active_execution") {
-        return NextResponse.json(
-          {
-            error: "Session does not have an active graph workflow execution",
-          } satisfies ApiError,
-          { status: 404 },
+        return notFound(
+          "Session does not have an active graph workflow execution",
         );
       }
       return NextResponse.json(

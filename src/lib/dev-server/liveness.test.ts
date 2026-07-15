@@ -93,11 +93,17 @@ describe("LivenessPoller", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(entry.status).toBe("stopped");
+    // Entry and wire event agree after the transition: a stopped server has
+    // no reachable remote URL and no error.
+    expect(entry.remoteUrl).toBeNull();
+    expect(entry.errorMessage).toBeNull();
     expect(mockBroadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "dev-server-status",
         serverName: "web",
         status: "stopped",
+        remoteUrl: null,
+        errorMessage: null,
       }),
     );
   });

@@ -6,7 +6,7 @@ import {
   type RequestCollaborationHandlerContext,
   type RequestCollaborationHandlerDeps,
 } from "./lane-tool-service";
-import type { ResolvedCollaborationConfig } from "@/lib/workflows/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type { ExecutionLogger } from "./execution-logger";
 
 describe("buildContextLimitStopInstruction", () => {

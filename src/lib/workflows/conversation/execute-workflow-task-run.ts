@@ -18,10 +18,12 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { TranscriptMessageOrigin } from "@/lib/conversations/schemas";
 import { createLogger } from "@/lib/logging";
+import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 import type { ConversationActorRef } from "./machine";
 import { ensureConversationActor, type EnsureActorInputData } from "./manager";
 import { conversationRuntimeKey } from "./runtime-state";
@@ -57,14 +59,6 @@ export interface ExecuteWorkflowTaskRunInput {
    * worktree. Omit to use the conversation's existing binding.
    */
   worktreePath?: string;
-  /**
-   * When true, the post-dispatch structured-output gate in the AgentCall
-   * facade is bypassed. Use this when the caller maintains its own
-   * response-parsing chain (e.g. the graph-workflow validator's
-   * raw-JSON / fenced-JSON fallback) and needs the raw text to remain
-   * available even when a structured payload was requested.
-   */
-  skipStructuredOutputGate?: boolean;
   /** Persist this validated structured-output string field as the assistant
    *  transcript text, keeping backend transport JSON out of the UI. */
   structuredOutputTextField?: string;
@@ -106,6 +100,7 @@ export type TaskRunResult =
       transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
       backendRef: AgentSessionRef | null;
+      continuationDisposition: ContinuationDisposition;
     }
   | {
       kind: "text";
@@ -114,6 +109,7 @@ export type TaskRunResult =
       transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
       backendRef: AgentSessionRef | null;
+      continuationDisposition: ContinuationDisposition;
     }
   | {
       kind: "error";
@@ -123,25 +119,27 @@ export type TaskRunResult =
       transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
       backendRef: AgentSessionRef | null;
+      continuationDisposition: ContinuationDisposition;
     };
 
 /**
- * Per-conversation in-flight chain. Each call appends to the chain so a second
+ * Per-conversation in-flight chain. Each call is serialized against other
+ * calls for the same `(projectPath, sessionName, conversationId)` so a second
  * concurrent caller observes the conversation lock being held by the first
  * and runs only after the first turn finalizes.
  */
-const inFlightByKey = new Map<string, Promise<unknown>>();
+let dispatchMutex = createKeyedMutex();
 
 /** Reset for testing — clears the per-key chain. */
 export function _resetExecuteWorkflowTaskRunForTesting(): void {
-  inFlightByKey.clear();
+  dispatchMutex = createKeyedMutex();
 }
 
 export function _getExecuteWorkflowTaskRunInFlightCountForTesting(): number {
-  return inFlightByKey.size;
+  return dispatchMutex.activeKeyCount();
 }
 
-export async function executeWorkflowTaskRun(
+export function executeWorkflowTaskRun(
   input: ExecuteWorkflowTaskRunInput,
 ): Promise<TaskRunResult> {
   const key = conversationRuntimeKey(
@@ -149,20 +147,7 @@ export async function executeWorkflowTaskRun(
     input.sessionName,
     input.conversationId,
   );
-
-  const previous = inFlightByKey.get(key) ?? Promise.resolve();
-  const ours: Promise<TaskRunResult> = previous
-    .catch(() => undefined)
-    .then(() => runOnce(input));
-
-  const tracked = ours.finally(() => {
-    if (inFlightByKey.get(key) === tracked) {
-      inFlightByKey.delete(key);
-    }
-  });
-  inFlightByKey.set(key, tracked);
-
-  return ours;
+  return dispatchMutex.run(key, () => runOnce(input));
 }
 
 async function runOnce(
@@ -207,9 +192,6 @@ async function runOnce(
       ? { systemInstructions: input.systemInstructions }
       : {}),
     ...(input.tooling !== undefined ? { tooling: input.tooling } : {}),
-    ...(input.skipStructuredOutputGate !== undefined
-      ? { skipStructuredOutputGate: input.skipStructuredOutputGate }
-      : {}),
     ...(input.structuredOutputTextField !== undefined
       ? { structuredOutputTextField: input.structuredOutputTextField }
       : {}),
@@ -246,6 +228,7 @@ async function runOnce(
         cachedInputTokens: null,
       },
       backendRef: null,
+      continuationDisposition: "retain",
     };
   }
 
@@ -339,6 +322,8 @@ function mapToTaskRunResult(
     cachedInputTokens: result?.cachedInputTokens ?? null,
   };
   const backendRef: AgentSessionRef | null = result?.backendRef ?? null;
+  const continuationDisposition =
+    result?.continuationDisposition ?? ("retain" as const);
   const transcriptFields =
     result?.transcript !== undefined ? { transcript: result.transcript } : {};
 
@@ -350,6 +335,7 @@ function mapToTaskRunResult(
       ...transcriptFields,
       usage,
       backendRef,
+      continuationDisposition,
     };
   }
 
@@ -360,6 +346,7 @@ function mapToTaskRunResult(
       aborted: false,
       usage,
       backendRef,
+      continuationDisposition,
     };
   }
 
@@ -371,6 +358,7 @@ function mapToTaskRunResult(
       ...transcriptFields,
       usage,
       backendRef,
+      continuationDisposition,
     };
   }
 
@@ -389,8 +377,16 @@ function mapToTaskRunResult(
       ...transcriptFields,
       usage,
       backendRef,
+      continuationDisposition,
     };
   }
 
-  return { kind: "text", text, ...transcriptFields, usage, backendRef };
+  return {
+    kind: "text",
+    text,
+    ...transcriptFields,
+    usage,
+    backendRef,
+    continuationDisposition,
+  };
 }

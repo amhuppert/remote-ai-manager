@@ -6,7 +6,7 @@ import {
   sendPendingPromptBeacon,
 } from "@/lib/prompt/mutations";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 
 const DEBOUNCE_MS = 500;
 

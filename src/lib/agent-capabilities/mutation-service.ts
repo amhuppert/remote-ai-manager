@@ -36,6 +36,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createLogger } from "@/lib/logging";
+import { assertNever } from "@/lib/shared/assert-never";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   agentCapabilityPatchRequestSchema,
@@ -302,12 +303,11 @@ export function createCapabilityMutationService(
               );
         return result.changedItemIds;
       }
-      default: {
-        const exhaustive: never = scope;
-        throw new Error(
-          `Unsupported capability mutation scope: ${JSON.stringify(exhaustive)}`,
+      default:
+        return assertNever(
+          scope,
+          `Unsupported capability mutation scope: ${JSON.stringify(scope)}`,
         );
-      }
     }
   }
 

@@ -8,8 +8,8 @@ import {
 import type {
   GraphWorkflowExecution,
   GraphWorkflowTaskState,
-  WorkflowLiveEditOperation,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   implementer: { backend: "claude", model: "opus", reasoningEffort: "medium" },

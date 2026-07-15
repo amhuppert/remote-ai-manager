@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
@@ -37,15 +38,14 @@ export async function runDecisions(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure("decisions requires a subcommand: propose", json);
-  }
-  if (sub === "propose") {
-    return runDecisionsPropose(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown decisions subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["decisions"],
+    rest,
+    json: flags.json,
+    handlers: {
+      propose: (r) => runDecisionsPropose(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runDecisionsPropose(

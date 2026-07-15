@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type {
+  ParameterDeclaration,
+  WorkflowPrerequisite,
+} from "@/lib/workflow-graph/definition-schemas";
 import {
-  workflowDefinitionEditOperationSchema,
   type DefinitionEditOperation,
-  type ParameterDeclaration,
-  type WorkflowPrerequisite,
-} from "@/lib/workflows/schemas";
+  workflowDefinitionEditOperationSchema,
+} from "@/lib/workflows/edit-schemas";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,

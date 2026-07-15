@@ -17,6 +17,7 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
 
 export interface AgentCapabilityLayerOption {
@@ -80,11 +81,11 @@ const SR_ONLY =
 // Shared by every detail span (including the chips) so long content wraps inside the row.
 const DETAILS_SPAN = "min-w-0 [overflow-wrap:anywhere]";
 
-// Base styling shared by the inheritance, status, and plugin chips.
+// Base styling for the interactive plugin chip, whose blue hover/focus morph
+// and span/button polymorphism are distinct from the tone-coded ui/StatusChip
+// pill (the inheritance and status chips compose StatusChip directly).
 const CHIP_BASE =
   "inline-flex items-center gap-[4px] whitespace-nowrap rounded-full border border-solid border-border-subtle px-[7px] py-[2px] font-mono text-[0.7rem] font-medium text-text-tertiary";
-const CHIP_CYAN = "border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan";
-const CHIP_AMBER = "border-[var(--cc-amber-a25)] bg-amber-glow text-amber";
 
 const PLUGIN_CHIP = cn(
   CHIP_BASE,
@@ -444,12 +445,15 @@ function CapabilityRow({
               onOpenPlugin={onOpenPlugin}
             />
           ) : null}
-          {row.stale ? <StatusChip label="Stale" tone="warning" /> : null}
+          {row.stale ? (
+            <StatusChip tone="amber" wrap layoutClassName="min-w-0">
+              Stale
+            </StatusChip>
+          ) : null}
           {row.applyStatus !== "none" ? (
-            <StatusChip
-              label={applyStatusLabel(row.applyStatus)}
-              tone="pending"
-            />
+            <StatusChip tone="cyan" wrap layoutClassName="min-w-0">
+              {applyStatusLabel(row.applyStatus)}
+            </StatusChip>
           ) : null}
           {pending ? (
             <span className={cn(DETAILS_SPAN, "font-mono text-[0.7rem]")}>
@@ -500,26 +504,6 @@ function CapabilityRow({
   );
 }
 
-function StatusChip({
-  label,
-  tone,
-}: {
-  label: string;
-  tone?: "warning" | "pending";
-}): React.JSX.Element {
-  return (
-    <span
-      className={cn(
-        CHIP_BASE,
-        DETAILS_SPAN,
-        tone === "warning" ? CHIP_AMBER : tone === "pending" ? CHIP_CYAN : "",
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
 function PluginChip({
   pluginId,
   disabledByPlugin,
@@ -561,24 +545,22 @@ function InheritanceChip({
 }): React.JSX.Element {
   if (row.currentLayerValue) {
     return (
-      <span
-        className={cn(
-          CHIP_BASE,
-          DETAILS_SPAN,
-          row.currentLayerValue.enabled ? CHIP_CYAN : CHIP_AMBER,
-        )}
+      <StatusChip
+        tone={row.currentLayerValue.enabled ? "cyan" : "amber"}
+        wrap
+        layoutClassName="min-w-0"
       >
         Set {enabledStateLabel(row.currentLayerValue.enabled)} at{" "}
         {originLabel(row.currentLayerValue.originLayer)}
-      </span>
+      </StatusChip>
     );
   }
 
   return (
-    <span className={cn(CHIP_BASE, DETAILS_SPAN)}>
+    <StatusChip wrap layoutClassName="min-w-0">
       Inherits {enabledStateLabel(row.ownEffectiveState.enabled)} from{" "}
       {originLabel(row.ownEffectiveState.originLayer)}
-    </span>
+    </StatusChip>
   );
 }
 

@@ -15,6 +15,7 @@
  * on either.
  */
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 import type {
   ToolInventoryCache,
@@ -43,7 +44,7 @@ export function wireToolDiscoveryInvalidation(
     } catch (err) {
       logger.warn("invalidator.failed", {
         serverKey: event.serverKey,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   });

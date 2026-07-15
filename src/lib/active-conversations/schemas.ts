@@ -3,11 +3,13 @@ import { askQuestionItemSchema } from "@/lib/conversations/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   graphWorkflowCleanupStatusValueSchema,
+  graphWorkflowMergeStatusValueSchema,
+} from "@/lib/workflow-graph/event-schemas";
+import {
   graphWorkflowExecutionJoinKindSchema,
   graphWorkflowExecutionJoinStatusSchema,
   graphWorkflowHaltReasonSchema,
-  graphWorkflowMergeStatusValueSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 
 const activeConversationForkedFromSchema = z.object({
   conversationId: z.string(),

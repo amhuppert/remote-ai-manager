@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   graphWorkflowExecutionSchema,
   graphWorkflowHaltReasonSchema,
-  resolvedWorkflowSemanticDefinitionSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import { resolvedWorkflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowHaltReason,
-  GraphWorkflowStatus,
   GraphWorkflowTaskState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   buildInitialContextState,

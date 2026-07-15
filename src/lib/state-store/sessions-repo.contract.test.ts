@@ -472,32 +472,27 @@ describe("sessions-repo findListItemsByProject projection", () => {
     const rows = repo.findListItemsByProject(PROJECT_PATH);
     expect(rows).toHaveLength(2);
 
-    const forbidden = [
-      "machine_snapshot",
-      "graph_workflow_execution",
-      "graph_workflow_execution_history",
-      "workflow_lanes",
-      "mcp_runtime",
-      "agent_capabilities_runtime",
-      "pending_questions",
-      "pending_prompt_text",
-      "debug_mode",
-    ];
+    // The projection speaks camelCase domain vocabulary — no snake_case row
+    // shape (heavy or otherwise) crosses the repo boundary.
     for (const row of rows) {
       const keys = Object.keys(row);
-      for (const f of forbidden) {
-        expect(keys).not.toContain(f);
+      for (const key of keys) {
+        expect(key).not.toContain("_");
       }
     }
 
-    const running = rows.find((r) => r.session_name === "running-wf");
+    const running = rows.find((r) => r.sessionName === "running-wf");
     expect(running).toBeDefined();
-    expect(running?.has_active_graph_workflow).toBe(1);
-    expect(running?.workflow_envelopes).toContain("collaboration");
+    expect(running?.hasActiveGraphWorkflow).toBe(true);
+    // The JSON column is parsed at the boundary into a domain object.
+    expect(running?.workflowEnvelopes).toMatchObject({
+      env1: { workflowType: "collaboration", status: "running" },
+    });
 
-    const done = rows.find((r) => r.session_name === "done-wf");
+    const done = rows.find((r) => r.sessionName === "done-wf");
     expect(done).toBeDefined();
-    expect(done?.has_active_graph_workflow).toBe(0);
+    expect(done?.hasActiveGraphWorkflow).toBe(false);
+    expect(done?.workflowEnvelopes).toBeNull();
   });
 });
 
@@ -675,6 +670,119 @@ describe("sessions-repo findAll caching", () => {
     const second = repo.findAll();
     expect(second).not.toBe(first);
     expect(second.map((r) => r.session.sessionName)).toEqual(["s-keep"]);
+  });
+});
+
+/**
+ * Wrap `db.prepare` so every `Statement.all()` execution whose source SQL
+ * matches a predicate is counted. This proves the cache short-circuits BEFORE
+ * the raw SQLite fetch, not merely before the Zod parse — the "short-circuit
+ * before raw fetch" property PERFORMANCE.md pins (§50-62).
+ */
+function countingAllStmtDb(
+  db: Db,
+  sqlMatches: (sql: string) => boolean,
+): { counter: { count: number } } {
+  const counter = { count: 0 };
+  const realPrepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    const stmt = realPrepare(sql);
+    if (!sqlMatches(sql)) return stmt;
+    const realAll = stmt.all.bind(stmt);
+    stmt.all = ((...args: unknown[]) => {
+      counter.count += 1;
+      return realAll(...args);
+    }) as typeof stmt.all;
+    return stmt;
+  }) as typeof db.prepare;
+  return { counter };
+}
+
+describe("sessions-repo findAll SQL short-circuit (F9)", () => {
+  it("does NOT execute the findAll statement on a warm-version cache hit", () => {
+    const local = _createTestDb({ inMemory: true });
+    local
+      .prepare("INSERT INTO projects (root_path) VALUES (?)")
+      .run(PROJECT_PATH);
+    const { counter } = countingAllStmtDb(local, (sql) =>
+      /FROM sessions[\s\S]*ORDER BY project_path/.test(sql),
+    );
+    const localRepo = createSessionsRepo(local);
+    localRepo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-a" }));
+    localRepo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-b" }));
+
+    localRepo.findAll();
+    expect(counter.count).toBe(1);
+
+    // Warm hit: the version has not moved, so no SQL fetch may run.
+    localRepo.findAll();
+    expect(counter.count).toBe(1);
+
+    // A mutation bumps the version; the next findAll must re-fetch once.
+    localRepo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "s-a", targetBranch: "moved" }),
+    );
+    localRepo.findAll();
+    expect(counter.count).toBe(2);
+
+    local.close();
+  });
+});
+
+describe("sessions-repo setSpawnedFrom cache invalidation (F10)", () => {
+  it("bumps the cache so a warm findAll observes the updated spawnedFrom, keeping unchanged siblings by reference", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-target" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-sibling" }));
+
+    // Warm the findAll cache before the single-column write.
+    const first = repo.findAll();
+    const firstTarget = first.find((r) => r.session.sessionName === "s-target");
+    const firstSibling = first.find(
+      (r) => r.session.sessionName === "s-sibling",
+    );
+    expect(firstTarget?.session.spawnedFrom).toBeNull();
+
+    const spawnedFrom = {
+      source: "chat" as const,
+      projectName: "p1",
+      conversationId: "conv-1",
+    };
+    const changed = repo.setSpawnedFrom(PROJECT_PATH, "s-target", spawnedFrom);
+    expect(changed).toBe(true);
+
+    const second = repo.findAll();
+    const secondTarget = second.find(
+      (r) => r.session.sessionName === "s-target",
+    );
+    const secondSibling = second.find(
+      (r) => r.session.sessionName === "s-sibling",
+    );
+
+    // New result container after the write invalidated the version.
+    expect(second).not.toBe(first);
+    // The updated projection is visible (not the stale pre-write null).
+    expect(secondTarget?.session.spawnedFrom).toEqual(spawnedFrom);
+    expect(secondTarget?.session).not.toBe(firstTarget!.session);
+    // The untouched sibling is still served from cache by reference.
+    expect(secondSibling?.session).toBe(firstSibling!.session);
+  });
+
+  it("does not bump when the row is absent (no changes)", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-only" }));
+    const first = repo.findAll();
+
+    const changed = repo.setSpawnedFrom(PROJECT_PATH, "s-missing", {
+      source: "chat",
+      projectName: "p1",
+      conversationId: "conv-x",
+    });
+    expect(changed).toBe(false);
+
+    // No write occurred, so the version is unchanged and the array reference
+    // is preserved.
+    const second = repo.findAll();
+    expect(second).toBe(first);
   });
 });
 

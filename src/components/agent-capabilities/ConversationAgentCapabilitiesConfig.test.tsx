@@ -4,6 +4,13 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import ConversationAgentCapabilitiesConfig from "./ConversationAgentCapabilitiesConfig";
 
+// The drawer composes ui/Dialog (Radix) — it locks scroll / manages focus on
+// open, and jsdom implements none of the pointer-capture APIs it reaches for.
+Element.prototype.scrollIntoView = () => {};
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+
 vi.mock("./AgentCapabilityPanelContainer", () => ({
   AgentCapabilityPanelContainer: ({
     cascadeKind,
@@ -78,9 +85,9 @@ describe("ConversationAgentCapabilitiesConfig", () => {
     const drawer = screen.getByRole("dialog", {
       name: "Agent capabilities configuration",
     });
-    expect(
-      screen.getByTestId("agent-capabilities-drawer-overlay"),
-    ).toBeInTheDocument();
+    // The primitive marks its scrim so the global ambient-animation freeze rule
+    // can detect it — proves the Dialog scrim is mounted behind the drawer.
+    expect(document.querySelector("[data-cc-modal-scrim]")).not.toBeNull();
 
     expect(
       within(drawer).getByTestId("capability-panel-mcp"),

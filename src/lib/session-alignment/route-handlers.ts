@@ -18,9 +18,13 @@
  *  - POST /alignment/rollback         — roll back to a prior version
  */
 import { NextResponse } from "next/server";
+import {
+  jsonError,
+  notFound,
+  resolveProjectOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 
-import type { ApiError } from "@/lib/api/errors";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -80,10 +84,6 @@ const diffQuerySchema = z.object({
   to: z.coerce.number().int(),
 });
 
-function jsonError(error: string, status: number): Response {
-  return NextResponse.json({ error } satisfies ApiError, { status });
-}
-
 function buildValidationErrorResponse(error: z.ZodError): Response {
   return NextResponse.json(
     {
@@ -111,10 +111,10 @@ function mapDomainError(err: unknown): Response {
     return jsonError(err.message, 409);
   }
   if (err instanceof AlignmentDraftNotFoundError) {
-    return jsonError(err.message, 404);
+    return notFound(err.message);
   }
   if (err instanceof AlignmentVersionNotFoundError) {
-    return jsonError(err.message, 404);
+    return notFound(err.message);
   }
   logger.error("session-alignment.route.unexpected_error", {
     error: getErrorMessage(err),
@@ -136,12 +136,10 @@ async function resolveSessionParams(
     };
   }
 
-  const projectPath = await deps.resolveProjectPath(name);
-  if (!projectPath) {
-    return { error: jsonError("Project not found", 404) };
-  }
+  const project = await resolveProjectOr404(deps, name);
+  if (!project.ok) return { error: project.response };
 
-  return { projectPath, sessionName };
+  return { projectPath: project.value, sessionName };
 }
 
 async function readJsonBody(

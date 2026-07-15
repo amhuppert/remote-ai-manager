@@ -2,17 +2,9 @@
 
 import { useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import {
-  AutocompleteListbox,
-  AutocompleteNavFooter,
-  AutocompleteOption,
-  autocompleteHeaderClass,
-  autocompleteHeaderCountClass,
-} from "./ui/Autocomplete";
-import {
-  fileCharClass,
-  fileExtBadgeClass,
-  filePathClass,
-} from "./FileAutocompleteList";
+  FileAutocompleteListView,
+  type FileAutocompleteRow,
+} from "./FileAutocompleteListView";
 
 /** A file item from the project file index */
 interface FileItem {
@@ -121,78 +113,25 @@ export const FileAutocomplete = forwardRef<
 
   if (!visible) return null;
 
-  const displayCount = items.length;
-  const hasMore = totalCount != null && totalCount > displayCount;
-  const countLabel = hasMore
-    ? `${displayCount} of ${totalCount}`
-    : `${displayCount} ${displayCount === 1 ? "file" : "files"}`;
+  const rows: FileAutocompleteRow[] = items.map((scored) => ({
+    id: scored.item.path,
+    path: scored.item.path,
+    matchIndices: scored.indices,
+  }));
 
   return (
-    <AutocompleteListbox
-      label={sourceLabel ? `Files — ${sourceLabel}` : "Files"}
-      activeIndex={activeIndex}
-      maxHeightClassName="max-h-[340px]"
+    <FileAutocompleteListView
+      items={rows}
+      selectedIndex={activeIndex}
+      onHover={setActiveIndex}
+      onSelect={(item) => onSelect(item.path)}
+      popupRole="listbox"
+      optionIdPrefix="file-autocomplete-option"
+      totalCount={totalCount}
       loading={loading}
-      loadingLabel="Scanning files..."
       error={error}
-      isEmpty={items.length === 0}
-      empty="No matching files"
-      header={
-        <div className={autocompleteHeaderClass}>
-          <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
-          <span className={autocompleteHeaderCountClass}>
-            {countLabel}
-            {truncated ? " (truncated)" : ""}
-          </span>
-        </div>
-      }
-      footer={<AutocompleteNavFooter />}
-    >
-      {items.map((scored, i) => (
-        <AutocompleteOption
-          key={scored.item.path}
-          id={`file-autocomplete-option-${i}`}
-          active={i === activeIndex}
-          onHover={() => setActiveIndex(i)}
-          onSelect={() => onSelect(scored.item.path)}
-        >
-          <FilePath path={scored.item.path} indices={scored.indices} />
-          <FileExtBadge path={scored.item.path} />
-        </AutocompleteOption>
-      ))}
-    </AutocompleteListbox>
+      sourceLabel={sourceLabel}
+      truncated={truncated}
+    />
   );
 });
-
-/**
- * Renders a file path with directory chars dimmed and filename chars bright.
- * Matched character indices are highlighted in cyan.
- */
-function FilePath({ path, indices }: { path: string; indices: number[] }) {
-  const lastSlash = path.lastIndexOf("/");
-  const indexSet = new Set(indices);
-
-  const chars: React.ReactNode[] = [];
-  for (let i = 0; i < path.length; i++) {
-    const isDir = i <= lastSlash;
-    const isMatch = indexSet.has(i);
-
-    chars.push(
-      <span key={i} className={fileCharClass(isDir, isMatch)}>
-        {path[i]}
-      </span>,
-    );
-  }
-
-  return <span className={filePathClass}>{chars}</span>;
-}
-
-/** Renders a small extension badge (e.g., .tsx, .css) */
-function FileExtBadge({ path }: { path: string }) {
-  const lastDot = path.lastIndexOf(".");
-  const lastSlash = path.lastIndexOf("/");
-  if (lastDot <= lastSlash) return null;
-
-  const ext = path.slice(lastDot);
-  return <span className={fileExtBadgeClass}>{ext}</span>;
-}

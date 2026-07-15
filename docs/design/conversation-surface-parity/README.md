@@ -1,6 +1,6 @@
 # Conversation Surface Parity — Review & Unification Design
 
-Status: decisions locked (Alex, 2026-07-09) — §5 is the approved parity set
+Status: implemented; decisions locked (Alex, 2026-07-09) — §5 is the approved parity set and this document is the parity decision record
 Date: 2026-07-09
 
 ## 1. The four surfaces today

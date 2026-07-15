@@ -10,6 +10,7 @@ import {
 } from "@/lib/git/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { cn } from "@/lib/ui/cn";
 import {
   TabsRoot,
@@ -196,17 +197,6 @@ function CommitEntry({
 
 const commitDiffLoading =
   "px-md py-lg text-text-tertiary font-mono text-[0.72rem] flex items-center gap-sm before:content-[''] before:w-[16px] before:h-[16px] before:border-2 before:border-border-default before:border-t-cyan-dim before:rounded-full before:animate-[spin_0.7s_linear_infinite]";
-
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 /* ── Uncommitted diff content with navigation ── */
 

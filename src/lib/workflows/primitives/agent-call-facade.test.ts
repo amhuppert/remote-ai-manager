@@ -16,7 +16,7 @@ import type {
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type {
   AgentTaskRunner,
   AgentTaskRequest,
@@ -60,8 +60,8 @@ function makeConversationRuntime(
   const baseResult: ConversationBackendTurnResult = {
     backendRef:
       backend === "claude"
-        ? ({ backend: "claude", sessionId: "sess-1" } as AgentSessionRef)
-        : ({ backend: "codex", threadId: "th-1" } as AgentSessionRef),
+        ? ({ backend: "claude", ref: "sess-1" } as AgentSessionRef)
+        : ({ backend: "codex", ref: "th-1" } as AgentSessionRef),
     costUsd: null,
     durationMs: 100,
     numTurns: 1,
@@ -71,20 +71,13 @@ function makeConversationRuntime(
     structuredOutput: undefined,
     aborted: false,
     compacted: false,
-    error: null,
+    failure: null,
+    continuationDisposition: "retain",
   };
 
   return {
     backend,
     status: "alive",
-    capabilities: {
-      queueWhileRunning: true,
-      askUserQuestion: backend === "claude",
-      preciseFork: backend === "claude",
-      portableMcpAtStart: true,
-      portableMcpBetweenTurns: true,
-      contextWindowMetrics: backend === "claude",
-    },
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,
@@ -109,13 +102,15 @@ function makeTaskRunner(
   const base: AgentTaskResult = {
     backendRef:
       backend === "codex"
-        ? { backend: "codex", threadId: "th-1" }
-        : { backend: "claude", sessionId: "sess-1" },
+        ? { backend: "codex", ref: "th-1" }
+        : { backend: "claude", ref: "sess-1" },
     text: "ok",
     structuredOutput: undefined,
     usage: { inputTokens: 10, outputTokens: 20, cachedInputTokens: 0 },
     error: null,
     timedOut: false,
+    failure: null,
+    continuationDisposition: "retain",
   };
   return {
     backend,
@@ -498,7 +493,10 @@ describe("executeAgentCall — structured-output gate", () => {
   it("does not run the gate when the dispatch already failed", async () => {
     let calls = 0;
     const runtime = makeConversationRuntime("claude", {
-      result: { error: "boom", aborted: false },
+      result: {
+        failure: { kind: "backend_error", message: "boom", retryable: false },
+        aborted: false,
+      },
     });
     const result = await executeAgentCall(
       {
@@ -519,6 +517,113 @@ describe("executeAgentCall — structured-output gate", () => {
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("backend_error");
+    }
+  });
+});
+
+describe("executeAgentCall — structured-output gate fall-through", () => {
+  it("falls through to a valid fenced JSON object when the native structured output fails the gate", async () => {
+    const runtime = makeConversationRuntime("claude", {
+      result: {
+        structuredOutput: { ok: false },
+        contentBlocks: [
+          {
+            type: "text",
+            text:
+              "The native payload was wrong, but here is the corrected one:\n\n" +
+              "```json\n" +
+              '{"ok":true}\n' +
+              "```\n",
+          },
+        ],
+      },
+    });
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        prompt: "go",
+        outputSchema: { type: "object", required: ["ok"] },
+      },
+      buildDepsForConversation({
+        runtime,
+        view: CLAUDE_VIEW,
+        validate: (_schema, value) =>
+          typeof value === "object" &&
+          value !== null &&
+          (value as { ok?: unknown }).ok === true
+            ? { valid: true }
+            : { valid: false, errors: ["ok must be true"] },
+      }),
+    );
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.structuredOutput).toEqual({ ok: true });
+    }
+  });
+
+  it("keeps a passing native structured output even when the text carries different JSON", async () => {
+    const runtime = makeConversationRuntime("claude", {
+      result: {
+        structuredOutput: { ok: true, origin: "native" },
+        contentBlocks: [{ type: "text", text: '{"ok":true,"origin":"raw"}' }],
+      },
+    });
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        prompt: "go",
+        outputSchema: { type: "object", required: ["ok"] },
+      },
+      buildDepsForConversation({
+        runtime,
+        view: CLAUDE_VIEW,
+        validate: (_schema, value) =>
+          typeof value === "object" &&
+          value !== null &&
+          (value as { ok?: unknown }).ok === true
+            ? { valid: true }
+            : { valid: false, errors: ["ok must be true"] },
+      }),
+    );
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.structuredOutput).toEqual({
+        ok: true,
+        origin: "native",
+      });
+    }
+  });
+
+  it("fails with schema_validation reporting the native candidate when no recoverable JSON exists in the text", async () => {
+    const runtime = makeConversationRuntime("claude", {
+      result: {
+        structuredOutput: { ok: false },
+        contentBlocks: [
+          { type: "text", text: "No JSON of any kind in this reply." },
+        ],
+      },
+    });
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        prompt: "go",
+        outputSchema: { type: "object", required: ["ok"] },
+      },
+      buildDepsForConversation({
+        runtime,
+        view: CLAUDE_VIEW,
+        validate: (_schema, value) =>
+          typeof value === "object" &&
+          value !== null &&
+          (value as { ok?: unknown }).ok === true
+            ? { valid: true }
+            : { valid: false, errors: ["ok must be true"] },
+      }),
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("schema_validation");
+      expect(result.outcome.error.message).toContain("ok must be true");
     }
   });
 });
@@ -829,3 +934,293 @@ function buildDepsForTask(input: TaskDepsHelperInput): AgentCallFacadeDeps {
     ...(input.validate ? { validateStructuredOutput: input.validate } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Absorbed pre-turn pipeline (Phase 3.1): semantic task intent, MCP apply,
+// continuity recording, error normalization, widened result fields.
+// ---------------------------------------------------------------------------
+
+describe("executeAgentCall — semantic task execution intent", () => {
+  it("resolves the runner via the injected registry seam from taskExecution intent", async () => {
+    const capture = { value: null as AgentTaskRequest | null };
+    const runner = makeTaskRunner("codex", { capture });
+    const getTaskRunner = vi.fn(() => runner);
+
+    const result = await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+        modelId: "gpt-5.2",
+        reasoningEffort: "high",
+      },
+      {
+        taskExecution: {
+          workingDirectory: "/tmp/wt-intent",
+          autonomous: true,
+          resumeRef: { backend: "codex", ref: "th-9" },
+        },
+        getTaskRunner,
+      },
+    );
+
+    expect(getTaskRunner).toHaveBeenCalledWith("codex");
+    expect(result.outcome.kind).toBe("completed");
+    expect(capture.value?.workingDirectory).toBe("/tmp/wt-intent");
+    expect(capture.value?.resumeRef).toEqual({ backend: "codex", ref: "th-9" });
+    expect(capture.value?.modelId).toBe("gpt-5.2");
+    expect(capture.value?.reasoningEffort).toBe("high");
+  });
+
+  it("fails loudly when a task_run has neither taskExecution nor resolveTaskRunner", async () => {
+    await expect(
+      executeAgentCall({ kind: "task_run", backend: "codex", prompt: "x" }, {}),
+    ).rejects.toThrow(/taskExecution.*or deps\.resolveTaskRunner/);
+  });
+});
+
+describe("executeAgentCall — pre-turn MCP apply hook", () => {
+  it("fails the call with capability_unavailable before dispatch when applyMcp rejects", async () => {
+    const sendTurn = vi.fn();
+    const runtime = makeConversationRuntime("claude");
+    runtime.sendTurn = sendTurn;
+
+    const result = await executeAgentCall(
+      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        resolveConversationRuntime: () => ({
+          runtime,
+          capabilityView: CLAUDE_VIEW,
+          signal: new AbortController().signal,
+        }),
+        applyMcp: () => ({ ok: false, message: "MCP config rejected" }),
+      },
+    );
+
+    expect(sendTurn).not.toHaveBeenCalled();
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("capability_unavailable");
+      expect(result.outcome.error.message).toBe("MCP config rejected");
+      // No adapter turn result exists for a pre-dispatch failure.
+      expect(result.outcome.contentBlocks).toBeUndefined();
+    }
+    expect(result.continuationDisposition).toBe("retain");
+  });
+
+  it("dispatches normally when applyMcp succeeds", async () => {
+    const applyMcp = vi.fn(async () => ({ ok: true as const }));
+    const result = await executeAgentCall(
+      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        resolveConversationRuntime: () => ({
+          runtime: makeConversationRuntime("claude"),
+          capabilityView: CLAUDE_VIEW,
+          signal: new AbortController().signal,
+        }),
+        applyMcp,
+      },
+    );
+    expect(applyMcp).toHaveBeenCalledTimes(1);
+    expect(result.outcome.kind).toBe("completed");
+  });
+});
+
+describe("executeAgentCall — continuity recording", () => {
+  it("reports backendRef and continuationDisposition after a completed call", async () => {
+    const recorded: unknown[] = [];
+    const result = await executeAgentCall(
+      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        resolveConversationRuntime: () => ({
+          runtime: makeConversationRuntime("claude"),
+          capabilityView: CLAUDE_VIEW,
+          signal: new AbortController().signal,
+        }),
+        recordContinuity: (record) => {
+          recorded.push(record);
+        },
+      },
+    );
+    expect(result.outcome.kind).toBe("completed");
+    expect(recorded).toEqual([
+      {
+        backend: "claude",
+        backendRef: { backend: "claude", ref: "sess-1" },
+        continuationDisposition: "retain",
+      },
+    ]);
+  });
+
+  it("never masks the turn result when recording throws", async () => {
+    const result = await executeAgentCall(
+      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        resolveConversationRuntime: () => ({
+          runtime: makeConversationRuntime("claude"),
+          capabilityView: CLAUDE_VIEW,
+          signal: new AbortController().signal,
+        }),
+        recordContinuity: () => {
+          throw new Error("ledger unavailable");
+        },
+      },
+    );
+    expect(result.outcome.kind).toBe("completed");
+  });
+});
+
+describe("executeAgentCall — failure normalization via the descriptor classifier", () => {
+  it("normalizes a thrown conversation error into the classifier's failure kind", async () => {
+    const runtime = makeConversationRuntime("claude");
+    runtime.sendTurn = async () => {
+      throw new Error("resume session not found");
+    };
+    const result = await executeAgentCall(
+      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        resolveConversationRuntime: () => ({
+          runtime,
+          capabilityView: CLAUDE_VIEW,
+          signal: new AbortController().signal,
+        }),
+        getFailureClassifier: () => {
+          const classify = (error: unknown) => ({
+            kind: "stale_resume_ref" as const,
+            message: error instanceof Error ? error.message : String(error),
+            retryable: true,
+          });
+          return {
+            classify,
+            classifyWithContinuation: (error: unknown) => ({
+              failure: classify(error),
+              continuationDisposition: "clear",
+            }),
+          };
+        },
+      },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("stale_resume_ref");
+      expect(result.outcome.error.message).toBe("resume session not found");
+    }
+    expect(result.backendRef).toBeNull();
+    expect(result.continuationDisposition).toBe("clear");
+  });
+
+  it("preserves a task adapter's classified failure and continuation verdict", async () => {
+    const runner = makeTaskRunner("codex", {
+      result: {
+        backendRef: null,
+        error: "failed to resume codex thread th-1",
+        text: null,
+        failure: {
+          kind: "stale_resume_ref",
+          message: "failed to resume codex thread th-1",
+          retryable: true,
+        },
+        continuationDisposition: "clear",
+      },
+    });
+    const classify = vi.fn((_error?: unknown) => ({
+      kind: "stale_resume_ref" as const,
+      message: "failed to resume codex thread th-1",
+      retryable: true,
+    }));
+    const result = await executeAgentCall(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        taskExecution: { workingDirectory: "/tmp/wt" },
+        getTaskRunner: () => runner,
+        getFailureClassifier: () => ({
+          classify,
+          classifyWithContinuation: (error) => ({
+            failure: classify(error),
+            continuationDisposition: "clear",
+          }),
+        }),
+      },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("stale_resume_ref");
+    }
+    expect(classify).not.toHaveBeenCalled();
+    expect(result.continuationDisposition).toBe("clear");
+  });
+});
+
+describe("executeAgentCall — widened result fields", () => {
+  it("stamps parse metadata when the gate accepts a fenced candidate", async () => {
+    const runtime = makeConversationRuntime("claude", {
+      result: {
+        contentBlocks: [
+          { type: "text", text: 'result:\n```json\n{"answer":7}\n```' },
+        ],
+        structuredOutput: undefined,
+      },
+    });
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+        outputSchema: {
+          type: "object",
+          properties: { answer: { type: "number" } },
+          required: ["answer"],
+        },
+      },
+      buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
+    );
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.structuredOutput).toEqual({ answer: 7 });
+      expect(result.outcome.parse).toEqual({ source: "fenced" });
+    }
+  });
+
+  it("carries numTurns and contentBlocks on the completed conversation outcome", async () => {
+    const result = await executeAgentCall(
+      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      buildDepsForConversation({
+        runtime: makeConversationRuntime("claude"),
+        view: CLAUDE_VIEW,
+      }),
+    );
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.numTurns).toBe(1);
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: "hi" },
+      ]);
+    }
+  });
+
+  it("keeps partial content and the adapter verdict on a gate downgrade", async () => {
+    const runtime = makeConversationRuntime("codex", {
+      result: {
+        contentBlocks: [{ type: "text", text: "not json" }],
+        structuredOutput: undefined,
+      },
+    });
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        backend: "codex",
+        prompt: "hi",
+        outputSchema: { type: "object", required: ["answer"] },
+      },
+      buildDepsForConversation({ runtime, view: CODEX_VIEW }),
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("schema_validation");
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: "not json" },
+      ]);
+    }
+    expect(result.continuationDisposition).toBe("retain");
+  });
+});

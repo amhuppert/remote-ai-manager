@@ -4,10 +4,6 @@ import { mergeMachine } from "@/lib/workflows/merge/machine";
 import type {
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
-  CheckUncommittedInput,
-  CheckUncommittedOutput,
-  CommitChangesInput,
-  CommitChangesOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -18,12 +14,24 @@ import type {
   PublishActorOutput,
   ResolveConflictsInput,
   ResolveConflictsOutput,
-  RunValidationInput,
 } from "@/lib/workflows/merge/actors";
+import type {
+  CheckUncommittedInput,
+  CheckUncommittedOutput,
+  CommitChangesInput,
+  CommitChangesOutput,
+  RunValidationInput,
+} from "@/lib/workflows/validation-fix/actors";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
 
 /** Real merge machine with stubbed actors; captures the resolver's input. */
-function buildCapturingMachine(captured: ResolveConflictsInput[]) {
+function buildCapturingMachine(
+  captured: ResolveConflictsInput[],
+  publishOutput: PublishActorOutput = {
+    status: "completed",
+    mergeHash: "merge-hash",
+  },
+) {
   return mergeMachine.provide({
     actors: {
       checkUncommitted: fromPromise<
@@ -61,10 +69,9 @@ function buildCapturingMachine(captured: ResolveConflictsInput[]) {
         expectedTargetSha: "expected-sha",
         parkedRef: "refs/cc-merges/test",
       })),
-      publish: fromPromise<PublishActorOutput, PublishActorInput>(async () => ({
-        status: "completed",
-        mergeHash: "merge-hash",
-      })),
+      publish: fromPromise<PublishActorOutput, PublishActorInput>(
+        async () => publishOutput,
+      ),
     },
   });
 }
@@ -194,6 +201,51 @@ describe("graph-merge-runner", () => {
     for (let i = 1; i < phases.length; i++) {
       expect(phases[i]).not.toBe(phases[i - 1]);
     }
+  });
+
+  it("emits the terminal awaiting-land breadcrumb when a dirty target leaves the merge ready to land", async () => {
+    const phases: string[] = [];
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () =>
+        buildCapturingMachine([], {
+          status: "ready-to-land",
+          parkedRef: "refs/cc-merges/test",
+          preparedSha: "prepared-sha",
+          targetWorktreePath: "/tmp/lane-a",
+        }),
+      recordMergeIntent: () => {},
+      onPhase: (info) => {
+        phases.push(info.phase);
+      },
+    });
+
+    const output = await runner.run({
+      jobId: "job-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "context-verify",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/lane-a",
+      targetWorktreePath: "/tmp/lane-a",
+      message: "join merge",
+    });
+
+    expect(output.status).toBe("ready-to-land");
+    // readyToLand is the one terminal state that retains a phase
+    // ("awaiting-land"); the breadcrumb sequence must include it so a join
+    // parked on a dirty target is forensically distinguishable from one that
+    // finished publishing.
+    expect(phases).toEqual([
+      "committing-uncommitted",
+      "merging-main",
+      "resolving-conflicts",
+      "validating",
+      "preparing",
+      "publishing",
+      "awaiting-land",
+    ]);
   });
 
   it("does not record an intent when no resolutionContext was provided", async () => {

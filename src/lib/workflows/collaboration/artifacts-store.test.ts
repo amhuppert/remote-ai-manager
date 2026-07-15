@@ -17,6 +17,7 @@ import {
   appendCollaborationArtifact,
   deleteCollaborationArtifacts,
   getCollaborationArtifactsPath,
+  parseAndValidateArtifactLines,
   readCollaborationArtifacts,
 } from "./artifacts-store";
 import { collaborationArtifactSchema } from "./types";
@@ -147,6 +148,34 @@ describe("collaboration artifacts sidecar store", () => {
     );
 
     expect(read.map((a) => a.kind)).toEqual(["initial_draft", "final_answer"]);
+  });
+
+  it("reports the TRUE source line index for a schema-invalid line preceded by blank and malformed lines", () => {
+    // Line 0: blank. Line 1: valid. Line 2: malformed JSON (parse failure).
+    // Line 3: valid JSON but schema-invalid. Line 4: valid.
+    // The schema-invalid diagnostic must name source line 3 (not the compacted
+    // index 1 it would collapse to after blank/malformed removal), and the
+    // parse-failure diagnostic must name source line 2.
+    const raw = [
+      "",
+      JSON.stringify(INITIAL_DRAFT),
+      "this-is-not-json{",
+      JSON.stringify({ kind: "initial_draft", agent: "not-a-valid-agent" }),
+      JSON.stringify(FINAL_ANSWER),
+    ].join("\n");
+
+    const result = parseAndValidateArtifactLines(
+      raw,
+      collaborationArtifactSchema,
+    );
+
+    expect(result.entries.map((a) => a.kind)).toEqual([
+      "initial_draft",
+      "final_answer",
+    ]);
+    expect(result.parseFailures.map((f) => f.lineIndex)).toEqual([2]);
+    expect(result.invalidLines.map((l) => l.lineIndex)).toEqual([3]);
+    expect(result.invalidLines[0]!.issues).toContain("agent");
   });
 
   it("round-trips workflow-path entries through their wrapper schema", async () => {

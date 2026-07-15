@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 
-import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
+import { Dialog, DialogContent } from "@/components/ui/Dialog";
 import { triggerBase, triggerHover } from "@/components/mcp/styles";
 import { cn } from "@/lib/ui/cn";
+import {
+  capabilitiesDrawerContent,
+  capabilitiesDrawerScrim,
+} from "./drawer-recipe";
 
 import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
@@ -116,22 +119,14 @@ function ScopedAgentCapabilitiesDrawer({
   onClose(): void;
   layerOptions: readonly AgentCapabilityLayerOption[];
   initialScope: AgentCapabilityScope;
-}): React.JSX.Element | null {
-  useOverlayScope(open, { onEscape: onClose });
-
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <>
-      <div
-        className="fixed inset-0 z-dropdown bg-[var(--cc-bg-void-a60)] [backdrop-filter:blur(4px)_saturate(120%)]"
-        data-testid="agent-capabilities-drawer-overlay"
-        data-cc-modal-scrim=""
-        onClick={onClose}
-      />
-      <aside
-        className="fixed top-0 right-0 bottom-0 z-dropdown flex w-[min(720px,100vw)] flex-col border-y-0 border-r-0 border-l border-solid border-border-default bg-bg-base shadow-[-16px_0_48px_var(--cc-black-a55)]"
-        role="dialog"
+}): React.JSX.Element {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        unstyled
+        anchor="stretch"
+        scrimClassName={capabilitiesDrawerScrim}
+        contentClassName={capabilitiesDrawerContent}
         aria-label="Agent capabilities configuration"
       >
         <AgentCapabilitiesConfigurator
@@ -140,9 +135,8 @@ function ScopedAgentCapabilitiesDrawer({
           drawer
           onClose={onClose}
         />
-      </aside>
-    </>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -23,41 +23,18 @@ import {
 import { ensureConversationActor } from "@/lib/workflows/conversation/manager";
 import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import { createDebugLogStatsHandlers } from "@/lib/debug-log/stats-route-handlers";
+import { resolveSessionConversationRoute } from "./route-resolution";
 import type { ApiError } from "@/lib/api/errors";
 
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/debug-mode — enter/exit debug mode */
 export const updateDebugMode = withTracing(async (request, { params }) => {
-  const resolvedParams = await params;
-  const name = resolvedParams["name"] ?? "";
-  const sessionSlug = resolvedParams["session"] ?? "";
-  const sessionName = decodeURIComponent(sessionSlug);
-  const conversationId = resolvedParams["conversationId"] ?? "";
-
-  const projectPath = await resolveProjectPath(name);
-  if (!projectPath) {
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const session = await getSession(projectPath, sessionName);
-  if (!session) {
-    return NextResponse.json(
-      { error: "Session not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
+  const resolved = await resolveSessionConversationRoute(
+    { resolveProjectPath, getSession },
+    { params },
   );
-  if (!conversation) {
-    return NextResponse.json(
-      { error: "Conversation not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
+  if (!resolved.ok) return resolved.response;
+  const { projectPath, sessionName, conversationId, session, conversation } =
+    resolved.value;
 
   let body: ReturnType<typeof debugModeRequestSchema.parse>;
   try {
@@ -138,37 +115,13 @@ export const getDebugModeLogs = createDebugLogStatsHandlers().GET;
 
 /** DELETE .../debug-mode/logs — clear the debug log file */
 export const deleteDebugModeLogs = withTracing(async (_request, { params }) => {
-  const resolvedParams = await params;
-  const name = resolvedParams["name"] ?? "";
-  const sessionSlug = resolvedParams["session"] ?? "";
-  const sessionName = decodeURIComponent(sessionSlug);
-  const conversationId = resolvedParams["conversationId"] ?? "";
-
-  const projectPath = await resolveProjectPath(name);
-  if (!projectPath) {
-    return NextResponse.json(
-      { error: "Project not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const session = await getSession(projectPath, sessionName);
-  if (!session) {
-    return NextResponse.json(
-      { error: "Session not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
+  const name = (await params)["name"] ?? "";
+  const resolved = await resolveSessionConversationRoute(
+    { resolveProjectPath, getSession },
+    { params },
   );
-  if (!conversation) {
-    return NextResponse.json(
-      { error: "Conversation not found" } satisfies ApiError,
-      { status: 404 },
-    );
-  }
+  if (!resolved.ok) return resolved.response;
+  const { sessionName, conversationId, conversation } = resolved.value;
 
   if (!conversation.debugMode?.active) {
     return NextResponse.json(
@@ -198,37 +151,13 @@ export const deleteDebugModeLogs = withTracing(async (_request, { params }) => {
 /** POST .../debug-mode/recording — start/stop debug log recording */
 export const updateDebugModeRecording = withTracing(
   async (request, { params }) => {
-    const resolvedParams = await params;
-    const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
-    const conversationId = resolvedParams["conversationId"] ?? "";
-
-    const projectPath = await resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const conversation = session.conversations.find(
-      (c) => c.id === conversationId,
+    const resolved = await resolveSessionConversationRoute(
+      { resolveProjectPath, getSession },
+      { params },
     );
-    if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId, conversation } =
+      resolved.value;
 
     if (!conversation.debugMode?.active) {
       return NextResponse.json(

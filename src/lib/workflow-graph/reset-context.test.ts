@@ -1,10 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowAgentSessionState,
-} from "@/lib/workflows/schemas";
-import { resetExecutionContext } from "./reset-context";
+  GraphWorkflowExecution,
+} from "@/lib/workflow-graph/schemas";
+import {
+  ResetExecutionContextError,
+  resetExecutionContext,
+} from "./reset-context";
+
+// Infrastructure-only mock (module-load-time logger) so the tests can observe
+// the transition owner's structured events without touching internal seams.
+const logSpy = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => logSpy,
+}));
 
 const now = "2026-04-19T00:00:00.000Z";
 
@@ -13,17 +29,13 @@ function makeLaneState(
   lane: GraphWorkflowAgentSessionState["lane"],
 ): GraphWorkflowAgentSessionState {
   return {
-    engine: "claude",
+    backend: "claude",
+    refKind: "conversation",
     lane,
     contextId,
-    sessionRef: {
-      engine: "claude",
-      lane,
-      conversationId: `conv-${lane}-${contextId}`,
-    },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    workflowConversationId: `conv-${lane}-${contextId}`,
+    sessionRef: { backend: "claude", ref: `conv-${lane}-${contextId}` },
+    metrics: { rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: now,
   };
@@ -304,6 +316,65 @@ describe("resetExecutionContext", () => {
     expect(() =>
       resetExecutionContext(buildExecution(), "context-missing"),
     ).toThrow(/not found|unknown/i);
+  });
+
+  describe("transition ownership", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("routes a paused-execution reset through the transition owner (context_transition.applied old -> pending)", () => {
+      const next = resetExecutionContext(
+        buildExecution({ status: "paused" }),
+        "context-implement",
+      );
+
+      expect(next.contextStates["context-implement"]!.status).toBe("pending");
+      expect(logSpy.debug).toHaveBeenCalledWith(
+        "context_transition.applied",
+        expect.objectContaining({
+          contextId: "context-implement",
+          from: "running",
+          to: "pending",
+        }),
+      );
+    });
+
+    it("routes a halted-execution reset through the transition owner", () => {
+      const next = resetExecutionContext(
+        buildExecution({ status: "halted" }),
+        "context-implement",
+      );
+
+      expect(next.contextStates["context-implement"]!.status).toBe("pending");
+      expect(logSpy.debug).toHaveBeenCalledWith(
+        "context_transition.applied",
+        expect.objectContaining({
+          contextId: "context-implement",
+          from: "running",
+          to: "pending",
+        }),
+      );
+    });
+
+    it("rejects a completed context via the owner's legality check while keeping the reset error contract", () => {
+      expect(() =>
+        resetExecutionContext(buildExecution(), "context-plan"),
+      ).toThrow(ResetExecutionContextError);
+
+      expect(logSpy.error).toHaveBeenCalledWith(
+        "context_transition.illegal",
+        expect.objectContaining({
+          contextId: "context-plan",
+          from: "completed",
+          to: "pending",
+        }),
+      );
+      expect(logSpy.debug).not.toHaveBeenCalledWith(
+        "context_transition.applied",
+        expect.anything(),
+      );
+    });
   });
 
   it("recomputes lanePlan after reset so a stale continuation entry on the target context's parent is refreshed", () => {

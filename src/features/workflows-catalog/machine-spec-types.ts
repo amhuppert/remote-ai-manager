@@ -9,12 +9,7 @@
  * match XState's convention.
  */
 
-export type MachineId =
-  | "conversation"
-  | "smart-merge"
-  | "smart-commit"
-  | "optimistic"
-  | "retry";
+export type MachineId = "conversation" | "smart-merge" | "smart-commit";
 
 export type StateNodeKind =
   | "atomic"
@@ -108,8 +103,6 @@ const machineIds: ReadonlySet<MachineId> = new Set([
   "conversation",
   "smart-merge",
   "smart-commit",
-  "optimistic",
-  "retry",
 ]);
 
 export function isMachineId(value: string): value is MachineId {

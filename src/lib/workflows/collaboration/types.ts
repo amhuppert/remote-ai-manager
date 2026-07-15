@@ -2,12 +2,12 @@
  * Collaboration Mode types.
  *
  * The wire-shape contracts — the asymmetric per-artifact outputs every
- * participating agent emits — live in `src/lib/schemas.ts` and are
- * documented in `memory-bank/COLLABORATION_MODE_FLOW.md`. This module
- * re-exports them so feature code keeps a stable import site, adds the
- * lane-identity enum that is internal to the orchestrator, and projects
- * each artifact schema to a JSON Schema constant for backends that enforce
- * structured output natively.
+ * participating agent emits — live in
+ * `src/lib/workflow-graph/collaboration-schemas.ts` and are documented in
+ * `memory-bank/COLLABORATION_MODE_FLOW.md`. This module re-exports them so
+ * feature code keeps a stable import site, adds the lane-identity enum that is
+ * internal to the orchestrator, and projects each artifact schema to a JSON
+ * Schema constant for backends that enforce structured output natively.
  *
  * IMPORTANT: these JSON Schema constants are handed to Claude's native
  * structured-output enforcement (`outputFormat: { type: "json_schema" }`),
@@ -22,6 +22,7 @@
  */
 
 import { z } from "zod";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 
 export {
   type CollaborationArtifactAgreement,
@@ -69,9 +70,9 @@ export {
   collaborationResolutionDecisionOutputSchema,
   type CollaborationResolutionDecisionOutput,
   type CollaborationUserQuestion,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 
-const collaborationAgentSchema = z.enum(["claude", "codex"]);
+const collaborationAgentSchema = agentBackendSchema;
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
 
 /**

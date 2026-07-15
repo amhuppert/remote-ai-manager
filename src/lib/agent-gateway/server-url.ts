@@ -21,6 +21,7 @@
 
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { sleep } from "@/lib/shared/sleep";
 import {
   deleteGlobalValue,
   getGlobalValue,
@@ -135,7 +136,7 @@ export interface VerifyServerBaseUrlDeps {
 
 const defaultVerifyDeps: VerifyServerBaseUrlDeps = {
   fetchImpl: (url, init) => fetch(url, init),
-  delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  delay: sleep,
 };
 
 /**

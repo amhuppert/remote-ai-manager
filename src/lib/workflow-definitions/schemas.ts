@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  workflowDefinitionRecordSchema,
   resolvedWorkflowSemanticDefinitionSchema,
-} from "@/lib/workflows/schemas";
+  workflowDefinitionRecordSchema,
+} from "@/lib/workflow-graph/definition-schemas";
 
 const workflowDefinitionSummarySchema = z.object({
   id: z.string(),

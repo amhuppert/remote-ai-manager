@@ -11,6 +11,7 @@ import {
   pushNotificationConfigSchema,
   rawPushNotificationConfigSchema,
 } from "@/lib/notifications/schemas";
+import { workflowCollaborationConfigSchema } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   graphWorkflowAgentConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
@@ -20,8 +21,7 @@ import {
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
-  workflowCollaborationConfigSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/config-schemas";
 import { devServerConfigSchema } from "@/lib/dev-server/schemas";
 
 // ============================================================

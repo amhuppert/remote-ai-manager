@@ -49,7 +49,7 @@ const UTILITY_FIRST_PATHS = [
   // floor). composer/cockpit are subdirs of project-detail, so the still-legacy
   // project-detail shell stays under the guard.
   `${path.sep}features${path.sep}config${path.sep}`,
-  `${path.sep}features${path.sep}_root${path.sep}spawn-card${path.sep}`,
+  `${path.sep}features${path.sep}project-detail${path.sep}spawn-card${path.sep}`,
   `${path.sep}features${path.sep}workflows-catalog${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}composer${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}cockpit${path.sep}`,
@@ -86,9 +86,18 @@ const UTILITY_FIRST_PATHS = [
   // file/dir-scoped so the still-legacy project-detail shell stays under the guard.
   `${path.sep}features${path.sep}project-detail${path.sep}components${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}ProjectDetailView.tsx`,
-  `${path.sep}features${path.sep}session${path.sep}sidebar${path.sep}`,
+  `${path.sep}components${path.sep}session${path.sep}sidebar${path.sep}`,
   `${path.sep}features${path.sep}session${path.sep}debug${path.sep}`,
-  `${path.sep}features${path.sep}session${path.sep}git${path.sep}`,
+  // The self-contained debug leaves (DebugStatusStrip/DebugModeToggle) promoted
+  // out of features/session/debug/ to src/components/session/ — utility-first by
+  // design, file-scoped so the components/session/ root isn't blanket-exempted.
+  `${path.sep}components${path.sep}session${path.sep}DebugStatusStrip.tsx`,
+  `${path.sep}components${path.sep}session${path.sep}DebugModeToggle.tsx`,
+  // CollabConfigRow promoted out of features/session/conversation/collab/ (the
+  // only collab leaf PromptComposer consumes) to src/components/session/;
+  // utility-first by design, file-scoped like the debug leaves above.
+  `${path.sep}components${path.sep}session${path.sep}CollabConfigRow.tsx`,
+  `${path.sep}components${path.sep}git${path.sep}`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionActionsMenu.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}InfoDetailsPopover.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationLinkChip.tsx`,
@@ -139,9 +148,9 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}RightPane.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SpecBrowser.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SyntheticForkBadge.tsx`,
-  `${path.sep}features${path.sep}session${path.sep}prompt${path.sep}`,
-  `${path.sep}features${path.sep}session${path.sep}mobile${path.sep}MobilePromptToolbar.tsx`,
-  `${path.sep}features${path.sep}session${path.sep}mobile${path.sep}MobilePromptToolbar.stories.tsx`,
+  `${path.sep}components${path.sep}session${path.sep}prompt${path.sep}`,
+  `${path.sep}components${path.sep}session${path.sep}MobilePromptToolbar.tsx`,
+  `${path.sep}components${path.sep}session${path.sep}MobilePromptToolbar.stories.tsx`,
   // Stage B-4 conversation-panes wave: the split-screen panes frame is fully
   // utility-first (conversation-panes.css dropped to its 3-selector residual).
   `${path.sep}features${path.sep}session${path.sep}panes${path.sep}`,
@@ -158,6 +167,9 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}CommandAutocompleteList.tsx`,
   `${path.sep}components${path.sep}FileAutocomplete.tsx`,
   `${path.sep}components${path.sep}FileAutocompleteList.tsx`,
+  // The single file-autocomplete popup-body owner both file-mention surfaces
+  // render through — utility-first by design, like the two host files above.
+  `${path.sep}components${path.sep}FileAutocompleteListView.tsx`,
   `${path.sep}components${path.sep}ConversationAutocompleteList.tsx`,
   `${path.sep}components${path.sep}TicketAutocompleteList.tsx`,
   // DevServerDrawer + DevServersButton are utility-first; their only CSS is the

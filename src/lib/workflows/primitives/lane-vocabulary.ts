@@ -1,11 +1,14 @@
 /**
  * Lane vocabulary for the workflow primitive layer.
  *
- * Models a long-lived agent continuity stream owned by a workflow scope.
- * The state shape preserves backend-specific continuity references and
- * metrics through discriminated unions so unsupported fields stay absent
- * rather than collapsing into fake defaults (Codex never carries
- * context-window metrics; Claude never carries Codex turn-usage rollups).
+ * Models a long-lived agent continuity stream owned by a workflow scope. The
+ * state is backend-neutral: the continuity handle is the opaque
+ * `{backend, ref}` pair (the same identity `AgentSessionRef` carries — only
+ * the owning backend's continuity adapter may interpret `ref`), and metrics
+ * are a single normalized shape whose fields are optional because backends
+ * genuinely differ in what they report (context-window occupancy, per-turn
+ * token usage). Absent fields stay absent rather than collapsing into fake
+ * defaults.
  *
  * `LaneRef` and `LaneWriteCapability` are sourced from the AgentCall
  * vocabulary so the execution facade and the lane service share one identity
@@ -13,7 +16,10 @@
  */
 
 import { z } from "zod";
-import { agentBackendSchema } from "@/lib/shared/schemas";
+import {
+  agentBackendIdShapeSchema,
+  type AgentSessionRef,
+} from "@/lib/shared/schemas";
 import {
   laneWriteCapabilitySchema,
   type LaneRef,
@@ -28,85 +34,60 @@ export const lanePolicySchema = z.object({
 });
 export type LanePolicy = z.infer<typeof lanePolicySchema>;
 
-const claudeLaneBackendStateSchema = z
-  .object({
-    backend: z.literal("claude"),
-    conversationId: z.string().min(1).optional(),
-    staleSession: z.boolean().optional(),
-  })
-  .strict();
-
-const codexLaneBackendStateSchema = z
-  .object({
-    backend: z.literal("codex"),
-    threadId: z.string().min(1).optional(),
-    staleSession: z.boolean().optional(),
-  })
-  .strict();
-
-export const laneBackendStateSchema = z.discriminatedUnion("backend", [
-  claudeLaneBackendStateSchema,
-  codexLaneBackendStateSchema,
-]);
-
-const codexLaneTurnUsageSchema = z.object({
+export const laneTurnUsageSchema = z.object({
   inputTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
 });
-export type CodexLaneTurnUsage = z.infer<typeof codexLaneTurnUsageSchema>;
+export type LaneTurnUsage = z.infer<typeof laneTurnUsageSchema>;
 
-const claudeLaneMetricsSchema = z
+/**
+ * Normalized per-lane metrics. Every field except `rotateBeforeNextTurn` is
+ * optional: a backend that does not report a metric leaves it absent
+ * (`lastTurnUsage: null` records "the turn reported no usage" for backends
+ * that do report usage in general).
+ */
+export const laneMetricsSchema = z
   .object({
-    backend: z.literal("claude"),
     contextTokens: z.number().int().nonnegative().optional(),
     contextWindowMax: z.number().int().positive().optional(),
+    lastTurnUsage: laneTurnUsageSchema.nullable().optional(),
     rotateBeforeNextTurn: z.boolean(),
   })
   .strict();
-
-const codexLaneMetricsSchema = z
-  .object({
-    backend: z.literal("codex"),
-    lastTurnUsage: codexLaneTurnUsageSchema.nullable().optional(),
-    rotateBeforeNextTurn: z.boolean(),
-  })
-  .strict();
-
-export const laneMetricsSchema = z.discriminatedUnion("backend", [
-  claudeLaneMetricsSchema,
-  codexLaneMetricsSchema,
-]);
 export type LaneMetrics = z.infer<typeof laneMetricsSchema>;
 
-export const laneStateSchema = z
-  .object({
-    workflowId: z.string().min(1),
-    laneId: z.string().min(1),
-    backend: agentBackendSchema,
-    writeCapability: laneWriteCapabilitySchema,
-    policy: lanePolicySchema,
-    backendState: laneBackendStateSchema,
-    metrics: laneMetricsSchema,
-    lastUsedAt: z.string().min(1),
-  })
-  .superRefine((state, ctx) => {
-    if (state.backendState.backend !== state.backend) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `backendState.backend (${state.backendState.backend}) must match backend (${state.backend})`,
-        path: ["backendState", "backend"],
-      });
-    }
-    if (state.metrics.backend !== state.backend) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `metrics.backend (${state.metrics.backend}) must match backend (${state.backend})`,
-        path: ["metrics", "backend"],
-      });
-    }
-  });
+export const laneStateSchema = z.object({
+  workflowId: z.string().min(1),
+  laneId: z.string().min(1),
+  backend: agentBackendIdShapeSchema,
+  /**
+   * Opaque continuity handle minted by the owning backend's adapter. Null
+   * until the first backend session exists.
+   */
+  ref: z.string().min(1).nullable(),
+  /** What owns `ref`; absent rows predate explicit reference semantics. */
+  refKind: z.enum(["conversation", "backend"]).optional(),
+  /**
+   * CC conversation used to dispatch the lane. This is independent of `ref`:
+   * a conversation-backed lane may use the same value for both, while a
+   * headless backend can dispatch under a synthetic conversation id and keep
+   * its native thread/session handle in `ref`.
+   */
+  conversationId: z.string().min(1).optional(),
+  /** True when the persisted handle is known-stale (recovery pending). */
+  staleSession: z.boolean().optional(),
+  writeCapability: laneWriteCapabilitySchema,
+  policy: lanePolicySchema,
+  metrics: laneMetricsSchema,
+  lastUsedAt: z.string().min(1),
+});
 export type LaneState = z.infer<typeof laneStateSchema>;
+
+/** The lane's continuity handle as an `AgentSessionRef`, when one exists. */
+export function laneSessionRef(state: LaneState): AgentSessionRef | null {
+  return state.ref === null ? null : { backend: state.backend, ref: state.ref };
+}
 
 /**
  * Stable storage key for a lane within its owning workflow scope.

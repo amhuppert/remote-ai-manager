@@ -6,8 +6,12 @@ import {
   type AgentCapabilityOverrides,
 } from "./schemas";
 
-import type { ClaudePluginNativeRecord } from "./claude-plugin-translator";
-import { composeConversationStartRuntime } from "./runtime-composer";
+import type { ResolvedCapabilityItem } from "@/lib/agent-backends/runtime-config";
+import type { CapabilityKind } from "@/lib/agent-backends/descriptor";
+import {
+  composeConversationStartRuntime,
+  type ComposeConversationStartResult,
+} from "./runtime-composer";
 
 function claudeSkill(
   itemId: string,
@@ -115,6 +119,13 @@ function mergeOverrides(
   return { cascades };
 }
 
+function kindItems(
+  result: ComposeConversationStartResult,
+  kind: CapabilityKind,
+): readonly ResolvedCapabilityItem[] | undefined {
+  return result.capabilities.kinds.find((entry) => entry.kind === kind)?.items;
+}
+
 describe("composeConversationStartRuntime — backend scoping", () => {
   it("composes only Claude cascades when backend is claude (ignores codex discovery)", () => {
     const result = composeConversationStartRuntime({
@@ -134,12 +145,14 @@ describe("composeConversationStartRuntime — backend scoping", () => {
         // when the active backend is Claude.
         "codex-skills": { items: [codexSkill("spec-init")] },
       },
-      nativePluginRecords: [],
     });
     expect(result.backend).toBe("claude");
-    expect(result.claudeRuntime).toBeDefined();
-    expect(result.codexRuntime).toBeUndefined();
-    expect(result.claudeRuntime?.skillOverrides).toEqual({ alpha: "off" });
+    expect(result.capabilities.backend).toBe("claude");
+    expect(kindItems(result, "skills")).toContainEqual({
+      itemId: "alpha",
+      enabled: false,
+      originLayer: "global",
+    });
     // The codex view must not even be present — the composer skipped it.
     expect(result.views["codex-skills"]).toBeUndefined();
   });
@@ -156,15 +169,19 @@ describe("composeConversationStartRuntime — backend scoping", () => {
       },
     });
     expect(result.backend).toBe("codex");
-    expect(result.claudeRuntime).toBeUndefined();
-    expect(result.codexRuntime).toBeDefined();
+    expect(result.capabilities.backend).toBe("codex");
     expect(result.views["claude-skills"]).toBeUndefined();
     expect(result.views["codex-skills"]).toBeDefined();
+    expect(kindItems(result, "skills")).toContainEqual({
+      itemId: "spec-init",
+      enabled: true,
+      originLayer: "native",
+    });
   });
 });
 
 describe("composeConversationStartRuntime — Claude composition", () => {
-  it("resolves plugin enablement before children so plugin-disabled skills emit as off", () => {
+  it("resolves plugin enablement before children so plugin-disabled skills project as off", () => {
     const result = composeConversationStartRuntime({
       backend: "claude",
       scope: { level: "conversation" },
@@ -181,17 +198,20 @@ describe("composeConversationStartRuntime — Claude composition", () => {
         "claude-plugins": { items: [claudePlugin("owner@m", true)] },
         "claude-agents": { items: [] },
       },
-      nativePluginRecords: [
-        { pluginId: "owner@m", nativeEnabled: true, nativeRawValue: true },
-      ],
     });
-    expect(result.claudeRuntime?.enabledPlugins).toEqual({ "owner@m": false });
-    expect(result.claudeRuntime?.skillOverrides).toEqual({
-      "child-skill": "off",
+    expect(kindItems(result, "plugins")).toContainEqual({
+      itemId: "owner@m",
+      enabled: false,
+      originLayer: "global",
+    });
+    expect(kindItems(result, "skills")).toContainEqual({
+      itemId: "child-skill",
+      enabled: false,
+      originLayer: "global",
     });
   });
 
-  it("collects disabled agent names for the suppression strategy", () => {
+  it("carries disabled agents with their deciding layer for adapter-side suppression", () => {
     const result = composeConversationStartRuntime({
       backend: "claude",
       scope: { level: "conversation" },
@@ -208,15 +228,14 @@ describe("composeConversationStartRuntime — Claude composition", () => {
           items: [claudeAgent("reviewer", true), claudeAgent("explorer", true)],
         },
       },
-      nativePluginRecords: [],
     });
-    expect(result.claudeRuntime?.disabledAgentNames).toEqual(["reviewer"]);
-    expect(result.claudeRuntime?.agentSuppressionStrategy.kind).toBe(
-      "permission-layer",
-    );
+    expect(kindItems(result, "agents")).toEqual([
+      { itemId: "explorer", enabled: true, originLayer: "native" },
+      { itemId: "reviewer", enabled: false, originLayer: "global" },
+    ]);
   });
 
-  it("falls back to native defaults for a cascade marked as failed (no emission, no seeded state for it)", () => {
+  it("falls back to native defaults for a cascade marked as failed (no cascade entry, no seeded state for it)", () => {
     const result = composeConversationStartRuntime({
       backend: "claude",
       scope: { level: "conversation" },
@@ -228,18 +247,21 @@ describe("composeConversationStartRuntime — Claude composition", () => {
       ],
       discoveryByCascade: {
         "claude-skills": { items: [claudeSkill("alpha")] },
-        // claude-plugins discovery failed — composer must not call the
-        // translator for this cascade, and must not seed runtime state for it.
+        // claude-plugins discovery failed — composer must not project the
+        // cascade, and must not seed runtime state for it.
         "claude-agents": { items: [] },
       },
       failedCascadeKinds: ["claude-plugins"],
-      nativePluginRecords: [],
     });
     // Skills cascade still composed.
-    expect(result.claudeRuntime?.skillOverrides).toEqual({ alpha: "off" });
-    // Plugin emission omitted entirely.
-    expect(result.claudeRuntime?.enabledPlugins).toEqual({});
-    // Runtime state was seeded only for the cascades that emitted.
+    expect(kindItems(result, "skills")).toContainEqual({
+      itemId: "alpha",
+      enabled: false,
+      originLayer: "global",
+    });
+    // Plugin cascade omitted entirely.
+    expect(kindItems(result, "plugins")).toBeUndefined();
+    // Runtime state was seeded only for the cascades that composed.
     expect(result.runtimeState.cascades["claude-skills"]).toBeDefined();
     expect(result.runtimeState.cascades["claude-plugins"]).toBeUndefined();
     expect(result.runtimeState.cascades["claude-agents"]).toBeDefined();
@@ -248,7 +270,7 @@ describe("composeConversationStartRuntime — Claude composition", () => {
     expect(result.failedCascadeKinds).toEqual(["claude-plugins"]);
   });
 
-  it("preserves diagnostics for a cascade marked as failed while omitting its runtime config", () => {
+  it("preserves diagnostics for a cascade marked as failed while omitting its cascade entry", () => {
     const result = composeConversationStartRuntime({
       backend: "claude",
       scope: { level: "conversation" },
@@ -270,12 +292,9 @@ describe("composeConversationStartRuntime — Claude composition", () => {
         "claude-agents": { items: [] },
       },
       failedCascadeKinds: ["claude-plugins"],
-      nativePluginRecords: [
-        { pluginId: "owner@m", nativeEnabled: true, nativeRawValue: true },
-      ],
     });
 
-    expect(result.claudeRuntime?.enabledPlugins).toEqual({});
+    expect(kindItems(result, "plugins")).toBeUndefined();
     expect(result.runtimeState.cascades["claude-plugins"]).toBeUndefined();
     expect(result.diagnostics).toContainEqual(
       expect.objectContaining({
@@ -336,9 +355,6 @@ describe("composeConversationStartRuntime — project conversations", () => {
           items: [claudeAgent("reviewer", true), claudeAgent("helper", true)],
         },
       },
-      nativePluginRecords: [
-        { pluginId: "owner@m", nativeEnabled: true, nativeRawValue: true },
-      ],
     });
 
     const alpha = result.views["claude-skills"]?.items.find(
@@ -356,8 +372,16 @@ describe("composeConversationStartRuntime — project conversations", () => {
     });
     expect(child?.effectiveState.enabled).toBe(true);
     expect(child?.inheritedDisableReason).toBeUndefined();
-    expect(result.claudeRuntime?.skillOverrides).toEqual({ alpha: "on" });
-    expect(result.claudeRuntime?.disabledAgentNames).toEqual(["reviewer"]);
+    expect(kindItems(result, "skills")).toContainEqual({
+      itemId: "alpha",
+      enabled: true,
+      originLayer: "project",
+    });
+    expect(kindItems(result, "agents")).toContainEqual({
+      itemId: "reviewer",
+      enabled: false,
+      originLayer: "conversation",
+    });
     expect(result.runtimeState.cascades["claude-skills"]?.pendingHash).toMatch(
       /^[0-9a-f]{64}$/,
     );
@@ -414,20 +438,18 @@ describe("composeConversationStartRuntime — project conversations", () => {
     expect(result.views["claude-skills"]).toBeUndefined();
     expect(child?.effectiveState.enabled).toBe(true);
     expect(child?.inheritedDisableReason).toBeUndefined();
-    expect(result.codexRuntime?.config).toEqual({
-      skills: {
-        config: [
-          { enabled: false, name: "alpha" },
-          { enabled: true, name: "child" },
-        ],
-      },
-      plugins: { "codex-owner": { enabled: true } },
-    });
+    expect(kindItems(result, "skills")).toEqual([
+      { itemId: "alpha", enabled: false, originLayer: "conversation" },
+      { itemId: "child", enabled: true, originLayer: "native" },
+    ]);
+    expect(kindItems(result, "plugins")).toEqual([
+      { itemId: "codex-owner", enabled: true, originLayer: "project" },
+    ]);
   });
 });
 
 describe("composeConversationStartRuntime — runtime hash seeding", () => {
-  it("seeds a deterministic pendingHash per emitted cascade", () => {
+  it("seeds a deterministic pendingHash per composed cascade over its non-native rows", () => {
     const input = {
       backend: "claude" as const,
       scope: { level: "conversation" as const },
@@ -442,7 +464,6 @@ describe("composeConversationStartRuntime — runtime hash seeding", () => {
         "claude-plugins": { items: [] },
         "claude-agents": { items: [] },
       },
-      nativePluginRecords: [] as ClaudePluginNativeRecord[],
     };
     const a = composeConversationStartRuntime(input);
     const b = composeConversationStartRuntime(input);
@@ -476,7 +497,6 @@ describe("composeConversationStartRuntime — runtime hash seeding", () => {
         },
       ],
       discoveryByCascade: baseDiscovery,
-      nativePluginRecords: [],
     });
     const on = composeConversationStartRuntime({
       backend: "claude",
@@ -488,18 +508,57 @@ describe("composeConversationStartRuntime — runtime hash seeding", () => {
         },
       ],
       discoveryByCascade: baseDiscovery,
-      nativePluginRecords: [],
     });
-    // off has explicit override (origin: global), on equals native default so
-    // no skill emission → hashes differ.
+    // off has an explicit override (origin: global); on equals the native
+    // default so the row resolves at native and stays out of the hash basis.
     expect(off.runtimeState.cascades["claude-skills"]?.pendingHash).not.toEqual(
       on.runtimeState.cascades["claude-skills"]?.pendingHash,
+    );
+  });
+
+  it("hash ignores native-origin rows (native drift does not perturb idempotency)", () => {
+    const withNativeOnly = composeConversationStartRuntime({
+      backend: "claude",
+      scope: { level: "conversation" },
+      overrideChain: [
+        {
+          layer: "global",
+          overrides: override("claude-skills", { alpha: false }),
+        },
+      ],
+      discoveryByCascade: {
+        "claude-skills": { items: [claudeSkill("alpha"), claudeSkill("beta")] },
+      },
+    });
+    const withExtraNative = composeConversationStartRuntime({
+      backend: "claude",
+      scope: { level: "conversation" },
+      overrideChain: [
+        {
+          layer: "global",
+          overrides: override("claude-skills", { alpha: false }),
+        },
+      ],
+      discoveryByCascade: {
+        "claude-skills": {
+          items: [
+            claudeSkill("alpha"),
+            claudeSkill("beta"),
+            claudeSkill("gamma"),
+          ],
+        },
+      },
+    });
+    expect(
+      withNativeOnly.runtimeState.cascades["claude-skills"]?.pendingHash,
+    ).toEqual(
+      withExtraNative.runtimeState.cascades["claude-skills"]?.pendingHash,
     );
   });
 });
 
 describe("composeConversationStartRuntime — diagnostics", () => {
-  it("aggregates discovery diagnostics + translator diagnostics, tagged with cascade and backend", () => {
+  it("aggregates discovery and resolver diagnostics, tagged with cascade and backend", () => {
     const result = composeConversationStartRuntime({
       backend: "claude",
       scope: { level: "conversation" },
@@ -525,22 +584,23 @@ describe("composeConversationStartRuntime — diagnostics", () => {
         },
         "claude-agents": { items: [] },
       },
-      nativePluginRecords: [
-        { pluginId: "known@m", nativeEnabled: true, nativeRawValue: true },
-      ],
     });
     // Discovery diagnostic surfaces in the composed diagnostics list.
     const discoveryDiag = result.diagnostics.find(
       (d) => d.code === "claude-plugin-discovery-warning",
     );
     expect(discoveryDiag).toBeDefined();
-    // Translator diagnostic (stale ghost@m override) surfaces with backend +
-    // cascadeKind.
+    // Resolver stale-row diagnostic (ghost@m override matches no discovered
+    // plugin) surfaces with backend + cascadeKind.
     const staleDiag = result.diagnostics.find(
-      (d) => d.code === "claude-plugin-override-stale",
+      (d) => d.code === "agent-capability-stale-override",
     );
     expect(staleDiag?.backend).toBe("claude");
     expect(staleDiag?.cascadeKind).toBe("claude-plugins");
+    // Stale rows never reach the neutral cascade.
+    expect(kindItems(result, "plugins")).toEqual([
+      { itemId: "known@m", enabled: true, originLayer: "native" },
+    ]);
   });
 });
 
@@ -572,13 +632,6 @@ describe("composeConversationStartRuntime — determinism without I/O", () => {
           items: [claudeAgent("reviewer", true), claudeAgent("explorer", true)],
         },
       },
-      nativePluginRecords: [
-        {
-          pluginId: "owner@m",
-          nativeEnabled: true,
-          nativeRawValue: { version: "1.2.0" },
-        },
-      ] as ClaudePluginNativeRecord[],
     };
     const runs = Array.from({ length: 5 }, () =>
       composeConversationStartRuntime(input),

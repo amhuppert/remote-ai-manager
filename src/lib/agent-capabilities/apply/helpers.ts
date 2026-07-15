@@ -1,5 +1,9 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
+  ResolvedCapabilityCascade,
+  RuntimeConfigApplyResult,
+} from "@/lib/agent-backends/runtime-config";
+import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeRuntimeState,
   AgentCapabilityDiagnostic,
@@ -7,8 +11,6 @@ import type {
 } from "../schemas";
 
 import type { AgentCapabilityMetadataRegistry } from "../metadata";
-import type { ClaudeRuntimeCapabilityConfig } from "../claude-runtime-translator";
-import type { CodexRuntimeCapabilityConfig } from "../codex-runtime-translator";
 import type { ComposeConversationStartResult } from "../runtime-composer";
 import type { MutationScope } from "../mutation-service";
 
@@ -42,25 +44,6 @@ export type AffectedConversation = ApplyConversationIdentity & {
   isTurnActive: boolean;
 };
 
-export interface ClaudeApplyPortInput {
-  conversationId: string;
-  config: ClaudeRuntimeCapabilityConfig;
-}
-
-export type ClaudeApplyPortResult =
-  | { status: "applied" }
-  | { status: "rejected"; error: string }
-  | { status: "skipped-turn-active" };
-
-export interface CodexApplyPortInput {
-  conversationId: string;
-  config: CodexRuntimeCapabilityConfig;
-}
-
-export type CodexApplyPortResult =
-  | { status: "applied" }
-  | { status: "rejected"; error: string };
-
 export interface ApplyServiceDeps {
   metadataRegistry?: AgentCapabilityMetadataRegistry;
   /**
@@ -92,21 +75,17 @@ export interface ApplyServiceDeps {
       state: AgentCapabilityRuntimeApplicationState;
     },
   ): Promise<void>;
-  /** Live-apply Claude config for one conversation. Returns the disposition;
-   * the apply service is responsible for storing the result via
-   * `recordApplyOutcome`. */
-  applyClaudeRuntime?(
-    input: ClaudeApplyPortInput,
-  ): Promise<ClaudeApplyPortResult>;
   /**
-   * Push a recomposed Codex capability config into the live Codex runtime so
-   * the next turn ingests it. Codex runtimes always rebuild `CodexOptions` per
-   * turn, so this only needs to replace the runtime's staged config and never
-   * interrupts an in-flight turn. Returns `rejected` when the runtime is
-   * closed or missing; the apply service records the failure rather than
-   * falsely promoting state to `applied`.
+   * Apply a freshly-resolved capability cascade to the conversation's live
+   * runtime through the backend descriptor's runtime-config adapter.
+   * Translation into the provider payload happens below the seam; the port
+   * returns the declared apply disposition and the apply service is
+   * responsible for storing the result via `recordApplyOutcome`.
    */
-  applyCodexRuntime?(input: CodexApplyPortInput): Promise<CodexApplyPortResult>;
+  applyRuntimeConfig?(input: {
+    conversation: ApplyConversationIdentity;
+    resolved: ResolvedCapabilityCascade;
+  }): Promise<RuntimeConfigApplyResult>;
 }
 
 export interface CascadeApplyOutcome {

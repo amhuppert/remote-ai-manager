@@ -7,9 +7,11 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,
@@ -49,7 +51,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -759,30 +761,28 @@ describe("graph workflow manager", () => {
             implementer: {
               lane: "implementer",
               contextId: "context-plan",
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               workflowConversationId: "conv-impl",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-impl",
-              },
-              lastContextTokens: null,
-              lastContextWindowMax: null,
-              rotateBeforeNextTurn: false,
+              sessionRef: { backend: "claude", ref: "conv-impl" },
+              metrics: { rotateBeforeNextTurn: false },
               limitEvaluation: "supported",
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
             context_validator: {
               lane: "context_validator",
               contextId: "context-plan",
-              engine: "codex",
+              backend: "codex",
+              refKind: "backend",
               // Production shape: the validator runner persists the synthetic
               // dispatch id (__validator__:{executionId}:{contextId}:{lane}:{backend})
               // onto the lane state before dispatching the turn.
               workflowConversationId:
                 "__validator__:execution-1:context-plan:context_validator:codex",
-              lastTurnUsage: null,
-              rotateBeforeNextTurn: false,
+              metrics: {
+                lastTurnUsage: null,
+                rotateBeforeNextTurn: false,
+              },
               limitEvaluation: "unsupported",
               lastUsedAt: "2026-03-27T15:01:00.000Z",
             },
@@ -825,16 +825,11 @@ describe("graph workflow manager", () => {
             implementer: {
               lane: "implementer",
               contextId: "context-plan",
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               workflowConversationId: "conv-impl",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-impl",
-              },
-              lastContextTokens: null,
-              lastContextWindowMax: null,
-              rotateBeforeNextTurn: false,
+              sessionRef: { backend: "claude", ref: "conv-impl" },
+              metrics: { rotateBeforeNextTurn: false },
               limitEvaluation: "supported",
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -875,16 +870,11 @@ describe("graph workflow manager", () => {
             implementer: {
               lane: "implementer",
               contextId: "context-plan",
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               workflowConversationId: "conv-parked",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-parked",
-              },
-              lastContextTokens: null,
-              lastContextWindowMax: null,
-              rotateBeforeNextTurn: false,
+              sessionRef: { backend: "claude", ref: "conv-parked" },
+              metrics: { rotateBeforeNextTurn: false },
               limitEvaluation: "supported",
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -893,16 +883,11 @@ describe("graph workflow manager", () => {
             implementer: {
               lane: "implementer",
               contextId: "context-implement",
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               workflowConversationId: "conv-live",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-live",
-              },
-              lastContextTokens: null,
-              lastContextWindowMax: null,
-              rotateBeforeNextTurn: false,
+              sessionRef: { backend: "claude", ref: "conv-live" },
+              metrics: { rotateBeforeNextTurn: false },
               limitEvaluation: "supported",
               lastUsedAt: "2026-03-27T15:01:00.000Z",
             },
@@ -966,16 +951,11 @@ describe("graph workflow manager", () => {
           implementer: {
             lane: "implementer",
             contextId: "context-plan",
-            engine: "claude",
+            backend: "claude",
+            refKind: "conversation",
             workflowConversationId: "conv-parked",
-            sessionRef: {
-              engine: "claude",
-              lane: "implementer",
-              conversationId: "conv-parked",
-            },
-            lastContextTokens: null,
-            lastContextWindowMax: null,
-            rotateBeforeNextTurn: false,
+            sessionRef: { backend: "claude", ref: "conv-parked" },
+            metrics: { rotateBeforeNextTurn: false },
             limitEvaluation: "supported",
             lastUsedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -1396,17 +1376,17 @@ describe("graph workflow manager", () => {
         laneStates: {
           "context-plan": {
             implementer: {
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               lane: "implementer",
               contextId: "context-plan",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-1",
+              workflowConversationId: "conv-1",
+              sessionRef: { backend: "claude", ref: "conv-1" },
+              metrics: {
+                contextTokens: 10_000,
+                contextWindowMax: 200_000,
+                rotateBeforeNextTurn: false,
               },
-              lastContextTokens: 10_000,
-              lastContextWindowMax: 200_000,
-              rotateBeforeNextTurn: false,
               limitEvaluation: "disabled",
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -1445,7 +1425,7 @@ describe("graph workflow manager", () => {
     expect(execution.contextStates["context-plan"]?.status).toBe("ready");
     expect(execution.laneStates["context-plan"]?.["implementer"]).toMatchObject(
       {
-        rotateBeforeNextTurn: true,
+        metrics: { rotateBeforeNextTurn: true },
         lastUsedAt: "2026-03-27T15:07:00.000Z",
       },
     );
@@ -2718,7 +2698,7 @@ describe("graph workflow manager", () => {
       },
     });
 
-    const firstReason: import("@/lib/workflows/schemas").GraphWorkflowHaltReason =
+    const firstReason: import("@/lib/workflow-graph/schemas").GraphWorkflowHaltReason =
       {
         type: "recovery_error",
         message: "first",
@@ -2863,17 +2843,17 @@ describe("graph workflow manager", () => {
       laneStates: {
         "context-implement": {
           implementer: {
-            engine: "claude",
+            backend: "claude",
+            refKind: "conversation",
             lane: "implementer",
             contextId: "context-implement",
-            sessionRef: {
-              engine: "claude",
-              lane: "implementer",
-              conversationId: "conv-old",
+            workflowConversationId: "conv-old",
+            sessionRef: { backend: "claude", ref: "conv-old" },
+            metrics: {
+              contextTokens: 50_000,
+              contextWindowMax: 200_000,
+              rotateBeforeNextTurn: false,
             },
-            lastContextTokens: 50_000,
-            lastContextWindowMax: 200_000,
-            rotateBeforeNextTurn: false,
             limitEvaluation: "disabled",
             lastUsedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -3060,34 +3040,30 @@ describe("graph workflow manager", () => {
         laneStates: {
           "context-implement": {
             implementer: {
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               lane: "implementer",
               contextId: "context-implement",
-              sessionRef: {
-                engine: "claude",
-                lane: "implementer",
-                conversationId: "conv-impl",
+              workflowConversationId: "conv-impl",
+              sessionRef: { backend: "claude", ref: "conv-impl" },
+              metrics: {
+                contextTokens: 10,
+                contextWindowMax: 100,
+                rotateBeforeNextTurn: false,
               },
-              lastContextTokens: 10,
-              lastContextWindowMax: 100,
-              rotateBeforeNextTurn: false,
               limitEvaluation: "disabled",
               lastUsedAt: "2026-03-27T15:10:00.000Z",
             },
           },
           "context-plan": {
             context_validator: {
-              engine: "claude",
+              backend: "claude",
+              refKind: "conversation",
               lane: "context_validator",
               contextId: "context-plan",
-              sessionRef: {
-                engine: "claude",
-                lane: "context_validator",
-                conversationId: "conv-val",
-              },
-              lastContextTokens: null,
-              lastContextWindowMax: null,
-              rotateBeforeNextTurn: false,
+              workflowConversationId: "conv-val",
+              sessionRef: { backend: "claude", ref: "conv-val" },
+              metrics: { rotateBeforeNextTurn: false },
               limitEvaluation: "disabled",
               lastUsedAt: "2026-03-27T15:11:00.000Z",
             },
@@ -5768,17 +5744,17 @@ describe("graph workflow manager", () => {
             laneStates: {
               "context-plan": {
                 implementer: {
-                  engine: "claude",
+                  backend: "claude",
+                  refKind: "conversation",
                   lane: "implementer",
                   contextId: "context-plan",
-                  sessionRef: {
-                    engine: "claude",
-                    lane: "implementer",
-                    conversationId: "conv-prev",
+                  workflowConversationId: "conv-prev",
+                  sessionRef: { backend: "claude", ref: "conv-prev" },
+                  metrics: {
+                    contextTokens: 10_000,
+                    contextWindowMax: 200_000,
+                    rotateBeforeNextTurn: false,
                   },
-                  lastContextTokens: 10_000,
-                  lastContextWindowMax: 200_000,
-                  rotateBeforeNextTurn: false,
                   limitEvaluation: "disabled",
                   lastUsedAt: "2026-03-27T15:00:00.000Z",
                 },

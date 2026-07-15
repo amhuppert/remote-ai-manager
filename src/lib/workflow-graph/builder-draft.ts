@@ -1,10 +1,10 @@
 import type {
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowVisualLayout,
   GraphWorkflowTaskDefinition,
+  GraphWorkflowVisualLayout,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   validateWorkflowDefinition,
   type WorkflowGraphValidationError,

@@ -10,6 +10,7 @@ import {
   spawnedFromSchema,
 } from "@/lib/sessions/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
+import { createVersionedRowCache } from "@/lib/shared/versioned-row-cache";
 import { jsonOrNull, stableStringify } from "./serialization";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 type Db = InstanceType<typeof Database>;
@@ -34,10 +35,36 @@ interface SessionListItemRow {
   spawned_from: string | null;
 }
 
+/**
+ * Camel-case domain projection of one session-list row: the slim column set
+ * needed to derive a `SessionListItem`, mapped to domain vocabulary at the repo
+ * boundary. The heavy JSON columns are parsed here (`workflowEnvelopes`,
+ * `spawnedFrom`) so no snake_case row shape escapes into callers; the
+ * cross-entity derivation (status/prompt-count over the session's
+ * conversations) stays with the accessor that owns that data.
+ */
+export interface SessionListItemProjection {
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  targetBranch: string;
+  parentSessionName: string | null;
+  createdAt: string;
+  lastActivityAt: string;
+  archived: boolean;
+  finished: boolean;
+  source: SessionState["source"];
+  creationMode: SessionState["creationMode"];
+  tddEnabled: boolean;
+  hasActiveGraphWorkflow: boolean;
+  workflowEnvelopes: Record<string, unknown> | null;
+  spawnedFrom: SpawnedFrom | null;
+}
+
 export interface SessionsRepo {
   findByKey(projectPath: string, sessionName: string): SessionState | null;
   findByProject(projectPath: string): SessionState[];
-  findListItemsByProject(projectPath: string): SessionListItemRow[];
+  findListItemsByProject(projectPath: string): SessionListItemProjection[];
   findAll(): { projectPath: string; session: SessionState }[];
   upsert(projectPath: string, session: SessionState): void;
   delete(projectPath: string, sessionName: string): void;
@@ -558,6 +585,68 @@ function rowToDomain(rawRow: unknown): {
   };
 }
 
+/**
+ * Map one raw session-list SQL row to its camel-case domain projection. Parses
+ * the two JSON columns here so a snake_case row shape never crosses the repo
+ * boundary; a malformed `workflow_envelopes`/`spawned_from` value is logged and
+ * degraded to `null` rather than failing the whole list read (these columns are
+ * advisory for the slim list projection).
+ */
+function sessionListRowToProjection(
+  projectPath: string,
+  row: SessionListItemRow,
+): SessionListItemProjection {
+  let workflowEnvelopes: Record<string, unknown> | null = null;
+  if (row.workflow_envelopes !== null) {
+    try {
+      const candidate: unknown = JSON.parse(row.workflow_envelopes);
+      if (
+        candidate !== null &&
+        typeof candidate === "object" &&
+        !Array.isArray(candidate)
+      ) {
+        workflowEnvelopes = candidate as Record<string, unknown>;
+      }
+    } catch {
+      logger.warn("state-store.sessions.workflow_envelopes_parse_failed", {
+        projectPath,
+        sessionName: row.session_name,
+      });
+    }
+  }
+
+  let spawnedFrom: SpawnedFrom | null = null;
+  if (row.spawned_from !== null) {
+    try {
+      const parsed = spawnedFromSchema.safeParse(JSON.parse(row.spawned_from));
+      if (parsed.success) spawnedFrom = parsed.data;
+    } catch {
+      logger.warn("state-store.sessions.spawned_from_parse_failed", {
+        projectPath,
+        sessionName: row.session_name,
+      });
+    }
+  }
+
+  return {
+    sessionName: row.session_name,
+    worktreePath: row.worktree_path,
+    branchName: row.branch_name,
+    targetBranch: row.target_branch,
+    parentSessionName: row.parent_session_name,
+    createdAt: row.created_at,
+    lastActivityAt: row.last_activity_at,
+    archived: row.archived === 1,
+    finished: row.finished === 1,
+    source: row.source as SessionState["source"],
+    creationMode: row.creation_mode as SessionState["creationMode"],
+    tddEnabled: row.tdd_enabled === 1,
+    hasActiveGraphWorkflow: row.has_active_graph_workflow === 1,
+    workflowEnvelopes,
+    spawnedFrom,
+  };
+}
+
 function timed<T>(
   op: string,
   projectPath: string | undefined,
@@ -592,13 +681,16 @@ function rawSessionRowsEqual(
 
 export function createSessionsRepo(db: Db): SessionsRepo {
   type ParsedSessionRow = { projectPath: string; session: SessionState };
-  const findAllCache = new Map<
+  const cache = createVersionedRowCache<
     string,
-    { rawRow: Record<string, unknown>; parsed: ParsedSessionRow }
-  >();
-  let cacheVersion = 0;
-  let lastFindAllVersion = -1;
-  let lastFindAllResult: ParsedSessionRow[] = [];
+    Record<string, unknown>,
+    ParsedSessionRow
+  >({
+    keyOf: (row) =>
+      `${row.project_path as string} ${row.session_name as string}`,
+    rowsEqual: rawSessionRowsEqual,
+    parse: rowToDomain,
+  });
   const findByKeyStmt = db.prepare(
     `SELECT * FROM sessions
      WHERE project_path = ? AND session_name = ?
@@ -730,57 +822,30 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     },
     findListItemsByProject(projectPath) {
       return timed("findListItemsByProject", projectPath, undefined, () => {
-        return findListItemsByProjectStmt.all(
+        const rows = findListItemsByProjectStmt.all(
           projectPath,
         ) as SessionListItemRow[];
+        return rows.map((row) => sessionListRowToProjection(projectPath, row));
       });
     },
     findAll() {
-      return timed("findAll", undefined, undefined, () => {
-        if (cacheVersion === lastFindAllVersion) {
-          return lastFindAllResult;
-        }
-        const rows = findAllStmt.all() as Array<Record<string, unknown>>;
-        const out: ParsedSessionRow[] = new Array(rows.length);
-        const seenKeys = new Set<string>();
-        for (let i = 0; i < rows.length; i += 1) {
-          const row = rows[i]!;
-          const key = `${row.project_path as string}\u0000${row.session_name as string}`;
-          seenKeys.add(key);
-          const cached = findAllCache.get(key);
-          if (cached !== undefined && rawSessionRowsEqual(cached.rawRow, row)) {
-            out[i] = cached.parsed;
-            continue;
-          }
-          const result = rowToDomain(row);
-          const parsed: ParsedSessionRow = {
-            projectPath: result.projectPath,
-            session: result.session,
-          };
-          findAllCache.set(key, { rawRow: row, parsed });
-          out[i] = parsed;
-        }
-        if (findAllCache.size > seenKeys.size) {
-          for (const key of findAllCache.keys()) {
-            if (!seenKeys.has(key)) findAllCache.delete(key);
-          }
-        }
-        lastFindAllVersion = cacheVersion;
-        lastFindAllResult = out;
-        return out;
-      });
+      return timed("findAll", undefined, undefined, () =>
+        cache.readAll(
+          () => findAllStmt.all() as Array<Record<string, unknown>>,
+        ),
+      );
     },
     upsert(projectPath, session) {
       timed("upsert", projectPath, session.sessionName, () => {
         const bind = domainToSessionRow(projectPath, session);
         upsertStmt.run(bind);
-        cacheVersion += 1;
+        cache.bump();
       });
     },
     delete(projectPath, sessionName) {
       timed("delete", projectPath, sessionName, () => {
         deleteStmt.run(projectPath, sessionName);
-        cacheVersion += 1;
+        cache.bump();
       });
     },
     updateChangedColumns(projectPath, sessionName, changedColumns) {
@@ -796,7 +861,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
           bind[col] = changedColumns[col]!;
         }
         const info = stmt.run(bind);
-        if (info.changes > 0) cacheVersion += 1;
+        if (info.changes > 0) cache.bump();
         return info.changes > 0;
       });
     },
@@ -807,6 +872,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
           projectPath,
           sessionName,
         );
+        if (info.changes > 0) cache.bump();
         return info.changes > 0;
       });
     },
@@ -818,7 +884,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
           projectPath,
           sessionName,
         );
-        cacheVersion += 1;
+        cache.bump();
         return info.changes > 0;
       });
     },
@@ -839,7 +905,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
             projectPath,
             sessionName,
           );
-          cacheVersion += 1;
+          cache.bump();
           return info.changes > 0;
         },
       );

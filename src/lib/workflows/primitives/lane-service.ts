@@ -2,19 +2,22 @@
  * Lane service for the workflow primitive layer.
  *
  * Resolves the active continuity context for lane-backed agent calls and
- * applies post-turn outcomes back to lane state. Backend-specific outcome
- * fields are kept in discriminated branches so the service never invents
- * unsupported metrics — Codex never carries `contextTokens`/`contextWindowMax`,
- * Claude never carries Codex `lastTurnUsage`.
+ * applies post-turn outcomes back to lane state. The outcome shape is
+ * backend-neutral: metric fields are optional and merge onto the lane's
+ * normalized metrics, so the service never invents unsupported values — a
+ * backend that reports no context-window occupancy simply records none, and
+ * the context-limit gate reads metric availability from the backend's
+ * registered descriptor rather than from its identity.
  *
  * The service is feature-neutral: it does not create conversations or open
- * Codex threads. Callers seed a lane via `initialize()` once they have the
- * backend reference, then route post-turn metadata through `recordOutcome()`.
+ * backend threads. Callers seed a lane via `initialize()` once they have the
+ * continuity handle, then route post-turn metadata through `recordOutcome()`.
  */
 
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { agentBackendSchema } from "@/lib/shared/schemas";
+import { continuationDispositionSchema } from "@/lib/agent-backends/errors";
+import { agentBackendIdShapeSchema } from "@/lib/shared/schemas";
 import {
   evaluateContextLimit,
   type ContextLimitEvaluation,
@@ -22,28 +25,26 @@ import {
 import type { LaneStore } from "./lane-store";
 import {
   laneStateSchema,
-  type CodexLaneTurnUsage,
+  laneTurnUsageSchema,
   type LaneRef,
   type LaneState,
 } from "./lane-vocabulary";
 
 const logger = createLogger("workflows.primitives.lane.service");
 
-const codexLaneTurnUsageSchema = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  cachedInputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-});
-
-const claudeLaneOutcomeSchema = z
+const laneOutcomeSchema = z
   .object({
-    backend: z.literal("claude"),
+    /** Owning backend; must match the lane's backend (guarded at apply time). */
+    backend: agentBackendIdShapeSchema,
+    /** Updated continuity handle reported by the turn, when one was minted. */
+    ref: z.string().min(1).optional(),
     contextTokens: z.number().int().nonnegative().optional(),
     contextWindowMax: z.number().int().positive().optional(),
     contextLimitTokens: z.number().int().positive().optional(),
-    conversationId: z.string().min(1).optional(),
+    lastTurnUsage: laneTurnUsageSchema.nullable().optional(),
     staleSession: z.boolean().optional(),
-    failed: z.boolean().optional(),
+    /** Adapter verdict for the lane's continuation after this turn. */
+    continuationDisposition: continuationDispositionSchema.optional(),
     /**
      * True when the turn auto-compacted. Outcome-scoped (not persisted into
      * lane metrics): it enters the rotation decision as a separate input
@@ -52,22 +53,6 @@ const claudeLaneOutcomeSchema = z
     compactedThisTurn: z.boolean().optional(),
   })
   .strict();
-
-const codexLaneOutcomeSchema = z
-  .object({
-    backend: z.literal("codex"),
-    threadId: z.string().min(1).optional(),
-    lastTurnUsage: codexLaneTurnUsageSchema.nullable().optional(),
-    contextLimitTokens: z.number().int().positive().optional(),
-    staleSession: z.boolean().optional(),
-    failed: z.boolean().optional(),
-  })
-  .strict();
-
-const laneOutcomeSchema = z.discriminatedUnion("backend", [
-  claudeLaneOutcomeSchema,
-  codexLaneOutcomeSchema,
-]);
 export type LaneOutcome = z.infer<typeof laneOutcomeSchema>;
 
 export interface LaneServiceDeps {
@@ -113,27 +98,18 @@ export function createLaneService(deps: LaneServiceDeps): LaneService {
     },
 
     async recordOutcome(ref, outcome) {
-      const parsedOutcome = laneOutcomeSchema.parse(outcome);
       const existing = await store.read(ref);
       if (!existing) {
         throw new Error(
           `lane ${ref.workflowId}/${ref.laneId} is not initialized; call initialize() first`,
         );
       }
-      // Re-validate parity since outside callers might bypass the schema.
-      agentBackendSchema.parse(existing.backend);
-      if (parsedOutcome.backend !== existing.backend) {
-        throw new Error(
-          `lane outcome backend (${parsedOutcome.backend}) does not match lane backend (${existing.backend})`,
-        );
-      }
 
-      const { state, contextLimitEvaluation } = applyOutcome(
+      const { state: reparsed, contextLimitEvaluation } = deriveLaneOutcome(
         existing,
-        parsedOutcome,
+        outcome,
         now(),
       );
-      const reparsed = laneStateSchema.parse(state);
       await store.write(reparsed);
 
       logger.debug("lane.service.record_outcome", {
@@ -142,14 +118,39 @@ export function createLaneService(deps: LaneServiceDeps): LaneService {
         backend: reparsed.backend,
         rotateBeforeNextTurn: reparsed.metrics.rotateBeforeNextTurn,
         contextLimitEvaluation,
-        staleSession:
-          reparsed.backendState.backend === "claude"
-            ? reparsed.backendState.staleSession
-            : reparsed.backendState.staleSession,
+        staleSession: reparsed.staleSession,
       });
       return { state: reparsed, contextLimitEvaluation };
     },
   };
+}
+
+/**
+ * The lane service's post-turn decision as a pure function: it owns the
+ * backend-match guard, the context-limit verdict, and the next lane state.
+ * Callers that persist through their own atomic critical section (the graph
+ * lane continuity records its outcome and its graph-only `limitEvaluation` in
+ * one execution mutation) invoke this against a lane state they have already
+ * read inside that section, so the decision stays here while the durable write
+ * happens once at the call site.
+ */
+export function deriveLaneOutcome(
+  existing: LaneState,
+  outcome: LaneOutcome,
+  timestamp: string,
+): RecordOutcomeResult {
+  const parsedOutcome = laneOutcomeSchema.parse(outcome);
+  if (parsedOutcome.backend !== existing.backend) {
+    throw new Error(
+      `lane outcome backend (${parsedOutcome.backend}) does not match lane backend (${existing.backend})`,
+    );
+  }
+  const { state, contextLimitEvaluation } = applyOutcome(
+    existing,
+    parsedOutcome,
+    timestamp,
+  );
+  return { state: laneStateSchema.parse(state), contextLimitEvaluation };
 }
 
 function applyOutcome(
@@ -157,56 +158,28 @@ function applyOutcome(
   outcome: LaneOutcome,
   timestamp: string,
 ): RecordOutcomeResult {
-  if (outcome.backend === "claude") {
-    return applyClaudeOutcome(existing, outcome, timestamp);
-  }
-  return applyCodexOutcome(existing, outcome, timestamp);
-}
-
-function applyClaudeOutcome(
-  existing: LaneState,
-  outcome: Extract<LaneOutcome, { backend: "claude" }>,
-  timestamp: string,
-): RecordOutcomeResult {
-  if (existing.backendState.backend !== "claude") {
-    throw new Error("lane backendState branch mismatched at outcome time");
-  }
-  if (existing.metrics.backend !== "claude") {
-    throw new Error("lane metrics branch mismatched at outcome time");
-  }
-
   const limit =
     outcome.contextLimitTokens ?? existing.policy.contextLimitTokens;
 
   const evaluation = evaluateContextLimit({
     metrics: {
-      backend: "claude",
+      backend: existing.backend,
       ...(outcome.contextTokens !== undefined
         ? { contextTokens: outcome.contextTokens }
         : {}),
       rotateBeforeNextTurn: existing.metrics.rotateBeforeNextTurn,
     },
     policy: { contextLimitTokens: limit },
-    compactedThisTurn: outcome.compactedThisTurn,
+    ...(outcome.compactedThisTurn !== undefined
+      ? { compactedThisTurn: outcome.compactedThisTurn }
+      : {}),
   });
-  const nextRotate = evaluation === "rotation_required";
 
-  const nextBackendState: LaneState["backendState"] = {
-    backend: "claude",
-    ...(outcome.conversationId !== undefined
-      ? { conversationId: outcome.conversationId }
-      : existing.backendState.conversationId !== undefined
-        ? { conversationId: existing.backendState.conversationId }
-        : {}),
-    ...(outcome.staleSession !== undefined
-      ? { staleSession: outcome.staleSession }
-      : existing.backendState.staleSession !== undefined
-        ? { staleSession: existing.backendState.staleSession }
-        : {}),
-  };
+  const nextRotate =
+    evaluation === "rotation_required" ||
+    outcome.continuationDisposition === "clear";
 
   const nextMetrics: LaneState["metrics"] = {
-    backend: "claude",
     ...(outcome.contextTokens !== undefined
       ? { contextTokens: outcome.contextTokens }
       : existing.metrics.contextTokens !== undefined
@@ -217,69 +190,29 @@ function applyClaudeOutcome(
       : existing.metrics.contextWindowMax !== undefined
         ? { contextWindowMax: existing.metrics.contextWindowMax }
         : {}),
+    ...(outcome.lastTurnUsage !== undefined
+      ? { lastTurnUsage: outcome.lastTurnUsage }
+      : existing.metrics.lastTurnUsage !== undefined
+        ? { lastTurnUsage: existing.metrics.lastTurnUsage }
+        : {}),
     rotateBeforeNextTurn: nextRotate,
   };
+
+  const nextStaleSession =
+    outcome.staleSession !== undefined
+      ? outcome.staleSession
+      : existing.staleSession;
 
   return {
     state: {
       ...existing,
-      backendState: nextBackendState,
+      ref: outcome.ref ?? existing.ref,
+      ...(nextStaleSession !== undefined
+        ? { staleSession: nextStaleSession }
+        : {}),
       metrics: nextMetrics,
       lastUsedAt: timestamp,
     },
     contextLimitEvaluation: evaluation,
-  };
-}
-
-function applyCodexOutcome(
-  existing: LaneState,
-  outcome: Extract<LaneOutcome, { backend: "codex" }>,
-  timestamp: string,
-): RecordOutcomeResult {
-  if (existing.backendState.backend !== "codex") {
-    throw new Error("lane backendState branch mismatched at outcome time");
-  }
-  if (existing.metrics.backend !== "codex") {
-    throw new Error("lane metrics branch mismatched at outcome time");
-  }
-
-  const limit =
-    outcome.contextLimitTokens ?? existing.policy.contextLimitTokens;
-
-  const nextBackendState: LaneState["backendState"] = {
-    backend: "codex",
-    ...(outcome.threadId !== undefined
-      ? { threadId: outcome.threadId }
-      : existing.backendState.threadId !== undefined
-        ? { threadId: existing.backendState.threadId }
-        : {}),
-    ...(outcome.staleSession !== undefined
-      ? { staleSession: outcome.staleSession }
-      : existing.backendState.staleSession !== undefined
-        ? { staleSession: existing.backendState.staleSession }
-        : {}),
-  };
-
-  const nextLastTurnUsage: CodexLaneTurnUsage | null | undefined =
-    outcome.lastTurnUsage !== undefined
-      ? outcome.lastTurnUsage
-      : existing.metrics.lastTurnUsage;
-
-  const nextMetrics: LaneState["metrics"] = {
-    backend: "codex",
-    ...(nextLastTurnUsage !== undefined
-      ? { lastTurnUsage: nextLastTurnUsage }
-      : {}),
-    rotateBeforeNextTurn: outcome.failed === true,
-  };
-
-  return {
-    state: {
-      ...existing,
-      backendState: nextBackendState,
-      metrics: nextMetrics,
-      lastUsedAt: timestamp,
-    },
-    contextLimitEvaluation: limit === undefined ? "disabled" : "unsupported",
   };
 }

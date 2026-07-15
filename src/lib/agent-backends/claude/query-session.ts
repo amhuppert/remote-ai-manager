@@ -56,6 +56,7 @@ import {
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/shared/sdk-env";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("query-session");
 
@@ -102,6 +103,44 @@ export interface BackgroundWaitOutcome {
 
 type TurnEmit = (event: string, data: unknown) => void;
 
+/**
+ * The slice of the SDK `Query` surface QuerySession and its consumers actually
+ * use: the message pump iterates it, teardown closes it, and the conversation
+ * runtime issues these control-plane requests through the `query` getter.
+ * Structural (rather than the full `Query` interface) so the conformance
+ * suite's fake provider port can implement it without type fictions.
+ */
+export interface ClaudeSdkQueryPort extends AsyncIterable<SDKMessage> {
+  close(): void;
+  supportedCommands(): ReturnType<Query["supportedCommands"]>;
+  supportedAgents(): ReturnType<Query["supportedAgents"]>;
+  mcpServerStatus(): ReturnType<Query["mcpServerStatus"]>;
+  applyFlagSettings(
+    settings: Parameters<Query["applyFlagSettings"]>[0],
+  ): Promise<void>;
+  /** Callers ignore the reload response; typed loosely so the real `Query`
+   * (which returns the full reload summary) satisfies the port. */
+  reloadPlugins(): Promise<unknown>;
+}
+
+export type CreateSdkQuery = (args: {
+  prompt: AsyncIterable<SDKUserMessage>;
+  options: Options;
+}) => ClaudeSdkQueryPort;
+
+const defaultCreateSdkQuery: CreateSdkQuery = (args) => sdkQuery(args);
+
+let createSdkQueryImpl: CreateSdkQuery = defaultCreateSdkQuery;
+
+/**
+ * Test-only provider-port seam: replaces the SDK `query()` call with a fake
+ * provider port so the conformance suite can drive the REAL QuerySession pump
+ * and Claude runtime without a subprocess. Pass null to restore the SDK.
+ */
+export function _setSdkQueryForTesting(impl: CreateSdkQuery | null): void {
+  createSdkQueryImpl = impl ?? defaultCreateSdkQuery;
+}
+
 export interface QuerySession {
   /** Current health status */
   readonly status: "alive" | "dead";
@@ -116,7 +155,7 @@ export interface QuerySession {
    * iterable completes, dooming the subprocess. Deliver through sendPrompt /
    * queueUserInput, which feed the session's persistent input channel.
    */
-  readonly query: Query;
+  readonly query: ClaudeSdkQueryPort;
 
   /** The current turn options (read by canUseTool) */
   readonly currentTurnOptions: TurnOptions | null;
@@ -416,7 +455,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
   };
 
-  const q: Query = sdkQuery({
+  const q: ClaudeSdkQueryPort = createSdkQueryImpl({
     prompt: inputChannel(),
     options: sdkOptions,
   });
@@ -801,7 +840,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     } catch (err) {
       logger.error("query-session.background_tasks_lost_callback_failed", {
         conversationId: options.conversationId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   }
@@ -840,7 +879,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       }
     } catch (err) {
       if (status === "alive") {
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsg = getErrorMessage(err);
         const stderr =
           stderrChunks.length > 0 ? stderrChunks.join("") : undefined;
         logger.error("query-session.pump_error", {

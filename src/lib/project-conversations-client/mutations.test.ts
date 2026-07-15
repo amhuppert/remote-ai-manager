@@ -10,7 +10,6 @@ import {
   useCreateProjectConversation,
   useCloseProjectConversation,
   useReopenProjectConversation,
-  useRenameProjectConversation,
   useMarkProjectConversationReadMutation,
   useSendProjectPrompt,
 } from "./mutations";
@@ -86,7 +85,7 @@ describe("project conversation lifecycle mutations", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("create posts to the create route and invalidates list + open-count", async () => {
+  it("create posts to the create route and invalidates the list", async () => {
     fetchSpy.mockResolvedValue(jsonResponse(okConversation, 201));
     const client = new QueryClient();
     const spy = vi.spyOn(client, "invalidateQueries");
@@ -103,9 +102,6 @@ describe("project conversation lifecycle mutations", () => {
     const invalidatedKeys = spy.mock.calls.map((c) => c[0]?.queryKey);
     expect(invalidatedKeys).toContainEqual(
       projectConversationKeys.list("proj"),
-    );
-    expect(invalidatedKeys).toContainEqual(
-      projectConversationKeys.openCount("proj"),
     );
   });
 
@@ -134,24 +130,6 @@ describe("project conversation lifecycle mutations", () => {
     const [url, init] = fetchSpy.mock.calls[0]!;
     expect(url).toBe("/api/projects/proj/conversations/c9/open");
     expect(JSON.parse(init?.body as string)).toEqual({ open: true });
-  });
-
-  it("rename PATCHes the new name and invalidates the list", async () => {
-    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
-    const client = new QueryClient();
-    const spy = vi.spyOn(client, "invalidateQueries");
-    const { result } = renderHook(() => useRenameProjectConversation("proj"), {
-      wrapper: wrapperFor(client),
-    });
-    await act(async () => {
-      await result.current.mutateAsync({ conversationId: "c1", name: "New" });
-    });
-    const [url, init] = fetchSpy.mock.calls[0]!;
-    expect(url).toBe("/api/projects/proj/conversations/c1/rename");
-    expect(JSON.parse(init?.body as string)).toEqual({ name: "New" });
-    expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(
-      projectConversationKeys.list("proj"),
-    );
   });
 });
 
@@ -215,14 +193,6 @@ describe("optimistic lifecycle updates", () => {
     return client;
   }
 
-  function listNames(client: QueryClient): (string | null)[] {
-    const list =
-      client.getQueryData<ConversationState[]>(
-        projectConversationKeys.list("proj"),
-      ) ?? [];
-    return list.map((c) => c.name);
-  }
-
   function openFlag(client: QueryClient, id: string): boolean | undefined {
     const list =
       client.getQueryData<ConversationState[]>(
@@ -254,9 +224,6 @@ describe("optimistic lifecycle updates", () => {
     const invalidatedKeys = spy.mock.calls.map((c) => c[0]?.queryKey);
     expect(invalidatedKeys).toContainEqual(
       projectConversationKeys.list("proj"),
-    );
-    expect(invalidatedKeys).toContainEqual(
-      projectConversationKeys.openCount("proj"),
     );
   });
 
@@ -296,59 +263,6 @@ describe("optimistic lifecycle updates", () => {
       result.current.mutate("c1");
     });
     await waitFor(() => expect(openFlag(client, "c1")).toBe(true));
-  });
-
-  it("rename patches the list and active caches before the server responds, then invalidates on settle", async () => {
-    const deferred = deferredResponse();
-    fetchSpy.mockReturnValue(deferred.promise);
-    const client = seededClient();
-    const spy = vi.spyOn(client, "invalidateQueries");
-    const { result } = renderHook(() => useRenameProjectConversation("proj"), {
-      wrapper: wrapperFor(client),
-    });
-
-    act(() => {
-      result.current.mutate({ conversationId: "c1", name: "Renamed" });
-    });
-    await waitFor(() => expect(listNames(client)).toEqual(["Renamed", "c2"]));
-    const active = client.getQueryData<ActiveConversationsResponse>(
-      conversationKeys.active(),
-    );
-    expect(active?.conversations[0]?.name).toBe("Renamed");
-
-    await act(async () => {
-      deferred.resolve(jsonResponse({ ok: true }));
-    });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    const invalidatedKeys = spy.mock.calls.map((c) => c[0]?.queryKey);
-    expect(invalidatedKeys).toContainEqual(
-      projectConversationKeys.list("proj"),
-    );
-    expect(invalidatedKeys).toContainEqual(conversationKeys.active());
-  });
-
-  it("rename rolls both caches back when the server rejects", async () => {
-    const deferred = deferredResponse();
-    fetchSpy.mockReturnValue(deferred.promise);
-    const client = seededClient();
-    const { result } = renderHook(() => useRenameProjectConversation("proj"), {
-      wrapper: wrapperFor(client),
-    });
-
-    act(() => {
-      result.current.mutate({ conversationId: "c1", name: "Renamed" });
-    });
-    await waitFor(() => expect(listNames(client)).toEqual(["Renamed", "c2"]));
-
-    await act(async () => {
-      deferred.reject(new Error("boom"));
-    });
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(listNames(client)).toEqual(["c1", "c2"]);
-    const active = client.getQueryData<ActiveConversationsResponse>(
-      conversationKeys.active(),
-    );
-    expect(active?.conversations[0]?.name).toBe("c1");
   });
 
   it("mark-read clears unread in the active cache before the server responds, then invalidates on settle", async () => {

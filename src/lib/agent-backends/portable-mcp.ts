@@ -39,3 +39,52 @@ export interface McpApplyResult {
   droppedFields: string[];
   errors: Record<string, string>;
 }
+
+export type PortableMcpToolDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason: "server-disabled" | "tool-disabled" | "tool-not-in-allowlist";
+    };
+
+/**
+ * Neutral per-tool filter decision over an emitted portable MCP config.
+ *
+ * Denial reasons mirror the spec:
+ * - `server-disabled` — `enabled === false` on the emitted entry
+ * - `tool-disabled` — tool listed in `disabledTools` (takes precedence over an
+ *   allowlist)
+ * - `tool-not-in-allowlist` — `enabledTools` is non-empty and the tool is not
+ *   listed
+ *
+ * When the config is `null` (no emitted set yet) or the server key is absent
+ * from the emitted set (out-of-scope for this filter), the tool is allowed so
+ * unrelated tools are never falsely denied.
+ */
+export function evaluatePortableMcpToolFilter(
+  config: PortableMcpConfig | null,
+  input: { serverKey: string; toolName: string },
+): PortableMcpToolDecision {
+  if (!config) return { allowed: true };
+
+  const server = config.servers.find((s) => s.id === input.serverKey);
+  if (!server) return { allowed: true };
+
+  if (server.enabled === false) {
+    return { allowed: false, reason: "server-disabled" };
+  }
+
+  if (server.disabledTools && server.disabledTools.includes(input.toolName)) {
+    return { allowed: false, reason: "tool-disabled" };
+  }
+
+  if (
+    server.enabledTools &&
+    server.enabledTools.length > 0 &&
+    !server.enabledTools.includes(input.toolName)
+  ) {
+    return { allowed: false, reason: "tool-not-in-allowlist" };
+  }
+
+  return { allowed: true };
+}

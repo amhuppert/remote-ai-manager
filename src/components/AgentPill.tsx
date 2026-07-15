@@ -1,4 +1,5 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import { cn } from "@/lib/ui/cn";
 
 interface AgentPillProps {
@@ -6,11 +7,18 @@ interface AgentPillProps {
   size?: "sm" | "md";
 }
 
-const agentColorClass: Record<AgentBackendId, string> = {
-  claude: "bg-cyan-glow text-cyan border border-solid border-cyan-glow-strong",
-  codex:
+// Identity color keyed by the catalog's design-system tone token, not by
+// backend id — the catalog owns which backend maps to which tone.
+const toneColorClass: Record<string, string> = {
+  cyan: "bg-cyan-glow text-cyan border border-solid border-cyan-glow-strong",
+  violet:
     "bg-violet-glow text-violet border border-solid border-violet-glow-strong",
 };
+
+// An id the catalog does not know renders flagged-neutral rather than
+// borrowing another backend's identity color.
+const unknownColorClass =
+  "bg-bg-raised text-text-secondary border border-solid border-border-default";
 
 const sizeClass: Record<"sm" | "md", string> = {
   md: "text-[0.68rem] px-[8px] py-[2px] gap-[5px]",
@@ -28,14 +36,18 @@ export default function AgentPill({
   backend,
   size = "md",
 }: AgentPillProps): React.JSX.Element {
+  const entry = findBackendCatalogEntry(backend);
+  const colorClass =
+    (entry ? toneColorClass[entry.toneToken] : undefined) ?? unknownColorClass;
   return (
     <span
       className={cn(
         "agent-pill inline-flex shrink-0 items-center rounded-full font-mono font-semibold tracking-[0.02em] whitespace-nowrap lowercase max-768:hidden",
         sizeClass[size],
-        agentColorClass[backend],
+        colorClass,
       )}
       data-agent={backend}
+      data-agent-unknown={entry ? undefined : "true"}
     >
       <span
         className={cn(
@@ -43,7 +55,7 @@ export default function AgentPill({
           dotSizeClass[size],
         )}
       />
-      {backend}
+      {entry?.label ?? backend}
     </span>
   );
 }

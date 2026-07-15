@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { truncate } from "@/lib/shared/truncate";
+
 // Canonical worktree mirror location for the active charter (R7/R8). The
 // service materializes the full charter here on activation; the digest path
 // points agents at this file for the untruncated content.
@@ -75,13 +77,6 @@ export interface AlignmentInjection {
   text: string;
 }
 
-function truncate(value: string, budget: number): string {
-  if (value.length <= budget) {
-    return value;
-  }
-  return `${value.slice(0, budget - 1).trimEnd()}…`;
-}
-
 /**
  * Render the governing-context section for an active charter. Below
  * ALIGNMENT_INLINE_THRESHOLD the full content is inlined; above it, a bounded
@@ -101,7 +96,10 @@ export function renderAlignmentPromptSection(
   return [
     GOVERNING_PREAMBLE,
     "## Charter digest (excerpt)",
-    truncate(content, DIGEST_BODY_BUDGET),
+    truncate(content, DIGEST_BODY_BUDGET, {
+      countEllipsisInBudget: true,
+      trimEnd: true,
+    }),
     `This is a digest. Read the full charter at \`${filePath}\` for the complete governing content.`,
   ].join("\n\n");
 }

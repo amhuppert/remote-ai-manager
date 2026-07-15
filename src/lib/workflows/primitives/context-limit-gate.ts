@@ -3,15 +3,16 @@
  *
  * Decides whether a lane should rotate before the next turn based on the
  * workflow's context-limit policy and the metrics that the lane's backend
- * actually exposes. The shared lane vocabulary already keeps Claude vs Codex
- * metrics in discriminated branches, so the gate trusts those branches and
- * never invents context-window numbers a backend cannot supply.
+ * actually exposes. Whether a backend can report context occupancy is read
+ * from its registered descriptor (`conversation.capabilities
+ * .contextWindowMetrics`) — never from backend identity — so a newly
+ * registered backend flows through this gate with zero edits here.
  *
  * Outcomes route through the shared `GateResult` vocabulary:
  *  - `pass` with `evaluation: "disabled"` when no `contextLimitTokens` policy
  *    is configured for the lane.
  *  - `pass` with `evaluation: "unsupported"` when a policy is configured but
- *    the backend does not expose context metrics (Codex today).
+ *    the backend's descriptor declares no context-window metrics.
  *  - `fail` with `evaluation: "rotation_required"` when the turn auto-compacted
  *    (`compactedThisTurn`) under a configured limit — compaction deflates the
  *    occupancy metric, so the reading can no longer be trusted below the limit.
@@ -26,26 +27,29 @@
  */
 
 import { z } from "zod";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   gateFail,
   gatePass,
   type GateFailResult,
   type GatePassResult,
 } from "./gate-vocabulary";
-import type { LanePolicy, LaneMetrics } from "./lane-vocabulary";
+import type { LanePolicy } from "./lane-vocabulary";
 
 /**
  * The full taxonomy of context-limit decisions. Ordered by capability rather
  * than by the branch precedence used inside `evaluateContextLimit`:
  *
  *  - `disabled` — no `contextLimitTokens` policy configured.
- *  - `unsupported` — a policy is set but the backend cannot report context
- *    occupancy (Codex today).
+ *  - `unsupported` — a policy is set but the backend's descriptor declares
+ *    it cannot report context occupancy.
  *  - `rotation_required` (compaction) — the optional `compactedThisTurn` input
  *    is true under a configured limit; the occupancy metric is masked by the
  *    auto-compaction, so the branch fires before `metrics_unavailable` and the
  *    numeric comparison, but after `disabled`/`unsupported` so a disabled
- *    feature never rotates and Codex stays honestly unsupported.
+ *    feature never rotates and a metrics-less backend stays honestly
+ *    unsupported.
  *  - `metrics_unavailable` — the backend supports occupancy metrics but has
  *    not yet recorded a `contextTokens` value.
  *  - `no_rotation` — occupancy is at or below the configured limit.
@@ -63,25 +67,44 @@ export type ContextLimitEvaluation = z.infer<
   typeof contextLimitEvaluationSchema
 >;
 
+/**
+ * Backend-neutral projection of the lane metrics the gate needs. Every
+ * `LaneMetrics` branch is structurally assignable; branches without an
+ * occupancy metric simply carry no `contextTokens`.
+ */
+export interface ContextLimitMetrics {
+  backend: AgentBackendId;
+  contextTokens?: number;
+  rotateBeforeNextTurn: boolean;
+}
+
 export interface RunContextLimitGateInput {
-  metrics: LaneMetrics;
+  metrics: ContextLimitMetrics;
   policy: Pick<LanePolicy, "contextLimitTokens"> | LanePolicy;
 }
 
 export type ContextLimitGateResult = GatePassResult | GateFailResult;
 
+function backendSupportsContextMetrics(backend: AgentBackendId): boolean {
+  return (
+    getBackendDescriptor(backend).conversation?.capabilities
+      .contextWindowMetrics === true
+  );
+}
+
 /**
- * Pure decision function: given a lane's metrics and its context-limit policy,
- * classify whether the lane must rotate. The branch order is significant — an
+ * Decision function: given a lane's metrics and its context-limit policy,
+ * classify whether the lane must rotate. Metric support is read from the
+ * backend's registered descriptor. The branch order is significant — an
  * already-flagged `rotateBeforeNextTurn` sticks regardless of occupancy, and a
- * missing policy short-circuits before any backend/occupancy inspection. The
- * optional, outcome-scoped `compactedThisTurn` forces rotation when a turn
+ * missing policy short-circuits before any capability/occupancy inspection.
+ * The optional, outcome-scoped `compactedThisTurn` forces rotation when a turn
  * auto-compacted under a configured limit — after `disabled`/`unsupported` so
  * those short-circuits win, but before the occupancy checks the compaction
  * would otherwise mask.
  */
 export function evaluateContextLimit(input: {
-  metrics: LaneMetrics;
+  metrics: ContextLimitMetrics;
   policy: Pick<LanePolicy, "contextLimitTokens">;
   compactedThisTurn?: boolean;
 }): ContextLimitEvaluation {
@@ -96,7 +119,7 @@ export function evaluateContextLimit(input: {
     return "disabled";
   }
 
-  if (metrics.backend === "codex") {
+  if (!backendSupportsContextMetrics(metrics.backend)) {
     return "unsupported";
   }
 
@@ -120,8 +143,7 @@ export function runContextLimitGate(
 ): ContextLimitGateResult {
   const { metrics, policy } = input;
   const limit = policy.contextLimitTokens;
-  const contextTokens =
-    metrics.backend === "claude" ? metrics.contextTokens : undefined;
+  const contextTokens = metrics.contextTokens;
   const evaluation = evaluateContextLimit({ metrics, policy });
 
   switch (evaluation) {

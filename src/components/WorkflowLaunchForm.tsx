@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useRef, useState, type Ref } from "react";
-import type { ParameterDeclaration } from "@/lib/workflows/schemas";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import { Button } from "@/components/ui/Button";
 import {
   MultilineInput,

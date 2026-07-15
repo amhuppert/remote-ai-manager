@@ -1,7 +1,7 @@
 /**
  * Section 4 — production-path verification.
  *
- * The companion `section-4-end-to-end.test.ts` exercises `publishSessionStatus`
+ * The companion `section-4-end-to-end.test.ts` exercises `publishEvent`
  * and `createDefaultSessionArtifactRegistry` in isolation. These tests instead
  * exercise the **migrated production publishers and artifact producers** and
  * prove that, with no broadcast/registry overrides, they:
@@ -35,12 +35,12 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 import {
-  publishSessionStatus,
-  setDefaultSessionStatusBusBroadcastForTesting,
-  subscribeSessionStatus,
-  _resetDefaultSessionStatusBusForTesting,
-} from "./default-session-status-bus";
-import type { StatusBusEnvelope } from "./status-bus";
+  publishEvent,
+  setPublicationBroadcastForTesting,
+  subscribeLifecycle,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
+import type { StatusBusEnvelope } from "@/lib/events/status-bus";
 import type {
   ArtifactRegistry,
   ArtifactRecord,
@@ -62,7 +62,7 @@ import {
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/actor-implementations";
+import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/pre-turn/focus-memory";
 
 interface CapturedRegistryCall {
   type: "write" | "writeOptional" | "register";
@@ -111,23 +111,23 @@ describe("section 4 production paths — migrated publishers go through the shar
   let workingDir: string;
 
   beforeEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     workingDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "section4-prod-paths-"),
     );
   });
 
   afterEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
-  it("the queue service enqueue broadcasts its message-queued event through the shared default session status bus (envelope to subscribers, payload to wire)", async () => {
+  it("the queue service enqueue broadcasts its message-queued event through the publication module (wire delivery only — message-queued is not a lifecycle event)", async () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const envelopes: StatusBusEnvelope[] = [];
-    const unsubscribe = subscribeSessionStatus((envelope) => {
+    const unsubscribe = subscribeLifecycle((envelope) => {
       envelopes.push(envelope);
     });
 
@@ -161,7 +161,7 @@ describe("section 4 production paths — migrated publishers go through the shar
       },
       // Route this production broadcast through the REAL shared default bus.
       broadcast: (event) => {
-        publishSessionStatus(event);
+        publishEvent(event);
       },
       now() {
         return "2026-04-28T00:00:00.000Z";
@@ -197,20 +197,17 @@ describe("section 4 production paths — migrated publishers go through the shar
     expect(wireEvent.message?.id).toBe("queued-1");
     expect(wireEvent.message?.status).toBe("pending");
 
-    expect(envelopes).toHaveLength(1);
-    const envelope = envelopes[0];
-    expect(envelope?.scope).toBe("conversation");
-    expect(envelope?.scopeId).toBe("conv-prod-1");
-    expect(envelope?.status).toBe("running");
-    expect(envelope?.payload).toEqual(wireEvent);
+    // message-queued is outside the enumerated lifecycle set: the wire gets
+    // the raw event, in-process lifecycle subscribers get nothing.
+    expect(envelopes).toEqual([]);
   });
 
   it("graph workflow execution event publisher routes its events through the shared default session status bus when no broadcast override is supplied", () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const envelopes: StatusBusEnvelope[] = [];
-    const unsubscribe = subscribeSessionStatus((envelope) => {
+    const unsubscribe = subscribeLifecycle((envelope) => {
       envelopes.push(envelope);
     });
 
@@ -287,7 +284,6 @@ describe("section 4 production paths — migrated publishers go through the shar
     expect(call.type).toBe("write");
     const req = call.request as ArtifactWriteRequest;
     expect(req.kind).toBe("validation_log");
-    expect(req.required).toBe(true);
     expect(req.audience).toBe("internal_log");
     expect(req.relativePath).toMatch(
       /^\.cc\/workflow\/exec-prod-1\/pre-merge-\d{8}T\d{6}Z\.log$/,
@@ -454,16 +450,16 @@ describe("section 4 production paths — migrated publishers go through the shar
 
   it("debug-log API publishers go through the shared default session status bus when posting debug-log-received events", () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const envelopes: StatusBusEnvelope[] = [];
-    const unsubscribe = subscribeSessionStatus((envelope) => {
+    const unsubscribe = subscribeLifecycle((envelope) => {
       envelopes.push(envelope);
     });
 
-    // Simulate the API route's call. The route imports `publishSessionStatus`
+    // Simulate the API route's call. The route imports `publishEvent`
     // and calls it with a debug-log-received SSEEvent.
-    const outcome = publishSessionStatus({
+    const outcome = publishEvent({
       type: "debug-log-received",
       projectName: "p",
       sessionName: "s",
@@ -487,14 +483,14 @@ describe("section 4 production paths — migrated publishers go through the shar
 
   it("background job publishers route through the shared default session status bus for job-status events without an explicit broadcast override", () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const envelopes: StatusBusEnvelope[] = [];
-    const unsubscribe = subscribeSessionStatus((envelope) => {
+    const unsubscribe = subscribeLifecycle((envelope) => {
       envelopes.push(envelope);
     });
 
-    const outcome = publishSessionStatus({
+    const outcome = publishEvent({
       type: "job-status",
       jobType: "merge",
       status: "running",

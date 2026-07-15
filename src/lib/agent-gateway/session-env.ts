@@ -20,7 +20,7 @@ const logger = createLogger("session-env");
  * read is a falsy check, so "" behaves exactly like unset.
  */
 
-/** 30 min — long `cctl --wait` flows (codex runs) exceed the 10-min default. */
+/** 30 min — long `cctl --wait` flows (agent runs) exceed the 10-min default. */
 const BASH_MAX_TIMEOUT_MS_DEFAULT = "1800000";
 
 export type SessionEnv = Record<string, string | undefined>;

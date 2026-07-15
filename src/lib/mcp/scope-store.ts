@@ -1,12 +1,12 @@
 import { createLogger } from "@/lib/logging";
 import type { McpOverrideOperation, McpOverrides } from "@/lib/mcp/schemas";
-import { createStateManager } from "@/lib/state-store";
+import { getStateStore, type StateStore } from "@/lib/state-store";
 
 import { applyOperations } from "./overrides-patch";
 
 const logger = createLogger("mcp.override-store");
 
-type StateManager = ReturnType<typeof createStateManager>;
+type StateManager = StateStore;
 
 export interface ScopeOverrideStoreDeps {
   stateManager: StateManager;
@@ -148,4 +148,4 @@ function logPatch(
  * Tests should inject their own state manager via `createScopeOverrideStore`.
  */
 export const defaultScopeOverrideStore: ScopeOverrideStore =
-  createScopeOverrideStore({ stateManager: createStateManager() });
+  createScopeOverrideStore({ stateManager: getStateStore() });

@@ -1,6 +1,12 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { defaultAgentCapabilityMetadataRegistry } from "./metadata";
+import {
+  applyTimingForCascade,
+  defaultAgentCapabilityMetadataRegistry,
+} from "./metadata";
 import {
   planCascadeApply,
   planCascadeFailure,
@@ -14,6 +20,7 @@ const baseInput = (
   overrides: Partial<PlanCascadeApplyInput>,
 ): PlanCascadeApplyInput => ({
   metadata: defaultAgentCapabilityMetadataRegistry.get("claude-skills"),
+  applyTiming: "idle_live",
   previous: undefined,
   attemptedHash: "hash-attempt",
   attemptedItemIds: ["a", "b"],
@@ -22,10 +29,11 @@ const baseInput = (
 });
 
 describe("planCascadeApply", () => {
-  it("returns staged-next-turn for codex-skills regardless of turn state", () => {
+  it("returns staged-next-turn for next_turn timing regardless of turn state", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
+        applyTiming: applyTimingForCascade("codex-skills"),
         triggerMode: "turn-active",
       }),
     );
@@ -36,6 +44,7 @@ describe("planCascadeApply", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
+        applyTiming: "next_turn",
         attemptedHash: "stable",
         previous: { appliedHash: "stable", lastApplyStatus: "applied" },
       }),
@@ -43,10 +52,11 @@ describe("planCascadeApply", () => {
     expect(plan.disposition).toBe("idempotent-no-op");
   });
 
-  it("returns staged-next-turn for codex-plugins", () => {
+  it("returns staged-next-turn for codex-plugins via the descriptor timing", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-plugins"),
+        applyTiming: applyTimingForCascade("codex-plugins"),
       }),
     );
     expect(plan.disposition).toBe("staged-next-turn");
@@ -76,20 +86,21 @@ describe("planCascadeApply", () => {
     expect(plan.disposition).toBe("try-live-apply");
   });
 
-  it("returns staged-idle for idle-live-apply cascades while a turn is active", () => {
+  it("returns staged-idle for idle_live timing while a turn is active", () => {
     const plan = planCascadeApply(baseInput({ triggerMode: "turn-active" }));
     expect(plan.disposition).toBe("staged-idle");
   });
 
-  it("returns try-live-apply for idle Claude skills", () => {
+  it("returns try-live-apply for idle_live timing when idle", () => {
     const plan = planCascadeApply(baseInput({ triggerMode: "idle" }));
     expect(plan.disposition).toBe("try-live-apply");
   });
 
-  it("returns deferred-next-conversation for claude-agents", () => {
+  it("returns deferred-next-conversation for next_conversation timing (claude-agents)", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("claude-agents"),
+        applyTiming: applyTimingForCascade("claude-agents"),
         triggerMode: "idle",
       }),
     );
@@ -171,9 +182,9 @@ describe("planIdleDrainCascadeApply", () => {
 });
 
 describe("planTurnStartCascadeApply", () => {
-  it("promotes non-Codex staged-next-turn work when the composed hash still matches", () => {
+  it("promotes non-next-turn staged work when the composed hash still matches", () => {
     const plan = planTurnStartCascadeApply({
-      backend: "claude",
+      applyTiming: "idle_live",
       previous: {
         pendingHash: "hash-a",
         pendingItemIds: ["alpha"],
@@ -191,9 +202,9 @@ describe("planTurnStartCascadeApply", () => {
     });
   });
 
-  it("sends verified Codex staged-next-turn work through runtime delivery", () => {
+  it("sends next_turn staged work through runtime delivery", () => {
     const plan = planTurnStartCascadeApply({
-      backend: "codex",
+      applyTiming: applyTimingForCascade("codex-skills"),
       previous: {
         pendingHash: "hash-a",
         pendingItemIds: ["spec-init"],
@@ -211,9 +222,9 @@ describe("planTurnStartCascadeApply", () => {
     });
   });
 
-  it("retries rejected Codex pending work at turn start", () => {
+  it("retries rejected next_turn pending work at turn start", () => {
     const plan = planTurnStartCascadeApply({
-      backend: "codex",
+      applyTiming: "next_turn",
       previous: {
         appliedHash: "hash-applied",
         pendingHash: "hash-pending",
@@ -231,7 +242,7 @@ describe("planTurnStartCascadeApply", () => {
 
   it("preserves deferred-next-conversation work at turn start", () => {
     const plan = planTurnStartCascadeApply({
-      backend: "claude",
+      applyTiming: "next_conversation",
       previous: {
         pendingHash: "hash-agent",
         pendingItemIds: ["doc-writer"],
@@ -248,9 +259,9 @@ describe("planTurnStartCascadeApply", () => {
     });
   });
 
-  it("does not retry rejected Claude pending work at turn start", () => {
+  it("does not retry rejected idle_live pending work at turn start", () => {
     const plan = planTurnStartCascadeApply({
-      backend: "claude",
+      applyTiming: applyTimingForCascade("claude-skills"),
       previous: {
         pendingHash: "hash-pending",
         pendingItemIds: ["alpha"],
@@ -270,7 +281,7 @@ describe("planTurnStartCascadeApply", () => {
 
   it("preserves pending work without applying when turn-start hash drifted", () => {
     const plan = planTurnStartCascadeApply({
-      backend: "codex",
+      applyTiming: "next_turn",
       previous: {
         pendingHash: "hash-staged",
         pendingItemIds: ["spec-init"],
@@ -323,5 +334,16 @@ describe("planCascadeFailure", () => {
       attemptedItemIds: [],
       reason: "failed-discovery",
     });
+  });
+});
+
+describe("architecture: neutral planner", () => {
+  it("contains zero backend-identity branches", () => {
+    const source = readFileSync(
+      path.join(__dirname, "apply-planner.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/backend\s*===/);
+    expect(source).not.toMatch(/applySemantics/);
   });
 });

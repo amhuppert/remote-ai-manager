@@ -4,8 +4,6 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
   generateRandomSuffix,
   ensureUniqueName,
@@ -16,7 +14,7 @@ import { buildChildEnv } from "../shared/child-env";
 import { defaultGitClient, type GitClient } from "../git/client";
 import { ensureCcArtifactsExcluded as defaultEnsureCcArtifactsExcluded } from "../git/worktree";
 import { fastRemoveWorktree as defaultFastRemoveWorktree } from "../git/worktree-fast-remove";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import { buildConversation } from "@/lib/conversations/build-conversation";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode, SessionState } from "@/lib/sessions/schemas";
 import { readState, mutateState } from "../state-store";
@@ -30,14 +28,11 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { executeOptimisticWorkflow } from "../shared/optimistic";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
-import {
-  deleteNotificationsForSession as defaultDeleteNotificationsForSession,
-  deleteNotificationsForProject as defaultDeleteNotificationsForProject,
-} from "../notifications/repo";
-import {
-  deleteJobRecordsForSession as defaultDeleteJobRecordsForSession,
-  deleteJobRecordsForProject as defaultDeleteJobRecordsForProject,
-} from "../jobs/repo";
+import { getTaskRunner as registryGetTaskRunner } from "@/lib/agent-backends/registry";
+import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { getNotificationsService } from "../notifications/service";
+import { createJobsRepo } from "../jobs/repo";
 import { createLaneWorktreeSweep } from "./lane-worktree-sweep";
 import { deleteCollaborationArtifacts } from "../workflows/collaboration/artifacts-store";
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
@@ -120,7 +115,8 @@ export interface SessionDeps {
   getProjectDisplayName: typeof getProjectDisplayName;
   executeOptimisticWorkflow: typeof executeOptimisticWorkflow;
   buildChildEnv: typeof buildChildEnv;
-  query: typeof query;
+  /** Resolves the backend task runner used for the session-naming turn. */
+  getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
   deleteNotificationsForSession(
     projectName: string,
     sessionName: string,
@@ -219,11 +215,21 @@ const defaultSessionDeps: SessionDeps = {
   getProjectDisplayName,
   executeOptimisticWorkflow,
   buildChildEnv,
-  query,
-  deleteNotificationsForSession: defaultDeleteNotificationsForSession,
-  deleteJobRecordsForSession: defaultDeleteJobRecordsForSession,
-  deleteNotificationsForProject: defaultDeleteNotificationsForProject,
-  deleteJobRecordsForProject: defaultDeleteJobRecordsForProject,
+  getTaskRunner: registryGetTaskRunner,
+  deleteNotificationsForSession: (projectName, sessionName) =>
+    getNotificationsService().deleteNotificationsForSession(
+      projectName,
+      sessionName,
+    ),
+  deleteJobRecordsForSession: (projectName, sessionName) =>
+    createJobsRepo(getStateDb()).deleteJobRecordsForSession(
+      projectName,
+      sessionName,
+    ),
+  deleteNotificationsForProject: (projectName) =>
+    getNotificationsService().deleteNotificationsForProject(projectName),
+  deleteJobRecordsForProject: (projectName) =>
+    createJobsRepo(getStateDb()).deleteJobRecordsForProject(projectName),
   deleteContextArtifactsForScope: (projectPath, sessionName) =>
     createContextArtifactsRepo(getStateDb()).deleteByScope(
       projectPath,
@@ -303,7 +309,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     getProjectDisplayName,
     executeOptimisticWorkflow,
     buildChildEnv,
-    query,
+    getTaskRunner,
     deleteNotificationsForSession,
     deleteJobRecordsForSession,
     deleteNotificationsForProject,
@@ -366,58 +372,40 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     return gitClient.git(args, cwd);
   }
 
-  /** Generate a short readable session name from an objective using the Agent SDK */
+  /** Generate a short readable session name from an objective via a backend naming task */
   async function generateSessionName(
     objective: string,
     projectPath: string,
   ): Promise<string> {
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 60_000);
+    const runner = getTaskRunner("claude");
+    const result = await runner.run({
+      workingDirectory: projectPath,
+      prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
+      modelId: "haiku",
+      timeoutMs: 60_000,
+      executionProfile: "isolated-one-shot",
+      autonomous: true,
+    });
 
-    try {
-      let text = "";
-
-      const q = query({
-        prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
-        options: {
-          model: "haiku",
-          maxTurns: 1,
-          tools: [],
-          mcpServers: {},
-          settingSources: [],
-          persistSession: false,
-          cwd: projectPath,
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          abortController,
-          env: { ...buildChildEnv(), CLAUDECODE: "" } as Record<string, string>,
-        },
+    if (result.error) {
+      logger.warn("session.name_generation_failed", {
+        projectPath,
+        error: result.error,
+        timedOut: result.timedOut,
       });
-
-      for await (const message of q) {
-        if (message.type === "assistant") {
-          const asstMsg = message as SDKAssistantMessage;
-          for (const block of asstMsg.message.content) {
-            if (block.type === "text" && "text" in block) {
-              text += block.text;
-            }
-          }
-        }
-      }
-
-      const name = text.trim().split("\n")[0]!.trim();
-      if (!name) {
-        throw new Error("Session name generation returned empty result");
-      }
-      if (sanitizeBranchName(name).length === 0) {
-        throw new Error(
-          "Generated session name is invalid: must contain at least one letter or number",
-        );
-      }
-      return name;
-    } finally {
-      clearTimeout(timeout);
+      throw new Error(result.error);
     }
+
+    const name = (result.text ?? "").trim().split("\n")[0]!.trim();
+    if (!name) {
+      throw new Error("Session name generation returned empty result");
+    }
+    if (sanitizeBranchName(name).length === 0) {
+      throw new Error(
+        "Generated session name is invalid: must contain at least one letter or number",
+      );
+    }
+    return name;
   }
 
   /**
@@ -461,38 +449,13 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     // (GET /sessions) sees the new directory before the session is in state
     // and imports it as a duplicate with conversations: [].
     const now = new Date().toISOString();
-    const initialConversation: ConversationState = {
+    const initialConversation = buildConversation({
       id: crypto.randomUUID(),
       scope: "session",
       name: `${sessionName} 1`,
-      transcriptPath: null,
-      status: "new",
-      promptCount: 0,
       createdAt: now,
-      lastActivityAt: now,
-      source: "cc",
-      summary: null,
-      archived: false,
-      totalCostUsd: null,
-      totalDurationMs: null,
-      totalTurns: null,
-      pendingQuestionId: null,
-      pendingQuestions: null,
-      pendingPromptText: null,
-      forkedFrom: null,
-      role: null,
-      activeTurnSource: null,
-      contextTokens: null,
-      contextWindowMax: null,
-      debugMode: null,
-      machineSnapshot: null,
-      agentBackend: "claude",
-      backendRef: null,
-      unread: false,
-      pendingQueue: [],
-      lastSeenAlignmentVersion: null,
-      pendingAgentNotices: [],
-    };
+      agentBackend: globalConfig.defaultAgentBackend ?? "claude",
+    });
     const session: SessionState = {
       sessionName,
       worktreePath,

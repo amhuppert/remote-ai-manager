@@ -10,6 +10,7 @@ import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { SessionDiff } from "@/lib/git/schemas";
 import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 // ---------------------------------------------------------------------------
 // Shared mocks
@@ -117,7 +118,7 @@ if (!Element.prototype.scrollTo) {
 
 // Tiptap depends on layout APIs jsdom doesn't implement; render a plain
 // <textarea> that satisfies the same imperative handle and props contract.
-vi.mock("@/features/session/prompt/PromptEditor", async () => {
+vi.mock("@/components/session/prompt/PromptEditor", async () => {
   const React = await import("react");
   type Props = {
     value: string;
@@ -536,18 +537,20 @@ beforeEach(() => {
   });
 });
 
+const DEFAULT_BACKEND_SELECTIONS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "high" },
+  codex: { modelId: "gpt-5.6-sol", effort: "high" },
+};
+
 function renderPage(props?: {
-  defaultEffort?: "low" | "medium" | "high" | "max";
-  defaultCodexModel?: string;
-  defaultCodexEffort?: "low" | "medium" | "high" | "xhigh";
+  backendDefaults?: BackendSelectionDefaultsById;
 }) {
   return renderWithQuery(
     <ConversationWorkspace
       projectName="repo"
       sessionName="test-session"
       conversationId="conv-1"
-      defaultModel="sonnet"
-      defaultCodexModel="gpt-5.6-sol"
+      backendDefaults={props?.backendDefaults ?? DEFAULT_BACKEND_SELECTIONS}
       {...props}
     />,
   );
@@ -807,8 +810,8 @@ describe("ConversationWorkspace", () => {
     });
   });
 
-  describe("defaultEffort prop", () => {
-    it("uses 'high' as initial effort when no defaultEffort is provided", () => {
+  describe("backend selection defaults", () => {
+    it("uses the projected effort as the initial effort", () => {
       renderPage();
       const effortTrigger = document.querySelector(
         '[data-testid="effort-selector-trigger"]',
@@ -817,8 +820,13 @@ describe("ConversationWorkspace", () => {
       expect(effortTrigger!.getAttribute("title")).toContain("High");
     });
 
-    it("uses defaultEffort prop as initial effort when provided", () => {
-      renderPage({ defaultEffort: "low" });
+    it("uses a configured effort as the initial effort", () => {
+      renderPage({
+        backendDefaults: {
+          ...DEFAULT_BACKEND_SELECTIONS,
+          claude: { modelId: "sonnet", effort: "low" },
+        },
+      });
       const effortTrigger = document.querySelector(
         '[data-testid="effort-selector-trigger"]',
       );
@@ -1280,8 +1288,7 @@ describe("ConversationWorkspace", () => {
           projectName="repo"
           sessionName="test-session"
           conversationId="conv-1"
-          defaultModel="sonnet"
-          defaultCodexModel="gpt-5.6-sol"
+          backendDefaults={DEFAULT_BACKEND_SELECTIONS}
         />,
       );
     }
@@ -1296,7 +1303,7 @@ describe("ConversationWorkspace", () => {
       expect(container.querySelector(".app")).toBeNull();
       expect(container.querySelector("main.main")).toBeNull();
       expect(
-        container.querySelector('[data-tooltip="Collapse sidebar"]'),
+        container.querySelector('[aria-label="Collapse sidebar"]'),
       ).toBeNull();
     });
 
@@ -1312,8 +1319,7 @@ describe("ConversationWorkspace", () => {
             projectName="repo"
             sessionName="test-session"
             conversationId={conversationId}
-            defaultModel="sonnet"
-            defaultCodexModel="gpt-5.6-sol"
+            backendDefaults={DEFAULT_BACKEND_SELECTIONS}
           />
         </QueryClientProvider>
       );
@@ -1344,7 +1350,7 @@ describe("ConversationWorkspace", () => {
       const { container } = renderWorkspace();
 
       expect(
-        container.querySelector('[data-tooltip="Expand sidebar"]'),
+        container.querySelector('[aria-label="Expand sidebar"]'),
       ).toBeNull();
     });
 
@@ -1372,8 +1378,10 @@ describe("ConversationWorkspace", () => {
         ],
       };
       renderPage({
-        defaultCodexModel: "gpt-5.6-sol",
-        defaultCodexEffort: "xhigh",
+        backendDefaults: {
+          ...DEFAULT_BACKEND_SELECTIONS,
+          codex: { modelId: "gpt-5.6-sol", effort: "xhigh" },
+        },
       });
 
       fireEvent.click(screen.getAllByRole("button", { name: "Codex" })[0]!);
@@ -1388,12 +1396,9 @@ describe("ConversationWorkspace", () => {
       expect(sendPromptMock.mock.calls[0]?.[5]).toBe("codex");
     });
 
-    // Regression: when the active conversation's backend is "codex" and the
-    // session query is already in cache (e.g. navigating between conversations),
-    // both `selectedBackend` and `selectedModel` initialize together. Previously
-    // the model defaulted to the Claude `defaultModel`, so the first prompt
-    // was sent as "opus" against the Codex backend and the API rejected it.
-    it("submits a Codex model (not the Claude defaultModel) on first prompt", async () => {
+    // A cached conversation initializes backend and model as one selection so
+    // its first prompt cannot pair one backend with another backend's model.
+    it("submits a Codex model on the first prompt", async () => {
       testSession = {
         ...baseSession,
         conversations: [
@@ -1404,11 +1409,9 @@ describe("ConversationWorkspace", () => {
         ],
       };
 
-      renderPage(); // defaultModel="sonnet" (a Claude model)
+      renderPage();
 
-      const textarea = screen.getByPlaceholderText(
-        "Send a prompt to Claude...",
-      );
+      const textarea = screen.getByPlaceholderText("Send a prompt to Codex...");
       fireEvent.change(textarea, { target: { value: "Hello" } });
 
       const sendBtn = screen.getAllByTitle("Send prompt")[0]!;
@@ -1420,7 +1423,6 @@ describe("ConversationWorkspace", () => {
       const submittedBackend = callArgs[5] as string;
 
       expect(submittedBackend).toBe("codex");
-      // Must NOT be the Claude defaultModel — that's the bug.
       expect(submittedModel).not.toBe("sonnet");
       expect(submittedModel).not.toBe("opus");
       expect(submittedModel).not.toBe("haiku");

@@ -2,8 +2,9 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { executePromptStream } from "../prompt/sdk-driver";
 import { dispatchMergeJob } from "../jobs/queue";
-import { createNotification } from "../notifications/repo";
+import { createJobNotification } from "../notifications/service";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { sleep } from "@/lib/shared/sleep";
 import { createLogger } from "../logging";
 
 const logger = createLogger("optimistic");
@@ -18,8 +19,8 @@ const logger = createLogger("optimistic");
  * Calling `executeAgentCall` from this orchestrator directly would bypass the
  * conversation lifecycle (transcript writing, single-flight session lock,
  * machine-state transitions) that the optimistic-mode UI surfaces depend on.
- * The chain is asserted via parity tests in
- * `src/lib/workflows/primitives/section-6-3-merge-optimistic-parity.test.ts`.
+ * The chain is asserted via the wire-contract tests in
+ * `src/lib/workflows/primitives/status-bus-wire-contract.test.ts`.
  */
 
 // No-op emitter for fire-and-forget execution (no SSE client connected)
@@ -32,13 +33,13 @@ const noopEmit = () => {};
 export interface OptimisticDeps {
   executePromptStream: typeof executePromptStream;
   dispatchMergeJob: typeof dispatchMergeJob;
-  createNotification: typeof createNotification;
+  createNotification: typeof createJobNotification;
 }
 
 export const defaultOptimisticDeps: OptimisticDeps = {
   executePromptStream,
   dispatchMergeJob,
-  createNotification,
+  createNotification: createJobNotification,
 };
 
 /**
@@ -99,7 +100,7 @@ export async function executeOptimisticWorkflow(
     });
 
     // Brief delay to allow state persistence to settle
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await sleep(500);
 
     // Dispatch smart merge with auto-resolve
     deps.dispatchMergeJob({

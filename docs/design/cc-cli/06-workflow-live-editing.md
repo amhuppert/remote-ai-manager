@@ -1,7 +1,7 @@
 # 06 — Live Editing of Launched Graph Workflows
 
-Status: **approved** (all decisions confirmed with Alex, 2026-07-07; revised same day after an
-independent design review — findings 1–5 incorporated as D14–D16 + classifier/policy amendments).
+Status: **implemented** (all decisions confirmed with Alex, 2026-07-07; revised same day after an
+independent design review — findings 1–5 incorporated as D14–D16 + classifier/policy amendments, then implemented behind `cctl workflow live …`).
 This document is decision-complete: every open question from the design collaboration has a locked
 answer, recorded in §Decisions.
 

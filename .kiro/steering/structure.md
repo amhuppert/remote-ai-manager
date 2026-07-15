@@ -6,14 +6,14 @@ App Router routing layer is **isolated** in `src/app/`. All page-level UI lives 
 
 | Directory | Purpose | Pattern |
 |---|---|---|
-| `src/app/**/{page,layout,loading,error,not-found,route,template,default}.{tsx,ts}` | Next.js App Router shells ONLY. Each file is a thin re-export. | No domain code, no helpers, no inline components. |
+| `src/app/**/{page,layout,loading,error,not-found,route,template,default}.{tsx,ts}` | Next.js App Router shells ONLY. Each file is a thin re-export (two grandfathered exceptions — see "Grandfathered exceptions"). | No domain code, no helpers, no inline components. |
 | `src/features/<feature>/` | Page-level UI for one route or sub-route. Owns its components, hooks, CSS, dialogs, and tests. | Files inside a feature MUST NOT be imported from another feature — promote to `src/components/` instead. |
 | `src/features/_root/` | Layout + global styles (tokens, reset, typography, shell, topbar; plus session/conversation/prompt/sidebar/dialogs styles that are consumed across multiple features). Leading underscore = not a route. | Imported by `src/app/layout.tsx` and `src/app/globals.css`. |
 | `src/components/` | Cross-feature shared UI. | Promote here only when reused by ≥2 features. |
 | `src/hooks/` | Cross-feature shared hooks. | Promote here only when reused by ≥2 features. |
 | `src/stores/` | Zustand stores. | One per concern; Immer middleware (`*.store.ts`). |
 | `src/lib/<domain>/` | Business logic, server actions, route handlers, queries, mutations, schemas for one domain. | Each domain owns `schemas.ts`, `route-handlers.ts`, `service.ts` (or split), `queries.ts`, `mutations.ts`, `query-keys.ts`, tests. |
-| `src/lib/api/` | Shared React Query / fetch plumbing only (`fetcher.ts`, `errors.ts`, `sse.ts`). No domain code. | Per-domain queries/mutations live in `src/lib/<domain>/`. |
+| `src/lib/api/` | Shared React Query / fetch plumbing only (`fetcher.ts`, `errors.ts`, `sse-events.ts`). No domain code. | Per-domain queries/mutations live in `src/lib/<domain>/`. |
 
 ## Routing & Domain Boundary (the Next.js exception)
 
@@ -23,7 +23,20 @@ Colocation applies fully **outside** `src/app/`. Inside `src/app/`, the Next.js 
 - `src/app/api/<resource>/route.ts` — `export { GET, POST, PUT, DELETE } from "@/lib/<domain>/route-handlers";`
 - `src/app/layout.tsx` — re-exports `RootLayout` from `@/features/_root/RootLayout`.
 
-No other code in `src/app/`. CSS imports in `globals.css` chain through `@/features/_root/styles/index.css`.
+No other code in `src/app/` (two grandfathered exceptions below). CSS imports in `globals.css` chain through `@/features/_root/styles/index.css`.
+
+### Route resolution
+
+- Nested API addressing composes `RouteResolution<T>` from `src/lib/shared/route-resolution.ts`. A resolution step returns either the resolved value or one already-formed HTTP error response.
+- Shared project lookup lives in the shared resolver; each domain owns a small route adapter for its addressing shape (conversation, project conversation, ticket, or a future domain).
+- Route handlers compose those adapters and return early on failure. Use the shared `jsonError`/`notFound` response helpers; do not rebuild project/session/entity 404 ladders or define another result union.
+
+### Grandfathered exceptions
+
+Two files predate the thin re-export rule and still hold real logic. Relocating them into `src/features/` is scheduled program work; until then they are the complete exception list — the rule applies to every new file under `src/app/`, and these are not precedent:
+
+- `src/app/projects/[name]/[session]/conflicts/page.tsx` — a full client page (queries, mutations, local state, rendering).
+- `src/app/workflows/[machine]/page.tsx` — param validation (`isMachineId` → `notFound()`) and derived sibling props.
 
 ## Schemas
 
@@ -33,7 +46,7 @@ No other code in `src/app/`. CSS imports in `globals.css` chain through `@/featu
 
 ## React Query
 
-- Shared plumbing in `src/lib/api/` (`fetcher.ts`, `errors.ts`, `sse.ts`).
+- Shared plumbing in `src/lib/api/` (`fetcher.ts`, `errors.ts`, `sse-events.ts`).
 - Per-domain query/mutation/key factories in `src/lib/<domain>/{queries,mutations,query-keys}.ts`.
 
 ## Naming
@@ -43,7 +56,7 @@ No other code in `src/app/`. CSS imports in `globals.css` chain through `@/featu
 - Types/Interfaces: PascalCase.
 - Schemas: camelCase + `Schema` suffix (`sessionStateSchema`).
 - Tests: `.test.ts`/`.test.tsx` colocated with source.
-- Styling: Tailwind v4 utility-first classNames + the `ui/` primitives (`src/components/ui/`) + `cn()` — author new UI with utilities, not new stylesheets (the `no-unapproved-global-css` guardrail rejects new global CSS). Custom tokens live in `src/features/_root/styles/theme.css` (`@theme`, the single source of truth); author with the Tailwind utilities, not raw `var(--…)` names. Existing `src/features/<feature>/styles/*.css` are grandfathered legacy/preserved CSS (kebab-case BEM, e.g. `project-card-header`); foundation tokens + reset live in `src/features/_root/styles/`. See `docs/tailwind-conventions.md`.
+- Styling: Tailwind v4 utility-first classNames + the `ui/` primitives (`src/components/ui/`) + `cn()` — author new UI with utilities, not new stylesheets (the `no-unapproved-global-css` guardrail rejects new global CSS). Tone-coded status/lifecycle pills use `ui/StatusChip`; do not hand-author its geometry. Custom tokens live in `src/features/_root/styles/theme.css` (`@theme`, the single source of truth); author with the Tailwind utilities, not raw `var(--…)` names. Existing `src/features/<feature>/styles/*.css` are grandfathered legacy/preserved CSS (kebab-case BEM, e.g. `project-card-header`); foundation tokens + reset live in `src/features/_root/styles/`. See `docs/tailwind-conventions.md`.
 
 ## Imports
 
@@ -60,4 +73,4 @@ import { someHelper } from "./helper";                     // Relative same-dir
 - **Colocation outside `src/app/`** — components, hooks, CSS, tests live next to the code that uses them.
 - **No barrel re-exports for backward compatibility.** Direct importers are updated when files move.
 - **API mirrors resources** — `/api/projects/[name]/sessions/[session]/prompt` maps to `src/lib/prompt/route-handlers.ts`.
-- **One focused module per concept** — split when a single file approaches ~600 lines unless there is a strong reason to keep it whole.
+- **Depth over line count** — a module earns its size by concentrating knowledge: it hides a named design decision and passes the deletion test (removing it would respread complexity into its callers, not just vanish). Split by knowledge boundaries — when a file mixes decisions that different callers care about — never mechanically on line count. A large module that hides one substantial decision and improves locality stays whole; a small module that hides nothing is still too shallow.

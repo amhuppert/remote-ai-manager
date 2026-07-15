@@ -20,6 +20,10 @@ beforeEach(() => {
 });
 
 import type { GitClient } from "../git/client";
+import type {
+  AgentTaskResult,
+  AgentTaskRunner,
+} from "@/lib/agent-backends/task";
 import { createTicketProjectOperationGate } from "../tickets/project-operation-gate";
 import { createSessionLifecycleGate } from "./lifecycle-gate";
 import {
@@ -43,7 +47,11 @@ function createTestDeps() {
   const execFileAsyncMock = vi
     .fn()
     .mockResolvedValue({ stdout: "", stderr: "" });
-  const queryMock = vi.fn();
+  const taskRunnerRunMock = vi.fn();
+  const fakeTaskRunner: AgentTaskRunner = {
+    backend: "claude",
+    run: taskRunnerRunMock as AgentTaskRunner["run"],
+  };
   const fastRemoveWorktreeMock = vi
     .fn()
     .mockResolvedValue({ status: "moved", trashPath: "/trash/x" });
@@ -82,7 +90,7 @@ function createTestDeps() {
     buildChildEnv: vi
       .fn()
       .mockReturnValue({}) as unknown as SessionDeps["buildChildEnv"],
-    query: queryMock as unknown as SessionDeps["query"],
+    getTaskRunner: () => fakeTaskRunner,
     deleteNotificationsForSession: vi.fn().mockReturnValue(0),
     deleteJobRecordsForSession: vi.fn().mockReturnValue(0),
     deleteNotificationsForProject: vi.fn().mockReturnValue(0),
@@ -116,7 +124,7 @@ function createTestDeps() {
     execFileAsyncMock,
     fastRemoveWorktreeMock,
     sweepLaneWorktreesMock,
-    queryMock,
+    taskRunnerRunMock,
     copyAlignmentCharterFromParentMock,
     ensureCcArtifactsExcludedMock,
   };
@@ -166,45 +174,40 @@ function stateWithSession(
   };
 }
 
+/** AgentTaskResult with quiet defaults for the naming-task fake. */
+function taskResult(overrides: Partial<AgentTaskResult> = {}): AgentTaskResult {
+  return {
+    backendRef: null,
+    text: "Generated Name",
+    usage: null,
+    error: null,
+    timedOut: false,
+    ...overrides,
+    failure:
+      overrides.failure ??
+      (overrides.timedOut
+        ? {
+            kind: "timeout",
+            message: overrides.error ?? "Task timed out",
+            retryable: true,
+          }
+        : overrides.error
+          ? {
+              kind: "backend_error",
+              message: overrides.error,
+              retryable: true,
+            }
+          : null),
+    continuationDisposition: overrides.continuationDisposition ?? "retain",
+  };
+}
+
 function deferred(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
     resolve = done;
   });
   return { promise, resolve };
-}
-
-/** Create a mock async iterable that yields SDK messages with the given text */
-function mockQueryResponse(text: string) {
-  async function* generate() {
-    yield {
-      type: "assistant" as const,
-      session_id: "mock-session",
-      message: {
-        role: "assistant" as const,
-        content: [{ type: "text" as const, text }],
-      },
-    };
-    yield {
-      type: "result" as const,
-      subtype: "success" as const,
-      session_id: "mock-session",
-      total_cost_usd: 0,
-      duration_ms: 100,
-      num_turns: 1,
-    };
-  }
-  return generate();
-}
-
-/** Create a mock async iterable that throws an error */
-function mockQueryError(error: Error) {
-  async function* generate() {
-    throw error;
-
-    yield undefined as never;
-  }
-  return generate();
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +222,7 @@ let existsSyncMock: Mock;
 let execFileAsyncMock: Mock;
 let fastRemoveWorktreeMock: Mock;
 let sweepLaneWorktreesMock: Mock;
-let queryMock: Mock;
+let taskRunnerRunMock: Mock;
 let copyAlignmentCharterFromParentMock: Mock;
 let ensureCcArtifactsExcludedMock: Mock;
 let service: ReturnType<typeof createSessionService>;
@@ -262,7 +265,7 @@ beforeEach(() => {
   execFileAsyncMock = testSetup.execFileAsyncMock;
   fastRemoveWorktreeMock = testSetup.fastRemoveWorktreeMock;
   sweepLaneWorktreesMock = testSetup.sweepLaneWorktreesMock;
-  queryMock = testSetup.queryMock;
+  taskRunnerRunMock = testSetup.taskRunnerRunMock;
   copyAlignmentCharterFromParentMock =
     testSetup.copyAlignmentCharterFromParentMock;
   ensureCcArtifactsExcludedMock = testSetup.ensureCcArtifactsExcludedMock;
@@ -418,72 +421,67 @@ describe("generateRandomSuffix", () => {
 // ===========================================================================
 
 describe("generateSessionName", () => {
-  it("uses Agent SDK output when valid", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Add Auth"));
+  it("runs a naming task through the backend task runner and returns its text", async () => {
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Add Auth" }));
     const name = await service.generateSessionName(
       "Add user authentication",
       "/projects/repo",
     );
     expect(name).toBe("Add Auth");
 
-    // Verify SDK was called with haiku model and no tools
-    expect(queryMock).toHaveBeenCalledWith(
+    expect(taskRunnerRunMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        workingDirectory: "/projects/repo",
         prompt: expect.stringContaining("Add user authentication"),
-        options: expect.objectContaining({
-          model: "haiku",
-          maxTurns: 1,
-          tools: [],
-          mcpServers: {},
-        }),
+        modelId: "haiku",
+        autonomous: true,
+        timeoutMs: 60_000,
+        executionProfile: "isolated-one-shot",
       }),
     );
   });
 
-  it("throws when SDK query fails", async () => {
-    queryMock.mockReturnValue(
-      mockQueryError(new Error("SDK connection error")),
+  it("takes only the first line of a multi-line answer", async () => {
+    taskRunnerRunMock.mockResolvedValue(
+      taskResult({ text: "  Fix Login \nExtra commentary" }),
+    );
+    const name = await service.generateSessionName(
+      "Fix the login bug",
+      "/projects/repo",
+    );
+    expect(name).toBe("Fix Login");
+  });
+
+  it("throws when the task runner reports an error", async () => {
+    taskRunnerRunMock.mockResolvedValue(
+      taskResult({ text: null, error: "SDK connection error" }),
     );
     await expect(
       service.generateSessionName("Add auth feature", "/projects/repo"),
     ).rejects.toThrow("SDK connection error");
   });
 
-  it("throws when Claude returns empty output", async () => {
-    queryMock.mockReturnValue(mockQueryResponse(""));
+  it("throws when the task times out", async () => {
+    taskRunnerRunMock.mockResolvedValue(
+      taskResult({ text: null, error: "Task timed out", timedOut: true }),
+    );
+    await expect(
+      service.generateSessionName("Add auth feature", "/projects/repo"),
+    ).rejects.toThrow("Task timed out");
+  });
+
+  it("throws when the runner returns empty output", async () => {
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "" }));
     await expect(
       service.generateSessionName("Implement search", "/projects/repo"),
     ).rejects.toThrow("Session name generation returned empty result");
   });
 
-  it("throws when Claude returns name with no alphanumeric characters", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("---!!!"));
+  it("throws when the runner returns a name with no alphanumeric characters", async () => {
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "---!!!" }));
     await expect(
       service.generateSessionName("Bad name", "/projects/repo"),
     ).rejects.toThrow("Generated session name is invalid");
-  });
-
-  it("passes a sanitized child env (from buildChildEnv) to the SDK so NODE_ENV from CC's parent process does not leak", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Sanitized Env"));
-    (deps.buildChildEnv as Mock).mockReturnValue({
-      PATH: "/usr/bin",
-      HOME: "/home/test",
-    });
-
-    await service.generateSessionName("Add feature", "/projects/repo");
-
-    expect(deps.buildChildEnv).toHaveBeenCalled();
-    expect(queryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        options: expect.objectContaining({
-          env: {
-            PATH: "/usr/bin",
-            HOME: "/home/test",
-            CLAUDECODE: "",
-          },
-        }),
-      }),
-    );
   });
 });
 
@@ -516,6 +514,30 @@ describe("createSessionNormal", () => {
     expect(session.conversations[0]!.id).toBeTruthy();
     expect(session.archived).toBe(false);
     expect(session.source).toBe("cc");
+  });
+
+  it("provisions the initial conversation on the configured defaultAgentBackend", async () => {
+    deps.readConfig = vi
+      .fn()
+      .mockResolvedValue({ defaultAgentBackend: "codex" });
+    service = createSessionService(deps);
+    mockGitSuccess(); // git worktree add
+
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "Codex Default",
+    );
+
+    expect(session.conversations[0]!.agentBackend).toBe("codex");
+  });
+
+  it("provisions on claude when no defaultAgentBackend is configured", async () => {
+    mockGitSuccess(); // git worktree add
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "Default Backend",
+    );
+    expect(session.conversations[0]!.agentBackend).toBe("claude");
   });
 
   it("does not persist any session-wide objective", async () => {
@@ -1759,8 +1781,8 @@ describe("provisionSession — optimistic mode", () => {
 // ===========================================================================
 
 describe("createSessionOptimistic", () => {
-  it("generates a session name from instructions via Agent SDK", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Fix Login"));
+  it("generates a session name from instructions via the backend task runner", async () => {
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Fix Login" }));
     mockGitSuccess();
 
     const session = await service.createSessionOptimistic(
@@ -1769,11 +1791,13 @@ describe("createSessionOptimistic", () => {
     );
 
     expect(session.sessionName).toBe("Fix Login");
-    expect(queryMock).toHaveBeenCalled();
+    expect(taskRunnerRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({ executionProfile: "isolated-one-shot" }),
+    );
   });
 
   it("stores no session-wide objective and seeds the kickoff prompt with the instructions", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Auth Fix"));
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Auth Fix" }));
     mockGitSuccess();
 
     const session = await service.createSessionOptimistic(
@@ -1802,7 +1826,7 @@ describe("createSessionOptimistic", () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "Duplicate"),
     );
-    queryMock.mockReturnValue(mockQueryResponse("Duplicate"));
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Duplicate" }));
     mockGitSuccess();
 
     const session = await service.createSessionOptimistic(
@@ -1814,7 +1838,7 @@ describe("createSessionOptimistic", () => {
   });
 
   it("launches orchestrator as fire-and-forget and returns session immediately", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Quick Task"));
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Quick Task" }));
     mockGitSuccess();
 
     const session = await service.createSessionOptimistic(
@@ -1839,7 +1863,7 @@ describe("createSessionOptimistic", () => {
   });
 
   it("returns SessionState before orchestrator completes", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Fast Return"));
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Fast Return" }));
     mockGitSuccess();
 
     // Make orchestrator take a long time (simulating prompt execution)
@@ -2062,7 +2086,7 @@ describe("createSessionNormal — branching opts", () => {
 
 describe("createSessionOptimistic — branching opts", () => {
   it("threads baseBranch, targetBranch, parentSessionName to provisionSession", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Child Opt"));
+    taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Child Opt" }));
     mockGitSuccess();
     const session = await service.createSessionOptimistic(
       "/projects/repo",

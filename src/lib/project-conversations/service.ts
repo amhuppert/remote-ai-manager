@@ -12,6 +12,7 @@ import {
 } from "@/lib/state-store";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { buildConversation } from "@/lib/conversations/build-conversation";
 import { countOpen } from "./lifecycle";
 
 const logger = createLogger("project-conversations.service");
@@ -108,39 +109,13 @@ export function createProjectConversationService(
       opts?.agentBackend ?? config.defaultAgentBackend ?? "claude";
     const now = deps.now();
 
-    const conversation: ConversationState = {
+    const conversation = buildConversation({
       id: deps.newId(),
       scope: "project",
       name: opts?.name ?? `${projectName} chat ${sequenceNumber}`,
-      transcriptPath: null,
-      status: "new",
-      promptCount: 0,
       createdAt: now,
-      lastActivityAt: now,
-      source: "cc",
-      summary: null,
-      archived: false,
-      open: true,
-      totalCostUsd: null,
-      totalDurationMs: null,
-      totalTurns: null,
-      pendingQuestionId: null,
-      pendingQuestions: null,
-      pendingPromptText: null,
-      forkedFrom: null,
-      role: null,
-      activeTurnSource: null,
-      contextTokens: null,
-      contextWindowMax: null,
-      debugMode: null,
-      machineSnapshot: null,
       agentBackend,
-      backendRef: null,
-      unread: false,
-      lastSeenAlignmentVersion: null,
-      pendingAgentNotices: [],
-      pendingQueue: [],
-    };
+    });
 
     await deps.createProjectConversationRecord(projectPath, conversation);
     logger.info("project-conversation.created", {

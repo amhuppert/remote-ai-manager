@@ -1,13 +1,11 @@
 import { createLogger, runAsTrace } from "../logging";
-import type { BroadcastFn } from "../events/broadcaster";
-import { publishSessionStatus } from "../workflows/primitives/default-session-status-bus";
+import { publishEvent, type PublishFn } from "../events/publication";
 import * as tailscale from "../shared/tailscale";
 import { readConfig } from "../config/loader";
 import { defaultPortOwnershipService } from "./port-ownership";
 import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
 import { getGlobalValue, setGlobalValue } from "../shared/global-singleton";
-import type { DevServerEntry } from "./registry";
-import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
+import { transitionEntryTo, type DevServerEntry } from "./registry";
 const logger = createLogger("dev-server");
 const GLOBAL_KEY = "__cc_dev_server_liveness" as const;
 const POLL_INTERVAL_MS = 5_000;
@@ -17,7 +15,7 @@ const POLL_INTERVAL_MS = 5_000;
 // ============================================================
 
 export interface LivenessDeps {
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
   unregister(port: number): Promise<void>;
   classifyPortOwnership(
     input: PortOwnershipInput,
@@ -26,14 +24,10 @@ export interface LivenessDeps {
 
 let _deps: LivenessDeps | null = null;
 
-const defaultLivenessBroadcast: BroadcastFn = (event) => {
-  publishSessionStatus(event);
-};
-
 function getDeps(): LivenessDeps {
   if (!_deps) {
     _deps = {
-      broadcast: defaultLivenessBroadcast,
+      broadcast: publishEvent,
       unregister: tailscale.unregister,
       classifyPortOwnership: defaultPortOwnershipService.classifyPort,
     };
@@ -106,26 +100,12 @@ async function poll(): Promise<void> {
           })
           .catch(() => {});
 
-        // Transition to stopped
-        entry.status = "stopped";
         entry._process = null;
         entry.ownedByThisSession = false;
-
-        const event: DevServerStatusEvent = {
-          type: "dev-server-status",
-          projectName: entry.projectPath,
-          sessionName: entry.sessionName,
-          serverName: entry.serverName,
-          status: "stopped",
-          port: entry.port,
+        transitionEntryTo(entry, "stopped", d.broadcast, {
           remoteUrl: null,
           errorMessage: null,
-          ownedByThisSession: entry.ownedByThisSession,
-          worktreePath: entry.worktreePath,
-          ownerPid: entry.ownerPid,
-          logFilePath: entry.logFilePath,
-        };
-        d.broadcast(event);
+        });
       }
     }
   }

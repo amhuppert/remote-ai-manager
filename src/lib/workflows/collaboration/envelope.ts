@@ -32,23 +32,30 @@
 
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import { pauseForHumanApproval } from "@/lib/workflows/primitives/human-approval-gate";
 import type {
   AgentCallRequest,
   AgentCallResult,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { LaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
-import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
-import type { StatusBus } from "@/lib/workflows/primitives/status-bus";
+import {
+  laneSessionRef,
+  type LaneState,
+} from "@/lib/workflows/primitives/lane-vocabulary";
+import type { StatusBus } from "@/lib/events/status-bus";
 import type {
   WorkflowEnvelope,
   WorkflowEnvelopeStatus,
 } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import type { WorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import { buildAgentOneFinalAnswerPrompt } from "./prompt-builders";
+import {
+  buildCollaborationLaneSeeds,
+  oppositeCollaborationBackend,
+  primaryLaneSeedRef,
+} from "./backend-pair";
 import {
   decideCollaborationNextStep,
   type CollaborationPolicyDecision,
@@ -125,9 +132,9 @@ export interface AsymmetricCollaborationSliceInput {
   /**
    * The originating conversation's stored backend session ref. When present
    * and the backend matches `primaryAgentBackend`, the primary lane's
-   * `backendState` is seeded with the corresponding `conversationId` /
-   * `threadId` so Agent One's first turn resumes the prior session and
-   * inherits its full context. Backend mismatches are silently ignored.
+   * continuity `ref` is seeded with it so Agent One's first turn resumes the
+   * prior session and inherits its full context. Backend mismatches are
+   * silently ignored.
    */
   priorBackendRef?: AgentSessionRef;
   /**
@@ -189,9 +196,13 @@ export type AsymmetricDispatchInfo =
     };
 
 export interface AsymmetricCollaborationSliceDeps {
+  /**
+   * Lane-aware agent execution. Lane scheduling is owned by the
+   * `WorkflowAgentCaller` behind this dep — the single acquisition point
+   * (D16) — so the slice never schedules around it.
+   */
   callAgent(request: AgentCallRequest): Promise<AgentCallResult>;
   laneService: LaneService;
-  laneScheduler: LaneScheduler;
   envelopeStore: WorkflowEnvelopeStore;
   statusBus: StatusBus;
   /**
@@ -263,8 +274,9 @@ export async function runAsymmetricCollaborationSlice(
   }
 
   const now = deps.now ?? (() => new Date().toISOString());
-  const agentTwoBackend: CollaborationAgent =
-    input.primaryAgentBackend === "claude" ? "codex" : "claude";
+  const agentTwoBackend: CollaborationAgent = oppositeCollaborationBackend(
+    input.primaryAgentBackend,
+  );
   const backendForAgent = (
     agent: CollaborationFlowAgent,
   ): CollaborationAgent =>
@@ -580,39 +592,23 @@ async function initializeLanes(
   deps: AsymmetricCollaborationSliceDeps,
   now: () => string,
 ): Promise<void> {
-  const seedClaude =
-    input.priorBackendRef?.backend === "claude" &&
-    input.primaryAgentBackend === "claude"
-      ? { conversationId: input.priorBackendRef.sessionId }
-      : {};
-  const seedCodex =
-    input.priorBackendRef?.backend === "codex" &&
-    input.primaryAgentBackend === "codex"
-      ? { threadId: input.priorBackendRef.threadId }
-      : {};
-
-  const claudeLane: LaneState = {
+  // Only the primary lane inherits the originating conversation's ref; the
+  // opposite lane always starts fresh.
+  const seeds = buildCollaborationLaneSeeds({
     workflowId: input.workflowId,
-    laneId: "claude",
-    backend: "claude",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
-    backendState: { backend: "claude", ...seedClaude },
-    metrics: { backend: "claude", rotateBeforeNextTurn: false },
     lastUsedAt: now(),
-  };
-  const codexLane: LaneState = {
-    workflowId: input.workflowId,
-    laneId: "codex",
-    backend: "codex",
-    writeCapability: "write_capable",
-    policy: { continuityEnabled: true },
-    backendState: { backend: "codex", ...seedCodex },
-    metrics: { backend: "codex", rotateBeforeNextTurn: false },
-    lastUsedAt: now(),
-  };
-  await initializeLaneIfMissing(deps, claudeLane);
-  await initializeLaneIfMissing(deps, codexLane);
+    seedRefFor: (backend) =>
+      primaryLaneSeedRef(
+        backend,
+        input.primaryAgentBackend,
+        input.priorBackendRef,
+      ),
+  });
+  for (const seed of seeds) {
+    await initializeLaneIfMissing(deps, seed);
+  }
 }
 
 async function initializeLaneIfMissing(
@@ -643,13 +639,7 @@ async function readPrimaryLaneAdvancedRef(
     laneId: input.primaryAgentBackend,
   });
   if (!lane) return null;
-  const state = lane.backendState;
-  if (state.backend === "claude") {
-    return state.conversationId
-      ? { backend: "claude", sessionId: state.conversationId }
-      : null;
-  }
-  return state.threadId ? { backend: "codex", threadId: state.threadId } : null;
+  return laneSessionRef(lane);
 }
 
 interface InitializeEnvelopeOutcome {

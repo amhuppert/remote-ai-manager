@@ -1,14 +1,12 @@
 import { createLogger } from "../logging";
-import type { BroadcastFn } from "../events/broadcaster";
-import { publishSessionStatus } from "../workflows/primitives/default-session-status-bus";
+import { publishEvent, type PublishFn } from "../events/publication";
 import {
   defaultPortOwnershipService,
   type PortOwnershipInput,
   type PortOwnershipResult,
 } from "./port-ownership";
 import { getGlobalSingleton } from "../shared/global-singleton";
-import type { DevServerEntry } from "./registry";
-import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
+import { transitionEntryTo, type DevServerEntry } from "./registry";
 
 const logger = createLogger("dev-server");
 
@@ -22,7 +20,7 @@ export interface DevServerReconciliationDeps {
   classifyPortOwnership(
     input: PortOwnershipInput,
   ): Promise<PortOwnershipResult>;
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
   getRegistry(): Map<string, DevServerEntry>;
 }
 
@@ -50,23 +48,6 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
     serverName: string,
   ): string {
     return `${projectPath}::${sessionName}::${worktreePath}::${serverName}`;
-  }
-
-  function buildEvent(entry: DevServerEntry): DevServerStatusEvent {
-    return {
-      type: "dev-server-status",
-      projectName: entry.projectPath,
-      sessionName: entry.sessionName,
-      serverName: entry.serverName,
-      status: entry.status,
-      port: entry.port,
-      remoteUrl: entry.remoteUrl,
-      errorMessage: entry.errorMessage,
-      ownedByThisSession: entry.ownedByThisSession,
-      worktreePath: entry.worktreePath,
-      ownerPid: entry.ownerPid,
-      logFilePath: entry.logFilePath,
-    };
   }
 
   async function verifyRunningEntry(entry: DevServerEntry): Promise<void> {
@@ -99,14 +80,15 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
         reason: ownership.reason,
         ownership: "unknown",
       });
-      entry.status = "error";
-      entry.errorMessage = `Could not verify ownership of port ${entry.port} for worktree ${entry.worktreePath}: ${ownership.reason}`;
       entry.ownedByThisSession = false;
       entry._process = null;
-      deps.broadcast(buildEvent(entry));
+      transitionEntryTo(entry, "error", deps.broadcast, {
+        errorMessage: `Could not verify ownership of port ${entry.port} for worktree ${entry.worktreePath}: ${ownership.reason}`,
+      });
       return;
     }
 
+    let errorMessage: string | null;
     if (ownership.status === "conflict") {
       logger.warn("dev-server.reconcile.conflict", {
         serverName: entry.serverName,
@@ -116,7 +98,7 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
         conflictReason: ownership.reason ?? null,
         worktreePath: entry.worktreePath,
       });
-      entry.errorMessage =
+      errorMessage =
         ownership.pid === null
           ? `Port ${entry.port} is in use by a process invisible to lsof (likely root-owned, e.g. a stale tailscale serve entry): ${ownership.reason ?? "bind probe failed"}.`
           : `Port ${entry.port} is now owned by pid ${ownership.pid}${ownership.cwd ? ` (cwd ${ownership.cwd})` : ""}, which is outside this session's worktree (${entry.worktreePath}).`;
@@ -126,13 +108,12 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
         port: entry.port,
         worktreePath: entry.worktreePath,
       });
-      entry.errorMessage = null;
+      errorMessage = null;
     }
 
-    entry.status = "stopped";
     entry.ownedByThisSession = false;
     entry._process = null;
-    deps.broadcast(buildEvent(entry));
+    transitionEntryTo(entry, "stopped", deps.broadcast, { errorMessage });
   }
 
   async function reconcile(input: ReconcileInput): Promise<void> {
@@ -181,9 +162,7 @@ function defaultGetRegistry(): Map<string, DevServerEntry> {
   );
 }
 
-const defaultReconcilerBroadcast: BroadcastFn = (event) => {
-  publishSessionStatus(event);
-};
+const defaultReconcilerBroadcast: PublishFn = publishEvent;
 
 const defaultDevServerReconciliationDeps: DevServerReconciliationDeps = {
   classifyPortOwnership: defaultPortOwnershipService.classifyPort,

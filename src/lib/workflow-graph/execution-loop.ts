@@ -32,7 +32,8 @@ import type {
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
-import type { SessionGitLock } from "@/lib/workflow-graph/session-git-lock";
+import { type SessionGitLock } from "@/lib/shared/lock-retry";
+import { sleep } from "@/lib/shared/sleep";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import type { SoloContextCommitter } from "@/lib/workflow-graph/solo-context-committer";
 import {
@@ -45,21 +46,26 @@ import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import {
   SESSION_LANE_ID,
   appendPendingJoin,
-  applyJoinProgress,
   findActiveJoin,
   findBusyJoinSourceLaneIds,
   materializeSessionLane,
   planContextJoin,
   planFinalPublishJoin,
 } from "@/lib/workflow-graph/lane-join";
+import {
+  applyJoinProgress,
+  buildLifecycleSnapshot,
+  transitionContextMergeStatus,
+  transitionContextStatus,
+} from "@/lib/workflow-graph/context-transitions";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowHaltReason,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import {
   StaleLoopFenceError,
@@ -74,7 +80,6 @@ import {
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import type { MutateActiveResult } from "./execution-repository";
 import type {
-  GraphWorkflowLifecycleSnapshot,
   RecordPendingHaltReasonResult,
   ScheduleEligibleContextsResult,
 } from "./workflow-manager";
@@ -337,7 +342,7 @@ async function defaultWaitForCollaborationProgress(_input: {
   sessionName: string;
   executionId: string;
 }): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await sleep(1000);
 }
 
 async function defaultWaitForApprovalProgress(_input: {
@@ -346,7 +351,7 @@ async function defaultWaitForApprovalProgress(_input: {
   executionId: string;
   contextId: string;
 }): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await sleep(1000);
 }
 
 async function defaultWaitForUserInputProgress(_input: {
@@ -355,25 +360,7 @@ async function defaultWaitForUserInputProgress(_input: {
   executionId: string;
   contextId: string;
 }): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-}
-
-/**
- * Mirrors the lifecycle snapshot the iteration orchestrator's finalization
- * mutations maintain. Decision application rebuilds it the same way the
- * gate-off completion path would have; there is never a live iteration at
- * application time.
- */
-function buildMachineSnapshot(
-  execution: GraphWorkflowExecution,
-): GraphWorkflowLifecycleSnapshot {
-  return {
-    schemaVersion: 1,
-    lifecycleStatus: execution.status,
-    activeContextId: execution.activeContextIds[0] ?? null,
-    recoveryMode: "none",
-    hasLiveIteration: false,
-  };
+  await sleep(1000);
 }
 
 /**
@@ -848,14 +835,20 @@ export function createGraphWorkflowExecutionLoop(
           const next = structuredClone(e);
           if (decision.type === "approved") {
             approvalGateService.applyApprovedDecision(next, contextId);
-            const cs = next.contextStates[contextId];
-            if (cs) {
-              cs.status = "completed";
+            if (next.contextStates[contextId]) {
+              transitionContextStatus(next, contextId, "completed", {
+                reason: "approval_gate.apply_approved_decision",
+              });
             }
           } else {
             approvalGateService.applyRejectedDecision(next, contextId);
           }
-          next.machineSnapshot = buildMachineSnapshot(next);
+          // Decision application rebuilds the snapshot the same way the
+          // gate-off completion path would have; there is never a live
+          // iteration at application time.
+          next.machineSnapshot = buildLifecycleSnapshot(next, {
+            hasLiveIteration: false,
+          });
           return next;
         },
       );
@@ -1052,9 +1045,10 @@ export function createGraphWorkflowExecutionLoop(
             input.sessionName,
             (e) => {
               const next = structuredClone(e);
-              const cs = next.contextStates[contextId];
-              if (cs) {
-                cs.mergeStatus = "in-progress";
+              if (next.contextStates[contextId]) {
+                transitionContextMergeStatus(next, contextId, "in-progress", {
+                  reason: "merge.started",
+                });
               }
               return next;
             },
@@ -1088,7 +1082,12 @@ export function createGraphWorkflowExecutionLoop(
                 applyAdditionalMutation: (next) => {
                   const cs = next.contextStates[contextId];
                   if (cs) {
-                    cs.mergeStatus = "merged-failed";
+                    transitionContextMergeStatus(
+                      next,
+                      contextId,
+                      "merged-failed",
+                      { reason: "merge.session_not_found" },
+                    );
                     cs.lastMergeError = reason.message;
                   }
                 },
@@ -1147,7 +1146,12 @@ export function createGraphWorkflowExecutionLoop(
                 const next = structuredClone(e);
                 const cs = next.contextStates[contextId];
                 if (cs) {
-                  cs.mergeStatus = "merged-success";
+                  transitionContextMergeStatus(
+                    next,
+                    contextId,
+                    "merged-success",
+                    { reason: "merge.completed" },
+                  );
                   cs.lastMergeError = null;
                 }
                 return next;
@@ -1205,7 +1209,14 @@ export function createGraphWorkflowExecutionLoop(
               applyAdditionalMutation: (next) => {
                 const cs = next.contextStates[contextId];
                 if (cs) {
-                  cs.mergeStatus = finalMergeStatus;
+                  transitionContextMergeStatus(
+                    next,
+                    contextId,
+                    finalMergeStatus,
+                    {
+                      reason: "merge.failed",
+                    },
+                  );
                   cs.lastMergeError = mergeError;
                 }
               },
@@ -1685,7 +1696,12 @@ export function createGraphWorkflowExecutionLoop(
                 applyAdditionalMutation: (next) => {
                   const cs = next.contextStates[contextId];
                   if (cs) {
-                    cs.mergeStatus = "merged-failed";
+                    transitionContextMergeStatus(
+                      next,
+                      contextId,
+                      "merged-failed",
+                      { reason: "lane_commit.failed" },
+                    );
                     cs.lastMergeError = result.errorMessage;
                   }
                 },
@@ -1705,26 +1721,20 @@ export function createGraphWorkflowExecutionLoop(
             await deps.workflowManager.mutateActive(
               input.projectPath,
               input.sessionName,
-              (e) =>
-                applyLaneCommitSnapshot(
-                  {
-                    ...e,
-                    contextStates: {
-                      ...e.contextStates,
-                      ...(e.contextStates[contextId]
-                        ? {
-                            [contextId]: {
-                              ...e.contextStates[contextId]!,
-                              mergeStatus: "merged-success",
-                              lastMergeError: null,
-                            },
-                          }
-                        : {}),
-                    },
-                  },
-                  laneId,
-                  snapshot,
-                ),
+              (e) => {
+                const next = structuredClone(e);
+                const cs = next.contextStates[contextId];
+                if (cs) {
+                  transitionContextMergeStatus(
+                    next,
+                    contextId,
+                    "merged-success",
+                    { reason: "lane_commit.completed" },
+                  );
+                  cs.lastMergeError = null;
+                }
+                return applyLaneCommitSnapshot(next, laneId, snapshot);
+              },
             );
             execLogger?.iteration(contextId, "lane_commit.completed", {
               laneId,
@@ -1756,9 +1766,15 @@ export function createGraphWorkflowExecutionLoop(
                   contextId,
                 ];
               }
-              const cs = next.contextStates[contextId];
-              if (cs) {
-                cs.mergeStatus = "merged-success";
+              if (next.contextStates[contextId]) {
+                transitionContextMergeStatus(
+                  next,
+                  contextId,
+                  "merged-success",
+                  {
+                    reason: "lane_commit.skipped",
+                  },
+                );
               }
               return next;
             },
@@ -2272,18 +2288,29 @@ export function createGraphWorkflowExecutionLoop(
     // merged (halted/aborted executions) keep their lanes intact for forensics
     // until session delete. Failures are logged and never fail the completion.
     async function cleanupMergedLanes(): Promise<void> {
-      const laneIds = new Set<string>();
+      // The branch recorded at provision time travels with the lane state so
+      // cleanup never re-derives it from the (mutable) branch-prefix config.
+      const laneBranches = new Map<string, string | null>();
+      const recordLane = (laneId: string, branchName: string | null): void => {
+        const existing = laneBranches.get(laneId);
+        if (existing === undefined || existing === null) {
+          laneBranches.set(laneId, branchName);
+        }
+      };
       for (const cs of Object.values(execution.contextStates)) {
         if (cs.mergeStatus !== "merged-success") continue;
         if (cs.isolation !== "worktree") continue;
         if (cs.laneId !== null) {
-          laneIds.add(cs.laneId);
+          recordLane(
+            cs.laneId,
+            execution.executionLanes[cs.laneId]?.branchName ?? cs.branchName,
+          );
         } else if (cs.cleanupStatus !== "removed") {
           // Legacy per-context worktree whose merge-time dispose did not land.
-          laneIds.add(cs.contextId);
+          recordLane(cs.contextId, cs.branchName);
         }
       }
-      if (laneIds.size === 0) return;
+      if (laneBranches.size === 0) return;
 
       const session = await deps.getSession(
         input.projectPath,
@@ -2292,19 +2319,20 @@ export function createGraphWorkflowExecutionLoop(
       if (!session) {
         logger.warn("graph-workflow.lane_cleanup.session_missing", {
           executionId: execution.id,
-          laneIds: [...laneIds],
+          laneIds: [...laneBranches.keys()],
         });
         return;
       }
       const sessionDir = path.basename(session.worktreePath);
 
-      for (const laneId of laneIds) {
+      for (const [laneId, branchName] of laneBranches) {
         try {
           const result = await deps.parallelWorktrees.cleanupLane({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             sessionDir,
             contextId: laneId,
+            branchName,
           });
           execLogger?.lifecycle("lane.cleanup_attempted", {
             laneId,

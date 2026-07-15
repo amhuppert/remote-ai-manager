@@ -47,7 +47,7 @@ There is no rung 4. "Fire mutation → `invalidateQueries` → wait for the refe
 
 - One `EventSource("/api/events")` per tab, opened by `NotificationListener` mounted at the root layout.
 - Per-feature streams are forbidden except for genuinely high-frequency content streams (live token streaming for an active prompt). Lifecycle/status updates ride the global bus.
-- The broadcaster (`src/lib/events/broadcaster.ts`) is the **sole** publication mechanism for cross-client events. API route handlers and workflow primitives publish through it (directly or via `StatusBus`); they never open their own streams for lifecycle/status concerns.
+- The typed publication module (`src/lib/events/publication.ts`) is the **sole production interface** for cross-client events. Its private broadcaster adapter owns the raw transport; API routes and workflow modules publish through `publishEvent`, an injected `PublishFn`, `publishEventBestEffort`, or `publishScopedStatus`.
 
 ### Typed events, discriminator-driven
 
@@ -86,10 +86,11 @@ Never broadcast a full conversation transcript, full session list, or full diff.
 ### Publication path
 
 ```
-domain code → StatusBus.publish(event) → broadcaster.broadcast(event) → all clients
+domain code → publication.publishEvent(event) → broadcaster adapter → all clients
+                                      └──────→ lifecycle projection (enumerated events only)
 ```
 
-- `StatusBus` (`src/lib/workflows/primitives/status-bus.ts`) is the canonical publication surface. New broadcast sites add a `publish` call there; they do not import the broadcaster (`src/lib/events/broadcaster.ts`) directly except inside the bus itself.
+- `publishEvent` and the `PublishFn` interface in `src/lib/events/publication.ts` are canonical. A mutation that has already committed uses `publishEventBestEffort`; primitive-owned lifecycle status uses `publishScopedStatus`. Only the publication module and SSE transport may import `src/lib/events/broadcaster.ts`.
 - Every route that mutates state and would otherwise require the client to poll publishes one event before returning.
 
 ---
@@ -296,7 +297,7 @@ SSE-first. Polling is a fallback, not a default.
 - ❌ A mutation whose only feedback is `onSuccess: () => invalidateQueries(...)` — the user sees nothing until the refetch lands. Add an optimistic update or a pending indicator.
 - ❌ A triggering control that only sets `disabled={isPending}` on a slow operation, with no visible in-progress state.
 - ❌ A second `new EventSource(...)` somewhere in feature code for "lifecycle" updates.
-- ❌ Per-feature route handlers calling `broadcaster.broadcast(...)` directly, bypassing `StatusBus`.
+- ❌ Per-feature route handlers calling `broadcaster.broadcast(...)` directly, bypassing typed SSE publication.
 - ❌ SSE handlers that re-fetch via `invalidateQueries` when the event payload already contained the delta.
 
 ---
@@ -310,7 +311,8 @@ SSE-first. Polling is a fallback, not a default.
 | `src/lib/<domain>/mutations.ts` | `useXxxMutation` hooks with `onMutate`/`onError`/`onSettled` |
 | `src/lib/<domain>/schemas.ts` | Zod schemas for SSE events and API payloads |
 | `src/lib/api/sse-events.ts` | Canonical `SSEEvent` union (assembled from per-domain schemas) |
-| `src/lib/events/broadcaster.ts` | Server-side broadcast primitive |
-| `src/lib/workflows/primitives/status-bus.ts` | Canonical publication surface |
+| `src/lib/events/publication.ts` | Typed publication interface, delivery policy, and lifecycle projection composition |
+| `src/lib/events/{status-bus,lifecycle-projection}.ts` | Private in-process lifecycle projection implementation |
+| `src/lib/events/broadcaster.ts` | Raw server-side transport; imported only by publication and the SSE route |
 | `src/components/NotificationListener.tsx` | Sole SSE consumer; dispatches to query cache |
 | `src/app/api/events/route.ts` | Single SSE endpoint with replay + heartbeat |

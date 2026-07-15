@@ -13,14 +13,14 @@ import type {
   Usage,
   McpToolCallItem,
 } from "@openai/codex-sdk";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   MessageContentBlock,
   ToolResultMetrics,
 } from "@/lib/conversations/schemas";
 import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
-import type { AgentBackendId, ConversationBackendCapabilities } from "../types";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
-  CodexCapabilityApplyResult,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
@@ -29,8 +29,6 @@ import type {
 } from "../conversation";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
 import type { PortableMcpToCodexResult } from "../mcp-translation";
-import { registerConversationBackendFactory } from "../registry-core";
-import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
 import {
   codexReasoningEffortSchema,
   getCodexReasoningLevelsForModel,
@@ -38,8 +36,15 @@ import {
   type CodexPricingTable,
 } from "@/lib/agent-backends/schemas";
 import { estimateCodexCostUsd } from "./pricing";
+import type { AgentFailureClassification } from "../errors";
+import { createCodexFailureClassifier } from "./failure-classifier";
 import { createLogger } from "@/lib/logging";
-import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
+import {
+  translateCodexRuntimeCapabilities,
+  type CodexCapabilityApplyResult,
+  type CodexCapabilityApplyTarget,
+  type CodexRuntimeCapabilityConfig,
+} from "./runtime-config";
 
 // Default dep implementations (used at runtime, injected in tests)
 import { Codex } from "@openai/codex-sdk";
@@ -57,6 +62,8 @@ import {
 } from "./native-mcp-suppression";
 
 const logger = createLogger("codex:conversation-runtime");
+
+const codexFailureClassifier = createCodexFailureClassifier();
 
 // ============================================================
 // Injectable dependency surface
@@ -115,11 +122,10 @@ const defaultDeps: CodexConversationRuntimeDeps = {
 // Codex Conversation Runtime
 // ============================================================
 
-export class CodexConversationRuntime implements ConversationBackendRuntime {
+export class CodexConversationRuntime
+  implements ConversationBackendRuntime, CodexCapabilityApplyTarget
+{
   readonly backend: AgentBackendId = "codex";
-  readonly capabilities: ConversationBackendCapabilities =
-    backendCapabilities("codex");
-
   readonly modelId: string | undefined;
   readonly reasoningEffort: string | undefined;
   readonly outputFormat:
@@ -152,12 +158,12 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     deps: CodexConversationRuntimeDeps = defaultDeps,
   ) {
     this.threadId =
-      input.persistedRef?.backend === "codex"
-        ? input.persistedRef.threadId
-        : null;
+      input.persistedRef?.backend === "codex" ? input.persistedRef.ref : null;
     this.isFirstTurn = this.threadId == null;
     this.stagedPortableMcp = input.tooling.portableMcp ?? null;
-    this.stagedCapabilityConfig = input.tooling.codexCapabilityConfig ?? null;
+    this.stagedCapabilityConfig = input.tooling.capabilities
+      ? translateCodexRuntimeCapabilities(input.tooling.capabilities)
+      : null;
     this.sessionInstructions = input.sessionInstructions;
     this.worktreePath = input.worktreePath;
     this.conversationId = input.conversationId;
@@ -196,8 +202,9 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       lastAgentMessageText: null as string | null,
       usage: null as Usage | null,
       errorMessage: null as string | null,
+      failure: null as AgentFailureClassification | null,
+      processFailed: false,
       aborted: false,
-      processCrashed: false,
     };
     const contentBlocks: MessageContentBlock[] = [];
 
@@ -279,48 +286,71 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         });
       }
     } catch (err) {
-      const isResumeFailure =
-        err instanceof Error &&
-        err.message.includes("thread/resume: no rollout found");
-
-      if (isResumeFailure) {
-        acc.processCrashed = true;
-        acc.errorMessage = `Failed to resume Codex thread ${this.threadId}: ${err instanceof Error ? err.message : String(err)}`;
-        if (this.threadId && !acc.knownThreadId) {
-          acc.knownThreadId = this.threadId;
-        }
-      } else if (isAbortError(err) || input.signal.aborted) {
+      if (isAbortError(err) || input.signal.aborted) {
         acc.aborted = true;
       } else {
-        acc.processCrashed = true;
-        // Preserve error from turn.failed event if already captured —
-        // it contains more useful detail than the generic process exit error.
-        if (!acc.errorMessage) {
-          acc.errorMessage = err instanceof Error ? err.message : String(err);
+        acc.processFailed = true;
+        // Single capture point for thrown provider failures: the classifier
+        // decides the failure kind from the raw error, and both the reported
+        // `failure` and the continuation disposition below consume that one
+        // typed classification — no message re-grepping here.
+        const classification = codexFailureClassifier.classify(err);
+        if (classification.kind === "stale_resume_ref") {
+          acc.failure = {
+            ...classification,
+            message:
+              this.threadId != null
+                ? `Failed to resume Codex thread ${this.threadId}: ${classification.message}`
+                : classification.message,
+          };
+          logger.warn("codex-runtime.stale_resume_ref", {
+            conversationId: this.conversationId,
+            threadId: this.threadId,
+            error: acc.failure.message,
+          });
+        } else {
+          // Preserve error from turn.failed event if already captured —
+          // it contains more useful detail than the generic process exit
+          // error.
+          if (acc.errorMessage == null) {
+            acc.failure = classification;
+          }
+          logger.error("codex-runtime.turn_error", {
+            conversationId: this.conversationId,
+            error: acc.errorMessage ?? classification.message,
+            rawError: classification.message,
+            threadId: acc.knownThreadId,
+            modelId: this.modelId,
+            reasoningEffort: this.reasoningEffort,
+            wasFirstTurn,
+          });
         }
-        logger.error("codex-runtime.turn_error", {
-          conversationId: this.conversationId,
-          error: acc.errorMessage,
-          rawError: err instanceof Error ? err.message : String(err),
-          threadId: acc.knownThreadId,
-          modelId: this.modelId,
-          reasoningEffort: this.reasoningEffort,
-          wasFirstTurn,
-        });
       }
     }
 
-    // When the process crashes on a first turn, reset internal state so the
-    // next turn starts a fresh thread instead of trying to resume the dead one.
-    // Graceful turn.failed events (no process crash) preserve the threadId
-    // because the server-side thread may still be alive.
-    if (acc.processCrashed && wasFirstTurn) {
+    const failure =
+      acc.failure ??
+      (acc.errorMessage != null
+        ? codexFailureClassifier.classify(acc.errorMessage)
+        : null);
+
+    // A missing rollout proves the ref unusable. A local process crash only
+    // invalidates a first-turn rollout; graceful provider failures and crashes
+    // while resuming can leave the server-side thread viable.
+    const continuationDisposition =
+      failure?.kind === "stale_resume_ref" ||
+      (failure != null && acc.processFailed && wasFirstTurn)
+        ? "clear"
+        : "retain";
+
+    if (continuationDisposition === "clear") {
       this.threadId = null;
       this.isFirstTurn = true;
       acc.knownThreadId = null;
-
-      logger.info("codex-runtime.reset_after_failed_first_turn", {
+      logger.info("codex-runtime.continuation_cleared_after_failure", {
         conversationId: this.conversationId,
+        failureKind: failure?.kind ?? null,
+        wasFirstTurn,
       });
     }
 
@@ -335,7 +365,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     }
 
     const backendRef = acc.knownThreadId
-      ? { backend: "codex" as const, threadId: acc.knownThreadId }
+      ? { backend: "codex" as const, ref: acc.knownThreadId }
       : null;
 
     const result: ConversationBackendTurnResult = {
@@ -350,14 +380,17 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       aborted: acc.aborted,
       // Codex never surfaces an SDK compaction under CC's view.
       compacted: false,
-      error: acc.errorMessage,
+      failure,
+      continuationDisposition,
     };
 
     logger.info("codex-runtime.turn_end", {
       conversationId: this.conversationId,
       threadId: acc.knownThreadId,
       aborted: acc.aborted,
-      hasError: !!acc.errorMessage,
+      hasError: failure != null,
+      failureKind: result.failure?.kind ?? null,
+      continuationDisposition: result.continuationDisposition,
       contentBlockCount: contentBlocks.length,
       costUsd: result.costUsd,
     });
@@ -379,7 +412,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     } catch (err) {
       logger.warn("codex-runtime.pricing_overrides_unavailable", {
         conversationId: this.conversationId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
 
@@ -398,7 +431,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
    * apply service can record the failure instead of falsely reporting
    * `applied`.
    */
-  async applyCodexCapabilityConfig(
+  async applyCapabilityConfig(
     config: CodexRuntimeCapabilityConfig,
   ): Promise<CodexCapabilityApplyResult> {
     if (this._status === "dead") {
@@ -543,7 +576,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     } catch (err) {
       logger.warn("codex-runtime.mcp_native_server_list_failed", {
         conversationId: this.conversationId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return [];
     }
@@ -588,7 +621,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         acc.setThreadId(event.thread_id);
         await input.onEvent({
           type: "backend_init",
-          backendRef: { backend: "codex", threadId: event.thread_id },
+          backendRef: { backend: "codex", ref: event.thread_id },
         });
         break;
 
@@ -856,7 +889,7 @@ function extractMcpToolResultContent(
 // ============================================================
 
 export const codexConversationBackendFactory: ConversationBackendFactory = {
-  backend: "codex" as AgentBackendId,
+  backend: "codex",
 
   async createRuntime(
     input: ConversationBackendCreateInput,
@@ -895,9 +928,3 @@ export const codexConversationBackendFactory: ConversationBackendFactory = {
     }
   },
 };
-
-// ============================================================
-// Register factory
-// ============================================================
-
-registerConversationBackendFactory(codexConversationBackendFactory);

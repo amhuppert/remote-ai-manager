@@ -6,7 +6,7 @@
  * directly into each factory.
  */
 
-import { createStateManager } from "@/lib/state-store";
+import { getStateStore } from "@/lib/state-store";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
@@ -47,7 +47,7 @@ export const defaultGlobalMcpDefinitionPath = getDefaultGlobalMcpDefinitionPath;
 export const defaultGlobalStore = defaultGlobalOverrideStore;
 export const defaultScopeStore = defaultScopeOverrideStore;
 
-const defaultStateManager = createStateManager();
+const defaultStateManager = getStateStore();
 
 /**
  * Reads the current project-level MCP overrides from persisted state so

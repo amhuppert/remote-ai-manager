@@ -1,10 +1,10 @@
 /**
- * Prompt execution facade — delegates to the conversation XState machine.
+ * Prompt execution facade — delegates to the conversation lifecycle module.
  *
  * Keeps the same export signatures (`executePromptStream`, `createPromptExecutor`)
  * so callers (prompt-route-handlers.ts) don't need changes.
- * Internally replaces inline orchestration with the
- * conversation manager lifecycle.
+ * The lifecycle module hides its state-machine implementation and returns a
+ * stable turn projection.
  */
 
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
@@ -12,11 +12,17 @@ import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/schemas";
-import type { ConversationActorRef } from "@/lib/workflows/conversation/machine";
-import type { ConversationEvent } from "@/lib/workflows/conversation/types";
-import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import { getErrorMessage } from "@/lib/shared/errors";
+import {
+  DEFAULT_AGENT_BACKEND_ID,
+  type AgentBackendId,
+} from "@/lib/shared/schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
+import type {
+  EnsureActorInputData,
+  ExecuteConversationTurnInput,
+  ConversationTurnExecution,
+} from "@/lib/workflows/conversation/manager";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
@@ -67,7 +73,7 @@ export const TDD_INSTRUCTIONS =
  *
  * The agent's actual *text* response is constrained per debug phase by
  * `outputFormat` derived from `debug-schemas.ts` (see
- * `src/lib/workflows/conversation/machine.ts:281-310`).
+ * the conversation lifecycle module).
  */
 export const DEBUG_MODE_INSTRUCTIONS = `<debug-mode>
 You are in Debug Mode. Debug with runtime evidence, not static guesswork.
@@ -257,8 +263,8 @@ export interface PromptDeps {
   readConfig: typeof readConfig;
   getConversationBackendFactory: typeof getConversationBackendFactory;
 
-  // Manager operations — injected to avoid vi.mock() on the manager module
-  ensureConversationActor(
+  // Lifecycle operations — injected to avoid vi.mock() on the manager module
+  ensureConversationLifecycle(
     projectPath: string,
     sessionName: string,
     conversationId: string,
@@ -266,26 +272,10 @@ export interface PromptDeps {
       executionTarget?: ExecutionTarget;
       actorInput?: EnsureActorInputData;
     },
-  ): Promise<ConversationActorRef>;
-  attachPromptStream(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    streamId: string,
-    emit: (event: string, data: unknown) => void,
-  ): void;
-  detachPromptStream(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    streamId: string,
-  ): void;
-  sendConversationEvent(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    event: ConversationEvent,
-  ): boolean;
+  ): Promise<void>;
+  executeConversationTurn(
+    input: ExecuteConversationTurnInput,
+  ): Promise<ConversationTurnExecution>;
 
   setTooling?(
     projectPath: string,
@@ -312,7 +302,7 @@ export interface PromptDeps {
    * Dispatches a `/collab` prompt to the collaboration manager.
    *
    * `executePromptStream` calls this when it detects a /collab prefix instead
-   * of running the normal SUBMIT_PROMPT flow. The dispatcher is responsible
+   * of running the normal conversation-turn flow. The dispatcher is responsible
    * for persisting the user's prompt to the conversation transcript and
    * starting the collaboration workflow. Returns the workflowId so the caller
    * can emit a `collab-started` SSE event.
@@ -332,7 +322,7 @@ export interface PromptDeps {
   /**
    * Dispatches a `/commit` or `/merge` conversation command to the command
    * service. `executePromptStream` calls this when `parseConversationCommand`
-   * matches, instead of running the normal SUBMIT_PROMPT flow. The dispatcher
+   * matches, instead of running the normal conversation-turn flow. The dispatcher
    * is responsible for persisting the user's command message (`rawText`) to
    * the conversation transcript and running the command service to completion
    * — the route awaits the returned promise.
@@ -361,10 +351,8 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     getProjectDisplayName,
     readConfig,
     getConversationBackendFactory,
-    ensureConversationActor: manager.ensureConversationActor,
-    attachPromptStream: manager.attachPromptStream,
-    detachPromptStream: manager.detachPromptStream,
-    sendConversationEvent: manager.sendConversationEvent,
+    ensureConversationLifecycle: manager.ensureConversationLifecycle,
+    executeConversationTurn: manager.executeConversationTurn,
     async dispatchCollabStart(input) {
       const collabManager = collabModule.getDefaultCollaborationManager();
       const startInput: Parameters<typeof collabManager.start>[0] = {
@@ -496,8 +484,8 @@ export interface PromptStreamOptions {
    */
   executionTarget?: ExecutionTarget;
   /**
-   * Explicit actor input passed through to `ensureConversationActor`, bypassing
-   * the manager's session-based loader. The session-less project-conversation
+   * Explicit lifecycle input that bypasses the manager's session-based loader.
+   * The session-less project-conversation
    * entry supplies this (built from the project record + repo-root worktree)
    * because the conversation has no host session to load from.
    */
@@ -612,14 +600,12 @@ export function stripCollabPrefix(text: string): string {
 }
 
 /**
- * Execute a prompt by delegating to the conversation XState machine.
+ * Execute a prompt through the conversation lifecycle module.
  *
  * 1. Get-or-create conversation
- * 2. Ensure a conversation actor is running
- * 3. Attach the SSE emit callback
- * 4. Send SUBMIT_PROMPT event
- * 5. Wait for the actor to complete the turn (returns to idle/debug/done)
- * 6. Detach stream
+ * 2. Ensure the conversation lifecycle is ready
+ * 3. Execute one turn through its domain interface
+ * 4. Emit the terminal stream event from the returned projection
  */
 export async function executePromptStream(
   projectPath: string,
@@ -682,7 +668,7 @@ export async function executePromptStream(
       resolvedBackend = options.backend;
     } else {
       const config = await resolvedDeps.readConfig();
-      resolvedBackend = config.defaultAgentBackend ?? "claude";
+      resolvedBackend = config.defaultAgentBackend ?? DEFAULT_AGENT_BACKEND_ID;
     }
     const conversation = await resolvedDeps.createConversation(
       projectPath,
@@ -855,7 +841,7 @@ export async function executePromptStream(
         backend: resolvedBackend,
         modelId,
         effort: options?.effort,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       throw new ModelEffortValidationError(
         err instanceof Error
@@ -886,7 +872,7 @@ export async function executePromptStream(
   if (options?.actorInput !== undefined) {
     actorOptions.actorInput = options.actorInput;
   }
-  const actor = await resolvedDeps.ensureConversationActor(
+  await resolvedDeps.ensureConversationLifecycle(
     projectPath,
     session.sessionName,
     conversationId,
@@ -924,92 +910,70 @@ export async function executePromptStream(
     );
   }
 
-  // Attach SSE stream
-  resolvedDeps.attachPromptStream(
+  const execution = await resolvedDeps.executeConversationTurn({
     projectPath,
-    session.sessionName,
+    sessionName: session.sessionName,
     conversationId,
     streamId,
     emit,
-  );
+    onAccepted: () =>
+      notifyPromptAccepted(options, session.sessionName, conversationId),
+    turn: {
+      promptText,
+      images,
+      backend: resolvedBackend,
+      modelId,
+      effort: options?.effort,
+      autonomous: options?.autonomous,
+      outputFormat: options?.outputFormat,
+      ...(options?.waitForBackgroundTasks
+        ? { waitForBackgroundTasks: true }
+        : {}),
+      ...(options?.documentFeedback
+        ? { documentFeedback: options.documentFeedback }
+        : {}),
+      ...(options?.askUserQuestionsEnabled
+        ? { askUserQuestionsEnabled: true }
+        : {}),
+    },
+  });
 
-  try {
-    // Send the prompt event to the machine
-    const accepted = resolvedDeps.sendConversationEvent(
-      projectPath,
-      session.sessionName,
+  if (execution.status === "rejected") {
+    const errorMessage = "Conversation is not ready to accept a new prompt";
+    logger.error("prompt.submit_rejected", {
       conversationId,
-      {
-        type: "SUBMIT_PROMPT",
-        promptText,
-        images,
-        backend: resolvedBackend,
-        modelId,
-        effort: options?.effort,
-        autonomous: options?.autonomous,
-        streamId,
-        outputFormat: options?.outputFormat,
-        ...(options?.waitForBackgroundTasks
-          ? { waitForBackgroundTasks: true }
-          : {}),
-        ...(options?.documentFeedback
-          ? { documentFeedback: options.documentFeedback }
-          : {}),
-        ...(options?.askUserQuestionsEnabled
-          ? { askUserQuestionsEnabled: true }
-          : {}),
-      },
-    );
-
-    // The machine refused SUBMIT_PROMPT — no actor, or the current state cannot
-    // accept it (e.g. wedged in externalExecuting after the SDK subprocess died
-    // mid virtual turn). Fail fast: awaiting waitForTurnCompletion here would
-    // hang forever since no turn ever starts, leaving the request open and the
-    // UI loading indicator spinning.
-    if (!accepted) {
-      const errorMessage = "Conversation is not ready to accept a new prompt";
-      const snapshot = actor.getSnapshot();
-      logger.error("prompt.submit_rejected", {
-        conversationId,
-        sessionName: session.sessionName,
-        actorState: snapshot.value,
-      });
-      emitErrorAndDone(emit, errorMessage);
-      return {
-        ...readContextFromSnapshot(snapshot, conversationId),
-        error: errorMessage,
-      };
-    }
-
-    await notifyPromptAccepted(options, session.sessionName, conversationId);
-
-    // Wait for the turn to complete: actor reaches idle, debug.*, or done
-    await waitForTurnCompletion(actor);
-
-    logger.info("prompt.complete", {
       sessionName: session.sessionName,
-      conversationId,
+      reason: execution.reason,
     });
+    emitErrorAndDone(emit, errorMessage);
+    return {
+      conversationId,
+      ...execution.result,
+      error: errorMessage,
+    };
+  }
 
-    emit("done", {});
-    return readContextFromSnapshot(actor.getSnapshot(), conversationId);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Prompt failed";
+  if (execution.status === "failed") {
     logger.error("prompt.facade_error", {
       sessionName: session.sessionName,
       conversationId,
-      error: errorMsg,
+      error: execution.error,
     });
-    emitErrorAndDone(emit, errorMsg);
-    return readContextFromSnapshot(actor.getSnapshot(), conversationId);
-  } finally {
-    resolvedDeps.detachPromptStream(
-      projectPath,
-      session.sessionName,
+    emitErrorAndDone(emit, execution.error);
+    return {
       conversationId,
-      streamId,
-    );
+      ...execution.result,
+      error: execution.result.error ?? execution.error,
+    };
   }
+
+  logger.info("prompt.complete", {
+    sessionName: session.sessionName,
+    conversationId,
+  });
+
+  emit("done", {});
+  return { conversationId, ...execution.result };
 }
 
 // ============================================================
@@ -1047,130 +1011,4 @@ function emitErrorAndDone(
 ): void {
   emit("error", { message });
   emit("done", {});
-}
-
-/**
- * Read context token usage from the actor snapshot after a turn completes.
- */
-function readContextFromSnapshot(
-  snap: ReturnType<ConversationActorRef["getSnapshot"]>,
-  conversationId: string,
-): PromptStreamResult {
-  const ctx = snap.context as unknown as Record<string, unknown>;
-  const totals = ctx?.totals as
-    | { contextTokens?: number | null; contextWindowMax?: number | null }
-    | undefined;
-  const lastResult = ctx?.lastResult as
-    | {
-        structuredOutput?: unknown;
-        aborted?: boolean;
-        compacted?: boolean;
-        abortReason?: "timeout" | "user" | "shutdown";
-        timeoutMs?: number;
-        error?: string | null;
-        backgroundWait?: BackgroundWaitSummary;
-      }
-    | undefined;
-  const lastError = typeof ctx?.lastError === "string" ? ctx.lastError : null;
-  return {
-    conversationId,
-    contextTokens: totals?.contextTokens ?? null,
-    contextWindowMax: totals?.contextWindowMax ?? null,
-    structuredOutput: lastResult?.structuredOutput,
-    aborted: lastResult?.aborted ?? false,
-    compacted: lastResult?.compacted ?? false,
-    ...(lastResult?.abortReason !== undefined
-      ? { abortReason: lastResult.abortReason }
-      : {}),
-    ...(lastResult?.timeoutMs !== undefined
-      ? { timeoutMs: lastResult.timeoutMs }
-      : {}),
-    error: lastResult?.error ?? lastError,
-    ...(lastResult?.backgroundWait !== undefined
-      ? { backgroundWait: lastResult.backgroundWait }
-      : {}),
-  };
-}
-
-/**
- * Wait for the conversation actor to finish the current turn.
- * Resolves when the actor settles into a between-turn boundary
- * (idle, waitingForInput, or debug.*) or reaches the done state.
- * Rejects if the actor errors.
- */
-function waitForTurnCompletion(actor: ConversationActorRef): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    // Check if already idle (no active turn)
-    const snap = actor.getSnapshot();
-    if (snap.status === "done") {
-      resolve();
-      return;
-    }
-
-    const isSettled = (stateValue: unknown): boolean => {
-      if (stateValue === "idle") return true;
-      // A turn that ends by asking the user (`cctl ask`) settles into the
-      // top-level `waitingForInput` state — a between-turn boundary alongside
-      // `idle`/`debug.*` (see conversation machine). The turn is complete, so
-      // the autonomous/workflow caller must return here to run its post-turn
-      // handling (e.g. parking the graph-workflow context) instead of hanging.
-      if (stateValue === "waitingForInput") return true;
-      if (
-        typeof stateValue === "object" &&
-        stateValue !== null &&
-        "debug" in stateValue
-      )
-        return true;
-      return false;
-    };
-
-    // If the machine hasn't started acquiring resources yet, we need to wait
-    // for the SUBMIT_PROMPT to take effect first
-    const initialValue = snap.value;
-    // Seed from the initial snapshot: when waiting begins the actor is already
-    // mid-turn (acquiringResources — SUBMIT_PROMPT was accepted synchronously),
-    // so the active turn has effectively already been observed. Without this, a
-    // turn that fails during resource acquisition collapses
-    // acquiringResources→finalizingTurn→idle in a single macrostep, the
-    // subscriber sees only the settled `idle` snapshot, `sawTransition` never
-    // flips, and the wait hangs forever.
-    let sawTransition = !isSettled(initialValue);
-
-    const sub = actor.subscribe((snapshot) => {
-      // Track that a state transition occurred (machine left idle/debug)
-      if (!sawTransition && !isSettled(snapshot.value)) {
-        sawTransition = true;
-      }
-
-      if (snapshot.status === "done") {
-        sub.unsubscribe();
-        resolve();
-        return;
-      }
-
-      if (snapshot.status === "error") {
-        sub.unsubscribe();
-        reject(new Error("Conversation actor errored"));
-        return;
-      }
-
-      // Only resolve when we've seen a transition AND come back to settled
-      if (sawTransition && isSettled(snapshot.value)) {
-        sub.unsubscribe();
-        resolve();
-      }
-    });
-
-    // If the actor is already settled and hasn't transitioned,
-    // check after a microtask to allow the SUBMIT_PROMPT event to be processed
-    if (isSettled(initialValue)) {
-      queueMicrotask(() => {
-        const current = actor.getSnapshot();
-        if (current.status === "done") {
-          sub.unsubscribe();
-          resolve();
-        }
-      });
-    }
-  });
 }

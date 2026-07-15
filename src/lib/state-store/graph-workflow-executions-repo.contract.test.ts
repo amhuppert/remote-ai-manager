@@ -18,11 +18,11 @@ import {
   RUNTIME_TIER_KEYS,
   type GraphWorkflowExecutionsRepo,
 } from "./graph-workflow-executions-repo";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowAgentSessionState,
-} from "@/lib/workflows/schemas";
+  GraphWorkflowExecution,
+} from "@/lib/workflow-graph/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 
@@ -60,17 +60,13 @@ function maximalExecution(): GraphWorkflowExecution {
   // honest label is "metrics_unavailable"; keeping it here proves the widened
   // enum value survives the SQLite/Zod round-trip through the real repo.
   const validatorLane: GraphWorkflowAgentSessionState = {
+    backend: "claude",
+    refKind: "conversation",
     lane: "context_validator",
     contextId: "ctx-1",
-    engine: "claude",
-    sessionRef: {
-      engine: "claude",
-      lane: "context_validator",
-      conversationId: "conv-lane-2",
-    },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    workflowConversationId: "conv-lane-2",
+    sessionRef: { backend: "claude", ref: "conv-lane-2" },
+    metrics: { rotateBeforeNextTurn: false },
     limitEvaluation: "metrics_unavailable",
     lastUsedAt: "2026-01-02T02:30:00Z",
   };

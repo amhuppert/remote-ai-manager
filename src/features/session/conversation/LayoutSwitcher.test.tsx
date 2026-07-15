@@ -1,36 +1,26 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import LayoutSwitcher from "@/features/session/conversation/LayoutSwitcher";
 
-function buttonByTooltip(
-  container: HTMLElement,
-  tooltip: string,
-): HTMLButtonElement {
-  const btn = container.querySelector<HTMLButtonElement>(
-    `button[data-tooltip="${tooltip}"]`,
-  );
-  if (!btn) throw new Error(`No layout button with tooltip ${tooltip}`);
-  return btn;
+// The tooltip label doubles as each icon-only button's accessible name
+// (aria-label), so buttons are found by role name.
+function buttonByLabel(name: string): HTMLButtonElement {
+  return screen.getByRole("button", { name }) as HTMLButtonElement;
 }
 
 describe("LayoutSwitcher", () => {
   it("renders five layout mode buttons (Req 3.1)", () => {
-    const { container } = render(
-      <LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />,
-    );
-    const buttons = container.querySelectorAll("button");
-    expect(buttons.length).toBe(5);
+    render(<LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />);
+    expect(screen.getAllByRole("button").length).toBe(5);
   });
 
   it("orders panes after split and before diff (Req 3.1)", () => {
-    const { container } = render(
-      <LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />,
-    );
-    const tooltips = Array.from(container.querySelectorAll("button")).map((b) =>
-      b.getAttribute("data-tooltip"),
-    );
-    expect(tooltips).toEqual([
+    render(<LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />);
+    const labels = screen
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(labels).toEqual([
       "Conversation + Diff sidebar",
       "Split 50/50",
       "Panes (split-screen)",
@@ -41,72 +31,60 @@ describe("LayoutSwitcher", () => {
 
   it("activates panes layout on click (Req 3.1)", () => {
     const onLayoutChange = vi.fn();
-    const { container } = render(
+    render(
       <LayoutSwitcher activeLayout="default" onLayoutChange={onLayoutChange} />,
     );
-    fireEvent.click(buttonByTooltip(container, "Panes (split-screen)"));
+    fireEvent.click(buttonByLabel("Panes (split-screen)"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("panes");
   });
 
   it("highlights the panes mode when active (Req 3.1)", () => {
-    const { container } = render(
-      <LayoutSwitcher activeLayout="panes" onLayoutChange={vi.fn()} />,
-    );
+    render(<LayoutSwitcher activeLayout="panes" onLayoutChange={vi.fn()} />);
     expect(
-      buttonByTooltip(container, "Panes (split-screen)").getAttribute(
-        "data-active",
-      ),
+      buttonByLabel("Panes (split-screen)").getAttribute("data-active"),
     ).toBe("true");
-    expect(
-      buttonByTooltip(container, "Split 50/50").getAttribute("data-active"),
-    ).toBe("false");
+    expect(buttonByLabel("Split 50/50").getAttribute("data-active")).toBe(
+      "false",
+    );
   });
 
   it("calls onLayoutChange with correct mode on click (Req 4.4)", () => {
     const onLayoutChange = vi.fn();
-    const { container } = render(
+    render(
       <LayoutSwitcher activeLayout="default" onLayoutChange={onLayoutChange} />,
     );
-    fireEvent.click(buttonByTooltip(container, "Conversation only"));
+    fireEvent.click(buttonByLabel("Conversation only"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("conversation");
 
-    fireEvent.click(buttonByTooltip(container, "Split 50/50"));
+    fireEvent.click(buttonByLabel("Split 50/50"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("split");
 
-    fireEvent.click(buttonByTooltip(container, "Diff only"));
+    fireEvent.click(buttonByLabel("Diff only"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("diff");
   });
 
   it("highlights the active mode (Req 4.4)", () => {
-    const { container } = render(
-      <LayoutSwitcher activeLayout="split" onLayoutChange={vi.fn()} />,
+    render(<LayoutSwitcher activeLayout="split" onLayoutChange={vi.fn()} />);
+    expect(buttonByLabel("Split 50/50").getAttribute("data-active")).toBe(
+      "true",
+    );
+    expect(buttonByLabel("Conversation only").getAttribute("data-active")).toBe(
+      "false",
     );
     expect(
-      buttonByTooltip(container, "Split 50/50").getAttribute("data-active"),
-    ).toBe("true");
-    expect(
-      buttonByTooltip(container, "Conversation only").getAttribute(
-        "data-active",
-      ),
+      buttonByLabel("Conversation + Diff sidebar").getAttribute("data-active"),
     ).toBe("false");
-    expect(
-      buttonByTooltip(container, "Conversation + Diff sidebar").getAttribute(
-        "data-active",
-      ),
-    ).toBe("false");
-    expect(
-      buttonByTooltip(container, "Diff only").getAttribute("data-active"),
-    ).toBe("false");
+    expect(buttonByLabel("Diff only").getAttribute("data-active")).toBe(
+      "false",
+    );
   });
 
-  it("shows tooltips for each mode", () => {
-    const { container } = render(
-      <LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />,
-    );
-    const tooltips = Array.from(container.querySelectorAll("button")).map((b) =>
-      b.getAttribute("data-tooltip"),
-    );
-    expect(tooltips).toEqual(
+  it("exposes an accessible name for each mode", () => {
+    render(<LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />);
+    const labels = screen
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(labels).toEqual(
       expect.arrayContaining([
         "Conversation only",
         "Conversation + Diff sidebar",

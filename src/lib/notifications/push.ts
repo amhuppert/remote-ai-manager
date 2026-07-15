@@ -1,5 +1,6 @@
 import { createLogger } from "@/lib/logging";
 import type { PushNotificationConfig } from "@/lib/notifications/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 const logger = createLogger("push-notification");
 
 // ============================================================
@@ -130,7 +131,7 @@ export async function sendPushNotification(
     }
   } catch (error) {
     logger.warn("push-notification.send_error", {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
       provider: cfg.provider,
       trigger: event.trigger,
     });
@@ -179,7 +180,7 @@ export async function sendAgentNotification(
     }
   } catch (error) {
     logger.warn("agent-notification.send_error", {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
       projectName,
       sessionName,
     });

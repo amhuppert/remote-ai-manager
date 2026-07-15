@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
-import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 
 export function useSessionPageLocalState(initialPromptText = "") {

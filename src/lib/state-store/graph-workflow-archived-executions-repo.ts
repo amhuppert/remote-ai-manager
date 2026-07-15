@@ -2,11 +2,14 @@ import type Database from "better-sqlite3";
 import { createLogger } from "@/lib/logging";
 import {
   graphWorkflowExecutionSchema,
-  graphWorkflowStatusSchema,
   type GraphWorkflowExecution,
+} from "@/lib/workflow-graph/schemas";
+import {
+  graphWorkflowStatusSchema,
   type GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { PersistenceError } from "../shared/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.graph-workflow-archived-executions");
@@ -245,7 +248,7 @@ export function createGraphWorkflowArchivedExecutionsRepo(
               {
                 code: "invalid_json",
                 path: ["execution_json"],
-                message: err instanceof Error ? err.message : String(err),
+                message: getErrorMessage(err),
               },
             ]);
           }

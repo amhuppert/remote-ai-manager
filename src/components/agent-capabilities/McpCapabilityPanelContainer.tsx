@@ -19,6 +19,7 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
 
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
@@ -65,15 +66,6 @@ const SWITCH_ON = "border-cyan bg-cyan shadow-[0_0_12px_var(--cyan-glow)]";
 const SWITCH_OFF = "border-border-default bg-bg-base";
 const SWITCH_KNOB =
   "absolute left-px top-px rounded-full transition-[transform,background] duration-150";
-
-// Shared `.agent-capability-inheritance` chip.
-const CHIP_BASE = cn(
-  "inline-flex items-center gap-[4px] rounded-full border border-solid px-[7px] py-[2px] font-mono text-[0.7rem] font-medium whitespace-nowrap text-text-tertiary",
-  DETAILS_SPAN,
-);
-const CHIP_EXPLICIT = "border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan";
-const CHIP_EXPLICIT_OFF =
-  "border-[var(--cc-amber-a25)] bg-amber-glow text-amber";
 
 export function McpCapabilityPanelContainer({
   selectedScope,
@@ -484,29 +476,29 @@ function McpInheritanceChip({
 }): React.JSX.Element {
   if (server.status.kind === "disabled") {
     return (
-      <span className={cn(CHIP_BASE, CHIP_EXPLICIT_OFF)}>
+      <StatusChip tone="amber" wrap layoutClassName="min-w-0">
         Set off at {scopeName}
-      </span>
+      </StatusChip>
     );
   }
   if (server.status.kind === "overridden") {
     return (
-      <span className={cn(CHIP_BASE, CHIP_EXPLICIT)}>
+      <StatusChip tone="cyan" wrap layoutClassName="min-w-0">
         Set on at {scopeName}
-      </span>
+      </StatusChip>
     );
   }
   if (server.status.kind === "inherited") {
     return (
-      <span className={cn(CHIP_BASE, "border-border-subtle")}>
+      <StatusChip tone="neutral" wrap layoutClassName="min-w-0">
         Inherits {server.enabled ? "on" : "off"} from {server.status.from}
-      </span>
+      </StatusChip>
     );
   }
   return (
-    <span className={cn(CHIP_BASE, CHIP_EXPLICIT)}>
+    <StatusChip tone="cyan" wrap layoutClassName="min-w-0">
       Set {server.enabled ? "on" : "off"} at {scopeName}
-    </span>
+    </StatusChip>
   );
 }
 

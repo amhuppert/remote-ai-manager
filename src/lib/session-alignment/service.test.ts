@@ -79,6 +79,7 @@ function makeService(
       if (event.type === "session-alignment-updated") {
         broadcasts.push(event);
       }
+      return { delivered: true };
     },
     promptQueue: {
       async enqueue(message) {

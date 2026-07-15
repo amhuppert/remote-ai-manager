@@ -23,6 +23,7 @@ import type {
 } from "./schemas";
 import { clampTop } from "./stats";
 import type { LogAnalysisFilters, LogAnalysisThresholds } from "./types";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("log-analysis");
 
@@ -290,7 +291,7 @@ async function emitInputBanner(input: {
       `[logs:analyze] reading ${filePath} (resolved=${resolution}, size=${formatBytes(stats.size)}, mtime=${mtimeIso}, age=${formatAge(ageMs)})`,
     );
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = getErrorMessage(err);
     writeStderr(
       runtime,
       `[logs:analyze] reading ${filePath} (resolved=${resolution}, stat unavailable: ${reason})`,
@@ -539,7 +540,7 @@ export async function runLogAnalysisCli(
     });
     return exitCode;
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = getErrorMessage(err);
     logger.error("log_analysis.error", {
       command,
       durationMs: Date.now() - start,

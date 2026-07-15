@@ -1,43 +1,22 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import { CapabilitiesSection } from "./CapabilitiesSection";
 
-vi.mock("@/lib/mcp/queries", () => ({
-  useGlobalMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: true,
-    isError: false,
-    error: null,
-  }),
-  useProjectMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-  useSessionMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-  useConversationMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-}));
+let api: FetchFixture;
 
-vi.mock("@/lib/mcp/mutations", () => ({
-  useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
-  useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
-  useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
-  useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
-  useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
-}));
+beforeEach(() => {
+  api = installFetchFixture();
+  // The MCP panel mounts at global scope and reads the global config; holding it
+  // in perpetual loading keeps this render assertion free of MCP fixture data.
+  api.pending("GET", "/api/config/mcp");
+});
+
+afterEach(() => {
+  api.restore();
+});
 
 describe("CapabilitiesSection", () => {
   it("renders the AgentCapabilitiesConfigurator with the global scope tab", () => {

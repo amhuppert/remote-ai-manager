@@ -23,10 +23,8 @@ import {
   type ExecutionContextNodeData,
   type ContextEdgeData,
 } from "@/components/workflow-graph/derive-graph";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowVisualLayout,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowVisualLayout } from "@/lib/workflow-graph/definition-schemas";
 const nodeTypes = {
   executionContext: ExecutionContextNode,
 } as unknown as NodeTypes;

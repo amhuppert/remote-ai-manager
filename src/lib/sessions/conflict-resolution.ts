@@ -11,6 +11,8 @@ import type {
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import { buildIncomingChangesSection as defaultBuildIncomingChangesSection } from "@/lib/merge-intents/incoming-changes";
 import type { IncomingChangesParams } from "@/lib/merge-intents/incoming-changes";
+import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("conflict-resolution");
 
@@ -241,27 +243,7 @@ function buildDecisionsPrompt(decisions: ConflictDecisionInput[]): string {
 }
 
 // ============================================================
-// JSON Extraction
-// ============================================================
-
-/**
- * Scan text for the last ```json code fence and return its content.
- * Returns null if no code fence is found.
- */
-function extractLastJsonCodeFence(text: string): string | null {
-  const regex = /```json\s*\n([\s\S]*?)```/g;
-  let lastMatch: string | null = null;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(text)) !== null) {
-    lastMatch = match[1] ?? null;
-  }
-
-  return lastMatch?.trim() ?? null;
-}
-
-// ============================================================
-// Conflict Entry Parsing (resilience order)
+// Conflict Entry Parsing
 // ============================================================
 
 // Accepts either the wrapped object `{ conflicts: [...] }` produced by the
@@ -278,70 +260,26 @@ function unwrapEntries(
 }
 
 /**
- * Parse conflict entries from a task-run result using a resilience chain:
- * 1. Structured output (preferred — the JSON-schema gate already validated it)
- * 2. Raw JSON parse of the full text
- * 3. Fenced ```json block extraction
+ * Parse conflict entries from a task-run result via the shared
+ * structured-output module (extraction precedence native → raw JSON → last
+ * fenced block, first schema-passing candidate wins). An invalid native
+ * candidate does not hard-fail: the chain falls through to a schema-valid raw
+ * or fenced text candidate in the same turn (Phase 3 review F5, approved in
+ * the 2026-07-13 addendum to the Phase 1 slice designs).
  */
-function parseConflictEntries(
+export function parseConflictEntries(
   text: string | null,
   structuredOutput: unknown,
 ): { conflicts: ConflictEntry[] } | { error: string } {
-  // 1. Structured output
-  if (structuredOutput != null) {
-    const parseResult =
-      conflictEntriesPayloadSchema.safeParse(structuredOutput);
-    if (parseResult.success) {
-      logger.debug("conflict-resolution.parsed_via_structured_output");
-      return { conflicts: unwrapEntries(parseResult.data) };
-    }
-    logger.debug("conflict-resolution.structured_output_invalid", {
-      error: parseResult.error.message,
-    });
-    return {
-      error: `Failed to parse structured conflict entries: ${parseResult.error.message}`,
-    };
+  const validated = validateStructuredOutput(conflictEntriesPayloadSchema, {
+    ...(structuredOutput != null ? { native: structuredOutput } : {}),
+    text,
+  });
+  if (!validated.ok) {
+    return { error: validated.error };
   }
-
-  if (!text) {
-    return { error: "No text output from task runner" };
-  }
-
-  // 2. Raw JSON parse of the full text
-  try {
-    const parsed = JSON.parse(text);
-    const parseResult = conflictEntriesPayloadSchema.safeParse(parsed);
-    if (parseResult.success) {
-      logger.debug("conflict-resolution.parsed_via_raw_json");
-      return { conflicts: unwrapEntries(parseResult.data) };
-    }
-  } catch {
-    // Not valid JSON — fall through to fenced block extraction
-  }
-
-  // 3. Fenced ```json block extraction
-  const jsonContent = extractLastJsonCodeFence(text);
-  if (!jsonContent) {
-    return { error: "No JSON code fence found in agent's response" };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonContent);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Invalid JSON";
-    return { error: `Failed to parse conflict entries JSON: ${errorMsg}` };
-  }
-
-  const parseResult = conflictEntriesPayloadSchema.safeParse(parsed);
-  if (!parseResult.success) {
-    return {
-      error: `Failed to parse conflict entries: ${parseResult.error.message}`,
-    };
-  }
-
-  logger.debug("conflict-resolution.parsed_via_fenced_block");
-  return { conflicts: unwrapEntries(parseResult.data) };
+  logger.debug("conflict-resolution.parsed", { source: validated.source });
+  return { conflicts: unwrapEntries(validated.value) };
 }
 
 // ============================================================
@@ -400,7 +338,7 @@ async function verifyResolutionGroundTruth(
   try {
     unmerged = await listUnmergedFiles(worktreePath);
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = getErrorMessage(err);
     logger.error("conflict-resolution.ground_truth_check_error", {
       worktreePath,
       error: errorMsg,

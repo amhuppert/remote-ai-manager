@@ -18,15 +18,15 @@ import {
   getSession as defaultGetSession,
   mutateConversation as defaultMutateConversation,
 } from "@/lib/state-store";
-import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
-import type { BroadcastFn } from "@/lib/events/broadcaster";
+import { publishEvent, type PublishFn } from "@/lib/events/publication";
 import {
   conversationUnreadEventSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ApiError } from "@/lib/api/errors";
+import { resolveSessionConversationRoute } from "./route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("conversation-mark-read-route-handlers");
 
@@ -44,7 +44,7 @@ export interface MarkReadRouteDeps {
     label: string,
     mutate: (conversation: ConversationState) => void | Promise<void>,
   ): Promise<void>;
-  broadcast: BroadcastFn;
+  broadcast: PublishFn;
 }
 
 const defaultDeps: MarkReadRouteDeps = {
@@ -52,7 +52,7 @@ const defaultDeps: MarkReadRouteDeps = {
   getProjectDisplayName: defaultGetProjectDisplayName,
   getSession: defaultGetSession,
   mutateConversation: defaultMutateConversation,
-  broadcast: defaultBroadcast,
+  broadcast: publishEvent,
 };
 
 type RouteContext = { params: Promise<Record<string, string>> };
@@ -64,37 +64,9 @@ export function createMarkReadRouteHandlers(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const resolvedParams = await context.params;
-    const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
-    const conversationId = resolvedParams["conversationId"] ?? "";
-
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const conversation = session.conversations.find(
-      (c) => c.id === conversationId,
-    );
-    if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId } = resolved.value;
 
     await deps.mutateConversation(
       projectPath,
@@ -122,7 +94,7 @@ export function createMarkReadRouteHandlers(
         projectName,
         sessionName,
         conversationId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
 

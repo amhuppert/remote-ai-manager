@@ -32,7 +32,7 @@ import {
   collaborationProposedChangesOutputSchema,
   collaborationResolutionDecisionOutputSchema,
   resolvedCollaborationConfigSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 
 const collaborationFeatureSnapshotUserSchema = z
   .object({
@@ -43,39 +43,39 @@ const collaborationFeatureSnapshotUserSchema = z
 export const collaborationWorkflowArtifactEntrySchema = z.discriminatedUnion(
   "kind",
   [
-  z.object({
-    kind: z.literal("initial_draft"),
-    agent: z.enum(["agent_one", "agent_two"]),
-    value: collaborationInitialDraftOutputSchema,
-  }),
-  z.object({
-    kind: z.literal("cross_review"),
-    agent: z.literal("agent_two"),
-    value: collaborationCrossReviewOutputSchema,
-  }),
-  z.object({
-    kind: z.literal("proposed_changes"),
-    agent: z.literal("agent_one"),
-    round: z.number().int().positive(),
-    value: collaborationProposedChangesOutputSchema,
-  }),
-  z.object({
-    kind: z.literal("counter_proposal"),
-    agent: z.literal("agent_two"),
-    round: z.number().int().positive(),
-    value: collaborationCounterProposalOutputSchema,
-  }),
-  z.object({
-    kind: z.literal("resolution_decision"),
-    agent: z.literal("agent_one"),
-    round: z.number().int().positive(),
-    value: collaborationResolutionDecisionOutputSchema,
-  }),
-  z.object({
-    kind: z.literal("final_answer"),
-    agent: z.literal("agent_one"),
-    value: collaborationFinalAnswerOutputSchema,
-  }),
+    z.object({
+      kind: z.literal("initial_draft"),
+      agent: z.enum(["agent_one", "agent_two"]),
+      value: collaborationInitialDraftOutputSchema,
+    }),
+    z.object({
+      kind: z.literal("cross_review"),
+      agent: z.literal("agent_two"),
+      value: collaborationCrossReviewOutputSchema,
+    }),
+    z.object({
+      kind: z.literal("proposed_changes"),
+      agent: z.literal("agent_one"),
+      round: z.number().int().positive(),
+      value: collaborationProposedChangesOutputSchema,
+    }),
+    z.object({
+      kind: z.literal("counter_proposal"),
+      agent: z.literal("agent_two"),
+      round: z.number().int().positive(),
+      value: collaborationCounterProposalOutputSchema,
+    }),
+    z.object({
+      kind: z.literal("resolution_decision"),
+      agent: z.literal("agent_one"),
+      round: z.number().int().positive(),
+      value: collaborationResolutionDecisionOutputSchema,
+    }),
+    z.object({
+      kind: z.literal("final_answer"),
+      agent: z.literal("agent_one"),
+      value: collaborationFinalAnswerOutputSchema,
+    }),
   ],
 );
 export type CollaborationWorkflowArtifactEntry = z.infer<

@@ -13,7 +13,7 @@ import {
   type DispatchFirstTurnInput,
 } from "@/lib/prompt/first-turn-dispatch";
 import { getDefaultCollaborationManager } from "@/lib/workflows/collaboration/manager";
-import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
+import { publishEvent } from "@/lib/events/publication";
 import {
   conversationCreatedEventSchema,
   type ConversationCreatedEvent,
@@ -290,6 +290,6 @@ export function defaultChatSpawnDeps(): ChatSpawnDeps {
     setSessionSpawnedFrom: defaultSetSessionSpawnedFrom,
     addPlcSpawnedSessionIds: defaultAddPlcSpawnedSessionIds,
     dispatchFirstTurn: dispatcher.dispatchFirstTurn,
-    broadcast: defaultBroadcast,
+    broadcast: publishEvent,
   };
 }

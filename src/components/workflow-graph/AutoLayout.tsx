@@ -10,7 +10,7 @@ import type {
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 export function collectNodeDimensions(nodes: Node[]): NodeDimensions {
   const dims: NodeDimensions = new Map();
   for (const node of nodes) {

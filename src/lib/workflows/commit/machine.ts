@@ -1,7 +1,8 @@
 /**
  * Smart Commit XState v5 Machine.
  *
- * Models the commit pipeline with validation and auto-fix:
+ * Models the commit pipeline with validation and auto-fix (the fix loop is
+ * the shared `createValidationFixStates` fragment):
  *
  *   committing → validating → completed
  *       ↓ (error)       ↓ (fail)
@@ -11,6 +12,9 @@
  *                                                                       fixingValidation (loop)
  *                                                                             ↓ (fail + no retries)
  *                                                                           failed
+ *
+ * A validation-script timeout in validating/revalidating short-circuits to
+ * failed — an environment/scope limit the fix agent can never resolve.
  */
 
 import { setup, assign, fromPromise } from "xstate";
@@ -24,23 +28,47 @@ import type {
   RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
-} from "../merge/actors";
+} from "../validation-fix/actors";
 import {
   checkUncommitted,
   commitChangesActor,
   runValidation,
   fixValidation,
-} from "../merge/actors";
-import {
-  extractErrorMessage,
-  errorAssign,
-  createTerminalStates,
-} from "../utils";
+} from "../validation-fix/actors";
+import { createValidationFixStates } from "../validation-fix/states";
+import { errorAssign, createTerminalStates } from "../utils";
 
 const SCHEMA_VERSION = 1;
 
 /** Standard terminal states for the commit machine. */
 const terminals = createTerminalStates(["completed", "failed"] as const);
+
+/**
+ * Shared validate → fix → check → commit-fix → revalidate fragment.
+ * Success routes straight to `completed` (terminals don't clear
+ * phase/completedAt, so the transition assigns them); a validation-script
+ * timeout short-circuits to `failed` without burning fix turns.
+ */
+const validationFixStates = createValidationFixStates<CommitContext>({
+  validateInput: (context) => ({
+    projectPath: context.projectPath,
+    worktreePath: context.worktreePath,
+    sessionName: context.sessionName,
+    branchName: context.branchName,
+    targetBranch: context.targetBranch,
+    timeoutMs: context.validationTimeoutMs,
+  }),
+  onValidated: {
+    target: "completed",
+    actions: [
+      assign({
+        completedAt: () => new Date().toISOString(),
+        phase: null,
+      }),
+    ],
+  },
+  onTimeout: { target: "failed" },
+});
 
 /** Exported type alias so consumers can accept the machine or `.provide()` variants. */
 export type CommitMachineType = typeof commitMachine;
@@ -64,23 +92,6 @@ export const commitMachine = setup({
     fixValidation: fixValidation as ReturnType<
       typeof fromPromise<FixValidationOutput, FixValidationInput>
     >,
-  },
-  guards: {
-    fixSucceeded: ({ event }) => {
-      const e = event as unknown as { output: FixValidationOutput };
-      return e.output.status === "fixed";
-    },
-    hasFixRetriesRemaining: ({ context }) =>
-      context.fixAttempt < context.maxFixAttempts,
-    hasUncommittedChanges: ({ event }) => {
-      const e = event as unknown as { output: CheckUncommittedOutput };
-      return e.output.hasChanges;
-    },
-  },
-  actions: {
-    onTerminal: () => {
-      // Override via .provide() for notifications, SSE broadcast, etc.
-    },
   },
 }).createMachine({
   id: "smartCommit",
@@ -128,144 +139,8 @@ export const commitMachine = setup({
       },
     },
 
-    validating: {
-      entry: assign({ phase: "validating" as const }),
-      invoke: {
-        src: "runValidation",
-        input: ({ context }) => ({
-          projectPath: context.projectPath,
-          worktreePath: context.worktreePath,
-          sessionName: context.sessionName,
-          branchName: context.branchName,
-          targetBranch: context.targetBranch,
-          timeoutMs: context.validationTimeoutMs,
-        }),
-        onDone: {
-          target: "completed",
-          actions: assign({
-            completedAt: () => new Date().toISOString(),
-            phase: null,
-          }),
-        },
-        onError: {
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-          }),
-          target: "fixingValidation",
-        },
-      },
-    },
-
-    fixingValidation: {
-      entry: [
-        assign({ phase: "fixing-validation" as const }),
-        assign({ fixAttempt: ({ context }) => context.fixAttempt + 1 }),
-      ],
-      invoke: {
-        src: "fixValidation",
-        input: ({ context }) => ({
-          worktreePath: context.worktreePath,
-          validationOutput: context.error ?? "",
-          projectPath: context.projectPath,
-          sessionName: context.sessionName,
-          branchName: context.branchName,
-          isRetry: context.fixAttempt > 1,
-        }),
-        onDone: [
-          {
-            guard: "fixSucceeded",
-            target: "checkingFixChanges",
-          },
-          {
-            // Fix failed — go to failed with original error
-            target: "failed",
-            actions: assign({
-              completedAt: () => new Date().toISOString(),
-              phase: null,
-            }),
-          },
-        ],
-        onError: {
-          target: "failed",
-          actions: [errorAssign(), assign({ phase: null })],
-        },
-      },
-    },
-
-    /**
-     * Check whether the fix agent actually made changes before committing.
-     * If it didn't, skip straight to revalidating so the machine can decide
-     * whether to retry or fail based on actual validation results.
-     */
-    checkingFixChanges: {
-      invoke: {
-        src: "checkUncommitted",
-        input: ({ context }) => ({ worktreePath: context.worktreePath }),
-        onDone: [
-          {
-            guard: "hasUncommittedChanges",
-            target: "committingFix",
-          },
-          { target: "revalidating" },
-        ],
-        onError: {
-          // Best-effort: if we can't check, try to commit anyway
-          target: "committingFix",
-        },
-      },
-    },
-
-    committingFix: {
-      invoke: {
-        src: "commitChanges",
-        input: ({ context }) => ({
-          worktreePath: context.worktreePath,
-          message: "auto-fix: validation errors",
-          skipHooks: true,
-        }),
-        onDone: "revalidating",
-        onError: {
-          target: "failed",
-          actions: [errorAssign(), assign({ phase: null })],
-        },
-      },
-    },
-
-    revalidating: {
-      entry: assign({ phase: "re-validating" as const }),
-      invoke: {
-        src: "runValidation",
-        input: ({ context }) => ({
-          projectPath: context.projectPath,
-          worktreePath: context.worktreePath,
-          sessionName: context.sessionName,
-          branchName: context.branchName,
-          targetBranch: context.targetBranch,
-          timeoutMs: context.validationTimeoutMs,
-        }),
-        onDone: {
-          target: "completed",
-          actions: assign({
-            error: null,
-            completedAt: () => new Date().toISOString(),
-            phase: null,
-          }),
-        },
-        onError: [
-          {
-            guard: "hasFixRetriesRemaining",
-            actions: assign({
-              error: ({ event }) => extractErrorMessage(event.error),
-            }),
-            target: "fixingValidation",
-          },
-          {
-            target: "failed",
-            actions: [errorAssign(), assign({ phase: null })],
-          },
-        ],
-      },
-    },
+    // Shared validate → fix → check → commit-fix → revalidate fragment
+    ...validationFixStates,
 
     // Standard terminal states (completed, failed)
     ...terminals,

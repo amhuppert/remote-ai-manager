@@ -1,6 +1,6 @@
 # Design Spec: Conversation Reading & Compaction
 
-- **Status:** Draft for review (not yet ratified)
+- **Status:** Implemented. This document is the ratified design record; implementation paths named below are current unless a section explicitly describes an audit-time baseline.
 - **Date:** 2026-07-05
 - **Source:** Collaboration run `296d4991` (two-agent negotiated design; final agreement, audit in `memory-bank/collaboration/296d4991-2bc8-4821-967d-061269faa43e/round-1/agent_one/final_answer/`)
 - **Scope:** Efficient cross-conversation reading for agents + lazy message/conversation compaction, shared with users (UI) and agents (`cctl`).
@@ -51,7 +51,7 @@ Agents escalate cheapest-first; a full-transcript `Read` should effectively neve
 | One-shot structured LLM call | `src/lib/workflows/conversation/execute-workflow-task-run.ts:127` (`ExecuteWorkflowTaskRunInput`: `kind:"task_run"`, `prompt`, `outputFormat`, `timeoutMs`, `modelId`, `effort`; returns `TaskRunResult` with `structuredOutput`) ; `src/lib/agent-backends/claude/task-runner.ts:40` | Generation call |
 | Structured-output template | `src/lib/conversation-commands/` (commit-message generation: Zod schema + JSON schema + `safeParse`) | Prompt/validation pattern |
 | Background jobs | `src/lib/jobs/` (`backgroundJobSchema` schemas.ts:24 requires `sessionName`/`branchName`) | Session-shaped — explicitly **not** reused; see §7.2 |
-| SSE | `src/lib/events/broadcaster.ts:65` (`broadcast(event)`), `src/lib/api/sse-events.ts:96` (`SSEEvent` union) | New event type |
+| SSE | `src/lib/events/publication.ts` (`publishEvent`/`PublishFn`), `src/lib/api/sse-events.ts` (`SSEEvent` union) | Typed event through the canonical publication seam |
 | Agent auth | `src/lib/agent-gateway/token.ts:89` (`createAgentAuth().requireToken(request)`) | Endpoint gating |
 | Token-gated route template | `src/lib/sessions/reference-documents-route-handlers.ts` | Route handler shape |
 | Schema floor + migrations | `src/lib/state-store/state-db.ts`, `src/lib/state-store/migrations/README.md` | New table |
@@ -391,9 +391,9 @@ Merged via `mergeConfigWithDefaults()`; per-project override via the existing ca
 
 ### 8.2 Policy (agreed)
 
-- **v1 default:** the proven Claude task-runner structured-output path, high-recall tier (Sonnet default; Opus available via config). Rationale: recall-first — a dropped decision misleads future agents and costs more than model savings; `outputFormat: json_schema` + Zod validation is the wired, tested route.
-- **Not provider-locked:** `backend` is config; `model_provider/model/effort/prompt_version/normalizer_version` are stamped on every artifact so eval comparisons are attributable.
-- **GPT-5.5/Codex is a required benchmark** in the eval suite (§13) before any default changes — not the v1 wired default (Codex structured output is unproven in this codebase; OpenAI Responses is not a wired path).
+- **Default:** Claude with the configured high-recall model remains the product default. Generation nevertheless uses the neutral task-runner boundary and supports any registered backend selected by `compaction.backend`.
+- **Schema safety:** the authoritative schema is shared. Claude projects unsupported JSON Schema keywords inside its adapter immediately before SDK handoff; Codex receives the unmodified schema; Zod validates the returned artifact for both.
+- **Not provider-locked:** `backend` is config; `model_provider/model/effort/prompt_version/normalizer_version` are stamped on every artifact so eval comparisons are attributable. A default backend/model change still requires the §13 recall evaluation.
 - **Never** default canonical artifacts to a cheap model before the eval exists; a cheaper `messageModel` (e.g. Haiku) is adopted only after evals show it preserves decisions/files/commands/blockers + source refs.
 - **Never** use a provider's opaque native compaction as the user-facing artifact.
 
@@ -415,7 +415,7 @@ DELETE /api/projects/[name]/sessions/[session]/conversations/[id]/context-artifa
 
 ### 9.1 SSE
 
-New event in the `SSEEvent` union (`src/lib/api/sse-events.ts`), broadcast via `broadcast()`:
+The event is part of the `SSEEvent` union (`src/lib/api/sse-events.ts`) and is published through `publishEvent` or an injected `PublishFn` from `src/lib/events/publication.ts`:
 
 ```ts
 interface ContextArtifactStatusEvent {

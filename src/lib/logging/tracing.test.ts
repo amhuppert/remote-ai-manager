@@ -142,7 +142,7 @@ describe("withTracing", () => {
     expect(typeof completeLog?.["durationMs"]).toBe("number");
   });
 
-  it("logs error with full context before re-throwing", async () => {
+  it("logs error with full context and returns a shaped ApiError 500 envelope", async () => {
     const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const testError = new Error("handler exploded");
     const handler = vi.fn(async () => {
@@ -155,18 +155,106 @@ describe("withTracing", () => {
       headers: { "x-trace-id": "error-trace" },
     });
 
-    await expect(wrapped(req, makeParams())).rejects.toThrow(
-      "handler exploded",
-    );
+    const response = await wrapped(req, makeParams());
+    expect(response.status).toBe(500);
+    expect(response.headers.get("x-trace-id")).toBe("error-trace");
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["error"]).toBe("handler exploded");
+    expect(body["code"]).toBe("internal_error");
 
     const lines = readLogLines();
     const errorLog = lines.find((l) => l["message"] === "request.error");
     expect(errorLog).toBeDefined();
     expect(errorLog?.["traceId"]).toBe("error-trace");
     expect(errorLog?.["method"]).toBe("POST");
+    expect(errorLog?.["status"]).toBe(500);
     expect(errorLog?.["error"]).toBe("handler exploded");
     expect(errorLog?.["stack"]).toMatch(/Error: handler exploded/);
     expect(typeof errorLog?.["durationMs"]).toBe("number");
+
+    stderrSpy.mockRestore();
+  });
+
+  it("uses the per-domain error mapper's response when it maps the error", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const handler = vi.fn(async () => {
+      throw new Error("branch is stale");
+    });
+    const wrapped = withTracing(handler, {
+      mapError(error) {
+        if (error instanceof Error && error.message.includes("stale")) {
+          return Response.json(
+            { error: "Branch is stale", code: "stale_branch" },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      },
+    });
+
+    const req = makeRequest("http://localhost:3000/api/test", {
+      headers: { "x-trace-id": "mapper-trace" },
+    });
+
+    const response = await wrapped(req, makeParams());
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-trace-id")).toBe("mapper-trace");
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["code"]).toBe("stale_branch");
+
+    const lines = readLogLines();
+    const errorLog = lines.find((l) => l["message"] === "request.error");
+    expect(errorLog?.["status"]).toBe(409);
+
+    stderrSpy.mockRestore();
+  });
+
+  it("falls back to the default 500 envelope when the mapper returns undefined", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const handler = vi.fn(async () => {
+      throw new Error("unmapped failure");
+    });
+    const wrapped = withTracing(handler, {
+      mapError() {
+        return undefined;
+      },
+    });
+
+    const req = makeRequest("http://localhost:3000/api/test");
+    const response = await wrapped(req, makeParams());
+
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["error"]).toBe("unmapped failure");
+    expect(body["code"]).toBe("internal_error");
+
+    stderrSpy.mockRestore();
+  });
+
+  it("falls back to the default 500 envelope when the mapper itself throws", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const handler = vi.fn(async () => {
+      throw new Error("original failure");
+    });
+    const wrapped = withTracing(handler, {
+      mapError() {
+        throw new Error("mapper exploded");
+      },
+    });
+
+    const req = makeRequest("http://localhost:3000/api/test");
+    const response = await wrapped(req, makeParams());
+
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["error"]).toBe("original failure");
+    expect(body["code"]).toBe("internal_error");
+
+    const lines = readLogLines();
+    const mapperLog = lines.find(
+      (l) => l["message"] === "request.error_mapper_failed",
+    );
+    expect(mapperLog?.["error"]).toBe("mapper exploded");
 
     stderrSpy.mockRestore();
   });

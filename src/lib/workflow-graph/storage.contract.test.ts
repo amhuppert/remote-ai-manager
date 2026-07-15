@@ -12,11 +12,11 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { workflowDefinitionRecordSchema } from "@/lib/workflows/schemas";
+import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
 import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { createWorkflowStorageService } from "./storage";

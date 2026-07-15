@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   GraphWorkflowContextEdge,
   ResolvedWorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { computeLanePlan, recomputeLanePlanForSubgraph } from "./lane-plan";
 import { createResolvedWorkflowDefinition } from "./test-fixtures";
 

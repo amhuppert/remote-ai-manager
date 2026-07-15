@@ -16,6 +16,7 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   gateFail,
   gatePass,
@@ -52,7 +53,7 @@ export function runStructuredOutputGate(
   try {
     outcome = validator(schema, value);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     logger.warn("structured_output_gate.validator_threw", { message });
     return gateFail({
       kind: "structured_output",

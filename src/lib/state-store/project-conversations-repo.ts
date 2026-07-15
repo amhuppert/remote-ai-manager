@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { createVersionedRowCache } from "@/lib/shared/versioned-row-cache";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
   decodeSharedConversationColumns,
@@ -85,6 +86,9 @@ const projectConversationsTableRowSchema = z.object({
   agent_capabilities_runtime: z.string().nullable(),
   unread: z.union([z.literal(0), z.literal(1)]),
   spawned_session_ids: z.string().nullable(),
+  pending_queue: z.string().nullable(),
+  last_seen_alignment_version: z.number().int().nullable(),
+  pending_agent_notices: z.string().nullable(),
 });
 type ProjectConversationsTableRow = z.infer<
   typeof projectConversationsTableRowSchema
@@ -125,6 +129,9 @@ interface ProjectSqlBindRow {
   agent_capabilities_runtime: string | null;
   unread: number;
   spawned_session_ids: string | null;
+  pending_queue: string | null;
+  last_seen_alignment_version: number | null;
+  pending_agent_notices: string | null;
 }
 
 function conversationToProjectSqlBind(
@@ -177,6 +184,9 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "agent_capabilities_runtime",
   "unread",
   "spawned_session_ids",
+  "pending_queue",
+  "last_seen_alignment_version",
+  "pending_agent_notices",
 ];
 
 function rawRowsEqual(
@@ -255,13 +265,15 @@ export function createProjectConversationsRepo(
   db: Db,
 ): ProjectConversationsRepo {
   type ParsedRow = { projectPath: string; conversation: ConversationState };
-  const findAllCache = new Map<
+  const cache = createVersionedRowCache<
     string,
-    { rawRow: Record<string, unknown>; parsed: ParsedRow }
-  >();
-  let cacheVersion = 0;
-  let lastFindAllVersion = -1;
-  let lastFindAllResult: ParsedRow[] = [];
+    Record<string, unknown>,
+    ParsedRow
+  >({
+    keyOf: (row) => row.id as string,
+    rowsEqual: rawRowsEqual,
+    parse: rowToProjectDomain,
+  });
 
   const findByIdStmt = db.prepare(
     `SELECT * FROM project_conversations WHERE id = ? LIMIT 1`,
@@ -283,7 +295,7 @@ export function createProjectConversationsRepo(
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
-       unread, spawned_session_ids
+       unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices
      ) VALUES (
        @id, @project_path, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived, @open,
@@ -291,7 +303,7 @@ export function createProjectConversationsRepo(
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
-       @unread, @spawned_session_ids
+       @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -324,7 +336,10 @@ export function createProjectConversationsRepo(
        agent_capability_overrides = excluded.agent_capability_overrides,
        agent_capabilities_runtime = excluded.agent_capabilities_runtime,
        unread                     = excluded.unread,
-       spawned_session_ids        = excluded.spawned_session_ids`,
+       spawned_session_ids        = excluded.spawned_session_ids,
+       pending_queue              = excluded.pending_queue,
+       last_seen_alignment_version = excluded.last_seen_alignment_version,
+       pending_agent_notices      = excluded.pending_agent_notices`,
   );
   const deleteStmt = db.prepare(
     `DELETE FROM project_conversations WHERE id = ?`,
@@ -356,35 +371,9 @@ export function createProjectConversationsRepo(
   );
 
   function findAll(): ParsedRow[] {
-    return timed("findAll", {}, () => {
-      if (cacheVersion === lastFindAllVersion) {
-        return lastFindAllResult;
-      }
-      const rows = findAllStmt.all() as Array<Record<string, unknown>>;
-      const out: ParsedRow[] = new Array(rows.length);
-      const seenIds = new Set<string>();
-      for (let i = 0; i < rows.length; i += 1) {
-        const row = rows[i]!;
-        const id = row.id as string;
-        seenIds.add(id);
-        const cached = findAllCache.get(id);
-        if (cached !== undefined && rawRowsEqual(cached.rawRow, row)) {
-          out[i] = cached.parsed;
-          continue;
-        }
-        const parsed = rowToProjectDomain(row);
-        findAllCache.set(id, { rawRow: row, parsed });
-        out[i] = parsed;
-      }
-      if (findAllCache.size > seenIds.size) {
-        for (const id of findAllCache.keys()) {
-          if (!seenIds.has(id)) findAllCache.delete(id);
-        }
-      }
-      lastFindAllVersion = cacheVersion;
-      lastFindAllResult = out;
-      return out;
-    });
+    return timed("findAll", {}, () =>
+      cache.readAll(() => findAllStmt.all() as Array<Record<string, unknown>>),
+    );
   }
 
   return {
@@ -414,21 +403,21 @@ export function createProjectConversationsRepo(
       timed("upsert", { id: conversation.id, projectPath }, () => {
         const bind = conversationToProjectSqlBind(projectPath, conversation);
         upsertStmt.run(bind);
-        cacheVersion += 1;
+        cache.bump();
       });
     },
     delete(id) {
       timed("delete", { id }, () => {
         deleteStmt.run(id);
-        findAllCache.delete(id);
-        cacheVersion += 1;
+        cache.evict(id);
+        cache.bump();
       });
     },
     setPendingPromptText(projectPath, id, text) {
       return timed("setPendingPromptText", { id, projectPath }, () => {
         const info = setPendingPromptTextStmt.run(text, projectPath, id);
         const changed = info.changes > 0;
-        if (changed) cacheVersion += 1;
+        if (changed) cache.bump();
         return changed;
       });
     },
@@ -436,7 +425,7 @@ export function createProjectConversationsRepo(
       return timed("setArchived", { id, projectPath }, () => {
         const info = setArchivedStmt.run(archived ? 1 : 0, projectPath, id);
         const changed = info.changes > 0;
-        if (changed) cacheVersion += 1;
+        if (changed) cache.bump();
         return changed;
       });
     },
@@ -444,7 +433,7 @@ export function createProjectConversationsRepo(
       return timed("setOpen", { id, projectPath }, () => {
         const info = setOpenStmt.run(open ? 1 : 0, projectPath, id);
         const changed = info.changes > 0;
-        if (changed) cacheVersion += 1;
+        if (changed) cache.bump();
         return changed;
       });
     },
@@ -474,7 +463,7 @@ export function createProjectConversationsRepo(
           id,
         );
         const changed = info.changes > 0;
-        if (changed) cacheVersion += 1;
+        if (changed) cache.bump();
         return changed;
       });
     },

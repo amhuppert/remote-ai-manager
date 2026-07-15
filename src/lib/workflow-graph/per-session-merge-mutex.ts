@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 
 const logger = createLogger("graph-workflow-merge-mutex");
 
@@ -16,35 +17,20 @@ function mutexKey(key: MergeMutexKey): string {
 }
 
 export function createPerSessionMergeMutex(): PerSessionMergeMutex {
-  const tails = new Map<string, Promise<void>>();
+  const mutex = createKeyedMutex();
 
   return {
-    async withMergeMutex<T>(
-      key: MergeMutexKey,
-      fn: () => Promise<T>,
-    ): Promise<T> {
+    withMergeMutex<T>(key: MergeMutexKey, fn: () => Promise<T>): Promise<T> {
       const id = mutexKey(key);
-      const previous = tails.get(id) ?? Promise.resolve();
-
-      let releaseSlot!: () => void;
-      const slot = new Promise<void>((resolve) => {
-        releaseSlot = resolve;
-      });
-      tails.set(id, slot);
-
       logger.debug("queue", { key: id });
-
-      try {
-        await previous;
+      return mutex.run(id, async () => {
         logger.debug("acquired", { key: id });
-        return await fn();
-      } finally {
-        if (tails.get(id) === slot) {
-          tails.delete(id);
+        try {
+          return await fn();
+        } finally {
+          logger.debug("released", { key: id });
         }
-        releaseSlot();
-        logger.debug("released", { key: id });
-      }
+      });
     },
   };
 }

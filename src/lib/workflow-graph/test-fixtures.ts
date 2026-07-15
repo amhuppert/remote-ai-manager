@@ -1,10 +1,10 @@
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 const timestamp = "2026-03-27T12:00:00.000Z";
 

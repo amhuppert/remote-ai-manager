@@ -2,10 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
-import type {
-  GraphWorkflowPendingApproval,
-  GraphWorkflowStatus,
-} from "@/lib/workflows/schemas";
+import type { GraphWorkflowPendingApproval } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import {
   createPromptRouteHandlers,

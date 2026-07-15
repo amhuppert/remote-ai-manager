@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TicketListItem } from "@/lib/tickets/schemas";
@@ -117,6 +117,11 @@ describe("ticket live-update motion", () => {
     expect(list.container.querySelector('[class*="pulse-dot"]')).toHaveClass(
       "motion-reduce:[animation:none]",
     );
+    const activeSessionChip = screen
+      .getByText("ticket-session")
+      .closest("[data-tone]");
+    expect(activeSessionChip).toHaveAttribute("data-appearance", "solid");
+    expect(activeSessionChip).toHaveAttribute("data-tone", "neutral");
     list.unmount();
 
     const board = render(<TicketBoard items={[active]} />, {

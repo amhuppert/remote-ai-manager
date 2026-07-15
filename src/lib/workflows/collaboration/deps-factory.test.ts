@@ -20,7 +20,7 @@ import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import {
   createStatusBus,
   type StatusBusEnvelope,
-} from "@/lib/workflows/primitives/status-bus";
+} from "@/lib/events/status-bus";
 import {
   setTranscriptDeps,
   _resetTranscriptDepsForTesting,
@@ -61,8 +61,6 @@ describe("createCollaborationDeps", () => {
     expect(typeof deps.laneService.resolve).toBe("function");
     expect(typeof deps.laneService.initialize).toBe("function");
     expect(typeof deps.laneService.recordOutcome).toBe("function");
-    expect(deps.laneScheduler).toBeDefined();
-    expect(typeof deps.laneScheduler.schedule).toBe("function");
     expect(deps.envelopeStore).toBeDefined();
     expect(typeof deps.envelopeStore.read).toBe("function");
     expect(typeof deps.envelopeStore.upsert).toBe("function");
@@ -125,7 +123,7 @@ describe("createCollaborationDeps", () => {
     expect(deps.statusBus).toBe(overrideBus);
   });
 
-  it("creates fresh lane state per call but shares the production scheduler across runs", () => {
+  it("creates fresh lane state per call", () => {
     const a = createCollaborationDeps({
       ...baseInput,
       callAgent: makeStubCallAgent(),
@@ -136,7 +134,6 @@ describe("createCollaborationDeps", () => {
     });
 
     expect(a.laneService).not.toBe(b.laneService);
-    expect(a.laneScheduler).toBe(b.laneScheduler);
     expect(a.statusBus).not.toBe(b.statusBus);
   });
 
@@ -148,6 +145,7 @@ describe("createCollaborationDeps", () => {
     setTranscriptDeps({
       broadcast: (event) => {
         events.push(event);
+        return { delivered: true };
       },
     });
     try {

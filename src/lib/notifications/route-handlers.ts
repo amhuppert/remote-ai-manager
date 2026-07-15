@@ -4,14 +4,8 @@ import {
   getNotificationsQuerySchema,
   markReadRequestSchema,
 } from "@/lib/notifications/schemas";
-import {
-  getNotifications,
-  markAsRead,
-  markAllAsRead,
-  deleteAllNotifications,
-  deleteNotification,
-  notificationExists,
-} from "@/lib/notifications/repo";
+import { getNotificationsService } from "@/lib/notifications/service";
+import { notFound } from "@/lib/shared/route-resolution";
 import type { ApiError } from "@/lib/api/errors";
 /** GET /api/notifications — query persisted notifications with optional filters */
 export const GET = withTracing(async (request) => {
@@ -33,7 +27,11 @@ export const GET = withTracing(async (request) => {
   }
 
   const { unread, limit, offset } = parsed.data;
-  const result = getNotifications({ unread, limit, offset });
+  const result = getNotificationsService().getNotifications({
+    unread,
+    limit,
+    offset,
+  });
 
   return NextResponse.json({
     notifications: result.notifications,
@@ -65,12 +63,9 @@ export const PATCH = withTracing(async (request, { params }) => {
     );
   }
 
-  const exists = markAsRead(id);
+  const { exists } = getNotificationsService().markAsRead(id);
   if (!exists) {
-    return NextResponse.json(
-      { error: "Notification not found" } satisfies ApiError,
-      { status: 404 },
-    );
+    return notFound("Notification not found");
   }
 
   return NextResponse.json({ success: true });
@@ -81,20 +76,19 @@ export const DELETE = withTracing(async (_request, { params }) => {
   const resolvedParams = await params;
   const id = resolvedParams["id"] ?? "";
 
-  if (!notificationExists(id)) {
-    return NextResponse.json(
-      { error: "Notification not found" } satisfies ApiError,
-      { status: 404 },
-    );
+  const service = getNotificationsService();
+  if (!service.notificationExists(id)) {
+    return notFound("Notification not found");
   }
 
-  deleteNotification(id);
+  service.deleteNotification(id);
   return NextResponse.json({ success: true });
 });
 
 /** POST /api/notifications/mark-all-read — mark all as read then clear all notifications */
 export const POST_MARK_ALL_READ = withTracing(async () => {
-  const readCount = markAllAsRead();
-  const deletedCount = deleteAllNotifications();
+  const service = getNotificationsService();
+  const readCount = service.markAllAsRead();
+  const deletedCount = service.deleteAllNotifications();
   return NextResponse.json({ success: true, readCount, deletedCount });
 });

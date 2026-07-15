@@ -1,4 +1,4 @@
-import type { GraphWorkflowMutabilityPolicy } from "@/lib/workflows/schemas";
+import type { GraphWorkflowMutabilityPolicy } from "@/lib/workflow-graph/config-schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigToggle } from "../../components/ConfigToggle";
 
@@ -18,6 +18,7 @@ export function MutabilityFields({
       hint="Let agents add tasks during execution"
     >
       <ConfigToggle
+        label="Allow agent task add"
         value={value.allowAgentTaskAdd}
         onChange={(v) => onChange({ allowAgentTaskAdd: v })}
       />

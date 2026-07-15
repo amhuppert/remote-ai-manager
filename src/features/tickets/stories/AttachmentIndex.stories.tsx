@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { userEvent, within } from "storybook/test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import ToastContainer from "@/components/ToastContainer";
+import { GenericToastSource } from "@/components/ToastHost";
 import { ticketFollowCommand } from "@/lib/tickets/attachment-commands";
 import { useTicketDetailQuery } from "@/lib/tickets/queries";
 import { formatTicketIdentifier } from "@/lib/tickets/references";
@@ -389,7 +389,7 @@ function IndexHarness({
       <div className="mx-auto max-w-[72ch] p-xl">
         <DossierIndex projectName={detail.projectName} number={detail.number} />
       </div>
-      <ToastContainer />
+      <GenericToastSource />
     </QueryClientProvider>
   );
 }

@@ -1,4 +1,4 @@
-import type { GraphWorkflowAgentConfig } from "@/lib/workflows/schemas";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import { AgentConfigFields } from "./AgentConfigFields";
 
 export function ImplementerFields({

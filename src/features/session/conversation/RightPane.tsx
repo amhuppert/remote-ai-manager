@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/Tabs";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 import { useMemo } from "react";
-import DiffPanel from "@/features/session/git/DiffPanel";
+import DiffPanel from "@/components/git/DiffPanel";
 import SpecBrowser from "@/features/session/conversation/SpecBrowser";
 import DocsPanel from "@/features/session/conversation/DocsPanel";
 import AlignmentPanel from "@/features/session/conversation/AlignmentPanel";

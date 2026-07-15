@@ -1,8 +1,8 @@
 /**
  * End-to-end verification for section 4 (shared status + artifact handling).
  *
- * These tests compose the actual primitive surface — `publishSessionStatus`
- * via `default-session-status-bus`, plus `createDefaultSessionArtifactRegistry`
+ * These tests compose the actual primitive surface — `publishEvent`
+ * via the SSE publication module, plus `createDefaultSessionArtifactRegistry`
  * — to prove that:
  *
  *  - Migrated publishers still deliver the on-the-wire SSE payload shapes
@@ -26,10 +26,10 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 import {
-  publishSessionStatus,
-  setDefaultSessionStatusBusBroadcastForTesting,
-  _resetDefaultSessionStatusBusForTesting,
-} from "./default-session-status-bus";
+  publishEvent,
+  setPublicationBroadcastForTesting,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
 import { createDefaultSessionArtifactRegistry } from "./default-session-artifact-registry";
 import { ArtifactRequiredFailure } from "./artifact-registry";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -68,18 +68,18 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
   let workingDir: string;
 
   beforeEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     workingDir = await fs.mkdtemp(path.join(os.tmpdir(), "section4-e2e-"));
   });
 
   afterEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
   it("preserves the on-the-wire payload shape for every migrated publisher (conversation, graph workflow, job, debug)", () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const events: SSEEvent[] = [
       {
@@ -151,7 +151,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
     ];
 
     for (const e of events) {
-      const outcome = publishSessionStatus(e);
+      const outcome = publishEvent(e);
       expect(outcome.delivered).toBe(true);
     }
 
@@ -160,7 +160,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
 
   it("conversation-status payloads survive the shared bus unchanged across the conversation lifecycle the UI consumes (Task 6.1 parity)", () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const baseFields = {
       scope: "session",
@@ -191,7 +191,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
     ];
 
     for (const event of transitions) {
-      const outcome = publishSessionStatus(event);
+      const outcome = publishEvent(event);
       expect(outcome.delivered).toBe(true);
     }
 
@@ -202,7 +202,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
     const wire = vi.fn<(event: SSEEvent) => void>(() => {
       throw new Error("transport down");
     });
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
+    setPublicationBroadcastForTesting(wire);
 
     const event: SSEEvent = {
       type: "graph-workflow-status",
@@ -217,12 +217,12 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
       pendingHaltReason: null,
       secondaryHaltReasons: [],
     };
-    const outcome = publishSessionStatus(event);
+    const outcome = publishEvent(event);
     expect(outcome.delivered).toBe(false);
     expect(outcome.error).toBeInstanceOf(Error);
   });
 
-  it("rejects path traversal at the artifact registry boundary even when the caller says required:false", async () => {
+  it("rejects path traversal at the artifact registry boundary even for optional writes", async () => {
     const docStore = makeFakeReferenceDocStore();
     const registry = createDefaultSessionArtifactRegistry({
       projectPath: "/proj/p",
@@ -247,7 +247,6 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
         relativePath: "../escape.log",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: {},
       }),
     ).rejects.toBeInstanceOf(ArtifactRequiredFailure);
@@ -271,7 +270,6 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
         relativePath: "memory-bank/focus.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "wf-1" },
         description: "f",
       });
@@ -325,7 +323,6 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
       relativePath: "memory-bank/focus.md",
       contents: "# Focus\nE2E\n",
       audience: "user_facing",
-      required: true,
       source: { workflowId: "wf-1" },
       description: "Current focus",
     });
@@ -361,7 +358,6 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
       relativePath: "memory-bank/focus.md",
       contents: "v1",
       audience: "user_facing",
-      required: true,
       source: { workflowId: "wf-1" },
       description: "first",
     });
@@ -372,7 +368,6 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
       relativePath: "memory-bank/focus.md",
       contents: "v2",
       audience: "user_facing",
-      required: true,
       source: { workflowId: "wf-1" },
       description: "second",
     });

@@ -1,13 +1,15 @@
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
+} from "@/lib/workflow-graph/config-schemas";
+import type {
   GraphWorkflowContextStatus,
-  GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
   GraphWorkflowStatus,
   GraphWorkflowTaskStatus,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   classifyContextLifecycle,
   classifyExecutionEditability,

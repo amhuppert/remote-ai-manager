@@ -1,12 +1,15 @@
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
-import { evaluateContextLimit } from "@/lib/workflows/primitives/context-limit-gate";
-import type { LaneMetrics } from "@/lib/workflows/primitives/lane-vocabulary";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-} from "@/lib/workflows/schemas";
+import {
+  evaluateContextLimit,
+  type ContextLimitMetrics,
+} from "@/lib/workflows/primitives/context-limit-gate";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { buildLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { getExecutionLogger } from "./execution-logger";
+import { graphLaneContextMetrics } from "./graph-lane-store";
 import type { PublishLiveEditAppliedInput } from "./execution-events";
 import type { MutateActiveResult } from "./execution-repository";
 import type { ExecutionTarget } from "./execution-target-resolver";
@@ -120,16 +123,6 @@ function countCompletedTasks(
   }).length;
 }
 
-function buildMachineSnapshot(execution: GraphWorkflowExecution) {
-  return {
-    schemaVersion: 1,
-    lifecycleStatus: execution.status,
-    activeContextId: execution.activeContextIds[0] ?? null,
-    recoveryMode: "none" as const,
-    hasLiveIteration: true,
-  };
-}
-
 export function createGraphWorkflowExecutionToolContext(
   deps: GraphWorkflowExecutionToolContextDeps,
 ): GraphWorkflowExecutionToolContextFactory {
@@ -192,11 +185,11 @@ export function createGraphWorkflowExecutionToolContext(
      * Mid-turn context-limit gate. Runs inside the completion mutation so the
      * lane flag rides the same serialized write as the task record. Reads live
      * occupancy for the resolved conversation (falling back to the lane's
-     * persisted `lastContextTokens`), defers the rotation decision to
+     * persisted normalized occupancy), defers the rotation decision to
      * `evaluateContextLimit` (never an inline numeric comparison), and on
      * `rotation_required` sets the sticky `rotateBeforeNextTurn` flag and
-     * returns the stop descriptor. Skipped for a missing or non-Claude lane —
-     * Codex exposes no mid-turn occupancy — with no registry read.
+     * returns the stop descriptor. Skipped when the lane is missing, the
+     * policy is disabled, or the backend does not expose occupancy metrics.
      */
     function evaluateMidTurnContextLimit(
       execution: GraphWorkflowExecution,
@@ -204,7 +197,7 @@ export function createGraphWorkflowExecutionToolContext(
       conversationId: string,
     ): CompleteTaskContextLimitStop | null {
       const lane = execution.laneStates[input.contextId]?.["implementer"];
-      if (!lane || lane.engine !== "claude") {
+      if (!lane) {
         return null;
       }
 
@@ -214,16 +207,26 @@ export function createGraphWorkflowExecutionToolContext(
         );
       const contextLimitTokens =
         executionContext?.iterationPolicy.continuity.contextLimitTokens;
+      if (contextLimitTokens === undefined) {
+        return null;
+      }
+      const supportsContextMetrics =
+        getBackendDescriptor(lane.backend).conversation?.capabilities
+          .contextWindowMetrics === true;
+      if (!supportsContextMetrics) {
+        return null;
+      }
 
       const live = deps.readLiveOccupancy(conversationId);
+      const persisted = graphLaneContextMetrics(lane);
 
       let contextTokens: number | undefined;
       let source: CompleteTaskContextLimitStop["source"];
       if (live?.contextTokens != null) {
         contextTokens = live.contextTokens;
         source = "live";
-      } else if (lane.lastContextTokens != null) {
-        contextTokens = lane.lastContextTokens;
+      } else if (persisted.contextTokens != null) {
+        contextTokens = persisted.contextTokens;
         source = "lane";
       } else {
         contextTokens = undefined;
@@ -232,9 +235,9 @@ export function createGraphWorkflowExecutionToolContext(
 
       const compactedThisTurn = live?.compactedThisTurn ?? false;
 
-      const metrics: LaneMetrics = {
-        backend: "claude",
-        rotateBeforeNextTurn: lane.rotateBeforeNextTurn,
+      const metrics: ContextLimitMetrics = {
+        backend: lane.backend,
+        rotateBeforeNextTurn: lane.metrics.rotateBeforeNextTurn,
         ...(contextTokens !== undefined ? { contextTokens } : {}),
       };
 
@@ -248,8 +251,8 @@ export function createGraphWorkflowExecutionToolContext(
         return null;
       }
 
-      const alreadyScheduled = lane.rotateBeforeNextTurn;
-      lane.rotateBeforeNextTurn = true;
+      const alreadyScheduled = lane.metrics.rotateBeforeNextTurn;
+      lane.metrics = { ...lane.metrics, rotateBeforeNextTurn: true };
       lane.lastUsedAt = now();
 
       const stop: CompleteTaskContextLimitStop = {
@@ -334,7 +337,9 @@ export function createGraphWorkflowExecutionToolContext(
             );
           }
 
-          draft.machineSnapshot = buildMachineSnapshot(draft);
+          draft.machineSnapshot = buildLifecycleSnapshot(draft, {
+            hasLiveIteration: true,
+          });
           contextLimitStop = evaluateMidTurnContextLimit(
             draft,
             taskId,

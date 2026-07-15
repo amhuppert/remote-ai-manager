@@ -2,18 +2,22 @@ import { describe, expect, it } from "vitest";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type {
   CollaborationAutonomousResolutionThreshold,
+  WorkflowCollaborationConfig,
+} from "@/lib/workflow-graph/collaboration-schemas";
+import type {
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
-  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowScriptValidatorConfig,
-  WorkflowCollaborationConfig,
+} from "@/lib/workflow-graph/config-schemas";
+import type {
+  GraphWorkflowExecutionContextDefinition,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   computeUsedBackends,
   resolveCollaborationConfigWithProvenance,

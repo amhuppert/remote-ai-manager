@@ -8,6 +8,13 @@ import prettier from "eslint-config-prettier/flat";
 import css from "@eslint/css";
 import betterTailwind from "eslint-plugin-better-tailwindcss";
 import tailwindGuardrails from "./eslint-rules/tailwind-guardrails.mjs";
+import architectureSeams from "./eslint-rules/architecture-seams.mjs";
+import {
+  BACKEND_SEAM_ALLOWLIST,
+  SSE_PUBLICATION_SANCTIONED,
+  CROSS_FEATURE_ALLOWLIST,
+  STATE_STORE_CONSTRUCTION_ALLOWLIST,
+} from "./eslint-rules/seam-allowlists.mjs";
 
 // Surfaces migrated to Tailwind utilities (utility-first BY DESIGN). The Tailwind
 // guardrail rules apply ONLY here — they would false-positive on legacy
@@ -189,7 +196,7 @@ const GRANDFATHERED_LEGACY_CSS = [
   "/features/projects-index/styles/projects-index.css",
   "/features/session-diff/styles/session-diff.css",
   "/features/session-workflow/styles/session-workflow.css",
-  "/features/session/sidebar/styles/PeekPopover.css",
+  "/components/session/sidebar/styles/PeekPopover.css",
   "/features/workflows-builder/styles/workflows-builder.css",
   "/features/workflows-catalog/styles/workflows-catalog.css",
 ];
@@ -269,6 +276,62 @@ const eslintConfig = defineConfig([
           grandfathered: GRANDFATHERED_LEGACY_CSS,
         },
       ],
+    },
+  },
+  // Architecture seam rules (consolidated plan §0.4 / §3.5.2). Allowlists are
+  // burn-down debt captured from the current tree — see
+  // eslint-rules/seam-allowlists.mjs for per-entry deletion phases.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: { "architecture-seams": architectureSeams },
+    rules: {
+      "architecture-seams/no-backend-deep-import": [
+        "error",
+        { allowlist: BACKEND_SEAM_ALLOWLIST },
+      ],
+      "architecture-seams/no-raw-broadcaster-import": [
+        "error",
+        { sanctioned: SSE_PUBLICATION_SANCTIONED },
+      ],
+      "architecture-seams/no-cross-feature-import": [
+        "error",
+        { allowlist: CROSS_FEATURE_ALLOWLIST },
+      ],
+      "architecture-seams/no-external-state-store-construction": [
+        "error",
+        { allowlist: STATE_STORE_CONSTRUCTION_ALLOWLIST },
+      ],
+      // The delegated `data-tooltip` mechanism is retired (its global provider
+      // is deleted); new tooltips compose WithTooltip / ui/Tooltip. No
+      // allowlist — the population is zero and authoring is impossible by
+      // construction (plan §3.5.1 deletion test; Phase 5 review finding 2).
+      "architecture-seams/no-data-tooltip-attribute": "error",
+    },
+  },
+  // Client-bundle seam (plan P6 — construction over convention). A
+  // client-reachable module that imports the SERVER logging barrel (@/lib/logging,
+  // which re-exports node:async_hooks-backed tracing) or any node: builtin drags
+  // Node internals into the browser bundle. Only `bun run build` caught the
+  // original break (a client SSE-reaction module imported @/lib/logging); this
+  // rule turns that into a fast-lint error. Scope = the client transport surface:
+  // components, features, hooks, stores, the sse-reactions modules, and src/lib/api.
+  // No allowlist — the population is ZERO after c625755f; a hit is a real bug,
+  // fix it (use @/lib/logging/client-logger), never allowlist. Test/story files
+  // run under Node (vitest/Storybook), not in the client bundle, so they are
+  // excluded like the Tailwind guardrail block above.
+  {
+    files: [
+      "src/components/**/*.{ts,tsx}",
+      "src/features/**/*.{ts,tsx}",
+      "src/hooks/**/*.{ts,tsx}",
+      "src/stores/**/*.{ts,tsx}",
+      "src/lib/**/sse-reactions.ts",
+      "src/lib/api/**/*.{ts,tsx}",
+    ],
+    ignores: ["**/*.test.{ts,tsx}", "**/*.stories.{ts,tsx}"],
+    plugins: { "architecture-seams": architectureSeams },
+    rules: {
+      "architecture-seams/no-server-logging-in-client": "error",
     },
   },
   // Focused-first default: importing the whole-state escape hatches is the

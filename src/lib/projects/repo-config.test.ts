@@ -11,10 +11,6 @@ function createTestDeps(): RepoConfigDeps {
     readFile: vi.fn().mockRejectedValue(new Error("file not found")),
     execFileAsync: vi.fn().mockResolvedValue({ stdout: "", stderr: "" }),
     buildChildEnv: vi.fn().mockReturnValue({}),
-    hasUncommittedChanges: vi.fn().mockResolvedValue(false),
-    commitChanges: vi.fn().mockResolvedValue({
-      hash: "autofix123",
-    }) as RepoConfigDeps["commitChanges"],
   };
 }
 
@@ -89,20 +85,23 @@ describe("readRepoConfig", () => {
 });
 
 // ===========================================================================
-// runPreMergeValidation
+// executeRepoValidationCommand
 // ===========================================================================
 
-describe("runPreMergeValidation", () => {
-  it("no-op when no config file exists", async () => {
+describe("executeRepoValidationCommand", () => {
+  it("reports not-executed when no config file exists", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    await runPreMergeValidation(BASE_PARAMS);
+    const result = await executeRepoValidationCommand(BASE_PARAMS);
+
+    expect(result.executed).toBe(false);
+    expect(result.pass).toBe(true);
     expect(deps.execFileAsync).not.toHaveBeenCalled();
   });
 
-  it("no-op when preMergeCommand is null", async () => {
+  it("reports not-executed when preMergeCommand is null", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
       (p: string) => {
@@ -113,13 +112,15 @@ describe("runPreMergeValidation", () => {
     (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({ initScriptPath: null, preMergeCommand: null }),
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    await runPreMergeValidation(BASE_PARAMS);
+    const result = await executeRepoValidationCommand(BASE_PARAMS);
+
+    expect(result.executed).toBe(false);
     expect(deps.execFileAsync).not.toHaveBeenCalled();
   });
 
-  it("no-op when preMergeCommand is absent", async () => {
+  it("reports not-executed when preMergeCommand is absent", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
       (p: string) => {
@@ -130,9 +131,11 @@ describe("runPreMergeValidation", () => {
     (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({ initScriptPath: null }),
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    await runPreMergeValidation(BASE_PARAMS);
+    const result = await executeRepoValidationCommand(BASE_PARAMS);
+
+    expect(result.executed).toBe(false);
     expect(deps.execFileAsync).not.toHaveBeenCalled();
   });
 
@@ -151,9 +154,9 @@ describe("runPreMergeValidation", () => {
         preMergeCommand: "./validate.sh",
       }),
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    await runPreMergeValidation(BASE_PARAMS);
+    await executeRepoValidationCommand(BASE_PARAMS);
 
     expect(deps.execFileAsync).toHaveBeenCalledWith(
       "/projects/foo/validate.sh",
@@ -188,9 +191,12 @@ describe("runPreMergeValidation", () => {
         preMergeCommand: "./validate.sh",
       }),
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    await runPreMergeValidation({ ...BASE_PARAMS, targetBranch: "csm/parent" });
+    await executeRepoValidationCommand({
+      ...BASE_PARAMS,
+      targetBranch: "csm/parent",
+    });
 
     expect(deps.execFileAsync).toHaveBeenCalledWith(
       "/projects/foo/validate.sh",
@@ -216,14 +222,14 @@ describe("runPreMergeValidation", () => {
         preMergeCommand: "./validate.sh",
       }),
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    await expect(runPreMergeValidation(BASE_PARAMS)).rejects.toThrow(
+    await expect(executeRepoValidationCommand(BASE_PARAMS)).rejects.toThrow(
       "Pre-merge validation script not found:",
     );
   });
 
-  it("throws with gitOutput on script failure", async () => {
+  it("reports a failure with the combined script output", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
       (p: string) => {
@@ -245,20 +251,19 @@ describe("runPreMergeValidation", () => {
     (deps.execFileAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
       scriptErr,
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    try {
-      await runPreMergeValidation(BASE_PARAMS);
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const e = err as Error & { gitOutput?: string };
-      expect(e.message).toBe("Pre-merge validation failed");
-      expect(e.gitOutput).toContain("lint errors found");
-      expect(e.gitOutput).toContain("2 problems");
-    }
+    const result = await executeRepoValidationCommand(BASE_PARAMS);
+
+    expect(result.executed).toBe(true);
+    expect(result.pass).toBe(false);
+    expect(result.timedOut).toBe(false);
+    expect(result.message).toBe("Pre-merge validation failed");
+    expect(result.output).toContain("lint errors found");
+    expect(result.output).toContain("2 problems");
   });
 
-  it("throws with timeout message when script is killed by timeout", async () => {
+  it("reports a timeout with timedOut set when the script is killed by timeout", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
       (p: string) => {
@@ -282,23 +287,21 @@ describe("runPreMergeValidation", () => {
     (deps.execFileAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
       timeoutErr,
     );
-    const { runPreMergeValidation } = createRepoConfig(deps);
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
 
-    try {
-      await runPreMergeValidation(BASE_PARAMS);
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const e = err as Error & { gitOutput?: string; timedOut?: boolean };
-      expect(e.message).toContain("timed out");
-      expect(e.message).toContain("300");
-      expect(e.gitOutput).toContain("All checks passed!");
-      // The timeout-ness must survive on the thrown error so the merge machine
-      // can distinguish an unfixable timeout from a fixable validation failure.
-      expect(e.timedOut).toBe(true);
-    }
+    const result = await executeRepoValidationCommand(BASE_PARAMS);
+
+    expect(result.executed).toBe(true);
+    expect(result.pass).toBe(false);
+    // The timeout-ness must survive on the result so the validation-fix loop
+    // can distinguish an unfixable timeout from a fixable validation failure.
+    expect(result.timedOut).toBe(true);
+    expect(result.message).toContain("timed out");
+    expect(result.message).toContain("300");
+    expect(result.output).toContain("All checks passed!");
   });
 
-  it("commits auto-fixes when script modifies files", async () => {
+  it("returns the raw script result on success", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
       (p: string) => {
@@ -312,65 +315,6 @@ describe("runPreMergeValidation", () => {
         initScriptPath: null,
         preMergeCommand: "./validate.sh",
       }),
-    );
-    (deps.hasUncommittedChanges as ReturnType<typeof vi.fn>).mockResolvedValue(
-      true,
-    );
-    const { runPreMergeValidation } = createRepoConfig(deps);
-
-    await runPreMergeValidation(BASE_PARAMS);
-
-    expect(deps.commitChanges).toHaveBeenCalledWith(
-      BASE_PARAMS.worktreePath,
-      "auto-fix: pre-merge validation",
-      { skipHooks: true },
-    );
-  });
-
-  it("does not commit when script leaves no changes", async () => {
-    const deps = createTestDeps();
-    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
-      (p: string) => {
-        if (String(p).includes("CommandCenter.json")) return true;
-        if (String(p).includes("validate.sh")) return true;
-        return false;
-      },
-    );
-    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
-      JSON.stringify({
-        initScriptPath: null,
-        preMergeCommand: "./validate.sh",
-      }),
-    );
-    (deps.hasUncommittedChanges as ReturnType<typeof vi.fn>).mockResolvedValue(
-      false,
-    );
-    const { runPreMergeValidation } = createRepoConfig(deps);
-
-    await runPreMergeValidation(BASE_PARAMS);
-
-    expect(deps.commitChanges).not.toHaveBeenCalled();
-  });
-});
-
-describe("executeRepoValidationCommand", () => {
-  it("returns the raw script result without auto-committing changes", async () => {
-    const deps = createTestDeps();
-    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
-      (p: string) => {
-        if (String(p).includes("CommandCenter.json")) return true;
-        if (String(p).includes("validate.sh")) return true;
-        return false;
-      },
-    );
-    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
-      JSON.stringify({
-        initScriptPath: null,
-        preMergeCommand: "./validate.sh",
-      }),
-    );
-    (deps.hasUncommittedChanges as ReturnType<typeof vi.fn>).mockResolvedValue(
-      true,
     );
     const { executeRepoValidationCommand } = createRepoConfig(deps);
 
@@ -385,7 +329,6 @@ describe("executeRepoValidationCommand", () => {
       timedOut: false,
       message: null,
     });
-    expect(deps.commitChanges).not.toHaveBeenCalled();
   });
 
   it("omits TARGET_BRANCH from the env when no targetBranch is given", async () => {

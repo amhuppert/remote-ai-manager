@@ -3,7 +3,7 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import {
   collectLaneWorktreePaths,
   stopExecutionLaneDevServers,

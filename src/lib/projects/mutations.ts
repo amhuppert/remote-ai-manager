@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import { z } from "zod";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import { projectKeys } from "@/lib/projects/query-keys";
 import type {
   discoveredProjectSchema,
@@ -77,47 +78,54 @@ function invalidateProjectCaches(queryClient: QueryClient) {
 export function useArchiveProjectMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({
-      projectName,
-      archived,
-    }: {
-      projectName: string;
-      archived: boolean;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/archive`,
-        "archive-project",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ archived }),
-        },
-      ),
-    onMutate: async ({ projectName, archived }) => {
-      const context = await snapshotProjectCaches(queryClient);
-      if (context.previousPreferences) {
-        queryClient.setQueryData<ProjectPreferences>(
-          projectKeys.preferences(),
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
+        projectName,
+        archived,
+      }: {
+        projectName: string;
+        archived: boolean;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/archive`,
+          "archive-project",
           {
-            ...context.previousPreferences,
-            archived: withMembership(
-              context.previousPreferences.archived,
-              projectName,
-              archived,
-            ),
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archived }),
           },
-        );
-      }
-      return context;
-    },
-    onError: (_err, _vars, context) => {
-      rollbackProjectCaches(queryClient, context);
-    },
-    onSettled: () => {
-      invalidateProjectCaches(queryClient);
-    },
-  });
+        ),
+      updates: [
+        // The project list carries no optimistic write for archive; it is
+        // snapshotted/restored and reconciled by invalidation alone.
+        cacheUpdate<
+          { projectName: string; archived: boolean },
+          DiscoveredProject[]
+        >({
+          key: () => projectKeys.list(),
+          update: () => undefined,
+        }),
+        cacheUpdate<
+          { projectName: string; archived: boolean },
+          ProjectPreferences
+        >({
+          key: () => projectKeys.preferences(),
+          update: (old, vars) =>
+            old
+              ? {
+                  ...old,
+                  archived: withMembership(
+                    old.archived,
+                    vars.projectName,
+                    vars.archived,
+                  ),
+                }
+              : undefined,
+        }),
+      ],
+    }),
+  );
 }
 
 export function useDeleteProjectMutation() {
@@ -189,57 +197,43 @@ export function useDeleteProjectMutation() {
 export function usePinProjectMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({
-      projectName,
-      pinned,
-    }: {
-      projectName: string;
-      pinned: boolean;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/pin`,
-        "pin-project",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pinned }),
-        },
-      ),
-    onMutate: async ({ projectName, pinned }) => {
-      await queryClient.cancelQueries({
-        queryKey: projectKeys.preferences(),
-      });
-      const previousPreferences = queryClient.getQueryData<ProjectPreferences>(
-        projectKeys.preferences(),
-      );
-      if (previousPreferences) {
-        queryClient.setQueryData<ProjectPreferences>(
-          projectKeys.preferences(),
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
+        projectName,
+        pinned,
+      }: {
+        projectName: string;
+        pinned: boolean;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/pin`,
+          "pin-project",
           {
-            ...previousPreferences,
-            pinned: withMembership(
-              previousPreferences.pinned,
-              projectName,
-              pinned,
-            ),
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pinned }),
           },
-        );
-      }
-      return { previousPreferences };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previousPreferences) {
-        queryClient.setQueryData(
-          projectKeys.preferences(),
-          context.previousPreferences,
-        );
-      }
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: projectKeys.preferences(),
-      });
-    },
-  });
+        ),
+      updates: [
+        cacheUpdate<
+          { projectName: string; pinned: boolean },
+          ProjectPreferences
+        >({
+          key: () => projectKeys.preferences(),
+          update: (old, vars) =>
+            old
+              ? {
+                  ...old,
+                  pinned: withMembership(
+                    old.pinned,
+                    vars.projectName,
+                    vars.pinned,
+                  ),
+                }
+              : undefined,
+        }),
+      ],
+    }),
+  );
 }

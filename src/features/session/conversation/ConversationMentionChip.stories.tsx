@@ -1,13 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { resolveDisplayLabel } from "@/lib/conversations/display-label";
 import type { ConversationMentionAttrs } from "@/lib/prompt-editor";
+import { truncate } from "@/lib/shared/truncate";
 
 const MAX_LABEL_LENGTH = 40;
-
-function truncate(label: string): string {
-  if (label.length <= MAX_LABEL_LENGTH) return label;
-  return label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
-}
 
 interface ChipPreviewProps {
   attrs: ConversationMentionAttrs;
@@ -26,6 +22,8 @@ function ChipPreview({
       firstPromptSnippet: null,
       conversationId: attrs.conversationId,
     }),
+    MAX_LABEL_LENGTH,
+    { countEllipsisInBudget: true },
   );
   const removeAriaTarget =
     attrs.conversationName.length > 0

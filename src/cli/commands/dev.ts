@@ -1,22 +1,20 @@
 import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
-  EXIT_USAGE,
   checkFlags,
   cliRequest,
   encodePathSegment,
   failure,
-  failureFromRequest,
+  failureFromRequestNotFoundAsUsage,
   render,
   resolveSessionContext,
-  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
-  type CliRequestResult,
   type CliResult,
   type GlobalFlags,
   type SessionContext,
@@ -52,22 +50,6 @@ function formatServerBlock(server: DevServerRuntimeState): string {
   ].join("\n");
 }
 
-/** A non-ok request against a dev route: a 404 is a caller/config mistake (exit 2), else the shared mapping. */
-function devFailure(
-  result: Exclude<CliRequestResult, { kind: "ok" }>,
-  json: boolean,
-): CliResult {
-  if (result.kind === "error" && result.status === 404) {
-    return failure({
-      exitCode: EXIT_USAGE,
-      message: result.error,
-      ...structuredErrorFields(result),
-      json,
-    });
-  }
-  return failureFromRequest(result, json);
-}
-
 function noDevServersFailure(json: boolean): CliResult {
   return failure({
     exitCode: EXIT_OPERATION_FAILED,
@@ -84,24 +66,16 @@ export async function runDev(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "dev requires a subcommand: list, ensure, or stop",
-      json,
-    );
-  }
-  if (sub === "list") {
-    return runDevList(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "ensure") {
-    return runDevEnsure(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "stop") {
-    return runDevStop(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown dev subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["dev"],
+    rest,
+    json: flags.json,
+    handlers: {
+      list: (r) => runDevList(r, flags, values, env, host),
+      ensure: (r) => runDevEnsure(r, flags, values, env, host),
+      stop: (r) => runDevStop(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runDevList(
@@ -129,7 +103,8 @@ async function runDevList(
     method: "GET",
     path: devServersPath(context),
   });
-  if (result.kind !== "ok") return devFailure(result, json);
+  if (result.kind !== "ok")
+    return failureFromRequestNotFoundAsUsage(result, json);
 
   const parsed = devServersStatusResponseSchema.safeParse(result.body);
   const servers = parsed.success ? parsed.data.servers : [];
@@ -182,7 +157,8 @@ async function runDevEnsure(
       method: "GET",
       path: listPath,
     });
-    if (listResult.kind !== "ok") return devFailure(listResult, json);
+    if (listResult.kind !== "ok")
+      return failureFromRequestNotFoundAsUsage(listResult, json);
     const parsed = devServersStatusResponseSchema.safeParse(listResult.body);
     const servers = parsed.success ? parsed.data.servers : [];
     if (servers.length === 0) return noDevServersFailure(json);
@@ -211,7 +187,7 @@ async function runDevEnsure(
     ) {
       return noDevServersFailure(json);
     }
-    return devFailure(startResult, json);
+    return failureFromRequestNotFoundAsUsage(startResult, json);
   }
 
   // Block until liveness: poll the list route until the target runs, errors, or times out.
@@ -224,7 +200,8 @@ async function runDevEnsure(
       method: "GET",
       path: listPath,
     });
-    if (listResult.kind !== "ok") return devFailure(listResult, json);
+    if (listResult.kind !== "ok")
+      return failureFromRequestNotFoundAsUsage(listResult, json);
     const parsed = devServersStatusResponseSchema.safeParse(listResult.body);
     const target = parsed.success
       ? parsed.data.servers.find((s) => s.serverName === targetName)
@@ -296,7 +273,8 @@ async function runDevStop(
     method: "POST",
     path: `${devServersPath(context)}/${encodePathSegment(name)}/stop`,
   });
-  if (result.kind !== "ok") return devFailure(result, json);
+  if (result.kind !== "ok")
+    return failureFromRequestNotFoundAsUsage(result, json);
 
   // No hint — stop is terminal.
   return {

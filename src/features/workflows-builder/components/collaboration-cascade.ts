@@ -2,7 +2,7 @@ import { mergeCollaborationOverWithDefaults } from "@/lib/workflow-graph/resolve
 import type {
   WorkflowCollaborationConfig,
   WorkflowCollaborationConfigOverride,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import type { InspectorConfigBlockSource } from "./InspectorConfigBlock";
 
 // Whole-block collaboration cascade resolution for the workflow-builder

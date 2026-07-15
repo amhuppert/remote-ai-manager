@@ -3,9 +3,9 @@ import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { useRef } from "react";
 import { usePromptSubmission } from "./use-prompt-submission";
-import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { ImagePayload } from "@/lib/images/schemas";
-import type { QueueCapability } from "@/lib/agent-backends/capabilities-descriptor";
+import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 

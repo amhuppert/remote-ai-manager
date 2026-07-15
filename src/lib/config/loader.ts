@@ -7,6 +7,7 @@ import { rawGlobalConfigSchema } from "./schemas";
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 /**
  * Resolve the config directory for Command Center.
@@ -266,7 +267,7 @@ export function createConfigReader(configDir: string): ConfigReader {
         parsed = JSON.parse(contents);
       } catch (err) {
         log.warn("config.raw_read_error", {
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
           configDir,
         });
         return {};

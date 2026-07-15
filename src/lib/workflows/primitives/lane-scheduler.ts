@@ -13,11 +13,11 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
+import { DEFAULT_LANE_WRITE_CAPABILITY } from "./agent-call-vocabulary";
 import type { LaneWriteCapability } from "./lane-vocabulary";
 
 const defaultLogger = createLogger("workflows.primitives.lane.scheduler");
-
-const DEFAULT_WRITE_CAPABILITY: LaneWriteCapability = "write_capable";
 
 export interface LaneScheduleRequest {
   sessionKey: string;
@@ -37,13 +37,13 @@ export interface LaneSchedulerDeps {
 export function createLaneScheduler(
   deps: LaneSchedulerDeps = {},
 ): LaneScheduler {
-  const writeChains = new Map<string, Promise<unknown>>();
+  const writeMutex = createKeyedMutex();
   const log = deps.logger ?? defaultLogger;
 
   return {
     async schedule(request, fn) {
       const writeCapability =
-        request.writeCapability ?? DEFAULT_WRITE_CAPABILITY;
+        request.writeCapability ?? DEFAULT_LANE_WRITE_CAPABILITY;
 
       if (
         writeCapability === "read_only" ||
@@ -62,27 +62,14 @@ export function createLaneScheduler(
         return fn();
       }
 
-      const previous = writeChains.get(request.sessionKey) ?? Promise.resolve();
-      // Chain onto the previous write regardless of its outcome so a failed
-      // write does not strand the entire session lock.
-      const next = previous.then(
-        () => fn(),
-        () => fn(),
-      );
-      writeChains.set(request.sessionKey, next);
       log.debug("lane.scheduler.write_capable_enqueued", {
         sessionKey: request.sessionKey,
         workflowId: request.workflowId,
         laneId: request.laneId,
       });
-
-      try {
-        return await next;
-      } finally {
-        if (writeChains.get(request.sessionKey) === next) {
-          writeChains.delete(request.sessionKey);
-        }
-      }
+      // Serialize write-capable executions per session so a failed write does
+      // not strand the session lock (the mutex advances on settlement).
+      return writeMutex.run(request.sessionKey, fn);
     },
   };
 }

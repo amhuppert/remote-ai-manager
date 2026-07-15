@@ -179,6 +179,86 @@ describe("Dialog", () => {
   });
 });
 
+describe("DialogContent unstyled variant", () => {
+  it("drops the padded card recipe but keeps Portal + focus trap + role/aria wiring", () => {
+    render(
+      <Dialog open>
+        <DialogContent
+          unstyled
+          contentClassName="fixed top-0 right-0 bottom-0 w-[720px] bg-bg-base"
+        >
+          <DialogTitle>Slide-over</DialogTitle>
+          <p>edge-anchored body</p>
+        </DialogContent>
+      </Dialog>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Slide-over" });
+    // Radix still owns behaviour: the content is portaled out to the body.
+    expect(document.body.contains(dialog)).toBe(true);
+    // No padded card recipe leaks onto the card — the consumer owns the box model.
+    expect(dialog.className).not.toContain("p-xl");
+    expect(dialog.className).not.toContain("max-w-[480px]");
+    expect(dialog.className).not.toContain("bg-bg-surface");
+    // The consumer's edge-anchored geometry + appearance is applied verbatim.
+    expect(dialog.className).toContain("fixed");
+    expect(dialog.className).toContain("w-[720px]");
+    expect(dialog.className).toContain("bg-bg-base");
+  });
+
+  it("makes the centring layer full-bleed so an edge-anchored card can position itself", () => {
+    render(
+      <Dialog open>
+        <DialogContent
+          unstyled
+          anchor="stretch"
+          aria-label="Full-screen reader"
+        >
+          <p>immersive</p>
+        </DialogContent>
+      </Dialog>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Full-screen reader" });
+    // The card's positioning layer stretches to the viewport (inset-0) instead
+    // of centring the card, so a `top-0 right-0 bottom-0` card docks to the edge.
+    const layer = dialog.parentElement as HTMLElement;
+    expect(layer.className).toContain("inset-0");
+    expect(layer.className).not.toContain("items-center");
+  });
+
+  it("still renders the tokenized scrim by default in the unstyled variant", () => {
+    render(
+      <Dialog open>
+        <DialogContent unstyled aria-label="Custom card">
+          <p>body</p>
+        </DialogContent>
+      </Dialog>,
+    );
+    const overlay = document.querySelector('[class*="cc-overlay-scrim"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay?.hasAttribute("data-cc-modal-scrim")).toBe(true);
+  });
+
+  it("applies a custom scrim appearance when scrimClassName is supplied", () => {
+    render(
+      <Dialog open>
+        <DialogContent
+          unstyled
+          scrimClassName="fixed inset-0 z-dropdown bg-[var(--cc-bg-void-a60)] [backdrop-filter:blur(4px)_saturate(120%)]"
+          aria-label="Drawer"
+        >
+          <p>body</p>
+        </DialogContent>
+      </Dialog>,
+    );
+    // The default tokenized scrim is replaced, not merged.
+    expect(document.querySelector('[class*="cc-overlay-scrim"]')).toBeNull();
+    const overlay = document.querySelector("[data-cc-modal-scrim]");
+    expect(overlay?.className).toContain(
+      "[backdrop-filter:blur(4px)_saturate(120%)]",
+    );
+  });
+});
+
 // While a nested overlay (Select listbox) is open, Radix disables pointer
 // events on the dialog card but the scrim keeps `pointer-events: auto`, so a
 // browser click aimed at the card hit-tests to the scrim. Dispatching the

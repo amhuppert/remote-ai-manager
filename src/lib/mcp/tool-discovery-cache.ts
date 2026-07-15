@@ -22,6 +22,7 @@
  */
 import { createLogger } from "@/lib/logging";
 import type { McpToolInventoryResult } from "@/lib/mcp/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 const logger = createLogger("mcp.tool-discovery");
 
 export interface ToolInventoryKey {
@@ -96,7 +97,7 @@ export function createToolInventoryCache(
       } catch (err) {
         logger.warn("cache.listener_failed", {
           serverKey: key.serverKey,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       }
     }

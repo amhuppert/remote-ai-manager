@@ -114,7 +114,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
       relativePath: "memory-bank/focus.md",
       contents: "# Focus",
       audience: "user_facing",
-      required: true,
       source: { workflowId: "wf-1" },
     });
 
@@ -133,7 +132,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
         relativePath: "memory-bank/something-else.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow(/canonical path/i);
@@ -148,7 +146,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
         relativePath: "elsewhere/note.md",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow(/memory-bank\/codex/);
@@ -159,7 +156,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
       relativePath: "memory-bank/codex/note.md",
       contents: "x",
       audience: "internal_log",
-      required: true,
       source: { workflowId: "wf-1" },
     });
     expect(ok.relativePath).toBe("memory-bank/codex/note.md");
@@ -174,7 +170,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
         relativePath: "elsewhere/x.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow(/\.cc\/graph-workflow-docs/);
@@ -189,7 +184,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
         relativePath: "/etc/passwd",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow(/absolute/i);
@@ -204,7 +198,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
         relativePath: "../../../../etc/passwd",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow(/outside.*worktree/i);
@@ -219,7 +212,6 @@ describe("createArtifactRegistry write — path resolution and traversal rejecti
         relativePath: "",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow();
@@ -237,7 +229,6 @@ describe("createArtifactRegistry write — record metadata", () => {
       relativePath: ".cc/workflow/exec-1/pre-merge-2026.log",
       contents: "log body",
       audience: "internal_log",
-      required: false,
       source: { workflowId: "wf-1", laneId: "implementer", round: 2 },
     });
 
@@ -263,7 +254,6 @@ describe("createArtifactRegistry write — record metadata", () => {
       relativePath: "memory-bank/codex/sub/file.md",
       contents: "x",
       audience: "internal_log",
-      required: true,
       source: { workflowId: "wf-1" },
     });
 
@@ -296,7 +286,6 @@ describe("createArtifactRegistry write — discoverability registration", () => 
       relativePath: "memory-bank/focus.md",
       contents: "# focus",
       audience: "user_facing",
-      required: true,
       source: { workflowId: "wf-1" },
       description: "Current focus",
     });
@@ -325,7 +314,6 @@ describe("createArtifactRegistry write — discoverability registration", () => 
       relativePath: "memory-bank/notes/topic.md",
       contents: "x",
       audience: "user_facing",
-      required: true,
       description: "Notes on topic",
       source: { workflowId: "wf-1" },
     });
@@ -353,7 +341,6 @@ describe("createArtifactRegistry write — discoverability registration", () => 
       relativePath: ".cc/graph-workflow-docs/notes.md",
       contents: "x",
       audience: "user_facing",
-      required: true,
       description: "Shared notes",
       readWhen: "Before iteration",
       source: { workflowId: "wf-1" },
@@ -390,7 +377,6 @@ describe("createArtifactRegistry write — discoverability registration", () => 
       relativePath: ".cc/workflow/exec-1/pre-merge.log",
       contents: "x",
       audience: "internal_log",
-      required: true,
       source: { workflowId: "wf-1" },
     });
     await registry.write({
@@ -399,7 +385,6 @@ describe("createArtifactRegistry write — discoverability registration", () => 
       relativePath: "memory-bank/codex/note.md",
       contents: "x",
       audience: "internal_log",
-      required: true,
       source: { workflowId: "wf-1" },
     });
 
@@ -428,7 +413,6 @@ describe("createArtifactRegistry write — discoverability registration", () => 
         relativePath: "memory-bank/focus.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         description: "focus",
         source: { workflowId: "wf-1" },
       }),
@@ -457,15 +441,14 @@ describe("createArtifactRegistry write — discoverability registration", () => 
         relativePath: "memory-bank/notes/x.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "wf-1" },
       }),
     ).rejects.toThrow(/description/i);
   });
 });
 
-describe("createArtifactRegistry write — required vs optional failure handling", () => {
-  it("throws ArtifactRequiredFailure when required=true and the write fails", async () => {
+describe("createArtifactRegistry write — write vs writeOptional failure handling", () => {
+  it("write() throws ArtifactRequiredFailure when the write fails", async () => {
     const fs = makeFakeFs();
     fs.failOnce = path.join(SESSION_WORKTREE, ".cc/workflow/exec-1/x.log");
     const registry = createArtifactRegistry(makeDeps(fs));
@@ -478,7 +461,6 @@ describe("createArtifactRegistry write — required vs optional failure handling
         relativePath: ".cc/workflow/exec-1/x.log",
         contents: "x",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "wf-1" },
       });
     } catch (err) {
@@ -489,7 +471,7 @@ describe("createArtifactRegistry write — required vs optional failure handling
     expect(caught?.name).toBe(artifactRequiredFailureName);
   });
 
-  it("returns a warning outcome and does not throw when required=false and the write fails", async () => {
+  it("writeOptional() returns a warning outcome and does not throw when the write fails", async () => {
     const fs = makeFakeFs();
     fs.failOnce = path.join(SESSION_WORKTREE, ".cc/workflow/exec-1/x.log");
     const warnings: Array<{ event: string; fields: Record<string, unknown> }> =
@@ -522,7 +504,7 @@ describe("createArtifactRegistry write — required vs optional failure handling
     ).toBe(true);
   });
 
-  it("propagates registration failures as required failures when required=true", async () => {
+  it("write() propagates registration failures as required failures", async () => {
     const fs = makeFakeFs();
     const registry = createArtifactRegistry(
       makeDeps(fs, {
@@ -542,7 +524,6 @@ describe("createArtifactRegistry write — required vs optional failure handling
         relativePath: "memory-bank/focus.md",
         contents: "x",
         audience: "user_facing",
-        required: true,
         description: "focus",
         source: { workflowId: "wf-1" },
       });

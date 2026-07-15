@@ -26,9 +26,35 @@ export type RouteResolution<T> =
   | { ok: true; value: T }
   | { ok: false; response: Response };
 
-/** Build a JSON `{ error }` Response with the given HTTP status. */
-export function jsonError(message: string, status: number): Response {
-  return NextResponse.json({ error: message } satisfies ApiError, { status });
+/**
+ * Build a JSON `{ error }` Response with the given HTTP status. The optional
+ * `code` and `details` map to the corresponding `ApiError` fields. Omitted
+ * fields are absent from the body (not `undefined`), preserving the wire shape
+ * of handlers that never sent them.
+ */
+export function jsonError(
+  message: string,
+  status: number,
+  code?: string,
+  details?: ApiError["details"],
+): Response {
+  const body: ApiError = { error: message };
+  if (code !== undefined) body.code = code;
+  if (details !== undefined) body.details = details;
+  return NextResponse.json(body, { status });
+}
+
+/**
+ * Build the seam's 404 `{ error }` Response. Handlers use this for
+ * single-entity misses (`if (!item) return notFound("X not found");`) so the
+ * 404 wire shape lives here rather than being hand-rolled per handler.
+ */
+export function notFound(
+  message: string,
+  code?: string,
+  details?: ApiError["details"],
+): Response {
+  return jsonError(message, 404, code, details);
 }
 
 export interface ResolveProjectDeps {
@@ -48,6 +74,31 @@ export async function resolveProjectOr404(
     return { ok: false, response: jsonError("Project not found", 404) };
   }
   return { ok: true, value: projectPath };
+}
+
+export interface ResolveProjectSessionDeps<S> extends ResolveProjectDeps {
+  getSession(projectPath: string, sessionName: string): Promise<S | null>;
+}
+
+/**
+ * Resolve a project path plus one of its sessions, or a 404 Response
+ * ("Project not found" / "Session not found"). Generic over the session type
+ * so domains with narrowed session deps reuse it without importing the full
+ * session schema here.
+ */
+export async function resolveProjectSessionOr404<S>(
+  deps: ResolveProjectSessionDeps<S>,
+  projectName: string,
+  sessionName: string,
+): Promise<RouteResolution<{ projectPath: string; session: S }>> {
+  const project = await resolveProjectOr404(deps, projectName);
+  if (!project.ok) return project;
+
+  const session = await deps.getSession(project.value, sessionName);
+  if (!session) {
+    return { ok: false, response: notFound("Session not found") };
+  }
+  return { ok: true, value: { projectPath: project.value, session } };
 }
 
 /**

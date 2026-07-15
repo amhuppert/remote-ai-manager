@@ -1,25 +1,25 @@
 # Product Overview
 
-CC (Command Center) — web control plane for managing remote Claude Code sessions. Each session runs in its own git worktree + branch (`csm/<name>`); UI provides create/monitor/interact across multiple parallel sessions.
+CC (Command Center) is a web control plane for managing parallel AI coding-agent sessions. Claude and Codex run behind one backend-neutral session model; each worktree-backed session has isolated git state while the UI provides creation, monitoring, interaction, review, and delivery.
 
 ## Core Capabilities
 
-- **Project discovery** — scans configurable base directory for git repos
-- **Session lifecycle** — create/monitor/delete; backed by worktrees + branches; Fast and Focus creation modes
-- **Prompt execution** — `@anthropic-ai/claude-agent-sdk` `query()` API, single-flight locking, message queuing
-- **Live observability** — own JSONL transcripts + computed git diffs per session
-- **Real-time SSE** — conversation/job/notification/workflow/dev-server status broadcasts
-- **Background jobs** — fire-and-forget merge/commit/conflict-resolution with SQLite history
-- **Graph workflows** — declarative multi-context execution with task graphs, validation, retries, circuit breakers
-- **Dev server automation** — per-session spawning, liveness polling, remote URL via Tailscale
+- **Project discovery** — scans configurable base directories for git repositories
+- **Session lifecycle** — creates, monitors, and deletes worktree-backed sessions through normal or optimistic creation
+- **Backend-neutral agent execution** — registered Claude and Codex descriptors provide conversation/task facets, capabilities, continuity, and failure policy
+- **Live observability** — lossless backend transcript envelopes, rendered conversation messages, costs/usage when available, and computed git diffs
+- **Real-time updates** — typed conversation, ticket, job, notification, workflow, and dev-server events over one SSE connection
+- **Background jobs** — durable merge, commit, and conflict-resolution history with user notifications
+- **Graph workflows** — declarative multi-context execution with task graphs, validation, retries, gates, and circuit breakers
+- **Dev server automation** — per-session spawning, liveness polling, and remote URLs
 - **Voice input** — Whisper-based prompt transcription
 
 ## Use Cases
 
-- Multi-repo + parallel session management from one UI
-- Remote monitoring of Claude activity (transcripts, diffs, status)
-- Autonomous development via graph workflows for unattended operation
+- Run and compare parallel coding-agent sessions across multiple repositories
+- Monitor transcripts, diffs, workflows, and attention states remotely
+- Execute autonomous graph workflows while preserving review and delivery controls
 
 ## Value
 
-"Ground control" for Claude Code — turns ad-hoc CLI usage into structured multi-session workflow with full git isolation per session.
+Command Center turns isolated agent runs into a composable, observable development workflow without coupling product policy to one provider SDK.

@@ -17,11 +17,11 @@ import {
   createWorkflowExecution,
 } from "./test-fixtures";
 import type {
-  GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
-  WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 
 const WORKTREE_PATH = "/repo/.worktrees/session-1";
 

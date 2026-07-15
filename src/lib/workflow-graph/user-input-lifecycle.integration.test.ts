@@ -5,11 +5,11 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowPendingUserInput,
-  GraphWorkflowSSEEvent,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { _resetRegistryForTesting } from "./execution-logger";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
@@ -704,16 +704,11 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
         implementer: {
           lane: "implementer",
           contextId: "context-plan",
-          engine: "claude",
+          backend: "claude",
+          refKind: "conversation",
           workflowConversationId: "conv-fast",
-          sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-fast",
-          },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
+          sessionRef: { backend: "claude", ref: "conv-fast" },
+          metrics: { rotateBeforeNextTurn: false },
           limitEvaluation: "disabled",
           lastUsedAt: NOW,
         },

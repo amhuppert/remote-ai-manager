@@ -4,7 +4,7 @@
  * Provides common helpers to reduce duplication across workflow machines:
  * - extractErrorMessage: Uniform error → string extraction
  * - errorAssign: Standard onError assign action (error + completedAt)
- * - createTerminalStates: Generate final states with finalStatus + onTerminal
+ * - createTerminalStates: Generate final states that record finalStatus
  */
 
 import { assign } from "xstate";
@@ -90,7 +90,6 @@ export function errorAssign() {
  * Each terminal state:
  * - Has `type: "final"`
  * - Sets `finalStatus` to its own name via assign
- * - Calls the `"onTerminal"` named action
  *
  * Usage:
  *   const terminals = createTerminalStates(["completed", "failed", "conflicts"] as const);
@@ -100,9 +99,7 @@ export function errorAssign() {
  *     ...terminals,
  *   }
  *
- * Requires the machine to have:
- * - `finalStatus` in context (initially null)
- * - `onTerminal` in actions (can be a no-op stub overridden via .provide())
+ * Requires the machine to have `finalStatus` in context (initially null).
  *
  * The return type uses a broad cast for the same reason as errorAssign():
  * XState's strict type system requires exact context/event type matches,
@@ -115,7 +112,7 @@ export function createTerminalStates<T extends readonly string[]>(
   for (const status of statuses) {
     result[status] = {
       type: "final" as const,
-      entry: [assign({ finalStatus: status as string }), "onTerminal" as const],
+      entry: assign({ finalStatus: status as string }),
     };
   }
   return result as Record<T[number], never>;

@@ -104,6 +104,7 @@ function makeRealService(fixture: PersistenceFixture): {
     },
     broadcast(event) {
       events.push(event as SessionAlignmentUpdatedEvent);
+      return { delivered: true };
     },
     promptQueue: {
       async enqueue() {},

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
   findUnboundedCollections,
   reconcileDischarges,

@@ -1,6 +1,8 @@
 import path from "node:path";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { z } from "zod";
 import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_CONNECTION,
@@ -224,33 +226,26 @@ export async function runFixture(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === "session") {
-    const verb = rest[1];
-    if (verb === "create") {
-      return runSessionCreate(rest.slice(2), flags, values, env, host);
-    }
-    if (verb === "delete") {
-      return runSessionDelete(rest.slice(2), flags, values, env, host);
-    }
-    return usageFailure(
-      "fixture session requires a verb: create or delete",
-      json,
-    );
-  }
-  if (sub === "prompt") {
-    return runPrompt(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "status") {
-    return runStatus(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(
-    sub === undefined
-      ? "fixture requires a subcommand: session, prompt, or status"
-      : `unknown fixture subcommand "${sub}"`,
-    json,
-  );
+  return dispatchGroup({
+    group: ["fixture"],
+    rest,
+    json: flags.json,
+    handlers: {
+      session: (r) =>
+        dispatchGroup({
+          group: ["fixture", "session"],
+          rest: r,
+          json: flags.json,
+          noun: "verb",
+          handlers: {
+            create: (rr) => runSessionCreate(rr, flags, values, env, host),
+            delete: (rr) => runSessionDelete(rr, flags, values, env, host),
+          },
+        }),
+      prompt: (r) => runPrompt(r, flags, values, env, host),
+      status: (r) => runStatus(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runSessionCreate(
@@ -517,7 +512,7 @@ async function runPrompt(
     return failure({
       exitCode: EXIT_CONNECTION,
       message: `cannot reach the dev server at ${target.url}`,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: getErrorMessage(error),
       json,
     });
   }

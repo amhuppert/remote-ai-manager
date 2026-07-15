@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
 import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";

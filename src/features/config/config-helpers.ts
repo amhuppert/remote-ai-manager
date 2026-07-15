@@ -1,8 +1,7 @@
 import {
-  claudeModelSchema,
-  codexModelSchema,
   getEffortLevelsForBackend,
-} from "@/lib/agent-backends/schemas";
+  getModelsForBackend,
+} from "@/lib/agent-backends/catalog";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 // ---------------------------------------------------------------------------
@@ -100,8 +99,7 @@ export function validateNumericInput(
 export function getModelOptionsForBackend(
   backend: AgentBackendId,
 ): readonly string[] {
-  if (backend === "codex") return codexModelSchema.options;
-  return claudeModelSchema.options;
+  return getModelsForBackend(backend).map((m) => m.id);
 }
 
 export function getEffortOptionsForBackend(

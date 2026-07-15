@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkflowPrerequisite } from "@/lib/workflows/schemas";
+import type { WorkflowPrerequisite } from "@/lib/workflow-graph/definition-schemas";
 
 import { containsPlaceholderOpener } from "./parameter-validation";
 import { validatePrerequisites } from "./prerequisite-validation";

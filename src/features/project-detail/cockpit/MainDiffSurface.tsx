@@ -1,6 +1,6 @@
 "use client";
 
-import DiffPanel from "@/features/session/git/DiffPanel";
+import DiffPanel from "@/components/git/DiffPanel";
 import {
   EmptyState,
   EmptyStateTitle,

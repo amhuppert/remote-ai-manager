@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { queueDeliveryTimingSchema } from "@/lib/agent-backends/capabilities-descriptor";
+import { queueDeliveryTimingSchema } from "@/lib/agent-backends/descriptor";
 import { documentFeedbackPayloadSchema } from "@/lib/conversations/message-content-schemas";
 import { queuedMessageViewSchema } from "@/lib/conversations/message-queue-schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";

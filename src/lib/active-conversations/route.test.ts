@@ -5,7 +5,7 @@ import {
 } from "./route-handlers";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

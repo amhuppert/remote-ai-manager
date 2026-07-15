@@ -13,7 +13,7 @@ const baseProps = {
   conversationId: "c3e2c1cc-abcd-1234-5678-abcdef012345",
   backendRef: {
     backend: "claude" as const,
-    sessionId: "sess_abc123xyz",
+    ref: "sess_abc123xyz",
   },
   createdAt: "2026-04-15T16:15:00Z",
   worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/my-branch",
@@ -38,7 +38,7 @@ describe("InfoDetailsPopover", () => {
     render(
       <InfoDetailsPopover
         {...baseProps}
-        backendRef={{ backend: "codex", threadId: "thread_xyz789" }}
+        backendRef={{ backend: "codex", ref: "thread_xyz789" }}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /session details/i }));

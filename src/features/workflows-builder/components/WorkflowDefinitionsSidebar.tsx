@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/ui/cn";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 
 const WB_BTN_BASE =
   "inline-flex items-center justify-center gap-[6px] whitespace-nowrap cursor-pointer rounded-sm border border-solid border-border-default font-medium transition-all duration-150";
@@ -160,15 +161,16 @@ export default function WorkflowDefinitionsSidebar({
                 <span className="flex-shrink-0 text-[0.7rem] font-normal text-text-tertiary">
                   r{def.revision}
                 </span>
-                <span
-                  className={cn(
-                    "mx-xs inline-block h-[6px] w-[6px] flex-shrink-0 rounded-full",
-                    DOT_CLASS[dot.variant],
-                  )}
-                  data-tooltip={dot.tooltip}
-                  aria-label={dot.tooltip}
-                  role="img"
-                />
+                <WithTooltip label={dot.tooltip}>
+                  <span
+                    className={cn(
+                      "mx-xs inline-block h-[6px] w-[6px] flex-shrink-0 rounded-full",
+                      DOT_CLASS[dot.variant],
+                    )}
+                    aria-label={dot.tooltip}
+                    role="img"
+                  />
+                </WithTooltip>
               </button>
             );
           })

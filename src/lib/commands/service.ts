@@ -5,6 +5,8 @@ import os from "node:os";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { skillTriggerPrefixForBackend } from "@/lib/agent-backends/catalog";
+import type { SkillTriggerPrefix } from "@/lib/agent-backends/descriptor";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 const logger = createLogger("commands");
@@ -130,7 +132,7 @@ async function scanCommandDir(
 }
 
 interface ScanSkillsOptions {
-  itemPrefix: "/" | "$";
+  itemPrefix: SkillTriggerPrefix;
   pluginName?: string;
   ignoreDirNames?: Set<string>;
 }
@@ -306,6 +308,7 @@ export async function resolvePluginPaths(): Promise<
 
 async function discoverClaudeItems(
   worktreePath: string,
+  itemPrefix: SkillTriggerPrefix,
 ): Promise<CommandItem[]> {
   const homeDir = os.homedir();
   const allItems: CommandItem[] = [];
@@ -315,7 +318,7 @@ async function discoverClaudeItems(
 
   const projectSkillsDir = path.join(worktreePath, ".claude", "skills");
   allItems.push(
-    ...(await scanSkillsDir(projectSkillsDir, "project", { itemPrefix: "/" })),
+    ...(await scanSkillsDir(projectSkillsDir, "project", { itemPrefix })),
   );
 
   const userCmdDir = path.join(homeDir, ".claude", "commands");
@@ -323,7 +326,7 @@ async function discoverClaudeItems(
 
   const userSkillsDir = path.join(homeDir, ".claude", "skills");
   allItems.push(
-    ...(await scanSkillsDir(userSkillsDir, "user", { itemPrefix: "/" })),
+    ...(await scanSkillsDir(userSkillsDir, "user", { itemPrefix })),
   );
 
   const pluginPaths = await resolvePluginPaths();
@@ -336,7 +339,7 @@ async function discoverClaudeItems(
     const pluginSkillsDir = path.join(plugin.path, "skills");
     allItems.push(
       ...(await scanSkillsDir(pluginSkillsDir, plugin.name, {
-        itemPrefix: "/",
+        itemPrefix,
         pluginName: plugin.name,
       })),
     );
@@ -347,6 +350,7 @@ async function discoverClaudeItems(
 
 async function discoverCodexItems(
   worktreePath: string,
+  itemPrefix: SkillTriggerPrefix,
 ): Promise<CommandItem[]> {
   const homeDir = os.homedir();
   const allItems: CommandItem[] = [];
@@ -356,7 +360,7 @@ async function discoverCodexItems(
       path.join(worktreePath, ".agents", "skills"),
       "project",
       {
-        itemPrefix: "$",
+        itemPrefix,
       },
     )),
   );
@@ -365,18 +369,18 @@ async function discoverCodexItems(
       path.join(worktreePath, ".codex", "skills"),
       "project",
       {
-        itemPrefix: "$",
+        itemPrefix,
       },
     )),
   );
   allItems.push(
     ...(await scanSkillsDir(path.join(homeDir, ".agents", "skills"), "user", {
-      itemPrefix: "$",
+      itemPrefix,
     })),
   );
   allItems.push(
     ...(await scanSkillsDir(path.join(homeDir, ".codex", "skills"), "user", {
-      itemPrefix: "$",
+      itemPrefix,
       ignoreDirNames: new Set([".system"]),
     })),
   );
@@ -384,7 +388,7 @@ async function discoverCodexItems(
     ...(await scanSkillsDir(
       path.join(homeDir, ".codex", "skills", ".system"),
       "system",
-      { itemPrefix: "$" },
+      { itemPrefix },
     )),
   );
 
@@ -404,10 +408,11 @@ export async function discoverCommands(
     "commands.discover",
     { backend, worktreePath },
     async () => {
+      const itemPrefix = skillTriggerPrefixForBackend(backend);
       const allItems =
         backend === "codex"
-          ? await discoverCodexItems(worktreePath)
-          : await discoverClaudeItems(worktreePath);
+          ? await discoverCodexItems(worktreePath, itemPrefix)
+          : await discoverClaudeItems(worktreePath, itemPrefix);
 
       const seen = new Set<string>();
       const deduplicated: CommandItem[] = [];

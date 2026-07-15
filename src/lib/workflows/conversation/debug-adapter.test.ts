@@ -30,18 +30,18 @@ import {
   debugCleanupResultSchema,
 } from "./debug-schemas";
 import {
-  setDefaultSessionStatusBusBroadcastForTesting,
-  subscribeSessionStatus,
-  _resetDefaultSessionStatusBusForTesting,
-} from "@/lib/workflows/primitives/default-session-status-bus";
-import type { StatusBusEnvelope } from "@/lib/workflows/primitives/status-bus";
+  setPublicationBroadcastForTesting,
+  subscribeLifecycle,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
+import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
+import type { StatusBusEnvelope } from "@/lib/events/status-bus";
 import type {
   ConversationInput,
   ExecutePromptInput,
   PrepareTurnInput,
   PrepareTurnOutput,
   PromptActorResult,
-  VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -90,6 +90,7 @@ function successResult(
     aborted: false,
     compacted: false,
     error: null,
+    continuationDisposition: "retain",
     ...overrides,
   };
 }
@@ -108,31 +109,25 @@ function makeMockExecutePrompt(result?: Partial<PromptActorResult>) {
   });
 }
 
-function makeMockVerifyCleanup(output: Partial<VerifyCleanupOutput> = {}) {
-  return fromPromise<VerifyCleanupOutput, VerifyCleanupInput>(async () => {
-    await new Promise((r) => setTimeout(r, 0));
-    return {
-      ok: true,
-      failedConditions: [],
-      missingFiles: [],
-      remediationPrompt: null,
-      ...output,
-    };
-  });
-}
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function makeTestMachine(overrides?: {
   prepareTurn?: any;
   executePrompt?: any;
-  verifyCleanup?: any;
+  verifyCleanup?: () => Promise<VerifyCleanupOutput>;
 }) {
   /* eslint-enable @typescript-eslint/no-explicit-any */
+  const fakeVerifyCleanup =
+    overrides?.verifyCleanup ??
+    (async (): Promise<VerifyCleanupOutput> => ({
+      ok: true,
+      failedConditions: [],
+      missingFiles: [],
+      remediationPrompt: null,
+    }));
   return conversationMachine.provide({
     actors: {
       prepareTurn: overrides?.prepareTurn ?? makeMockPrepareTurn(),
       executePrompt: overrides?.executePrompt ?? makeMockExecutePrompt(),
-      verifyCleanup: overrides?.verifyCleanup ?? makeMockVerifyCleanup(),
     },
     actions: {
       persistSnapshot: () => {},
@@ -142,6 +137,22 @@ function makeTestMachine(overrides?: {
       broadcastDebugModeStatus: () => {},
       releaseResources: () => {},
       dispatchPushNotification: () => {},
+      startDebugCleanupVerification: ({ context, self }) => {
+        void runDebugCleanupVerification(
+          {
+            worktreePath: context.worktreePath,
+            conversationId: context.conversationId,
+            structuredOutput: context.lastResult?.structuredOutput,
+            debugSessionId:
+              context.debugMode?.debugSessionId ?? "debug-session-test",
+            attempt: context.debugMode?.cleanupVerificationAttempt ?? 0,
+          },
+          { verifyCleanup: fakeVerifyCleanup },
+        ).then((command) => {
+          if (!command) return;
+          self.send({ type: "DEBUG_COMMAND", command });
+        });
+      },
     },
   });
 }
@@ -175,6 +186,45 @@ function waitForState(
 
     const sub = actor.subscribe((s) => {
       if (check(s.value)) {
+        clearTimeout(timer);
+        sub.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+function waitForPhase(
+  actor: AnyActorRef,
+  phase: string,
+  timeoutMs = 3000,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const phaseOf = () =>
+      (
+        actor.getSnapshot() as {
+          context: { debugMode: { phase: string } | null };
+        }
+      ).context.debugMode?.phase;
+
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Timed out waiting for phase "${phase}", current: ${phaseOf()}`,
+          ),
+        ),
+      timeoutMs,
+    );
+
+    if (phaseOf() === phase) {
+      clearTimeout(timer);
+      resolve();
+      return;
+    }
+
+    const sub = actor.subscribe(() => {
+      if (phaseOf() === phase) {
         clearTimeout(timer);
         sub.unsubscribe();
         resolve();
@@ -245,19 +295,19 @@ describe("debug adapter", () => {
     let unsubscribe: () => void;
 
     beforeEach(() => {
-      _resetDefaultSessionStatusBusForTesting();
+      _resetPublicationForTesting();
       _resetDefaultDebugAdapterForTesting();
       wire = vi.fn<(event: SSEEvent) => void>();
-      setDefaultSessionStatusBusBroadcastForTesting(wire);
+      setPublicationBroadcastForTesting(wire);
       envelopes = [];
-      unsubscribe = subscribeSessionStatus((envelope) => {
+      unsubscribe = subscribeLifecycle((envelope) => {
         envelopes.push(envelope);
       });
     });
 
     afterEach(() => {
       unsubscribe();
-      _resetDefaultSessionStatusBusForTesting();
+      _resetPublicationForTesting();
       _resetDefaultDebugAdapterForTesting();
     });
 
@@ -309,7 +359,7 @@ describe("debug adapter", () => {
     });
 
     it("respects an injected publish dependency for testing", () => {
-      const customPublish = vi.fn(() => ({ delivered: true }));
+      const customPublish = vi.fn(() => ({ delivered: true as const }));
       const adapter = createDebugAdapter({ publishSSE: customPublish });
       adapter.publishDebugModeStatus({
         projectName: "acme",
@@ -329,7 +379,7 @@ describe("debug adapter", () => {
   });
 
   describe("phase transition dispatch", () => {
-    it("dispatches ENTER_DEBUG_MODE / EXIT_DEBUG_MODE / MARK_REPRODUCED / MARK_FIX_VERIFIED / SET_DEBUG_RECORDING / CLEAR_DEBUG_LOGS through the injected sender", () => {
+    it("dispatches lifecycle commands with a stable identity for each entered debug session", () => {
       const sent: Array<{
         projectPath: string;
         sessionName: string;
@@ -337,6 +387,7 @@ describe("debug adapter", () => {
         event: unknown;
       }> = [];
       const adapter = createDebugAdapter({
+        createDebugSessionId: () => "debug-session-1",
         sendConversationEvent: (
           projectPath,
           sessionName,
@@ -358,16 +409,24 @@ describe("debug adapter", () => {
       adapter.markReproduced(target);
       adapter.markFixVerified(target);
       adapter.setRecording(target, true);
-      adapter.clearDebugLogs(target);
       adapter.exitDebugMode(target);
 
       expect(sent.map((s) => s.event)).toEqual([
-        { type: "ENTER_DEBUG_MODE", logFilePath: "/tmp/logs.jsonl" },
-        { type: "MARK_REPRODUCED" },
-        { type: "MARK_FIX_VERIFIED" },
-        { type: "SET_DEBUG_RECORDING", recording: true },
-        { type: "CLEAR_DEBUG_LOGS" },
-        { type: "EXIT_DEBUG_MODE" },
+        {
+          type: "DEBUG_COMMAND",
+          command: {
+            kind: "enter",
+            logFilePath: "/tmp/logs.jsonl",
+            debugSessionId: "debug-session-1",
+          },
+        },
+        { type: "DEBUG_COMMAND", command: { kind: "mark_reproduced" } },
+        { type: "DEBUG_COMMAND", command: { kind: "mark_fix_verified" } },
+        {
+          type: "DEBUG_COMMAND",
+          command: { kind: "set_recording", recording: true },
+        },
+        { type: "DEBUG_COMMAND", command: { kind: "exit" } },
       ]);
       for (const s of sent) {
         expect(s.projectPath).toBe(target.projectPath);
@@ -375,10 +434,15 @@ describe("debug adapter", () => {
         expect(s.conversationId).toBe(target.conversationId);
       }
     });
+
+    it("does not expose route-owned debug-log deletion as a lifecycle command", () => {
+      const adapter = createDebugAdapter();
+      expect("clearDebugLogs" in adapter).toBe(false);
+    });
   });
 
   describe("full debug session lifecycle drives the conversation actor with same observable behavior as direct event sends", () => {
-    it("drives ENTER_DEBUG_MODE → submit → MARK_REPRODUCED → submit (fix_applied) → MARK_FIX_VERIFIED → submit cleanup → idle, and the captured outputFormat schemas match the adapter's resolveOutputFormat for each phase", async () => {
+    it("drives enter → submit → mark_reproduced → submit (fix_applied) → mark_fix_verified → submit cleanup → idle, and the captured outputFormat schemas match the adapter's resolveOutputFormat for each phase", async () => {
       const capturedSchemas: Array<unknown> = [];
       let callCount = 0;
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
@@ -443,32 +507,34 @@ describe("debug adapter", () => {
       };
 
       adapter.enterDebugMode(target, { logFilePath: "/tmp/.debug/logs.jsonl" });
-      expect(actor.getSnapshot().value).toEqual({ debug: "hypothesizing" });
+      expect(actor.getSnapshot().value).toBe("debug");
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "hypothesizing",
+      );
 
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Hypothesize",
         streamId: "s1",
       });
-      await waitForState(actor, "awaitingReproduction");
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "awaiting_reproduction",
-      );
+      await waitForPhase(actor, "awaiting_reproduction");
 
       adapter.markReproduced(target);
-      expect(actor.getSnapshot().value).toEqual({ debug: "analyzingEvidence" });
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "analyzing_evidence",
+      );
 
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Analyze evidence",
         streamId: "s2",
       });
-      await waitForState(actor, "awaitingVerification");
+      await waitForPhase(actor, "awaiting_verification");
 
       adapter.markFixVerified(target);
-      expect(actor.getSnapshot().value).toEqual({
-        debug: "cleanupInstrumentation",
-      });
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "cleanup_instrumentation",
+      );
 
       actor.send({
         type: "SUBMIT_PROMPT",
@@ -490,15 +556,22 @@ describe("debug adapter", () => {
       );
 
       expect(sentEvents).toEqual([
-        { type: "ENTER_DEBUG_MODE", logFilePath: "/tmp/.debug/logs.jsonl" },
-        { type: "MARK_REPRODUCED" },
-        { type: "MARK_FIX_VERIFIED" },
+        {
+          type: "DEBUG_COMMAND",
+          command: {
+            kind: "enter",
+            logFilePath: "/tmp/.debug/logs.jsonl",
+            debugSessionId: expect.any(String),
+          },
+        },
+        { type: "DEBUG_COMMAND", command: { kind: "mark_reproduced" } },
+        { type: "DEBUG_COMMAND", command: { kind: "mark_fix_verified" } },
       ]);
     });
   });
 
   describe("markFixFailed", () => {
-    it("dispatches a MARK_FIX_FAILED event to the conversation actor", () => {
+    it("dispatches a mark_fix_failed command to the conversation actor", () => {
       const sent: Array<{
         projectPath: string;
         sessionName: string;
@@ -528,7 +601,10 @@ describe("debug adapter", () => {
           projectPath: "/repo",
           sessionName: "sess",
           conversationId: "conv-1",
-          event: { type: "MARK_FIX_FAILED" },
+          event: {
+            type: "DEBUG_COMMAND",
+            command: { kind: "mark_fix_failed" },
+          },
         },
       ]);
     });

@@ -10,14 +10,14 @@ import type {
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { neutralizeAmbientCcEnv } from "@/lib/agent-gateway/session-env";
 import { createLogger } from "@/lib/logging";
-import { registerTaskRunner } from "../registry-core";
 import type {
   AgentTaskRequest,
   AgentTaskResult,
   AgentTaskRunner,
 } from "../task";
-import type { AgentBackendId } from "../types";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
+import { projectSchemaForClaude } from "./structured-output-projection";
 import {
   toRawTranscriptEntries,
   type AgentTranscriptEntry,
@@ -28,21 +28,61 @@ import {
 } from "@/lib/agent-backends/schemas";
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/shared/sdk-env";
+import { getErrorMessage } from "@/lib/shared/errors";
+import { createClaudeFailureClassifier } from "./failure-classifier";
 
 const logger = createLogger("claude:task-runner");
+const claudeFailureClassifier = createClaudeFailureClassifier();
+
+function resolveTaskContinuation(
+  backendRef: AgentSessionRef | null,
+  error: unknown | null,
+): Pick<AgentTaskResult, "backendRef" | "failure" | "continuationDisposition"> {
+  if (error === null) {
+    return { backendRef, failure: null, continuationDisposition: "retain" };
+  }
+  const { failure, continuationDisposition } =
+    claudeFailureClassifier.classifyWithContinuation(error);
+  return {
+    backendRef: continuationDisposition === "clear" ? null : backendRef,
+    failure,
+    continuationDisposition,
+  };
+}
 
 // ============================================================
 // Claude Task Runner
 // ============================================================
 
+/**
+ * Provider port for the one SDK call the task runner makes. Injected so the
+ * conformance suite can drive the real runner against a fake message stream;
+ * the runner only iterates the returned stream, so the port is structural.
+ */
+export interface ClaudeTaskRunnerDeps {
+  runQuery(args: {
+    prompt: string;
+    options: Options;
+  }): AsyncIterable<SDKMessage>;
+}
+
+const defaultDeps: ClaudeTaskRunnerDeps = {
+  runQuery: (args) => query(args),
+};
+
 export class ClaudeTaskRunner implements AgentTaskRunner {
   readonly backend: AgentBackendId = "claude";
 
+  constructor(private readonly deps: ClaudeTaskRunnerDeps = defaultDeps) {}
+
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
+    const isolatedOneShot = input.executionProfile === "isolated-one-shot";
+
     logger.info("claude-task-runner.start", {
       workingDirectory: input.workingDirectory,
       hasResume: !!input.resumeRef,
       timeoutMs: input.timeoutMs,
+      executionProfile: input.executionProfile ?? "standard",
     });
 
     let validatedReasoningEffort: ClaudeEffortLevel | undefined;
@@ -57,7 +97,10 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           reasoningEffort: input.reasoningEffort,
         });
         return {
-          backendRef: null,
+          ...resolveTaskContinuation(
+            input.resumeRef?.backend === "claude" ? input.resumeRef : null,
+            error,
+          ),
           text: null,
           usage: null,
           error,
@@ -68,13 +111,17 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     }
 
     // Cannot resume a different backend's session
-    if (input.resumeRef != null && input.resumeRef.backend !== "claude") {
+    if (
+      !isolatedOneShot &&
+      input.resumeRef != null &&
+      input.resumeRef.backend !== "claude"
+    ) {
       const error = `Cannot resume a ${input.resumeRef.backend} session with ClaudeTaskRunner`;
       logger.error("claude-task-runner.resume_backend_mismatch", {
         resumeBackend: input.resumeRef.backend,
       });
       return {
-        backendRef: null,
+        ...resolveTaskContinuation(null, error),
         text: null,
         usage: null,
         error,
@@ -83,8 +130,8 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     }
 
     const resumeSessionId =
-      input.resumeRef?.backend === "claude"
-        ? input.resumeRef.sessionId
+      !isolatedOneShot && input.resumeRef?.backend === "claude"
+        ? input.resumeRef.ref
         : undefined;
 
     if (resumeSessionId) {
@@ -113,7 +160,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     // Build MCP servers from tooling
     const mcpServers: Record<string, unknown> = {};
 
-    if (input.tooling?.portableMcp) {
+    if (!isolatedOneShot && input.tooling?.portableMcp) {
       const {
         servers: portableServers,
         rejectedServers,
@@ -133,8 +180,15 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       ? input.systemInstructions.join("\n\n")
       : undefined;
 
+    // Project the schema at the SDK handoff: Claude's native enforcement
+    // validates but cannot steer minLength/minItems/numeric-range keywords,
+    // so they are stripped here and enforced post-parse by the caller's Zod
+    // schema instead.
     const outputFormat = input.outputSchema
-      ? { type: "json_schema" as const, schema: input.outputSchema }
+      ? {
+          type: "json_schema" as const,
+          schema: projectSchemaForClaude(input.outputSchema),
+        }
       : undefined;
 
     // Set up timeout via AbortController
@@ -171,7 +225,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     let error: string | null = null;
 
     try {
-      const stream = query({
+      const stream = this.deps.runQuery({
         prompt: input.prompt,
         options: {
           cwd: input.workingDirectory,
@@ -182,22 +236,25 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           },
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
-          settingSources: ["user", "project", "local"],
+          settingSources: isolatedOneShot ? [] : ["user", "project", "local"],
+          ...(isolatedOneShot
+            ? { maxTurns: 1, tools: [], strictMcpConfig: true }
+            : {}),
           ...(input.modelId ? { model: input.modelId } : {}),
           ...(validatedReasoningEffort
             ? { effort: validatedReasoningEffort as Options["effort"] }
             : {}),
           resume: resumeSessionId,
-          persistSession: true,
+          persistSession: !isolatedOneShot,
           ...(outputFormat ? { outputFormat } : {}),
           mcpServers: mcpServers as Record<string, never>,
           abortController,
           // Task subprocesses get no session-env contract, so ambient CC_*
           // (an outer instance's server URL/token) must be blanked here.
-          env: neutralizeAmbientCcEnv(buildChildEnv()) as Record<
-            string,
-            string
-          >,
+          env: {
+            ...neutralizeAmbientCcEnv(buildChildEnv()),
+            ...(isolatedOneShot ? { CLAUDECODE: "" } : {}),
+          } as Record<string, string>,
         },
       });
 
@@ -242,7 +299,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       }
     } catch (err) {
       if (!timedOut) {
-        error = err instanceof Error ? err.message : String(err);
+        error = getErrorMessage(err);
         logger.error("claude-task-runner.query_error", {
           workingDirectory: input.workingDirectory,
           error,
@@ -253,9 +310,19 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       externalSignal?.removeEventListener("abort", onExternalAbort);
     }
 
-    const backendRef = sessionId
-      ? { backend: "claude" as const, sessionId }
-      : null;
+    const observedBackendRef =
+      sessionId && !isolatedOneShot
+        ? { backend: "claude" as const, ref: sessionId }
+        : null;
+    const priorBackendRef =
+      !isolatedOneShot && input.resumeRef?.backend === "claude"
+        ? input.resumeRef
+        : null;
+    const finalError = error ?? (timedOut ? "Task timed out" : null);
+    const continuation = resolveTaskContinuation(
+      observedBackendRef ?? priorBackendRef,
+      finalError,
+    );
 
     const transcript: AgentTranscriptEntry[] | undefined =
       rawMessages.length > 0
@@ -267,23 +334,19 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       sessionId,
       timedOut,
       hasError: !!error,
+      executionProfile: input.executionProfile ?? "standard",
     });
 
     return {
-      backendRef,
+      ...continuation,
       text: textBlocks.length > 0 ? textBlocks.join("") : null,
       structuredOutput,
       usage: usageResult,
       ...(transcript ? { transcript } : {}),
-      error: error ?? (timedOut ? "Task timed out" : null),
+      error: finalError,
       timedOut,
     };
   }
 }
 
-// ============================================================
-// Register task runner
-// ============================================================
-
-const claudeTaskRunner = new ClaudeTaskRunner();
-registerTaskRunner(claudeTaskRunner);
+export const claudeTaskRunner = new ClaudeTaskRunner();

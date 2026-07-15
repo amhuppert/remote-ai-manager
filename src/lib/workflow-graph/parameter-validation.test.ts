@@ -8,7 +8,7 @@ import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type {
   ParameterDeclaration,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 import {
   buildLaunchInputSchema,

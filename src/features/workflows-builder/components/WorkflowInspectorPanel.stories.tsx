@@ -10,7 +10,7 @@ import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.s
 import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import WorkflowInspectorPanel, {
   type InspectorTab,
 } from "./WorkflowInspectorPanel";

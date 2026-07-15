@@ -1,14 +1,15 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import type {
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/config-schemas";
 import { cn } from "@/lib/ui/cn";
 
-// Shared glyphs + chips for the workflow inspector rails. Backend
-// identity follows the design system's semantic accents — cyan = Claude,
-// violet = Codex — and the gate glyphs (script / approval / questions) reuse
-// one vocabulary across the resolved-setup strip and the config blocks.
+// Shared glyphs + chips for the workflow inspector rails. Backend identity
+// colors key off each backend's catalog-declared design-system tone, and the
+// gate glyphs (script / approval / questions) reuse one vocabulary across the
+// resolved-setup strip and the config blocks.
 
 interface IconProps {
   size?: number;
@@ -131,28 +132,43 @@ export function ExpandGlyphIcon({ size = 14 }: IconProps): React.JSX.Element {
   );
 }
 
+function chipBackendLabel(id: string): string {
+  return findBackendCatalogEntry(id)?.label ?? id;
+}
+
 export function implementerChipLabel(config: GraphWorkflowAgentConfig): string {
   const effort = config.reasoningEffort;
-  const agent = `${config.backend} ${config.model}`;
+  const agent = `${chipBackendLabel(config.backend)} ${config.model}`;
   return effort ? `${agent} · ${effort}` : agent;
 }
 
 export function validatorChipLabel(
   validator: GraphWorkflowAgentValidatorConfig,
 ): string {
-  if (validator.type === "claude") {
-    return `claude ${validator.agent.model}`;
-  }
-  return `codex ${validator.codex?.model ?? "default"}`;
+  // The validator config is a per-type discriminated union, so the model
+  // field lives in a different place per member; the display label itself
+  // comes from the catalog.
+  const model =
+    validator.type === "claude"
+      ? validator.agent.model
+      : (validator.codex?.model ?? "default");
+  return `${chipBackendLabel(validator.type)} ${model}`;
 }
 
 const CHIP_BASE =
   "inline-flex items-center gap-[5px] whitespace-nowrap rounded-sm border border-solid px-sm py-[2px] font-mono text-[0.7rem] font-semibold uppercase tracking-[0.05em]";
 
-const BACKEND_CHIP_CLASS: Record<AgentBackendId, string> = {
-  claude: "border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a06)] text-cyan",
-  codex: "border-[var(--cc-codex-violet-a35)] bg-violet-glow text-violet",
+// Identity color keyed by the catalog's design-system tone token; the catalog
+// owns which backend maps to which tone.
+const TONE_CHIP_CLASS: Record<string, string> = {
+  cyan: "border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a06)] text-cyan",
+  violet: "border-[var(--cc-codex-violet-a35)] bg-violet-glow text-violet",
 };
+
+// An id the catalog does not know renders flagged-neutral rather than
+// borrowing another backend's identity color.
+const UNKNOWN_CHIP_CLASS =
+  "border-border-default bg-bg-raised text-text-secondary";
 
 export function BackendChip({
   backend,
@@ -161,8 +177,16 @@ export function BackendChip({
   backend: AgentBackendId;
   children: React.ReactNode;
 }): React.JSX.Element {
+  const entry = findBackendCatalogEntry(backend);
+  const toneClass =
+    (entry ? TONE_CHIP_CLASS[entry.toneToken] : undefined) ??
+    UNKNOWN_CHIP_CLASS;
   return (
-    <span className={cn(CHIP_BASE, BACKEND_CHIP_CLASS[backend])}>
+    <span
+      className={cn(CHIP_BASE, toneClass)}
+      data-backend={backend}
+      data-backend-unknown={entry ? undefined : "true"}
+    >
       <BackendGlyphIcon />
       {children}
     </span>

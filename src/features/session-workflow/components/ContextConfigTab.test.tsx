@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render as rtlRender,
+  screen,
+  within,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import {
   buildInitialContextState,
@@ -10,10 +16,23 @@ import ContextConfigTab from "./ContextConfigTab";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
+} from "@/lib/workflow-graph/schemas";
+import type {
   GraphWorkflowResolvedContext,
   GraphWorkflowStatus,
   GraphWorkflowTaskDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
+
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
 
 function fullContext(): GraphWorkflowResolvedContext {
   return {

@@ -1,5 +1,7 @@
 # Tool-by-Tool Migration Design
 
+**Status:** Implemented; retained as the transport-migration record. Current command and output contracts live in `.kiro/steering/cli.md`.
+
 Phases 1–4 of the [CC CLI migration](./README.md). AskUserQuestion has its own document
 ([03](./03-ask-user-question-async.md)).
 
@@ -110,27 +112,25 @@ tools (`src/lib/session-alignment/tools.ts`).
 - `POST /api/projects/[name]/sessions/[session]/alignment/decisions` — mirrors `propose_decisions`.
 - CLI: both take `--file` (payloads are structured and multi-paragraph; inline flags don't fit).
 
-### 3.3 `cctl codex run` — job-shaped
+### 3.3 `cctl agent run` — job-shaped
 
-`run_codex` today executes in-process in the server with `cwd` = session worktree
-(`src/lib/agent-backends/codex/codex-tool.ts`, runner in `codex/task-runner.ts`) and can run for
-tens of minutes. Decision: **keep execution server-side, make it a job** — the server keeps codex
-config resolution (`codexConfigSchema`), artifact-registry integration (auto-registering
-`referenceDocuments`), logging, and timeout policy. A CLI-local codex spawn would duplicate all of
-that into the bundle.
+The long-running agent-run flow executes in-process in the server with `cwd` = session worktree and
+can run for tens of minutes. Decision: **keep execution server-side, make it a job** — the server
+keeps agent config resolution, artifact-registry integration (auto-registering `referenceDocuments`),
+logging, and timeout policy. A CLI-local spawn would duplicate all of that into the bundle.
 
-- `POST /api/projects/[name]/sessions/[session]/codex-runs` → `{ runId }`. Body mirrors the tool
+- `POST /api/projects/[name]/sessions/[session]/agent-runs` → `{ runId }`. Body mirrors the tool
   input (prompt, outputSchema expectations, timeoutMs, workingDirectory default = session
   worktree).
-- `GET  …/codex-runs/[runId]` → `{ status: "running" | "succeeded" | "failed" | "timed_out", summary?, referenceDocuments?, error? }`
-- `POST …/codex-runs/[runId]/cancel` — aborts via the existing AbortController path.
-- CLI: `cctl codex run --file prompt.json --wait [--timeout 25m]`; on Bash kill mid-wait the run
-  continues, `cctl codex status <runId>` / `cctl codex cancel <runId>` recover. `--wait` prints the
+- `GET  …/agent-runs/[runId]` → `{ status: "running" | "completed" | "failed", summary?, referenceDocuments?, error? }`
+- `POST …/agent-runs/[runId]/cancel` — aborts via the existing AbortController path.
+- CLI: `cctl agent run --file prompt.json --wait [--timeout 25m]`; on Bash kill mid-wait the run
+  continues, `cctl agent status <runId>` / `cctl agent cancel <runId>` recover. `--wait` prints the
   same JSON shape the MCP tool returned (`summary` + `referenceDocuments`), so downstream agent
   behavior is unchanged.
-- Hints: without `--wait` → `hint: poll with 'cctl codex status <runId>'; cancel with 'cctl codex
+- Hints: without `--wait` → `hint: poll with 'cctl agent status <runId>'; cancel with 'cctl agent
   cancel <runId>'`. On completion with artifacts (interpolated from response facts) →
-  `hint: codex registered <N> reference documents — read them before building on the summary`.
+  `hint: agent run registered <N> reference documents — read them before building on the summary`.
 
 ## 4. Phase 3 — Graph-workflow lane tools
 

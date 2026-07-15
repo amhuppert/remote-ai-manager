@@ -16,9 +16,12 @@ import {
   claudeConversationBackendFactory,
   resolveIdleTtlMs,
 } from "./conversation-runtime";
-import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
-import { backendCapabilities } from "../capabilities-descriptor";
-import type { ConversationBackendEvent } from "../conversation";
+import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./runtime-config/agent-suppression";
+import type {
+  ConversationBackendEvent,
+  ConversationBackendRuntime,
+} from "../conversation";
+import type { ClaudeCapabilityApplyTarget } from "./runtime-config/adapter";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
 
 const createRuntimeWithFakeDeps: typeof claudeConversationBackendFactory.createRuntime =
@@ -28,6 +31,7 @@ function createControllableMockQuery() {
   const messages: SDKMessage[] = [];
   let resolveNext: ((value: IteratorResult<SDKMessage, void>) => void) | null =
     null;
+  let rejectNext: ((error: Error) => void) | null = null;
   let done = false;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -37,6 +41,7 @@ function createControllableMockQuery() {
       if (resolveNext) {
         resolveNext({ value: undefined, done: true });
         resolveNext = null;
+        rejectNext = null;
       }
     }),
     streamInput: vi.fn(),
@@ -59,9 +64,12 @@ function createControllableMockQuery() {
           done: true,
         } as IteratorResult<SDKMessage, void>);
       }
-      return new Promise<IteratorResult<SDKMessage, void>>((resolve) => {
-        resolveNext = resolve;
-      });
+      return new Promise<IteratorResult<SDKMessage, void>>(
+        (resolve, reject) => {
+          resolveNext = resolve;
+          rejectNext = reject;
+        },
+      );
     },
     return() {
       done = true;
@@ -82,6 +90,7 @@ function createControllableMockQuery() {
       if (resolveNext) {
         const r = resolveNext;
         resolveNext = null;
+        rejectNext = null;
         r({ value: msg, done: false });
       } else {
         messages.push(msg);
@@ -93,7 +102,17 @@ function createControllableMockQuery() {
       if (resolveNext) {
         const r = resolveNext;
         resolveNext = null;
+        rejectNext = null;
         r({ value: undefined, done: true });
+      }
+    },
+    failPump(error: Error) {
+      done = true;
+      if (rejectNext) {
+        const reject = rejectNext;
+        resolveNext = null;
+        rejectNext = null;
+        reject(error);
       }
     },
   };
@@ -137,6 +156,67 @@ describe("ClaudeConversationRuntime — SDK options", () => {
 
     runtime.close();
   });
+
+  it("projects a keyword-carrying outputFormat before the SDK sees it (T3.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const schema = {
+      type: "object",
+      properties: {
+        summary: { type: "string", minLength: 1 },
+        refs: { type: "array", minItems: 1, items: { type: "string" } },
+      },
+      required: ["summary", "refs"],
+      additionalProperties: false,
+    };
+    const projected = {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        refs: { type: "array", items: { type: "string" } },
+      },
+      required: ["summary", "refs"],
+      additionalProperties: false,
+    };
+
+    const outputFormat = {
+      type: "json_schema" as const,
+      schema,
+    };
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-projection",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+      outputFormat,
+    });
+
+    const callArg = queryMock.mock.calls[0]![0]! as {
+      options: { outputFormat?: { type: string; schema: unknown } };
+    };
+    expect(callArg.options.outputFormat).toEqual({
+      type: "json_schema",
+      schema: projected,
+    });
+    // The runtime-held copy keeps the caller's object BY REFERENCE: the
+    // actor's recreate gate compares `runtime.outputFormat` by identity, so
+    // substituting a fresh projected object would churn the runtime every
+    // turn (see debug-adapter's per-phase wrapper cache).
+    expect(runtime.outputFormat).toBe(outputFormat);
+    // T3.2 amendment pin (slice designs §1.5): `runtime.outputFormat` is an
+    // opaque source-identity token — no SDK path reads it. The object that
+    // crosses the `query()` boundary is a distinct projected copy, never the
+    // runtime-held source or its schema.
+    expect(callArg.options.outputFormat).not.toBe(runtime.outputFormat);
+    expect(callArg.options.outputFormat!.schema).not.toBe(outputFormat.schema);
+
+    runtime.close();
+  });
 });
 
 describe("ClaudeConversationRuntime — alignment version metadata", () => {
@@ -175,7 +255,7 @@ describe("ClaudeConversationRuntime — alignment version metadata", () => {
 });
 
 describe("ClaudeConversationRuntime — external turn events", () => {
-  it("emits external_turn_started, provider_events, and external_turn_completed for a virtual turn", async () => {
+  it("emits external_turn_started, interpreted transcript entries, and external_turn_completed for a virtual turn", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -265,13 +345,14 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     const completedIdx = externalEvents.findIndex(
       (e) => e.type === "external_turn_completed",
     );
-    const providerEvents = externalEvents.filter(
-      (e) => e.type === "provider_event",
+    const transcriptEvents = externalEvents.filter(
+      (e) => e.type === "transcript_entry",
     );
 
     expect(startedIdx).toBeGreaterThanOrEqual(0);
     expect(completedIdx).toBeGreaterThan(startedIdx);
-    expect(providerEvents.length).toBeGreaterThanOrEqual(3);
+    // user tool-notification + assistant + result frames at minimum
+    expect(transcriptEvents.length).toBeGreaterThanOrEqual(3);
 
     const completedEvent = externalEvents[completedIdx]!;
     if (completedEvent.type !== "external_turn_completed") {
@@ -282,7 +363,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     expect(completedEvent.result.numTurns).toBe(2);
     expect(completedEvent.result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sess-1",
+      ref: "sess-1",
     });
 
     runtime.close();
@@ -615,11 +696,20 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
       persistedRef: null,
       sessionInstructions: [],
       tooling: {
-        claudeCapabilityConfig: {
-          enabledPlugins: {},
-          skillOverrides: {},
-          disabledAgentNames: ["code-reviewer"],
-          agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
+        capabilities: {
+          backend: "claude",
+          kinds: [
+            {
+              kind: "agents",
+              items: [
+                {
+                  itemId: "code-reviewer",
+                  enabled: false,
+                  originLayer: "global",
+                },
+              ],
+            },
+          ],
         },
       },
     });
@@ -653,7 +743,9 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
       tooling: {},
     });
 
-    const result = await runtime.applyClaudeCapabilityConfig!({
+    const applyTarget = runtime as ConversationBackendRuntime &
+      ClaudeCapabilityApplyTarget;
+    const result = await applyTarget.applyCapabilityConfig({
       enabledPlugins: { "owner@m": false },
       skillOverrides: { "contrib-skill": "off" },
       disabledAgentNames: [],
@@ -858,6 +950,84 @@ describe("ClaudeConversationRuntime — static external MCP passthrough", () => 
 });
 
 describe("ClaudeConversationRuntime — error result classification", () => {
+  it("clears a persisted ref when the provider reports that session as stale", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-stale-resume",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: { backend: "claude", ref: "session-gone" },
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "error_during_execution",
+      session_id: "session-gone",
+      uuid: "u-stale",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 0,
+      is_error: true,
+      errors: ["Session session-gone does not exist"],
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+
+    expect(result.failure?.kind).toBe("stale_resume_ref");
+    expect(result.continuationDisposition).toBe("clear");
+    expect(result.backendRef).toBeNull();
+
+    runtime.close();
+  });
+
+  it("returns an explicit clear result when a stale-resume pump rejection is tagged as QuerySession death", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-stale-pump",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: { backend: "claude", ref: "session-gone" },
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "continue",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    mock.failPump(new Error("Session session-gone does not exist"));
+
+    const result = await turnPromise;
+
+    expect(result.failure?.kind).toBe("stale_resume_ref");
+    expect(result.continuationDisposition).toBe("clear");
+    expect(result.backendRef).toBeNull();
+    runtime.close();
+  });
+
   it("preserves the learned sessionId in backendRef when the turn fails after init", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -898,10 +1068,12 @@ describe("ClaudeConversationRuntime — error result classification", () => {
 
     const result = await turnPromise;
 
-    expect(result.error).toContain("QuerySession closed");
+    expect(result.failure?.message).toContain("QuerySession closed");
+    expect(result.failure?.kind).toBe("session_died");
+    expect(result.continuationDisposition).toBe("retain");
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sess-after-init",
+      ref: "sess-after-init",
     });
   });
 
@@ -948,10 +1120,10 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     const result = await turnPromise;
 
     expect(result.aborted).toBe(true);
-    expect(result.error).toBeNull();
+    expect(result.failure).toBeNull();
     expect(result.backendRef).toEqual({
       backend: "claude",
-      sessionId: "sess-aborted",
+      ref: "sess-aborted",
     });
   });
 });
@@ -1114,7 +1286,7 @@ describe("ClaudeConversationRuntime — retryable error propagation", () => {
     const result = await turnPromise;
 
     expect(result.aborted).toBe(true);
-    expect(result.error).toBeNull();
+    expect(result.failure).toBeNull();
   });
 });
 
@@ -1515,7 +1687,7 @@ describe("ClaudeConversationRuntime — compaction pass-through (sendTurn)", () 
 });
 
 describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
-  it("emits input_accepted on the first raw message, before the first provider_event and any content", async () => {
+  it("emits input_accepted on the first raw message, before the first transcript entry and any content", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1565,12 +1737,12 @@ describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
     await turnPromise;
 
     const acceptedIdx = eventTypes.indexOf("input_accepted");
-    const firstProviderIdx = eventTypes.indexOf("provider_event");
+    const firstTranscriptIdx = eventTypes.indexOf("transcript_entry");
     const firstContentIdx = eventTypes.indexOf("content");
 
     expect(acceptedIdx).toBeGreaterThanOrEqual(0);
-    expect(firstProviderIdx).toBeGreaterThanOrEqual(0);
-    expect(acceptedIdx).toBeLessThan(firstProviderIdx);
+    expect(firstTranscriptIdx).toBeGreaterThanOrEqual(0);
+    expect(acceptedIdx).toBeLessThan(firstTranscriptIdx);
     expect(firstContentIdx).toBeGreaterThan(acceptedIdx);
 
     runtime.close();
@@ -1709,15 +1881,13 @@ describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
   });
 });
 
-describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
-  const textBlock = { type: "text" as const, text: "queued follow-up" };
-
-  it("sources capabilities from the descriptor", async () => {
+describe("ClaudeConversationRuntime — sendTurn awaits event handler drain", () => {
+  it("resolves sendTurn only after slow transcript-append handlers settle, in emission order", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
-      conversationId: "conv-queue-caps",
+      conversationId: "conv-drain",
       projectPath: "/project",
       projectName: "proj",
       sessionName: "sess",
@@ -1727,11 +1897,70 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
       tooling: {},
     });
 
-    expect(runtime.capabilities).toEqual(backendCapabilities("claude"));
-    expect(runtime.capabilities.queueWhileRunning).toBe(true);
+    const handled: ConversationBackendEvent["type"][] = [];
+    let releaseAppends!: () => void;
+    const appendGate = new Promise<void>((r) => {
+      releaseAppends = r;
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: async (event: ConversationBackendEvent) => {
+        if (event.type === "transcript_entry") {
+          await appendGate;
+        }
+        handled.push(event.type);
+      },
+    });
+    let turnResolved = false;
+    void turnPromise.then(() => {
+      turnResolved = true;
+    });
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst",
+      message: { content: [{ type: "text", text: "answer" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "answer",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(turnResolved).toBe(false);
+
+    releaseAppends();
+    const result = await turnPromise;
+
+    expect(result.aborted).toBe(false);
+    // Queued-user acceptance settles before the first assistant frame handler.
+    expect(handled.indexOf("input_accepted")).toBeGreaterThanOrEqual(0);
+    expect(handled.indexOf("input_accepted")).toBeLessThan(
+      handled.indexOf("transcript_entry"),
+    );
+    // Post-turn events flow through the same ordered chain and are drained
+    // before sendTurn resolves.
+    expect(handled).toContain("backend_init");
 
     runtime.close();
   });
+});
+
+describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
+  const textBlock = { type: "text" as const, text: "queued follow-up" };
 
   it("resolves queueUserInput only after the SDK consumes the input (the observable)", async () => {
     const mock = createControllableMockQuery();

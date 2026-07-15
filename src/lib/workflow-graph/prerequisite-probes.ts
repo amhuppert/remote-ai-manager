@@ -6,7 +6,7 @@ import { discoverCommands } from "@/lib/commands/service";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { normalizeSkillReference } from "@/lib/workflows/schemas";
+import { normalizeSkillReference } from "@/lib/workflow-graph/definition-schemas";
 
 const logger = createLogger("workflow-graph.prerequisite-probes");
 

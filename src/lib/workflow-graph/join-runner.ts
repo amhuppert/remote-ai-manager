@@ -5,17 +5,14 @@ import { abortInProgressMerge as defaultAbortInProgressMerge } from "@/lib/git/w
 import type { ConflictEntry } from "@/lib/jobs/schemas";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
-import type { SessionGitLock } from "./session-git-lock";
-import {
-  applyJoinProgress,
-  remainingSourceLanes,
-  resolveLaneConversationId,
-} from "./lane-join";
+import type { SessionGitLock } from "@/lib/shared/lock-retry";
+import { applyJoinProgress } from "./context-transitions";
+import { remainingSourceLanes, resolveLaneConversationId } from "./lane-join";
 import { buildJoinResolutionContext } from "./join-resolution-context";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 const logger = createLogger("graph-workflow-join-runner");
 
 export type JoinRunnerMutateActive = (

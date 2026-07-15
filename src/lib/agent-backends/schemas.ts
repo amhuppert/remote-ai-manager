@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export const claudeModelSchema = z.enum(["fable", "opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
@@ -8,12 +7,6 @@ export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 export function getDefaultClaudeModel(): ClaudeModel {
   return "opus";
 }
-
-export const agentSessionRefSchema = z.discriminatedUnion("backend", [
-  z.object({ backend: z.literal("claude"), sessionId: z.string() }),
-  z.object({ backend: z.literal("codex"), threadId: z.string() }),
-]);
-export type AgentSessionRef = z.infer<typeof agentSessionRefSchema>;
 
 export const effortLevelSchema = z.enum([
   "minimal",
@@ -142,28 +135,4 @@ export function getCodexReasoningLevelsForModel(
   model: string,
 ): CodexReasoningEffort[] | null {
   return CODEX_MODEL_REASONING_LEVELS[model] ?? null;
-}
-
-/**
- * Returns the canonical default model for a backend. Callers must resolve the
- * default this way rather than indexing a display-ordered option list — model
- * ordering is a UI concern and does not encode which model is the default.
- */
-export function getDefaultModelForBackend(backend: AgentBackendId): string {
-  return backend === "codex" ? getDefaultCodexModel() : getDefaultClaudeModel();
-}
-
-/**
- * Returns effort/reasoning levels for the given backend and optional model.
- * Both Claude and Codex levels are subsets of the unified EffortLevel union.
- */
-export function getEffortLevelsForBackend(
-  backend: AgentBackendId,
-  model?: string,
-): EffortLevel[] {
-  if (backend === "codex") {
-    const levels = getCodexReasoningLevelsForModel(model ?? "gpt-5.4");
-    return (levels ?? [...codexReasoningEffortSchema.options]) as EffortLevel[];
-  }
-  return getEffortLevelsForModel((model ?? "opus") as ClaudeModel);
 }

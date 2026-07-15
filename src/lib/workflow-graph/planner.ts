@@ -4,14 +4,14 @@ import type {
   WorkflowGeneratedDraft,
   WorkflowPlanRequest,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import {
   workflowGeneratedDraftSchema,
   workflowSemanticDefinitionSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import { buildWorkflowDraftPortableMcp as defaultBuildWorkflowDraftPortableMcp } from "@/lib/workflows/workflow-draft/portable-config";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import {

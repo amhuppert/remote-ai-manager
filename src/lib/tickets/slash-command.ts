@@ -8,8 +8,8 @@
  */
 
 import { z } from "zod";
-import type { SSEEvent } from "@/lib/api/sse-events";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { PublishFn } from "@/lib/events/publication";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   renderCompactTranscript,
@@ -91,17 +91,15 @@ export const ticketCommandOutputSchema = z.object({
 });
 export type TicketCommandOutput = z.infer<typeof ticketCommandOutputSchema>;
 
-/** `outputFormat.schema` payload mirroring {@link ticketCommandOutputSchema}. */
-export const TICKET_COMMAND_JSON_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    description: { type: "string" },
-    workType: { type: "string", enum: [...ticketWorkTypeSchema.options] },
-  },
-  required: ["title", "description", "workType"],
-  additionalProperties: false,
-};
+/**
+ * `outputFormat.schema` derived from the validation contract. The dialect
+ * marker is not part of the established provider payload; Claude-specific
+ * unsupported-keyword projection remains owned by its backend adapter.
+ */
+const ticketCommandJsonSchema = z.toJSONSchema(ticketCommandOutputSchema);
+delete ticketCommandJsonSchema.$schema;
+export const TICKET_COMMAND_JSON_SCHEMA: Record<string, unknown> =
+  ticketCommandJsonSchema;
 
 // ============================================================
 // Pure generation helpers
@@ -247,7 +245,7 @@ export interface TicketCommandRunnerDeps {
     input: ExecuteWorkflowTaskRunInput,
   ): Promise<TaskRunResult>;
   appendNotice(input: AppendNoticeInput): Promise<void>;
-  broadcast(event: SSEEvent): void;
+  publish: PublishFn;
   now(): string;
   generateId(): string;
 }
@@ -424,7 +422,7 @@ export function createTicketCommandRunner(
       return;
     }
     publishTicketChange({
-      broadcast: deps.broadcast,
+      publish: deps.publish,
       logger,
       change: "created",
       projectName: input.projectName,

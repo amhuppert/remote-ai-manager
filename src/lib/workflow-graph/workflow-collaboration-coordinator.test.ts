@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+} from "@/lib/workflow-graph/schemas";
+import type {
   ResolvedCollaborationConfig,
   WorkflowCollaborationResult,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowCollaborationCoordinator } from "./workflow-collaboration-coordinator";
 

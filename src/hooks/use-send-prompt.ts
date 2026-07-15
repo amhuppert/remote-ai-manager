@@ -15,11 +15,9 @@ import {
   useSetQueueError,
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
+import { consumePromptStream } from "@/lib/prompt/stream-transport";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
-import type {
-  MessageContentBlock,
-  AskQuestionItem,
-} from "@/lib/conversations/schemas";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { QueueEnqueueResponse } from "@/lib/prompt/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -181,82 +179,34 @@ export function useSendPrompt(
 
       try {
         // 4. Read SSE stream
-        const reader = res.body?.getReader();
-        if (!reader) {
+        if (!res.body) {
           failPrompt(conversationId, "No response stream");
           return;
         }
 
-        const decoder = new TextDecoder();
         const streamBlocks: MessageContentBlock[] = [];
-        let buffer = "";
-
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // Split on double newline for complete SSE events
-          const parts = buffer.split("\n\n");
-          // Keep the last part as it may be incomplete
-          buffer = parts.pop() ?? "";
-
-          for (const part of parts) {
-            if (!part.trim()) continue;
-
-            // Parse SSE event: "event: <name>\ndata: <json>"
-            let eventName = "";
-            let eventData = "";
-            for (const line of part.split("\n")) {
-              if (line.startsWith("event: ")) {
-                eventName = line.slice(7);
-              } else if (line.startsWith("data: ")) {
-                eventData = line.slice(6);
-              }
-            }
-
-            if (!eventName || !eventData) continue;
-
-            if (eventName === "content") {
-              try {
-                const block = JSON.parse(eventData) as MessageContentBlock;
-                streamBlocks.push(block);
-                receiveStreamContent(
-                  conversationId,
-                  displayContent,
-                  [...streamBlocks],
-                  agentSettings,
-                );
-              } catch {
-                // Skip malformed content events
-              }
-            } else if (eventName === "ask-question") {
-              try {
-                const data = JSON.parse(eventData) as {
-                  questionId: string;
-                  questions: AskQuestionItem[];
-                };
-                showQuestions(data.questionId, data.questions);
-              } catch {
-                // Skip malformed question events
-              }
-            } else if (eventName === "error") {
-              try {
-                const data = JSON.parse(eventData) as {
-                  message?: string;
-                };
-                failPrompt(conversationId, data.message ?? "Prompt failed");
-              } catch {
-                failPrompt(conversationId, "Prompt failed");
-              }
-            } else if (eventName === "aborted") {
+        await consumePromptStream(res.body, (event) => {
+          switch (event.type) {
+            case "content":
+              streamBlocks.push(event.block);
+              receiveStreamContent(
+                conversationId,
+                displayContent,
+                [...streamBlocks],
+                agentSettings,
+              );
               break;
-            } else if (eventName === "done") {
+            case "ask-question":
+              showQuestions(event.questionId, event.questions);
               break;
-            }
+            case "error":
+              failPrompt(conversationId, event.message ?? "Prompt failed");
+              break;
+            case "aborted":
+            case "done":
+              break;
           }
-        }
+        });
       } catch (e) {
         // Abort is expected during navigation — don't treat as error
         if (e instanceof DOMException && e.name === "AbortError") return;

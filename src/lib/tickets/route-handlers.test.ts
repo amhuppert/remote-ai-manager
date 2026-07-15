@@ -106,7 +106,7 @@ beforeEach(() => {
     resolveProjectPath,
     resolveAvailableProjectPath,
     deleteTicketContent: () => Promise.resolve(),
-    broadcast: () => {},
+    publish: () => ({ delivered: true }),
     runProjectTicketOperation: (_projectPath, operation) =>
       operation({ projectDeletionPrecededOperation: false }),
     runTicketOperation: (_key, fn) => fn(),

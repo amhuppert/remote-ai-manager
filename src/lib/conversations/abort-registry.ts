@@ -1,17 +1,23 @@
 import { createLogger } from "../logging";
-import { getGlobalSingleton } from "../shared/global-singleton";
+import {
+  abortHandle,
+  registerAbortHandle,
+  unregisterAbortHandle,
+  type AbortHandleKey,
+} from "@/lib/shared/abort-registry";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 
-const logger = createLogger("abort-registry");
+/**
+ * Conversation-scoped view over the shared abort registry
+ * (`@/lib/shared/abort-registry`, scope `conversation:*`). This module owns
+ * the domain semantics: aborting a conversation also closes its backend
+ * runtime so the active session terminates and the next prompt resumes fresh.
+ */
 
-// Use globalThis to survive HMR (same pattern as sse-broadcaster.ts)
-const GLOBAL_KEY = "__cc_abort_controllers" as const;
+const logger = createLogger("abort-registry.conversation");
 
-function getRegistry(): Map<string, AbortController> {
-  return getGlobalSingleton(
-    GLOBAL_KEY,
-    () => new Map<string, AbortController>(),
-  );
+function keyFor(conversationId: string): AbortHandleKey {
+  return `conversation:${conversationId}`;
 }
 
 /**
@@ -23,8 +29,7 @@ export function registerAbortController(
   conversationId: string,
   controller: AbortController,
 ): void {
-  getRegistry().set(conversationId, controller);
-  logger.debug("abort.registered", { conversationId });
+  registerAbortHandle(keyFor(conversationId), controller);
 }
 
 /**
@@ -39,13 +44,7 @@ export function unregisterAbortController(
   conversationId: string,
   controller: AbortController,
 ): void {
-  const registry = getRegistry();
-  if (registry.get(conversationId) !== controller) {
-    logger.debug("abort.unregister_skipped_stale", { conversationId });
-    return;
-  }
-  registry.delete(conversationId);
-  logger.debug("abort.unregistered", { conversationId });
+  unregisterAbortHandle(keyFor(conversationId), controller);
 }
 
 /**
@@ -53,12 +52,8 @@ export function unregisterAbortController(
  * Returns true if a running controller was found and aborted.
  */
 export function abortConversation(conversationId: string): boolean {
-  const registry = getRegistry();
-  const controller = registry.get(conversationId);
-  if (!controller) return false;
-
-  registry.delete(conversationId);
-  controller.abort();
+  const aborted = abortHandle(keyFor(conversationId));
+  if (!aborted) return false;
 
   // Also close the backend runtime to terminate any active session.
   // The next prompt will create a fresh runtime with resume.
@@ -68,6 +63,6 @@ export function abortConversation(conversationId: string): boolean {
     // best-effort
   }
 
-  logger.info("abort.signaled", { conversationId });
+  logger.info("abort.conversation_signaled", { conversationId });
   return true;
 }

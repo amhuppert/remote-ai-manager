@@ -35,6 +35,7 @@ import type { z } from "zod";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { parseJsonlWithIndex } from "@/lib/shared/read-jsonl";
 
 const logger = createLogger("workflows.collaboration.artifacts");
 
@@ -44,7 +45,9 @@ function getCollaborationArtifactsDir(configDir?: string): string {
   return path.join(configDir ?? getConfigDirPath(), ARTIFACTS_DIRNAME);
 }
 
-async function ensureCollaborationArtifactsDir(configDir?: string): Promise<void> {
+async function ensureCollaborationArtifactsDir(
+  configDir?: string,
+): Promise<void> {
   const dir = getCollaborationArtifactsDir(configDir);
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
@@ -86,6 +89,63 @@ export async function appendCollaborationArtifact(
   });
 }
 
+/** A source line that parsed as JSON but failed schema validation, with its
+ * TRUE zero-based index in the sidecar file (counting skipped blank/malformed
+ * lines) so a diagnostic can name the on-disk line to repair. */
+export interface ArtifactInvalidLine {
+  lineIndex: number;
+  issues: string;
+}
+
+/** A source line that failed `JSON.parse`, with its true zero-based index. */
+export interface ArtifactParseFailure {
+  lineIndex: number;
+  error: string;
+}
+
+export interface ParsedArtifactLines<T> {
+  entries: T[];
+  parseFailures: ArtifactParseFailure[];
+  invalidLines: ArtifactInvalidLine[];
+}
+
+/**
+ * Parse and schema-validate a sidecar JSONL blob, keeping the TRUE source line
+ * index for every skipped line. Pure over its inputs (no I/O, no logging) so
+ * the diagnostic-coordinate behavior is directly testable: a schema-invalid
+ * line preceded by blank/malformed lines must report its original file line,
+ * not the compacted array position.
+ */
+export function parseAndValidateArtifactLines<T>(
+  raw: string,
+  schema: z.ZodType<T>,
+): ParsedArtifactLines<T> {
+  const entries: T[] = [];
+  const parseFailures: ArtifactParseFailure[] = [];
+  const invalidLines: ArtifactInvalidLine[] = [];
+
+  const parsedLines = parseJsonlWithIndex(raw, {
+    onError: (_line, lineIndex, err) => {
+      parseFailures.push({ lineIndex, error: getErrorMessage(err) });
+    },
+  });
+  for (const { value, lineIndex } of parsedLines) {
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      invalidLines.push({
+        lineIndex,
+        issues: parsed.error.issues
+          .map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`)
+          .join("; "),
+      });
+      continue;
+    }
+    entries.push(parsed.data);
+  }
+
+  return { entries, parseFailures, invalidLines };
+}
+
 /**
  * Read a workflow's artifact stream back from its sidecar, in append order.
  *
@@ -114,36 +174,22 @@ export async function readCollaborationArtifacts<T>(
     return [];
   }
 
-  const entries: T[] = [];
-  const lines = raw.split("\n");
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    if (!line || line.trim().length === 0) continue;
+  const { entries, parseFailures, invalidLines } =
+    parseAndValidateArtifactLines(raw, schema);
 
-    let json: unknown;
-    try {
-      json = JSON.parse(line);
-    } catch (err) {
-      logger.warn("collaboration.artifacts.line_parse_failed", {
-        workflowId,
-        lineIndex,
-        error: getErrorMessage(err),
-      });
-      continue;
-    }
-
-    const parsed = schema.safeParse(json);
-    if (!parsed.success) {
-      logger.warn("collaboration.artifacts.line_invalid", {
-        workflowId,
-        lineIndex,
-        issues: parsed.error.issues
-          .map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`)
-          .join("; "),
-      });
-      continue;
-    }
-    entries.push(parsed.data);
+  for (const failure of parseFailures) {
+    logger.warn("collaboration.artifacts.line_parse_failed", {
+      workflowId,
+      lineIndex: failure.lineIndex,
+      error: failure.error,
+    });
+  }
+  for (const invalid of invalidLines) {
+    logger.warn("collaboration.artifacts.line_invalid", {
+      workflowId,
+      lineIndex: invalid.lineIndex,
+      issues: invalid.issues,
+    });
   }
 
   logger.debug("collaboration.artifacts.read", {

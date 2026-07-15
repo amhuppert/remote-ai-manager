@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   containsConflictMarkers,
   createConflictResolver,
+  parseConflictEntries,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
 import type {
@@ -32,6 +33,7 @@ function structuredOk(structured: unknown): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -49,6 +51,7 @@ function textOk(text: string): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -67,6 +70,7 @@ function errResult(error: string, aborted = false): TaskRunResult {
       cachedInputTokens: null,
     },
     backendRef: null,
+    continuationDisposition: "retain",
   };
 }
 
@@ -777,5 +781,56 @@ describe("conflict-resolution structured-output parity", () => {
     if (structuredResult.status === "resolved") {
       expect(structuredResult.conflicts).toEqual(SAMPLE_ENTRIES);
     }
+  });
+});
+
+// ============================================================
+// F5 pin: the shared structured-output chain widens conflict-resolution's
+// rejection behavior — an INVALID native candidate no longer hard-fails; the
+// chain falls through to a schema-valid raw/fenced text candidate in the same
+// turn. This widening is approved (2026-07-13 addendum to the Phase 1 slice
+// designs) and pinned here at the conflict-resolution consumer so a
+// "stop after invalid native" regression fails the suite.
+// ============================================================
+
+describe("conflict-resolution invalid-native fall-through (F5 pin)", () => {
+  it("accepts a valid fenced-JSON text candidate after an invalid native one", () => {
+    const invalidNative = { conflicts: [{ file: "x" }] };
+    const validFencedText = [
+      "I resolved the conflicts:",
+      "```json",
+      JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2),
+      "```",
+    ].join("\n");
+
+    const result = parseConflictEntries(validFencedText, invalidNative);
+
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.conflicts).toEqual(SAMPLE_ENTRIES);
+    }
+  });
+
+  it("accepts a valid raw-JSON text candidate after an invalid native one", () => {
+    const invalidNative = { conflicts: [{ file: "x" }] };
+    const validRawText = JSON.stringify({ conflicts: SAMPLE_ENTRIES });
+
+    const result = parseConflictEntries(validRawText, invalidNative);
+
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.conflicts).toEqual(SAMPLE_ENTRIES);
+    }
+  });
+
+  it("still fails when the invalid native candidate has no recoverable text", () => {
+    const invalidNative = { conflicts: [{ file: "x" }] };
+
+    const result = parseConflictEntries(
+      "prose with no JSON at all",
+      invalidNative,
+    );
+
+    expect("error" in result).toBe(true);
   });
 });

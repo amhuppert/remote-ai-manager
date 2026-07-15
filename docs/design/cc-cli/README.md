@@ -1,6 +1,6 @@
 # CC CLI Migration — Master Design
 
-**Status:** Design approved-pending-review · 2026-07-02
+**Status:** Implemented. This directory is the ratified design and migration record; `.kiro/steering/cli.md` is the concise contract for new CLI work.
 **Scope:** Replace Command Center's in-process MCP tools with a purpose-built CLI (`cctl`) + agent skills, backed by the CC server's HTTP API.
 
 Documents in this set:
@@ -88,7 +88,7 @@ Phase column refers to §4. "Endpoint" reflects what exists today (verified 2026
 | `replace_graph_workflow` | Exists (same) | `cctl workflow replace --file` | 2 |
 | `write_session_charter` | Missing (approve/reject exist) | `cctl charter write --file` | 2 |
 | `propose_decisions` | Missing (resolve exists) | `cctl decisions propose --file` | 2 |
-| `run_codex` | Missing | `cctl codex run` (job-shaped) | 2 |
+| `run_codex` | Missing | `cctl agent run` (job-shaped) | 2 |
 | `AskUserQuestion` | Answer route exists; ask missing | `cctl ask --file` | 3 |
 
 ### cc-graph-workflow (4)
@@ -118,7 +118,7 @@ read/lifecycle ops. Skill sections shipped; tools deregistered from `session-ser
 
 **Phase 2 — Authoring tools**
 Planner file-based flow (`workflow create/replace/validate --file`), alignment submission endpoints
-(charter/decisions), job-shaped `codex run`.
+(charter/decisions), job-shaped `agent run`.
 *Exit criteria:* `cc-session-tools` reduced to `AskUserQuestion` only.
 
 **Phase 3 — Turn-control tools**
@@ -145,7 +145,7 @@ design input; requirements per spec should be derived from the relevant doc sect
 | Cooperative turn-end not honored after `cctl ask` / rotation-gate instruction | Medium | Same trust model as the shipped `complete_task` rotation gate; skill discipline; degradation is graceful (answer queues) |
 | Agents forget the CLI exists (discovery) | Medium | Skill + one-line nudge in session system prompt; per-command guidance hints chain multi-step flows (doc 01 §6); lane prompts explicitly instruct `cctl` |
 | Version skew CLI ↔ server | Medium | Server-owned binary + build-stamp handshake (doc 01 §3, §5) |
-| Long ops vs Bash timeout ceilings (`codex run`) | Medium | Job-shaped endpoint + `--wait`; raise `BASH_MAX_TIMEOUT_MS` via env contract (doc 01 §2) |
+| Long ops vs Bash timeout ceilings (`agent run`) | Medium | Job-shaped endpoint + `--wait`; raise `BASH_MAX_TIMEOUT_MS` via env contract (doc 01 §2) |
 | Orphaned server ops when Bash is killed mid-`--wait` | Low | Job model already decouples; jobs are cancellable/inspectable (doc 02 §5) |
 | Invocation-layer validation weaker than Zod-at-dispatch | Low | `--file` inputs validated server-side with terse actionable errors; `workflow validate` pre-flight |
 

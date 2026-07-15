@@ -208,13 +208,13 @@ Per-conversation JSONL. Each line is a `TranscriptEntry`.
 | `type` | Purpose |
 |---|---|
 | `user` | User prompt (text + image refs) |
-| `assistant` | Claude response (text, tool_use blocks) |
-| `system` | SDK init, session ID assignment |
+| `assistant` | Agent response (text, thinking, and tool blocks as supported) |
+| `system` | Adapter-projected backend initialization/metadata |
 | `tool_result` | Tool execution results |
-| `result` | Conversation completion (`is_error`, `duration_ms`, `total_cost_usd`, `num_turns`) |
-| `rate_limit_event` | API rate limit info |
+| `result` | Adapter-projected completion (`duration_ms`, `total_cost_usd`, `num_turns`, and failure fields when available) |
+| provider-native type | Lossless native entry wrapped with `backend`, `seq`, `type`, and uninterpreted `raw` payload |
 
-Content blocks: `text`, `tool_use`, `tool_result`, `command` (parsed slash command), `image` (legacy inline base64), `image_ref` (externalized to disk — current format).
+Content blocks: `text`, `thinking`, `tool_use`, `tool_result`, `command` (parsed slash command), `image` (legacy inline base64), `image_ref` (externalized to disk), `image_marker`, `debug_structured`, and `document_feedback`.
 
 `readConversationMessages()` in `transcript.ts` filters visible messages, merges consecutive same-role entries, resolves `image_ref` → inline `image`, detects slash commands.
 
@@ -222,18 +222,18 @@ Content blocks: `text`, `tool_use`, `tool_result`, `command` (parsed slash comma
 
 State lives in `command-center.db` (WAL mode) and is accessed through a write queue (`src/lib/state-store/`). The aggregate exposes the legacy `ManagerState → projects → sessions → conversations[]` hierarchy to callers.
 
-Key `ConversationState` fields: `id` (matches transcript filename), `status` (`new`/`awaiting`/`running`/`waiting_for_input`), `claudeSessionId` (SDK resume), `transcriptPath`, `totalCostUsd`, `totalDurationMs`, `totalTurns`, `promptCount`.
+Key `ConversationState` fields: `id` (matches transcript filename), `status` (`new`/`awaiting`/`running`/`waiting_for_input`), `backendRef` (opaque `{ backend, ref }` continuity handle), `transcriptPath`, `totalCostUsd`, `totalDurationMs`, `totalTurns`, `promptCount`.
 
 Startup: stale `running`/`waiting_for_input` conversations are reset to `awaiting` during recovery.
 
 ## SSE Events
 
-Broadcast via `events/broadcaster.ts`; client-side Zod-validated.
+Publish through `events/publication.ts` (`publishEvent`, an injected `PublishFn`, `publishEventBestEffort`, or `publishScopedStatus`); the raw broadcaster is private transport. Clients validate frames with Zod.
 
 | Event | Trigger |
 |---|---|
 | `conversation-status` | `running` / `awaiting` / `waiting_for_input` transitions |
-| `ask-question` | SDK requests permission/input |
+| `ask-question` | Backend or workflow requests permission/input |
 | `message-queued` | Queued via `streamInput()` into running conversation |
 | `job-status` | Background job state change |
 | `notification-created` / `notification-updated` | Notification lifecycle |
@@ -248,13 +248,14 @@ HTTP request (X-Trace-Id) → withTracing() middleware
     (traceId, action, projectName, sessionName, conversationId)
     → all createLogger() calls auto-enriched
       → logs/global.log  +  logs/sessions/<proj>__<sess>/[conversations/<conv>.]log
-  → prompt.ts → conversation actor → transcript.ts (jsonl) + transcript-images.ts + broadcast()
+  → prompt route → conversation lifecycle → backend adapter
+      → transcript.ts (jsonl) + transcript-images.ts + publication.publishEvent()
   → state-store (SQLite via write queue)
 ```
 
 Every API route wrapped with `withTracing()`. TraceId links debug entries for one request; `request.start`/`request.complete` from the `tracing` module are dual-written to both the scoped destination and `global.log`. Transcripts are separate (conversation content, not request lifecycle).
 
-Background entrypoints (jobs, workflow execution, SDK turns, SSE broadcasts) call `runAsTrace(action, fn, inherit?)` so all `timed()` calls during the unit of work share a `traceId` for hotspot aggregation.
+Background entrypoints (jobs, workflow execution, backend turns, SSE publication) call `runAsTrace(action, fn, inherit?)` so all `timed()` calls during the unit of work share a `traceId` for hotspot aggregation.
 
 ## Workflow Execution Logs (`workflow-logs/{executionId}/`)
 

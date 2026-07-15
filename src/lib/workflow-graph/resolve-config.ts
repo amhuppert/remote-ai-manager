@@ -2,16 +2,18 @@ import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   CollaborationConfigSource,
-  GraphWorkflowAgentValidatorConfig,
-  GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowResolvedContext,
   ResolvedCollaborationConfig,
-  ResolvedWorkflowSemanticDefinition,
   WorkflowCollaborationConfig,
   WorkflowCollaborationConfigOverride,
+} from "@/lib/workflow-graph/collaboration-schemas";
+import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type {
+  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 export type ResolvedWorkflowConfig = WorkflowDefaults;
 
 const SEEDED_DEFAULTS: WorkflowDefaults = {

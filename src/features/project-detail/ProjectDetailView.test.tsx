@@ -1,21 +1,25 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import {
-  fireEvent,
-  screen,
-  waitFor,
-  render,
-  within,
-} from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderWithQuery } from "@/test/component-mocks";
+  installFetchFixture,
+  type FetchFixture,
+  type RouteReply,
+} from "@/test/fetch-fixture";
 import ProjectDetailView from "./ProjectDetailView";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
+import { sessionKeys } from "@/lib/sessions/query-keys";
 import { _useCockpitViewStore } from "./cockpit/use-cockpit-view-state";
-// Shared mocks
+
+// These are external framework/browser-integration modules, not internal seams:
+// next routing and the browser voice/hotkey hooks. The sanctioned client-test
+// pattern (@/test/fetch-fixture) covers only the network boundary, so these keep
+// their component-mock stubs. Queries, mutations, and Zustand stores run for
+// real against the fetch fixture and the real stores.
 vi.mock(
   "next/link",
   async () => (await import("@/test/component-mocks")).nextLinkMock,
@@ -33,7 +37,6 @@ vi.mock(
   async () => (await import("@/test/component-mocks")).voiceRecordButtonMock,
 );
 
-// File-specific mocks
 const routerPushMock = vi.fn();
 const routerReplaceMock = vi.fn();
 const mockSearchParams = new URLSearchParams();
@@ -46,6 +49,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
+// The capability drawer is a deep child rendered here only to assert the props
+// this view threads into it; substituting a prop-echoing stub isolates that
+// wiring contract without pulling the drawer's own data dependencies. This is a
+// component-boundary double, not a network mock.
 vi.mock(
   "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig",
   () => ({
@@ -65,87 +72,38 @@ vi.mock(
   }),
 );
 
-const mockSessionsData = {
-  data: undefined as SessionListItem[] | undefined,
-  isPending: false,
-};
-vi.mock("@/lib/notifications/queries", () => ({
-  useNotificationsQuery: () => ({ data: undefined }),
-}));
+let api: FetchFixture;
 
-vi.mock("@/lib/active-conversations/queries", () => ({
-  useActiveConversationsQuery: () => ({ data: undefined }),
-}));
-vi.mock("@/lib/files/queries", () => ({
-  useProjectFilesQuery: () => ({
-    data: undefined,
-    isLoading: false,
-    error: null,
-  }),
-}));
-vi.mock("@/lib/mcp/queries", () => ({
-  useProjectMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: true,
-    isError: false,
-    error: null,
-  }),
-}));
-vi.mock("@/lib/sessions/queries", () => ({
-  useSessionsQuery: () => mockSessionsData,
-  useBranchPrefixQuery: () => ({ data: undefined }),
-}));
-
-const deleteMutateMock = vi.fn();
-vi.mock("@/lib/mcp/mutations", () => ({
-  useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
-  useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
-  useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
-  useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
-  useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
-}));
-vi.mock("@/lib/sessions/mutations", () => ({
-  useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteSessionMutation: () => ({
-    mutate: deleteMutateMock,
-    isPending: false,
-  }),
-  useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useGenericArchiveSessionMutation: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
-  useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useBulkSessionsMutation: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-
-let storeShowCreateModal = false;
-let storeDeleteTarget: { sessionName: string; projectName: string } | null =
-  null;
-
-vi.mock("@/stores/sessions.store", () => ({
-  useShowCreateModal: () => storeShowCreateModal,
-  useBranchFromParent: () => null,
-  useDeleteTarget: () => storeDeleteTarget,
-  useOpenCreateModal: () => () => {
-    storeShowCreateModal = true;
-  },
-  useCloseCreateModal: () => vi.fn(),
-  useConfirmDeleteSession:
-    () => (target: { sessionName: string; projectName: string }) => {
-      storeDeleteTarget = target;
-    },
-  useCancelDeleteSession: () => vi.fn(),
-}));
+/** Serve the project's session list; unless a test seeds sessions the list is
+ * empty. Every other endpoint the view or its topbar may touch is held quiet. */
+function seedSessions(sessions: SessionListItem[]): void {
+  api.json("GET", "/api/projects/my-project/sessions", { sessions });
+}
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  storeShowCreateModal = false;
-  storeDeleteTarget = null;
-  mockSessionsData.data = undefined;
-  mockSessionsData.isPending = false;
+  api = installFetchFixture();
+  seedSessions([]);
+  api.json("GET", "/api/notifications", {
+    notifications: [],
+    total: 0,
+    unreadCount: 0,
+  });
+  api.json("GET", "/api/conversations/active", { conversations: [] });
+  api.json("GET", "/api/projects/my-project/branch-prefix", {
+    branchPrefix: "csm/",
+  });
+  // Files + MCP panels mount lazily; hold them in perpetual loading so a lazy
+  // fetch never rejects as an unmatched route.
+  api.pending("GET", "/api/projects/my-project/files");
+  api.pending("GET", "/api/projects/my-project/mcp-config");
+
   mockSearchParams.delete("focus");
   _useCockpitViewStore.getState()._reset();
+});
+
+afterEach(() => {
+  api.restore();
+  vi.clearAllMocks();
 });
 
 // ---------------------------------------------------------------------------
@@ -212,39 +170,21 @@ const makeProjectConversation = (
   ...overrides,
 });
 
+/** Render the view with the project-conversation list pre-seeded in cache (the
+ * PLC list query then reads the cache instead of the network). */
 function renderProjectWithConversations(
   conversations: ConversationState[],
-): QueryClient {
-  mockSessionsData.data = [];
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+): void {
+  const queryClient = createTestQueryClient();
+  // Seed both caches so the view renders past its "Loading sessions..." branch
+  // synchronously — these tests assert on the PLC drawer, not the fetch path.
+  queryClient.setQueryData(sessionKeys.list("my-project"), []);
   queryClient.setQueryData(
     projectConversationKeys.list("my-project"),
     conversations,
   );
 
-  render(
-    <QueryClientProvider client={queryClient}>
-      <ProjectDetailView projectName="my-project" />
-    </QueryClientProvider>,
-  );
-
-  return queryClient;
-}
-
-function stubProjectFetch(
-  handler?: (url: string) => Response | Promise<Response>,
-): ReturnType<typeof vi.fn<(input: RequestInfo | URL) => Promise<Response>>> {
-  const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(
-    async (input) => {
-      const url = input instanceof Request ? input.url : String(input);
-      if (handler !== undefined) return handler(url);
-      return new Response(null, { status: 404 });
-    },
-  );
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
+  renderWithQuery(<ProjectDetailView projectName="my-project" />, queryClient);
 }
 
 // ===========================================================================
@@ -252,60 +192,62 @@ function stubProjectFetch(
 // ===========================================================================
 
 describe("ProjectDetailView", () => {
-  it("renders table with session rows (Req 2.1, 2.2)", () => {
-    mockSessionsData.data = makeSessions(3);
+  it("renders table with session rows (Req 2.1, 2.2)", async () => {
+    seedSessions(makeSessions(3));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(screen.getByText("session-1")).toBeInTheDocument();
+    expect(await screen.findByText("session-1")).toBeInTheDocument();
     expect(screen.getByText("session-2")).toBeInTheDocument();
     expect(screen.getByText("session-3")).toBeInTheDocument();
   });
 
-  it("renders empty state when no sessions (Req 2.5)", () => {
-    mockSessionsData.data = [];
+  it("renders empty state when no sessions (Req 2.5)", async () => {
+    seedSessions([]);
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(screen.getByText("No sessions yet")).toBeInTheDocument();
+    expect(await screen.findByText("No sessions yet")).toBeInTheDocument();
     expect(
       screen.getByText("Create a session to start working in this project."),
     ).toBeInTheDocument();
   });
 
-  it("renders branch names in table (Req 2.2)", () => {
-    mockSessionsData.data = makeSessions(2);
+  it("renders branch names in table (Req 2.2)", async () => {
+    seedSessions(makeSessions(2));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(screen.getByText("csm/session-1")).toBeInTheDocument();
+    expect(await screen.findByText("csm/session-1")).toBeInTheDocument();
     expect(screen.getByText("csm/session-2")).toBeInTheDocument();
   });
 
-  it("renders status badges (Req 2.3)", () => {
-    mockSessionsData.data = makeSessions(2);
+  it("renders status badges (Req 2.3)", async () => {
+    seedSessions(makeSessions(2));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(await screen.findByText("running")).toBeInTheDocument();
     expect(screen.getByText("awaiting")).toBeInTheDocument();
   });
 
-  it("links session name to detail page (Req 2.4)", () => {
-    mockSessionsData.data = makeSessions(1);
+  it("links session name to detail page (Req 2.4)", async () => {
+    seedSessions(makeSessions(1));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    const link = screen.getByText("session-1").closest("a");
+    const link = (await screen.findByText("session-1")).closest("a");
     expect(link?.getAttribute("href")).toBe("/projects/my-project/session-1");
   });
 
-  it("renders a conversations quick-link on each session row targeting the filtered /conversations page", () => {
-    mockSessionsData.data = makeSessions(1);
+  it("renders a conversations quick-link on each session row targeting the filtered /conversations page", async () => {
+    seedSessions(makeSessions(1));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
 
-    const quickLink = screen.getByLabelText("Open in Conversations");
+    const quickLink = await screen.findByLabelText("Open in Conversations");
     expect(quickLink.getAttribute("href")).toBe(
       "/conversations?project=my-project&session=session-1",
     );
-    expect(quickLink.getAttribute("data-tooltip")).toBeTruthy();
+    // The quick-link is a Radix tooltip trigger (stamped with data-state) rather
+    // than the legacy data-tooltip attribute.
+    expect(quickLink).toHaveAttribute("data-state");
   });
 
-  it("keeps the session-landing link independent of the conversations quick-link", () => {
-    mockSessionsData.data = makeSessions(1);
+  it("keeps the session-landing link independent of the conversations quick-link", async () => {
+    seedSessions(makeSessions(1));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
 
-    const titleLink = screen.getByText("session-1").closest("a");
+    const titleLink = (await screen.findByText("session-1")).closest("a");
     expect(titleLink?.getAttribute("href")).toBe(
       "/projects/my-project/session-1",
     );
@@ -319,19 +261,19 @@ describe("ProjectDetailView", () => {
     expect(routerPushMock).not.toHaveBeenCalled();
   });
 
-  it("renders primary New session CTA in page header (Req 3.1)", () => {
-    mockSessionsData.data = [];
+  it("renders primary New session CTA in page header (Req 3.1)", async () => {
+    seedSessions([]);
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
     expect(
-      screen.getByRole("button", { name: /New session/ }),
+      await screen.findByRole("button", { name: /New session/ }),
     ).toBeInTheDocument();
   });
 
-  it("renders the project header as a compact single-row summary", () => {
-    mockSessionsData.data = makeSessions(2);
+  it("renders the project header as a compact single-row summary", async () => {
+    seedSessions(makeSessions(2));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
 
-    const summary = screen.getByLabelText("Project summary");
+    const summary = await screen.findByLabelText("Project summary");
     expect(summary.textContent).toContain("my-project");
     expect(summary.textContent).toContain("2 sessions");
     expect(summary.textContent).toContain("0 archived");
@@ -342,7 +284,7 @@ describe("ProjectDetailView", () => {
   });
 
   it("renders a Tickets entry opening /tickets pre-filtered to the project (ticket-system Req 9.5)", async () => {
-    mockSessionsData.data = makeSessions(1);
+    seedSessions(makeSessions(1));
     const makeTicket = (
       number: number,
       status: TicketListItem["status"],
@@ -359,18 +301,14 @@ describe("ProjectDetailView", () => {
       createdAt: now,
       updatedAt: now,
     });
-    stubProjectFetch((url) =>
-      url.includes("/api/projects/my-project/tickets")
-        ? Response.json([
-            makeTicket(1, "not_started"),
-            makeTicket(2, "in_progress"),
-            makeTicket(3, "done"),
-          ])
-        : new Response(null, { status: 404 }),
-    );
+    api.json("GET", "/api/projects/my-project/tickets", [
+      makeTicket(1, "not_started"),
+      makeTicket(2, "in_progress"),
+      makeTicket(3, "done"),
+    ]);
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
 
-    const link = screen.getByTitle("Tickets for this project");
+    const link = await screen.findByTitle("Tickets for this project");
     expect(link.getAttribute("href")).toBe("/tickets?project=my-project");
     expect(link).toHaveTextContent("Tickets");
     // Badge counts open tickets only (done/closed excluded).
@@ -380,11 +318,13 @@ describe("ProjectDetailView", () => {
   });
 
   it("renders the shared prompt composer in place of the legacy command console", async () => {
-    mockSessionsData.data = [];
+    seedSessions([]);
     const { container } = renderWithQuery(
       <ProjectDetailView projectName="my-project" />,
     );
-    const viewTabs = screen.getByRole("tablist", { name: "Project view" });
+    const viewTabs = await screen.findByRole("tablist", {
+      name: "Project view",
+    });
     fireEvent.click(
       within(viewTabs).getByRole("tab", { name: /Conversations/ }),
     );
@@ -394,11 +334,11 @@ describe("ProjectDetailView", () => {
     expect(screen.queryByLabelText("Project composer")).toBeNull();
   });
 
-  it("renders table with all column headers (Req 2.1)", () => {
-    mockSessionsData.data = makeSessions(1);
+  it("renders table with all column headers (Req 2.1)", async () => {
+    seedSessions(makeSessions(1));
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
     expect(
-      screen.getByRole("button", { name: /^Session/ }),
+      await screen.findByRole("button", { name: /^Session/ }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Branch/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Status/ })).toBeInTheDocument();
@@ -411,25 +351,25 @@ describe("ProjectDetailView", () => {
   });
 
   it("shows loading state when pending", () => {
-    mockSessionsData.isPending = true;
+    // Hold the session list unresolved so the loading branch renders.
+    api.pending("GET", "/api/projects/my-project/sessions");
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
     expect(screen.getByText("Loading sessions...")).toBeInTheDocument();
   });
 
-  it("renders optimistic mode indicator for optimistic mode sessions", () => {
-    mockSessionsData.data = [
+  it("renders optimistic mode indicator for optimistic mode sessions", async () => {
+    seedSessions([
       {
         ...makeSessions(1)[0]!,
         creationMode: "optimistic",
       },
-    ];
+    ]);
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(screen.getByTitle("Optimistic session")).toBeInTheDocument();
+    expect(await screen.findByTitle("Optimistic session")).toBeInTheDocument();
   });
 
   it("focuses an already-open project conversation from the focus query param (Req 12.1)", async () => {
     mockSearchParams.set("focus", "open-convo");
-    const fetchMock = stubProjectFetch();
 
     renderProjectWithConversations([
       makeProjectConversation({
@@ -442,34 +382,40 @@ describe("ProjectDetailView", () => {
     await waitFor(() =>
       expect(_useCockpitViewStore.getState().activeTabId).toBe("open-convo"),
     );
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      "/api/projects/my-project/conversations/open-convo/open",
-      expect.objectContaining({ method: "PATCH" }),
-    );
+    // An already-open conversation is not re-opened over the wire (the reopen
+    // mutation PATCHes .../open).
+    expect(
+      api.requestsTo(
+        "PATCH",
+        "/api/projects/my-project/conversations/open-convo/open",
+      ),
+    ).toHaveLength(0);
   });
 
   it("reopens and focuses a closed but unarchived project conversation from the focus query param (Req 12.2)", async () => {
     mockSearchParams.set("focus", "closed-convo");
     let reopened = false;
-    const fetchMock = stubProjectFetch((url) => {
-      if (url === "/api/projects/my-project/conversations/closed-convo/open") {
+    api.reply(
+      "PATCH",
+      "/api/projects/my-project/conversations/closed-convo/open",
+      (): RouteReply => {
         reopened = true;
-        return new Response(JSON.stringify({}), { status: 200 });
-      }
-      if (url === "/api/projects/my-project/conversations") {
-        return new Response(
-          JSON.stringify([
-            makeProjectConversation({
-              id: "closed-convo",
-              name: "Closed project focus",
-              open: reopened,
-            }),
-          ]),
-          { status: 200 },
-        );
-      }
-      return new Response(null, { status: 404 });
-    });
+        return { json: {} };
+      },
+    );
+    api.reply(
+      "GET",
+      "/api/projects/my-project/conversations",
+      (): RouteReply => ({
+        json: [
+          makeProjectConversation({
+            id: "closed-convo",
+            name: "Closed project focus",
+            open: reopened,
+          }),
+        ],
+      }),
+    );
 
     renderProjectWithConversations([
       makeProjectConversation({
@@ -479,15 +425,14 @@ describe("ProjectDetailView", () => {
       }),
     ]);
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
+    await waitFor(() => {
+      const opens = api.requestsTo(
+        "PATCH",
         "/api/projects/my-project/conversations/closed-convo/open",
-        expect.objectContaining({
-          method: "PATCH",
-          body: JSON.stringify({ open: true }),
-        }),
-      ),
-    );
+      );
+      expect(opens).toHaveLength(1);
+      expect(opens[0]?.jsonBody).toEqual({ open: true });
+    });
     await waitFor(() =>
       expect(_useCockpitViewStore.getState().activeTabId).toBe("closed-convo"),
     );
@@ -495,14 +440,11 @@ describe("ProjectDetailView", () => {
 
   it("shows an unavailable focus state without navigating to a session conversation route when the focused project conversation cannot be opened (Req 12.4)", async () => {
     mockSearchParams.set("focus", "missing-convo");
-    stubProjectFetch((url) => {
-      if (url === "/api/projects/my-project/conversations/missing-convo/open") {
-        return new Response(JSON.stringify({ error: "Not found" }), {
-          status: 404,
-        });
-      }
-      return new Response(null, { status: 404 });
-    });
+    api.reply(
+      "PATCH",
+      "/api/projects/my-project/conversations/missing-convo/open",
+      (): RouteReply => ({ status: 404, json: { error: "Not found" } }),
+    );
 
     renderProjectWithConversations([]);
 

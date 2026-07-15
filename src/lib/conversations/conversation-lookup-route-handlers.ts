@@ -5,10 +5,12 @@
  */
 
 import { NextResponse } from "next/server";
+import { notFound } from "@/lib/shared/route-resolution";
 import { findConversationById as defaultFindConversationById } from "./cross-project-list";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationListItem } from "./schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const log = createLogger("conversation-lookup-route-handlers");
 
@@ -37,10 +39,7 @@ export function createConversationLookupRouteHandlers(
           : await deps.findConversationById(conversationId);
       if (!item) {
         log.warn("conversation.lookup.miss", { conversationId });
-        return NextResponse.json(
-          { error: "conversation_not_found" } satisfies ApiError,
-          { status: 404 },
-        );
+        return notFound("conversation_not_found");
       }
       log.info("conversation.lookup.hit", {
         conversationId,
@@ -50,7 +49,7 @@ export function createConversationLookupRouteHandlers(
       });
       return NextResponse.json(item);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.error("conversation.lookup.failed", { conversationId, err: message });
       return NextResponse.json({ error: message } satisfies ApiError, {
         status: 500,

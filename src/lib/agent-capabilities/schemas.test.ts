@@ -6,6 +6,9 @@ import {
   agentCapabilityApplyStatusSchema,
   agentCapabilityCascadeKindSchema,
   agentCapabilityCascadeLayerSchema,
+  agentCapabilityCascadeRefSchema,
+  decodeCascadeKind,
+  encodeCascadeKind,
   agentCapabilityCascadeOverrideSchema,
   agentCapabilityCascadeRuntimeStateSchema,
   agentCapabilityCascadesOverrideSchema,
@@ -1291,5 +1294,55 @@ describe("agentCapabilityDiagnosticSchema cascade/backend ownership", () => {
       backend: "codex",
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("cascade-kind codec ({backend, kind} ⇄ persisted string)", () => {
+  it("is bijective over all five persisted cascade kinds", () => {
+    for (const cascadeKind of AGENT_CAPABILITY_CASCADE_KINDS) {
+      const ref = decodeCascadeKind(cascadeKind);
+      expect(encodeCascadeKind(ref)).toBe(cascadeKind);
+    }
+  });
+
+  it("decodes each persisted string into the expected pair", () => {
+    expect(decodeCascadeKind("claude-skills")).toEqual({
+      backend: "claude",
+      kind: "skills",
+    });
+    expect(decodeCascadeKind("claude-agents")).toEqual({
+      backend: "claude",
+      kind: "agents",
+    });
+    expect(decodeCascadeKind("codex-plugins")).toEqual({
+      backend: "codex",
+      kind: "plugins",
+    });
+  });
+
+  it("fails loudly on an unknown persisted string", () => {
+    expect(() => decodeCascadeKind("codex-agents")).toThrow();
+    expect(() => decodeCascadeKind("gemini-skills")).toThrow();
+  });
+
+  it("rejects an unsupported {backend, kind} pair loudly at encode time", () => {
+    expect(() =>
+      encodeCascadeKind({ backend: "codex", kind: "agents" }),
+    ).toThrow(/does not support/);
+  });
+
+  it("validates refs through agentCapabilityCascadeRefSchema", () => {
+    expect(
+      agentCapabilityCascadeRefSchema.safeParse({
+        backend: "claude",
+        kind: "agents",
+      }).success,
+    ).toBe(true);
+    expect(
+      agentCapabilityCascadeRefSchema.safeParse({
+        backend: "codex",
+        kind: "agents",
+      }).success,
+    ).toBe(false);
   });
 });

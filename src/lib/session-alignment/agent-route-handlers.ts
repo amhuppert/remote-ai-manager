@@ -15,10 +15,13 @@
  * SSE are byte-equivalent to today's MCP path. Token-gated (doc 01 §4).
  */
 import { NextResponse } from "next/server";
+import {
+  jsonError,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
-import type { ApiError } from "@/lib/api/errors";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
@@ -58,10 +61,6 @@ export interface SessionAlignmentAgentRouteDeps extends AlignmentAuthoringDeps {
 export interface SessionAlignmentAgentRouteHandlers {
   writeCharter(request: Request, context: RouteContext): Promise<Response>;
   proposeDecisions(request: Request, context: RouteContext): Promise<Response>;
-}
-
-function jsonError(error: string, status: number): Response {
-  return NextResponse.json({ error } satisfies ApiError, { status });
 }
 
 function validationErrorResponse(error: z.ZodError): Response {
@@ -125,15 +124,9 @@ export function createSessionAlignmentAgentRouteHandlers(
     const name = p["name"] ?? "";
     const sessionName = decodeURIComponent(p["session"] ?? "");
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return { error: jsonError("Project not found", 404) };
-    }
-    const sessionState = await deps.getSession(projectPath, sessionName);
-    if (!sessionState) {
-      return { error: jsonError("Session not found", 404) };
-    }
-    return { projectPath, sessionName };
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return { error: resolved.response };
+    return { projectPath: resolved.value.projectPath, sessionName };
   }
 
   async function readJsonBody(

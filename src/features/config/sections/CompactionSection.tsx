@@ -1,25 +1,28 @@
 import { useMemo } from "react";
-import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
+import {
+  effortLevelsForCatalogEntry,
+  type BackendCatalogEntry,
+} from "@/lib/agent-backends/catalog";
+import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
+import { compactionConfigSchema } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
 import { SettingsPage } from "../components/SettingsPage";
 import { SettingsSubSection } from "../components/SettingsSubSection";
-import {
-  getEffortOptionsForBackend,
-  getModelOptionsForBackend,
-} from "../config-helpers";
 import type { ConfigFormController } from "./types";
 
-// Schema defaults (compactionConfigSchema): claude backend, sonnet models,
-// medium effort. Mirrored here so the section renders the effective defaults
-// when config.json carries no `compaction` block yet.
-const CLAUDE_DEFAULT_MODEL = "sonnet";
-const DEFAULT_EFFORT = "medium";
+// Effective defaults rendered when config.json carries no `compaction` block
+// yet. For the schema's own default backend, the compaction default model is
+// deliberately the schema's — a per-feature summarizer choice, not the backend
+// catalog default. Any other backend starts from its catalog default model.
+const COMPACTION_DEFAULTS = compactionConfigSchema.parse({});
 
-function defaultModelForBackend(backend: AgentBackendId): string {
-  return backend === "codex" ? getDefaultCodexModel() : CLAUDE_DEFAULT_MODEL;
+function defaultModelForBackend(entry: BackendCatalogEntry): string {
+  return entry.id === COMPACTION_DEFAULTS.backend
+    ? COMPACTION_DEFAULTS.conversationModel
+    : entry.defaultModelId;
 }
 
 export function CompactionSection({
@@ -31,19 +34,27 @@ export function CompactionSection({
     controller;
 
   const compaction = formState.compaction;
-  const backend: AgentBackendId = compaction?.backend ?? "claude";
+  const backend: AgentBackendId =
+    compaction?.backend ?? COMPACTION_DEFAULTS.backend;
   const conversationModel =
-    compaction?.conversationModel ?? CLAUDE_DEFAULT_MODEL;
-  const messageModel = compaction?.messageModel ?? CLAUDE_DEFAULT_MODEL;
-  const effort = compaction?.effort ?? DEFAULT_EFFORT;
+    compaction?.conversationModel ?? COMPACTION_DEFAULTS.conversationModel;
+  const messageModel =
+    compaction?.messageModel ?? COMPACTION_DEFAULTS.messageModel;
+  const effort = compaction?.effort ?? COMPACTION_DEFAULTS.effort;
 
-  const modelOptions = getModelOptionsForBackend(backend);
+  const { data: backends } = useBackendCatalogQuery();
+  const entry = backends.find((b) => b.id === backend);
+  if (!entry) {
+    throw new Error(`Unknown agent backend: ${backend}`);
+  }
+
+  const modelOptions = entry.models.map((m) => m.id);
   // A single effort applies to both models; scope its options to the primary
   // (conversation) model, matching the DefaultsSection convention. The backend
   // clamps per-model, so an effort the message model doesn't support is safe.
   const effortOptions = useMemo(
-    () => getEffortOptionsForBackend(backend, conversationModel),
-    [backend, conversationModel],
+    () => effortLevelsForCatalogEntry(entry, conversationModel),
+    [entry, conversationModel],
   );
 
   return (
@@ -64,16 +75,21 @@ export function CompactionSection({
         >
           <ConfigPillGroup
             value={backend}
-            options={["claude", "codex"] as const}
+            options={backends.map((b) => b.id)}
             onChange={(value) => {
+              const nextEntry = backends.find((b) => b.id === value);
+              if (!nextEntry) {
+                throw new Error(`Unknown agent backend: ${value}`);
+              }
+              const nextModel = defaultModelForBackend(nextEntry);
               // conversationModel/messageModel are a single shared field per
               // kind, not split by backend, so a backend switch must reset them
               // to a model valid for the new backend. Effort clears to its
               // schema default (medium), which every backend supports.
               handleChangeMulti([
                 ["compaction.backend", value],
-                ["compaction.conversationModel", defaultModelForBackend(value)],
-                ["compaction.messageModel", defaultModelForBackend(value)],
+                ["compaction.conversationModel", nextModel],
+                ["compaction.messageModel", nextModel],
                 ["compaction.effort", undefined],
               ]);
             }}

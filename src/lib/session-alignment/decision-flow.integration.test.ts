@@ -111,6 +111,7 @@ async function setup(): Promise<Harness> {
     },
     broadcast(event) {
       if (event.type === "session-alignment-updated") broadcasts.push(event);
+      return { delivered: true };
     },
     // The REAL prompt-queue persistence: incorporation/feedback turns route
     // through messageQueueService and land in the conversation's pendingQueue.

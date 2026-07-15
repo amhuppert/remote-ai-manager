@@ -5,7 +5,7 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionToolContext } from "./execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
@@ -95,25 +95,23 @@ function createFakeMutateActive(store: FakeStore) {
 }
 
 function makeClaudeLane(
-  overrides: Partial<
-    Extract<GraphWorkflowAgentSessionState, { engine: "claude" }>
-  > = {},
+  overrides: Partial<GraphWorkflowAgentSessionState> = {},
 ): GraphWorkflowAgentSessionState {
+  const metrics = {
+    rotateBeforeNextTurn: false,
+    ...overrides.metrics,
+  };
   return {
-    engine: "claude",
+    backend: "claude",
+    refKind: "conversation",
     lane: "implementer",
     contextId: "context-plan",
-    sessionRef: {
-      engine: "claude",
-      lane: "implementer",
-      conversationId: "conv-bound",
-    },
-    lastContextTokens: null,
-    lastContextWindowMax: null,
-    rotateBeforeNextTurn: false,
+    workflowConversationId: "conv-bound",
+    sessionRef: { backend: "claude", ref: "conv-bound" },
     limitEvaluation: "disabled",
     lastUsedAt: "2026-03-27T11:00:00.000Z",
     ...overrides,
+    metrics,
   };
 }
 

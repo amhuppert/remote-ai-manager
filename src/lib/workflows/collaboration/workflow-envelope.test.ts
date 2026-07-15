@@ -12,7 +12,7 @@ import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/
 import {
   createStatusBus,
   type StatusBusEnvelope,
-} from "@/lib/workflows/primitives/status-bus";
+} from "@/lib/events/status-bus";
 import {
   collaborationFeatureSnapshotSchema,
   type CollaborationFeatureSnapshotWorkflow,
@@ -29,7 +29,7 @@ import type {
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
   ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 import {
   makeAgentOneInitialDraft,
   makeAgentOneProposedChanges,

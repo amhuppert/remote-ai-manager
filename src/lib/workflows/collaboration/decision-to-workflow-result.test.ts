@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decisionToWorkflowResult } from "./decision-to-workflow-result";
 import type { CollaborationPolicyDecision } from "./policy";
-import type { WorkflowCollaborationOpenConflict } from "@/lib/workflows/schemas";
+import type { WorkflowCollaborationOpenConflict } from "@/lib/workflow-graph/collaboration-schemas";
 
 const SAMPLE_CONFLICT: WorkflowCollaborationOpenConflict = {
   rejectingAgent: "agent_one",
@@ -204,7 +204,7 @@ describe("decisionToWorkflowResult", () => {
 
     it("returns a result that round-trips through workflowCollaborationResultSchema", async () => {
       const { workflowCollaborationResultSchema } =
-        await import("@/lib/workflows/schemas");
+        await import("@/lib/workflow-graph/collaboration-schemas");
       const result = decisionToWorkflowResult({
         decision: { kind: "final" },
         finalAnswer: "Adopt Postgres.",

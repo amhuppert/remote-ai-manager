@@ -21,6 +21,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -105,13 +106,9 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
     const sessionName = decodeURIComponent(resolvedParams["session"] ?? "");
     const conversationId = resolvedParams["conversationId"] ?? "";
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const project = await resolveProjectOr404(deps, name);
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
     const conversation = await deps.getConversation(
       projectPath,
@@ -119,10 +116,7 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
       conversationId,
     );
     if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Conversation not found");
     }
 
     let body: AnswerQuestionRequest;
@@ -142,10 +136,7 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
       );
     }
     if (conversation.pendingQuestionId !== body.questionId) {
-      return NextResponse.json(
-        { error: "No pending question found with that ID" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("No pending question found with that ID");
     }
 
     // Graph-workflow lane answer: record on the execution's context record and

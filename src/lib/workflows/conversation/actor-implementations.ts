@@ -18,36 +18,23 @@ import type {
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
   ConversationBackendRuntime,
   ConversationBackendFactory,
   ConversationBackendTurnInput,
-  ConversationBackendTurnResult,
   ConversationBackendEvent,
-  ConversationImageRef,
-  BackgroundTasksLostInfo,
 } from "@/lib/agent-backends/conversation";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
-import type {
-  AgentCapabilityDiagnostic,
-  AgentCapabilityRuntimeApplicationState,
-} from "@/lib/agent-capabilities/schemas";
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
 import type {
   MessageContentBlock,
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
-import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
-import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
-import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
-import { assembleUserContentBlocks } from "./assemble-user-blocks";
-import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
 import type {
   TranscriptEntry,
   TranscriptBroadcastMeta,
@@ -55,13 +42,6 @@ import type {
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
-import type {
-  SDKMessage,
-  SDKAssistantMessage,
-  SDKResultSuccess,
-  SDKResultError,
-  SDKSystemMessage,
-} from "@anthropic-ai/claude-agent-sdk";
 import {
   conversationRuntimeKey,
   getConversationRuntime,
@@ -75,22 +55,23 @@ import {
   TDD_INSTRUCTIONS,
   selectAskQuestionInstructions,
 } from "@/lib/prompt/sdk-driver";
+import { conversationTranscriptFrame } from "@/lib/agent-backends/transcript";
+import type { BackendConversationCapabilities } from "@/lib/agent-backends/descriptor";
 import {
-  isUndeliveredQuerySessionError,
-  tagQuerySessionError,
-  QUERY_SESSION_ERROR_CODES,
-} from "@/lib/agent-backends/claude/query-session-errors";
-import { mapAssistantContentBlocks } from "@/lib/agent-backends/claude/map-content-blocks";
-import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
+  markPromptNotDelivered,
+  type AgentFailureClassification,
+  type AgentFailureClassifier,
+  type ContinuationDisposition,
+} from "@/lib/agent-backends/errors";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
+import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
   PROJECT_CC_CONTEXT,
   PROJECT_SPAWN_INSTRUCTIONS,
 } from "@/lib/project-conversations/system-prompt";
 import { createExternalTurnHandler } from "./external-turn-handler";
-import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import type {
   AgentCallRequest,
   AgentCallResult,
@@ -98,120 +79,64 @@ import type {
 import type {
   AgentCallFacadeDeps,
   ConversationRuntimeResolution,
+  McpApplyHookResult,
 } from "@/lib/workflows/primitives/agent-call-facade";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+import {
+  getConversationTranscriptProjection,
+  getTaskTranscriptProjection,
+} from "@/lib/agent-backends/conversation-policy";
 import { getDebugManifestPath } from "@/lib/debug-log/service";
-import fs from "node:fs/promises";
+import type { ActorConfig } from "./pre-turn/resolve-model-effort";
+import {
+  resolveTurnModelEffort,
+  resolveBackendTimeoutMs,
+} from "./pre-turn/resolve-model-effort";
+import {
+  resolveTurnPromptText,
+  composeUserTranscriptBlocks,
+} from "./pre-turn/document-feedback";
+import { persistTurnImages } from "./pre-turn/image-persistence";
+import type {
+  CapabilitySeed,
+  ProjectCapabilitySeed,
+  CapabilityTurnContext,
+} from "./pre-turn/capability-cascade";
+import {
+  buildCapabilityApplyInput,
+  resolveCapabilitySeedForNewRuntime,
+  seedRuntimeCapabilityState,
+  applyCapabilityCascadeAtTurnStart,
+  drainCapabilityWhenIdle,
+} from "./pre-turn/capability-cascade";
+import {
+  resolveAlignmentGateForReusedRuntime,
+  resolveAlignmentInstructionForNewRuntime,
+  recordSeenAlignmentVersion,
+} from "./pre-turn/alignment-gate";
+import {
+  readPendingAgentNotices,
+  buildPendingNoticesInstruction,
+  drainConsumedAgentNotices,
+  createBackgroundTasksLostHandler,
+} from "./pre-turn/notices-drain";
+import { resolveSyntheticForkSeed } from "./pre-turn/fork-seed";
+import { registerFocusMemoryIfPresent } from "./pre-turn/focus-memory";
+import { wireTurnAbort } from "./pre-turn/abort-wiring";
+import { createQueuedDeliveryAccounting } from "./post-turn/queued-delivery-accounting";
+import {
+  buildFailedTurnResult,
+  buildAbortedTurnResult,
+} from "./post-turn/failure-fallback";
 
 const logger = createLogger("conversation-actor");
 
-/**
- * Cap for `pendingAgentNotices` growth between drains (the persisted-blob
- * bounds gate requires every persisted collection to be bounded). Repeated
- * losses with no intervening prompt keep only the most recent entries.
- */
-const MAX_PENDING_AGENT_NOTICES = 10;
-
-const FOCUS_MEMORY_DESCRIPTION =
-  "Current work-in-progress and remaining tasks for this session";
-
-type ProjectCapabilitySeed =
-  import("@/lib/agent-capabilities/default-deps").ComposedProjectConversationCapabilitySeed;
-type RuntimeProjectCapabilitySeed = Exclude<
-  ProjectCapabilitySeed,
-  { kind: "diagnostics-only" }
->;
-
-function isRuntimeProjectCapabilitySeed(
-  seed: ProjectCapabilitySeed | undefined,
-): seed is RuntimeProjectCapabilitySeed {
-  return seed !== undefined && seed.kind !== "diagnostics-only";
-}
-
-export interface RegisterFocusMemoryIfPresentInput {
-  worktreePath: string;
-  projectPath: string;
-  sessionName: string;
-  conversationId: string;
-  fileExists: (filePath: string) => boolean;
-  registerReferenceDocument: (
-    projectPath: string,
-    sessionName: string,
-    filePath: string,
-    description: string,
-  ) => Promise<unknown>;
-  /** Optional registry override; production constructs one if omitted. */
-  artifactRegistry?: ReturnType<typeof createArtifactRegistry>;
-}
-
-/**
- * Register `memory-bank/focus.md` as a `focus_memory` artifact when present.
- *
- * Always routes through the shared `ArtifactRegistry.register()` flow so the
- * canonical path is enforced and shallow source metadata (workflowId =
- * conversationId) is recorded alongside the existing reference-document
- * registration. Preserves the prior behavior of doing nothing when the file
- * is absent.
- */
-export async function registerFocusMemoryIfPresent(
-  input: RegisterFocusMemoryIfPresentInput,
-): Promise<void> {
-  const focusPath = `${input.worktreePath}/memory-bank/focus.md`;
-  if (!input.fileExists(focusPath)) return;
-
-  const registry =
-    input.artifactRegistry ??
-    createArtifactRegistry({
-      writeFile: (absolutePath, contents) =>
-        fs.writeFile(absolutePath, contents),
-      ensureDir: (absolutePath) =>
-        fs.mkdir(absolutePath, { recursive: true }).then(() => {}),
-      registration: {
-        registerReferenceDocument: async ({ relativePath, description }) => {
-          await input.registerReferenceDocument(
-            input.projectPath,
-            input.sessionName,
-            relativePath,
-            description,
-          );
-        },
-      },
-    });
-
-  await registry.register({
-    kind: "focus_memory",
-    worktreePath: input.worktreePath,
-    relativePath: "memory-bank/focus.md",
-    description: FOCUS_MEMORY_DESCRIPTION,
-    source: { workflowId: input.conversationId },
-  });
-}
-
 // ============================================================
-// Minimal types for deps interface
+// Dependency Injection — narrow port groups
 // ============================================================
 
-/** Subset of GlobalConfig properties used by actor implementations. */
-export interface ActorConfig {
-  defaultModel?: string;
-  defaultEffort?: string;
-  claudeTimeoutMs: number;
-  maxTurns: number;
-  idleQuerySessionTtlMs: number;
-  pushNotification?: unknown;
-  codex?: {
-    enabled?: boolean;
-    model?: string;
-    reasoningEffort?: string;
-    timeoutMs?: number | null;
-  };
-}
-
-// ============================================================
-// Dependency Injection
-// ============================================================
-
-export interface ActorImplementationDeps {
+/** Turn orchestration: locks, config, backend runtime lifecycle, state. */
+export interface TurnExecutionDeps {
   // Resource acquisition
   acquireConversationLock(
     projectPath: string,
@@ -219,33 +144,24 @@ export interface ActorImplementationDeps {
     conversationId: string,
   ): () => void;
   acquireQuerySlot(label: string): Promise<() => void>;
-  getTranscriptPath(conversationId: string): Promise<string>;
 
   // Config & project
   readConfig(): Promise<ActorConfig>;
   getProjectDisplayName(projectPath: string): string;
-  getDebugLogUrl(conversationId: string): string;
-
-  // Transcript I/O. `meta` is forwarded to `appendTranscriptEntry` so callers
-  // that know the project + session identity (the conversation turn actor and
-  // external-turn handler) can trigger the `message-appended` SSE broadcast.
-  safeAppendTranscriptEntry(
-    conversationId: string,
-    entry: TranscriptEntry,
-    meta?: TranscriptBroadcastMeta,
-  ): Promise<void>;
-  saveTranscriptImage(
-    conversationId: string,
-    index: number,
-    mediaType: string,
-    base64Data: string,
-  ): Promise<string>;
-  getNextImageIndex(conversationId: string): Promise<number>;
 
   // Backend runtime lifecycle
   getConversationBackendFactory(
     backend: AgentBackendId,
   ): ConversationBackendFactory;
+  /**
+   * Declared conversation capabilities from the backend's registered
+   * descriptor. Undefined when the backend has no conversation facet. The
+   * actor branches on declared capabilities (e.g. `externalTurns`), never on
+   * backend identity.
+   */
+  getConversationCapabilities(
+    backend: AgentBackendId,
+  ): BackendConversationCapabilities | undefined;
   registerBackendRuntime(
     conversationId: string,
     runtime: ConversationBackendRuntime,
@@ -317,13 +233,6 @@ export interface ActorImplementationDeps {
   ): Promise<Array<{ filePath: string; description: string }>>;
   fileExists(filePath: string): boolean;
 
-  // Transcript reading (for synthetic fork seed and last-used model/effort
-  // resolution). Returns the full TranscriptMessage so per-turn model/effort
-  // metadata is available, not just role/content.
-  readConversationMessages(
-    transcriptPath: string | null,
-  ): Promise<TranscriptMessage[]>;
-
   // Lifecycle registries
   registerAbortController(
     conversationId: string,
@@ -334,6 +243,54 @@ export interface ActorImplementationDeps {
     controller: AbortController,
   ): void;
 
+  /**
+   * Execute a single conversation/task turn through the shared AgentCall
+   * primitive. Production wires this to the real `executeAgentCall` facade;
+   * tests inject a spy. Routing through this dep guarantees the conversation
+   * actor never bypasses the primitive layer (cf. `executePromptForMachine`).
+   */
+  executeAgentCall(
+    request: AgentCallRequest,
+    facadeDeps: AgentCallFacadeDeps,
+  ): Promise<AgentCallResult>;
+
+  /**
+   * Resolve the registered `AgentTaskRunner` for a backend. Wired to the
+   * agent-backends registry in production; tests inject a stub runner.
+   */
+  getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
+}
+
+/** Transcript I/O: JSONL append, image persistence, transcript reads. */
+export interface TranscriptDeps {
+  getTranscriptPath(conversationId: string): Promise<string>;
+
+  // `meta` is forwarded to `appendTranscriptEntry` so callers that know the
+  // project + session identity (the conversation turn actor and external-turn
+  // handler) can trigger the `message-appended` SSE broadcast.
+  safeAppendTranscriptEntry(
+    conversationId: string,
+    entry: TranscriptEntry,
+    meta?: TranscriptBroadcastMeta,
+  ): Promise<void>;
+  saveTranscriptImage(
+    conversationId: string,
+    index: number,
+    mediaType: string,
+    base64Data: string,
+  ): Promise<string>;
+  getNextImageIndex(conversationId: string): Promise<number>;
+
+  // Transcript reading (for synthetic fork seed and last-used model/effort
+  // resolution). Returns the full TranscriptMessage so per-turn model/effort
+  // metadata is available, not just role/content.
+  readConversationMessages(
+    transcriptPath: string | null,
+  ): Promise<TranscriptMessage[]>;
+}
+
+/** MCP + agent-capability cascade composition and apply. */
+export interface CapabilityDeps {
   /**
    * Compose the effective portable MCP config for the next turn, honoring the
    * four-level override cascade (global → project → session → conversation),
@@ -376,40 +333,22 @@ export interface ActorImplementationDeps {
   applyCapabilityWhenIdle(input: ApplyConversationIdentity): Promise<unknown>;
 
   /**
-   * Compose the Claude capability runtime config + initial apply state for a
-   * new conversation runtime. The actor passes `config` to the backend
-   * factory's `tooling.claudeCapabilityConfig` and persists `runtimeState` to
-   * `conversation.agentCapabilitiesRuntime` so the apply service can compare
-   * subsequent mutations against the baseline the runtime was seeded with.
-   * Returns `undefined` for non-Claude backends or when there are no cascade
-   * overrides to apply.
+   * Compose the neutral capability cascade + initial apply state for a new
+   * conversation runtime. The actor passes `capabilities` to the backend
+   * factory's `tooling.capabilities` (the factory translates it internally)
+   * and persists `runtimeState` to `conversation.agentCapabilitiesRuntime` so
+   * the apply service can compare subsequent mutations against the baseline
+   * the runtime was seeded with. Returns `undefined` when there are no
+   * resolved cascades to seed.
    */
-  composeClaudeCapabilityConfigForConversation(input: {
+  composeCapabilityConfigForConversation(input: {
     projectPath: string;
     projectName: string;
     sessionName: string;
     conversationId: string;
     worktreePath: string;
-  }): Promise<
-    | import("@/lib/agent-capabilities/default-deps").ComposedClaudeCapabilitySeed
-    | undefined
-  >;
-
-  /**
-   * Compose the Codex capability runtime config + initial apply state for a
-   * new conversation runtime. See `composeClaudeCapabilityConfigForConversation`
-   * for the actor wiring contract.
-   */
-  composeCodexCapabilityConfigForConversation(input: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    conversationId: string;
-    worktreePath: string;
-  }): Promise<
-    | import("@/lib/agent-capabilities/default-deps").ComposedCodexCapabilitySeed
-    | undefined
-  >;
+    backend: AgentBackendId;
+  }): Promise<CapabilitySeed | undefined>;
 
   /**
    * Compose capability runtime config for a project conversation. Uses the
@@ -420,34 +359,18 @@ export interface ActorImplementationDeps {
     projectPath: string;
     projectName: string;
     conversationId: string;
-  }): Promise<
-    | import("@/lib/agent-capabilities/default-deps").ComposedProjectConversationCapabilitySeed
-    | undefined
-  >;
+  }): Promise<ProjectCapabilitySeed | undefined>;
+}
 
-  /**
-   * Execute a single conversation/task turn through the shared AgentCall
-   * primitive. Production wires this to the real `executeAgentCall` facade;
-   * tests inject a spy. Routing through this dep guarantees the conversation
-   * actor never bypasses the primitive layer (cf. `executePromptForMachine`).
-   */
-  executeAgentCall(
-    request: AgentCallRequest,
-    facadeDeps: AgentCallFacadeDeps,
-  ): Promise<AgentCallResult>;
-
-  /**
-   * Resolve the registered `AgentTaskRunner` for a backend. Wired to the
-   * agent-backends registry in production; tests inject a stub runner.
-   */
-  getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
-
-  // Durable queue delivery result. Used only by auto-drained queued turns to
-  // record the outcome of a claimed delivery batch against the message queue.
-  // `markQueuedDelivered` is called after the coalesced user transcript entry
-  // is appended; `markQueuedPending` returns a batch to `pending` for a
-  // recoverable acceptance failure; `markQueuedFailed` marks it terminally
-  // `failed`. Wired to `messageQueueService` in production.
+/**
+ * Durable queue delivery result. Used only by auto-drained queued turns to
+ * record the outcome of a claimed delivery batch against the message queue.
+ * `markQueuedDelivered` is called after the coalesced user transcript entry
+ * is appended; `markQueuedPending` returns a batch to `pending` for a
+ * recoverable acceptance failure; `markQueuedFailed` marks it terminally
+ * `failed`. Wired to `messageQueueService` in production.
+ */
+export interface QueueDeliveryDeps {
   markQueuedDelivered(input: {
     projectPath: string;
     sessionName: string;
@@ -472,6 +395,17 @@ export interface ActorImplementationDeps {
     error: string;
   }): Promise<void>;
 }
+
+/** Debug-mode support surfaces. */
+export interface DebugDeps {
+  getDebugLogUrl(conversationId: string): string;
+}
+
+export type ActorImplementationDeps = TurnExecutionDeps &
+  TranscriptDeps &
+  CapabilityDeps &
+  QueueDeliveryDeps &
+  DebugDeps;
 
 let _deps: ActorImplementationDeps | null = null;
 let _depsPromise: Promise<ActorImplementationDeps> | null = null;
@@ -519,7 +453,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/agent-backends/runtime-registry"),
     import("@/lib/shared/child-env"),
     import("@/lib/commands/service"),
-    import("@/lib/agent-backends/codex/codex-output"),
+    import("@/lib/agent-runs/tool-hint"),
     import("@/lib/projects/resolver"),
     import("@/lib/debug-log/service"),
     import("@/lib/state-store"),
@@ -584,6 +518,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     saveTranscriptImage: transcriptImagesMod.saveTranscriptImage,
     getNextImageIndex: transcriptImagesMod.getNextImageIndex,
     getConversationBackendFactory: registryMod.getConversationBackendFactory,
+    getConversationCapabilities: (backend: AgentBackendId) =>
+      registryMod.getBackendDescriptor(backend).conversation?.capabilities,
     registerBackendRuntime: runtimeRegistryMod.registerRuntime,
     unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
     buildChildEnv: childEnvMod.buildChildEnv,
@@ -616,10 +552,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     applyCapabilityWhenIdle:
       capabilitiesDepsMod.defaultCapabilityRuntimeApplyService
         .applyWhenConversationBecomesIdle,
-    composeClaudeCapabilityConfigForConversation:
-      capabilitiesDepsMod.composeClaudeCapabilityConfigForConversation,
-    composeCodexCapabilityConfigForConversation:
-      capabilitiesDepsMod.composeCodexCapabilityConfigForConversation,
+    composeCapabilityConfigForConversation:
+      capabilitiesDepsMod.composeCapabilityConfigForConversation,
     composeCapabilityConfigForProjectConversation:
       capabilitiesDepsMod.composeCapabilityConfigForProjectConversation,
     executeAgentCall: defaultExecuteAgentCall,
@@ -627,7 +561,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     markQueuedDelivered: messageQueueMod.messageQueueService.markDelivered,
     markQueuedPending: messageQueueMod.messageQueueService.markPending,
     markQueuedFailed: messageQueueMod.messageQueueService.markFailed,
-  } as unknown as ActorImplementationDeps;
+  } satisfies ActorImplementationDeps;
 }
 
 export function setActorDeps(deps: ActorImplementationDeps): void {
@@ -750,148 +684,6 @@ export function buildEffectivePrompt(
   return effectivePrompt;
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function shouldRetryUndeliveredPrompt(
-  error: unknown,
-  runtime: { status: string } | undefined,
-  abortSignal: AbortSignal,
-  attemptNumber: number,
-): boolean {
-  return (
-    attemptNumber === 0 &&
-    !abortSignal.aborted &&
-    runtime?.status === "dead" &&
-    isUndeliveredQuerySessionError(error)
-  );
-}
-
-/**
- * Decide whether the first turn should build a synthetic-fork seed from the
- * local transcript copy. Only fires for non-Claude forks that have a
- * transcript and no backend continuity yet.
- *
- * Claude forks never need a runtime seed:
- *  - "native": arrive with `backendRef` populated (eager SDK fork).
- *  - "synthetic" fallback: `pendingPromptText` already carries the seed;
- *    re-seeding here would duplicate context on the first prompt.
- *  - case 3 (user fork at index 0): no source continuity, behaves like a
- *    brand-new conversation.
- */
-export function shouldBuildRuntimeSyntheticSeed(input: {
-  forkedFrom: unknown;
-  backendRef: unknown;
-  agentBackend: string;
-  transcriptPath: string | null;
-}): boolean {
-  return (
-    input.forkedFrom !== null &&
-    input.forkedFrom !== undefined &&
-    !input.backendRef &&
-    input.agentBackend !== "claude" &&
-    input.transcriptPath !== null
-  );
-}
-
-// ============================================================
-// Backend-aware settings resolution
-// ============================================================
-
-/**
- * Resolve the effective model and effort for a turn based on the backend.
- * Claude falls back to config.defaultModel; Codex falls back to config.codex.
- */
-export function resolveBackendTurnSettings(
-  backend: AgentBackendId,
-  config: ActorConfig,
-  explicitModel: string | null,
-  explicitEffort: string | null,
-): { effectiveModel: string | undefined; effectiveEffort: string | undefined } {
-  if (backend === "codex") {
-    return {
-      effectiveModel: explicitModel ?? config.codex?.model,
-      effectiveEffort: explicitEffort ?? config.codex?.reasoningEffort,
-    };
-  }
-  return {
-    effectiveModel: explicitModel ?? config.defaultModel,
-    effectiveEffort: explicitEffort ?? config.defaultEffort,
-  };
-}
-
-/**
- * Resolve the model + effort a turn should run with, using a three-tier
- * fallback: an explicit per-turn override, else the conversation's last-used
- * model/effort (from its prior user turns), else the backend's configured
- * defaults.
- *
- * The last-used tier is what keeps follow-up turns that carry no explicit
- * model/effort — drained queued messages, document feedback, alignment turns —
- * on the model the conversation was already using instead of snapping to the
- * global default. The client resolves this same last-used value for the
- * composer (`selectLastUserTurnAgentSettings`); paths that bypass the composer
- * rely on this server-side tier so the model/effort stays consistent. Backend
- * is resolved separately (from the conversation's stored `agentBackend`), so it
- * is never inferred from the transcript here.
- */
-export function resolveTurnModelEffort(input: {
-  backend: AgentBackendId;
-  config: ActorConfig;
-  explicitModel: string | null;
-  explicitEffort: string | null;
-  priorMessages: readonly TranscriptMessage[];
-}): {
-  effectiveModel: string | undefined;
-  effectiveEffort: string | undefined;
-} {
-  const lastUsed = selectLastUserTurnAgentSettings(input.priorMessages);
-  return resolveBackendTurnSettings(
-    input.backend,
-    input.config,
-    input.explicitModel ?? lastUsed.modelId ?? null,
-    input.explicitEffort ?? lastUsed.effort ?? null,
-  );
-}
-
-/**
- * Resolve the safety-net timeout for a turn based on the backend.
- * Returns 0 when the backend has no timeout.
- */
-export function resolveBackendTimeoutMs(
-  backend: AgentBackendId,
-  config: ActorConfig,
-): number {
-  if (backend === "codex") {
-    return resolveConfiguredTimeoutMs(config.codex?.timeoutMs);
-  }
-  return config.claudeTimeoutMs;
-}
-
-function buildNonClaudeResultTranscriptEntry(input: {
-  backend: Exclude<AgentBackendId, "claude">;
-  backendRef: AgentSessionRef | null;
-  turnResult: ConversationBackendTurnResult;
-  timestamp: string;
-}): TranscriptEntry {
-  return {
-    timestamp: input.timestamp,
-    type: "result",
-    raw: {
-      backend: input.backend,
-      backendRef: input.backendRef,
-      durationMs: input.turnResult.durationMs,
-      numTurns: input.turnResult.numTurns,
-      contextTokens: input.turnResult.contextTokens,
-      contextWindowMax: input.turnResult.contextWindowMax,
-      costUsd: input.turnResult.costUsd,
-      aborted: input.turnResult.aborted,
-      error: input.turnResult.error,
-    },
-  };
-}
-
 function formatTurnStartMcpApplyFailure(
   result: ConversationApplyResult,
 ): string {
@@ -902,131 +694,44 @@ function formatTurnStartMcpApplyFailure(
   return parts.join(". ");
 }
 
-// ============================================================
-// Message processing (handles raw SDK messages from provider_event)
-// ============================================================
+/**
+ * Resolve the backend descriptor's failure classifier. Falls back to a plain
+ * `backend_error` classification when the backend is not registered (test
+ * doubles outside the registry), preserving the classifier's never-throw
+ * contract.
+ */
+const fallbackFailureClassifier: AgentFailureClassifier = {
+  classify(error): AgentFailureClassification {
+    return {
+      kind: "backend_error",
+      message: getErrorMessage(error),
+      retryable: false,
+    };
+  },
+  classifyWithContinuation(error) {
+    return {
+      failure: this.classify(error),
+      continuationDisposition: "retain",
+    };
+  },
+};
 
-export async function processMessage(
-  message: SDKMessage,
-  conversationId: string,
-  emit: (event: string, data: unknown) => void,
-  contentBlocks: MessageContentBlock[],
-  safeAppendTranscriptEntry: (
-    conversationId: string,
-    entry: TranscriptEntry,
-  ) => Promise<void>,
-): Promise<void> {
-  const timestamp = new Date().toISOString();
-
-  switch (message.type) {
-    case "system": {
-      const sysMsg = message as SDKSystemMessage;
-      if (sysMsg.subtype === "init") {
-        emit("init", { sessionId: sysMsg.session_id });
-        await safeAppendTranscriptEntry(conversationId, {
-          timestamp,
-          type: "system",
-          raw: { subtype: "init", session_id: sysMsg.session_id },
-        });
-      } else {
-        await safeAppendTranscriptEntry(conversationId, {
-          timestamp,
-          type: "system",
-          raw: message,
-        });
-      }
-      break;
-    }
-
-    case "assistant": {
-      const asstMsg = message as SDKAssistantMessage;
-      const blocks = mapAssistantContentBlocks(asstMsg.message.content);
-      for (const block of blocks) {
-        contentBlocks.push(block);
-        emit("content", block);
-      }
-
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: "assistant",
-        role: "assistant",
-        content: blocks,
-        uuid: asstMsg.uuid,
-      });
-      break;
-    }
-
-    case "user": {
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: "tool_result",
-        raw: message,
-      });
-      break;
-    }
-
-    case "result": {
-      const resultMsg = message as SDKResultSuccess | SDKResultError;
-      if (resultMsg.subtype === "success") {
-        const success = resultMsg as SDKResultSuccess;
-        if (success.result && contentBlocks.length === 0) {
-          const textBlock: MessageContentBlock = {
-            type: "text",
-            text: success.result,
-          };
-          contentBlocks.push(textBlock);
-          emit("content", textBlock);
-        }
-        emit("result", {
-          sessionId: success.session_id,
-          costUsd: success.total_cost_usd,
-          numTurns: success.num_turns,
-        });
-      } else {
-        const error = resultMsg as SDKResultError;
-        const errorMessage = mapErrorSubtype(error);
-        emit("error", { message: errorMessage });
-      }
-
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: "result",
-        raw: resultMsg,
-      });
-      break;
-    }
-
-    default: {
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: message.type,
-        raw: message,
-      });
-      break;
-    }
+function resolveFailureClassifierForBackend(
+  backend: AgentBackendId,
+): AgentFailureClassifier {
+  try {
+    return getBackendDescriptor(backend).errors;
+  } catch {
+    return fallbackFailureClassifier;
   }
 }
 
-export function mapErrorSubtype(error: SDKResultError): string {
-  switch (error.subtype) {
-    case "error_max_turns":
-      return `Agent reached maximum turns (${error.num_turns})`;
-    case "error_max_budget_usd":
-      return `Agent exceeded budget limit ($${error.total_cost_usd.toFixed(2)})`;
-    case "error_max_structured_output_retries":
-      return "Agent exceeded structured output retry limit";
-    case "error_during_execution":
-      return error.errors.length > 0
-        ? error.errors.join("; ")
-        : "Error during execution";
-    default:
-      return "Unknown error";
-  }
+function classifyFailureForBackend(
+  backend: AgentBackendId,
+  error: unknown,
+): AgentFailureClassification {
+  return resolveFailureClassifierForBackend(backend).classify(error);
 }
-
-// ============================================================
-// Backend runtime creation
-// ============================================================
 
 // ============================================================
 // Shared AgentCall dispatch
@@ -1036,6 +741,8 @@ interface DispatchTurnViaAgentCallInput {
   executeAgentCall: ActorImplementationDeps["executeAgentCall"];
   getRuntime: () => ConversationBackendRuntime;
   replaceRuntime: () => Promise<ConversationBackendRuntime>;
+  /** Pre-turn MCP apply hook the facade runs before dispatch, when set. */
+  applyMcp: (() => Promise<McpApplyHookResult>) | undefined;
   signal: AbortSignal;
   conversationId: string;
   sessionName: string;
@@ -1051,78 +758,30 @@ interface DispatchTurnViaAgentCallInput {
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
 }
 
-interface DispatchTurnViaAgentCallOutput {
-  turnResult: ConversationBackendTurnResult | undefined;
-  agentCallResult: AgentCallResult | undefined;
-  thrown?: unknown;
-}
-
 /**
  * Routes a single conversation turn through the shared AgentCall primitive.
  *
- * - Builds a normalized `conversation_turn` request and resolves the
- *   conversation runtime via the facade.
- * - Captures the underlying `ConversationBackendTurnResult` so the actor's
- *   downstream code keeps full access to fields the normalized primitive
- *   result drops (numTurns, raw contentBlocks).
- * - Wraps the backend runtime so its `sendTurn` performs the existing
- *   undelivered-query-session retry loop in-place; observable behavior
- *   (close + unregister + recreate) matches the prior direct-`sendTurn`
- *   path so a stale Claude query session is retried transparently.
+ * The runtime handed to the facade is wrapped in the named
+ * `withRuntimeReplacementRetry` policy so a dead runtime whose prompt was
+ * never delivered is replaced (resume-preserving) and retried exactly once.
+ * The actor consumes the facade's normalized `AgentCallResult` — including
+ * failures, which the facade normalizes through the backend's failure
+ * classifier — and never a raw runtime result.
  */
 async function dispatchTurnViaAgentCall(
   input: DispatchTurnViaAgentCallInput,
-): Promise<DispatchTurnViaAgentCallOutput> {
-  let captured: ConversationBackendTurnResult | undefined;
-  let pendingRetry: Error | undefined;
-
-  const wrappedRuntime: ConversationBackendRuntime = new Proxy(
-    input.getRuntime(),
-    {
-      get(_target, prop, _receiver) {
-        const live = input.getRuntime();
-        if (prop === "sendTurn") {
-          return async (
-            turnInput: ConversationBackendTurnInput,
-          ): Promise<ConversationBackendTurnResult> => {
-            let attempt = 0;
-            let current = input.getRuntime();
-            while (true) {
-              try {
-                const result = await current.sendTurn(turnInput);
-                captured = result;
-                return result;
-              } catch (err) {
-                if (
-                  !shouldRetryUndeliveredPrompt(
-                    err,
-                    current,
-                    input.signal,
-                    attempt,
-                  )
-                ) {
-                  // Non-retryable: capture so the actor's outer catch can
-                  // surface the original error after the facade normalizes
-                  // the throw into a failed AgentCallResult.
-                  pendingRetry = err as Error;
-                  throw err;
-                }
-                attempt += 1;
-                logger.warn("prompt.runtime_retry", {
-                  sessionName: input.sessionName,
-                  conversationId: input.conversationId,
-                  attempt,
-                  error: getErrorMessage(err),
-                });
-                current = await input.replaceRuntime();
-              }
-            }
-          };
-        }
-        return Reflect.get(live, prop);
-      },
+): Promise<AgentCallResult> {
+  const wrappedRuntime = withRuntimeReplacementRetry({
+    getRuntime: input.getRuntime,
+    replaceRuntime: input.replaceRuntime,
+    classify: (error) => classifyFailureForBackend(input.backend, error),
+    signal: input.signal,
+    meta: {
+      conversationId: input.conversationId,
+      sessionName: input.sessionName,
+      backend: input.backend,
     },
-  );
+  });
 
   const request: AgentCallRequest = {
     kind: "conversation_turn",
@@ -1159,20 +818,11 @@ async function dispatchTurnViaAgentCall(
       };
       return resolution;
     },
+    getFailureClassifier: resolveFailureClassifierForBackend,
+    ...(input.applyMcp !== undefined ? { applyMcp: input.applyMcp } : {}),
   };
 
-  let agentCallResult: AgentCallResult | undefined;
-  try {
-    agentCallResult = await input.executeAgentCall(request, facadeDeps);
-  } catch (err) {
-    pendingRetry = err as Error;
-  }
-
-  return {
-    turnResult: captured,
-    agentCallResult,
-    ...(pendingRetry ? { thrown: pendingRetry } : {}),
-  };
+  return input.executeAgentCall(request, facadeDeps);
 }
 
 // ============================================================
@@ -1236,6 +886,9 @@ export async function executePromptForMachine(
   input: ExecutePromptInput,
 ): Promise<PromptActorResult> {
   const deps = await getDeps();
+  const transcriptProjection = getConversationTranscriptProjection(
+    input.agentBackend,
+  );
 
   const key = conversationRuntimeKey(
     input.projectPath,
@@ -1304,117 +957,36 @@ export async function executePromptForMachine(
         error: errorMessage,
       });
       runtimeState.streamEmit?.("error", { message: errorMessage });
-      return {
-        backendRef: null,
-        costUsd: null,
-        durationMs: null,
-        numTurns: null,
-        contextTokens: null,
-        contextWindow: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
+      return buildFailedTurnResult({
         contentBlocks: [],
-        aborted: false,
-        compacted: false,
         error: errorMessage,
-      };
+        continuationDisposition: "retain",
+      });
     }
   }
 
-  // Server-side image indexing: scan transcript for cumulative count, then
-  // assemble inline+strip images into a coherent block sequence with rewritten
-  // markers. Images are persisted to disk by serverIndex before dispatch so
-  // the backend (and downstream readers) can refer to them by path.
-  //
-  // Two send paths carry document feedback differently:
-  //  - Immediate path: the send hook puts the formatted feedback prose in
-  //    `promptText` (and `documentFeedback` for the card). The prose is used
-  //    as-is, or derived here when no explicit text was supplied.
-  //  - Drained queue path (`queuedDelivery` set): the durable queue dropped the
-  //    feedback prose at enqueue, so `promptText` is the user's OWN text — a
-  //    coalesced batch may pair a normal text message with a feedback message.
-  //    Both must reach the agent, so the derived feedback prose is appended to
-  //    the user text rather than replacing it.
-  // Absent feedback, `effectivePromptText` equals `input.promptText`, so
-  // non-feedback turns are unchanged.
-  const derivedFeedbackText = input.documentFeedback
-    ? formatDocumentFeedbackPrompt(input.documentFeedback.items)
-    : null;
-  const isDrainedFeedbackBatch =
-    input.queuedDelivery !== undefined && derivedFeedbackText !== null;
-  const hasExplicitPromptText = input.promptText.trim().length > 0;
-
-  let effectivePromptText: string;
-  if (!derivedFeedbackText) {
-    effectivePromptText = input.promptText;
-  } else if (isDrainedFeedbackBatch) {
-    effectivePromptText = hasExplicitPromptText
-      ? `${input.promptText}\n\n${derivedFeedbackText}`
-      : derivedFeedbackText;
-  } else {
-    effectivePromptText = hasExplicitPromptText
-      ? input.promptText
-      : derivedFeedbackText;
-  }
-
-  const startIndex =
-    input.images && input.images.length > 0
-      ? await deps.getNextImageIndex(input.conversationId)
-      : 1;
-
-  const assembled = assembleUserContentBlocks({
-    promptText: effectivePromptText,
-    images: input.images ?? [],
-    startIndex,
-  });
-
-  const imagesByAttachmentId = new Map<string, ImagePayload>(
-    (input.images ?? []).map((img) => [img.attachmentId, img]),
+  const { effectivePromptText, isDrainedFeedbackBatch } = resolveTurnPromptText(
+    {
+      promptText: input.promptText,
+      documentFeedback: input.documentFeedback,
+      isQueuedDelivery: input.queuedDelivery !== undefined,
+    },
   );
 
-  const imageRefs: ConversationImageRef[] = [];
-  for (const assignment of assembled.assignments) {
-    const image = imagesByAttachmentId.get(assignment.attachmentId);
-    if (!image) continue;
-    const persistedPath = await deps.saveTranscriptImage(
-      input.conversationId,
-      assignment.serverIndex,
-      assignment.mediaType,
-      image.base64Data,
-    );
-    imageRefs.push({
-      index: assignment.serverIndex,
-      mediaType: assignment.mediaType,
-      path: persistedPath,
-      base64Data: image.base64Data,
-    });
-  }
+  const { assembled, imageRefs } = await persistTurnImages(deps, {
+    conversationId: input.conversationId,
+    promptText: effectivePromptText,
+    images: input.images ?? [],
+  });
 
-  // For a feedback turn the transcript records the structured card. The
-  // agent-facing feedback prose is carried separately as the turn's prompt text,
-  // so the card-side `rewrittenPromptText` is the user's OWN text only — never
-  // the prose. Immediate feedback puts the prose in `promptText`, so the card is
-  // recorded alone (empty text). A drained mixed batch carries a distinct user
-  // text that is preserved as a text block before the card. Queued feedback
-  // content has no inline `[Image #N]` markers, so the raw user text is used
-  // directly. Non-feedback turns are unchanged: text+image interleaving, or a
-  // single text block, or nothing.
-  const transcriptUserText = isDrainedFeedbackBatch ? input.promptText : "";
-  const transcriptBlocks: MessageContentBlock[] = input.documentFeedback
-    ? buildUserTranscriptBlocks({
-        rewrittenPromptText: transcriptUserText,
-        imageRefs,
-        documentFeedback: input.documentFeedback,
-      })
-    : imageRefs.length > 0
-      ? buildUserTranscriptBlocks({
-          rewrittenPromptText: assembled.rewrittenPromptText,
-          imageRefs,
-        })
-      : effectivePromptText
-        ? [{ type: "text" as const, text: effectivePromptText }]
-        : [];
+  const transcriptBlocks: MessageContentBlock[] = composeUserTranscriptBlocks({
+    promptText: input.promptText,
+    effectivePromptText,
+    rewrittenPromptText: assembled.rewrittenPromptText,
+    isDrainedFeedbackBatch,
+    documentFeedback: input.documentFeedback,
+    imageRefs,
+  });
 
   const currentTurnMessageId =
     input.queuedDelivery?.messageIds[0] ?? input.streamId ?? null;
@@ -1435,9 +1007,16 @@ export async function executePromptForMachine(
     effort: effectiveEffort,
   });
 
-  if (!input.queuedDelivery) {
-    await safeAppendWithMeta(input.conversationId, buildUserTranscriptEntry());
-  }
+  const queuedAccounting = createQueuedDeliveryAccounting(deps, {
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    conversationId: input.conversationId,
+    queuedDelivery: input.queuedDelivery,
+    appendUserEntry: () =>
+      safeAppendWithMeta(input.conversationId, buildUserTranscriptEntry()),
+  });
+
+  await queuedAccounting.appendUserEntryAtDispatch();
 
   // ---------------------------------------------------------------
   // Get-or-create ConversationBackendRuntime
@@ -1480,94 +1059,17 @@ export async function executePromptForMachine(
     });
   }
 
-  async function seedRuntimeCapabilityState(
-    seed: AgentCapabilityRuntimeApplicationState,
-  ) {
-    await deps.mutateConversation(
-      input.projectPath,
-      input.sessionName,
-      input.conversationId,
-      "prompt.seedCapabilityRuntime",
-      (conversation) => {
-        conversation.agentCapabilitiesRuntime = seed;
-      },
-    );
-    logger.info("prompt.capability_runtime_seeded", {
-      sessionName: input.sessionName,
-      backend: input.agentBackend,
-      conversationId: input.conversationId,
-      seededCascadeKinds: Object.keys(seed.cascades),
-    });
-  }
-
-  function buildCapabilityApplyInput(): ApplyConversationIdentity {
-    if (isProjectConversation) {
-      return {
-        conversationScope: "project",
-        projectPath: input.projectPath,
-        projectName,
-        conversationId: input.conversationId,
-        worktreePath: input.worktreePath,
-        backend: input.agentBackend,
-      };
-    }
-
-    return {
-      projectPath: input.projectPath,
-      projectName,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
-      worktreePath: input.worktreePath,
-      backend: input.agentBackend,
-    };
-  }
-
-  async function composeProjectConversationCapabilitySeed(): Promise<
-    ProjectCapabilitySeed | undefined
-  > {
-    try {
-      return await deps.composeCapabilityConfigForProjectConversation({
-        projectPath: input.projectPath,
-        projectName,
-        conversationId: input.conversationId,
-      });
-    } catch (err) {
-      const error = getErrorMessage(err);
-      logger.warn("prompt.project_conversation_capability_compose_failed", {
-        sessionName: input.sessionName,
-        conversationScope: "project",
-        backend: input.agentBackend,
-        conversationId: input.conversationId,
-        error,
-      });
-      runtimeState.streamEmit?.("error", {
-        message: `Project conversation capability configuration could not be fully composed: ${error}`,
-      });
-      return undefined;
-    }
-  }
-
-  function emitProjectCapabilityDiagnostics(
-    diagnostics: readonly AgentCapabilityDiagnostic[] | undefined,
-  ): void {
-    if (!diagnostics || diagnostics.length === 0) return;
-
-    for (const diagnostic of diagnostics) {
-      logger.warn("prompt.project_conversation_capability_diagnostic", {
-        sessionName: input.sessionName,
-        conversationScope: "project",
-        backend: diagnostic.backend ?? input.agentBackend,
-        cascadeKind: diagnostic.cascadeKind,
-        code: diagnostic.code,
-        severity: diagnostic.severity,
-        conversationId: input.conversationId,
-        message: diagnostic.message,
-      });
-      runtimeState.streamEmit?.("error", {
-        message: `Project conversation capability configuration issue: ${diagnostic.message}`,
-      });
-    }
-  }
+  const capabilityCtx: CapabilityTurnContext = {
+    projectPath: input.projectPath,
+    projectName,
+    sessionName: input.sessionName,
+    conversationId: input.conversationId,
+    worktreePath: input.worktreePath,
+    backend: input.agentBackend,
+    isProjectConversation,
+    emitStreamError: (message) =>
+      runtimeState.streamEmit?.("error", { message }),
+  };
 
   // Tracks whether THIS turn governs under an active charter (R12.1/R12.2:
   // attended normal sessions only). Set on the recreate gate's reuse path and on
@@ -1585,16 +1087,15 @@ export async function executePromptForMachine(
       input.projectPath,
       input.sessionName,
     );
-    alignmentEligibleThisTurn =
-      gateSession?.creationMode === "normal" &&
-      !isProjectConversation &&
-      input.autonomous !== true;
-    desiredAlignmentVersion = alignmentEligibleThisTurn
-      ? await deps.getActiveAlignmentVersion(
-          input.projectPath,
-          input.sessionName,
-        )
-      : null;
+    const gate = await resolveAlignmentGateForReusedRuntime(deps, {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      creationMode: gateSession?.creationMode,
+      isProjectConversation,
+      autonomous: input.autonomous,
+    });
+    alignmentEligibleThisTurn = gate.eligible;
+    desiredAlignmentVersion = gate.desiredAlignmentVersion;
   }
 
   // Close existing runtime if model, effort, outputFormat, or alignment version changed
@@ -1667,31 +1168,19 @@ export async function executePromptForMachine(
           ].join("\n")
         : null;
 
-    // Alignment governs only attended normal sessions (R12.1/R12.2): not project
-    // conversations, not optimistic sessions, not autonomous turns. Mirror the
+    // Alignment governs only attended normal sessions (R12.1/R12.2). Mirror the
     // result to the outer flag so the post-turn seen-version record (R8.4) holds
     // for a freshly-created runtime too.
-    const alignmentEligible =
-      sessionState?.creationMode === "normal" &&
-      !isProjectConversation &&
-      input.autonomous !== true;
-    alignmentEligibleThisTurn = alignmentEligible;
-    let activeAlignmentVersion: number | null = null;
-    let alignmentInstruction: string | null = null;
-    if (alignmentEligible) {
-      const injection = await deps.getActiveAlignmentInjection(
-        input.projectPath,
-        input.sessionName,
-      );
-      if (injection) {
-        // Governing section (inline charter or bounded digest), R7.1/R7.2/R7.4.
-        activeAlignmentVersion = injection.version;
-        alignmentInstruction = injection.text;
-      } else {
-        // No active charter: nudge the agent to suggest `/align` (R2.5).
-        alignmentInstruction = ALIGN_SUGGESTION_INSTRUCTIONS;
-      }
-    }
+    const alignment = await resolveAlignmentInstructionForNewRuntime(deps, {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      creationMode: sessionState?.creationMode,
+      isProjectConversation,
+      autonomous: input.autonomous,
+    });
+    alignmentEligibleThisTurn = alignment.eligible;
+    const activeAlignmentVersion = alignment.activeAlignmentVersion;
+    const alignmentInstruction = alignment.alignmentInstruction;
 
     // Pending agent notices — messages recorded while the conversation had no
     // live backend session (e.g. background tasks lost with a dead session).
@@ -1699,22 +1188,13 @@ export async function executePromptForMachine(
     // runtime exists, so a notice is delivered exactly once.
     const pendingAgentNotices = isProjectConversation
       ? []
-      : ((
-          await deps.getConversation(
-            input.projectPath,
-            input.sessionName,
-            input.conversationId,
-          )
-        )?.pendingAgentNotices ?? []);
+      : await readPendingAgentNotices(deps, {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+        });
     const pendingNoticesInstruction =
-      pendingAgentNotices.length > 0
-        ? [
-            "## Session notices",
-            "The following was recorded for this conversation while no agent session was live. Act on it before trusting prior assumptions:",
-            "",
-            ...pendingAgentNotices.map((n) => `- ${n}`),
-          ].join("\n")
-        : null;
+      buildPendingNoticesInstruction(pendingAgentNotices);
 
     // Build session instructions (baked into the runtime once). Project
     // conversations run in the main worktree, so they use a CC context that
@@ -1751,63 +1231,12 @@ export async function executePromptForMachine(
         : {}),
     });
 
-    const projectCapabilitySeed = isProjectConversation
-      ? await composeProjectConversationCapabilitySeed()
-      : undefined;
-    emitProjectCapabilityDiagnostics(projectCapabilitySeed?.diagnostics);
-    const projectRuntimeCapabilitySeed = isRuntimeProjectCapabilitySeed(
-      projectCapabilitySeed,
-    )
-      ? projectCapabilitySeed
-      : undefined;
-
-    const claudeCapabilitySeed =
-      input.agentBackend === "claude"
-        ? projectRuntimeCapabilitySeed?.backend === "claude"
-          ? projectRuntimeCapabilitySeed
-          : !isProjectConversation
-            ? await deps.composeClaudeCapabilityConfigForConversation({
-                projectPath: input.projectPath,
-                projectName,
-                sessionName: input.sessionName,
-                conversationId: input.conversationId,
-                worktreePath: input.worktreePath,
-              })
-            : undefined
-        : undefined;
-
-    const codexCapabilitySeed =
-      input.agentBackend === "codex"
-        ? projectRuntimeCapabilitySeed?.backend === "codex"
-          ? projectRuntimeCapabilitySeed
-          : !isProjectConversation
-            ? await deps.composeCodexCapabilityConfigForConversation({
-                projectPath: input.projectPath,
-                projectName,
-                sessionName: input.sessionName,
-                conversationId: input.conversationId,
-                worktreePath: input.worktreePath,
-              })
-            : undefined
-        : undefined;
-
-    if (
-      projectCapabilitySeed &&
-      projectCapabilitySeed.backend !== input.agentBackend
-    ) {
-      logger.warn("prompt.project_conversation_capability_backend_mismatch", {
-        sessionName: input.sessionName,
-        conversationScope: "project",
-        conversationId: input.conversationId,
-        actorBackend: input.agentBackend,
-        composedBackend: projectCapabilitySeed.backend,
-      });
-    }
-
-    const claudeCapabilityConfig = claudeCapabilitySeed?.config;
-    const codexCapabilityConfig = codexCapabilitySeed?.config;
-    const capabilityRuntimeStateSeed =
-      claudeCapabilitySeed?.runtimeState ?? codexCapabilitySeed?.runtimeState;
+    const capabilitySeed = await resolveCapabilitySeedForNewRuntime(
+      deps,
+      capabilityCtx,
+    );
+    const capabilityCascadeSeed = capabilitySeed?.capabilities;
+    const capabilityRuntimeStateSeed = capabilitySeed?.runtimeState;
 
     logger.info("prompt.runtime_create", {
       sessionName: input.sessionName,
@@ -1815,8 +1244,7 @@ export async function executePromptForMachine(
       conversationId: input.conversationId,
       hasResumeRef: input.backendRef !== null,
       promptCount: input.promptCount,
-      claudeCapabilityConfigSeeded: claudeCapabilityConfig !== undefined,
-      codexCapabilityConfigSeeded: codexCapabilityConfig !== undefined,
+      capabilityCascadeSeeded: capabilityCascadeSeed !== undefined,
     });
 
     // A conversation with completed turns but no resume handle cannot restore
@@ -1832,77 +1260,42 @@ export async function executePromptForMachine(
       });
     }
 
-    const externalTurnHandler = createExternalTurnHandler(
-      {
-        projectPath: input.projectPath,
-        projectName,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        worktreePath: input.worktreePath,
-      },
-      {
-        sendToMachine: (event) => runtimeState.sendToMachine?.(event),
-      },
-      {
-        safeAppendTranscriptEntry: safeAppendWithMeta,
-        applyCapabilityWhenIdle:
-          input.agentBackend === "claude"
-            ? () => deps.applyCapabilityWhenIdle(buildCapabilityApplyInput())
-            : undefined,
-      },
+    // External (background auto-continuation) turns are a declared backend
+    // capability: only backends whose descriptor claims `externalTurns` get a
+    // handler wired. The idle capability drain is likewise gated on a
+    // declared `idle_live` capability kind rather than backend identity.
+    const conversationCapabilities = deps.getConversationCapabilities(
+      input.agentBackend,
     );
-
-    // Surface background tasks that die with the session: a visible notice
-    // row for the user, and (session conversations only — the project
-    // sentinel cannot address the session aggregate) a durable agent notice
-    // drained into the NEXT runtime's instructions, so the agent learns its
-    // watchers are gone instead of waiting for a wake that can never come.
-    const onBackgroundTasksLost = (info: BackgroundTasksLostInfo): void => {
-      const summary = info.tasks
-        .map((t) =>
-          t.description ? `${t.taskId} (${t.description})` : t.taskId,
-        )
-        .join(", ");
-      logger.warn("prompt.background_tasks_lost_surfaced", {
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        reason: info.reason,
-        taskCount: info.tasks.length,
-      });
-      void safeAppendWithMeta(input.conversationId, {
-        timestamp: new Date().toISOString(),
-        type: "notice",
-        role: "notice",
-        content: [
+    const supportsIdleCapabilityDrain =
+      conversationCapabilities?.capabilityKinds.some(
+        (k) => k.applyTiming === "idle_live",
+      ) ?? false;
+    const externalTurnHandler = conversationCapabilities?.externalTurns
+      ? createExternalTurnHandler(
+          { conversationId: input.conversationId },
           {
-            type: "text",
-            text: `${info.tasks.length} background task(s) were terminated with the agent session (${info.reason}): ${summary}. Their completion can no longer wake the agent.`,
+            sendToMachine: (event) => runtimeState.sendToMachine?.(event),
           },
-        ],
-      });
-      if (isProjectConversation) return;
-      const reminder = `Your previous agent session ended (${info.reason}) while ${info.tasks.length} background task(s) were still running: ${summary}. Those processes were terminated with the session — their completion notifications will never arrive. Do not wait for them; check any output files on disk and re-run whatever is still needed.`;
-      void deps
-        .mutateConversation(
-          input.projectPath,
-          input.sessionName,
-          input.conversationId,
-          "background_tasks_lost",
-          (conversation) => {
-            conversation.pendingAgentNotices = [
-              ...conversation.pendingAgentNotices,
-              reminder,
-            ].slice(-MAX_PENDING_AGENT_NOTICES);
+          {
+            safeAppendTranscriptEntry: safeAppendWithMeta,
+            applyCapabilityWhenIdle: supportsIdleCapabilityDrain
+              ? () =>
+                  deps.applyCapabilityWhenIdle(
+                    buildCapabilityApplyInput(capabilityCtx),
+                  )
+              : undefined,
           },
         )
-        .catch((err) => {
-          logger.warn("prompt.background_tasks_lost_persist_failed", {
-            sessionName: input.sessionName,
-            conversationId: input.conversationId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-    };
+      : undefined;
+
+    const onBackgroundTasksLost = createBackgroundTasksLostHandler(deps, {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      isProjectConversation,
+      appendTranscriptEntry: safeAppendWithMeta,
+    });
 
     const newRuntime = await factory.createRuntime({
       conversationId: input.conversationId,
@@ -1918,11 +1311,8 @@ export async function executePromptForMachine(
       sessionInstructions,
       tooling: {
         portableMcp,
-        ...(claudeCapabilityConfig !== undefined
-          ? { claudeCapabilityConfig }
-          : {}),
-        ...(codexCapabilityConfig !== undefined
-          ? { codexCapabilityConfig }
+        ...(capabilityCascadeSeed !== undefined
+          ? { capabilities: capabilityCascadeSeed }
           : {}),
       },
       ...(runtimeState.workflowContext
@@ -1931,7 +1321,9 @@ export async function executePromptForMachine(
             workflowContextId: runtimeState.workflowContext.contextId,
           }
         : {}),
-      onExternalTurnEvent: externalTurnHandler,
+      ...(externalTurnHandler
+        ? { onExternalTurnEvent: externalTurnHandler }
+        : {}),
       onBackgroundTasksLost,
     });
 
@@ -1941,34 +1333,23 @@ export async function executePromptForMachine(
     backendRuntime = newRuntime;
     await seedRuntimeMcpState(portableMcp);
     if (capabilityRuntimeStateSeed) {
-      await seedRuntimeCapabilityState(capabilityRuntimeStateSeed);
+      await seedRuntimeCapabilityState(
+        deps,
+        capabilityCtx,
+        capabilityRuntimeStateSeed,
+      );
     }
 
-    // Drain exactly the notices this runtime consumed. A notice recorded
-    // between the read above and this write (e.g. the freshly-created
-    // session dying immediately with tasks in flight) survives for the next
-    // runtime instead of being wiped.
-    if (pendingAgentNotices.length > 0 && !isProjectConversation) {
-      const consumed = [...pendingAgentNotices];
-      await deps.mutateConversation(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-        "drain_agent_notices",
-        (conversation) => {
-          const remaining = [...conversation.pendingAgentNotices];
-          for (const notice of consumed) {
-            const idx = remaining.indexOf(notice);
-            if (idx !== -1) remaining.splice(idx, 1);
-          }
-          conversation.pendingAgentNotices = remaining;
+    if (!isProjectConversation) {
+      await drainConsumedAgentNotices(
+        deps,
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
         },
+        pendingAgentNotices,
       );
-      logger.info("prompt.agent_notices_drained", {
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        noticeCount: consumed.length,
-      });
     }
 
     return newRuntime;
@@ -1984,80 +1365,29 @@ export async function executePromptForMachine(
   // ---------------------------------------------------------------
   // Safety-net timeout
   // ---------------------------------------------------------------
-  if (runtimeState.abortController.signal.aborted) {
-    logger.info("prompt.abort_controller_refreshed", {
-      sessionName: input.sessionName,
-      backend: input.agentBackend,
-      conversationId: input.conversationId,
-    });
-    runtimeState.abortController = new AbortController();
-  }
-  const abortController = runtimeState.abortController;
-  deps.registerAbortController(input.conversationId, abortController);
-
   const timeoutMs = resolveBackendTimeoutMs(input.agentBackend, config);
-  let timeoutFired = false;
-  logger.debug("prompt.timeout.resolved", {
+  const abortWiring = wireTurnAbort(deps, {
+    runtimeState,
+    conversationId: input.conversationId,
     sessionName: input.sessionName,
     backend: input.agentBackend,
     timeoutMs,
-    timeoutEnabled: timeoutMs > 0,
+    closeRuntime: () => backendRuntime?.close(),
   });
-  if (timeoutMs > 0) {
-    runtimeState.timeoutHandle = setTimeout(() => {
-      timeoutFired = true;
-      logger.warn("prompt.timeout", {
-        sessionName: input.sessionName,
-        timeoutMs,
-      });
-      // Abort first so the backend's `signal.aborted` check classifies the
-      // failure as `aborted` rather than a generic error.
-      abortController.abort();
-      backendRuntime?.close();
-    }, timeoutMs);
-  }
+  const abortController = abortWiring.abortController;
 
   // ---------------------------------------------------------------
   // Build turn input and execute
   // ---------------------------------------------------------------
   const contentBlocks: MessageContentBlock[] = [];
-  let persistedNonClaudeContentCount = 0;
+  let persistedContentEventCount = 0;
   let sawErrorEvent = false;
-
-  // Guards the queued-delivery transcript append. Set true the instant the
-  // coalesced user entry is appended on backend acceptance so a repeated
-  // `input_accepted` cannot re-append, and so a later `markQueuedDelivered`
-  // failure cannot trigger a second append. Read on all exit paths to decide
-  // whether a queued batch must be returned to `pending` (no acceptance).
-  let queuedUserEntryAppended = false;
 
   // onEvent: translate backend events into existing SSE emit path
   const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
     switch (event.type) {
       case "input_accepted": {
-        if (!input.queuedDelivery || queuedUserEntryAppended) {
-          break;
-        }
-        await safeAppendWithMeta(
-          input.conversationId,
-          buildUserTranscriptEntry(),
-        );
-        // Mark appended before the queue write so a `markQueuedDelivered`
-        // failure cannot cause the entry to be appended twice.
-        queuedUserEntryAppended = true;
-        await deps.markQueuedDelivered({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          ids: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-        });
-        logger.info("queue.accepted", {
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          messageIds: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-        });
+        await queuedAccounting.handleInputAccepted();
         break;
       }
 
@@ -2066,67 +1396,46 @@ export async function executePromptForMachine(
           type: "BACKEND_INIT",
           backendRef: event.backendRef,
         });
-        if (event.backendRef.backend === "codex") {
-          await safeAppendWithMeta(input.conversationId, {
+        {
+          const initEntry = transcriptProjection.projectBackendInit({
             timestamp: new Date().toISOString(),
-            type: "system",
-            raw: {
-              subtype: "init",
-              backend: "codex",
-              thread_id: event.backendRef.threadId,
-            },
+            backendRef: event.backendRef,
           });
+          if (initEntry !== null) {
+            await safeAppendWithMeta(input.conversationId, initEntry);
+          }
         }
         break;
 
       case "content":
         contentBlocks.push(event.block);
         runtimeState.streamEmit?.("content", event.block);
-        if (input.agentBackend !== "claude") {
+        if (transcriptProjection.persistContentEvents) {
           await safeAppendWithMeta(input.conversationId, {
             timestamp: new Date().toISOString(),
             type: "assistant",
             role: "assistant",
             content: [event.block],
           });
-          persistedNonClaudeContentCount += 1;
-          logger.debug("prompt.non_claude_content_persisted", {
+          persistedContentEventCount += 1;
+          logger.debug("prompt.content_event_persisted", {
             sessionName: input.sessionName,
             conversationId: input.conversationId,
             backend: input.agentBackend,
             blockType: event.block.type,
-            contentBlockCount: persistedNonClaudeContentCount,
+            contentBlockCount: persistedContentEventCount,
           });
         }
         break;
 
-      case "provider_event": {
-        // Handle raw SDK messages for transcript writing and real-time SSE streaming
-        const msg = event.payload as SDKMessage;
-
-        // Send BACKEND_INIT event to machine on SDK init
-        if (msg.type === "system") {
-          const sysMsg = msg as SDKSystemMessage;
-          if (sysMsg.subtype === "init" && sysMsg.session_id) {
-            runtimeState.sendToMachine?.({
-              type: "BACKEND_INIT",
-              backendRef: {
-                backend: "claude",
-                sessionId: sysMsg.session_id,
-              } as AgentSessionRef,
-            });
-          }
-        }
-
-        await processMessage(
-          msg,
+      case "transcript_entry":
+        // The adapter interprets; the actor records. The frame is appended
+        // verbatim — the payload is never read above the backend seam.
+        await safeAppendWithMeta(
           input.conversationId,
-          runtimeState.streamEmit ?? (() => {}),
-          contentBlocks,
-          safeAppendWithMeta,
+          conversationTranscriptFrame(event.entry),
         );
         break;
-      }
 
       case "error":
         sawErrorEvent = true;
@@ -2175,107 +1484,63 @@ export async function executePromptForMachine(
           .map((b) => b.text)
           .join("\n\n");
 
-  let syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"] =
-    undefined;
+  const syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"] =
+    await resolveSyntheticForkSeed(deps, {
+      sessionName: input.sessionName,
+      agentBackend: input.agentBackend,
+      backendRef: input.backendRef,
+      forkedFrom: input.forkedFrom,
+      transcriptPath: input.transcriptPath,
+    });
 
-  if (shouldBuildRuntimeSyntheticSeed(input)) {
-    syntheticForkSeed = await buildSyntheticForkSeed(
-      input.transcriptPath!,
-      input.forkedFrom!.messageIndex,
-      { readConversationMessages: deps.readConversationMessages },
-    );
-    if (syntheticForkSeed) {
-      logger.info("prompt.synthetic_fork", {
-        sessionName: input.sessionName,
-        backend: input.agentBackend,
-        seedLength: syntheticForkSeed.length,
-        messageIndex: input.forkedFrom!.messageIndex,
-      });
-    }
-  }
-
-  let turnResult: ConversationBackendTurnResult | undefined;
   let agentCallResult: AgentCallResult | undefined;
 
-  async function drainClaudeCapabilityWhenIdle(): Promise<void> {
-    if (input.agentBackend !== "claude") return;
+  // Pre-turn MCP apply, run by the facade in its fixed pre-dispatch order.
+  // Only reused runtimes need it — a fresh runtime was created with the
+  // composed config already baked in. A rejected apply fails the call inside
+  // the facade (capability_unavailable) before the prompt is delivered.
+  const applyMcpHook = isNewRuntime
+    ? undefined
+    : async (): Promise<McpApplyHookResult> => {
+        logger.info("prompt.mcp_turn_start_apply", {
+          sessionName: input.sessionName,
+          backend: input.agentBackend,
+          conversationId: input.conversationId,
+        });
+        const mcpApplyResult = await deps.applyMcpAtTurnStart({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          backend: input.agentBackend,
+        });
 
-    try {
-      await deps.applyCapabilityWhenIdle(buildCapabilityApplyInput());
-    } catch (err) {
-      logger.error("prompt.capability_idle_drain_failed", {
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        error: getErrorMessage(err),
-      });
-    }
-  }
-
-  try {
-    if (!isNewRuntime) {
-      logger.info("prompt.mcp_turn_start_apply", {
-        sessionName: input.sessionName,
-        backend: input.agentBackend,
-        conversationId: input.conversationId,
-      });
-      const mcpApplyResult = await deps.applyMcpAtTurnStart({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        backend: input.agentBackend,
-      });
-
-      logger.info("prompt.mcp_turn_start_result", {
-        sessionName: input.sessionName,
-        backend: input.agentBackend,
-        conversationId: input.conversationId,
-        disposition: mcpApplyResult.disposition,
-      });
-
-      if (mcpApplyResult.disposition === "rejected") {
-        const errorMessage = formatTurnStartMcpApplyFailure(mcpApplyResult);
-        logger.warn("prompt.mcp_turn_start_failed", {
+        logger.info("prompt.mcp_turn_start_result", {
           sessionName: input.sessionName,
           backend: input.agentBackend,
           conversationId: input.conversationId,
           disposition: mcpApplyResult.disposition,
-          error: mcpApplyResult.error,
         });
-        runtimeState.streamEmit?.("error", { message: errorMessage });
-        return {
-          backendRef: null,
-          costUsd: null,
-          durationMs: null,
-          numTurns: null,
-          contextTokens: null,
-          contextWindow: null,
-          inputTokens: null,
-          outputTokens: null,
-          cachedInputTokens: null,
-          contentBlocks: [],
-          aborted: false,
-          compacted: false,
-          error: errorMessage,
-        };
-      }
-    }
 
-    try {
-      logger.info("prompt.capability_turn_start_apply", {
-        sessionName: input.sessionName,
-        backend: input.agentBackend,
-        conversationId: input.conversationId,
-        isNewRuntime,
-      });
-      await deps.applyCapabilityAtTurnStart(buildCapabilityApplyInput());
-    } catch (err) {
-      logger.error("prompt.capability_turn_start_failed", {
-        sessionName: input.sessionName,
-        backend: input.agentBackend,
-        conversationId: input.conversationId,
-        error: getErrorMessage(err),
-      });
-    }
+        if (mcpApplyResult.disposition === "rejected") {
+          logger.warn("prompt.mcp_turn_start_failed", {
+            sessionName: input.sessionName,
+            backend: input.agentBackend,
+            conversationId: input.conversationId,
+            disposition: mcpApplyResult.disposition,
+            error: mcpApplyResult.error,
+          });
+          return {
+            ok: false,
+            message: formatTurnStartMcpApplyFailure(mcpApplyResult),
+          };
+        }
+        return { ok: true };
+      };
+
+  try {
+    await applyCapabilityCascadeAtTurnStart(deps, capabilityCtx, {
+      isNewRuntime,
+    });
 
     // Close + unregister the current runtime and build a fresh, resume-
     // preserving one (createManagedBackendRuntime threads `persistedRef`).
@@ -2314,25 +1579,24 @@ export async function executePromptForMachine(
           conversationId: input.conversationId,
           reason: retry.reason,
         });
-        throw tagQuerySessionError(
+        throw markPromptNotDelivered(
           new Error(
             `Prompt not delivered: runtime unrecoverable (${retry.reason})`,
           ),
-          QUERY_SESSION_ERROR_CODES.promptNotDelivered,
         );
       }
     }
 
-    // Route the turn through the shared AgentCall primitive. The wrapped
-    // runtime captures the underlying `ConversationBackendTurnResult` (the
-    // existing actor downstream still needs `numTurns`, `contentBlocks`, and
-    // other fields the primitive's normalized result drops) and handles the
-    // undelivered-query-session retry loop in-place so observable behavior
-    // matches the prior direct-`sendTurn` path.
-    const turnDispatch = await dispatchTurnViaAgentCall({
+    // Route the turn through the shared AgentCall primitive. The runtime is
+    // wrapped in the named `withRuntimeReplacementRetry` policy (single
+    // reattempt on the neutral prompt-not-delivered fact) and the facade
+    // normalizes every failure through the backend's failure classifier, so
+    // the actor consumes only the widened `AgentCallResult`.
+    agentCallResult = await dispatchTurnViaAgentCall({
       executeAgentCall: deps.executeAgentCall,
       getRuntime: () => backendRuntime!,
       replaceRuntime: recreateRuntimeForTurn,
+      applyMcp: applyMcpHook,
       signal: abortController.signal,
       conversationId: input.conversationId,
       sessionName: input.sessionName,
@@ -2347,43 +1611,74 @@ export async function executePromptForMachine(
       onEvent,
       syntheticForkSeed,
     });
-    turnResult = turnDispatch.turnResult;
-    agentCallResult = turnDispatch.agentCallResult;
-    if (turnDispatch.thrown) {
-      throw turnDispatch.thrown;
-    }
 
-    await drainClaudeCapabilityWhenIdle();
-  } catch (err) {
-    if (abortController.signal.aborted) {
-      const abortReason = timeoutFired ? "timeout" : undefined;
+    // A failed outcome without `contentBlocks` means the failure carries no
+    // adapter turn result: dispatch threw (normalized by the facade) or the
+    // pre-turn MCP apply rejected. These reproduce the legacy thrown-error
+    // surfaces; failures derived from an adapter turn result flow through the
+    // shared result mapping below.
+    const turnlessFailure =
+      agentCallResult.outcome.kind === "failed" &&
+      agentCallResult.outcome.contentBlocks === undefined
+        ? agentCallResult.outcome
+        : undefined;
+
+    if (turnlessFailure && abortController.signal.aborted) {
+      const timeoutFired = abortWiring.timeoutFired();
       logger.info("prompt.aborted", {
         sessionName: input.sessionName,
-        ...(abortReason !== undefined ? { abortReason } : {}),
-        ...(timeoutFired ? { timeoutMs } : {}),
+        ...(timeoutFired ? { abortReason: "timeout", timeoutMs } : {}),
       });
       runtimeState.streamEmit?.("aborted", {
         message: timeoutFired
           ? `Prompt execution timed out after ${timeoutMs}ms`
           : "Prompt execution was cancelled",
       });
-      return {
-        backendRef: null,
-        costUsd: null,
-        durationMs: null,
-        numTurns: null,
-        contextTokens: null,
-        contextWindow: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-        contentBlocks,
-        aborted: true,
-        compacted: false,
-        ...(abortReason !== undefined ? { abortReason } : {}),
-        ...(timeoutFired ? { timeoutMs } : {}),
-        error: null,
-      };
+      return buildAbortedTurnResult({ contentBlocks, timeoutFired, timeoutMs });
+    }
+
+    if (turnlessFailure) {
+      const errorMsg = turnlessFailure.error.message;
+      // Pre-turn MCP rejection surfaces its formatted message directly; a
+      // normalized dispatch throw keeps the legacy "SDK error:" surface.
+      if (turnlessFailure.error.failureKind === "capability_unavailable") {
+        runtimeState.streamEmit?.("error", { message: errorMsg });
+      } else {
+        logger.error("prompt.sdk_error", {
+          sessionName: input.sessionName,
+          failureKind: turnlessFailure.error.failureKind,
+          error: errorMsg,
+        });
+        await drainCapabilityWhenIdle(deps, capabilityCtx);
+        runtimeState.streamEmit?.("error", {
+          message: `SDK error: ${errorMsg}`,
+        });
+      }
+      return buildFailedTurnResult({
+        contentBlocks:
+          turnlessFailure.error.failureKind === "capability_unavailable"
+            ? []
+            : contentBlocks,
+        error: errorMsg,
+        continuationDisposition:
+          agentCallResult.continuationDisposition ?? "retain",
+      });
+    }
+
+    await drainCapabilityWhenIdle(deps, capabilityCtx);
+  } catch (err) {
+    if (abortController.signal.aborted) {
+      const timeoutFired = abortWiring.timeoutFired();
+      logger.info("prompt.aborted", {
+        sessionName: input.sessionName,
+        ...(timeoutFired ? { abortReason: "timeout", timeoutMs } : {}),
+      });
+      runtimeState.streamEmit?.("aborted", {
+        message: timeoutFired
+          ? `Prompt execution timed out after ${timeoutMs}ms`
+          : "Prompt execution was cancelled",
+      });
+      return buildAbortedTurnResult({ contentBlocks, timeoutFired, timeoutMs });
     }
 
     const errorMsg = getErrorMessage(err);
@@ -2391,88 +1686,57 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
       error: errorMsg,
     });
-    await drainClaudeCapabilityWhenIdle();
+    await drainCapabilityWhenIdle(deps, capabilityCtx);
     runtimeState.streamEmit?.("error", { message: `SDK error: ${errorMsg}` });
-    return {
-      backendRef: null,
-      costUsd: null,
-      durationMs: null,
-      numTurns: null,
-      contextTokens: null,
-      contextWindow: null,
-      inputTokens: null,
-      outputTokens: null,
-      cachedInputTokens: null,
+    return buildFailedTurnResult({
       contentBlocks,
-      aborted: false,
-      compacted: false,
       error: errorMsg,
-    };
+      continuationDisposition: "retain",
+    });
   } finally {
-    // Clear timeout
-    if (runtimeState.timeoutHandle) {
-      clearTimeout(runtimeState.timeoutHandle);
-      runtimeState.timeoutHandle = undefined;
-    }
+    abortWiring.cleanup();
     runtimeState.currentTurnAutonomous = undefined;
     runtimeState.currentTurnMessageId = undefined;
-    deps.unregisterAbortController(input.conversationId, abortController);
-
-    // Queued delivery that never reached backend acceptance (turn completed,
-    // errored, or aborted before `input_accepted`): return the claimed batch to
-    // `pending` so it is never silently lost (req 4.2). No transcript entry was
-    // appended for it. All acceptance failures are treated as recoverable —
-    // the turn result does not surface a terminal queue-acceptance signal, so
-    // we never guess `failed` here (see CONCERNS).
-    if (input.queuedDelivery && !queuedUserEntryAppended) {
-      try {
-        await deps.markQueuedPending({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          ids: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          error: "queued delivery did not reach backend acceptance",
-        });
-        logger.info("queue.return_pending", {
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          messageIds: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-        });
-      } catch (err) {
-        logger.error("queue.return_pending_failed", {
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          messageIds: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          error: getErrorMessage(err),
-        });
-      }
-    }
+    await queuedAccounting.settleAfterTurn();
   }
 
-  // Funnel structured-output extraction through the shared AgentCall gate.
-  // `applyStructuredOutputGate` runs inside `executeAgentCall` whenever
-  // `outputSchema` is present — it may parse `text` into a structuredOutput
-  // value or downgrade a completed outcome to `failed` with
+  // Every turnless-failure path returned inside the try (or the catch); a
+  // result that reaches this mapping carries an adapter-built outcome.
+  const callResult = agentCallResult!;
+  const completedOutcome =
+    callResult.outcome.kind === "completed" ? callResult.outcome : undefined;
+  const failedOutcome =
+    callResult.outcome.kind === "failed" ? callResult.outcome : undefined;
+  const gateSchemaValidationFailure =
+    failedOutcome?.error.failureKind === "schema_validation"
+      ? failedOutcome.error
+      : undefined;
+  const turnAborted = failedOutcome?.error.failureKind === "aborted";
+  // The structured-output gate ran inside `executeAgentCall` whenever
+  // `outputSchema` was present — it may have parsed `text` into a
+  // structuredOutput value or downgraded a completed outcome to `failed` with
   // `failureKind: "schema_validation"`. The actor consumes that result so the
   // conversation_turn and task_run paths share one validation outcome.
-  const gateCompletedOutcome =
-    agentCallResult?.outcome.kind === "completed"
-      ? agentCallResult.outcome
-      : undefined;
-  const gateSchemaValidationFailure =
-    agentCallResult?.outcome.kind === "failed" &&
-    agentCallResult.outcome.error.failureKind === "schema_validation"
-      ? agentCallResult.outcome.error
-      : undefined;
-  const effectiveStructuredOutput =
-    gateCompletedOutcome?.structuredOutput ?? turnResult?.structuredOutput;
+  const effectiveStructuredOutput = completedOutcome?.structuredOutput;
+  // Aborted turns report through `aborted`, never as an error surface.
   const effectiveError =
-    gateSchemaValidationFailure?.message ?? turnResult?.error ?? null;
+    failedOutcome !== undefined && !turnAborted
+      ? failedOutcome.error.message
+      : null;
+  const resultNumTurns =
+    completedOutcome?.numTurns ?? failedOutcome?.numTurns ?? null;
+  const resultContentBlocks =
+    completedOutcome?.contentBlocks ??
+    failedOutcome?.contentBlocks ??
+    contentBlocks;
 
-  if (effectiveError && !turnResult?.aborted && !sawErrorEvent) {
+  // The facade preserves the adapter's continuation verdict through every
+  // outcome projection. The fallback keeps tolerant injected facades safe
+  // when they omit the optional field without inventing invalidation.
+  const continuationDisposition: ContinuationDisposition =
+    callResult.continuationDisposition ?? "retain";
+
+  if (effectiveError && !turnAborted && !sawErrorEvent) {
     logger.warn("prompt.turn_error_fallback_emitted", {
       sessionName: input.sessionName,
       backend: input.agentBackend,
@@ -2484,47 +1748,54 @@ export async function executePromptForMachine(
     runtimeState.streamEmit?.("error", { message: effectiveError });
   }
 
-  // Codex content is persisted as each SDK item completes so every mounted
-  // conversation surface receives message-appended events during the turn.
   // Preserve any trailing blocks returned by a backend that were not emitted
-  // through onEvent, then append the non-visible result envelope.
-  if (backendRuntime!.backend !== "claude" && turnResult) {
-    const missingContent = turnResult.contentBlocks.slice(
-      persistedNonClaudeContentCount,
-    );
-    if (missingContent.length > 0) {
-      logger.warn("prompt.non_claude_content_fallback", {
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        backend: backendRuntime!.backend,
-        missingContentBlockCount: missingContent.length,
-      });
-      await safeAppendWithMeta(input.conversationId, {
-        timestamp: new Date().toISOString(),
-        type: "assistant",
-        role: "assistant",
-        content: missingContent,
-      });
+  // through onEvent, then append its optional compatibility result envelope.
+  const adapterContentBlocks =
+    completedOutcome?.contentBlocks ?? failedOutcome?.contentBlocks;
+  if (adapterContentBlocks) {
+    if (transcriptProjection.persistContentEvents) {
+      const missingContent = adapterContentBlocks.slice(
+        persistedContentEventCount,
+      );
+      if (missingContent.length > 0) {
+        logger.warn("prompt.content_event_fallback", {
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          backend: backendRuntime!.backend,
+          missingContentBlockCount: missingContent.length,
+        });
+        await safeAppendWithMeta(input.conversationId, {
+          timestamp: new Date().toISOString(),
+          type: "assistant",
+          role: "assistant",
+          content: missingContent,
+        });
+      }
     }
 
-    await safeAppendWithMeta(
-      input.conversationId,
-      buildNonClaudeResultTranscriptEntry({
-        backend: backendRuntime!.backend,
-        backendRef: turnResult.backendRef,
-        turnResult,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    const resultEntry = transcriptProjection.projectTurnResult({
+      timestamp: new Date().toISOString(),
+      backendRef: callResult.backendRef,
+      durationMs: callResult.usage.durationMs ?? null,
+      numTurns: resultNumTurns,
+      contextTokens: callResult.usage.contextTokens ?? null,
+      contextWindowMax: callResult.usage.contextWindowMax ?? null,
+      costUsd: callResult.usage.costUsd ?? null,
+      aborted: turnAborted,
+      error: effectiveError,
+    });
+    if (resultEntry !== null) {
+      await safeAppendWithMeta(input.conversationId, resultEntry);
+    }
   }
 
   // Persist a typed `debug_structured` block when a debug-mode turn produced
   // a structured output. Backend-agnostic — both Claude (SDK-validated) and
   // Codex (parsed JSON) reach here with structuredOutput populated. The block
   // merges with the preceding assistant text via readConversationMessages,
-  // letting the renderer dispatch on `phase`. The value comes from the shared
-  // gate when the gate ran (extraction may have parsed it from `text`), else
-  // from the backend's natively-populated turnResult.
+  // letting the renderer dispatch on `phase`. The value is the completed
+  // outcome's structuredOutput — the shared gate may have parsed it from
+  // `text`, else it is the backend's natively-populated payload.
   if (
     input.debugMode?.active === true &&
     effectiveStructuredOutput != null &&
@@ -2544,45 +1815,42 @@ export async function executePromptForMachine(
     });
   }
 
-  // R8.4: record which charter version this conversation's turn ran with, for
-  // stale detection. The runtime carries the version actually baked in. Only
+  // R8.4: the runtime carries the charter version actually baked in. Only
   // attended normal-session turns are alignment-eligible, so project/optimistic/
   // autonomous turns leave the seen-version untouched.
-  if (alignmentEligibleThisTurn && turnResult && backendRuntime) {
-    await deps.mutateConversation(
-      input.projectPath,
-      input.sessionName,
-      input.conversationId,
-      "prompt.recordSeenAlignmentVersion",
-      (c) => {
-        c.lastSeenAlignmentVersion = backendRuntime!.alignmentVersion;
-      },
-    );
+  if (alignmentEligibleThisTurn && backendRuntime) {
+    await recordSeenAlignmentVersion(deps, {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      seenAlignmentVersion: backendRuntime.alignmentVersion,
+    });
   }
 
   // Build result. structuredOutput and error come from the shared gate when
   // it ran; this ensures both streaming and task_run paths surface the same
   // validation outcome.
   const result: PromptActorResult = {
-    backendRef: turnResult?.backendRef ?? null,
-    costUsd: turnResult?.costUsd ?? null,
-    durationMs: turnResult?.durationMs ?? null,
-    numTurns: turnResult?.numTurns ?? null,
-    contextTokens: turnResult?.contextTokens ?? null,
-    contextWindow: turnResult?.contextWindowMax ?? null,
-    inputTokens: agentCallResult?.usage.inputTokens ?? null,
-    outputTokens: agentCallResult?.usage.outputTokens ?? null,
-    cachedInputTokens: agentCallResult?.usage.cachedInputTokens ?? null,
-    contentBlocks: turnResult?.contentBlocks ?? contentBlocks,
+    backendRef: callResult.backendRef,
+    costUsd: callResult.usage.costUsd ?? null,
+    durationMs: callResult.usage.durationMs ?? null,
+    numTurns: resultNumTurns,
+    contextTokens: callResult.usage.contextTokens ?? null,
+    contextWindow: callResult.usage.contextWindowMax ?? null,
+    inputTokens: callResult.usage.inputTokens ?? null,
+    outputTokens: callResult.usage.outputTokens ?? null,
+    cachedInputTokens: callResult.usage.cachedInputTokens ?? null,
+    contentBlocks: resultContentBlocks,
     structuredOutput: effectiveStructuredOutput,
-    aborted: turnResult?.aborted ?? false,
-    compacted: turnResult?.compacted ?? false,
-    ...(turnResult?.aborted && timeoutFired
+    aborted: turnAborted,
+    compacted: callResult.compacted ?? false,
+    ...(turnAborted && abortWiring.timeoutFired()
       ? { abortReason: "timeout" as const, timeoutMs }
       : {}),
     error: effectiveError,
-    ...(turnResult?.backgroundWait !== undefined
-      ? { backgroundWait: turnResult.backgroundWait }
+    continuationDisposition,
+    ...(callResult.backgroundWait !== undefined
+      ? { backgroundWait: callResult.backgroundWait }
       : {}),
   };
 
@@ -2614,6 +1882,7 @@ export async function runTaskRunTurnForMachine(
   input: RunTaskRunInput,
 ): Promise<PromptActorResult> {
   const deps = await getDeps();
+  const transcriptProjection = getTaskTranscriptProjection(input.agentBackend);
 
   const projectName =
     input.projectName || deps.getProjectDisplayName(input.projectPath);
@@ -2647,6 +1916,8 @@ export async function runTaskRunTurnForMachine(
     prompt: effectivePrompt,
     backend: input.agentBackend,
     writeCapability: "write_capable",
+    ...(input.modelId != null ? { modelId: input.modelId } : {}),
+    ...(input.effort != null ? { reasoningEffort: input.effort } : {}),
     ...(input.outputFormat?.type === "json_schema"
       ? { outputSchema: input.outputFormat.schema }
       : {}),
@@ -2657,17 +1928,6 @@ export async function runTaskRunTurnForMachine(
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
   };
 
-  const codexHardenedSettings =
-    input.agentBackend === "codex"
-      ? {
-          sandboxMode: "danger-full-access" as const,
-          approvalPolicy: "never" as const,
-          webSearchMode: "disabled" as const,
-          skipGitRepoCheck: true,
-          networkAccessEnabled: true,
-        }
-      : {};
-
   // Register the run in the conversations abort-registry so a workflow
   // abort/pause/halt (which fires abortConversation for lane conversations)
   // tears down the live task-run instead of letting it burn to completion.
@@ -2675,24 +1935,25 @@ export async function runTaskRunTurnForMachine(
   const abortController = new AbortController();
   deps.registerAbortController(input.conversationId, abortController);
 
+  // Semantic execution intent: the facade resolves the runner and capability
+  // view from the registry (`deps.getTaskRunner` stays the DI seam for tests).
   const facadeDeps: AgentCallFacadeDeps = {
-    resolveTaskRunner: () => ({
-      runner: deps.getTaskRunner(input.agentBackend),
-      capabilityView: capabilityViewForBackend(input.agentBackend),
+    taskExecution: {
       workingDirectory: input.worktreePath,
       autonomous: true,
       signal: abortController.signal,
-      ...(input.modelId != null ? { modelId: input.modelId } : {}),
-      ...(input.effort != null ? { reasoningEffort: input.effort } : {}),
       ...(input.backendRef !== null ? { resumeRef: input.backendRef } : {}),
       ...(input.timeoutMs !== undefined
         ? { defaultTimeoutMs: input.timeoutMs }
         : {}),
-      ...codexHardenedSettings,
-    }),
-    ...(input.skipStructuredOutputGate
-      ? { validateStructuredOutput: () => ({ valid: true }) }
-      : {}),
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never",
+      webSearchMode: "disabled",
+      skipGitRepoCheck: true,
+      networkAccessEnabled: true,
+    },
+    getTaskRunner: (backend) => deps.getTaskRunner(backend),
+    getFailureClassifier: resolveFailureClassifierForBackend,
   };
 
   logger.info("task_run.dispatch", {
@@ -2714,21 +1975,11 @@ export async function runTaskRunTurnForMachine(
       conversationId: input.conversationId,
       error: errorMsg,
     });
-    return {
-      backendRef: null,
-      costUsd: null,
-      durationMs: null,
-      numTurns: null,
-      contextTokens: null,
-      contextWindow: null,
-      inputTokens: null,
-      outputTokens: null,
-      cachedInputTokens: null,
+    return buildFailedTurnResult({
       contentBlocks: [],
-      aborted: false,
-      compacted: false,
       error: errorMsg,
-    };
+      continuationDisposition: "retain",
+    });
   } finally {
     deps.unregisterAbortController(input.conversationId, abortController);
   }
@@ -2761,15 +2012,8 @@ export async function runTaskRunTurnForMachine(
       : [];
 
     if (contentBlocks.length > 0) {
-      // For Codex, attach the threadId returned by the backend as turn
-      // metadata on the assistant TranscriptMessage so downstream readers can
-      // discover thread continuity from the transcript itself rather than
-      // from a separate side artifact. Storing it here keeps `conversationId`
-      // as the primary identity and treats the threadId as resumption hint.
       const rawMetadata =
-        backendRef?.backend === "codex"
-          ? { backend: "codex" as const, threadId: backendRef.threadId }
-          : undefined;
+        transcriptProjection.projectAssistantMetadata(backendRef);
       await deps.safeAppendTranscriptEntry(
         input.conversationId,
         {
@@ -2811,6 +2055,7 @@ export async function runTaskRunTurnForMachine(
       aborted: false,
       compacted: false,
       error: null,
+      continuationDisposition: result.continuationDisposition ?? "retain",
     };
   }
 
@@ -2841,6 +2086,7 @@ export async function runTaskRunTurnForMachine(
       aborted: failureKind === "aborted",
       compacted: false,
       error: errorMsg,
+      continuationDisposition: result.continuationDisposition ?? "retain",
     };
   }
 
@@ -2865,6 +2111,7 @@ export async function runTaskRunTurnForMachine(
     aborted: false,
     compacted: false,
     error: "task_run produced unexpected paused outcome",
+    continuationDisposition: result.continuationDisposition ?? "retain",
   };
 }
 
@@ -2876,10 +2123,14 @@ export async function runTaskRunTurnForMachine(
  */
 export async function verifyCleanupForMachine(
   input: VerifyCleanupInput,
+  signal?: AbortSignal,
 ): Promise<VerifyCleanupOutput> {
   const [{ verifyCleanupAgainstManifest, deleteManifest }] = await Promise.all([
     import("@/lib/debug-log/service"),
   ]);
+  if (signal?.aborted) {
+    throw new Error("Cleanup verification aborted");
+  }
 
   const verification = verifyCleanupAgainstManifest(
     input.worktreePath,
@@ -2888,6 +2139,9 @@ export async function verifyCleanupForMachine(
   );
 
   if (verification.ok) {
+    if (signal?.aborted) {
+      throw new Error("Cleanup verification aborted");
+    }
     deleteManifest(input.worktreePath, input.conversationId);
     logger.info("debug.cleanup_verified", {
       conversationId: input.conversationId,

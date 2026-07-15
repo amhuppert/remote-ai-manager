@@ -526,14 +526,12 @@ describe("useGenericRenameConversationMutation", () => {
     const client = makeClient();
     const activeKey = conversationKeys.active();
     const projectListKey = projectConversationKeys.list("p");
-    const openCountKey = projectConversationKeys.openCount("p");
     const sessionListKey = conversationKeys.list("p", "s");
     client.setQueryData<ActiveConversationsResponse>(
       activeKey,
       activeResponse([activeProjectConvo({ id: "pc1", name: "old" })]),
     );
     client.setQueryData(projectListKey, []);
-    client.setQueryData(openCountKey, { count: 1 });
     client.setQueryData(sessionListKey, []);
     fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
 
@@ -552,7 +550,6 @@ describe("useGenericRenameConversationMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(true);
-      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(false);
     });
   });
@@ -562,7 +559,6 @@ describe("useGenericRenameConversationMutation", () => {
     const activeKey = conversationKeys.active();
     const sessionListKey = conversationKeys.list("p", "s");
     const projectListKey = projectConversationKeys.list("p");
-    const openCountKey = projectConversationKeys.openCount("p");
     client.setQueryData<ConversationState[]>(sessionListKey, [
       conversation({ id: "c1", name: "old" }),
     ]);
@@ -571,7 +567,6 @@ describe("useGenericRenameConversationMutation", () => {
       activeResponse([activeConvo({ id: "c1", name: "old" })]),
     );
     client.setQueryData(projectListKey, []);
-    client.setQueryData(openCountKey, { count: 1 });
     fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
 
     const { result } = renderHook(
@@ -595,7 +590,6 @@ describe("useGenericRenameConversationMutation", () => {
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(false);
-      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(false);
     });
   });
 });
@@ -726,7 +720,6 @@ describe("useGenericArchiveConversationMutation", () => {
     const client = makeClient();
     const activeKey = conversationKeys.active();
     const projectListKey = projectConversationKeys.list("p");
-    const openCountKey = projectConversationKeys.openCount("p");
     const sessionListKey = conversationKeys.list("p", "s");
     client.setQueryData<ActiveConversationsResponse>(
       activeKey,
@@ -736,7 +729,6 @@ describe("useGenericArchiveConversationMutation", () => {
       ]),
     );
     client.setQueryData(projectListKey, []);
-    client.setQueryData(openCountKey, { count: 2 });
     client.setQueryData(sessionListKey, []);
 
     let resolveFetch: (res: Response) => void = () => {};
@@ -767,7 +759,6 @@ describe("useGenericArchiveConversationMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(true);
-      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(false);
     });
   });
@@ -777,7 +768,6 @@ describe("useGenericArchiveConversationMutation", () => {
     const activeKey = conversationKeys.active();
     const sessionListKey = conversationKeys.list("p", "s");
     const projectListKey = projectConversationKeys.list("p");
-    const openCountKey = projectConversationKeys.openCount("p");
     client.setQueryData<ConversationState[]>(sessionListKey, [
       conversation({ id: "c1", archived: false }),
     ]);
@@ -786,7 +776,6 @@ describe("useGenericArchiveConversationMutation", () => {
       activeResponse([activeConvo({ id: "c1" })]),
     );
     client.setQueryData(projectListKey, []);
-    client.setQueryData(openCountKey, { count: 1 });
     fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
 
     const { result } = renderHook(
@@ -810,7 +799,6 @@ describe("useGenericArchiveConversationMutation", () => {
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(false);
-      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(false);
     });
   });
 

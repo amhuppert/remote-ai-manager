@@ -8,7 +8,7 @@ import {
   type PendingToolBlock,
   type ToolUseBlock,
 } from "./tool-dispatcher";
-import type { ResolvedCollaborationConfig } from "@/lib/workflows/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 
 function resolvedConfigFixture(): ResolvedCollaborationConfig {
   return {

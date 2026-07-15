@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
@@ -192,14 +193,6 @@ function workflowEditFailure(
   result: Exclude<CliRequestResult, { kind: "ok" }>,
   json: boolean,
 ): CliResult {
-  if (result.kind === "error" && result.status === 404) {
-    return failure({
-      exitCode: EXIT_USAGE,
-      message: result.error,
-      ...structuredErrorFields(result),
-      json,
-    });
-  }
   if (result.kind === "error" && result.status === 400) {
     const semantic = result.code !== undefined;
     const detail =
@@ -216,7 +209,7 @@ function workflowEditFailure(
       json,
     });
   }
-  return failureFromRequest(result, json);
+  return failureFromRequestNotFoundAsUsage(result, json);
 }
 
 /**
@@ -247,10 +240,7 @@ function workflowLiveFailure(
       json,
     });
   }
-  if (
-    result.kind === "error" &&
-    (result.status === 400 || result.status === 404)
-  ) {
+  if (result.kind === "error" && result.status === 400) {
     return failure({
       exitCode: EXIT_USAGE,
       message: result.error,
@@ -258,7 +248,7 @@ function workflowLiveFailure(
       json,
     });
   }
-  return failureFromRequest(result, json);
+  return failureFromRequestNotFoundAsUsage(result, json);
 }
 
 export async function runWorkflow(
@@ -268,59 +258,34 @@ export async function runWorkflow(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
   // `workflow execution …` and `workflow exec …` are dispatch-rewrite aliases
-  // for `workflow live …` (doc 06, D10) — one implementation, one help node.
-  const sub = rest[0] === "execution" || rest[0] === "exec" ? "live" : rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "workflow requires a subcommand: validate, create, replace, edit, list, get, status, delete, start, templates, live, task, shared-doc, or collab",
-      json,
-    );
-  }
-  if (sub === "live") {
-    return runWorkflowLive(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "task") {
-    return runWorkflowTask(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "shared-doc") {
-    return runWorkflowSharedDoc(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "collab") {
-    return runWorkflowCollab(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "validate") {
-    return runWorkflowValidate(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "create") {
-    return runWorkflowCreate(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "replace") {
-    return runWorkflowReplace(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "edit") {
-    return runWorkflowEdit(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "list") {
-    return runWorkflowList(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "get") {
-    return runWorkflowGet(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "status") {
-    return runWorkflowStatus(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "delete") {
-    return runWorkflowDelete(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "start") {
-    return runWorkflowStart(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "templates") {
-    return runWorkflowTemplates(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown workflow subcommand "${sub}"`, json);
+  // for `workflow live …` (doc 06, D10) — one implementation, one help node. The
+  // aliases carry no registry entry, so rewrite before dispatch.
+  const rewritten =
+    rest[0] === "execution" || rest[0] === "exec"
+      ? ["live", ...rest.slice(1)]
+      : rest;
+  return dispatchGroup({
+    group: ["workflow"],
+    rest: rewritten,
+    json: flags.json,
+    handlers: {
+      validate: (r) => runWorkflowValidate(r, flags, values, env, host),
+      create: (r) => runWorkflowCreate(r, flags, values, env, host),
+      replace: (r) => runWorkflowReplace(r, flags, values, env, host),
+      list: (r) => runWorkflowList(r, flags, values, env, host),
+      get: (r) => runWorkflowGet(r, flags, values, env, host),
+      edit: (r) => runWorkflowEdit(r, flags, values, env, host),
+      status: (r) => runWorkflowStatus(r, flags, values, env, host),
+      start: (r) => runWorkflowStart(r, flags, values, env, host),
+      delete: (r) => runWorkflowDelete(r, flags, values, env, host),
+      templates: (r) => runWorkflowTemplates(r, flags, values, env, host),
+      live: (r) => runWorkflowLive(r, flags, values, env, host),
+      task: (r) => runWorkflowTask(r, flags, values, env, host),
+      "shared-doc": (r) => runWorkflowSharedDoc(r, flags, values, env, host),
+      collab: (r) => runWorkflowCollab(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runWorkflowValidate(
@@ -1080,27 +1045,17 @@ async function runWorkflowLive(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "workflow live requires a subcommand: get, edit, pause, or resume",
-      json,
-    );
-  }
-  if (sub === "get") {
-    return runWorkflowLiveGet(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "edit") {
-    return runWorkflowLiveEdit(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "pause") {
-    return runWorkflowLivePause(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "resume") {
-    return runWorkflowLiveResume(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown workflow live subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["workflow", "live"],
+    rest,
+    json: flags.json,
+    handlers: {
+      get: (r) => runWorkflowLiveGet(r, flags, values, env, host),
+      edit: (r) => runWorkflowLiveEdit(r, flags, values, env, host),
+      pause: (r) => runWorkflowLivePause(r, flags, values, env, host),
+      resume: (r) => runWorkflowLiveResume(r, flags, values, env, host),
+    },
+  });
 }
 
 /** The endpoint body's `section` slice value, for pretty-printing a selector. */
@@ -1345,21 +1300,15 @@ async function runWorkflowTask(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "workflow task requires a subcommand: complete or add",
-      json,
-    );
-  }
-  if (sub === "complete") {
-    return runWorkflowTaskComplete(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "add") {
-    return runWorkflowTaskAdd(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown workflow task subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["workflow", "task"],
+    rest,
+    json: flags.json,
+    handlers: {
+      complete: (r) => runWorkflowTaskComplete(r, flags, values, env, host),
+      add: (r) => runWorkflowTaskAdd(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runWorkflowTaskComplete(
@@ -1421,23 +1370,26 @@ async function runWorkflowTaskComplete(
     : undefined;
   const reminders = parsed.success ? parsed.data.reminders : undefined;
 
-  const envelope: JsonEnvelope = { ok: true, remainingTaskCount: remaining };
-  const humanLines = [`completed ${taskId}`];
-  if (stopInstruction !== undefined) {
-    // Load-bearing stop: primary output that REPLACES the remaining-count hint —
-    // a "continue" hint must never sit beside a "stop" instruction (doc 01 §6).
-    envelope.stopInstruction = stopInstruction;
-    humanLines.push(stopInstruction);
-  } else {
-    envelope.hint = remainingTasksHint(remaining);
-  }
-  // Tier-2 reminders render after the primary output (and any stop
-  // instruction), before the hint — `render()` places them (doc 04 §5.1).
-  if (reminders && reminders.length > 0) envelope.reminders = reminders;
+  // A load-bearing stop (mid-turn context rotation) is primary output: it prints
+  // in the body verbatim. The tier arbitration — that the remaining-count hint is
+  // suppressed whenever a stop instruction is present, in both text and JSON — is
+  // owned by `render` (doc 01 §6), so pass both `stopInstruction` and the `hint`
+  // and let the renderer drop the hint.
+  const humanBody =
+    stopInstruction !== undefined
+      ? `completed ${taskId}\n${stopInstruction}\n`
+      : `completed ${taskId}\n`;
+  const envelope: JsonEnvelope = {
+    ok: true,
+    remainingTaskCount: remaining,
+    hint: remainingTasksHint(remaining),
+    ...(stopInstruction !== undefined ? { stopInstruction } : {}),
+    ...(reminders && reminders.length > 0 ? { reminders } : {}),
+  };
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${humanLines.join("\n")}\n`, envelope),
+    stdout: render(json, humanBody, envelope),
     stderr: "",
   };
 }
@@ -1504,18 +1456,14 @@ async function runWorkflowSharedDoc(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "workflow shared-doc requires a subcommand: upsert",
-      json,
-    );
-  }
-  if (sub === "upsert") {
-    return runWorkflowSharedDocUpsert(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown workflow shared-doc subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["workflow", "shared-doc"],
+    rest,
+    json: flags.json,
+    handlers: {
+      upsert: (r) => runWorkflowSharedDocUpsert(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runWorkflowSharedDocUpsert(
@@ -1603,15 +1551,14 @@ async function runWorkflowCollab(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure("workflow collab requires a subcommand: request", json);
-  }
-  if (sub === "request") {
-    return runWorkflowCollabRequest(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown workflow collab subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["workflow", "collab"],
+    rest,
+    json: flags.json,
+    handlers: {
+      request: (r) => runWorkflowCollabRequest(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runWorkflowCollabRequest(

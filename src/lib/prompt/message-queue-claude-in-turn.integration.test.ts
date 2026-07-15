@@ -21,10 +21,7 @@ import type {
   ConversationBackendRuntime,
   ConversationQueuedUserInput,
 } from "@/lib/agent-backends/conversation";
-import {
-  backendCapabilities,
-  queueCapabilityForBackend,
-} from "@/lib/agent-backends/capabilities-descriptor";
+import { queueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 
 import {
   createMessageQueueService,
@@ -124,7 +121,6 @@ function makeAcceptingClaudeRuntime(): {
   const runtime: ConversationBackendRuntime = {
     backend: "claude",
     status: "alive",
-    capabilities: backendCapabilities("claude"),
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,

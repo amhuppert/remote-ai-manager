@@ -20,16 +20,18 @@ import {
   classifyExecutionEditability,
 } from "@/lib/workflow-graph/lifecycle-classifier";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  ResolvedCollaborationConfig,
+  WorkflowCollaborationConfig,
+} from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
-  GraphWorkflowExecution,
   GraphWorkflowIterationPolicy,
-  ResolvedCollaborationConfig,
-  WorkflowCollaborationConfig,
-  WorkflowLiveEditOperation,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/config-schemas";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 
 const BLOCK = "rounded-md border border-solid border-border-subtle bg-bg-base";
 const BLOCK_HEADER = "flex items-center gap-[10px] px-[14px] py-[10px]";

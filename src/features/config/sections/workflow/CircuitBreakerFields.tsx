@@ -1,4 +1,4 @@
-import type { GraphWorkflowCircuitBreakerPolicy } from "@/lib/workflows/schemas";
+import type { GraphWorkflowCircuitBreakerPolicy } from "@/lib/workflow-graph/config-schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigNumericInput } from "../../components/ConfigNumericInput";
 

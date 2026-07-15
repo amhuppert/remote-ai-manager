@@ -7,7 +7,7 @@ import {
   useSidebarSessionFilter,
   useSetSidebarSessionFilter,
 } from "@/stores/session-detail.store";
-import { useSidebarActiveListFilter } from "@/features/session/hooks/use-sidebar-persistent-filters";
+import { useSidebarActiveListFilter } from "@/hooks/use-sidebar-persistent-filters";
 import {
   useOpenTabs,
   type OpenTabsApi,

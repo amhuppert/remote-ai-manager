@@ -4,6 +4,7 @@ import {
   createFindConversationById,
   type ListAllConversationsDeps,
 } from "./cross-project-list";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import type { ConversationState } from "./schemas";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
@@ -87,6 +88,8 @@ function makeDeps(
 ): ListAllConversationsDeps {
   return {
     readState: overrides.readState ?? (async () => makeState({ projects: {} })),
+    listAllProjectConversations:
+      overrides.listAllProjectConversations ?? (async () => []),
     getFirstPromptSnippet:
       overrides.getFirstPromptSnippet ?? (async () => null),
     findArtifactsByConversationIds:
@@ -381,7 +384,7 @@ describe("listAllConversations", () => {
                 status: "running",
                 lastActivityAt: "2024-06-01T12:00:00Z",
                 agentBackend: "codex",
-                backendRef: { backend: "codex", threadId: "thread-xyz" },
+                backendRef: { backend: "codex", ref: "thread-xyz" },
                 transcriptPath: "/t/c1.jsonl",
                 debugMode: {
                   active: true,
@@ -412,7 +415,7 @@ describe("listAllConversations", () => {
       conversationId: "c1",
       conversationName: "Detailed",
       backend: "codex",
-      backendRef: { backend: "codex", threadId: "thread-xyz" },
+      backendRef: { backend: "codex", ref: "thread-xyz" },
       transcriptPath: "/t/c1.jsonl",
       debugLogPath: "/d/c1.log",
       status: "running",
@@ -429,6 +432,143 @@ describe("listAllConversations", () => {
     const result = await listAll({ includeArchived: false });
     expect(result.items).toEqual([]);
     expect(result.totalCount).toBe(0);
+  });
+});
+
+describe("listAllConversations project conversations", () => {
+  it("emits project conversations with the sentinel session name and project-root worktree", async () => {
+    const state = makeState({
+      projects: {
+        "/repos/awesome-app": {
+          rootPath: "/repos/awesome-app",
+          sessions: {
+            s1: makeSession(
+              "s1",
+              [makeConversation({ id: "session-c1", name: "Session convo" })],
+              false,
+              "/repos/awesome-app",
+            ),
+          },
+        },
+      },
+    });
+
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        listAllProjectConversations: async () => [
+          {
+            projectPath: "/repos/awesome-app",
+            conversation: makeConversation({
+              id: "plc-1",
+              name: "Project convo",
+              scope: "project",
+            }),
+          },
+        ],
+      }),
+    );
+
+    const { items, totalCount } = await listAll({ includeArchived: false });
+    expect(totalCount).toBe(2);
+    const plc = items.find((i) => i.conversationId === "plc-1");
+    expect(plc).toMatchObject({
+      projectName: "awesome-app",
+      projectPath: "/repos/awesome-app",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      worktreePath: "/repos/awesome-app",
+      conversationName: "Project convo",
+    });
+  });
+
+  it("filters archived project conversations and archived projects unless includeArchived", async () => {
+    const state = makeState({
+      projects: {
+        "/projects/live": { rootPath: "/projects/live", sessions: {} },
+      },
+      archivedProjects: ["/projects/archived"],
+    });
+    const projectConversations = async () => [
+      {
+        projectPath: "/projects/live",
+        conversation: makeConversation({ id: "plc-live", scope: "project" }),
+      },
+      {
+        projectPath: "/projects/live",
+        conversation: makeConversation({
+          id: "plc-archived",
+          scope: "project",
+          archived: true,
+        }),
+      },
+      {
+        projectPath: "/projects/archived",
+        conversation: makeConversation({
+          id: "plc-in-archived-project",
+          scope: "project",
+        }),
+      },
+    ];
+
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        listAllProjectConversations: projectConversations,
+      }),
+    );
+
+    const excluded = await listAll({ includeArchived: false });
+    expect(excluded.items.map((i) => i.conversationId)).toEqual(["plc-live"]);
+
+    const included = await listAll({ includeArchived: true });
+    expect(included.items.map((i) => i.conversationId).sort()).toEqual([
+      "plc-archived",
+      "plc-in-archived-project",
+      "plc-live",
+    ]);
+  });
+
+  it("enriches unnamed project conversations with first-prompt snippets and batches their artifact lookup", async () => {
+    const state = makeState({
+      projects: {
+        "/projects/a": {
+          rootPath: "/projects/a",
+          sessions: {
+            s1: makeSession("s1", [
+              makeConversation({ id: "session-c1", name: "Named" }),
+            ]),
+          },
+        },
+      },
+    });
+    const artifactCalls: string[][] = [];
+    const listAll = createListAllConversations(
+      makeDeps({
+        readState: async () => state,
+        listAllProjectConversations: async () => [
+          {
+            projectPath: "/projects/a",
+            conversation: makeConversation({
+              id: "plc-1",
+              scope: "project",
+              name: null,
+              summary: null,
+              transcriptPath: "/t/plc-1.jsonl",
+            }),
+          },
+        ],
+        getFirstPromptSnippet: async (path) => `snippet for ${path}`,
+        findArtifactsByConversationIds: (ids) => {
+          artifactCalls.push(ids);
+          return [];
+        },
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    const plc = items.find((i) => i.conversationId === "plc-1");
+    expect(plc?.firstPromptSnippet).toBe("snippet for /t/plc-1.jsonl");
+    expect(artifactCalls).toEqual([["session-c1", "plc-1"]]);
   });
 });
 

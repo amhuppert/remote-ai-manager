@@ -11,8 +11,8 @@
  * Calls flow through `WorkflowAgentCaller` (not bare `executeAgentCall`) so
  * each phase participates in the same lane bookkeeping, post-turn outcome
  * recording, and continuity handling that the rest of workflow agent activity
- * uses. The envelope owns the workflow-scoped `LaneService` and seeds two
- * lanes (`claude`, `codex`) before the first call; subsequent calls reuse
+ * uses. The envelope owns the workflow-scoped `LaneService` and seeds the
+ * configured backend pair before the first call; subsequent calls reuse
  * those lanes through `agent_one`'s and `agent_two`'s opposite-backend
  * mapping. This is what wires collaboration sub-calls into the "normal
  * workflow agent activity" path observable by the lane service, SSE status
@@ -39,13 +39,16 @@
  */
 
 import { createLogger } from "@/lib/logging";
-import type { AgentBackendId } from "@/lib/agent-backends/types";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  buildCollaborationLaneSeeds,
+  oppositeCollaborationBackend,
+} from "@/lib/workflows/collaboration/backend-pair";
 import type {
   AgentCallRequest,
   AgentCallResult,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
-import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
 import type { WorkflowAgentCaller } from "@/lib/workflows/primitives/workflow-agent-caller";
 import {
   buildAgentOneFinalAnswerPrompt,
@@ -82,7 +85,7 @@ import {
   collaborationResolutionDecisionContentSchema,
   collaborationResolutionDecisionOutputSchema,
   type ResolvedCollaborationConfig,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/collaboration-schemas";
 
 const logger = createLogger("workflow-graph.workflow-collaborator-caller");
 
@@ -133,10 +136,6 @@ const AGENT_ONE_FINAL_ANSWER_SYSTEM_INSTRUCTIONS = [
   'Set answer_artifact_id="answer" and audit_artifact_id="audit".',
 ].join("\n");
 
-function oppositeBackend(backend: AgentBackendId): AgentBackendId {
-  return backend === "claude" ? "codex" : "claude";
-}
-
 export interface WorkflowCollaboratorCallerInput {
   resolvedConfig: ResolvedCollaborationConfig;
   worktreePath: string;
@@ -174,7 +173,7 @@ export function createWorkflowCollaboratorCaller(
 ): WorkflowCollaborationCollaboratorCaller {
   const agentTwoConfig = input.resolvedConfig.secondAgent.value;
   const agentTwoBackend = agentTwoConfig.backend;
-  const agentOneBackend = oppositeBackend(agentTwoBackend);
+  const agentOneBackend = oppositeCollaborationBackend(agentTwoBackend);
   // Resolved per-field config from `resolveCollaborationConfigWithProvenance`
   // configures agent_two only; agent_one runs on the opposite backend without
   // explicit overrides so the underlying task runner uses its defaults.
@@ -186,36 +185,20 @@ export function createWorkflowCollaboratorCaller(
   async function ensureLanesInitialized(): Promise<void> {
     if (lanesInitialized) return;
     const seedTs = now();
-    const claudeLane: LaneState = {
+    const laneSeeds = buildCollaborationLaneSeeds({
       workflowId: input.workflowId,
-      laneId: "claude",
-      backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: false },
-      backendState: { backend: "claude" },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
       lastUsedAt: seedTs,
-    };
-    const codexLane: LaneState = {
-      workflowId: input.workflowId,
-      laneId: "codex",
-      backend: "codex",
-      writeCapability: "write_capable",
-      policy: { continuityEnabled: false },
-      backendState: { backend: "codex" },
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
-      lastUsedAt: seedTs,
-    };
-    const existingClaude = await input.laneService.resolve({
-      workflowId: claudeLane.workflowId,
-      laneId: claudeLane.laneId,
+      seedRefFor: () => null,
     });
-    if (!existingClaude) await input.laneService.initialize(claudeLane);
-    const existingCodex = await input.laneService.resolve({
-      workflowId: codexLane.workflowId,
-      laneId: codexLane.laneId,
-    });
-    if (!existingCodex) await input.laneService.initialize(codexLane);
+    for (const lane of laneSeeds) {
+      const existing = await input.laneService.resolve({
+        workflowId: lane.workflowId,
+        laneId: lane.laneId,
+      });
+      if (!existing) await input.laneService.initialize(lane);
+    }
     lanesInitialized = true;
   }
 

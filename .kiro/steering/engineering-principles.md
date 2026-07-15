@@ -28,9 +28,12 @@ Mocking internal modules tests wiring between fakes, not behavior. Use DI.
 |---|---|---|
 | Factory `createX(deps)` | Small surface, clear constructor moment | `src/lib/prompt/sdk-driver.ts` |
 | XState `.provide()` | Workflow actors/actions | `src/lib/workflows/conversation/actor-implementations.ts` |
-| Setter `setXxxDeps()` + `_resetDepsForTesting()` | Module-scoped singletons, many call sites | `src/lib/dev-server/liveness.ts`, `src/lib/workflows/actions.ts` |
+| Setter `setXxxDeps()` + `_resetDepsForTesting()` | Module-scoped singletons, many call sites | `src/lib/dev-server/liveness.ts`, `src/lib/workflows/conversation/actor-implementations.ts` |
+| Fetch fixture + injectable QueryClient | Component/hook tests over React Query | `src/test/fetch-fixture.ts`, `src/test/component-mocks.tsx` (`renderWithQuery`/`createTestQueryClient`) |
 
 `vi.mock()` is acceptable **only** for module-load-time infrastructure (`@/lib/logging`'s `createLogger()`, `@/lib/sdk-env`). Anywhere else = wrong dependency boundary; extract a pure function.
+
+**Client (component/hook) tests never `vi.mock` internal query/mutation/store modules.** Run the real hooks — real React Query, real `src/lib/api/fetcher.ts` validation, real Zod schemas, real Zustand stores — and fake only the genuinely-external network boundary with `installFetchFixture()` from `@/test/fetch-fixture` (register routes, assert mutations by observing the wire). Client state (Zustand) is owned code, not a boundary: use the real store; seed or read its state, don't mock it. External framework modules (`next/link`, `next/navigation`) and browser-only integration hooks (voice/hotkey) may keep their `@/test/component-mocks` stubs — those are not internal seams.
 
 Deps interfaces use **method syntax** (bivariant), not property syntax:
 
@@ -50,22 +53,24 @@ Test smell: assertions that only verify "mock A called when mock B returned X". 
 
 Value grows by adding sophisticated/autonomous workflows without codebase sprawl. New features earn complexity by being **composable**, not standalone.
 
-### Composable primitives, not feature silos
+### Composable modules, not feature silos
 
-Existing primitives: XState machines (`src/lib/workflows/`), graph engine (`src/lib/workflow-graph/`), agent backend abstraction, dual-validator model, iteration policy, circuit breaker, config cascade (global → workflow → per-context).
+**"Composable module"** is the umbrella term at every scale; **"primitive"** is reserved for the lowest level (`src/lib/workflows/primitives/`).
+
+Existing composable modules: the conversation-actor spine (`src/lib/workflows/conversation/`), the graph engine (`src/lib/workflow-graph/`), the agent backend abstraction (`src/lib/agent-backends/`), typed SSE publication (`src/lib/events/publication.ts`) with its private lifecycle projection, and the workflow primitives — AgentCall (`primitives/agent-call-facade.ts`), Lane (`lane-service`/`lane-scheduler`/`workflow-agent-caller`), ArtifactRegistry, WorkflowEnvelope, and the adopted gates (human-approval, circuit-breaker, context-limit, structured-output) — plus the dual-validator model, iteration policy, and config cascade (global → workflow → per-context). Per-concept adoption status (supported / experimental / migration-only, competing paths, deletion conditions): the adoption matrix in `.kiro/steering/workflows.md`.
 
 When adding workflow features:
 
 1. **Specify by what makes it different** — a new actor, validator type, or context shape, not a parallel orchestrator.
-2. **Reuse primitives** — `actions.ts`, `runtime-state.ts`, `persistence.ts`. Extend, don't fork.
+2. **Reuse composable modules** — the primitives above and the per-machine patterns in `conversation/{persistence,runtime-state}.ts`. Extend, don't fork; a competing path in the adoption matrix is a migration to finish, not a precedent to follow.
 3. **Push variation to the edges** — config cascade, validator `type` discriminators, and `.provide()` exist so the core stays small.
 
 If a feature can't be expressed as composition: surface it. Either the abstraction is missing or the scoping is wrong.
 
 ### Pre-implementation checklist for workflow features
 
-- Which existing primitives does it compose?
-- What is genuinely new and why can't it be expressed in existing primitives?
+- Which existing composable modules does it compose?
+- What is genuinely new and why can't it be expressed in existing modules?
 - Is the change additive (new actors/validator types/context blocks) or a structural rewrite?
 
 ---

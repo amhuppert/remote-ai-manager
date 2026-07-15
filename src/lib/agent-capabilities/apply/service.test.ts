@@ -12,16 +12,52 @@ import {
   type AffectedConversation,
   type ApplyConversationIdentity,
   type ApplyServiceDeps,
-  type ClaudeApplyPortInput,
-  type ClaudeApplyPortResult,
-  type CodexApplyPortInput,
-  type CodexApplyPortResult,
 } from ".";
-import type { ClaudeRuntimeCapabilityConfig } from "../claude-runtime-translator";
-import type { CodexRuntimeCapabilityConfig } from "../codex-runtime-translator";
+import type {
+  ResolvedCapabilityCascade,
+  ResolvedCapabilityKind,
+  RuntimeConfigApplyResult,
+} from "@/lib/agent-backends/runtime-config";
+import { decodeCascadeKind } from "../schemas";
 import type { ComposeConversationStartResult } from "../runtime-composer";
-import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "../claude-agent-suppression";
 import { computeCascadeRuntimeHash } from "../runtime-hashes";
+
+type ApplyRuntimeConfigInput = {
+  conversation: ApplyConversationIdentity;
+  resolved: ResolvedCapabilityCascade;
+};
+type ApplyRuntimeConfigPort = (
+  input: ApplyRuntimeConfigInput,
+) => Promise<RuntimeConfigApplyResult>;
+
+type CascadeRows = Partial<
+  Record<
+    AgentCapabilityCascadeKind,
+    { rows: readonly { itemId: string; enabled: boolean }[] }
+  >
+>;
+
+function capabilitiesFromCascades(
+  backend: AgentBackendId,
+  cascades: CascadeRows,
+): ResolvedCapabilityCascade {
+  const kinds: ResolvedCapabilityKind[] = [];
+  for (const [cascadeKind, val] of Object.entries(cascades) as [
+    AgentCapabilityCascadeKind,
+    { rows: readonly { itemId: string; enabled: boolean }[] } | undefined,
+  ][]) {
+    if (!val) continue;
+    kinds.push({
+      kind: decodeCascadeKind(cascadeKind).kind,
+      items: val.rows.map((row) => ({
+        itemId: row.itemId,
+        enabled: row.enabled,
+        originLayer: "global" as const,
+      })),
+    });
+  }
+  return { backend, kinds };
+}
 
 const claudeConversation = (
   overrides: Partial<AffectedConversation> = {},
@@ -63,21 +99,8 @@ const projectConversation = (
     ...overrides,
   }) as AffectedConversation;
 
-const defaultClaudeRuntime = (): ClaudeRuntimeCapabilityConfig => ({
-  enabledPlugins: {},
-  skillOverrides: { alpha: "off" },
-  disabledAgentNames: [],
-  agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
-});
-
 const buildClaudeComposition = (input: {
-  cascades: Partial<
-    Record<
-      AgentCapabilityCascadeKind,
-      { rows: readonly { itemId: string; enabled: boolean }[] }
-    >
-  >;
-  claudeRuntime?: ClaudeRuntimeCapabilityConfig;
+  cascades: CascadeRows;
   failedCascadeKinds?: readonly AgentCapabilityCascadeKind[];
 }): ComposeConversationStartResult => {
   const cascades: AgentCapabilityRuntimeApplicationState["cascades"] = {};
@@ -97,7 +120,7 @@ const buildClaudeComposition = (input: {
   }
   return {
     backend: "claude",
-    claudeRuntime: input.claudeRuntime ?? defaultClaudeRuntime(),
+    capabilities: capabilitiesFromCascades("claude", input.cascades),
     diagnostics: [],
     runtimeState: { cascades },
     views: {},
@@ -106,13 +129,7 @@ const buildClaudeComposition = (input: {
 };
 
 const buildCodexComposition = (input: {
-  cascades: Partial<
-    Record<
-      AgentCapabilityCascadeKind,
-      { rows: readonly { itemId: string; enabled: boolean }[] }
-    >
-  >;
-  codexConfig?: CodexRuntimeCapabilityConfig["config"];
+  cascades: CascadeRows;
   failedCascadeKinds?: readonly AgentCapabilityCascadeKind[];
 }): ComposeConversationStartResult => {
   const cascades: AgentCapabilityRuntimeApplicationState["cascades"] = {};
@@ -132,11 +149,7 @@ const buildCodexComposition = (input: {
   }
   return {
     backend: "codex",
-    codexRuntime: {
-      config:
-        input.codexConfig ?? ({} as CodexRuntimeCapabilityConfig["config"]),
-      applySemantics: "next-turn",
-    },
+    capabilities: capabilitiesFromCascades("codex", input.cascades),
     diagnostics: [],
     runtimeState: { cascades },
     views: {},
@@ -162,12 +175,7 @@ interface FakeDepsOptions {
   readRuntimeState?: () => Promise<
     AgentCapabilityRuntimeApplicationState | undefined
   >;
-  applyClaudeRuntime?: (
-    input: ClaudeApplyPortInput,
-  ) => Promise<ClaudeApplyPortResult>;
-  applyCodexRuntime?: (
-    input: CodexApplyPortInput,
-  ) => Promise<CodexApplyPortResult>;
+  applyRuntimeConfig?: ApplyRuntimeConfigPort;
 }
 
 interface FakeDepsHandles {
@@ -227,8 +235,7 @@ const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
           state: input.state,
         });
       }),
-      applyClaudeRuntime: opts.applyClaudeRuntime,
-      applyCodexRuntime: opts.applyCodexRuntime,
+      applyRuntimeConfig: opts.applyRuntimeConfig,
       metadataRegistry: opts.metadataRegistry,
     },
     writes,
@@ -248,8 +255,8 @@ describe("apply-after-mutation", () => {
     });
     const { deps, writes } = buildDeps({
       affected: [a, b],
-      applyClaudeRuntime: vi.fn(
-        async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+      applyRuntimeConfig: vi.fn(
+        async (): Promise<RuntimeConfigApplyResult> => ({ status: "applied" }),
       ),
     });
     const service = createCapabilityRuntimeApplyService(deps);
@@ -269,8 +276,8 @@ describe("apply-after-mutation", () => {
   it("passes changed item ids to affected conversation enumeration", async () => {
     const { deps } = buildDeps({
       affected: [claudeConversation()],
-      applyClaudeRuntime: vi.fn(
-        async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+      applyRuntimeConfig: vi.fn(
+        async (): Promise<RuntimeConfigApplyResult> => ({ status: "applied" }),
       ),
     });
     await createCapabilityRuntimeApplyService(deps).applyAfterOverrideChange({
@@ -286,13 +293,13 @@ describe("apply-after-mutation", () => {
   });
 
   it("Claude live-applies when idle and records applied", async () => {
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
       isTurnActive: () => false,
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
@@ -308,8 +315,14 @@ describe("apply-after-mutation", () => {
       }),
     ]);
     expect(port).toHaveBeenCalledTimes(1);
-    expect(port.mock.calls[0]?.[0].config.skillOverrides).toEqual({
-      alpha: "off",
+    expect(port.mock.calls[0]?.[0].resolved).toEqual({
+      backend: "claude",
+      kinds: [
+        {
+          kind: "skills",
+          items: [{ itemId: "alpha", enabled: false, originLayer: "global" }],
+        },
+      ],
     });
     expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
       appliedHash: expect.any(String),
@@ -318,9 +331,9 @@ describe("apply-after-mutation", () => {
   });
 
   it("Claude PLC live-applies when idle without synthetic session runtime state", async () => {
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const {
       deps,
       writes,
@@ -331,7 +344,7 @@ describe("apply-after-mutation", () => {
     } = buildDeps({
       affected: [projectConversation()],
       isTurnActive: () => false,
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
     });
 
     const result = await createCapabilityRuntimeApplyService(
@@ -378,9 +391,9 @@ describe("apply-after-mutation", () => {
   });
 
   it("routes each write to its own identity when a PLC and a session conversation are both affected (Req 17.4, 18.3)", async () => {
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [
         projectConversation({ conversationId: "plc-1" }),
@@ -390,7 +403,7 @@ describe("apply-after-mutation", () => {
         }),
       ],
       isTurnActive: () => false,
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
     });
 
     const result = await createCapabilityRuntimeApplyService(
@@ -426,13 +439,13 @@ describe("apply-after-mutation", () => {
   });
 
   it("Claude PLC with turn active records staged-idle", async () => {
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [projectConversation({ isTurnActive: true })],
       isTurnActive: () => true,
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
     });
 
     const result = await createCapabilityRuntimeApplyService(
@@ -456,9 +469,9 @@ describe("apply-after-mutation", () => {
   });
 
   it("Codex PLC stages cascade changes for next turn", async () => {
-    const port = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [
         projectConversation({
@@ -466,7 +479,7 @@ describe("apply-after-mutation", () => {
           backend: "codex",
         }),
       ],
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
@@ -505,13 +518,13 @@ describe("apply-after-mutation", () => {
       cascadeKind: "claude-skills",
       rows: [{ itemId: "alpha", enabled: false }],
     });
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
       isTurnActive: () => false,
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
           "claude-skills": {
@@ -539,13 +552,13 @@ describe("apply-after-mutation", () => {
   });
 
   it("Claude with turn active records staged-idle without calling the port", async () => {
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [claudeConversation({ isTurnActive: true })],
       isTurnActive: () => true,
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
@@ -566,12 +579,12 @@ describe("apply-after-mutation", () => {
   });
 
   it("stages codex-plugins changes for next turn without calling the runtime port", async () => {
-    const port = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [codexConversation()],
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
@@ -597,12 +610,12 @@ describe("apply-after-mutation", () => {
   });
 
   it("stages Codex cascade changes for next turn without calling the runtime port during mutation fanout", async () => {
-    const port = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [codexConversation()],
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
@@ -610,9 +623,6 @@ describe("apply-after-mutation", () => {
               rows: [{ itemId: "spec-init", enabled: false }],
             },
           },
-          codexConfig: {
-            verifiedSkillConfig: { "spec-init": false },
-          } as unknown as CodexRuntimeCapabilityConfig["config"],
         }),
     });
 
@@ -665,14 +675,14 @@ describe("apply-after-mutation", () => {
   it("preserves previous appliedHash when Claude apply is rejected", async () => {
     const prevAppliedHash = "prev-applied-hash";
     const port = vi.fn(
-      async (): Promise<ClaudeApplyPortResult> => ({
+      async (): Promise<RuntimeConfigApplyResult> => ({
         status: "rejected",
         error: "sdk reload failed",
       }),
     );
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
           "claude-skills": {
@@ -708,13 +718,13 @@ describe("apply-after-mutation", () => {
     const good = claudeConversation({ conversationId: "good" });
     const bad = claudeConversation({ conversationId: "bad" });
     const port = vi.fn(
-      async (): Promise<ClaudeApplyPortResult> => ({
+      async (): Promise<RuntimeConfigApplyResult> => ({
         status: "applied",
       }),
     );
     const { deps, writes } = buildDeps({
       affected: [good, bad],
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async (input) => {
         if (input.conversationId === "bad") {
           throw new Error("compose blew up");
@@ -921,7 +931,7 @@ describe("apply-after-mutation", () => {
     });
     const { deps, writes } = buildDeps({
       affected: [projectConversation({ conversationId: "plc-1" })],
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
           "claude-skills": {
@@ -966,12 +976,12 @@ describe("apply-after-mutation", () => {
       cascadeKind: "claude-plugins",
       rows: [{ itemId: "plugin:p", enabled: false }],
     });
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       affected: [projectConversation({ conversationId: "plc-1" })],
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       // claude-skills discovery failed for this composition; claude-plugins
       // composed cleanly. Only the failed cascade should fall back.
       composeForConversation: async () =>
@@ -1044,7 +1054,7 @@ describe("apply-after-mutation", () => {
 describe("apply-claude-idle-drain", () => {
   it("promotes staged-idle to applied on successful live-apply", async () => {
     const port = vi.fn(
-      async (): Promise<ClaudeApplyPortResult> => ({
+      async (): Promise<RuntimeConfigApplyResult> => ({
         status: "applied",
       }),
     );
@@ -1053,7 +1063,7 @@ describe("apply-claude-idle-drain", () => {
       rows: [{ itemId: "alpha", enabled: false }],
     });
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
           "claude-skills": {
@@ -1089,7 +1099,7 @@ describe("apply-claude-idle-drain", () => {
 
   it("keeps pending hash + items on failure and retains previous applied hash", async () => {
     const port = vi.fn(
-      async (): Promise<ClaudeApplyPortResult> => ({
+      async (): Promise<RuntimeConfigApplyResult> => ({
         status: "rejected",
         error: "boom",
       }),
@@ -1100,7 +1110,7 @@ describe("apply-claude-idle-drain", () => {
       rows: [{ itemId: "alpha", enabled: false }],
     });
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
           "claude-skills": {
@@ -1142,11 +1152,11 @@ describe("apply-claude-idle-drain", () => {
       rows: [{ itemId: "beta", enabled: false }],
     });
     expect(stagedHash).not.toEqual(driftedComposedHash);
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildClaudeComposition({
           cascades: {
@@ -1184,7 +1194,7 @@ describe("apply-claude-idle-drain", () => {
   it("is a no-op when no cascades are staged-idle", async () => {
     const port = vi.fn();
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
           "claude-skills": {
@@ -1262,12 +1272,12 @@ describe("apply-claude-idle-drain", () => {
       rows: [{ itemId: "alpha", enabled: false }],
     });
     const port = vi.fn(
-      async (): Promise<ClaudeApplyPortResult> => ({
+      async (): Promise<RuntimeConfigApplyResult> => ({
         status: "applied",
       }),
     );
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildClaudeComposition({
           cascades: {
@@ -1314,7 +1324,7 @@ describe("apply-claude-idle-drain", () => {
     });
     const port = vi.fn();
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () => {
         throw new Error(
           "idle compose failed in /home/alex/projects/repo with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
@@ -1385,11 +1395,11 @@ describe("apply-claude-idle-drain", () => {
       rows: [{ itemId: "beta", enabled: false }],
     });
     expect(stagedHash).not.toEqual(driftedComposedHash);
-    const port = vi.fn<
-      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildClaudeComposition({
           cascades: {
@@ -1513,20 +1523,16 @@ describe("apply-at-turn-start", () => {
       cascadeKind: "codex-skills",
       rows: [{ itemId: "spec-init", enabled: false }],
     });
-    const fakeConfig = {
-      recordedKey: "value-1",
-    } as unknown as CodexRuntimeCapabilityConfig["config"];
-    const port = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
             "codex-skills": { rows: [{ itemId: "spec-init", enabled: false }] },
           },
-          codexConfig: fakeConfig,
         }),
       readRuntimeState: async () => ({
         cascades: {
@@ -1550,8 +1556,18 @@ describe("apply-at-turn-start", () => {
     });
     expect(port).toHaveBeenCalledTimes(1);
     expect(port.mock.calls[0]?.[0]).toEqual({
-      conversationId: "conv-c1",
-      config: { config: fakeConfig },
+      conversation: expect.objectContaining({ conversationId: "conv-c1" }),
+      resolved: {
+        backend: "codex",
+        kinds: [
+          {
+            kind: "skills",
+            items: [
+              { itemId: "spec-init", enabled: false, originLayer: "global" },
+            ],
+          },
+        ],
+      },
     });
     expect(
       result.cascades.find((c) => c.cascadeKind === "codex-skills"),
@@ -1570,13 +1586,13 @@ describe("apply-at-turn-start", () => {
       rows: [{ itemId: "spec-init", enabled: false }],
     });
     const port = vi.fn(
-      async (): Promise<CodexApplyPortResult> => ({
+      async (): Promise<RuntimeConfigApplyResult> => ({
         status: "rejected",
         error: "codex runtime is closed",
       }),
     );
     const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
@@ -1704,20 +1720,16 @@ describe("apply-at-turn-start", () => {
       cascadeKind: "codex-skills",
       rows: [{ itemId: "spec-init", enabled: false }],
     });
-    const fakeConfig = {
-      recordedKey: "value-retry",
-    } as unknown as CodexRuntimeCapabilityConfig["config"];
-    const port = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
             "codex-skills": { rows: [{ itemId: "spec-init", enabled: false }] },
           },
-          codexConfig: fakeConfig,
         }),
       readRuntimeState: async () => ({
         cascades: {
@@ -1743,8 +1755,18 @@ describe("apply-at-turn-start", () => {
     });
     expect(port).toHaveBeenCalledTimes(1);
     expect(port.mock.calls[0]?.[0]).toEqual({
-      conversationId: "conv-c1",
-      config: { config: fakeConfig },
+      conversation: expect.objectContaining({ conversationId: "conv-c1" }),
+      resolved: {
+        backend: "codex",
+        kinds: [
+          {
+            kind: "skills",
+            items: [
+              { itemId: "spec-init", enabled: false, originLayer: "global" },
+            ],
+          },
+        ],
+      },
     });
     expect(
       result.cascades.find((c) => c.cascadeKind === "codex-skills"),
@@ -1767,11 +1789,11 @@ describe("apply-at-turn-start", () => {
       rows: [{ itemId: "other-skill", enabled: false }],
     });
     expect(stagedHash).not.toBe(driftedHash);
-    const port = vi.fn<
-      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
-    >(async () => ({ status: "applied" }));
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
@@ -1779,9 +1801,6 @@ describe("apply-at-turn-start", () => {
               rows: [{ itemId: "other-skill", enabled: false }],
             },
           },
-          codexConfig: {
-            recordedKey: "drifted",
-          } as unknown as CodexRuntimeCapabilityConfig["config"],
         }),
       readRuntimeState: async () => ({
         cascades: {
@@ -1819,7 +1838,7 @@ describe("apply-at-turn-start", () => {
     });
     const port = vi.fn();
     const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () => {
         throw new Error("turn-start composition crashed");
       },
@@ -1890,7 +1909,7 @@ describe("apply-at-turn-start", () => {
     });
     const port = vi.fn();
     const { deps, writes } = buildDeps({
-      applyClaudeRuntime: port,
+      applyRuntimeConfig: port,
       composeForConversation: async () =>
         buildClaudeComposition({
           cascades: {
@@ -1925,5 +1944,92 @@ describe("apply-at-turn-start", () => {
     });
     expect(port).not.toHaveBeenCalled();
     expect(writes).toHaveLength(0);
+  });
+});
+
+describe("runtime-config apply seam", () => {
+  it("records staged-idle when the adapter declares deferred/turn_active mid-race", async () => {
+    // The pre-check said idle, but a turn started before the adapter ran; the
+    // declared result must land exactly where skipped-turn-active used to.
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "deferred",
+      reason: "turn_active",
+    }));
+    const { deps, writes } = buildDeps({
+      affected: [claudeConversation()],
+      isTurnActive: () => false,
+      applyRuntimeConfig: port,
+    });
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+    expect(port).toHaveBeenCalledTimes(1);
+    expect(result.conversations[0]?.cascades[0]).toMatchObject({
+      cascadeKind: "claude-skills",
+      disposition: "staged-idle",
+    });
+    expect(writes[0]?.state.cascades["claude-skills"]?.lastApplyStatus).toBe(
+      "staged-idle",
+    );
+  });
+
+  it("re-applies exactly once when a persisted appliedHash predates the neutral hash basis, then no-ops", async () => {
+    // Simulates the upgrade path: the conversation's appliedHash was computed
+    // from translator emissions; the neutral basis produces a different hash,
+    // so the first post-upgrade mutation re-applies, after which repeats are
+    // idempotent.
+    const legacyEmissionsHash = "legacy-emissions-basis-hash";
+    const neutralHash = computeCascadeRuntimeHash({
+      cascadeKind: "claude-skills",
+      rows: [{ itemId: "alpha", enabled: false }],
+    });
+    expect(neutralHash).not.toBe(legacyEmissionsHash);
+
+    let persisted: AgentCapabilityRuntimeApplicationState = {
+      cascades: {
+        "claude-skills": {
+          appliedHash: legacyEmissionsHash,
+          lastApplyStatus: "applied",
+        },
+      },
+    };
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
+    const { deps } = buildDeps({
+      affected: [claudeConversation()],
+      applyRuntimeConfig: port,
+      readRuntimeState: async () => persisted,
+    });
+    deps.writeRuntimeState = async (input) => {
+      persisted = input.state;
+    };
+    const service = createCapabilityRuntimeApplyService(deps);
+
+    const first = await service.applyAfterOverrideChange({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+    expect(first.conversations[0]?.cascades[0]).toMatchObject({
+      disposition: "applied",
+      attemptedHash: neutralHash,
+    });
+    expect(port).toHaveBeenCalledTimes(1);
+    expect(persisted.cascades["claude-skills"]?.appliedHash).toBe(neutralHash);
+
+    const second = await service.applyAfterOverrideChange({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+    expect(second.conversations[0]?.cascades[0]).toMatchObject({
+      disposition: "idempotent-no-op",
+    });
+    expect(port).toHaveBeenCalledTimes(1);
   });
 });

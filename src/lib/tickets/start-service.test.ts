@@ -247,8 +247,9 @@ function makeService(overrides: Partial<TicketStartServiceDeps> = {}): {
       recorded.kickoffs.push({ input, linkCommittedAtCall: row.n === 1 });
       return Promise.resolve(true);
     },
-    broadcast(event) {
+    publish(event) {
       recorded.events.push(event);
+      return { delivered: true };
     },
     now: nextNow,
     generateId: () => `generated-${++idSeq}`,

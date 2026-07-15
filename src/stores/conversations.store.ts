@@ -7,13 +7,10 @@ import { immer } from "zustand/middleware/immer";
 
 interface ConversationsState {
   showArchived: boolean;
-  deleteTargetId: string | null;
 }
 
 interface ConversationsActions {
   toggleArchived: () => void;
-  requestDeleteConversation: (id: string) => void;
-  cancelDeleteConversation: () => void;
 }
 
 type ConversationsStore = ConversationsState & ConversationsActions;
@@ -25,21 +22,10 @@ type ConversationsStore = ConversationsState & ConversationsActions;
 const useConversationsStore = create<ConversationsStore>()(
   immer((set) => ({
     showArchived: false,
-    deleteTargetId: null,
 
     toggleArchived: () =>
       set((state) => {
         state.showArchived = !state.showArchived;
-      }),
-
-    requestDeleteConversation: (id) =>
-      set((state) => {
-        state.deleteTargetId = id;
-      }),
-
-    cancelDeleteConversation: () =>
-      set((state) => {
-        state.deleteTargetId = null;
       }),
   })),
 );

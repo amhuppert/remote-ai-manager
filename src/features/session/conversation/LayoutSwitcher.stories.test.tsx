@@ -20,25 +20,25 @@ function activeButton(): HTMLElement | null {
 describe("LayoutSwitcher stories", () => {
   it("Conversation highlights the conversation-only button", async () => {
     await Conversation.run();
-    expect(activeButton()?.getAttribute("data-tooltip")).toBe(
+    expect(activeButton()?.getAttribute("aria-label")).toBe(
       "Conversation only",
     );
   });
 
   it("Default highlights the default-split button", async () => {
     await Default.run();
-    expect(activeButton()?.getAttribute("data-tooltip")).toBe(
+    expect(activeButton()?.getAttribute("aria-label")).toBe(
       "Conversation + Diff sidebar",
     );
   });
 
   it("Split highlights the 50/50 button", async () => {
     await Split.run();
-    expect(activeButton()?.getAttribute("data-tooltip")).toBe("Split 50/50");
+    expect(activeButton()?.getAttribute("aria-label")).toBe("Split 50/50");
   });
 
   it("Diff highlights the diff-only button", async () => {
     await Diff.run();
-    expect(activeButton()?.getAttribute("data-tooltip")).toBe("Diff only");
+    expect(activeButton()?.getAttribute("aria-label")).toBe("Diff only");
   });
 });

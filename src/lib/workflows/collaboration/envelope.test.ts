@@ -67,16 +67,12 @@ import type {
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
-import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import {
   createStatusBus,
   type StatusBusEnvelope,
-} from "@/lib/workflows/primitives/status-bus";
-import {
-  createLaneScheduler,
-  type LaneScheduler,
-} from "@/lib/workflows/primitives/lane-scheduler";
+} from "@/lib/events/status-bus";
 
 type Backend = "claude" | "codex";
 
@@ -102,8 +98,8 @@ function makeBackendResult(
     backend,
     backendRef:
       backend === "claude"
-        ? { backend: "claude", sessionId: `sess-${backend}` }
-        : { backend: "codex", threadId: `th-${backend}` },
+        ? { backend: "claude", ref: `sess-${backend}` }
+        : { backend: "codex", ref: `th-${backend}` },
     capabilities: {
       backend,
       continuationStrength:
@@ -283,11 +279,6 @@ async function buildDeps(
     broadcast: (envelope) => capturedEnvelopes.push(envelope),
   });
 
-  const baseScheduler = createLaneScheduler();
-  const laneScheduler: LaneScheduler = {
-    schedule: (request, fn) => baseScheduler.schedule(request, fn),
-  };
-
   const capturedPushDispatches: Array<
     Parameters<NonNullable<AsymmetricCollaborationSliceDeps["dispatchPush"]>>[0]
   > = [];
@@ -297,7 +288,6 @@ async function buildDeps(
   const deps: AsymmetricCollaborationSliceDeps = {
     callAgent: programmed.callAgent,
     laneService,
-    laneScheduler,
     envelopeStore,
     statusBus,
     now: () => "2026-04-28T10:00:00.000Z",
@@ -1666,7 +1656,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         primaryAgentBackend: "claude",
         priorBackendRef: {
           backend: "claude",
-          sessionId: "claude-prior-session",
+          ref: "claude-prior-session",
         },
       }),
       built.deps,
@@ -1681,11 +1671,8 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     expect(codexInit).toBeDefined();
     if (!claudeInit || !codexInit) return;
 
-    expect(claudeInit.backendState).toMatchObject({
-      backend: "claude",
-      conversationId: "claude-prior-session",
-    });
-    expect(codexInit.backendState).toEqual({ backend: "codex" });
+    expect(claudeInit.ref).toBe("claude-prior-session");
+    expect(codexInit.ref).toBeNull();
   });
 
   it("seeds the primary Codex lane with threadId when priorBackendRef.backend matches primary", async () => {
@@ -1700,7 +1687,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         primaryAgentBackend: "codex",
         priorBackendRef: {
           backend: "codex",
-          threadId: "codex-prior-thread",
+          ref: "codex-prior-thread",
         },
       }),
       built.deps,
@@ -1713,11 +1700,8 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     expect(codexInit).toBeDefined();
     if (!claudeInit || !codexInit) return;
 
-    expect(codexInit.backendState).toMatchObject({
-      backend: "codex",
-      threadId: "codex-prior-thread",
-    });
-    expect(claudeInit.backendState).toEqual({ backend: "claude" });
+    expect(codexInit.ref).toBe("codex-prior-thread");
+    expect(claudeInit.ref).toBeNull();
   });
 
   it("does NOT seed when priorBackendRef.backend does not match primaryAgentBackend", async () => {
@@ -1732,7 +1716,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         primaryAgentBackend: "claude",
         priorBackendRef: {
           backend: "codex",
-          threadId: "stale-codex-thread",
+          ref: "stale-codex-thread",
         },
       }),
       built.deps,
@@ -1742,8 +1726,8 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     const codexInit = initializeCalls.find((s) => s.backend === "codex");
     if (!claudeInit || !codexInit) throw new Error("expected both lanes init");
 
-    expect(claudeInit.backendState).toEqual({ backend: "claude" });
-    expect(codexInit.backendState).toEqual({ backend: "codex" });
+    expect(claudeInit.ref).toBeNull();
+    expect(codexInit.ref).toBeNull();
   });
 
   it("is a no-op for lane seeding when priorBackendRef is omitted", async () => {
@@ -1762,8 +1746,8 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     const codexInit = initializeCalls.find((s) => s.backend === "codex");
     if (!claudeInit || !codexInit) throw new Error("expected both lanes init");
 
-    expect(claudeInit.backendState).toEqual({ backend: "claude" });
-    expect(codexInit.backendState).toEqual({ backend: "codex" });
+    expect(claudeInit.ref).toBeNull();
+    expect(codexInit.ref).toBeNull();
   });
 
   it("does not overwrite an existing lane on resume (initializeLaneIfMissing wins)", async () => {
@@ -1775,11 +1759,8 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      backendState: {
-        backend: "claude",
-        conversationId: "from-prior-turn",
-      },
-      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      ref: "from-prior-turn",
+      metrics: { rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T09:00:00.000Z",
     });
 
@@ -1791,7 +1772,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         primaryAgentBackend: "claude",
         priorBackendRef: {
           backend: "claude",
-          sessionId: "from-conversation",
+          ref: "from-conversation",
         },
       }),
       built.deps,
@@ -1803,13 +1784,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     });
     expect(lane).toBeDefined();
     if (!lane) return;
-    expect(lane.backendState).toMatchObject({
-      backend: "claude",
-      conversationId: "sess-claude",
-    });
-    expect(lane.backendState).not.toMatchObject({
-      conversationId: "from-conversation",
-    });
+    expect(lane.ref).toBe("sess-claude");
   });
 
   it("calls updateConversationBackendRef with the primary lane's latest claude ref on completed_final", async () => {
@@ -1836,7 +1811,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     expect(updateCalls).toEqual([
       {
         conversationId: "conv-1",
-        ref: { backend: "claude", sessionId: "sess-claude" },
+        ref: { backend: "claude", ref: "sess-claude" },
       },
     ]);
   });
@@ -1865,7 +1840,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     expect(updateCalls).toEqual([
       {
         conversationId: "conv-1",
-        ref: { backend: "codex", threadId: "th-codex" },
+        ref: { backend: "codex", ref: "th-codex" },
       },
     ]);
   });

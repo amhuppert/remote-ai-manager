@@ -1,6 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, rm, writeFile, unlink as fsUnlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { parseDiff, computeDiff, _resetDiffCacheForTesting } from "./diff";
 import type { ComputeDiffDeps } from "./diff";
+import { buildChildEnv } from "../shared/child-env";
+
+const execFileAsync = promisify(execFile);
 
 describe("parseDiff", () => {
   it("returns empty diff for empty input", () => {
@@ -213,24 +221,24 @@ index abc..def 100644
 
 function createMockDeps(): {
   deps: ComputeDiffDeps;
-  mockExec: ReturnType<typeof vi.fn>;
+  mockGit: ReturnType<typeof vi.fn>;
   mockUnlink: ReturnType<typeof vi.fn>;
 } {
-  const mockExec = vi.fn();
+  const mockGit = vi.fn();
   const mockUnlink = vi.fn().mockResolvedValue(undefined);
   return {
-    deps: { execFileAsync: mockExec, unlink: mockUnlink },
-    mockExec,
+    deps: { gitClient: { git: mockGit }, unlink: mockUnlink },
+    mockGit,
     mockUnlink,
   };
 }
 
 function mockTokenAndDiff(
-  mockExec: ReturnType<typeof vi.fn>,
+  mockGit: ReturnType<typeof vi.fn>,
   opts: { headSha: string; porcelain: string; diffStdout: string },
 ): void {
   // Order: rev-parse HEAD, status --porcelain, read-tree, add -A, diff
-  mockExec
+  mockGit
     .mockResolvedValueOnce({ stdout: `${opts.headSha}\n`, stderr: "" })
     .mockResolvedValueOnce({ stdout: opts.porcelain, stderr: "" })
     .mockResolvedValueOnce({ stdout: "", stderr: "" })
@@ -244,7 +252,7 @@ describe("computeDiff", () => {
   });
 
   it("uses temp index to diff working tree against HEAD", async () => {
-    const { deps, mockExec, mockUnlink } = createMockDeps();
+    const { deps, mockGit, mockUnlink } = createMockDeps();
     const diffOutput = `diff --git a/src/app.ts b/src/app.ts
 index abc..def 100644
 --- a/src/app.ts
@@ -254,7 +262,7 @@ index abc..def 100644
 +new line
  line2`;
 
-    mockTokenAndDiff(mockExec, {
+    mockTokenAndDiff(mockGit, {
       headSha: "deadbeef",
       porcelain: " M src/app.ts\0",
       diffStdout: diffOutput,
@@ -276,7 +284,7 @@ index abc..def 100644
 
     // Verify temp index env is set for the index-mutating git calls
     // (rev-parse and status do not use the temp index)
-    const indexCalls = mockExec.mock.calls.slice(2);
+    const indexCalls = mockGit.mock.calls.slice(2);
     for (const call of indexCalls) {
       const opts = call[2] as { env: Record<string, string> };
       expect(opts.env.GIT_INDEX_FILE).toMatch(/cc-diff-/);
@@ -287,9 +295,9 @@ index abc..def 100644
   });
 
   it("returns empty diff on read-tree failure", async () => {
-    const { deps, mockExec, mockUnlink } = createMockDeps();
+    const { deps, mockGit, mockUnlink } = createMockDeps();
     // rev-parse + status succeed (token probe), then read-tree fails
-    mockExec
+    mockGit
       .mockResolvedValueOnce({ stdout: "deadbeef\n", stderr: "" })
       .mockResolvedValueOnce({ stdout: "", stderr: "" })
       .mockRejectedValueOnce(new Error("git failed"));
@@ -304,8 +312,8 @@ index abc..def 100644
   });
 
   it("returns empty diff for empty git diff output", async () => {
-    const { deps, mockExec } = createMockDeps();
-    mockTokenAndDiff(mockExec, {
+    const { deps, mockGit } = createMockDeps();
+    mockTokenAndDiff(mockGit, {
       headSha: "deadbeef",
       porcelain: "",
       diffStdout: "",
@@ -323,7 +331,7 @@ describe("computeDiff caching", () => {
   });
 
   it("returns the same diff reference when HEAD and porcelain are unchanged", async () => {
-    const { deps, mockExec } = createMockDeps();
+    const { deps, mockGit } = createMockDeps();
     const diffOutput = `diff --git a/src/app.ts b/src/app.ts
 index abc..def 100644
 --- a/src/app.ts
@@ -333,13 +341,13 @@ index abc..def 100644
 +new line
  line2`;
     // First call: full 5-mock sequence
-    mockTokenAndDiff(mockExec, {
+    mockTokenAndDiff(mockGit, {
       headSha: "deadbeef",
       porcelain: " M src/app.ts\0",
       diffStdout: diffOutput,
     });
     // Second call: only token probes — cache should serve diff
-    mockExec
+    mockGit
       .mockResolvedValueOnce({ stdout: "deadbeef\n", stderr: "" })
       .mockResolvedValueOnce({ stdout: " M src/app.ts\0", stderr: "" });
 
@@ -347,20 +355,20 @@ index abc..def 100644
     const second = await computeDiff("/projects/repo/.worktrees/test", deps);
 
     expect(second).toBe(first);
-    // Exactly 5 (first compute) + 2 (cached probe) = 7 execFile calls
-    expect(mockExec).toHaveBeenCalledTimes(7);
+    // Exactly 5 (first compute) + 2 (cached probe) = 7 git invocations
+    expect(mockGit).toHaveBeenCalledTimes(7);
   });
 
   it("recomputes the diff when HEAD changes", async () => {
-    const { deps, mockExec } = createMockDeps();
+    const { deps, mockGit } = createMockDeps();
     // First compute
-    mockTokenAndDiff(mockExec, {
+    mockTokenAndDiff(mockGit, {
       headSha: "old-sha",
       porcelain: "",
       diffStdout: "",
     });
     // Second compute: HEAD changed → token miss → full diff sequence
-    mockTokenAndDiff(mockExec, {
+    mockTokenAndDiff(mockGit, {
       headSha: "new-sha",
       porcelain: "",
       diffStdout: `diff --git a/x.ts b/x.ts
@@ -382,13 +390,13 @@ index abc..def 100644
   });
 
   it("recomputes the diff when worktree status changes", async () => {
-    const { deps, mockExec } = createMockDeps();
-    mockTokenAndDiff(mockExec, {
+    const { deps, mockGit } = createMockDeps();
+    mockTokenAndDiff(mockGit, {
       headSha: "same-sha",
       porcelain: "",
       diffStdout: "",
     });
-    mockTokenAndDiff(mockExec, {
+    mockTokenAndDiff(mockGit, {
       headSha: "same-sha",
       porcelain: " M a.ts\0",
       diffStdout: `diff --git a/a.ts b/a.ts
@@ -408,13 +416,13 @@ index abc..def 100644
   });
 
   it("isolates caches per worktree path", async () => {
-    const { deps, mockExec } = createMockDeps();
-    mockTokenAndDiff(mockExec, {
+    const { deps, mockGit } = createMockDeps();
+    mockTokenAndDiff(mockGit, {
       headSha: "sha-a",
       porcelain: "",
       diffStdout: "",
     });
-    mockTokenAndDiff(mockExec, {
+    mockTokenAndDiff(mockGit, {
       headSha: "sha-b",
       porcelain: "",
       diffStdout: `diff --git a/b.ts b/b.ts
@@ -432,5 +440,149 @@ index abc..def 100644
     expect(b).not.toBe(a);
     expect(a.files).toHaveLength(0);
     expect(b.files).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// Golden tests — computeDiff over a real git repository with the production
+// default deps. Pins the full structured SessionDiff output so the internals
+// (temp index, git invocation plumbing) can change without changing behavior.
+// ===========================================================================
+
+describe("computeDiff golden (real repo)", () => {
+  let repoDir: string;
+
+  async function git(...args: string[]): Promise<string> {
+    // Sanitized child env (same as the production GitClient) so an inherited
+    // GIT_DIR / GIT_INDEX_FILE — e.g. when this suite runs inside a git
+    // hook — cannot leak the fixture's mutations into the real repo.
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoDir,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    _resetDiffCacheForTesting();
+    repoDir = await mkdtemp(join(tmpdir(), "cc-diff-golden-"));
+    await git("init");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
+    await writeFile(join(repoDir, "b.txt"), "one\ntwo\n");
+    await git("add", "-A");
+    await git("commit", "-m", "baseline");
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("pins the structured diff for modify + delete + untracked-add", async () => {
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\ngamma\n");
+    await fsUnlink(join(repoDir, "b.txt"));
+    await writeFile(join(repoDir, "new.txt"), "fresh\n");
+
+    const diff = await computeDiff(repoDir);
+
+    expect(diff).toEqual({
+      totalAdditions: 2,
+      totalDeletions: 3,
+      files: [
+        {
+          filePath: "a.txt",
+          additions: 1,
+          deletions: 1,
+          hunks: [
+            {
+              header: "@@ -1,3 +1,3 @@",
+              lines: [
+                { type: "hunk-header", content: "@@ -1,3 +1,3 @@" },
+                { type: "context", content: "alpha" },
+                { type: "remove", content: "beta" },
+                { type: "add", content: "BETA" },
+                { type: "context", content: "gamma" },
+              ],
+            },
+          ],
+        },
+        {
+          filePath: "b.txt",
+          additions: 0,
+          deletions: 2,
+          hunks: [
+            {
+              header: "@@ -1,2 +0,0 @@",
+              lines: [
+                { type: "hunk-header", content: "@@ -1,2 +0,0 @@" },
+                { type: "remove", content: "one" },
+                { type: "remove", content: "two" },
+              ],
+            },
+          ],
+        },
+        {
+          filePath: "new.txt",
+          additions: 1,
+          deletions: 0,
+          hunks: [
+            {
+              header: "@@ -0,0 +1 @@",
+              lines: [
+                { type: "hunk-header", content: "@@ -0,0 +1 @@" },
+                { type: "add", content: "fresh" },
+                // Trailing empty context line from the diff's final newline —
+                // part of the pinned parse output.
+                { type: "context", content: "" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    // Diffing must not touch the real index: b.txt stays a working-tree-only
+    // deletion and new.txt stays untracked.
+    const porcelain = await git("status", "--porcelain=v1");
+    expect(porcelain).toContain(" D b.txt");
+    expect(porcelain).toContain("?? new.txt");
+  });
+
+  it("returns an empty diff for a clean worktree", async () => {
+    const diff = await computeDiff(repoDir);
+    expect(diff).toEqual({ files: [], totalAdditions: 0, totalDeletions: 0 });
+  });
+
+  it("returns an empty diff for a non-repo directory", async () => {
+    const plainDir = await mkdtemp(join(tmpdir(), "cc-diff-plain-"));
+    try {
+      const diff = await computeDiff(plainDir);
+      expect(diff).toEqual({ files: [], totalAdditions: 0, totalDeletions: 0 });
+    } finally {
+      await rm(plainDir, { recursive: true, force: true });
+    }
+  });
+
+  it("serves the cached diff object until the worktree status changes", async () => {
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\ngamma\n");
+
+    const first = await computeDiff(repoDir);
+    const second = await computeDiff(repoDir);
+    expect(second).toBe(first);
+
+    // The cache token is HEAD + a hash of `git status --porcelain=v1 -z`.
+    // Porcelain output does not include file content, so editing an
+    // already-modified file leaves the token unchanged and the cached diff
+    // keeps being served — pinned here as the token's granularity.
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\nGAMMA\n");
+    expect(await computeDiff(repoDir)).toBe(first);
+
+    // A status-visible change (new untracked file) rotates the token.
+    await writeFile(join(repoDir, "c.txt"), "c\n");
+    const third = await computeDiff(repoDir);
+    expect(third).not.toBe(first);
+    expect(third.totalAdditions).toBe(3);
+    expect(third.totalDeletions).toBe(2);
   });
 });

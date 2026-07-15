@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithQuery } from "@/test/component-mocks";
 import { CompactionSection } from "./CompactionSection";
 import { makeController } from "./test-controller";
 
@@ -16,7 +17,7 @@ function pillIn(fieldPath: string, text: string): HTMLButtonElement {
 describe("CompactionSection", () => {
   it("renders the Conversation compaction heading with backend, both models and effort", () => {
     const { controller } = makeController();
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     expect(
       screen.getByRole("heading", { name: /Conversation compaction/i }),
@@ -28,7 +29,7 @@ describe("CompactionSection", () => {
 
   it("defaults to the claude sonnet models when config has no compaction block", () => {
     const { controller } = makeController();
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     // The claude model pills are present (sonnet is the compaction default).
     expect(pillIn("compaction.conversationModel", "sonnet")).toBeTruthy();
@@ -37,7 +38,7 @@ describe("CompactionSection", () => {
 
   it("switching to the codex backend sets codex models and clears effort", () => {
     const { controller, getState } = makeController();
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     fireEvent.click(pillIn("compaction.backend", "codex"));
 
@@ -50,7 +51,7 @@ describe("CompactionSection", () => {
 
   it("selecting a conversation model updates only that field", () => {
     const { controller, getState } = makeController();
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     fireEvent.click(pillIn("compaction.conversationModel", "opus"));
 
@@ -61,7 +62,7 @@ describe("CompactionSection", () => {
 
   it("selecting an effort updates compaction.effort", () => {
     const { controller, getState } = makeController();
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     fireEvent.click(pillIn("compaction.effort", "high"));
 
@@ -70,7 +71,7 @@ describe("CompactionSection", () => {
 
   it("renders a timeout field that stores entered minutes as milliseconds", () => {
     const { controller, getState } = makeController();
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     expect(screen.getByText("Timeout")).toBeVisible();
     const input = document.querySelector(
@@ -91,7 +92,7 @@ describe("CompactionSection", () => {
         timeoutMs: 300_000,
       },
     });
-    render(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />);
 
     const input = document.querySelector(
       '[data-field="compaction.timeoutMs"] input',

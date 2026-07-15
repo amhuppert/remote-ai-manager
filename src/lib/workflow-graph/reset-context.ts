@@ -1,15 +1,16 @@
 import {
-  buildInitialContextState,
-  buildInitialTaskState,
-} from "@/lib/workflow-graph/execution-state";
+  IllegalContextStatusTransitionError,
+  resetContextStateToInitial,
+} from "@/lib/workflow-graph/context-transitions";
+import { buildInitialTaskState } from "@/lib/workflow-graph/execution-state";
 import { recomputeLanePlanForSubgraph } from "@/lib/workflow-graph/lane-plan";
 import type {
+  GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowLaneKind,
-  GraphWorkflowAgentSessionState,
   GraphWorkflowTaskState,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 export class ResetExecutionContextError extends Error {
   constructor(message: string) {
     super(message);
@@ -30,29 +31,32 @@ export function resetExecutionContext(
     );
   }
 
-  const context = execution.workingDefinition.executionContexts.find(
+  const contextExists = execution.workingDefinition.executionContexts.some(
     (entry) => entry.id === contextId,
   );
-  if (!context) {
+  if (!contextExists) {
     throw new ResetExecutionContextError(
       `Execution context "${contextId}" not found.`,
     );
   }
 
-  const contextState = execution.contextStates[contextId];
-  if (contextState?.status === "completed") {
-    throw new ResetExecutionContextError(
-      `Execution context "${contextId}" is completed and cannot be reset.`,
-    );
+  // The transition owner holds the legality decision (completed is terminal)
+  // and emits the structured old -> pending transition event. Its rejection is
+  // translated back into the reset API's error contract: workflow-manager and
+  // respondToManagerError key off ResetExecutionContextError and this message.
+  let nextContextStates: Record<string, GraphWorkflowExecutionContextState>;
+  try {
+    nextContextStates = resetContextStateToInitial(execution, contextId, {
+      reason: "reset_context.operator_reset",
+    });
+  } catch (error) {
+    if (error instanceof IllegalContextStatusTransitionError) {
+      throw new ResetExecutionContextError(
+        `Execution context "${contextId}" is completed and cannot be reset.`,
+      );
+    }
+    throw error;
   }
-
-  const nextContextState: GraphWorkflowExecutionContextState =
-    buildInitialContextState(context, execution.workingDefinition.tasks);
-
-  const nextContextStates = {
-    ...execution.contextStates,
-    [contextId]: nextContextState,
-  };
 
   const nextTaskStates: Record<string, GraphWorkflowTaskState> = {};
   for (const [taskId, taskState] of Object.entries(execution.taskStates)) {

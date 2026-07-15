@@ -37,22 +37,19 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 import {
-  publishSessionStatus,
-  setDefaultSessionStatusBusBroadcastForTesting,
-  subscribeSessionStatus,
-  _resetDefaultSessionStatusBusForTesting,
-} from "./default-session-status-bus";
-import type { StatusBusEnvelope } from "./status-bus";
+  publishEvent,
+  setPublicationBroadcastForTesting,
+  subscribeLifecycle,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
+import type { StatusBusEnvelope } from "@/lib/events/status-bus";
 import {
   createArtifactRegistry,
   type ArtifactRegistration,
 } from "./artifact-registry";
 import { executeAgentCall } from "./agent-call-facade";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
-import {
-  CLAUDE_CAPABILITY_VIEW,
-  CODEX_CAPABILITY_VIEW,
-} from "./backend-capabilities";
+import { capabilityViewForBackend } from "./backend-capabilities";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type {
   AgentTaskRequest,
@@ -62,19 +59,22 @@ import type {
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationStatusEvent } from "@/lib/conversations/schemas";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 
+const CLAUDE_CAPABILITY_VIEW = capabilityViewForBackend("claude");
+const CODEX_CAPABILITY_VIEW = capabilityViewForBackend("codex");
+
 function captureWire() {
   const wire = vi.fn<(event: SSEEvent) => void>();
-  setDefaultSessionStatusBusBroadcastForTesting(wire);
+  setPublicationBroadcastForTesting(wire);
   return wire;
 }
 
 function captureEnvelopes() {
   const envelopes: StatusBusEnvelope[] = [];
-  const unsubscribe = subscribeSessionStatus((envelope) => {
+  const unsubscribe = subscribeLifecycle((envelope) => {
     envelopes.push(envelope);
   });
   return { envelopes, unsubscribe };
@@ -93,12 +93,12 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
   let workingDir: string;
 
   beforeEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     workingDir = await fs.mkdtemp(path.join(os.tmpdir(), "section7-2-parity-"));
   });
 
   afterEach(async () => {
-    _resetDefaultSessionStatusBusForTesting();
+    _resetPublicationForTesting();
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
@@ -116,7 +116,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         conversationId: "conv-7-2",
         status: "running",
       };
-      publishSessionStatus(convEvent);
+      publishEvent(convEvent);
 
       // 2. Graph workflow: pending → running publishes a graph-workflow-status.
       const graphPublisher = createGraphWorkflowExecutionEventPublisher({
@@ -141,16 +141,16 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         jobId: "job-7-2",
         branchName: "csm/session-1",
       };
-      publishSessionStatus(jobRunning);
+      publishEvent(jobRunning);
       const jobCompleted: JobStatusEvent = {
         ...jobRunning,
         status: "completed",
         mergeHash: "merge-abc",
       };
-      publishSessionStatus(jobCompleted);
+      publishEvent(jobCompleted);
 
       // 4. Debug status — same conversation, different scope.
-      publishSessionStatus({
+      publishEvent({
         type: "debug-mode-status",
         projectName: "acme",
         sessionName: "session-1",
@@ -239,9 +239,9 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       };
       const e3: JobStatusEvent = { ...e1, status: "completed" };
 
-      publishSessionStatus(e1);
-      publishSessionStatus(e2);
-      publishSessionStatus(e3);
+      publishEvent(e1);
+      publishEvent(e2);
+      publishEvent(e3);
 
       unsubscribe();
 
@@ -275,6 +275,22 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             error: null,
             timedOut: false,
             ...result,
+            failure:
+              result.failure ??
+              (result.timedOut
+                ? {
+                    kind: "timeout",
+                    message: result.error ?? "Task timed out",
+                    retryable: true,
+                  }
+                : result.error
+                  ? {
+                      kind: "backend_error",
+                      message: result.error,
+                      retryable: true,
+                    }
+                  : null),
+            continuationDisposition: result.continuationDisposition ?? "retain",
           }),
         ),
       };
@@ -530,7 +546,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         relativePath: "memory-bank/focus.md",
         contents: "# Focus from workflow A\n",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "workflow-A" },
         description: "focus memory",
       });
@@ -540,7 +555,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         relativePath: ".cc/workflow/exec-7-2/pre-merge.log",
         contents: "validation output",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "workflow-B" },
       });
       const codexOut = await registry.write({
@@ -549,7 +563,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         relativePath: "memory-bank/codex/run-1.md",
         contents: "codex run output",
         audience: "internal_log",
-        required: true,
         source: { workflowId: "workflow-C" },
       });
       const ref = await registry.write({
@@ -558,7 +571,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         relativePath: "memory-bank/notes.md",
         contents: "# Notes\n",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "workflow-D" },
         description: "Notes from workflow D",
       });
@@ -568,7 +580,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         relativePath: ".cc/graph-workflow-docs/plan.md",
         contents: "# Plan\n",
         audience: "user_facing",
-        required: true,
         source: { workflowId: "workflow-E" },
         description: "Plan doc",
         readWhen: "Before resuming",
@@ -632,7 +643,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           relativePath: "/etc/passwd",
           contents: "x",
           audience: "user_facing",
-          required: true,
           source: { workflowId: "x" },
           description: "x",
         }),
@@ -646,7 +656,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           relativePath: "../escaped.md",
           contents: "x",
           audience: "user_facing",
-          required: true,
           source: { workflowId: "x" },
           description: "x",
         }),
@@ -660,7 +669,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           relativePath: "memory-bank/something-else.md",
           contents: "x",
           audience: "internal_log",
-          required: true,
           source: { workflowId: "x" },
           description: "x",
         }),
@@ -674,7 +682,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           relativePath: ".cc/wrong-place/plan.md",
           contents: "x",
           audience: "user_facing",
-          required: true,
           source: { workflowId: "x" },
           description: "x",
           readWhen: "before",

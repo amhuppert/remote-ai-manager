@@ -6,18 +6,14 @@
 import type {
   CanUseTool,
   McpServerConfig,
+  SDKMessage,
   Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import type {
-  AgentBackendId,
-  AgentSessionRef,
-  ConversationBackendCapabilities,
-} from "../types";
+import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type {
   BackgroundWaitSummary,
-  ClaudeCapabilityApplyResult,
   ConversationBackendEvent,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
@@ -28,8 +24,15 @@ import type {
   ReadyResult,
 } from "../conversation";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
-import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
-import { registerConversationBackendFactory } from "../registry-core";
+import type {
+  ClaudeCapabilityApplyResult,
+  ClaudeCapabilityApplyTarget,
+} from "./runtime-config/adapter";
+import {
+  translateClaudeRuntimeCapabilities,
+  type ClaudeRuntimeCapabilityConfig,
+} from "./runtime-config/translator";
+import { readClaudePluginNativeRecords } from "./runtime-config/plugin-native-records";
 import {
   createQuerySession,
   type BackgroundWaitOutcome,
@@ -56,11 +59,20 @@ import {
 } from "@/lib/agent-backends/schemas";
 import { type McpDiscoveredTool } from "@/lib/mcp/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
-import { createPortableMcpFilterLookup } from "@/lib/mcp/portable-mcp-filter";
-import { composeClaudeAgentCanUseTool } from "@/lib/agent-capabilities/claude-agent-suppression";
-import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
+import { createPortableMcpFilterLookup } from "./portable-mcp-filter";
+import { composeClaudeAgentCanUseTool } from "./runtime-config/agent-suppression";
+import {
+  createClaudeMessageInterpreter,
+  createClaudeExternalTurnInterpreter,
+  type ClaudeMessageInterpreter,
+} from "./process-message";
+import { projectSchemaForClaude } from "./structured-output-projection";
+import { createClaudeFailureClassifier } from "./failure-classifier";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("claude:conversation-runtime");
+
+const claudeFailureClassifier = createClaudeFailureClassifier();
 
 /**
  * Default hard ceiling for the background-task wait barrier. Decoupled from the
@@ -96,15 +108,37 @@ export function resolveIdleTtlMs(
 const KNOWN_CLAUDE_MODELS = claudeModelSchema.options;
 const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
 
+function resolveClaudeContinuation(
+  backendRef: AgentSessionRef | null,
+  error: unknown | null,
+): Pick<
+  ConversationBackendTurnResult,
+  "backendRef" | "failure" | "continuationDisposition"
+> {
+  // Claude session IDs are server-side at Anthropic; a transient local
+  // failure (subprocess crash, idle TTL) does not invalidate them, so the ref
+  // stays resumable for the next turn's `resume:`. A stale-resume verdict is
+  // provider evidence that this particular ref no longer exists.
+  if (error == null) {
+    return { backendRef, failure: null, continuationDisposition: "retain" };
+  }
+  const { failure, continuationDisposition } =
+    claudeFailureClassifier.classifyWithContinuation(error);
+  return {
+    backendRef: continuationDisposition === "clear" ? null : backendRef,
+    failure,
+    continuationDisposition,
+  };
+}
+
 // ============================================================
 // Claude Conversation Runtime
 // ============================================================
 
-class ClaudeConversationRuntime implements ConversationBackendRuntime {
+class ClaudeConversationRuntime
+  implements ConversationBackendRuntime, ClaudeCapabilityApplyTarget
+{
   readonly backend: AgentBackendId = "claude";
-  readonly capabilities: ConversationBackendCapabilities =
-    backendCapabilities("claude");
-
   readonly modelId: string | undefined;
   readonly reasoningEffort: string | undefined;
   readonly outputFormat:
@@ -251,21 +285,25 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     // can still surface the live SDK session for the next turn's `resume:`.
     let lastKnownSessionId: string | null = null;
 
-    // Emit `input_accepted` exactly once, on the first raw provider message and
-    // before the first provider_event. Claude writes assistant transcript via
-    // the actor's provider_event path DURING sendPrompt, so the queued-delivery
-    // user transcript entry must be appended before any assistant content —
-    // hence acceptance precedes the first provider_event rather than firing
-    // after sendPrompt resolves. A dispatch failure delivers no raw message, so
-    // the flag stays false and acceptance never fires (the actor returns the
-    // queue row to pending for retry).
+    // Emit `input_accepted` exactly once, on the first raw provider message
+    // and before that message's interpreted events. Assistant transcript
+    // frames are emitted DURING sendPrompt, so the queued-delivery user
+    // transcript entry must be appended before any assistant content — hence
+    // acceptance precedes the first interpreted event rather than firing
+    // after sendPrompt resolves. A dispatch failure delivers no raw message,
+    // so the flag stays false and acceptance never fires (the actor returns
+    // the queue row to pending for retry).
     let inputAcceptedEmitted = false;
+
+    const interpreter = createClaudeMessageInterpreter({
+      onEvent: input.onEvent,
+    });
 
     const emit = (event: string, data: unknown) => {
       if (event === "__raw_message") {
         if (!inputAcceptedEmitted) {
           inputAcceptedEmitted = true;
-          input.onEvent({ type: "input_accepted" });
+          interpreter.emitEvent({ type: "input_accepted" });
           logger.debug("claude-runtime.input_accepted", {
             conversationId: this.querySession.conversationId,
           });
@@ -274,7 +312,8 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         if (msg && typeof msg.session_id === "string" && msg.session_id) {
           lastKnownSessionId = msg.session_id;
         }
-        input.onEvent({ type: "provider_event", payload: data });
+        // The pump only ever delivers SDK messages on this channel.
+        interpreter.handleMessage(data as SDKMessage);
       }
     };
 
@@ -294,19 +333,24 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       const backgroundWait = await this.waitForBackgroundTasksIfOptedIn(input);
 
       const backendRef: AgentSessionRef | null = turnResult.sessionId
-        ? { backend: "claude", sessionId: turnResult.sessionId }
+        ? { backend: "claude", ref: turnResult.sessionId }
         : null;
 
       if (backendRef) {
-        input.onEvent({ type: "backend_init", backendRef });
+        interpreter.emitEvent({ type: "backend_init", backendRef });
       }
 
       for (const block of turnResult.contentBlocks) {
-        input.onEvent({ type: "content", block });
+        interpreter.emitEvent({ type: "content", block });
       }
 
+      // Drain barrier: every emitted event's handler (queued-user acceptance,
+      // transcript appends) must settle before the turn is reported complete,
+      // so a reader observing completion sees the full ordered transcript.
+      await interpreter.flush();
+
       const result: ConversationBackendTurnResult = {
-        backendRef,
+        ...resolveClaudeContinuation(backendRef, turnResult.error),
         costUsd: turnResult.costUsd,
         durationMs: turnResult.durationMs ?? Date.now() - startTime,
         numTurns: turnResult.numTurns,
@@ -316,7 +360,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         structuredOutput: turnResult.structuredOutput,
         aborted: turnResult.aborted,
         compacted: turnResult.compacted,
-        error: turnResult.error,
         ...(backgroundWait ? { backgroundWait } : {}),
       };
 
@@ -324,15 +367,19 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         conversationId: this.querySession.conversationId,
         costUsd: result.costUsd,
         numTurns: result.numTurns,
-        error: result.error,
+        error: result.failure?.message ?? null,
+        failureKind: result.failure?.kind ?? null,
       });
 
       return result;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = getErrorMessage(err);
       const wasAborted = input.signal.aborted;
+      const classification = wasAborted
+        ? null
+        : claudeFailureClassifier.classify(err);
       const backendRef: AgentSessionRef | null = lastKnownSessionId
-        ? { backend: "claude", sessionId: lastKnownSessionId }
+        ? { backend: "claude", ref: lastKnownSessionId }
         : null;
 
       logger.error("claude-runtime.turn_error", {
@@ -340,6 +387,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         error: errorMsg,
         aborted: wasAborted,
         sessionId: lastKnownSessionId,
+        failureKind: classification?.kind ?? null,
       });
 
       // Surface retryable QuerySession errors to the caller so the actor's
@@ -347,17 +395,23 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       // continue to flow through the structured aborted-result path below.
       if (
         !wasAborted &&
+        classification?.kind !== "stale_resume_ref" &&
         (isUndeliveredQuerySessionError(err) || isSessionDiedMidTurnError(err))
       ) {
+        await interpreter.flush();
         throw err;
       }
 
       if (!wasAborted) {
-        input.onEvent({ type: "error", message: errorMsg });
+        interpreter.emitEvent({ type: "error", message: errorMsg });
       }
 
+      // Same drain barrier as the success path: frames interpreted before the
+      // failure must be durable before the turn result surfaces.
+      await interpreter.flush();
+
       return {
-        backendRef,
+        ...resolveClaudeContinuation(backendRef, wasAborted ? null : err),
         costUsd: null,
         durationMs: Date.now() - startTime,
         numTurns: null,
@@ -366,7 +420,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         contentBlocks: [],
         aborted: wasAborted,
         compacted: false,
-        error: wasAborted ? null : errorMsg,
       };
     }
   }
@@ -448,7 +501,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
    * `skipped-turn-active` while a turn is in flight so the apply service can
    * record `staged-idle` and drain after the turn completes.
    */
-  async applyClaudeCapabilityConfig(
+  async applyCapabilityConfig(
     config: ClaudeRuntimeCapabilityConfig,
   ): Promise<ClaudeCapabilityApplyResult> {
     const conversationId = this.querySession.conversationId;
@@ -468,7 +521,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     try {
       await this.onCapabilityConfigApplied(config);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = getErrorMessage(err);
       logger.error("claude-runtime.capability_apply_failed", {
         conversationId,
         error: errorMsg,
@@ -544,25 +597,31 @@ function buildExternalTurnHandler(
   emit: (event: string, data: unknown) => void;
   onComplete: (result: TurnResult) => void;
 } {
-  let started = false;
+  let interpreter: ClaudeMessageInterpreter | null = null;
   return {
     emit(event, data) {
       if (event !== "__raw_message") return;
-      if (!started) {
-        started = true;
-        onExternalTurnEvent({ type: "external_turn_started" });
+      if (!interpreter) {
+        // Fresh interpreter per virtual turn: wake-marker arming and the
+        // content-emitted flag reset at each external turn boundary.
+        interpreter = createClaudeExternalTurnInterpreter({
+          onEvent: onExternalTurnEvent,
+        });
+        interpreter.emitEvent({ type: "external_turn_started" });
       }
-      onExternalTurnEvent({ type: "provider_event", payload: data });
+      // The pump only ever delivers SDK messages on this channel.
+      interpreter.handleMessage(data as SDKMessage);
     },
     onComplete(turnResult: TurnResult) {
-      started = false;
+      const turnInterpreter = interpreter;
+      interpreter = null;
       const backendRef: AgentSessionRef | null = turnResult.sessionId
-        ? { backend: "claude", sessionId: turnResult.sessionId }
+        ? { backend: "claude", ref: turnResult.sessionId }
         : null;
-      onExternalTurnEvent({
+      const completedEvent: ConversationBackendEvent = {
         type: "external_turn_completed",
         result: {
-          backendRef,
+          ...resolveClaudeContinuation(backendRef, turnResult.error),
           costUsd: turnResult.costUsd,
           durationMs: turnResult.durationMs,
           numTurns: turnResult.numTurns,
@@ -572,9 +631,17 @@ function buildExternalTurnHandler(
           structuredOutput: turnResult.structuredOutput,
           aborted: turnResult.aborted,
           compacted: turnResult.compacted,
-          error: turnResult.error,
         },
-      });
+      };
+      // Completion rides the turn's interpreter chain so it is delivered
+      // only after every interpreted frame of this virtual turn. A turn that
+      // completed without delivering any raw message has no interpreter (and
+      // no pending frames), so the event goes out directly.
+      if (turnInterpreter) {
+        turnInterpreter.emitEvent(completedEvent);
+      } else {
+        onExternalTurnEvent(completedEvent);
+      }
     },
   };
 }
@@ -584,7 +651,7 @@ function buildExternalTurnHandler(
 // ============================================================
 
 const claudeConversationBackendFactory = {
-  backend: "claude" as AgentBackendId,
+  backend: "claude",
 
   async createRuntime(
     input: ConversationBackendCreateInput,
@@ -622,11 +689,49 @@ const claudeConversationBackendFactory = {
       return result;
     };
 
+    // Translate the neutral capability seed into the Claude runtime payload.
+    // Native plugin records are read here — below the seam — so the plugin
+    // delta basis never crosses upward. An unreadable native settings file
+    // degrades to no capability seeding (the apply service reconciles later).
+    let capabilityConfig: ClaudeRuntimeCapabilityConfig | undefined;
+    if (input.tooling.capabilities) {
+      try {
+        // The native records only matter for the plugin delta; skip the
+        // settings.json read when the cascade carries no CC plugin decisions.
+        const hasPluginOverrides = input.tooling.capabilities.kinds.some(
+          (kind) =>
+            kind.kind === "plugins" &&
+            kind.items.some((item) => item.originLayer !== "native"),
+        );
+        const nativePluginRecords = hasPluginOverrides
+          ? await readClaudePluginNativeRecords()
+          : [];
+        const translation = translateClaudeRuntimeCapabilities({
+          cascade: input.tooling.capabilities,
+          nativePluginRecords,
+        });
+        capabilityConfig = translation.config;
+        for (const diagnostic of translation.diagnostics) {
+          logger.warn("claude-factory.capability_translation_diagnostic", {
+            conversationId: input.conversationId,
+            code: diagnostic.code,
+            pluginId: diagnostic.pluginId,
+            message: diagnostic.message,
+          });
+        }
+      } catch (err) {
+        logger.error("claude-factory.capability_seed_failed", {
+          conversationId: input.conversationId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
     // Compose the sub-agent suppression layer. The suppression set is bound
     // at session creation per `CLAUDE_AGENT_SUPPRESSION_STRATEGY.applyPoint`
     // ("next-conversation"); mid-session changes require a fresh runtime.
     const disabledAgentNames = new Set<string>(
-      input.tooling.claudeCapabilityConfig?.disabledAgentNames ?? [],
+      capabilityConfig?.disabledAgentNames ?? [],
     );
     const canUseTool = composeClaudeAgentCanUseTool({
       disabledAgentNames,
@@ -637,7 +742,7 @@ const claudeConversationBackendFactory = {
     // SDK applies plugin/skill overrides natively at session start. Without
     // this, capability seeding for a brand-new runtime would be a no-op.
     const initialSettings: Settings | undefined = (() => {
-      const cfg = input.tooling.claudeCapabilityConfig;
+      const cfg = capabilityConfig;
       if (!cfg) return undefined;
       const settings: Settings = {};
       if (Object.keys(cfg.enabledPlugins).length > 0) {
@@ -652,7 +757,7 @@ const claudeConversationBackendFactory = {
     // Determine resume session ID from persisted ref
     const resumeSessionId =
       input.persistedRef?.backend === "claude"
-        ? input.persistedRef.sessionId
+        ? input.persistedRef.ref
         : undefined;
 
     // Build the external MCP servers config from tooling overrides and pass it
@@ -671,6 +776,19 @@ const claudeConversationBackendFactory = {
       : undefined;
 
     const idleTtlMs = resolveIdleTtlMs(input.workflowExecutionId);
+
+    // Project the output schema at the SDK handoff so Claude's native
+    // enforcement never sees keywords it cannot steer (minLength, minItems,
+    // numeric ranges, …). Zod remains the post-parse arbiter above the seam.
+    // The runtime's own `outputFormat` keeps the caller's object untouched:
+    // `shouldRecreateRuntime` compares it by reference, so replacing it with
+    // a fresh projected object would churn the runtime every turn.
+    const projectedOutputFormat = input.outputFormat
+      ? {
+          type: "json_schema" as const,
+          schema: projectSchemaForClaude(input.outputFormat.schema),
+        }
+      : undefined;
 
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
@@ -708,7 +826,7 @@ const claudeConversationBackendFactory = {
       plugins: [],
       settingSources: ["user", "project", "local"],
       disallowedTools: ["AskUserQuestion"],
-      outputFormat: input.outputFormat,
+      outputFormat: projectedOutputFormat,
       externalTurnHandler,
       onBackgroundTasksLost: input.onBackgroundTasksLost,
       ...(idleTtlMs !== undefined ? { idleTtlMs } : {}),
@@ -740,17 +858,12 @@ const claudeConversationBackendFactory = {
       },
     });
 
-    if (input.tooling.claudeCapabilityConfig) {
+    if (capabilityConfig) {
       logger.info("claude-runtime.initial_capability_config", {
         conversationId: input.conversationId,
-        pluginCount: Object.keys(
-          input.tooling.claudeCapabilityConfig.enabledPlugins,
-        ).length,
-        skillOverrideCount: Object.keys(
-          input.tooling.claudeCapabilityConfig.skillOverrides,
-        ).length,
-        disabledAgentCount:
-          input.tooling.claudeCapabilityConfig.disabledAgentNames.length,
+        pluginCount: Object.keys(capabilityConfig.enabledPlugins).length,
+        skillOverrideCount: Object.keys(capabilityConfig.skillOverrides).length,
+        disabledAgentCount: capabilityConfig.disabledAgentNames.length,
       });
     }
 
@@ -785,11 +898,5 @@ const claudeConversationBackendFactory = {
     }
   },
 } satisfies ConversationBackendFactory;
-
-// ============================================================
-// Register factory
-// ============================================================
-
-registerConversationBackendFactory(claudeConversationBackendFactory);
 
 export { claudeConversationBackendFactory };

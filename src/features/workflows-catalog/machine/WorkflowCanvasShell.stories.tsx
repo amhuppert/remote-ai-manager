@@ -2,9 +2,9 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { useState } from "react";
 import WorkflowCanvasShell from "./WorkflowCanvasShell";
-import OptimisticLayout from "../layouts/OptimisticLayout";
+import CommitLayout from "../layouts/CommitLayout";
 import ConversationLayout from "../layouts/ConversationLayout";
-import RetryLayout from "../layouts/RetryLayout";
+import MergeLayout from "../layouts/MergeLayout";
 
 const meta = {
   title: "Workflows/WorkflowCanvasShell",
@@ -13,12 +13,12 @@ const meta = {
     layout: "fullscreen",
   },
   args: {
-    title: "Optimistic",
-    character: "linear",
-    index: 4,
-    total: 5,
-    prev: { name: "Smart Commit", href: "#" },
-    next: { name: "Retry", href: "#" },
+    title: "Smart Commit",
+    character: "linear · loop",
+    index: 3,
+    total: 3,
+    prev: { name: "Smart Merge", href: "#" },
+    next: undefined,
     onPrev: fn(),
     onNext: fn(),
   },
@@ -88,10 +88,10 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-function OptimisticDemo(): React.JSX.Element {
+function CommitDemo(): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
   return (
-    <OptimisticLayout
+    <CommitLayout
       selectedStateId={selected}
       onSelectState={(id) =>
         setSelected((current) => (current === id ? null : id))
@@ -112,10 +112,10 @@ function ConversationDemo(): React.JSX.Element {
   );
 }
 
-function RetryDemo(): React.JSX.Element {
+function MergeDemo(): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
   return (
-    <RetryLayout
+    <MergeLayout
       selectedStateId={selected}
       onSelectState={(id) =>
         setSelected((current) => (current === id ? null : id))
@@ -126,13 +126,13 @@ function RetryDemo(): React.JSX.Element {
 
 export const SmallCanvas = {
   args: {
-    title: "Optimistic",
-    character: "linear",
-    index: 4,
-    total: 5,
-    prev: { name: "Smart Commit", href: "#" },
-    next: { name: "Retry", href: "#" },
-    children: <OptimisticDemo />,
+    title: "Smart Commit",
+    character: "linear · loop",
+    index: 3,
+    total: 3,
+    prev: { name: "Smart Merge", href: "#" },
+    next: undefined,
+    children: <CommitDemo />,
   },
 } satisfies Story;
 
@@ -141,7 +141,7 @@ export const LargeCanvas = {
     title: "Conversation",
     character: "hierarchical",
     index: 1,
-    total: 5,
+    total: 3,
     prev: undefined,
     next: { name: "Smart Merge", href: "#" },
     children: <ConversationDemo />,
@@ -153,7 +153,7 @@ export const FirstWorkflow = {
     title: "Conversation",
     character: "hierarchical",
     index: 1,
-    total: 5,
+    total: 3,
     prev: undefined,
     next: { name: "Smart Merge", href: "#" },
     children: <ConversationDemo />,
@@ -162,12 +162,24 @@ export const FirstWorkflow = {
 
 export const LastWorkflow = {
   args: {
-    title: "Retry",
-    character: "loop",
-    index: 5,
-    total: 5,
-    prev: { name: "Optimistic", href: "#" },
+    title: "Smart Commit",
+    character: "linear · loop",
+    index: 3,
+    total: 3,
+    prev: { name: "Smart Merge", href: "#" },
     next: undefined,
-    children: <RetryDemo />,
+    children: <CommitDemo />,
+  },
+} satisfies Story;
+
+export const MiddleWorkflow = {
+  args: {
+    title: "Smart Merge",
+    character: "pipeline · loop",
+    index: 2,
+    total: 3,
+    prev: { name: "Conversation", href: "#" },
+    next: { name: "Smart Commit", href: "#" },
+    children: <MergeDemo />,
   },
 } satisfies Story;

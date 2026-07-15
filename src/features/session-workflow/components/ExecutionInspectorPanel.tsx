@@ -25,7 +25,7 @@ import {
 } from "@/components/workflow-config/InspectorChips";
 import { cn } from "@/lib/ui/cn";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
-import type { AskQuestionPanelProps } from "@/features/session/hooks/use-user-input-gate";
+import type { AskQuestionPanelProps } from "@/hooks/use-user-input-gate";
 
 const wbBtn =
   "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
@@ -108,14 +108,17 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
 import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
-  GraphWorkflowValidationResultEvent,
   GraphWorkflowCircuitBreakerEvent,
-  GraphWorkflowLaneKind,
+  GraphWorkflowExecutionEvent,
+  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowValidationResultEvent,
+} from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  WorkflowLiveEditOperation,
-} from "@/lib/workflows/schemas";
+  GraphWorkflowLaneKind,
+} from "@/lib/workflow-graph/schemas";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
 import ContextConfigTab from "./ContextConfigTab";
 import BriefFocusSheet from "./BriefFocusSheet";
@@ -438,9 +441,8 @@ function computeReusedSessions(
     const event = events[i]!;
     const ref = event.sessionRef;
     if (!ref) continue;
-    const sessionId =
-      ref.engine === "claude" ? ref.conversationId : ref.threadId;
-    const laneKey = `${ref.lane}:${ref.engine}`;
+    const sessionId = ref.workflowConversationId ?? ref.ref;
+    const laneKey = `${ref.lane}:${ref.backend}`;
     const seen = seenByLane.get(laneKey);
     if (seen !== undefined && seen === sessionId) {
       reusedIndices.add(i);
@@ -451,14 +453,14 @@ function computeReusedSessions(
   return reusedIndices;
 }
 
-// ---- Codex response parsing ----
+// ---- Validator response parsing ----
 
 interface ParsedValidatorResponse {
   summary: string;
   issues: Array<{ title: string; description: string }>;
 }
 
-function parseCodexValidatorResponse(
+function parseValidatorResponseArtifact(
   response: string,
 ): ParsedValidatorResponse | null {
   try {
@@ -496,32 +498,32 @@ function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
   return "";
 }
 
-function CodexArtifactSection({
+function formatBackendName(backend: string): string {
+  return `${backend.slice(0, 1).toUpperCase()}${backend.slice(1)}`;
+}
+
+function ResponseArtifactSection({
   reviewArtifact,
 }: {
-  reviewArtifact: {
-    engine: "codex";
-    threadId: string;
-    response: string;
-    usage: {
-      inputTokens: number;
-      cachedInputTokens: number;
-      outputTokens: number;
-    } | null;
-  };
+  reviewArtifact: Extract<
+    GraphWorkflowValidationReviewArtifact,
+    { kind: "response" }
+  >;
 }) {
   const parsed = useMemo(
-    () => parseCodexValidatorResponse(reviewArtifact.response),
+    () => parseValidatorResponseArtifact(reviewArtifact.response),
     [reviewArtifact.response],
   );
 
   return (
     <div className="mt-2 pl-[14px]">
-      <div className={wbValidationSectionLabel}>Codex Review</div>
+      <div className={wbValidationSectionLabel}>
+        {formatBackendName(reviewArtifact.backend)} Review
+      </div>
       <div className="mb-1 text-[0.68rem] text-text-tertiary">
-        Thread:{" "}
+        Reference:{" "}
         <code className="font-mono text-[0.65rem] text-text-secondary">
-          {reviewArtifact.threadId}
+          {reviewArtifact.ref}
         </code>
       </div>
       {reviewArtifact.response && (
@@ -581,6 +583,7 @@ function ValidationCard({
   const hasIssues = event.issues.length > 0;
   const sessionRef = event.sessionRef;
   const reviewArtifact = event.reviewArtifact;
+  const workflowConversationId = sessionRef?.workflowConversationId;
 
   const laneBadge = getLaneBadgeLabel(sessionRef?.lane);
 
@@ -610,14 +613,14 @@ function ValidationCard({
             </span>
           )}
           <span className="rounded-[3px] bg-bg-raised px-[5px] py-px text-[0.64rem] text-text-tertiary">
-            {sessionRef.engine}
+            {sessionRef.backend}
           </span>
           {isReusedSession && (
             <span className="text-[0.64rem] text-text-tertiary opacity-80">
               ↺ continued
             </span>
           )}
-          {sessionRef.engine === "claude" && onViewConversation && (
+          {workflowConversationId && onViewConversation && (
             <button
               className={cn(
                 wbBtn,
@@ -627,7 +630,7 @@ function ValidationCard({
               )}
               onClick={() =>
                 onViewConversation(
-                  sessionRef.conversationId,
+                  workflowConversationId,
                   sessionRef.lane,
                   event.contextId,
                 )
@@ -639,8 +642,8 @@ function ValidationCard({
           )}
         </div>
       )}
-      {reviewArtifact?.engine === "codex" && (
-        <CodexArtifactSection reviewArtifact={reviewArtifact} />
+      {reviewArtifact?.kind === "response" && (
+        <ResponseArtifactSection reviewArtifact={reviewArtifact} />
       )}
       {hasIssues && (
         <div className={wbValidationBody}>

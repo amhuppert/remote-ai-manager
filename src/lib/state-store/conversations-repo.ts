@@ -1,17 +1,15 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { createVersionedRowCache } from "@/lib/shared/versioned-row-cache";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
   decodeSharedConversationColumns,
   encodeSharedConversationColumns,
-  jsonOrNull,
-  parseJsonColumn,
   stableStringify,
   throwConversationValidationError,
   type ChangedConversationColumns,
 } from "./conversation-row-codec";
-import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
 import type {
   ConversationState,
   ConversationStatus,
@@ -192,9 +190,6 @@ function conversationToSqlBind(
     project_path: projectPath,
     session_name: sessionName,
     ...encodeSharedConversationColumns(conversation),
-    pending_queue: jsonOrNull(conversation.pendingQueue),
-    last_seen_alignment_version: conversation.lastSeenAlignmentVersion,
-    pending_agent_notices: jsonOrNull(conversation.pendingAgentNotices),
   };
 }
 
@@ -218,9 +213,6 @@ export function canonicalConversationRow(
   );
 }
 
-const pendingQueueArraySchema = z.array(pendingQueuedMessageSchema);
-const pendingAgentNoticesArraySchema = z.array(z.string());
-
 function rowToDomain(rawRow: unknown): {
   projectPath: string;
   sessionName: string;
@@ -239,34 +231,9 @@ function rowToDomain(rawRow: unknown): {
   }
   const row: ConversationsTableRow = rowResult.data;
 
-  const pendingQueue = parseJsonColumn(
-    "pendingQueue",
-    row.pending_queue,
-    pendingQueueArraySchema,
-    "default",
-    [],
-  );
-  if (!pendingQueue.ok) {
-    return throwConversationValidationError(row.id, pendingQueue.issues);
-  }
-
-  const pendingAgentNotices = parseJsonColumn(
-    "pendingAgentNotices",
-    row.pending_agent_notices,
-    pendingAgentNoticesArraySchema,
-    "default",
-    [],
-  );
-  if (!pendingAgentNotices.ok) {
-    return throwConversationValidationError(row.id, pendingAgentNotices.issues);
-  }
-
   const candidate: Record<string, unknown> = {
     id: row.id,
     ...decodeSharedConversationColumns(row.id, row),
-    pendingQueue: pendingQueue.value ?? [],
-    lastSeenAlignmentVersion: row.last_seen_alignment_version,
-    pendingAgentNotices: pendingAgentNotices.value ?? [],
   };
 
   const result = conversationStateSchema.safeParse(candidate);
@@ -355,20 +322,23 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     sessionName: string;
     conversation: ConversationState;
   };
-  const findAllCache = new Map<
+  const cache = createVersionedRowCache<
     string,
-    { rawRow: Record<string, unknown>; parsed: ParsedRow }
-  >();
-  let cacheVersion = 0;
-  let lastFindAllVersion = -1;
-  let lastFindAllResult: ParsedRow[] = [];
+    Record<string, unknown>,
+    ParsedRow
+  >({
+    keyOf: (row) => row.id as string,
+    rowsEqual: rawRowsEqual,
+    parse: rowToDomain,
+  });
   // Per-session result memo (Pattern 3), keyed by
-  // `${projectPath}\u0000${sessionName}` and invalidated by the shared monotonic
-  // `cacheVersion`. Stores only the ordered row ids, not parsed rows, so it can
-  // never keep a parsed conversation alive after `findAllCache` evicts it. On a
-  // warm hit the ids resolve through `findAllCache` (the version gate guarantees
-  // every id is still present — any delete bumps `cacheVersion`), and the result
-  // is a FRESH array each call because callers such as getSessionConversations
+  // `${projectPath}\u0000${sessionName}` and invalidated by the shared row
+  // cache's monotonic version. Stores only the ordered row ids, not parsed
+  // rows, so it can never keep a parsed conversation alive after the row cache
+  // evicts it. On a warm hit the ids resolve through the shared cache (the
+  // version gate guarantees every id is still present — any delete bumps the
+  // version), and the result is a FRESH array each call because callers such
+  // as getSessionConversations
   // sort it in place, so the array container must never be shared.
   const findBySessionCache = new Map<
     string,
@@ -578,9 +548,9 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
       return timed("findBySession", { projectPath, sessionName }, () => {
         const cacheKey = `${projectPath}\u0000${sessionName}`;
         const memo = findBySessionCache.get(cacheKey);
-        if (memo !== undefined && memo.version === cacheVersion) {
+        if (memo !== undefined && memo.version === cache.version) {
           return memo.ids.map(
-            (id) => findAllCache.get(id)!.parsed.conversation,
+            (id) => cache.getParsedByKey(id)!.parsed.conversation,
           );
         }
         const rows = findBySessionStmt.all(projectPath, sessionName) as Array<
@@ -590,18 +560,10 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         const conversations: ConversationState[] = new Array(rows.length);
         for (let i = 0; i < rows.length; i += 1) {
           const row = rows[i]!;
-          const id = row.id as string;
-          ids[i] = id;
-          const cached = findAllCache.get(id);
-          if (cached !== undefined && rawRowsEqual(cached.rawRow, row)) {
-            conversations[i] = cached.parsed.conversation;
-            continue;
-          }
-          const parsed = rowToDomain(row);
-          findAllCache.set(id, { rawRow: row, parsed });
-          conversations[i] = parsed.conversation;
+          ids[i] = row.id as string;
+          conversations[i] = cache.resolveRow(row).conversation;
         }
-        findBySessionCache.set(cacheKey, { version: cacheVersion, ids });
+        findBySessionCache.set(cacheKey, { version: cache.version, ids });
         return conversations;
       });
     },
@@ -624,35 +586,11 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
       });
     },
     findAll() {
-      return timed("findAll", {}, () => {
-        if (cacheVersion === lastFindAllVersion) {
-          return lastFindAllResult;
-        }
-        const rows = findAllStmt.all() as Array<Record<string, unknown>>;
-        const out: ParsedRow[] = new Array(rows.length);
-        const seenIds = new Set<string>();
-        for (let i = 0; i < rows.length; i += 1) {
-          const row = rows[i]!;
-          const id = row.id as string;
-          seenIds.add(id);
-          const cached = findAllCache.get(id);
-          if (cached !== undefined && rawRowsEqual(cached.rawRow, row)) {
-            out[i] = cached.parsed;
-            continue;
-          }
-          const parsed = rowToDomain(row);
-          findAllCache.set(id, { rawRow: row, parsed });
-          out[i] = parsed;
-        }
-        if (findAllCache.size > seenIds.size) {
-          for (const id of findAllCache.keys()) {
-            if (!seenIds.has(id)) findAllCache.delete(id);
-          }
-        }
-        lastFindAllVersion = cacheVersion;
-        lastFindAllResult = out;
-        return out;
-      });
+      return timed("findAll", {}, () =>
+        cache.readAll(
+          () => findAllStmt.all() as Array<Record<string, unknown>>,
+        ),
+      );
     },
     countBySession(projectPath, sessionName) {
       return timed("countBySession", { projectPath, sessionName }, () => {
@@ -670,14 +608,14 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           conversation,
         );
         upsertStmt.run(bind);
-        cacheVersion += 1;
+        cache.bump();
       });
     },
     delete(id) {
       timed("delete", { id }, () => {
         deleteStmt.run(id);
-        findAllCache.delete(id);
-        cacheVersion += 1;
+        cache.evict(id);
+        cache.bump();
       });
     },
     upsertWithSessionTouch(
@@ -696,7 +634,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             conversation,
           );
           upsertWithSessionTouchTxn.immediate(bind, lastActivityAt);
-          cacheVersion += 1;
+          cache.bump();
         },
       );
     },
@@ -729,7 +667,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             sessionName,
             lastActivityAt,
           );
-          cacheVersion += 1;
+          cache.bump();
         },
       );
     },
@@ -755,7 +693,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             bind[col] = changedColumns[col]!;
           }
           stmt.run(bind);
-          cacheVersion += 1;
+          cache.bump();
         },
       );
     },
@@ -771,7 +709,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             conversationId,
           );
           const changed = info.changes > 0;
-          if (changed) cacheVersion += 1;
+          if (changed) cache.bump();
           return changed;
         },
       );

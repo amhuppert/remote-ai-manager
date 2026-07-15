@@ -24,10 +24,10 @@ prepareDispatch()
   → recoverStaleJob() (>10min → force fail)
   → acquireSessionLock() (key: projectPath::sessionName)
   → register in Map + createJobRecord()
-  → broadcast "job-status" (running)
+  → publish "job-status" (running)
 // Unawaited:
   → git ops (merge/commit/resolve)
-  → broadcast "job-status" (completed|failed|conflicts)
+  → publish "job-status" (completed|failed|conflicts)
   → persistTerminalState() → updateJobRecord + createNotification
   → release locks
 ```
@@ -59,6 +59,8 @@ Startup: `recoverStaleJobs()` → mark running as failed + create failure notifi
 Type derivation: `deriveNotificationType(jobType, status)` and `deriveNotificationTitle(type)` keep jobs/notifications consistent.
 
 ## SSE
+
+Jobs and notification services publish through `events/publication.ts` or an injected `PublishFn`. Repositories persist data only; they never emit SSE or push notifications.
 
 | Event | Trigger | Client action |
 |---|---|---|
@@ -96,4 +98,4 @@ React Query: `notificationKeys.list()` server-backed list for Activities panel; 
 - **Non-throwing persistence** — `persistJobRecord()` / `persistTerminalState()` swallow errors; DB failures must not block job execution
 - **Zod-validate on SSE** — all event handlers validate before processing
 - **Toasts on `notification-created`**, not `job-status` terminal
-- **Internal SSE broadcasts** — `createNotification()` and `markAsRead()` broadcast themselves; callers don't
+- **Service-owned publication** — notification service mutations publish their own typed events through an injected `PublishFn`; callers and repositories do not duplicate that side effect

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
-  graphWorkflowExecutionSchema,
   normalizeSkillReference,
   prerequisiteSchema,
   workflowSemanticDefinitionSchema,
-} from "./schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 function baseExecution(): Record<string, unknown> {
   return {

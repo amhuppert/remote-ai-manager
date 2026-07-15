@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
-import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 
 import { forEachScannedField, mapScannedFields } from "./parameter-validation";
 import { substituteContent } from "./parameter-substitution";

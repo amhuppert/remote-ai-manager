@@ -45,7 +45,7 @@ import {
 import { formatDocumentFeedbackPrompt } from "./format-feedback";
 import { queueMessage } from "@/lib/prompt/queue";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
-import { queuedBatchToSubmitPrompt } from "@/lib/workflows/conversation/manager";
+import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";

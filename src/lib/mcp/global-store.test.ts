@@ -273,6 +273,26 @@ describe("mcp/global-store", () => {
       expect(Object.keys(raw.overrides.servers)).toEqual(["a"]);
       expect(raw.overrides.servers.a).toEqual({ enabled: false });
     });
+
+    it("serializes concurrent patches so neither update is lost", async () => {
+      const store = createStore();
+      await Promise.all([
+        store.patch({
+          operations: [
+            { type: "set-server-enabled", serverKey: "alpha", enabled: true },
+          ],
+        }),
+        store.patch({
+          operations: [
+            { type: "set-server-enabled", serverKey: "beta", enabled: false },
+          ],
+        }),
+      ]);
+
+      const read = await store.read();
+      expect(read.servers.alpha?.enabled).toBe(true);
+      expect(read.servers.beta?.enabled).toBe(false);
+    });
   });
 });
 

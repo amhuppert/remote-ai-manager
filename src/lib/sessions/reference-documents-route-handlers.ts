@@ -15,6 +15,10 @@
 import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import {
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { resolveProjectPath } from "@/lib/projects/resolver";
@@ -33,21 +37,13 @@ const log = createLogger("reference-documents-route");
 export const listReferenceDocuments = withTracing(
   async (_request, { params }) => {
     const { name, session } = await params;
-    const projectPath = await resolveProjectPath(name ?? "");
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const sessionState = await getSession(projectPath, session ?? "");
-    if (!sessionState) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(
+      { resolveProjectPath, getSession },
+      name ?? "",
+      session ?? "",
+    );
+    if (!resolved.ok) return resolved.response;
+    const sessionState = resolved.value.session;
 
     return NextResponse.json(sessionState.referenceDocuments ?? []);
   },
@@ -57,28 +53,17 @@ export const listReferenceDocuments = withTracing(
 export const getReferenceDocumentContent = withTracing(
   async (_request, { params }) => {
     const { name, session, id } = await params;
-    const projectPath = await resolveProjectPath(name ?? "");
-    if (!projectPath) {
-      return NextResponse.json(
-        { error: "Project not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
-
-    const sessionState = await getSession(projectPath, session ?? "");
-    if (!sessionState) {
-      return NextResponse.json(
-        { error: "Session not found" } satisfies ApiError,
-        { status: 404 },
-      );
-    }
+    const resolved = await resolveProjectSessionOr404(
+      { resolveProjectPath, getSession },
+      name ?? "",
+      session ?? "",
+    );
+    if (!resolved.ok) return resolved.response;
+    const sessionState = resolved.value.session;
 
     const doc = sessionState.referenceDocuments?.find((d) => d.id === id);
     if (!doc) {
-      return NextResponse.json(
-        { error: "Document not found" } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound("Document not found");
     }
 
     // Resolve file path: relative paths are joined with worktree path
@@ -95,10 +80,7 @@ export const getReferenceDocumentContent = withTracing(
         "code" in err &&
         (err as NodeJS.ErrnoException).code === "ENOENT"
       ) {
-        return NextResponse.json(
-          { error: "Document file not found on disk" } satisfies ApiError,
-          { status: 404 },
-        );
+        return notFound("Document file not found on disk");
       }
       return NextResponse.json(
         { error: "Failed to read document" } satisfies ApiError,
@@ -186,27 +168,13 @@ export function createReferenceDocumentMutationHandlers(
     const projectName = name ?? "";
     const sessionName = session ?? "";
 
-    const projectPath = await deps.resolveProjectPath(projectName);
-    if (!projectPath) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          { error: "Project not found" } satisfies ApiError,
-          { status: 404 },
-        ),
-      };
-    }
-
-    const sessionState = await deps.getSession(projectPath, sessionName);
-    if (!sessionState) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          { error: "Session not found" } satisfies ApiError,
-          { status: 404 },
-        ),
-      };
-    }
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      projectName,
+      sessionName,
+    );
+    if (!resolved.ok) return resolved;
+    const { projectPath, session: sessionState } = resolved.value;
 
     return {
       ok: true,
@@ -304,10 +272,7 @@ export function createReferenceDocumentMutationHandlers(
       documentId,
     );
     if (!removed) {
-      return NextResponse.json(
-        { error: `Document "${documentId}" not found` } satisfies ApiError,
-        { status: 404 },
-      );
+      return notFound(`Document "${documentId}" not found`);
     }
 
     const resolvedPath = path.isAbsolute(removed.filePath)

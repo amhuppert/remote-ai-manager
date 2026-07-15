@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
 /** Open the given subsection's ModelSelector and pick the option whose label
  * starts with `labelPrefix` (Radix renders options only while the listbox is
@@ -26,6 +27,9 @@ import type { GlobalConfig } from "@/lib/config/schemas";
 import type { RawGlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import ConfigPage, { SEEDED_WORKFLOW_DEFAULTS } from "./ConfigPage";
 
+// next/link and next/navigation are external framework modules with no
+// internal seam; the sanctioned client-test pattern (@/test/fetch-fixture)
+// covers only the network boundary, so these keep their component-mock stubs.
 vi.mock(
   "next/link",
   async () => (await import("@/test/component-mocks")).nextLinkMock,
@@ -50,70 +54,49 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
   raw: { baseDir: "/home/user/projects" },
 };
 
-let currentData: { config: GlobalConfig; raw: RawGlobalConfig } =
-  structuredClone(fullConfigData);
+let api: FetchFixture;
 
-const mutateMock = vi.fn();
+/** Serve the full-config GET, the notifications + active-conversations GETs the
+ * Topbar issues, and hold the global MCP config query in perpetual loading (the
+ * Capabilities tab mounts the MCP panel; these tests never resolve it). */
+function seedConfigRoutes(
+  config: { config: GlobalConfig; raw: RawGlobalConfig } = fullConfigData,
+): void {
+  api.json("GET", "/api/config", config);
+  api.json("GET", "/api/notifications", {
+    notifications: [],
+    total: 0,
+    unreadCount: 0,
+  });
+  api.json("GET", "/api/conversations/active", { conversations: [] });
+  api.pending("GET", "/api/config/mcp");
+}
 
-vi.mock("@/lib/notifications/queries", () => ({
-  useNotificationsQuery: () => ({ data: { unreadCount: 0 } }),
-}));
-
-vi.mock("@/lib/config/queries", () => ({
-  useFullConfigQuery: () => ({
-    data: currentData,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-}));
-
-vi.mock("@/lib/mcp/queries", () => ({
-  useGlobalMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: true,
-    isError: false,
-    error: null,
-  }),
-  useProjectMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-  useSessionMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-  useConversationMcpConfigQuery: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-}));
-
-vi.mock("@/lib/config/mutations", () => ({
-  useUpdateConfigMutation: () => ({
-    mutate: mutateMock,
-    isPending: false,
-  }),
-}));
-
-vi.mock("@/lib/mcp/mutations", () => ({
-  useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
-  useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
-  useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
-  useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
-  useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
-}));
+/** The last full-config payload PUT to /api/config, parsed from the wire. */
+function savedConfig(): GlobalConfig {
+  const puts = api.requestsTo("PUT", "/api/config");
+  expect(puts).toHaveLength(1);
+  return puts[0]?.jsonBody as GlobalConfig;
+}
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  currentData = structuredClone(fullConfigData);
+  api = installFetchFixture();
+  // The update mutation validates its response with fullConfigResponseSchema
+  // and applySaved consumes it, so the PUT echoes a valid full config.
+  api.reply("PUT", "/api/config", { json: fullConfigData });
 });
+
+afterEach(() => {
+  api.restore();
+  vi.clearAllMocks();
+});
+
+async function renderConfigPage(): Promise<ReturnType<typeof renderWithQuery>> {
+  const result = renderWithQuery(<ConfigPage />);
+  // Queries resolve asynchronously; wait for the loaded shell before asserting.
+  await screen.findByRole("tablist", { name: "Settings" });
+  return result;
+}
 
 function selectSettingsTab(name: RegExp | string) {
   // Radix Tabs activate on pointer-down (automatic activation), not on a bare
@@ -126,8 +109,12 @@ function expandWorkflowDefaults() {
 }
 
 describe("ConfigPage — Workflow Defaults", () => {
-  it("uses the redesigned settings shell with General as the default section", () => {
-    renderWithQuery(<ConfigPage />);
+  beforeEach(() => {
+    seedConfigRoutes();
+  });
+
+  it("uses the redesigned settings shell with General as the default section", async () => {
+    await renderConfigPage();
 
     expect(
       screen.getByRole("tablist", { name: "Settings" }),
@@ -142,8 +129,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(screen.queryByText("System Configuration")).not.toBeInTheDocument();
   });
 
-  it("switches side-nav sections without leaving old sections underneath", () => {
-    renderWithQuery(<ConfigPage />);
+  it("switches side-nav sections without leaving old sections underneath", async () => {
+    await renderConfigPage();
 
     selectSettingsTab(/Capabilities/i);
 
@@ -163,8 +150,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(screen.queryByText("System Configuration")).not.toBeInTheDocument();
   });
 
-  it("exposes the settings nav as a vertical Radix tablist", () => {
-    renderWithQuery(<ConfigPage />);
+  it("exposes the settings nav as a vertical Radix tablist", async () => {
+    await renderConfigPage();
 
     // Radix promotes the <nav> to role=tablist; aria-label is preserved.
     const tablist = screen.getByRole("tablist", { name: "Settings" });
@@ -172,8 +159,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(tablist.tagName).toBe("NAV");
   });
 
-  it("wires the active section to a role=tabpanel", () => {
-    renderWithQuery(<ConfigPage />);
+  it("wires the active section to a role=tabpanel", async () => {
+    await renderConfigPage();
 
     const generalTab = screen.getByRole("tab", { name: /General/i });
     const panel = screen.getByRole("tabpanel");
@@ -188,7 +175,7 @@ describe("ConfigPage — Workflow Defaults", () => {
 
   it("moves selection + DOM focus with ArrowDown and swaps the tabpanel", async () => {
     const user = userEvent.setup();
-    renderWithQuery(<ConfigPage />);
+    await renderConfigPage();
 
     const generalTab = screen.getByRole("tab", { name: /General/i });
     generalTab.focus();
@@ -208,8 +195,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     );
   });
 
-  it("renders config section headers as static chrome instead of expandable controls", () => {
-    renderWithQuery(<ConfigPage />);
+  it("renders config section headers as static chrome instead of expandable controls", async () => {
+    await renderConfigPage();
 
     expect(
       screen.queryByRole("button", { name: /Workspace/i }),
@@ -221,8 +208,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(screen.getByText(/^Infrastructure$/i)).toBeVisible();
   });
 
-  it("renders workflow defaults directly at the page top level", () => {
-    const { container } = renderWithQuery(<ConfigPage />);
+  it("renders workflow defaults directly at the page top level", async () => {
+    const { container } = await renderConfigPage();
     selectSettingsTab(/Workflow defaults/i);
 
     expect(
@@ -235,8 +222,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(container.querySelectorAll("[data-subsection]")).toHaveLength(8);
   });
 
-  it("renders all eight workflow default blocks at the page top level", () => {
-    renderWithQuery(<ConfigPage />);
+  it("renders all eight workflow default blocks at the page top level", async () => {
+    await renderConfigPage();
     expandWorkflowDefaults();
 
     const expected = [
@@ -254,15 +241,15 @@ describe("ConfigPage — Workflow Defaults", () => {
     }
   });
 
-  it("renders every workflow block as a sub-section", () => {
-    const { container } = renderWithQuery(<ConfigPage />);
+  it("renders every workflow block as a sub-section", async () => {
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     expect(container.querySelectorAll("[data-subsection]")).toHaveLength(8);
   });
 
-  it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", () => {
-    const { container } = renderWithQuery(<ConfigPage />);
+  it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", async () => {
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const subs = container.querySelectorAll("[data-subsection]");
@@ -272,7 +259,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     }
   });
 
-  it("shows [MODIFIED] on a sub-section whose block differs from seeded defaults", () => {
+  it("shows [MODIFIED] on a sub-section whose block differs from seeded defaults", async () => {
     const customDefaults: WorkflowDefaults = {
       ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
       iterationPolicy: {
@@ -280,15 +267,15 @@ describe("ConfigPage — Workflow Defaults", () => {
         continuity: { enabled: true },
       },
     };
-    currentData = {
+    api.json("GET", "/api/config", {
       config: { ...fullConfigData.config, workflowDefaults: customDefaults },
       raw: {
         ...fullConfigData.raw,
         workflowDefaults: { iterationPolicy: customDefaults.iterationPolicy },
       },
-    };
+    });
 
-    const { container } = renderWithQuery(<ConfigPage />);
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const iteration = container.querySelector(
@@ -303,8 +290,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(implementer.textContent).not.toContain("MODIFIED");
   });
 
-  it("never surfaces a 'disabled' kind in the Context validator sub-section", () => {
-    const { container } = renderWithQuery(<ConfigPage />);
+  it("never surfaces a 'disabled' kind in the Context validator sub-section", async () => {
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const validator = container.querySelector(
@@ -322,7 +309,7 @@ describe("ConfigPage — Workflow Defaults", () => {
 
   it("marks the Implementer sub-section [MODIFIED] after editing the model", async () => {
     const user = userEvent.setup();
-    const { container } = renderWithQuery(<ConfigPage />);
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const implementer = container.querySelector(
@@ -338,7 +325,7 @@ describe("ConfigPage — Workflow Defaults", () => {
 
   it("switching the implementer model to Haiku does not crash and disables effort editing", async () => {
     const user = userEvent.setup();
-    const { container } = renderWithQuery(<ConfigPage />);
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const implementer = container.querySelector(
@@ -364,7 +351,7 @@ describe("ConfigPage — Workflow Defaults", () => {
 
   it("save writes only the changed blocks (unchanged workflow-defaults blocks not written)", async () => {
     const user = userEvent.setup();
-    const { container } = renderWithQuery(<ConfigPage />);
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const implementer = container.querySelector(
@@ -381,16 +368,17 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(saveBtn.disabled).toBe(false);
     fireEvent.click(saveBtn);
 
-    expect(mutateMock).toHaveBeenCalledTimes(1);
-    const [payload] = mutateMock.mock.calls[0]!;
-    const defaults = (payload as GlobalConfig).workflowDefaults;
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    const defaults = savedConfig().workflowDefaults;
     expect(defaults).toEqual({
       implementer: expect.objectContaining({ model: "sonnet" }),
     });
   });
 
-  it("saves only the changed compaction field after editing the Compaction section", () => {
-    const { container } = renderWithQuery(<ConfigPage />);
+  it("saves only the changed compaction field after editing the Compaction section", async () => {
+    const { container } = await renderConfigPage();
     selectSettingsTab(/Compaction/i);
 
     const effortField = container.querySelector(
@@ -406,13 +394,14 @@ describe("ConfigPage — Workflow Defaults", () => {
     }) as HTMLButtonElement;
     fireEvent.click(saveBtn);
 
-    expect(mutateMock).toHaveBeenCalledTimes(1);
-    const [payload] = mutateMock.mock.calls[0]!;
-    expect((payload as GlobalConfig).compaction).toEqual({ effort: "high" });
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig().compaction).toEqual({ effort: "high" });
   });
 
-  it("marks the Script validator sub-section modified and saves only that block after enabling it", () => {
-    const { container } = renderWithQuery(<ConfigPage />);
+  it("marks the Script validator sub-section modified and saves only that block after enabling it", async () => {
+    const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
     const scriptValidator = container.querySelector(
@@ -432,9 +421,10 @@ describe("ConfigPage — Workflow Defaults", () => {
     }) as HTMLButtonElement;
     fireEvent.click(saveBtn);
 
-    expect(mutateMock).toHaveBeenCalledTimes(1);
-    const [payload] = mutateMock.mock.calls[0]!;
-    const defaults = (payload as GlobalConfig).workflowDefaults;
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    const defaults = savedConfig().workflowDefaults;
     expect(defaults).toEqual({
       scriptValidator: { enabled: true },
     });

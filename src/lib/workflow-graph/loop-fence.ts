@@ -21,7 +21,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 export interface GraphWorkflowLoopFence {
   /** The session whose active execution this fence governs. Mutations the

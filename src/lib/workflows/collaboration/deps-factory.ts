@@ -7,10 +7,9 @@
  *
  *  - `laneService` is constructed per-call unless the manager passes a shared
  *    instance. Production lane state is session-state backed so backend
- *    continuity refs survive pause/resume and process restart. The production
- *    `laneScheduler` is shared across deps instances so write-capable lanes
- *    from separate runs in the same session serialize against each other on
- *    the session worktree.
+ *    continuity refs survive pause/resume and process restart. Lane
+ *    scheduling is owned by the `WorkflowAgentCaller` behind `callAgent`
+ *    (the single acquisition point, D16), so no scheduler is wired here.
  *  - `envelopeStore` is session-scoped: it hangs off the
  *    `(projectPath, sessionName)` pair so durable lifecycle records land in
  *    the correct session state.
@@ -25,21 +24,14 @@ import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
-  createLaneScheduler,
-  type LaneScheduler,
-} from "@/lib/workflows/primitives/lane-scheduler";
-import {
   createLaneService,
   type LaneService,
 } from "@/lib/workflows/primitives/lane-service";
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
 import { createSessionWorkflowEnvelopeStoreForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
 import type { WorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
-import {
-  createStatusBus,
-  type StatusBus,
-} from "@/lib/workflows/primitives/status-bus";
-import { publishScopedStatusEvent } from "@/lib/workflows/primitives/default-session-status-bus";
+import { createStatusBus, type StatusBus } from "@/lib/events/status-bus";
+import { publishEvent, publishScopedStatus } from "@/lib/events/publication";
 import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import {
@@ -49,7 +41,6 @@ import {
 import { collaborationArtifactSchema } from "./types";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
-import { publishSessionStatus as defaultPublishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 
 export interface CreateCollaborationDepsInput {
   projectPath: string;
@@ -97,12 +88,6 @@ export interface CreateCollaborationDepsInput {
    */
   envelopeStore?: WorkflowEnvelopeStore;
   /**
-   * Optional scheduler override. Production uses a module-level shared
-   * scheduler so concurrent collaboration runs in the same session still
-   * serialize write-capable lane work.
-   */
-  laneScheduler?: LaneScheduler;
-  /**
    * Optional override for the conversation state mutation. Tests inject an
    * in-memory fake so they can assert mutator effects (status, unread,
    * pending-question fields) without bootstrapping the on-disk state store.
@@ -111,14 +96,13 @@ export interface CreateCollaborationDepsInput {
   /**
    * Optional override for the SSE publisher used to broadcast the
    * `conversation-unread` event after `markConversationAwaiting` completes.
-   * Tests inject a capturing fake; production routes through the default
-   * session status bus so the sidebar updates in real time.
+   * Tests inject a capturing fake; production routes through the typed SSE
+   * publication module so the sidebar updates in real time.
    */
-  publishSessionStatus?: typeof defaultPublishSessionStatus;
+  publishSessionStatus?: typeof publishEvent;
 }
 
 const logger = createLogger("workflows.collaboration.deps-factory");
-const defaultCollaborationLaneScheduler = createLaneScheduler();
 
 export function createCollaborationDeps(
   input: CreateCollaborationDepsInput,
@@ -131,8 +115,6 @@ export function createCollaborationDeps(
         sessionName: input.sessionName,
       }),
     });
-  const laneScheduler =
-    input.laneScheduler ?? defaultCollaborationLaneScheduler;
 
   const envelopeStore =
     input.envelopeStore ??
@@ -145,8 +127,7 @@ export function createCollaborationDeps(
   const sessionName = input.sessionName;
   const mutateConversation =
     input.mutateConversation ?? defaultMutateConversation;
-  const publishSessionStatus =
-    input.publishSessionStatus ?? defaultPublishSessionStatus;
+  const publishSessionStatus = input.publishSessionStatus ?? publishEvent;
 
   const statusBus =
     input.statusBus ??
@@ -156,7 +137,7 @@ export function createCollaborationDeps(
         // wire as a `scoped-status` event. Delivery failures stay isolated
         // here (caught + logged) so a wire hiccup never propagates back
         // into the workflow that emitted the status.
-        const outcome = publishScopedStatusEvent({
+        const outcome = publishScopedStatus({
           scope: envelope.scope,
           scopeId: envelope.scopeId,
           status: envelope.status,
@@ -181,7 +162,6 @@ export function createCollaborationDeps(
   return {
     callAgent: input.callAgent,
     laneService,
-    laneScheduler,
     envelopeStore,
     statusBus,
     dispatchPush: (info) => {

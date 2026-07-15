@@ -88,6 +88,7 @@ function createTestMachine() {
           aborted: false,
           compacted: false,
           error: null,
+          continuationDisposition: "retain",
         }),
       ),
       runTaskRun: fromPromise<PromptActorResult, RunTaskRunInput>(
@@ -154,6 +155,7 @@ function defaultResult(
     aborted: false,
     compacted: false,
     error: null,
+    continuationDisposition: "retain",
     ...overrides,
   };
 }
@@ -479,6 +481,35 @@ describe("executeWorkflowTaskRun", () => {
       expect(result.error).toBe("backend error");
       expect(result.transcript).toEqual(transcript);
     }
+  });
+
+  it("preserves the adapter continuation verdict on failed task_run results", async () => {
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "will-error-with-viable-session",
+      timeoutMs: 5000,
+    });
+
+    const invocation = await nextPendingInvocation();
+    invocation.resolve(
+      defaultResult({
+        backendRef: { backend: "claude", ref: "still-viable" },
+        contentBlocks: [],
+        error: "transient backend error",
+        continuationDisposition: "retain",
+      }),
+    );
+
+    const result = await callPromise;
+
+    expect(result).toMatchObject({
+      kind: "error",
+      backendRef: { backend: "claude", ref: "still-viable" },
+      continuationDisposition: "retain",
+    });
   });
 
   it("pins the conversation actor to the provided worktreePath instead of the session worktree", async () => {

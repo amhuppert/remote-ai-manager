@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { userEvent, within } from "storybook/test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import ToastContainer from "@/components/ToastContainer";
+import { GenericToastSource } from "@/components/ToastHost";
 import type {
   TicketAttachment,
   TicketDetail,
@@ -249,7 +249,7 @@ function DetailHarness({
         projectName={detail.projectName}
         number={detail.number}
       />
-      <ToastContainer />
+      <GenericToastSource />
     </QueryClientProvider>
   );
 }

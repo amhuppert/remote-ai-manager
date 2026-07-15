@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
   GraphWorkflowHaltReason,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,

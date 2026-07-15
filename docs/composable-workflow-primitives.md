@@ -1,5 +1,7 @@
 # Composable Workflow Primitives
 
+> **Status: Superseded historical design.** This document records the proposal that initiated the composition-units program. The implemented contracts are defined by `.kiro/steering/engineering-principles.md`, `.kiro/steering/workflows.md`, `.kiro/steering/agent-backends.md`, `CONTEXT.md`, and `docs/reports/2026-07-12_consolidated-architecture-design-and-plan.md`. In particular, typed publication is public while StatusBus/lifecycle projection is private implementation detail, and removed creation modes are not precedents for new work.
+
 ## Overview
 
 Command Center needs to support increasingly complex agentic workflows without

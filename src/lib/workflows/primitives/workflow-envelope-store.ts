@@ -18,6 +18,7 @@
 
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
+import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 import {
   workflowEnvelopeSchema,
   type WorkflowEnvelope,
@@ -49,25 +50,13 @@ export interface WorkflowEnvelopeStore {
 
 export function createInMemoryWorkflowEnvelopeStore(): WorkflowEnvelopeStore {
   const records = new Map<string, WorkflowEnvelope>();
-  const upsertLocks = new Map<string, Promise<void>>();
+  const upsertMutex = createKeyedMutex();
 
   function withKeyLock<T>(
     workflowId: string,
     fn: () => Promise<T>,
   ): Promise<T> {
-    const previous = upsertLocks.get(workflowId) ?? Promise.resolve();
-    const operation = previous.then(fn);
-    const tail: Promise<void> = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    upsertLocks.set(workflowId, tail);
-    void tail.then(() => {
-      if (upsertLocks.get(workflowId) === tail) {
-        upsertLocks.delete(workflowId);
-      }
-    });
-    return operation;
+    return upsertMutex.run(workflowId, fn);
   }
 
   return {
@@ -270,7 +259,6 @@ export async function writeFeatureSnapshotAsArtifact(
     relativePath,
     contents: JSON.stringify(input.snapshot, null, 2),
     audience: "internal_log",
-    required: true,
     source: input.source ?? { workflowId: input.workflowId },
   });
   return {

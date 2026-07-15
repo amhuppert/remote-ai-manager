@@ -11,6 +11,11 @@ import {
 import { z } from "zod";
 
 import { apiFetch, mutationFetch } from "@/lib/api/fetcher";
+import {
+  cachePrefixUpdate,
+  createOptimisticMutation,
+  type OptimisticMutationContext,
+} from "@/lib/api/optimistic";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import {
@@ -48,10 +53,6 @@ export type AgentCapabilityScope =
 
 interface QueryOptions {
   enabled?: boolean;
-}
-
-interface PatchContext {
-  rollback: () => void;
 }
 
 interface ToggleVariables {
@@ -157,7 +158,7 @@ export function useToggleAgentCapabilityItemMutation(
   AgentCapabilityViewResponse,
   Error,
   ToggleVariables,
-  PatchContext
+  OptimisticMutationContext
 > {
   return usePatchAgentCapabilityMutation(scope, cascadeKind, (vars) => [
     {
@@ -175,7 +176,7 @@ export function useResetAgentCapabilityItemMutation(
   AgentCapabilityViewResponse,
   Error,
   ResetVariables,
-  PatchContext
+  OptimisticMutationContext
 > {
   return usePatchAgentCapabilityMutation(scope, cascadeKind, (vars) => [
     {
@@ -221,49 +222,63 @@ function usePatchAgentCapabilityMutation<TVars extends { itemId: string }>(
   scope: AgentCapabilityScope,
   cascadeKind: AgentCapabilityCascadeKind,
   buildOperations: (vars: TVars) => readonly AgentCapabilityOverrideOperation[],
-): UseMutationResult<AgentCapabilityViewResponse, Error, TVars, PatchContext> {
+): UseMutationResult<
+  AgentCapabilityViewResponse,
+  Error,
+  TVars,
+  OptimisticMutationContext
+> {
   const queryClient = useQueryClient();
   const queryKey = agentCapabilityScopeQueryKey(scope, cascadeKind);
 
-  return useMutation<AgentCapabilityViewResponse, Error, TVars, PatchContext>({
-    mutationFn: async (vars) => {
-      const request = buildPatchRequest(
-        cascadeKind,
-        buildOperations(vars),
-        readEffectiveHash(queryClient, queryKey),
-      );
-      const response = await mutationFetch(
-        agentCapabilityScopeUrl(scope),
-        "agent-capabilities-patch",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-        },
-        agentCapabilityPatchResponseSchema,
-      );
-      return response.view;
-    },
-    onMutate: async (vars) => {
-      await queryClient.cancelQueries({ queryKey });
-      return {
-        rollback: applyOptimisticPendingState(
-          queryClient,
-          queryKey,
-          vars.itemId,
-        ),
-      };
-    },
-    onError: (_err, _vars, context) => {
-      context?.rollback();
-    },
-    onSuccess: (view) => {
-      queryClient.setQueryData(queryKey, view);
-    },
-    onSettled: () => {
-      invalidateCapabilityScope(queryClient, scope, cascadeKind);
-    },
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: async (vars: TVars) => {
+        const request = buildPatchRequest(
+          cascadeKind,
+          buildOperations(vars),
+          readEffectiveHash(queryClient, queryKey),
+        );
+        const response = await mutationFetch(
+          agentCapabilityScopeUrl(scope),
+          "agent-capabilities-patch",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+          },
+          agentCapabilityPatchResponseSchema,
+        );
+        return response.view;
+      },
+      updates: [
+        cachePrefixUpdate<TVars, AgentCapabilityViewResponse>({
+          prefix: () => queryKey,
+          // Cached data is validated before patching (mirrors the query's
+          // schema boundary); entries that fail validation are left untouched.
+          update: (old, vars) => {
+            const parsed = agentCapabilityViewResponseSchema.safeParse(old);
+            if (!parsed.success) return undefined;
+            return {
+              ...parsed.data,
+              items: parsed.data.items.map((row) =>
+                row.itemId === vars.itemId
+                  ? {
+                      ...row,
+                      applyStatus: optimisticApplyStatus(parsed.data),
+                    }
+                  : row,
+              ),
+            };
+          },
+        }),
+      ],
+      invalidateKeys: () => capabilityInvalidationKeys(scope, cascadeKind),
+      onSuccess: (view) => {
+        queryClient.setQueryData(queryKey, view);
+      },
+    }),
+  );
 }
 
 function buildPatchRequest(
@@ -285,39 +300,6 @@ function readEffectiveHash(
   const cached =
     queryClient.getQueryData<AgentCapabilityViewResponse>(queryKey);
   return cached?.effectiveHash;
-}
-
-function applyOptimisticPendingState(
-  queryClient: ReturnType<typeof useQueryClient>,
-  queryKey: QueryKey,
-  itemId: string,
-): () => void {
-  const snapshots: Array<readonly [QueryKey, AgentCapabilityViewResponse]> = [];
-  const queries = queryClient.getQueryCache().findAll({ queryKey });
-
-  for (const query of queries) {
-    const data = query.state.data;
-    const parsed = agentCapabilityViewResponseSchema.safeParse(data);
-    if (!parsed.success) continue;
-    snapshots.push([query.queryKey, parsed.data]);
-    queryClient.setQueryData<AgentCapabilityViewResponse>(query.queryKey, {
-      ...parsed.data,
-      items: parsed.data.items.map((row) =>
-        row.itemId === itemId
-          ? {
-              ...row,
-              applyStatus: optimisticApplyStatus(parsed.data),
-            }
-          : row,
-      ),
-    });
-  }
-
-  return () => {
-    for (const [key, value] of snapshots) {
-      queryClient.setQueryData(key, value);
-    }
-  };
 }
 
 function optimisticApplyStatus(
@@ -345,17 +327,24 @@ function optimisticApplyStatus(
   return "none";
 }
 
+function capabilityInvalidationKeys(
+  scope: AgentCapabilityScope,
+  cascadeKind: AgentCapabilityCascadeKind,
+): QueryKey[] {
+  return computeAgentCapabilityInvalidations({
+    level: scope.level as AgentCapabilityCascadeLayer,
+    cascadeKind,
+    ...scopeNames(scope),
+  }).map((invalidation) => invalidation.queryKey);
+}
+
 function invalidateCapabilityScope(
   queryClient: ReturnType<typeof useQueryClient>,
   scope: AgentCapabilityScope,
   cascadeKind: AgentCapabilityCascadeKind,
 ): void {
-  for (const invalidation of computeAgentCapabilityInvalidations({
-    level: scope.level as AgentCapabilityCascadeLayer,
-    cascadeKind,
-    ...scopeNames(scope),
-  })) {
-    void queryClient.invalidateQueries({ queryKey: invalidation.queryKey });
+  for (const queryKey of capabilityInvalidationKeys(scope, cascadeKind)) {
+    void queryClient.invalidateQueries({ queryKey });
   }
 }
 

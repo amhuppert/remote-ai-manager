@@ -2,10 +2,11 @@ import { useCallback, useRef, useState } from "react";
 import {
   useMutation,
   useQueryClient,
-  type QueryClient,
   type UseMutationResult,
 } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
+import { consumePromptStream } from "@/lib/prompt/stream-transport";
 import {
   conversationStateSchema,
   type ConversationState,
@@ -31,84 +32,20 @@ function invalidateProjectLifecycle(
   void queryClient.invalidateQueries({
     queryKey: projectConversationKeys.list(projectName),
   });
-  void queryClient.invalidateQueries({
-    queryKey: projectConversationKeys.openCount(projectName),
-  });
 }
 
-/**
- * Cancel in-flight list/open-count fetches and snapshot the list cache for
- * rollback. The open-count query shares the list query key (it derives via
- * `select`), so patching the list cache updates the count optimistically too.
- */
-async function snapshotProjectList(
-  queryClient: QueryClient,
-  projectName: string,
-): Promise<ConversationState[] | undefined> {
-  await queryClient.cancelQueries({
-    queryKey: projectConversationKeys.list(projectName),
-  });
-  await queryClient.cancelQueries({
-    queryKey: projectConversationKeys.openCount(projectName),
-  });
-  return queryClient.getQueryData<ConversationState[]>(
-    projectConversationKeys.list(projectName),
-  );
-}
-
-function patchProjectListConversation(
-  queryClient: QueryClient,
-  projectName: string,
-  conversationId: string,
-  patch: (c: ConversationState) => ConversationState,
-): void {
-  queryClient.setQueryData<ConversationState[]>(
-    projectConversationKeys.list(projectName),
-    (old) => old?.map((c) => (c.id === conversationId ? patch(c) : c)),
-  );
-}
-
-function restoreProjectList(
-  queryClient: QueryClient,
-  projectName: string,
-  previous: ConversationState[] | undefined,
-): void {
-  if (previous !== undefined) {
-    queryClient.setQueryData(
-      projectConversationKeys.list(projectName),
-      previous,
-    );
-  }
-}
-
-function patchActiveConversation(
-  queryClient: QueryClient,
+function patchedActiveConversation(
+  active: ActiveConversationsResponse | undefined,
   conversationId: string,
   patch: (c: ActiveConversation) => ActiveConversation,
 ): ActiveConversationsResponse | undefined {
-  const activeKey = conversationKeys.active();
-  const previous =
-    queryClient.getQueryData<ActiveConversationsResponse>(activeKey);
-  queryClient.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
-    old === undefined
-      ? old
-      : {
-          ...old,
-          conversations: old.conversations.map((c) =>
-            c.id === conversationId ? patch(c) : c,
-          ),
-        },
-  );
-  return previous;
-}
-
-function restoreActiveConversations(
-  queryClient: QueryClient,
-  previous: ActiveConversationsResponse | undefined,
-): void {
-  if (previous !== undefined) {
-    queryClient.setQueryData(conversationKeys.active(), previous);
-  }
+  if (active === undefined) return undefined;
+  return {
+    ...active,
+    conversations: active.conversations.map((c) =>
+      c.id === conversationId ? patch(c) : c,
+    ),
+  };
 }
 
 /** Create a new project conversation (defaults backend via config when omitted). */
@@ -142,32 +79,29 @@ function useProjectOpenMutation(
   traceLabel: string,
 ): UseMutationResult<unknown, Error, string> {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (conversationId: string) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/open`,
-        traceLabel,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ open }),
-        },
-      ),
-    onMutate: async (conversationId) => {
-      const previousList = await snapshotProjectList(queryClient, projectName);
-      patchProjectListConversation(
-        queryClient,
-        projectName,
-        conversationId,
-        (c) => ({ ...c, open }),
-      );
-      return { previousList };
-    },
-    onError: (_err, _conversationId, context) => {
-      restoreProjectList(queryClient, projectName, context?.previousList);
-    },
-    onSettled: () => invalidateProjectLifecycle(queryClient, projectName),
-  });
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (conversationId: string) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/open`,
+          traceLabel,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ open }),
+          },
+        ),
+      // The open-conversation count derives from the list cache, so patching
+      // the list updates the count optimistically too.
+      updates: [
+        cacheUpdate<string, ConversationState[]>({
+          key: () => projectConversationKeys.list(projectName),
+          update: (old, conversationId) =>
+            old?.map((c) => (c.id === conversationId ? { ...c, open } : c)),
+        }),
+      ],
+    }),
+  );
 }
 
 /** Close a project conversation (open:false) — drops its cockpit tab. */
@@ -204,90 +138,35 @@ export function useMarkProjectConversationReadMutation(): UseMutationResult<
   { projectName: string; conversationId: string }
 > {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      projectName,
-      conversationId,
-    }: {
-      projectName: string;
-      conversationId: string;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/mark-read`,
-        "mark-project-conversation-read",
-        { method: "POST" },
-      ),
-    onMutate: async ({ conversationId }) => {
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
-      const previousActive = patchActiveConversation(
-        queryClient,
-        conversationId,
-        (c) => ({ ...c, unread: false }),
-      );
-      return { previousActive };
-    },
-    onError: (_err, _vars, context) => {
-      restoreActiveConversations(queryClient, context?.previousActive);
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
-}
-
-/** Rename a project conversation. */
-export function useRenameProjectConversation(
-  projectName: string,
-): UseMutationResult<unknown, Error, { conversationId: string; name: string }> {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      conversationId,
-      name,
-    }: {
-      conversationId: string;
-      name: string;
-    }) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
-        "rename-project-conversation",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
-        },
-      ),
-    onMutate: async ({ conversationId, name }) => {
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
-      const previousList = await snapshotProjectList(queryClient, projectName);
-      patchProjectListConversation(
-        queryClient,
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: ({
         projectName,
         conversationId,
-        (c) => ({ ...c, name }),
-      );
-      const previousActive = patchActiveConversation(
-        queryClient,
-        conversationId,
-        (c) => ({ ...c, name }),
-      );
-      return { previousList, previousActive };
-    },
-    onError: (_err, _vars, context) => {
-      restoreProjectList(queryClient, projectName, context?.previousList);
-      restoreActiveConversations(queryClient, context?.previousActive);
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: projectConversationKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
+      }: {
+        projectName: string;
+        conversationId: string;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/mark-read`,
+          "mark-project-conversation-read",
+          { method: "POST" },
+        ),
+      updates: [
+        cacheUpdate<
+          { projectName: string; conversationId: string },
+          ActiveConversationsResponse
+        >({
+          key: () => conversationKeys.active(),
+          update: (old, vars) =>
+            patchedActiveConversation(old, vars.conversationId, (c) => ({
+              ...c,
+              unread: false,
+            })),
+        }),
+      ],
+    }),
+  );
 }
 
 export interface SendProjectPromptInput {
@@ -398,13 +277,11 @@ export function useSendProjectPrompt(
           return;
         }
 
-        await consumePromptStream(res, (frame) => {
-          if (frame.event === "error") {
+        await consumePromptStream(res.body, (event) => {
+          if (event.type === "error") {
             setError({
-              message: frame.data.message ?? "Prompt failed",
-              ...(frame.data.code !== undefined
-                ? { code: frame.data.code }
-                : {}),
+              message: event.message ?? "Prompt failed",
+              ...(event.code !== undefined ? { code: event.code } : {}),
             });
           }
         });
@@ -429,47 +306,4 @@ export function useSendProjectPrompt(
   );
 
   return { send, sending, error, clearError };
-}
-
-interface PromptStreamFrame {
-  event: string;
-  data: { message?: string; code?: string };
-}
-
-/** Read a `text/event-stream` body to completion, surfacing parsed frames. */
-async function consumePromptStream(
-  res: Response,
-  onFrame: (frame: PromptStreamFrame) => void,
-): Promise<void> {
-  const reader = res.body?.getReader();
-  if (!reader) return;
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-    for (const part of parts) {
-      if (!part.trim()) continue;
-      let event = "";
-      let dataRaw = "";
-      for (const line of part.split("\n")) {
-        if (line.startsWith("event: ")) event = line.slice(7);
-        else if (line.startsWith("data: ")) dataRaw = line.slice(6);
-      }
-      if (!event) continue;
-      let data: { message?: string; code?: string } = {};
-      if (dataRaw) {
-        try {
-          data = JSON.parse(dataRaw) as { message?: string; code?: string };
-        } catch {
-          data = {};
-        }
-      }
-      onFrame({ event, data });
-      if (event === "done") return;
-    }
-  }
 }

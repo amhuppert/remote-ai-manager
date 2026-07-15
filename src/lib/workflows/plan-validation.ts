@@ -4,11 +4,11 @@ import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   graphWorkflowVisualLayoutSchema,
   workflowSemanticDefinitionSchema,
-} from "@/lib/workflows/schemas";
+} from "@/lib/workflow-graph/definition-schemas";
 
 /**
  * The create/replace request body: a named, laid-out workflow definition. This

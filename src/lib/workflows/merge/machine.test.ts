@@ -1,12 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createActor, fromPromise, toPromise } from "xstate";
 import { mergeMachine } from "./machine";
 import type { MergeInput } from "./types";
 import type {
-  CheckUncommittedInput,
-  CheckUncommittedOutput,
-  CommitChangesInput,
-  CommitChangesOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -15,10 +11,6 @@ import type {
   ResolveConflictsOutput,
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
-  RunValidationInput,
-  RunValidationOutput,
-  FixValidationInput,
-  FixValidationOutput,
   PrepareActorInput,
   PrepareActorOutput,
   PublishActorInput,
@@ -26,6 +18,16 @@ import type {
   DiscardParkedRefInput,
   DiscardParkedRefOutput,
 } from "./actors";
+import type {
+  CheckUncommittedInput,
+  CheckUncommittedOutput,
+  CommitChangesInput,
+  CommitChangesOutput,
+  RunValidationInput,
+  RunValidationOutput,
+  FixValidationInput,
+  FixValidationOutput,
+} from "../validation-fix/actors";
 
 // ============================================================
 // Typed Actor Helpers
@@ -146,7 +148,6 @@ type ActorOverrides = {
   prepare?: ReturnType<typeof mockPrepare>;
   publish?: ReturnType<typeof mockPublish>;
   discardParkedRef?: ReturnType<typeof mockDiscardParkedRef>;
-  onTerminal?: () => void;
 };
 
 function createTestMachine(overrides: ActorOverrides = {}) {
@@ -200,9 +201,6 @@ function createTestMachine(overrides: ActorOverrides = {}) {
       discardParkedRef:
         overrides.discardParkedRef ??
         mockDiscardParkedRef(async () => undefined),
-    },
-    actions: {
-      onTerminal: overrides.onTerminal ?? vi.fn(),
     },
   });
 }
@@ -717,54 +715,6 @@ describe("mergeMachine", () => {
 
       expect(output.status).toBe("failed");
       expect(output.error).toBe("Project lock timeout");
-    });
-  });
-
-  describe("onTerminal action", () => {
-    it("calls onTerminal on completed", async () => {
-      const onTerminal = vi.fn();
-      const machine = createTestMachine({ onTerminal });
-      const actor = createActor(machine, { input: defaultInput });
-      actor.start();
-
-      await toPromise(actor);
-
-      expect(onTerminal).toHaveBeenCalled();
-    });
-
-    it("calls onTerminal on failed", async () => {
-      const onTerminal = vi.fn();
-      const machine = createTestMachine({
-        onTerminal,
-        mergeMain: mockMergeMain(async () => {
-          throw new Error("git error");
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      actor.start();
-
-      await toPromise(actor);
-
-      expect(onTerminal).toHaveBeenCalled();
-    });
-
-    it("calls onTerminal on conflicts", async () => {
-      const onTerminal = vi.fn();
-      const machine = createTestMachine({
-        onTerminal,
-        mergeMain: mockMergeMain(async () => ({
-          status: "conflicts",
-          conflictFiles: ["a.ts"],
-        })),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, autoResolve: false },
-      });
-      actor.start();
-
-      await toPromise(actor);
-
-      expect(onTerminal).toHaveBeenCalled();
     });
   });
 

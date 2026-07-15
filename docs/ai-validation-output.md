@@ -17,7 +17,7 @@ The goal is simple: **maximize signal, minimize noise**. Show every failure in f
 3. **Strip ANSI color codes** — Escape sequences like `\e[31m` waste tokens and convey nothing to an LLM. Use `--no-color` flags or equivalent.
 4. **Bail early** — After a few failures, stop. Cascading errors from a single root cause waste context on symptoms rather than the cause.
 5. **Truncate large diffs** — A 5,000-character snapshot diff burns tokens without helping the agent, which can read the source file directly.
-6. **Detect automatically** — Use environment variables to switch output modes, not manual flags. Claude Code sets `CLAUDECODE=1` in every shell it spawns. CI systems set `CI=true`. This enables automatic three-tier configuration.
+6. **Use a backend-neutral signal** — Expose an explicit project-owned `AI_OUTPUT=1` switch and let provider- or CI-specific signals opt into it. Claude Code sets `CLAUDECODE=1`; CI systems commonly set `CI=true`; Codex environments do not guarantee the Claude variable.
 
 ## Command Center's Validation Script Feature
 
@@ -52,7 +52,8 @@ CC passes these environment variables to your validation script:
 | `WORKTREE_PATH` | Absolute path to the session worktree |
 | `SESSION_NAME` | Session identifier (e.g., `feature-auth`) |
 | `BRANCH_NAME` | Git branch name (e.g., `csm/feature-auth`) |
-| `CLAUDECODE` | Set to `1` by Claude Code in every spawned shell |
+
+`CLAUDECODE` is a Claude Code process signal, not part of Command Center's backend-neutral validation contract. Projects should expose explicit `:ai` scripts or accept `AI_OUTPUT=1` so the same low-noise path works for Claude, Codex, CI, and direct operator runs.
 
 ### Timeout
 
@@ -82,14 +83,14 @@ The `set -euo pipefail` causes the script to exit on the first failure. The `&&`
 
 ### Pre-Commit Hooks
 
-You can use the same AI-detection pattern in pre-commit hooks. Claude Code sets `CLAUDECODE=1`, so your hook can branch on it:
+You can use the same detection pattern in pre-commit hooks. Prefer the explicit `AI_OUTPUT=1` switch and accept `CLAUDECODE=1` as a Claude-specific convenience:
 
 ```bash
 #!/bin/sh
 set -e
 
 # Lint with auto-fix — AI mode suppresses warnings and colors
-if [ "$CLAUDECODE" = "1" ]; then
+if [ "${AI_OUTPUT:-0}" = "1" ] || [ "${CLAUDECODE:-0}" = "1" ]; then
   npx eslint . --fix --quiet --no-color --no-warn-ignored
 else
   npx eslint . --fix
@@ -97,7 +98,7 @@ fi
 git add -u
 
 # Type check — AI mode uses one-line-per-error format
-if [ "$CLAUDECODE" = "1" ]; then
+if [ "${AI_OUTPUT:-0}" = "1" ] || [ "${CLAUDECODE:-0}" = "1" ]; then
   tsc --noEmit --pretty false
 else
   tsc --noEmit --pretty
@@ -206,7 +207,8 @@ Vitest's output is best controlled through `vitest.config.ts` rather than CLI fl
 
 ```typescript
 // vitest.config.ts
-const isAI = process.env.CLAUDECODE === "1";
+const isAI =
+  process.env.AI_OUTPUT === "1" || process.env.CLAUDECODE === "1";
 const isCI = process.env.CI === "true";
 
 function getReporters(): string[] {
@@ -266,7 +268,7 @@ export default defineConfig({
 }
 ```
 
-The reporter switching is automatic via `CLAUDECODE=1` detection in the config.
+The reporter switching is automatic via `AI_OUTPUT=1` or the Claude-specific `CLAUDECODE=1` signal in the config.
 
 **Output comparison:**
 
@@ -304,7 +306,8 @@ Jest's `summary` reporter with `summaryThreshold: 0` is the closest equivalent t
 
 ```typescript
 // jest.config.ts
-const isAI = process.env.CLAUDECODE === "1";
+const isAI =
+  process.env.AI_OUTPUT === "1" || process.env.CLAUDECODE === "1";
 
 export default {
   reporters: isAI
@@ -421,7 +424,7 @@ npx prettier --write . > /dev/null 2>&1
 git add -u
 
 # Lint — AI mode suppresses warnings and colors
-if [ "$CLAUDECODE" = "1" ]; then
+if [ "${AI_OUTPUT:-0}" = "1" ] || [ "${CLAUDECODE:-0}" = "1" ]; then
   npx eslint . --fix --quiet --no-color --no-warn-ignored
 else
   npx eslint . --fix
@@ -429,7 +432,7 @@ fi
 git add -u
 
 # Type check — AI mode uses one-line-per-error format
-if [ "$CLAUDECODE" = "1" ]; then
+if [ "${AI_OUTPUT:-0}" = "1" ] || [ "${CLAUDECODE:-0}" = "1" ]; then
   tsc --noEmit --pretty false
 else
   tsc --noEmit --pretty
@@ -477,14 +480,16 @@ The automatic switching relies on these environment variables:
 
 | Variable | Set by | Value |
 |----------|--------|-------|
+| `AI_OUTPUT` | Project script, agent, or operator | Set to `"1"` to request backend-neutral low-noise output |
 | `CLAUDECODE` | Claude Code | `"1"` in every spawned shell |
 | `CI` | GitHub Actions, GitLab CI, CircleCI, etc. | `"true"` |
 
 Use these in your configs to switch output modes without requiring manual flags:
 
 ```typescript
-const isAI = process.env.CLAUDECODE === "1";
+const isAI =
+  process.env.AI_OUTPUT === "1" || process.env.CLAUDECODE === "1";
 const isCI = process.env.CI === "true";
 ```
 
-This is preferable to relying on agent instructions or CLI flags, which are probabilistic. Environment detection is deterministic — the right output mode is selected automatically every time.
+Use `AI_OUTPUT=1` when invoking a dedicated `:ai` script from an environment that provides no stable agent variable. Environment detection remains deterministic without coupling the validation contract to one backend.
