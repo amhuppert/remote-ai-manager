@@ -538,11 +538,13 @@ export function createActiveConversationsRouteHandlers(
             if (convo.archived) continue;
             const pendingApproval =
               pendingApprovalStandings.get(convo.id) ?? null;
-            // Gated rows bypass the status and role filters: their standing is
-            // derived from execution state, not conversation lifecycle, and
-            // workflow-managed rows must surface while a human decision is
-            // pending. Archival above remains authoritative.
-            if (!pendingApproval) {
+            const hasPendingQuestion =
+              convo.status === "waiting_for_input" &&
+              convo.pendingQuestionId !== null;
+            // Human-input rows bypass the role filter so workflow-managed lane
+            // conversations surface while a question or approval is pending.
+            // Archival above remains authoritative.
+            if (!pendingApproval && !hasPendingQuestion) {
               if (!ACTIVE_STATUSES.has(convo.status)) continue;
               if (convo.role === "iteration" || convo.role === "validator")
                 continue;

@@ -20,6 +20,7 @@ function makeConversation(
     role?: string | null;
     agentBackend?: "claude" | "codex";
     transcriptPath?: string | null;
+    pendingQuestionId?: string | null;
     pendingQuestions?: { question: string }[] | null;
     forkedFrom?: {
       sourceConversationId: string;
@@ -43,7 +44,7 @@ function makeConversation(
     totalCostUsd: null,
     totalDurationMs: null,
     totalTurns: null,
-    pendingQuestionId: null,
+    pendingQuestionId: overrides.pendingQuestionId ?? null,
     pendingQuestions: overrides.pendingQuestions ?? null,
     pendingPromptText: null,
     forkedFrom: overrides.forkedFrom ?? null,
@@ -855,6 +856,41 @@ describe("GET /api/conversations/active", () => {
 
     expect(body.conversations).toHaveLength(1);
     expect(body.conversations[0].id).toBe("c1");
+  });
+
+  it("includes a graph workflow lane when it has a pending question", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "workflow-question",
+                status: "waiting_for_input",
+                role: "iteration",
+                pendingQuestionId: "question-batch-1",
+                pendingQuestions: [{ question: "Which API should I use?" }],
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations).toEqual([
+      expect.objectContaining({
+        id: "workflow-question",
+        status: "waiting_for_input",
+        role: "iteration",
+        pendingQuestion: "Which API should I use?",
+        pendingQuestionId: "question-batch-1",
+        pendingQuestions: [{ question: "Which API should I use?" }],
+      }),
+    ]);
   });
 
   it("returns active collaboration executions read from session.workflowEnvelopes", async () => {
