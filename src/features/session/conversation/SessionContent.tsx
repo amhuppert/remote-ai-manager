@@ -84,6 +84,8 @@ export interface SessionContentProps {
   dsStopUnmanagedAndRetry?: () => void;
   dsIsStoppingUnmanaged?: boolean;
   onDelete: () => void;
+  /** Rebase the session branch onto its target; absent while busy/read-only. */
+  onRebase?: () => void;
 }
 
 export default function SessionContent({
@@ -120,6 +122,7 @@ export default function SessionContent({
   dsStopUnmanagedAndRetry,
   dsIsStoppingUnmanaged,
   onDelete,
+  onRebase,
 }: SessionContentProps): React.JSX.Element {
   const isPanes = layout === "panes";
   const workingSet = openTabs?.workingSet ?? [];
@@ -168,6 +171,7 @@ export default function SessionContent({
           dsIsStoppingUnmanaged={dsIsStoppingUnmanaged}
           targetBranch={targetBranch}
           onDelete={onDelete}
+          onRebase={onRebase}
         />
 
         {isFinished && <FinishedBanner targetBranch={targetBranch} />}

@@ -52,6 +52,14 @@ const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
     source: "built-in",
   },
   {
+    name: "/rebase",
+    description:
+      "Rebase the session branch onto another branch (defaults to its target), auto-resolving conflicts.",
+    argumentHint: "[[remote] branch]",
+    type: "command",
+    source: "built-in",
+  },
+  {
     name: "/align",
     description:
       "Draft or update the session's shared Alignment charter from the conversation.",

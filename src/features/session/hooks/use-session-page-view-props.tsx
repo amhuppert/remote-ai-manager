@@ -42,7 +42,7 @@ export function useSessionPageViewProps(
     worktreePath: identity.worktreePath,
     selectedBackend: backendModelEffort.selectedBackend,
     contextPercent: identity.contextPercent,
-    handleDebugPrompt: prompt.handleDebugPrompt,
+    handleDirectPrompt: prompt.handleDirectPrompt,
     handleFork: prompt.handleFork,
     canStop: prompt.canStop,
     onStop: prompt.handleStopPrompt,
@@ -59,6 +59,18 @@ export function useSessionPageViewProps(
     store,
     local,
   );
+
+  // The Actions-menu Rebase button submits `/rebase` exactly as if the user
+  // typed it (the SDK driver intercepts the command before any agent turn),
+  // rebasing onto the session's configured target branch. Omitted (disabling
+  // the item) while the session is read-only or a turn is in flight, since the
+  // direct submit does not queue.
+  const onRebase =
+    identity.isReadOnly || identity.isBusy
+      ? undefined
+      : () => {
+          void prompt.handleDirectPrompt("/rebase");
+        };
 
   return {
     contentProps: {
@@ -94,6 +106,7 @@ export function useSessionPageViewProps(
       dsStopUnmanagedAndRetry: devServers.dsStopUnmanagedAndRetry,
       dsIsStoppingUnmanaged: devServers.dsIsStoppingUnmanaged,
       onDelete: store.requestDelete,
+      onRebase,
     },
     promptInputSlotProps: {
       isWorkflowManagedConversation: identity.isWorkflowManagedConversation,

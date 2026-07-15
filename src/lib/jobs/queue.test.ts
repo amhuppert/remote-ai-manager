@@ -4,6 +4,7 @@ import {
   dispatchMergeJob,
   dispatchCommitJob,
   dispatchResolveConflictsJob,
+  dispatchRebaseJob,
   getJob,
   getActiveJobs,
   getConflictAnalysis,
@@ -11,6 +12,20 @@ import {
 } from "./queue";
 import { mergeMachine } from "../workflows/merge/machine";
 import { commitMachine } from "../workflows/commit/machine";
+import { rebaseMachine } from "../workflows/rebase/machine";
+import type {
+  CheckTrackedChangesInput,
+  CheckTrackedChangesOutput,
+  ResolveOntoInput,
+  ResolveOntoOutput,
+  StartRebaseInput,
+  ContinueRebaseInput,
+  RebaseStepOutput,
+  ResolveConflictsInput as RebaseResolveConflictsInput,
+  ResolveConflictsOutput as RebaseResolveConflictsOutput,
+  AbortRebaseInput,
+  AbortRebaseOutput,
+} from "../workflows/rebase/actors";
 import type {
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
@@ -143,6 +158,43 @@ const testCommitMachine = commitMachine.provide({
   },
 });
 
+const mockCheckTrackedChanges = vi.fn();
+const mockResolveOnto = vi.fn();
+const mockStartRebase = vi.fn();
+const mockContinueRebase = vi.fn();
+const mockRebaseResolveConflicts = vi.fn();
+const mockAbortRebase = vi.fn();
+
+/** Test machine: real rebase machine with mock actors */
+const testRebaseMachine = rebaseMachine.provide({
+  actors: {
+    getCurrentBranch: fromPromise<
+      GetCurrentBranchOutput,
+      GetCurrentBranchInput
+    >(async ({ input }) => mockGetCurrentBranch(input)),
+    checkTrackedChanges: fromPromise<
+      CheckTrackedChangesOutput,
+      CheckTrackedChangesInput
+    >(async ({ input }) => mockCheckTrackedChanges(input)),
+    resolveOnto: fromPromise<ResolveOntoOutput, ResolveOntoInput>(
+      async ({ input }) => mockResolveOnto(input),
+    ),
+    startRebase: fromPromise<RebaseStepOutput, StartRebaseInput>(
+      async ({ input }) => mockStartRebase(input),
+    ),
+    continueRebase: fromPromise<RebaseStepOutput, ContinueRebaseInput>(
+      async ({ input }) => mockContinueRebase(input),
+    ),
+    resolveConflicts: fromPromise<
+      RebaseResolveConflictsOutput,
+      RebaseResolveConflictsInput
+    >(async ({ input }) => mockRebaseResolveConflicts(input)),
+    abortRebase: fromPromise<AbortRebaseOutput, AbortRebaseInput>(
+      async ({ input }) => mockAbortRebase(input),
+    ),
+  },
+});
+
 // ============================================================
 // Injected deps — no vi.mock needed
 // ============================================================
@@ -194,6 +246,19 @@ const BASE_RESOLVE_PARAMS = {
   broadcast: mockBroadcast,
   acquireSessionLock: mockAcquireSessionLock,
   machine: testMachine,
+};
+
+const BASE_REBASE_PARAMS = {
+  projectPath: "/projects/foo",
+  projectName: "foo",
+  sessionName: "my-session",
+  worktreePath: "/projects/foo/.worktrees/my-session",
+  branchName: "csm/my-session",
+  onto: { kind: "remote" as const, remote: "origin", branch: "main" },
+  targetLabel: "origin/main",
+  broadcast: mockBroadcast,
+  acquireSessionLock: mockAcquireSessionLock,
+  machine: testRebaseMachine,
 };
 
 /** Extract the most recent broadcast call's event */
@@ -262,6 +327,80 @@ describe("background-jobs", () => {
     });
     // Default: discard parked ref succeeds (used when entryMode === "discard")
     mockDiscardParkedRefActor.mockResolvedValue(undefined);
+
+    // Rebase defaults: clean worktree, resolvable target, clean replay.
+    mockCheckTrackedChanges.mockResolvedValue({ hasChanges: false });
+    mockResolveOnto.mockResolvedValue({
+      ref: "deadbeef",
+      label: "origin/main",
+    });
+    mockStartRebase.mockResolvedValue({ status: "completed" as const });
+    mockContinueRebase.mockResolvedValue({ status: "completed" as const });
+    mockRebaseResolveConflicts.mockResolvedValue({
+      status: "resolved" as const,
+      conflicts: [],
+    });
+    mockAbortRebase.mockResolvedValue(undefined);
+  });
+
+  // ----------------------------------------------------------
+  // dispatchRebaseJob
+  // ----------------------------------------------------------
+  describe("dispatchRebaseJob", () => {
+    it("clean rebase broadcasts running → completed and records the target", async () => {
+      const result = dispatchRebaseJob(BASE_REBASE_PARAMS);
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      expect(broadcastAt(0).status).toBe("running");
+      expect(broadcastAt(0).jobType).toBe("rebase");
+      const last = lastBroadcast();
+      expect(last.status).toBe("completed");
+      // resolveOnto/startRebase actually ran (not just the mock returning early)
+      expect(mockResolveOnto).toHaveBeenCalledTimes(1);
+      expect(mockStartRebase).toHaveBeenCalledTimes(1);
+
+      // A terminal notification was persisted through the real repo.
+      const { notifications } = notificationsRepo.getNotifications();
+      const rebaseNotif = notifications.find(
+        (n) => n.title === "Rebase completed",
+      );
+      expect(rebaseNotif?.message).toContain("rebased onto origin/main");
+    });
+
+    it("aborts and fails when automatic resolution cannot resolve a conflict", async () => {
+      mockStartRebase.mockResolvedValue({
+        status: "conflicts" as const,
+        conflictFiles: ["a.ts"],
+      });
+      mockRebaseResolveConflicts.mockResolvedValue({
+        status: "failed" as const,
+        conflicts: [],
+        partialConflicts: [
+          { file: "a.ts", description: "", resolution: "", rationale: "" },
+        ],
+      });
+
+      dispatchRebaseJob(BASE_REBASE_PARAMS);
+      await settle();
+
+      expect(mockAbortRebase).toHaveBeenCalledTimes(1);
+      const last = lastBroadcast();
+      expect(last.status).toBe("failed");
+      expect(last.errorMessage).toMatch(/aborted/i);
+    });
+
+    it("rejects a second rebase while one is running", () => {
+      // Hold the first job open by never resolving its start step.
+      mockStartRebase.mockReturnValue(new Promise(() => {}));
+      const first = dispatchRebaseJob(BASE_REBASE_PARAMS);
+      expect(first.ok).toBe(true);
+
+      const second = dispatchRebaseJob(BASE_REBASE_PARAMS);
+      expect(second.ok).toBe(false);
+      if (!second.ok) expect(second.error).toBe("JOB_ALREADY_RUNNING");
+    });
   });
 
   // ----------------------------------------------------------

@@ -62,7 +62,7 @@ export interface PromptExecutionSlice {
   canStop: boolean;
   handleStopPrompt: () => void;
   handleAnswerSubmit: ConversationWorkspaceViewProps["promptInputSlotProps"]["handleAnswerSubmit"];
-  handleDebugPrompt: PanelContainerProps["handleDebugPrompt"];
+  handleDirectPrompt: PanelContainerProps["handleDirectPrompt"];
   handleFork: PanelContainerProps["handleFork"];
   debugToggleMutation: PromptComposerArgs["debugToggleMutation"];
 }

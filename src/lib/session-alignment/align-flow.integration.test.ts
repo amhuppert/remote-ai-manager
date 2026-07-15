@@ -106,6 +106,10 @@ function setup(): Harness {
       ok: true as const,
       value: { jobId: "job-merge" },
     })),
+    dispatchRebaseJob: vi.fn(() => ({
+      ok: true as const,
+      value: { jobId: "job-rebase" },
+    })),
     appendNotice: vi.fn(async () => {}),
     beginAlignmentDraft: (input) =>
       service.beginDraft({

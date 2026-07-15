@@ -24,6 +24,7 @@ const JOB_TITLE_VERB: Record<BackgroundJob["jobType"], string> = {
   merge: "Merge",
   commit: "Commit",
   "resolve-conflicts": "Resolve",
+  rebase: "Rebase",
 };
 
 const LAND_ACTIONS = {
@@ -213,6 +214,7 @@ export function deriveNotificationOutcomes(
       case "merge-failed":
       case "commit-failed":
       case "resolve-failed":
+      case "rebase-failed":
         attention.push({
           id: row.id,
           title: row.title,
@@ -227,6 +229,7 @@ export function deriveNotificationOutcomes(
       case "merge-discarded":
       case "commit-completed":
       case "resolve-completed":
+      case "rebase-completed":
         break;
     }
   }

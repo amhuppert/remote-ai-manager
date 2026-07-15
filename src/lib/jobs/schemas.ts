@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 
-export const jobTypeSchema = z.enum(["commit", "merge", "resolve-conflicts"]);
+export const jobTypeSchema = z.enum([
+  "commit",
+  "merge",
+  "resolve-conflicts",
+  "rebase",
+]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
 export const jobStatusSchema = z.enum([

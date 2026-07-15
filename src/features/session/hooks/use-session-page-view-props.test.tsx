@@ -113,7 +113,7 @@ function makeSlices(
       canStop: false,
       handleStopPrompt: vi.fn(),
       handleAnswerSubmit: vi.fn(async () => {}),
-      handleDebugPrompt: vi.fn(async () => {}),
+      handleDirectPrompt: vi.fn(async () => {}),
       handleFork: vi.fn(),
       debugToggleMutation: { isPending: false, mutate: vi.fn() },
     },

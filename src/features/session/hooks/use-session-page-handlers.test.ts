@@ -73,7 +73,7 @@ describe("useSessionPageHandlers", () => {
       { wrapper: wrapper(client) },
     );
     expect(typeof result.current.handleSendPrompt).toBe("function");
-    expect(typeof result.current.handleDebugPrompt).toBe("function");
+    expect(typeof result.current.handleDirectPrompt).toBe("function");
     expect(typeof result.current.handleAnswerSubmit).toBe("function");
     expect(typeof result.current.handleDelete).toBe("function");
     expect(typeof result.current.handleFork).toBe("function");

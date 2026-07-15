@@ -213,6 +213,9 @@ export function deriveNotificationType(
     case "resolve-conflicts":
       if (status === "completed") return "resolve-completed";
       return "resolve-failed";
+    case "rebase":
+      if (status === "completed") return "rebase-completed";
+      return "rebase-failed";
   }
 }
 
@@ -239,6 +242,10 @@ export function deriveNotificationTitle(type: JobNotificationType): string {
       return "Conflicts resolved";
     case "resolve-failed":
       return "Conflict resolution failed";
+    case "rebase-completed":
+      return "Rebase completed";
+    case "rebase-failed":
+      return "Rebase failed";
   }
 }
 

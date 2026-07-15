@@ -53,6 +53,23 @@ describe("SessionActionsMenu", () => {
       screen.getByRole("menuitem", { name: /rebase on main/i }),
     ).toHaveAttribute("data-disabled");
   });
+
+  it("invokes onRebase when the rebase item is picked", async () => {
+    const user = userEvent.setup();
+    const onRebase = vi.fn();
+    render(
+      <SessionActionsMenu
+        targetBranch="main"
+        onDelete={vi.fn()}
+        onRebase={onRebase}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /actions/i }));
+    await user.click(screen.getByRole("menuitem", { name: /rebase on main/i }));
+
+    expect(onRebase).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("SessionActionsMenu — compaction actions", () => {

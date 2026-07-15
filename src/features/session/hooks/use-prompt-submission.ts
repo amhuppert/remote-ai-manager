@@ -122,7 +122,7 @@ export interface UsePromptSubmissionArgs {
 
 export interface UsePromptSubmissionResult {
   handleSendPrompt: () => Promise<void>;
-  handleDebugPrompt: (text: string) => Promise<void>;
+  handleDirectPrompt: (text: string) => Promise<void>;
   handleConcurrentConfirm: () => void;
   cancelConcurrentSubmission: () => void;
   pendingConcurrentSubmission: {
@@ -348,7 +348,7 @@ export function usePromptSubmission({
     setPendingConcurrentSubmission(null);
   }, []);
 
-  const handleDebugPrompt = useCallback(
+  const handleDirectPrompt = useCallback(
     (text: string): Promise<void> =>
       sendPrompt(
         text,
@@ -363,7 +363,7 @@ export function usePromptSubmission({
 
   return {
     handleSendPrompt,
-    handleDebugPrompt,
+    handleDirectPrompt,
     handleConcurrentConfirm,
     cancelConcurrentSubmission,
     pendingConcurrentSubmission,

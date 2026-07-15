@@ -86,6 +86,10 @@ function makeDeps(
       ok: true as const,
       value: { jobId: "job-merge-1" },
     })),
+    dispatchRebaseJob: vi.fn(() => ({
+      ok: true as const,
+      value: { jobId: "job-rebase-1" },
+    })),
     appendNotice: vi.fn(async () => {}),
     beginAlignmentDraft: vi.fn(async () => ({
       authoringPrompt: "unused",
@@ -302,6 +306,66 @@ describe("createConversationCommandService eligible path", () => {
     );
     expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
     expect(deps.appendNotice).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a rebase job onto the session target when no argument is given", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "rebase", hint: "" } }),
+    );
+
+    expect(outcome).toEqual({
+      status: "dispatched",
+      jobId: "job-rebase-1",
+      usedFallback: false,
+    });
+    // Rebase generates no message and resolves no merge target.
+    expect(deps.executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(deps.resolveMergeTarget).not.toHaveBeenCalled();
+    expect(deps.dispatchRebaseJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreePath: "/tmp/worktrees/my-session",
+        branchName: "csm/my-session",
+        onto: { kind: "local", branch: "main" },
+        targetLabel: "main",
+        conversationId: "conv-1",
+      }),
+    );
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+    expect(deps.dispatchCommitJob).not.toHaveBeenCalled();
+  });
+
+  it("parses a remote rebase target from the hint", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    await service.run(
+      makeInput({ parsed: { command: "rebase", hint: "origin main" } }),
+    );
+
+    expect(deps.dispatchRebaseJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onto: { kind: "remote", remote: "origin", branch: "main" },
+        targetLabel: "origin/main",
+      }),
+    );
+  });
+
+  it("rejects a malformed /rebase argument with a usage notice", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "rebase", hint: "a b c" } }),
+    );
+
+    expect(outcome).toEqual({ status: "rejected", reason: "dispatch-failed" });
+    expect(deps.dispatchRebaseJob).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.text).toMatch(
+      /usage/i,
+    );
   });
 
   it("dispatches a merge job with autoResolve and the resolved target", async () => {

@@ -12,7 +12,7 @@ describe("useMessageRowRenderer", () => {
         activeConversation: undefined,
         selectedBackend: "claude",
         worktreePath: "/tmp/w",
-        handleDebugPrompt: async () => {},
+        handleDirectPrompt: async () => {},
         handleFork: async () => {},
         isBusy: false,
         projectName: "p",

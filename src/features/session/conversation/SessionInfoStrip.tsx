@@ -74,6 +74,8 @@ interface SessionInfoStripProps {
 
   targetBranch: string;
   onDelete: () => void;
+  /** Rebase the session branch onto its target; absent while busy/read-only. */
+  onRebase?: () => void;
 
   /** Invoked when the alignment chip's add affordance (the `none` state) is
    *  activated. Connecting this to the `/align` flow is completed in task 7.4. */
@@ -109,6 +111,7 @@ function SessionInfoStrip({
   dsIsStoppingUnmanaged = false,
   targetBranch,
   onDelete,
+  onRebase,
   onActivateAlignment,
 }: SessionInfoStripProps): React.JSX.Element {
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
@@ -239,6 +242,7 @@ function SessionInfoStrip({
             <SessionActionsMenu
               targetBranch={targetBranch}
               onDelete={onDelete}
+              onRebase={onRebase}
               compaction={compactionState}
               onCompactConversation={handleCompactConversation}
               onViewArtifact={openContextArtifactPanel}

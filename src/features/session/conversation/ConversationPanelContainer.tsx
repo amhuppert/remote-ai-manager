@@ -36,7 +36,7 @@ export interface ConversationPanelContainerProps {
   selectedBackend: AgentBackendId;
   contextPercent: number | null;
 
-  handleDebugPrompt: (text: string) => Promise<void>;
+  handleDirectPrompt: (text: string) => Promise<void>;
   handleFork: (messageIndex: number) => Promise<void>;
 
   local: LocalState;
@@ -58,7 +58,7 @@ export default function ConversationPanelContainer({
   worktreePath,
   selectedBackend,
   contextPercent,
-  handleDebugPrompt,
+  handleDirectPrompt,
   handleFork,
   local,
   collab,
@@ -94,7 +94,7 @@ export default function ConversationPanelContainer({
     selectedBackend,
     worktreePath,
     thinkingExpansionCommand,
-    handleDebugPrompt,
+    handleDirectPrompt,
     handleFork,
     isBusy,
     projectName,

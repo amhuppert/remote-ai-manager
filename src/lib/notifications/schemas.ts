@@ -61,6 +61,8 @@ const jobNotificationTypeSchema = z.enum([
   "commit-failed",
   "resolve-completed",
   "resolve-failed",
+  "rebase-completed",
+  "rebase-failed",
 ]);
 export type JobNotificationType = z.infer<typeof jobNotificationTypeSchema>;
 

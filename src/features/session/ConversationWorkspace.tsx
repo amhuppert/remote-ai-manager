@@ -284,7 +284,7 @@ export default function ConversationWorkspace({
 
   const {
     handleSendPrompt,
-    handleDebugPrompt,
+    handleDirectPrompt,
     handleConcurrentConfirm,
     cancelConcurrentSubmission,
     pendingConcurrentSubmission,
@@ -368,7 +368,7 @@ export default function ConversationWorkspace({
       canStop,
       handleStopPrompt,
       handleAnswerSubmit,
-      handleDebugPrompt,
+      handleDirectPrompt,
       handleFork,
       debugToggleMutation,
     },

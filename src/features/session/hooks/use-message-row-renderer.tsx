@@ -13,7 +13,7 @@ export interface UseMessageRowRendererArgs {
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
   thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
-  handleDebugPrompt: (text: string) => Promise<void>;
+  handleDirectPrompt: (text: string) => Promise<void>;
   handleFork: (messageIndex: number) => Promise<void>;
   isBusy: boolean;
   projectName: string;
@@ -25,7 +25,7 @@ export function useMessageRowRenderer({
   selectedBackend,
   worktreePath,
   thinkingExpansionCommand,
-  handleDebugPrompt,
+  handleDirectPrompt,
   handleFork,
   isBusy,
   projectName,
@@ -52,7 +52,7 @@ export function useMessageRowRenderer({
               projectName,
               sessionName,
               conversation: activeConversation,
-              onSendPrompt: handleDebugPrompt,
+              onSendPrompt: handleDirectPrompt,
               isBusy,
             }
           : null;
@@ -74,7 +74,7 @@ export function useMessageRowRenderer({
     },
     [
       activeConversation,
-      handleDebugPrompt,
+      handleDirectPrompt,
       handleFork,
       isBusy,
       projectName,

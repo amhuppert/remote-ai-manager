@@ -81,7 +81,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
 
   const {
     handleSendPrompt,
-    handleDebugPrompt,
+    handleDirectPrompt,
     handleConcurrentConfirm,
     cancelConcurrentSubmission,
     pendingConcurrentSubmission,
@@ -144,7 +144,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
 
   return {
     handleSendPrompt,
-    handleDebugPrompt,
+    handleDirectPrompt,
     handleConcurrentConfirm,
     cancelConcurrentSubmission,
     pendingConcurrentSubmission,

@@ -116,7 +116,7 @@ describe("usePromptSubmission", () => {
     });
 
     expect(typeof result.current.handleSendPrompt).toBe("function");
-    expect(typeof result.current.handleDebugPrompt).toBe("function");
+    expect(typeof result.current.handleDirectPrompt).toBe("function");
     expect(typeof result.current.handleConcurrentConfirm).toBe("function");
     expect(typeof result.current.cancelConcurrentSubmission).toBe("function");
     expect(result.current.pendingConcurrentSubmission).toBeNull();

@@ -9,9 +9,16 @@ import {
   getProjectConversation,
   getSession,
 } from "@/lib/state-store";
-import { getJob, dispatchCommitJob, dispatchMergeJob } from "@/lib/jobs/queue";
+import {
+  getJob,
+  dispatchCommitJob,
+  dispatchMergeJob,
+  dispatchRebaseJob,
+} from "@/lib/jobs/queue";
 import { hasUncommittedChanges, collectChangeSummary } from "@/lib/git/commits";
 import { resolveMergeTarget, type MergeTarget } from "@/lib/git/merge-target";
+import type { RebaseOnto } from "@/lib/git/rebase";
+import { parseRebaseArgs } from "./rebase-args";
 import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
   ExecuteWorkflowTaskRunInput,
@@ -73,6 +80,19 @@ export interface DispatchMergeParams {
   resolutionContext?: string;
 }
 
+export interface DispatchRebaseParams {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  /** Where to replay the session's commits onto. */
+  onto: RebaseOnto;
+  /** Human label for the target (`main` / `origin/main`), shown in notices. */
+  targetLabel: string;
+  conversationId?: string;
+}
+
 export interface ConversationCommandDeps {
   getSession(
     projectPath: string,
@@ -90,6 +110,7 @@ export interface ConversationCommandDeps {
   ): Promise<TaskRunResult>;
   dispatchCommitJob(params: DispatchCommitParams): DispatchResult;
   dispatchMergeJob(params: DispatchMergeParams): DispatchResult;
+  dispatchRebaseJob(params: DispatchRebaseParams): DispatchResult;
   appendNotice(input: AppendNoticeInput): Promise<void>;
   /**
    * Begin (or redraft) the session's Alignment charter and return the agent
@@ -334,11 +355,15 @@ export function createConversationCommandService(
   ): Promise<RunCommandOutcome> {
     const { parsed } = input;
 
-    // align and ticket are routed before this point; this guard narrows the
-    // remaining flow to the git-job commands.
-    if (parsed.command === "align" || parsed.command === "ticket") {
+    // align, ticket, and rebase are routed before this point; this guard
+    // narrows the remaining flow to the message-generating git-job commands.
+    if (
+      parsed.command === "align" ||
+      parsed.command === "ticket" ||
+      parsed.command === "rebase"
+    ) {
       throw new Error(
-        `${parsed.command} must be routed by run(), not the git-job path`,
+        `${parsed.command} must be routed by run(), not the message-gen git-job path`,
       );
     }
 
@@ -447,6 +472,80 @@ export function createConversationCommandService(
       status: "dispatched",
       jobId: dispatched.value.jobId,
       usedFallback,
+    };
+  }
+
+  /**
+   * `/rebase` replays the session branch onto another branch, reusing the
+   * automatic conflict resolver. Unlike `/commit` and `/merge` it generates no
+   * message (it replays existing commits) and never touches the target branch,
+   * so it dispatches straight to the rebase job after parsing its target from
+   * the hint (`""` → session target, `main` → local, `origin main` → remote).
+   * The clean-worktree precondition is owned by the rebase machine, so every
+   * dispatch path is guarded uniformly.
+   */
+  async function runRebase(
+    input: RunCommandInput,
+    session: SessionState,
+  ): Promise<RunCommandOutcome> {
+    const parsedArgs = parseRebaseArgs(input.parsed.hint, session.targetBranch);
+    if (!parsedArgs.ok) {
+      logger.warn("command.rebase_args_invalid", {
+        reason: parsedArgs.error,
+        sessionName: session.sessionName,
+        conversationId: input.conversationId,
+      });
+      await deps.appendNotice({
+        conversationId: input.conversationId,
+        text: `Cannot run /rebase: ${parsedArgs.error}`,
+        projectName: input.projectName,
+        sessionName: session.sessionName,
+      });
+      return { status: "rejected", reason: "dispatch-failed" };
+    }
+
+    const dispatched = deps.dispatchRebaseJob({
+      projectPath: input.projectPath,
+      projectName: input.projectName,
+      sessionName: session.sessionName,
+      worktreePath: session.worktreePath,
+      branchName: session.branchName,
+      onto: parsedArgs.onto,
+      targetLabel: parsedArgs.label,
+      conversationId: input.conversationId,
+    });
+
+    if (!dispatched.ok) {
+      logger.warn("command.dispatch_failed", {
+        command: "rebase",
+        error: dispatched.error,
+        sessionName: session.sessionName,
+        conversationId: input.conversationId,
+      });
+      await deps.appendNotice({
+        conversationId: input.conversationId,
+        text: `Cannot run /rebase: ${
+          dispatched.error === "SESSION_BUSY"
+            ? "the session is busy"
+            : "a background job is already running for this session"
+        }.`,
+        projectName: input.projectName,
+        sessionName: session.sessionName,
+      });
+      return { status: "rejected", reason: "dispatch-failed" };
+    }
+
+    logger.info("command.dispatched", {
+      command: "rebase",
+      jobId: dispatched.value.jobId,
+      targetLabel: parsedArgs.label,
+      sessionName: session.sessionName,
+      conversationId: input.conversationId,
+    });
+    return {
+      status: "dispatched",
+      jobId: dispatched.value.jobId,
+      usedFallback: false,
     };
   }
 
@@ -580,6 +679,9 @@ export function createConversationCommandService(
 
     const eligibility = await checkEligibility(input);
     if (!eligibility.eligible) return eligibility.outcome;
+    if (input.parsed.command === "rebase") {
+      return runRebase(input, eligibility.session);
+    }
     return executeEligibleCommand(input, eligibility.session);
   }
 
@@ -621,6 +723,7 @@ const productionDeps: ConversationCommandDeps = {
   executeWorkflowTaskRun,
   dispatchCommitJob,
   dispatchMergeJob,
+  dispatchRebaseJob,
   appendNotice,
   beginAlignmentDraft(input) {
     return getAlignmentService().beginDraft({

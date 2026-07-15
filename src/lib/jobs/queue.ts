@@ -56,6 +56,16 @@ import type {
   CommitContext,
   CommitOutput,
 } from "../workflows/commit/types";
+import {
+  rebaseMachine,
+  type RebaseMachineType,
+} from "../workflows/rebase/machine";
+import type {
+  RebaseInput,
+  RebaseContext,
+  RebaseOutput,
+} from "../workflows/rebase/types";
+import type { RebaseOnto } from "@/lib/git/rebase";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { assertNever } from "../shared/assert-never";
 import type { ConflictAnalysis } from "@/lib/git/schemas";
@@ -246,6 +256,8 @@ function buildNotificationMessage(job: BackgroundJob): string {
         return `Branch ${branch} merged into ${target}${job.mergeHash ? ` (${job.mergeHash.slice(0, 7)})` : ""}`;
       if (job.jobType === "commit")
         return `Changes committed${job.commitHash ? ` (${job.commitHash.slice(0, 7)})` : ""}`;
+      if (job.jobType === "rebase")
+        return `Branch ${branch} rebased onto ${target}`;
       return `Conflicts on ${branch} resolved successfully (target: ${target})`;
     case "conflicts":
       return `${job.conflictCount ?? 0} conflict${(job.conflictCount ?? 0) !== 1 ? "s" : ""} detected merging ${branch} into ${target}`;
@@ -447,6 +459,22 @@ const commitSubscription: JobSubscriptionConfig<CommitContext, CommitOutput> = {
     job.commitHash = output.commitHash ?? undefined;
     job.errorMessage = output.error ?? undefined;
     job.phase = undefined;
+  },
+};
+
+/** Rebase-machine → BackgroundJob projection. */
+const rebaseSubscription: JobSubscriptionConfig<RebaseContext, RebaseOutput> = {
+  phaseOf(context) {
+    return context.phase ?? undefined;
+  },
+  mapOutput(job, output) {
+    job.status = output.status;
+    job.errorMessage = output.error ?? undefined;
+    job.phase = output.phase ?? undefined;
+    if (output.conflictFiles.length > 0) {
+      job.conflictFiles = output.conflictFiles;
+      job.conflictCount = output.conflictFiles.length;
+    }
   },
 };
 
@@ -683,6 +711,83 @@ export function dispatchResolveConflictsJob(params: {
       return createActor(machine, { input });
     },
     subscription: mergeSubscription,
+  });
+}
+
+/**
+ * Dispatch a rebase job using the Rebase XState machine. The machine replays
+ * the session branch onto the target, auto-resolving conflicts per replayed
+ * commit; it never lands into or otherwise modifies the target branch.
+ */
+export interface DispatchRebaseParams {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  /** Where to replay the session's commits onto. */
+  onto: RebaseOnto;
+  /** Human label for the target (`main` / `origin/main`), shown in notices. */
+  targetLabel: string;
+  conversationId?: string;
+  broadcast?: PublishFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: RebaseMachineType;
+  maxConflictRounds?: number;
+}
+
+export function dispatchRebaseJob(
+  params: DispatchRebaseParams,
+): JobDispatchResult<{ jobId: string }> {
+  const {
+    projectPath,
+    projectName,
+    sessionName,
+    worktreePath,
+    branchName,
+    onto,
+    targetLabel,
+    conversationId,
+    broadcast = defaultJobBroadcast,
+    acquireSessionLock,
+    machine = rebaseMachine,
+    maxConflictRounds,
+  } = params;
+
+  return dispatchMachineJob<RebaseContext, RebaseOutput>({
+    jobType: "rebase",
+    session: {
+      projectPath,
+      projectName,
+      sessionName,
+      branchName,
+      targetBranch: targetLabel,
+    },
+    host: createDispatchHost(broadcast, acquireSessionLock),
+    logStart(job) {
+      logger.info("rebase.start", {
+        jobId: job.jobId,
+        sessionName,
+        worktreePath,
+        branchName,
+        targetLabel,
+      });
+    },
+    createJobActor(jobId) {
+      const input: RebaseInput = {
+        jobId,
+        projectPath,
+        projectName,
+        sessionName,
+        worktreePath,
+        branchName,
+        onto,
+        ...(conversationId && { conversationId }),
+        ...(maxConflictRounds && { maxConflictRounds }),
+      };
+      return createActor(machine, { input });
+    },
+    subscription: rebaseSubscription,
   });
 }
 

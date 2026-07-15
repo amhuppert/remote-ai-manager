@@ -473,6 +473,16 @@ describe("deriveNotificationType", () => {
       "resolve-failed",
     );
   });
+
+  it("maps rebase + completed to rebase-completed", () => {
+    expect(deriveNotificationType("rebase", "completed")).toBe(
+      "rebase-completed",
+    );
+  });
+
+  it("maps rebase + failed to rebase-failed", () => {
+    expect(deriveNotificationType("rebase", "failed")).toBe("rebase-failed");
+  });
 });
 
 describe("deriveNotificationTitle", () => {
@@ -496,6 +506,10 @@ describe("deriveNotificationTitle", () => {
     expect(deriveNotificationTitle("resolve-failed")).toBe(
       "Conflict resolution failed",
     );
+    expect(deriveNotificationTitle("rebase-completed")).toBe(
+      "Rebase completed",
+    );
+    expect(deriveNotificationTitle("rebase-failed")).toBe("Rebase failed");
   });
 });
 

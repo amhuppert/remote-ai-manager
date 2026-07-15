@@ -1783,6 +1783,10 @@ describe("conversation command interception", () => {
         ok: true as const,
         value: { jobId: "job-merge-1" },
       })),
+      dispatchRebaseJob: vi.fn(() => ({
+        ok: true as const,
+        value: { jobId: "job-rebase-1" },
+      })),
       appendNotice: vi.fn(async () => {}),
       beginAlignmentDraft: vi.fn(async () => ({
         authoringPrompt: "draft the charter",
