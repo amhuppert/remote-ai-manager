@@ -94,6 +94,7 @@ Focus on capabilities and outcomes, not code structure.
 - Phrase it as a deliverable, runtime behavior, persisted state, UI state, endpoint behavior, test result, or integration outcome
 - Avoid vague bullets like "implement support", "wire things up", or "handle logic" unless paired with a concrete observable result
 - Prefer making one detail bullet clearly answer: "What will be true when this task is done?"
+- Acceptance bullets must name specific requirement scenarios ("rejects a second run for a locked repository — 6.3"), never open-ended proof obligations ("prove locking is safe"). A criterion an adversarial reviewer could extend indefinitely is malformed — bound it by enumerating the cases.
 - Keep this within the existing task body; do not add extra bookkeeping fields
 
 ### 8. Code-Only Focus

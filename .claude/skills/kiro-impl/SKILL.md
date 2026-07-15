@@ -87,6 +87,7 @@ For each task (one at a time):
   - Paths to spec files: requirements.md, design.md, tasks.md
   - Exact requirement and design section numbers this task must satisfy (using source numbering, NOT invented `REQ-*` aliases)
   - Task-relevant steering context and parent-discovered validation commands (tests/build/smoke as relevant)
+  - The design's Operational Envelope (deployment model, trust boundary, failure model) extracted from design.md's Operational Envelope section or Non-Goals — pass this to both implementer and reviewer
   - Whether the task is behavioral (Feature Flag Protocol) or non-behavioral
   - **Previous learnings**: Include any `## Implementation Notes` entries from tasks.md that are relevant to this task's boundary or dependencies (e.g., "better-sqlite3 requires separate rebuild for Electron"). This prevents the same mistakes from recurring.
 - The implementer subagent will read the spec files and build its own Task Brief (acceptance criteria, completion definition, design constraints, verification method) before implementation
@@ -105,6 +106,7 @@ For each task (one at a time):
   - The task description and relevant spec section numbers
   - Paths to spec files (requirements.md, design.md) so the reviewer can read them directly
   - The implementer's status report (for reference only — reviewer must verify independently)
+  - The design's Operational Envelope, so blocking findings are limited to failures reachable in the documented deployment model
 - The reviewer must apply the `kiro-review` protocol to this task-local review.
 - Preserve the existing task-specific context: task text, spec refs, `_Boundary:_` scope, validation commands, implementer report, and the actual `git diff` as the primary source of truth.
 - The reviewer subagent will run `git diff` itself to read the actual code changes and verify against the spec
@@ -114,7 +116,7 @@ For each task (one at a time):
 - Parse reviewer verdict only from the exact `## Review Verdict` block and `- VERDICT:` field.
 - If `VERDICT` is missing, ambiguous, or replaced with prose, re-dispatch the reviewer once requesting the exact structured verdict only. Do NOT mark the task complete, commit, or continue to the next task without a parseable `APPROVED | REJECTED` value.
 - **APPROVED** → before marking the task `[x]` or making any success claim, apply `kiro-verify-completion` using fresh evidence from the current code state; then mark task `[x]` in tasks.md and perform selective git commit
-- **REJECTED (round 1-2)** → re-dispatch implementer with review feedback
+- **REJECTED (round 1-2)** → before re-dispatching, compare the findings against the previous round's: if the majority are NEW defects introduced by the last remediation rather than carried-over findings, the loop is diverging — stop and treat as `STOP_FOR_HUMAN` with the question "tighten scope or accept the current behavior?". Otherwise re-dispatch implementer with review feedback
 - **REJECTED (round 3)** → dispatch debug subagent (see section below)
 
 **e) Commit** (parent-only, selective staging):
@@ -205,6 +207,7 @@ For tasks that add or change behavior, enforce RED → GREEN with a feature flag
 - **Bounded Review Rounds**: Max 2 implementer re-dispatch rounds per reviewer rejection, then debug
 - **Bounded Debug**: Max 2 debug rounds per task (debug + re-implementation per round); if still failing → BLOCKED
 - **Bounded Remediation**: Cap final-validation remediation at 3 rounds
+- **Authorization Is Per-Round**: a human authorization to exceed any cap covers exactly ONE additional round for ONE task. Never record or honor blanket authorization for "future remediation rounds" — re-ask each time a cap is hit
 
 ## Output Description
 

@@ -80,9 +80,17 @@
 ## Section Authoring Guidance
 
 ### Global Ordering
-- Default flow: Overview → Goals/Non-Goals → Boundary Commitments → Architecture → File Structure Plan → Components & Interfaces → Optional sections.
+- Default flow: Overview → Goals/Non-Goals → Operational Envelope → Boundary Commitments → Architecture → File Structure Plan → Components & Interfaces → Optional sections.
 - Teams may swap Traceability earlier or place Data Models nearer Architecture when it improves clarity, but keep section headings intact.
 - Within each section, follow **Summary → Scope → Decisions → Impacts/Risks** so reviewers can scan consistently.
+
+### Operational Envelope (required)
+Immediately after Goals/Non-Goals, state:
+1. **Deployment model** — how many users, processes, machines run this feature.
+2. **Trust boundary** — which inputs are hostile vs. trusted.
+3. **Failure model** — what must survive a crash/restart, and what may acceptably be lost.
+
+Any use of "durable", "atomic", "safe", "recover", or "prove" elsewhere in the design MUST be interpreted relative to this section. Example: "Single local user, one server process. HTTP request fields are untrusted; the local filesystem is trusted. Durability = survives a dashboard restart; an in-flight record lost to a crash is acceptable." Reviewers and implementers treat failure modes outside this envelope as out of scope.
 
 ### Requirement IDs
 - Reference requirements as `2.1, 2.3` without prefixes (no “Requirement 2.1”).

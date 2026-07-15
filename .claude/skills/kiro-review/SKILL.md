@@ -35,6 +35,7 @@ Provide:
 - Spec file paths (`requirements.md`, `design.md`, optionally `tasks.md`)
 - The implementer's status report
 - The task `_Boundary:_` scope constraints
+- The design's **Operational Envelope** (deployment model, trust boundary, failure model — from design.md's Operational Envelope section or Goals/Non-Goals). If the design lacks one, derive a conservative envelope from Non-Goals and state it in the verdict; do not default to a hostile or distributed model.
 - Validation commands discovered by the controller
 - Relevant steering excerpts when applicable
 - Relevant `## Implementation Notes` entries when applicable
@@ -124,6 +125,9 @@ Run these checks and use the result as primary signal.
 ### 12. Error Handling
 - Confirm relevant failure paths are handled and not silently swallowed.
 
+### 13. Proportionality
+- Flag machinery that defends against scenarios outside the Operational Envelope (crash-durability proofs, adversarial-filesystem defenses, distributed coordination, speculative recovery protocols) as scope drift — the same severity as missing behavior. Simplicity violations block in both directions.
+
 ## Severity Model
 
 Use:
@@ -131,6 +135,12 @@ Use:
 - `Important` for required fixes before acceptance
 - `Suggestion` for non-blocking improvements
 - `FYI` for informational notes
+
+A `Critical` or `Important` finding (blocking) must BOTH:
+- cite the specific requirement, design section, or task acceptance criterion it violates, AND
+- describe a failure reachable within the documented Operational Envelope.
+
+A finding that fails either test cannot block. Threats or failure modes excluded by the design's Non-Goals or Operational Envelope (for example: hostile local processes, power-loss durability, or multi-process races for a single-process tool) are `Suggestion` at most. If you believe the envelope itself is wrong, ESCALATE — do not reject.
 
 ## Stop / Escalate
 
@@ -140,6 +150,8 @@ Escalate instead of papering over the issue when:
 - Required evidence cannot be gathered
 - The implementation only works by silently deviating from approved scope
 - Boundary ownership cannot be determined cleanly from requirements, design, and task scope
+- The same task has been rejected twice for findings not traceable to the referenced requirement/design sections
+- Closing a finding would require architecture not present in the approved design (new modules, new invariants, new persistence/locking/recovery state)
 
 ## Common Rationalizations
 
@@ -149,6 +161,8 @@ Escalate instead of papering over the issue when:
 | “The extra behavior is useful” | Extra behavior outside approved scope is still drift. |
 | “The implementer said RED was done” | RED must be evidenced, not asserted. |
 | “This gap is small enough to let through” | Real gaps must be rejected or escalated. |
+| “A hostile actor / crash at this instant could break it” | If that actor or crash mode is outside the documented envelope, it is not a blocking finding. Escalate if the envelope seems wrong. |
+| “The last remediation opened this new window” | Two consecutive rounds finding NEW defects introduced by remediation = diverging loop. Escalate with a scope question instead of rejecting again. |
 
 ## Output Format
 
@@ -164,6 +178,7 @@ Escalate instead of papering over the issue when:
   - Boundary: WITHIN | <files outside boundary>
   - Boundary audit: CLEAN | <spillover / hidden dependency findings>
   - RED phase: VERIFIED | MISSING | N/A
+- ENVELOPE: <the operational envelope this review assumed>
 - FINDINGS:
   1. <specific finding with exact files/spec refs>
 - REMEDIATION: <mandatory if REJECTED>
