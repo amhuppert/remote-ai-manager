@@ -8,7 +8,7 @@ import {
 } from "./Collapsible";
 
 // Radix Collapsible measures content via ResizeObserver (polyfilled in
-// vitest.setup) and may capture the pointer; stub the pointer methods jsdom omits.
+// vitest.jsdom.setup) and may capture the pointer; stub the pointer methods jsdom omits.
 Element.prototype.hasPointerCapture = () => false;
 Element.prototype.setPointerCapture = () => {};
 Element.prototype.releasePointerCapture = () => {};

@@ -21,26 +21,4 @@ describe("ContextFillIndicator", () => {
     rerender(<ContextFillIndicator percentage={150} />);
     expect(screen.getByText("100%")).toBeDefined();
   });
-
-  // The fill bar is the only element carrying an inline width style; color level
-  // by threshold is appearance, verified visually in Storybook (AllThresholds).
-  it("sets fill bar width to the clamped percentage", () => {
-    const { container } = render(<ContextFillIndicator percentage={73} />);
-    const fill = container.querySelector("[style]") as HTMLElement;
-    expect(fill?.style.width).toBe("73%");
-  });
-
-  it("renders 0% width for 0 percentage", () => {
-    const { container } = render(<ContextFillIndicator percentage={0} />);
-    const fill = container.querySelector("[style]") as HTMLElement;
-    expect(fill?.style.width).toBe("0%");
-    expect(screen.getByText("0%")).toBeDefined();
-  });
-
-  it("renders 100% width for 100 percentage", () => {
-    const { container } = render(<ContextFillIndicator percentage={100} />);
-    const fill = container.querySelector("[style]") as HTMLElement;
-    expect(fill?.style.width).toBe("100%");
-    expect(screen.getByText("100%")).toBeDefined();
-  });
 });

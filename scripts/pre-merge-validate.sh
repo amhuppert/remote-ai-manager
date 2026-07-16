@@ -14,11 +14,6 @@ set -euo pipefail
 # Enable AI-optimized output for tools that detect this (e.g., vitest.config.ts)
 export CLAUDECODE=1
 
-# build-info.generated.ts is gitignored and normally produced by postinstall/dev/build;
-# a fresh validation worktree may have run none of those, so generate it before
-# tsc/vitest resolve the module.
-bun run build:info >/dev/null
-
 # Resolve where this branch diverged from its merge target so we only lint/format/
 # test what it actually introduces or changes. TARGET_BRANCH is supplied by CC's
 # merge workflow; default to main for standalone runs.
@@ -28,22 +23,41 @@ if git rev-parse --verify --quiet "${TARGET_BRANCH}^{commit}" >/dev/null 2>&1; t
   merge_base="$(git merge-base "${TARGET_BRANCH}" HEAD 2>/dev/null || true)"
 fi
 
+if [ -n "$merge_base" ] && git diff --quiet "$merge_base" -- && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+  echo "No changes to validate."
+  exit 0
+fi
+
+# build-info.generated.ts is gitignored and normally produced by postinstall/dev/build;
+# a fresh validation worktree may have run none of those, so generate it before
+# tsc/vitest resolve the module.
+bun run build:info >/dev/null
+
 # Files changed vs the merge base: committed + staged + unstaged tracked changes
-# (ACMR drops deletions; renames resolve to the new path) plus untracked files.
-# Existence-filtered so prettier/eslint never receive a path that no longer exists.
+# plus untracked files. The formatter/linter lists are existence-filtered so
+# neither tool receives a path that no longer exists.
 changed_files=()
 lint_files=()
+shared_test_setup_changed=false
+node_test_setup_changed=false
+jsdom_test_setup_changed=false
 if [ -n "$merge_base" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    [ -f "$f" ] || continue
-    changed_files+=("$f")
     case "$f" in
-      *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs) lint_files+=("$f") ;;
+      vitest.setup.ts) shared_test_setup_changed=true ;;
+      vitest.node.setup.ts) node_test_setup_changed=true ;;
+      vitest.jsdom.setup.ts) jsdom_test_setup_changed=true ;;
     esac
+    if [ -f "$f" ]; then
+      changed_files+=("$f")
+      case "$f" in
+        *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs) lint_files+=("$f") ;;
+      esac
+    fi
   done < <(
     {
-      git diff --name-only --diff-filter=ACMR "$merge_base" --
+      git diff --name-only "$merge_base" --
       git ls-files --others --exclude-standard
     } | sort -u
   )
@@ -95,7 +109,18 @@ bun run build >/dev/null
 # development build (which exports `React.act`) — required by
 # @testing-library/react 16 under React 19.
 if [ -z "$merge_base" ]; then
-  NODE_ENV=test npx vitest run --project unit --no-color
+  NODE_ENV=test npx vitest run --project unit-node --project unit-jsdom --no-color
+elif [ "$shared_test_setup_changed" = true ] || { [ "$node_test_setup_changed" = true ] && [ "$jsdom_test_setup_changed" = true ]; }; then
+  NODE_ENV=test npx vitest run --project unit-node --project unit-jsdom --no-color
+elif [ "$node_test_setup_changed" = true ]; then
+  # Vitest does not include project-level setupFiles in --changed's dependency
+  # graph. Run the owning project in full, while preserving diff scoping for
+  # the other environment.
+  NODE_ENV=test npx vitest run --project unit-node --no-color
+  NODE_ENV=test npx vitest run --project unit-jsdom --no-color --changed "$merge_base" --passWithNoTests
+elif [ "$jsdom_test_setup_changed" = true ]; then
+  NODE_ENV=test npx vitest run --project unit-jsdom --no-color
+  NODE_ENV=test npx vitest run --project unit-node --no-color --changed "$merge_base" --passWithNoTests
 else
-  NODE_ENV=test npx vitest run --project unit --no-color --changed "$merge_base" --passWithNoTests
+  NODE_ENV=test npx vitest run --project unit-node --project unit-jsdom --no-color --changed "$merge_base" --passWithNoTests
 fi

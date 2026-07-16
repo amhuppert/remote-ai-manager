@@ -57,6 +57,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ## Testing boundaries
 
+- Unit tests must not import Storybook or `*.stories.*` modules. Test production components directly with Testing Library and Storybook-free fixtures/providers; keep CSF composition, play functions, and story interaction coverage in the Storybook browser project.
 - Never use `vi.mock()` for internal project modules. Use dependency injection, factories, XState `.provide()`, or extracted pure functions. Infrastructure modules with import-time side effects are the narrow exception.
 - Dependency interfaces use method syntax when production functions must satisfy them.
 - If correctness depends on SQLite serialization, use `createPersistenceFixture()` from `src/lib/shared/testing/persistence-fixture.ts`, reload through the repository, and assert on the reloaded state. JS-object fakes cannot prove durability.

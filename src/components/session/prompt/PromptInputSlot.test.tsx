@@ -16,8 +16,7 @@ type ApprovalGateProps = ComponentProps<typeof ApprovalGatePanel>;
 // providers, voice hooks, etc.). The default branch is exercised by
 // PromptEditor.test.tsx / PromptComposer-targeted stories; here we only need
 // to verify branch selection happens before PromptComposer renders, so we
-// pass a cast stub object — the default-branch test is skipped to avoid
-// re-exercising that provider stack.
+// pass a cast stub object and avoid re-exercising that provider stack.
 const composerStub = {} as PromptComposerProps;
 
 const sampleQuestions: AskQuestionItem[] = [
@@ -230,15 +229,5 @@ describe("PromptInputSlot", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onApprove).toHaveBeenCalledTimes(1);
-  });
-
-  it.skip("renders PromptComposer in the default branch (requires deep provider/lazy setup; covered by PromptEditor.test.tsx)", () => {
-    // The default branch falls through to <PromptComposer>, which lazy-loads
-    // Tiptap and pulls in voice/query hooks. Verifying that branch with a
-    // realistic stub would either need a full provider stack or aggressive
-    // vi.mocks on internal modules — both violate the project's testing
-    // rules. The "only pendingQuestions but no id" fallthrough hits the same
-    // code path and is therefore also out of scope here. The gated→composer
-    // selection is pinned by the resolvePromptSlotView tests above.
   });
 });

@@ -101,6 +101,28 @@ describe("DevServerRegistry", () => {
   let registry: ReturnType<typeof createDevServerRegistry>;
   let deps: DevServerRegistryDeps;
 
+  type ServerQuery = Parameters<(typeof registry)["getServer"]>[0];
+  type ServerEntry = NonNullable<ReturnType<(typeof registry)["getServer"]>>;
+
+  async function waitForServer(
+    query: ServerQuery,
+    predicate: (server: ServerEntry) => boolean,
+    timeout = 3000,
+  ): Promise<ServerEntry> {
+    return vi.waitFor(
+      () => {
+        const server = registry.getServer(query);
+        if (!server || !predicate(server)) {
+          throw new Error(
+            `Server ${query.serverName} has not reached the expected state`,
+          );
+        }
+        return server;
+      },
+      { timeout, interval: 10 },
+    );
+  }
+
   beforeEach(() => {
     deps = createTestDeps();
     registry = createDevServerRegistry(deps);
@@ -195,14 +217,15 @@ describe("DevServerRegistry", () => {
         startMode: startMode(59802, { readinessTimeoutMs: 2000 }),
       });
 
-      await new Promise((r) => setTimeout(r, 500));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "port-test",
-      });
+      const server = await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "port-test",
+        },
+        (entry) => entry.status === "running",
+      );
 
       expect(server!.status).toBe("running");
       expect(server!.port).toBe(59802);
@@ -221,14 +244,15 @@ describe("DevServerRegistry", () => {
         startMode: startMode(port, { readinessTimeoutMs: 2000 }),
       });
 
-      await new Promise((r) => setTimeout(r, 1200));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "tailscale-test",
-      });
+      const server = await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "tailscale-test",
+        },
+        (entry) => entry.remoteUrl !== null,
+      );
 
       expect(server!.status).toBe("running");
       expect(server!.port).toBe(port);
@@ -252,12 +276,11 @@ describe("DevServerRegistry", () => {
         worktreePath: "/tmp",
         serverName: "fail-test",
       };
-      let server = registry.getServer(query);
-      const deadline = Date.now() + 5000;
-      while (server?.status === "starting" && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 25));
-        server = registry.getServer(query);
-      }
+      const server = await waitForServer(
+        query,
+        (entry) => entry.status === "error",
+        5000,
+      );
 
       expect(server!.status).toBe("error");
       expect(server!.errorMessage).toContain(
@@ -275,14 +298,15 @@ describe("DevServerRegistry", () => {
         startMode: startMode(59804),
       });
 
-      await new Promise((r) => setTimeout(r, 200));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "output-test",
-      });
+      const server = await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "output-test",
+        },
+        (entry) => entry.recentOutput.length > 0,
+      );
 
       expect(server!.recentOutput.length).toBeGreaterThanOrEqual(1);
     });
@@ -301,7 +325,15 @@ describe("DevServerRegistry", () => {
         startMode: startMode(4000, { readinessTimeoutMs: 2000 }),
       });
 
-      await new Promise((r) => setTimeout(r, 500));
+      await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "stop-test",
+        },
+        (entry) => entry.status === "running",
+      );
 
       await registry.stopServer({
         projectPath: "/proj",
@@ -388,7 +420,26 @@ describe("DevServerRegistry", () => {
         startMode: startMode(59821, { readinessTimeoutMs: 2000 }),
       });
 
-      await new Promise((r) => setTimeout(r, 500));
+      await Promise.all([
+        waitForServer(
+          {
+            projectPath: "/proj",
+            sessionName: "s1",
+            worktreePath: laneAPath,
+            serverName: "web",
+          },
+          (entry) => entry.status === "running",
+        ),
+        waitForServer(
+          {
+            projectPath: "/proj",
+            sessionName: "s1",
+            worktreePath: laneBPath,
+            serverName: "web",
+          },
+          (entry) => entry.status === "running",
+        ),
+      ]);
 
       await registry.stopAllForWorktree({
         projectPath: "/proj",
@@ -486,18 +537,18 @@ describe("DevServerRegistry", () => {
   });
 
   describe("process group killing", () => {
-    /** Helper: poll until condition is true or timeout */
+    /** Helper: wait until an operating-system process condition is true. */
     async function waitFor(
       fn: () => boolean | Promise<boolean>,
       timeoutMs = 5000,
-      intervalMs = 200,
+      intervalMs = 20,
     ): Promise<void> {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, intervalMs));
-      }
-      throw new Error("waitFor timed out");
+      await vi.waitFor(
+        async () => {
+          if (!(await fn())) throw new Error("Process condition not met");
+        },
+        { timeout: timeoutMs, interval: intervalMs },
+      );
     }
 
     /** Check if a process group is alive (signal 0 = existence check) */
@@ -590,18 +641,15 @@ describe("DevServerRegistry", () => {
         startMode: startMode(port, { readinessTimeoutMs: 2000 }),
       });
 
-      const deadline = Date.now() + 3_000;
-      while (Date.now() < deadline) {
-        const s = registry.getServer({
+      return waitForServer(
+        {
           projectPath: "/proj",
           sessionName: "s1",
           worktreePath: WORKTREE,
           serverName,
-        });
-        if (s?.status === "running") return s;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      throw new Error("server never reached running");
+        },
+        (entry) => entry.status === "running",
+      );
     }
 
     it("only signals listener PIDs, never client-connection PIDs", async () => {
@@ -873,17 +921,18 @@ describe("DevServerRegistry", () => {
       needle: string,
       timeoutMs = 3000,
     ): Promise<string> {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        try {
-          const contents = readFileSync(filePath, "utf-8");
-          if (contents.includes(needle)) return contents;
-        } catch {
-          // not created yet
-        }
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      throw new Error(`log file ${filePath} never contained ${needle}`);
+      return vi.waitFor(
+        () => {
+          try {
+            const contents = readFileSync(filePath, "utf-8");
+            if (contents.includes(needle)) return contents;
+          } catch {
+            // not created yet
+          }
+          throw new Error(`log file ${filePath} does not contain ${needle}`);
+        },
+        { timeout: timeoutMs, interval: 10 },
+      );
     }
 
     it("computes logFilePath under <worktree>/.cc/dev-server-logs/<server>.log", async () => {
@@ -1025,14 +1074,18 @@ describe("DevServerRegistry", () => {
         },
       });
 
-      await new Promise((r) => setTimeout(r, 600));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "cc-assigned-env",
-      });
+      const server = await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "cc-assigned-env",
+        },
+        (entry) =>
+          entry.recentOutput.includes("CC_ASSIGNED_PORT=51234") &&
+          entry.recentOutput.includes("PORT=51234") &&
+          entry.recentOutput.includes("ALIAS_PORT=51234"),
+      );
       expect(server).toBeDefined();
       expect(server!.recentOutput).toContain("CC_ASSIGNED_PORT=51234");
       expect(server!.recentOutput).toContain("PORT=51234");
@@ -1054,22 +1107,16 @@ describe("DevServerRegistry", () => {
         },
       });
 
-      const deadline = Date.now() + 2500;
-      let server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "cc-assigned-tcp-ready",
-      });
-      while (Date.now() < deadline && server?.status !== "running") {
-        await new Promise((r) => setTimeout(r, 100));
-        server = registry.getServer({
+      const server = await waitForServer(
+        {
           projectPath: "/proj",
           sessionName: "s1",
           worktreePath: "/tmp",
           serverName: "cc-assigned-tcp-ready",
-        });
-      }
+        },
+        (entry) => entry.status === "running",
+        2500,
+      );
 
       expect(server!.status).toBe("running");
       expect(server!.port).toBe(51235);
@@ -1090,22 +1137,16 @@ describe("DevServerRegistry", () => {
         },
       });
 
-      const deadline = Date.now() + 2000;
-      let server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "cc-assigned-tcp-timeout",
-      });
-      while (Date.now() < deadline && server?.status === "starting") {
-        await new Promise((r) => setTimeout(r, 100));
-        server = registry.getServer({
+      const server = await waitForServer(
+        {
           projectPath: "/proj",
           sessionName: "s1",
           worktreePath: "/tmp",
           serverName: "cc-assigned-tcp-timeout",
-        });
-      }
+        },
+        (entry) => entry.status === "error",
+        2000,
+      );
 
       expect(server!.status).toBe("error");
       expect(server!.errorMessage ?? "").toMatch(/readiness|timeout/i);
@@ -1127,14 +1168,15 @@ describe("DevServerRegistry", () => {
         },
       });
 
-      await new Promise((r) => setTimeout(r, 400));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        worktreePath: "/tmp",
-        serverName: "cc-assigned-cwd",
-      });
+      const server = await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "cc-assigned-cwd",
+        },
+        (entry) => entry.recentOutput.some((line) => line.startsWith("PWD=")),
+      );
       const pwdLine = server?.recentOutput.find((l) => l.startsWith("PWD="));
       expect(pwdLine).toBe("PWD=/usr");
     });

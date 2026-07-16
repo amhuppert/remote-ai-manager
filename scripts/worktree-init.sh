@@ -7,3 +7,10 @@ set -euo pipefail
 
 echo "Installing dependencies in worktree: $WORKTREE_PATH"
 bun install
+
+parent_build_info="${PARENT_WORKTREE_PATH:-}/tsconfig.tsbuildinfo"
+build_info="$WORKTREE_PATH/tsconfig.tsbuildinfo"
+if [ -n "${PARENT_WORKTREE_PATH:-}" ] && [ -f "$parent_build_info" ] && [ ! -f "$build_info" ]; then
+  cp "$parent_build_info" "$build_info"
+  echo "Seeded TypeScript incremental state from parent worktree"
+fi

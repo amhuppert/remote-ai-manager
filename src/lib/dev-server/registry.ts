@@ -37,6 +37,7 @@ const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
 const TAILSCALE_POLL_INTERVAL_MS = 500;
 const TAILSCALE_POLL_TIMEOUT_MS = 30_000;
+const PROCESS_GROUP_POLL_INTERVAL_MS = 50;
 const LOG_SUBDIR = ".cc/dev-server-logs";
 
 /**
@@ -1054,7 +1055,7 @@ async function killProcessGroup(pid: number): Promise<void> {
     } catch {
       return; // Group has fully exited
     }
-    await sleep(500);
+    await sleep(PROCESS_GROUP_POLL_INTERVAL_MS);
   }
 
   // Force-kill remaining processes in the group

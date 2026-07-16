@@ -12,7 +12,7 @@ import {
   ContextMenuShortcut,
 } from "./ContextMenu";
 
-// Radix DOM-method polyfills are global (vitest.setup.ts).
+// Radix DOM-method polyfills are global (vitest.jsdom.setup.ts).
 afterEach(cleanup);
 
 function renderMenu(itemProps: { onSelect?: () => void } = {}) {

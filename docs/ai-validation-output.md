@@ -70,7 +70,7 @@ set -euo pipefail
 npx prettier --write .
 npx eslint . --fix
 npx tsc --noEmit --pretty
-npx vitest run --project unit
+npx vitest run --project unit-node --project unit-jsdom
 ```
 
 The `set -euo pipefail` causes the script to exit on the first failure. The `&&` chaining approach in a `package.json` script achieves the same effect:

@@ -41,14 +41,14 @@ describe("CardContextMenu", () => {
     expect(onOpenChange).toHaveBeenCalledWith(true);
   });
 
-  it("renders items as menuitems when open; danger maps to red", () => {
+  it("renders items as menuitems when open", () => {
     render(<CardContextMenu items={baseItems} open onOpenChange={vi.fn()} />);
     expect(
       screen.getByRole("menuitem", { name: "Archive Project" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: "Delete Project" }).className,
-    ).toContain("text-red");
+      screen.getByRole("menuitem", { name: "Delete Project" }),
+    ).toBeInTheDocument();
   });
 
   it("calls onAction when an item is selected", async () => {

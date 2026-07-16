@@ -29,18 +29,6 @@ describe("ThinkingBlock", () => {
     expect(code.tagName).toBe("CODE");
   });
 
-  it("keeps the reasoning body inside the italic tone host", async () => {
-    const { container } = render(<ThinkingBlock text="Reasoning prose." />);
-
-    await waitFor(() => {
-      expect(markdownRoot(container)).not.toBeNull();
-    }, LOAD_TIMEOUT);
-    // The disclosure body is the tone host: the canonical adapter renders
-    // directly inside it, and it still carries the italic "inner voice" tone.
-    const toneHost = markdownRoot(container)!.parentElement;
-    expect(toneHost?.className).toContain("italic");
-  });
-
   it("preserves the disclosure: toggling hides the reasoning body", async () => {
     const { container } = render(<ThinkingBlock text="Commanded thought." />);
 

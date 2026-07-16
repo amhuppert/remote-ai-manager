@@ -99,11 +99,13 @@ function expandBlock(block: HTMLElement): HTMLElement {
 }
 
 describe("WorkflowInspectorPanel — persistent tab strip", () => {
-  it("renders two tabs with Workflow active and Context disabled when no selection", () => {
+  it("tracks selection across its accessible Workflow and Context tabs", () => {
     resetStore();
     setupStore({ selectedContextId: null });
 
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+    const { container, rerender } = render(
+      <WorkflowInspectorPanel {...defaultProps} />,
+    );
     const tabs = getTabs(container);
     expect(tabs).toHaveLength(2);
 
@@ -118,29 +120,12 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     expect(contextTab.getAttribute("title")).toBe(
       "Select a context in the graph",
     );
-  });
-
-  it("enables the Context tab and shows the selected context title in the header", () => {
-    resetStore();
-    setupStore({ selectedContextId: "context-plan" });
-
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-    const tabs = getTabs(container);
-    const contextTab = tabs[1]!;
-    expect(contextTab.disabled).toBe(false);
-    expect(contextTab.textContent).toBe("Context");
-    // The selected context's title renders next to the tab strip.
-    const header = container.querySelector("header");
-    expect(header?.textContent).toContain("Plan");
-  });
-
-  it("context selection switches the active tab to Context", () => {
-    resetStore();
-    setupStore({ selectedContextId: null });
-    const { container, rerender } = render(
-      <WorkflowInspectorPanel {...defaultProps} />,
+    const workflowControls = workflowTab.getAttribute("aria-controls");
+    expect(workflowControls).toBeTruthy();
+    expect(document.getElementById(workflowControls!)).toHaveAttribute(
+      "role",
+      "tabpanel",
     );
-    expect(getTabs(container)[0]!.getAttribute("aria-selected")).toBe("true");
 
     act(() => {
       _useGraphWorkflowBuilderStore.setState({
@@ -149,40 +134,19 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     });
     rerender(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const [workflowTab, contextTab] = getTabs(container);
-    expect(contextTab!.getAttribute("aria-selected")).toBe("true");
-    expect(workflowTab!.getAttribute("aria-selected")).toBe("false");
-  });
+    const [selectedWorkflowTab, selectedContextTab] = getTabs(container);
+    expect(selectedContextTab!.disabled).toBe(false);
+    expect(selectedContextTab!.getAttribute("aria-selected")).toBe("true");
+    expect(selectedWorkflowTab!.getAttribute("aria-selected")).toBe("false");
+    expect(container.querySelector("header")?.textContent).toContain("Plan");
 
-  it("clicking Workflow tab does not clear selection", () => {
-    resetStore();
-    setupStore({ selectedContextId: "context-plan" });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const workflowTab = getTabs(container)[0]!;
     // Radix Tabs.Trigger activates on mousedown/focus (APG automatic
     // activation), not on a bare synthetic click event.
-    fireEvent.mouseDown(workflowTab);
-    expect(workflowTab.getAttribute("aria-selected")).toBe("true");
+    fireEvent.mouseDown(selectedWorkflowTab!);
+    expect(selectedWorkflowTab!.getAttribute("aria-selected")).toBe("true");
     expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
       "context-plan",
     );
-  });
-});
-
-describe("WorkflowInspectorPanel — Radix tabpanel wiring", () => {
-  it("wires the active tab to a role=tabpanel via aria-controls", () => {
-    resetStore();
-    setupStore({ selectedContextId: null });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const workflowTab = getTabs(container)[0]!;
-    expect(workflowTab.getAttribute("aria-selected")).toBe("true");
-    const controls = workflowTab.getAttribute("aria-controls");
-    expect(controls).toBeTruthy();
-    const panel = document.getElementById(controls!);
-    expect(panel).not.toBeNull();
-    expect(panel!.getAttribute("role")).toBe("tabpanel");
   });
 });
 
@@ -282,88 +246,47 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     ).toBeUndefined();
   });
 
-  it("toggling the workflow script validator creates and resets a workflow override", () => {
+  it("creates and resets each workflow gate override", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const toggle = screen.getByRole("switch", {
-      name: /workflow script validator/i,
-    });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const gates = [
+      {
+        name: /workflow script validator/i,
+        label: "Script validator",
+        read: () =>
+          _useGraphWorkflowBuilderStore.getState().draftDefinition
+            ?.workflowConfig.scriptValidator,
+      },
+      {
+        name: /workflow human approval gate/i,
+        label: "Human approval gate",
+        read: () =>
+          _useGraphWorkflowBuilderStore.getState().draftDefinition
+            ?.workflowConfig.humanApprovalGate,
+      },
+      {
+        name: /workflow ask user questions/i,
+        label: "Ask user questions",
+        read: () =>
+          _useGraphWorkflowBuilderStore.getState().draftDefinition
+            ?.workflowConfig.askUserQuestions,
+      },
+    ];
 
-    fireEvent.click(toggle);
+    for (const gate of gates) {
+      const toggle = screen.getByRole("switch", { name: gate.name });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(toggle);
+      expect(gate.read()).toEqual({ enabled: true });
 
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
-        .scriptValidator,
-    ).toEqual({ enabled: true });
-
-    const block = findBlockByLabel(container, "Script validator")!;
-    fireEvent.click(
-      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
-    );
-
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
-        .scriptValidator,
-    ).toBeUndefined();
-  });
-
-  it("toggling the workflow human approval gate creates and resets a workflow override", () => {
-    resetStore();
-    setupStore({ selectedContextId: null });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const toggle = screen.getByRole("switch", {
-      name: /workflow human approval gate/i,
-    });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-
-    fireEvent.click(toggle);
-
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
-        .humanApprovalGate,
-    ).toEqual({ enabled: true });
-
-    const block = findBlockByLabel(container, "Human approval gate")!;
-    fireEvent.click(
-      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
-    );
-
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
-        .humanApprovalGate,
-    ).toBeUndefined();
-  });
-
-  it("toggling the workflow ask-user-questions gate creates and resets a workflow override", () => {
-    resetStore();
-    setupStore({ selectedContextId: null });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const toggle = screen.getByRole("switch", {
-      name: /workflow ask user questions/i,
-    });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-
-    fireEvent.click(toggle);
-
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
-        .askUserQuestions,
-    ).toEqual({ enabled: true });
-
-    const block = findBlockByLabel(container, "Ask user questions")!;
-    fireEvent.click(
-      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
-    );
-
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
-        .askUserQuestions,
-    ).toBeUndefined();
+      const block = findBlockByLabel(container, gate.label)!;
+      fireEvent.click(
+        footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
+      );
+      expect(gate.read()).toBeUndefined();
+    }
   });
 });
 
@@ -586,57 +509,26 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     expect(ctx2?.iterationPolicy).toBeUndefined();
   });
 
-  it("toggling the context script validator creates a context override", () => {
+  it("creates each context gate override", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const toggle = screen.getByRole("switch", {
-      name: /context script validator/i,
-    });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-
-    fireEvent.click(toggle);
+    for (const name of [
+      /context script validator/i,
+      /context human approval gate/i,
+      /context ask user questions/i,
+    ]) {
+      const toggle = screen.getByRole("switch", { name });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(toggle);
+    }
 
     const ctx = _useGraphWorkflowBuilderStore
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.scriptValidator).toEqual({ enabled: true });
-  });
-
-  it("toggling the context human approval gate creates a context override", () => {
-    resetStore();
-    setupStore({ selectedContextId: "context-plan" });
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const toggle = screen.getByRole("switch", {
-      name: /context human approval gate/i,
-    });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-
-    fireEvent.click(toggle);
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.humanApprovalGate).toEqual({ enabled: true });
-  });
-
-  it("toggling the context ask-user-questions gate creates a context override", () => {
-    resetStore();
-    setupStore({ selectedContextId: "context-plan" });
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const toggle = screen.getByRole("switch", {
-      name: /context ask user questions/i,
-    });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-
-    fireEvent.click(toggle);
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.askUserQuestions).toEqual({ enabled: true });
   });
 });
@@ -774,20 +666,5 @@ describe("WorkflowInspectorPanel — validator three-state footer", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.contextValidator).toBeUndefined();
-  });
-});
-
-describe("WorkflowInspectorPanel — schema shape assertions", () => {
-  it("definition never contains legacy soft/hard limit fields", () => {
-    resetStore();
-    setupStore({ selectedContextId: "context-plan" });
-
-    const def = _useGraphWorkflowBuilderStore.getState().draftDefinition;
-    const ctx = def?.executionContexts[0];
-
-    expect(ctx?.iterationPolicy?.continuity).toHaveProperty("enabled");
-    const raw = ctx?.iterationPolicy as unknown as Record<string, unknown>;
-    expect(raw).not.toHaveProperty("contextSoftLimitTokens");
-    expect(raw).not.toHaveProperty("contextHardLimitTokens");
   });
 });

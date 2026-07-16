@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,12 +10,40 @@ const dirname =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url));
 
+const TEST_FILE_PATTERN = /\.test\.(?:ts|tsx|mjs)$/;
+const JSDOM_DIRECTIVE_PATTERN = /^\/\/ @vitest-environment jsdom\s*$/m;
+
+function collectTestFiles(directory: string): string[] {
+  const absoluteDirectory = path.join(dirname, directory);
+  return readdirSync(absoluteDirectory, { withFileTypes: true }).flatMap(
+    (entry) => {
+      const relativePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) return collectTestFiles(relativePath);
+      if (!entry.isFile() || !TEST_FILE_PATTERN.test(entry.name)) return [];
+      return [relativePath.split(path.sep).join("/")];
+    },
+  );
+}
+
+const unitTestFiles = ["src", "scripts", "eslint-rules"].flatMap(
+  collectTestFiles,
+);
+const jsdomTestFiles = unitTestFiles.filter((filePath) =>
+  JSDOM_DIRECTIVE_PATTERN.test(
+    readFileSync(path.join(dirname, filePath), "utf8"),
+  ),
+);
+const jsdomTestFileSet = new Set(jsdomTestFiles);
+const nodeTestFiles = unitTestFiles.filter(
+  (filePath) => !jsdomTestFileSet.has(filePath),
+);
+
 // Bound worker parallelism to available RAM, not just core count. Vitest's
 // default forks pool spawns one worker per CPU core with no heap cap; on a
 // high-core / low-RAM machine that fans out to N heavyweight Node processes at
 // once, which can exhaust RAM + swap during a full-suite (e.g. pre-merge
-// validation) run and freeze the machine. The `unit` project runs in the `node`
-// environment (no jsdom), so ~1.5 GB per worker is ample; budgeting that heap
+// validation) run and freeze the machine. The unit projects use Node or jsdom,
+// so ~1.5 GB per worker is ample; budgeting that heap
 // against ~55% of total RAM keeps low-RAM machines at the 2-worker floor while
 // letting high-RAM / high-core machines use more parallelism (e.g. 16 GB / 16
 // cores -> 5 workers) at a *lower* total heap footprint than the old 2 GB
@@ -92,21 +121,42 @@ export default defineConfig({
       },
     }),
 
-    workspace: [
-      // Unit tests — runs existing *.test.ts files in Node/jsdom
+    projects: [
+      // Compatibility alias for callers that still filter `--project unit`.
+      // The explicit node/jsdom shards remain the primary validation entrypoints.
       {
         extends: true,
         test: {
           name: "unit",
           environment: "node",
-          include: [
-            "src/**/*.test.{ts,tsx}",
-            "scripts/**/*.test.{ts,tsx}",
-            // Guardrail ESLint rules + their RuleTester suite are authored in
-            // .mjs (matching the eslint-plugin module format; excluded from tsc).
-            "eslint-rules/**/*.test.{ts,tsx,mjs}",
-          ],
-          setupFiles: ["vitest.setup.ts"],
+          include: unitTestFiles,
+          setupFiles: ["vitest.jsdom.setup.ts"],
+          testTimeout: 15000,
+          env: {
+            CC_LOG_SILENT: "1",
+          },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "unit-node",
+          environment: "node",
+          include: nodeTestFiles,
+          setupFiles: ["vitest.node.setup.ts"],
+          testTimeout: 15000,
+          env: {
+            CC_LOG_SILENT: "1",
+          },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "unit-jsdom",
+          environment: "jsdom",
+          include: jsdomTestFiles,
+          setupFiles: ["vitest.jsdom.setup.ts"],
           testTimeout: 15000,
           env: {
             CC_LOG_SILENT: "1",

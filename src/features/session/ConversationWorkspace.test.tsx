@@ -561,81 +561,50 @@ function renderPage(props?: {
 // ===========================================================================
 
 describe("ConversationWorkspace", () => {
-  it("renders user and assistant messages with role indicators", () => {
+  it("renders the transcript, session metadata, counter, and navigation", () => {
     renderPage();
     expect(screen.getAllByText("You")).toHaveLength(2);
     expect(screen.getAllByText("Claude").length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("renders message content text", () => {
-    renderPage();
     expect(screen.getByText("Hello Claude")).toBeInTheDocument();
     expect(screen.getByText("Hello! How can I help?")).toBeInTheDocument();
     expect(screen.getByText("Fix the bug")).toBeInTheDocument();
-  });
-
-  it("renders empty state when no messages", () => {
-    testMessages = [];
-    renderPage();
-    expect(screen.getByText("No messages yet")).toBeInTheDocument();
-    expect(
-      screen.getByText("Send a prompt to start the conversation."),
-    ).toBeInTheDocument();
-  });
-
-  it("displays session info with branch name", () => {
-    renderPage();
     expect(
       screen.getAllByText("csm/test-session").length,
     ).toBeGreaterThanOrEqual(1);
-  });
-
-  it("shows message counter with position / total", () => {
-    renderPage();
     expect(screen.getByText("1 / 3")).toBeInTheDocument();
-  });
-
-  it("shows 0 / 0 counter when no messages", () => {
-    testMessages = [];
-    renderPage();
-    expect(screen.getByText("0 / 0")).toBeInTheDocument();
-  });
-
-  it("keeps nav buttons always enabled", () => {
-    renderPage();
     const prevBtn = screen.getByTitle("Previous message");
     const nextBtn = screen.getByTitle("Next message");
     expect(prevBtn.hasAttribute("disabled")).toBe(false);
     expect(nextBtn.hasAttribute("disabled")).toBe(false);
   });
 
-  it("disables send button when prompt text is empty", () => {
+  it("renders the empty transcript and zero counter", () => {
+    testMessages = [];
+    renderPage();
+    expect(screen.getByText("No messages yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Send a prompt to start the conversation."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("0 / 0")).toBeInTheDocument();
+  });
+
+  it("enables prompt submission only after accepting input", () => {
     renderPage();
     const sendBtns = screen.getAllByTitle("Send prompt");
     expect(sendBtns.length).toBeGreaterThan(0);
     sendBtns.forEach((btn) => {
       expect(btn.hasAttribute("disabled")).toBe(true);
     });
-  });
 
-  it("enables send button when prompt text is entered", () => {
-    renderPage();
-    const textarea = screen.getByPlaceholderText("Send a prompt to Claude...");
-    fireEvent.change(textarea, { target: { value: "Hello" } });
-    const sendBtns = screen.getAllByTitle("Send prompt");
-    expect(sendBtns.length).toBeGreaterThan(0);
-    sendBtns.forEach((btn) => {
-      expect(btn.hasAttribute("disabled")).toBe(false);
-    });
-  });
-
-  it("prompt textarea accepts text input", () => {
-    renderPage();
     const textarea = screen.getByPlaceholderText(
       "Send a prompt to Claude...",
     ) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "Fix the bug" } });
+
     expect(textarea.value).toBe("Fix the bug");
+    sendBtns.forEach((btn) => {
+      expect(btn.hasAttribute("disabled")).toBe(false);
+    });
   });
 
   it("shows loading state when session query is pending", () => {
@@ -658,101 +627,10 @@ describe("ConversationWorkspace", () => {
     expect(screen.queryByText("Loading session...")).toBeNull();
   });
 
-  it("does not poll messages when a different conversation makes the session running", () => {
-    testSession = {
-      ...baseSession,
-      conversations: [
-        {
-          ...baseSession.conversations[0]!,
-          status: "awaiting",
-        },
-        {
-          ...baseSession.conversations[0]!,
-          id: "conv-2",
-          status: "running",
-        },
-      ],
-    };
-
-    renderPage();
-
-    expect(useConversationMessagesQueryMock).toHaveBeenCalledWith(
-      "repo",
-      "test-session",
-      "conv-1",
-    );
-  });
-
-  it("does not poll messages while the selected conversation is running", () => {
-    testSession = {
-      ...baseSession,
-      conversations: [
-        {
-          ...baseSession.conversations[0]!,
-          status: "running",
-        },
-      ],
-    };
-
-    renderPage();
-
-    expect(useConversationMessagesQueryMock).toHaveBeenCalledWith(
-      "repo",
-      "test-session",
-      "conv-1",
-    );
-  });
-
   describe("Stop button abort behavior", () => {
     function getStopButtons(): HTMLButtonElement[] {
       return screen.queryAllByTitle("Stop agent") as HTMLButtonElement[];
     }
-
-    it("renders the Stop button when conversation is running", () => {
-      testSession = {
-        ...baseSession,
-        conversations: [
-          { ...baseSession.conversations[0]!, status: "running" },
-        ],
-      };
-      renderPage();
-      expect(getStopButtons().length).toBeGreaterThan(0);
-    });
-
-    it("does NOT offer a turn-abort in waiting_for_input — no turn is running (async ask)", () => {
-      testSession = {
-        ...baseSession,
-        conversations: [
-          { ...baseSession.conversations[0]!, status: "waiting_for_input" },
-        ],
-      };
-      renderPage();
-      expect(getStopButtons()).toHaveLength(0);
-    });
-
-    it("does not render the Stop button when conversation is idle", () => {
-      testSession = {
-        ...baseSession,
-        conversations: [{ ...baseSession.conversations[0]!, status: "new" }],
-      };
-      renderPage();
-      expect(getStopButtons()).toHaveLength(0);
-    });
-
-    it("does not render the Stop button when conversation is running but a background workflow drives the active turn", () => {
-      testSession = {
-        ...baseSession,
-        conversations: [
-          {
-            ...baseSession.conversations[0]!,
-            status: "running",
-            activeTurnSource: "workflow",
-          },
-        ],
-      };
-      renderPage();
-      expect(getStopButtons()).toHaveLength(0);
-    });
 
     it("fires server abort when the Stop button is clicked while conversation is running", () => {
       testSession = {

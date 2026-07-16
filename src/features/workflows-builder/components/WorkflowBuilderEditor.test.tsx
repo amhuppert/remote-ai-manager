@@ -36,100 +36,48 @@ function resetStore() {
 }
 
 describe("WorkflowBuilderEditor", () => {
-  it("adds a context via toolbar and updates the store", () => {
+  it("adds an inherited context, marks the draft dirty, and resets it", () => {
     resetStore();
     render(
       <WorkflowBuilderEditor
         record={createWorkflowDefinitionRecord()}
         {...defaultHeaderProps}
+        defaultImplementerConfig={{
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        }}
       />,
     );
 
+    expect(screen.getByText("All changes saved")).toBeInTheDocument();
     const initialContextCount =
       _useGraphWorkflowBuilderStore.getState().draftDefinition
         ?.executionContexts.length ?? 0;
 
     fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
 
-    const newContextCount =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts.length ?? 0;
-    expect(newContextCount).toBe(initialContextCount + 1);
-    expect(
-      _useGraphWorkflowBuilderStore.getState().selectedContextId,
-    ).toBeTruthy();
-  });
-
-  it("saves the current draft when Save Draft is clicked", async () => {
-    resetStore();
-    const onSave = vi.fn();
-
-    render(
-      <WorkflowBuilderEditor
-        record={createWorkflowDefinitionRecord()}
-        {...defaultHeaderProps}
-        onSave={onSave}
-      />,
+    const state = _useGraphWorkflowBuilderStore.getState();
+    const added = state.draftDefinition?.executionContexts.at(-1);
+    expect(state.draftDefinition?.executionContexts).toHaveLength(
+      initialContextCount + 1,
     );
-
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({ dirty: true });
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        definition: expect.any(Object),
-        layout: expect.any(Object),
-      }),
-    );
-  });
-
-  it("shows unsaved changes indicator when store is dirty", () => {
-    resetStore();
-    render(
-      <WorkflowBuilderEditor
-        record={createWorkflowDefinitionRecord()}
-        {...defaultHeaderProps}
-      />,
-    );
-
-    // Initially shows saved status
-    expect(screen.getByText("All changes saved")).toBeInTheDocument();
-
-    // Make a change
-    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
-
+    expect(state.selectedContextId).toBeTruthy();
+    expect(added).toBeDefined();
+    expect(added?.implementer).toBeUndefined();
+    expect(added?.contextValidator).toBeUndefined();
+    expect(added?.iterationPolicy).toBeUndefined();
+    expect(added?.circuitBreaker).toBeUndefined();
+    expect(added?.mutability).toBeUndefined();
+    expect(added?.acceptanceCriteria).toBe("");
     expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
-  });
-
-  it("resets to persisted state when Reset is clicked", () => {
-    resetStore();
-    render(
-      <WorkflowBuilderEditor
-        record={createWorkflowDefinitionRecord()}
-        {...defaultHeaderProps}
-      />,
-    );
-
-    const initialCount =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts.length ?? 0;
-
-    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
-    expect(
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts.length ?? 0,
-    ).toBe(initialCount + 1);
 
     fireEvent.click(screen.getByRole("button", { name: /Reset/i }));
 
     expect(
       _useGraphWorkflowBuilderStore.getState().draftDefinition
         ?.executionContexts.length ?? 0,
-    ).toBe(initialCount);
+    ).toBe(initialContextCount);
     expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(false);
   });
 
@@ -298,36 +246,7 @@ describe("WorkflowBuilderEditor", () => {
     ).toBeInTheDocument();
   });
 
-  it("adds a context with no implementer block so it inherits from workflow defaults", () => {
-    resetStore();
-    render(
-      <WorkflowBuilderEditor
-        record={createWorkflowDefinitionRecord()}
-        {...defaultHeaderProps}
-        defaultImplementerConfig={{
-          backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-        }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
-
-    const contexts =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts ?? [];
-    const added = contexts.at(-1);
-    expect(added).toBeDefined();
-    expect(added?.implementer).toBeUndefined();
-    expect(added?.contextValidator).toBeUndefined();
-    expect(added?.iterationPolicy).toBeUndefined();
-    expect(added?.circuitBreaker).toBeUndefined();
-    expect(added?.mutability).toBeUndefined();
-    expect(added?.acceptanceCriteria).toBe("");
-  });
-
-  it("save payload preserves the existing continuity shape on seeded contexts", async () => {
+  it("saves the draft while preserving seeded context continuity", async () => {
     resetStore();
     const onSave = vi.fn();
 
@@ -345,6 +264,12 @@ describe("WorkflowBuilderEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.any(Object),
+        layout: expect.any(Object),
+      }),
+    );
 
     const [payload] = onSave.mock.calls[0] as [
       {

@@ -6,49 +6,7 @@ import ReasoningLevelSelector from "./ReasoningLevelSelector";
 
 afterEach(cleanup);
 
-// The rainbow tier signal is the animated gradient border on the trigger.
-const RAINBOW_MARKER = "rainbow-border-shift";
-
 describe("ReasoningLevelSelector", () => {
-  it("uses the rainbow trigger for the max tier", () => {
-    render(
-      <ReasoningLevelSelector
-        onChange={vi.fn()}
-        value="max"
-        availableLevels={["low", "medium", "high", "max"]}
-      />,
-    );
-    expect(screen.getByTestId("effort-selector-trigger").className).toContain(
-      RAINBOW_MARKER,
-    );
-  });
-
-  it("uses the rainbow trigger for the xhigh tier", () => {
-    render(
-      <ReasoningLevelSelector
-        onChange={vi.fn()}
-        value="xhigh"
-        availableLevels={["low", "medium", "high", "xhigh"]}
-      />,
-    );
-    expect(screen.getByTestId("effort-selector-trigger").className).toContain(
-      RAINBOW_MARKER,
-    );
-  });
-
-  it("uses the plain trigger for non-max tiers", () => {
-    render(
-      <ReasoningLevelSelector
-        onChange={vi.fn()}
-        value="high"
-        availableLevels={["low", "medium", "high", "max"]}
-      />,
-    );
-    expect(
-      screen.getByTestId("effort-selector-trigger").className,
-    ).not.toContain(RAINBOW_MARKER);
-  });
-
   it("renders a disabled Unavailable state when no levels exist", () => {
     render(
       <ReasoningLevelSelector

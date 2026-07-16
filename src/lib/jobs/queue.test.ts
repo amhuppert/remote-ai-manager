@@ -54,6 +54,7 @@ import type {
 } from "../workflows/validation-fix/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
+import type { PublishFn } from "@/lib/events/publication";
 
 import {
   createMergeIntentsRepo,
@@ -199,16 +200,41 @@ const testRebaseMachine = rebaseMachine.provide({
 // Injected deps — no vi.mock needed
 // ============================================================
 
-const mockBroadcast = vi.fn();
+interface JobCompletionSignal {
+  promise: Promise<void>;
+  resolve(): void;
+}
+
+const pendingJobCompletions = new Map<string, JobCompletionSignal>();
+const mockBroadcast = vi.fn<PublishFn>((event) => {
+  if (event.type !== "job-status") return { delivered: true };
+
+  if (event.status === "running") {
+    if (!pendingJobCompletions.has(event.jobId)) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      pendingJobCompletions.set(event.jobId, { promise, resolve });
+    }
+    return { delivered: true };
+  }
+
+  pendingJobCompletions.get(event.jobId)?.resolve();
+  return { delivered: true };
+});
 const mockAcquireSessionLock = vi.fn();
 
 // ============================================================
 // Helpers
 // ============================================================
 
-/** Let the fire-and-forget background promise settle */
-async function settle(ms = 50): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
+/** Await every fire-and-forget job's terminal status broadcast. */
+async function waitForJobCompletions(): Promise<void> {
+  await Promise.all(
+    Array.from(pendingJobCompletions.values(), ({ promise }) => promise),
+  );
+  pendingJobCompletions.clear();
 }
 
 const BASE_MERGE_PARAMS = {
@@ -289,7 +315,7 @@ describe("background-jobs", () => {
 
   beforeEach(async () => {
     // Let any background XState actors from previous tests complete
-    await settle();
+    await waitForJobCompletions();
     vi.clearAllMocks();
     _resetForTesting();
 
@@ -351,7 +377,7 @@ describe("background-jobs", () => {
       const result = dispatchRebaseJob(BASE_REBASE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(broadcastAt(0).status).toBe("running");
       expect(broadcastAt(0).jobType).toBe("rebase");
@@ -383,7 +409,7 @@ describe("background-jobs", () => {
       });
 
       dispatchRebaseJob(BASE_REBASE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockAbortRebase).toHaveBeenCalledTimes(1);
       const last = lastBroadcast();
@@ -391,15 +417,24 @@ describe("background-jobs", () => {
       expect(last.errorMessage).toMatch(/aborted/i);
     });
 
-    it("rejects a second rebase while one is running", () => {
-      // Hold the first job open by never resolving its start step.
-      mockStartRebase.mockReturnValue(new Promise(() => {}));
+    it("rejects a second rebase while one is running", async () => {
+      let resolveStart!: (value: RebaseStepOutput) => void;
+      // Hold the first job open until the duplicate-dispatch assertion lands,
+      // then complete it so shared test cleanup does not hang.
+      mockStartRebase.mockReturnValue(
+        new Promise<RebaseStepOutput>((resolve) => {
+          resolveStart = resolve;
+        }),
+      );
       const first = dispatchRebaseJob(BASE_REBASE_PARAMS);
       expect(first.ok).toBe(true);
 
       const second = dispatchRebaseJob(BASE_REBASE_PARAMS);
       expect(second.ok).toBe(false);
       if (!second.ok) expect(second.error).toBe("JOB_ALREADY_RUNNING");
+
+      resolveStart({ status: "completed" as const });
+      await waitForJobCompletions();
     });
   });
 
@@ -451,7 +486,7 @@ describe("background-jobs", () => {
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       // Verify actors were invoked with correct inputs
       expect(mockMergeMain).toHaveBeenCalledWith(
@@ -505,7 +540,7 @@ describe("background-jobs", () => {
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockCommitChangesActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -533,7 +568,7 @@ describe("background-jobs", () => {
       });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockCommitChangesActor).not.toHaveBeenCalled();
       expect(mockMergeMain).toHaveBeenCalled();
@@ -548,7 +583,7 @@ describe("background-jobs", () => {
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockMergeMain).not.toHaveBeenCalled();
 
@@ -593,7 +628,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockResolveConflictsActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -644,7 +679,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockResolveConflictsActor).not.toHaveBeenCalled();
 
@@ -687,7 +722,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const last = lastBroadcast();
       expect(last.status).toBe("conflicts");
@@ -711,7 +746,7 @@ describe("background-jobs", () => {
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const last = lastBroadcast();
       expect(last.status).toBe("failed");
@@ -736,7 +771,7 @@ describe("background-jobs", () => {
       mockPublishActor.mockRejectedValue(err);
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       const job = getJob(
         BASE_MERGE_PARAMS.projectPath,
@@ -754,7 +789,7 @@ describe("background-jobs", () => {
       });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockRunValidation).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -780,7 +815,7 @@ describe("background-jobs", () => {
       mockRunValidation.mockRejectedValue(err);
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockPublishActor).not.toHaveBeenCalled();
 
@@ -813,7 +848,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockCommitChangesActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -847,7 +882,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockRunValidation).toHaveBeenCalledWith(
         expect.objectContaining({ targetBranch: "csm/parent" }),
@@ -861,7 +896,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const last = lastBroadcast();
       expect(last.status).toBe("failed");
@@ -880,7 +915,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const job = getJob(
         BASE_COMMIT_PARAMS.projectPath,
@@ -896,7 +931,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       // Verify both commit and validation actors were called
       expect(mockCommitChangesActor).toHaveBeenCalled();
@@ -932,7 +967,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockFixValidation).toHaveBeenCalled();
       expect(mockCheckUncommitted).toHaveBeenCalled();
@@ -958,7 +993,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const last = lastBroadcast();
       expect(last.status).toBe("failed");
@@ -974,7 +1009,7 @@ describe("background-jobs", () => {
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const job = getJob(
         BASE_COMMIT_PARAMS.projectPath,
@@ -993,7 +1028,7 @@ describe("background-jobs", () => {
       mockMergeMain.mockRejectedValue(new Error("unexpected"));
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(releaseSession).toHaveBeenCalledTimes(1);
     });
@@ -1002,7 +1037,7 @@ describe("background-jobs", () => {
       mockCommitChangesActor.mockRejectedValue(new Error("commit failed"));
 
       dispatchCommitJob(BASE_COMMIT_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(releaseSession).toHaveBeenCalledTimes(1);
     });
@@ -1062,7 +1097,7 @@ describe("background-jobs", () => {
       const result = dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockResolveConflictsActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1117,7 +1152,7 @@ describe("background-jobs", () => {
       const result = dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       const last = lastBroadcast();
       expect(last.status).toBe("conflicts");
@@ -1146,7 +1181,7 @@ describe("background-jobs", () => {
       ];
 
       dispatchResolveConflictsJob({ ...BASE_RESOLVE_PARAMS, decisions });
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockResolveConflictsActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1168,7 +1203,7 @@ describe("background-jobs", () => {
       });
 
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockRunValidation).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1195,7 +1230,7 @@ describe("background-jobs", () => {
       );
 
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockPublishActor).not.toHaveBeenCalled();
       const last = lastBroadcast();
@@ -1209,7 +1244,7 @@ describe("background-jobs", () => {
       );
 
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       const last = lastBroadcast();
       expect(last.status).toBe("failed");
@@ -1270,7 +1305,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       // mergeMain actor should receive targetBranch
       expect(mockMergeMain).toHaveBeenCalledWith(
@@ -1310,7 +1345,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockPrepareActor).toHaveBeenCalledWith(
         expect.objectContaining({ targetBranch: "csm/parent-branch" }),
@@ -1372,7 +1407,7 @@ describe("background-jobs", () => {
       });
       expect(result.ok).toBe(true);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockResolveConflictsActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1407,7 +1442,7 @@ describe("background-jobs", () => {
         ...BASE_RESOLVE_PARAMS,
         resolutionContext: "Session migrated config reads to Zod v4.",
       });
-      await settle();
+      await waitForJobCompletions();
 
       expect(mockResolveConflictsActor).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1427,7 +1462,7 @@ describe("background-jobs", () => {
         ...BASE_MERGE_PARAMS,
         resolutionContext: "Session renamed SessionStore to SessionRepo.",
       });
-      await settle();
+      await waitForJobCompletions();
 
       const intents = mergeIntentsRepo.getMergeIntents(
         BASE_MERGE_PARAMS.projectPath,
@@ -1451,7 +1486,7 @@ describe("background-jobs", () => {
       });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
-      await settle();
+      await waitForJobCompletions();
 
       expect(
         mergeIntentsRepo.getMergeIntents(BASE_MERGE_PARAMS.projectPath, [
@@ -1475,7 +1510,7 @@ describe("background-jobs", () => {
         autoResolve: true,
         resolutionContext: "Some intent.",
       });
-      await settle();
+      await waitForJobCompletions();
 
       expect(countMergeIntents()).toBe(0);
     });
@@ -1491,7 +1526,7 @@ describe("background-jobs", () => {
         ...BASE_MERGE_PARAMS,
         targetBranch: "csm/parent-branch",
       });
-      await settle();
+      await waitForJobCompletions();
 
       const [notification] = notificationsRepo.getNotifications().notifications;
       expect(notification?.message).toContain("csm/parent-branch");
@@ -1508,7 +1543,7 @@ describe("background-jobs", () => {
         autoResolve: false,
         targetBranch: "csm/parent-branch",
       });
-      await settle();
+      await waitForJobCompletions();
 
       const [notification] = notificationsRepo.getNotifications().notifications;
       expect(notification?.message).toContain("csm/parent-branch");
@@ -1558,7 +1593,7 @@ describe("background-jobs", () => {
 
       // Clean up — resolve the blocked actor
       resolveActor?.();
-      await settle();
+      await waitForJobCompletions();
     });
 
     it("returns empty array when no jobs are running", () => {
@@ -1592,7 +1627,7 @@ describe("background-jobs", () => {
         expect(result.ok).toBe(true);
       });
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(captured.length).toBeGreaterThan(0);
       const ctx = captured[0]!;
@@ -1617,7 +1652,7 @@ describe("background-jobs", () => {
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(captured.length).toBeGreaterThan(0);
       const ctx = captured[0]!;
@@ -1637,7 +1672,7 @@ describe("background-jobs", () => {
 
       dispatchCommitJob(BASE_COMMIT_PARAMS);
 
-      await settle();
+      await waitForJobCompletions();
 
       expect(captured.length).toBeGreaterThan(0);
       expect(captured[0]?.action).toBe("job:commit");
@@ -1662,7 +1697,7 @@ describe("background-jobs", () => {
 
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
 
-      await settle();
+      await waitForJobCompletions();
 
       // analyzeConflicts only fires on the conflict path; if our path didn't
       // reach it, fall back to confirming the dispatch produced *some* traced

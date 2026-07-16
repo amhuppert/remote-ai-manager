@@ -541,7 +541,7 @@ describe("real-git isolation under an inherited GIT_DIR (pre-commit hook safety)
   // Regression: git runs hooks with GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE
   // exported into the environment. This suite runs real `git` mutations
   // (init/add/commit). When it executes inside the husky pre-commit hook (which
-  // runs `vitest run --project unit`), a git command that inherits those vars
+  // runs the Vitest unit projects), a git command that inherits those vars
   // commits into the REAL repo instead of its temp fixture — observed as a
   // stray "initial" commit (tree = {tracked.ts}) landing on the actual branch
   // and corrupting HEAD. The fixture git helper must use the sanitized child

@@ -71,6 +71,7 @@ function createTestDeps(
       .fn()
       .mockReturnValue({ ok: true, value: { jobId: "job-1" } }),
     createNotification: vi.fn(),
+    sleep: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -149,6 +150,28 @@ describe("executeOptimisticWorkflow", () => {
       autoResolve: true,
       targetBranch: "main",
     });
+  });
+
+  it("waits for state persistence before dispatching the merge job", async () => {
+    let finishSleep!: () => void;
+    const sleep = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSleep = resolve;
+        }),
+    );
+    const deps = createTestDeps({ sleep });
+
+    const workflow = executeOptimisticWorkflow(baseParams, deps);
+    await vi.waitFor(() => {
+      expect(sleep).toHaveBeenCalledWith(500);
+    });
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+
+    finishSleep();
+    await workflow;
+
+    expect(deps.dispatchMergeJob).toHaveBeenCalledTimes(1);
   });
 
   it("creates failure notification when prompt execution fails", async () => {

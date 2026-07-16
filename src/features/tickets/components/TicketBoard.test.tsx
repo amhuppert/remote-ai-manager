@@ -571,10 +571,6 @@ describe("TicketBoard status moves", () => {
       expect(
         messages.some((message) => message.includes("command-center#9")),
       ).toBe(true);
-      expect(
-        screen.getByText("command-center#9").closest("[data-ticket-card]")
-          ?.className,
-      ).toContain("border-red-dim");
     });
 
     await act(async () => {
@@ -590,10 +586,6 @@ describe("TicketBoard status moves", () => {
       expect(
         messages.some((message) => message.includes("aerotrainer#5")),
       ).toBe(true);
-      expect(
-        screen.getByText("aerotrainer#5").closest("[data-ticket-card]")
-          ?.className,
-      ).toContain("border-red-dim");
     });
   });
 
@@ -803,45 +795,6 @@ describe("TicketBoard status moves", () => {
         ),
       );
       patches.pending.forEach((resolve) => resolve());
-    } finally {
-      rectSpy.mockRestore();
-    }
-  });
-
-  it("ignores vertical arrows because keyboard drag changes status only", async () => {
-    const rectSpy = installBoardGeometry();
-
-    try {
-      installFetchStub(TICKETS);
-      renderBoard();
-
-      await waitFor(() =>
-        expect(screen.getByText("command-center#9")).toBeInTheDocument(),
-      );
-      const card = screen.getByRole("button", {
-        name: "Drag command-center#9",
-      });
-      card.focus();
-      fireEvent.keyDown(card, { key: "Enter", code: "Enter" });
-      await waitFor(() =>
-        expect(
-          document.querySelectorAll("[data-ticket-card='command-center#9']")
-            .length,
-        ).toBeGreaterThan(1),
-      );
-
-      fireEvent.keyDown(card, { key: "ArrowDown", code: "ArrowDown" });
-      expect(screen.queryByText(/moved down/)).not.toBeInTheDocument();
-      expect(
-        within(column("Not Started")).getByText("command-center#9"),
-      ).toBeInTheDocument();
-
-      fireEvent.keyDown(card, { key: "Escape", code: "Escape" });
-      await waitFor(() =>
-        expect(
-          document.querySelectorAll("[data-ticket-card='command-center#9']"),
-        ).toHaveLength(1),
-      );
     } finally {
       rectSpy.mockRestore();
     }

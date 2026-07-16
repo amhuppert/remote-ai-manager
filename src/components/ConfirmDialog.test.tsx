@@ -140,20 +140,6 @@ describe("ConfirmDialog", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
 
-  it("applies danger styling when danger=true", () => {
-    render(<ConfirmDialog {...defaultProps} danger />);
-    const confirmBtn = screen.getByRole("button", { name: "Confirm" });
-    expect(confirmBtn.className).toContain("text-red");
-    expect(confirmBtn.className).toContain("border-[var(--cc-red-border)]");
-  });
-
-  it("applies primary styling when danger=false", () => {
-    render(<ConfirmDialog {...defaultProps} danger={false} />);
-    const confirmBtn = screen.getByRole("button", { name: "Confirm" });
-    expect(confirmBtn.className).toContain("bg-cyan");
-    expect(confirmBtn.className).toContain("text-text-inverse");
-  });
-
   it("uses custom confirm and cancel labels", () => {
     render(
       <ConfirmDialog

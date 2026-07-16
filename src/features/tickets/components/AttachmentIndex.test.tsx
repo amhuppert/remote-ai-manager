@@ -244,22 +244,30 @@ function renderPreviewIndex() {
 }
 
 describe("AttachmentIndex markdown previews", () => {
-  it("renders a note preview through the canonical document adapter", async () => {
+  it("renders and collapses a note through the canonical document adapter", async () => {
     renderPreviewIndex();
     const user = userEvent.setup();
 
     const entry = await screen.findByRole("listitem", {
       name: "Failure report",
     });
-    await user.click(
-      within(entry).getByRole("button", { name: /Failure report/ }),
-    );
+    const disclosure = within(entry).getByRole("button", {
+      name: /Failure report/,
+    });
+    await user.click(disclosure);
 
     const heading = await within(entry).findByRole("heading", {
       name: "Failure recap",
     });
     expect(heading.tagName).toBe("H2");
     expect(heading.closest("[data-markdown-intent='document']")).not.toBeNull();
+
+    await user.click(disclosure);
+    await waitFor(() =>
+      expect(
+        within(entry).queryByRole("heading", { name: "Failure recap" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("renders a captured-conversation compaction preview through the document adapter and keeps the host label", async () => {
@@ -279,26 +287,5 @@ describe("AttachmentIndex markdown previews", () => {
     expect(heading.closest("[data-markdown-intent='document']")).not.toBeNull();
     // The host owns the compaction provenance label alongside the adapter.
     expect(within(entry).getByText(/retained compaction/)).toBeInTheDocument();
-  });
-
-  it("collapses the note preview when the row surface is toggled again", async () => {
-    renderPreviewIndex();
-    const user = userEvent.setup();
-
-    const entry = await screen.findByRole("listitem", {
-      name: "Failure report",
-    });
-    const disclosure = within(entry).getByRole("button", {
-      name: /Failure report/,
-    });
-    await user.click(disclosure);
-    await within(entry).findByRole("heading", { name: "Failure recap" });
-
-    await user.click(disclosure);
-    await waitFor(() =>
-      expect(
-        within(entry).queryByRole("heading", { name: "Failure recap" }),
-      ).not.toBeInTheDocument(),
-    );
   });
 });

@@ -356,6 +356,7 @@ describe("status-bus wire contract — job-status shapes, merge dispatch, optimi
         executePromptStream: promptSpy,
         dispatchMergeJob: dispatchSpy,
         createNotification: notificationSpy,
+        sleep: vi.fn().mockResolvedValue(undefined),
       },
     );
 

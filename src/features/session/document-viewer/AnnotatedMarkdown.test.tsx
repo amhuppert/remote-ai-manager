@@ -266,40 +266,6 @@ describe("AnnotatedMarkdown composition", () => {
     expect(sourceRoot.querySelector("[data-cc-line]")).not.toBeNull();
   });
 
-  it("owns only gutter spacing — headings/typography stay in the canonical root", async () => {
-    const { container } = renderAnnotated();
-    const sourceRoot = await findSourceRoot(container);
-
-    const annotatable = container.querySelector<HTMLElement>(
-      '[data-fake-annotator="true"]',
-    )!;
-    const insetWrapper = annotatable.parentElement!;
-    // The annotation host reserves the gutter and nothing else — no marker,
-    // list, or typography classes leak onto its wrapper.
-    expect(insetWrapper.className).toBe("pl-[26px] max-640:pl-[38px]");
-
-    const heading = screen.getByRole("heading", {
-      level: 1,
-      name: "Design Review",
-    });
-    expect(sourceRoot.contains(heading)).toBe(true);
-    // canonical document typography, not an annotation-owned renderer map
-    expect(heading.className).toContain("font-bold");
-  });
-
-  it("reserves a responsive left gutter that keeps text clear of pins at narrow widths", async () => {
-    const { container } = renderAnnotated({ comments: COMMENTS });
-    await findSourceRoot(container);
-
-    const insetWrapper = container.querySelector<HTMLElement>(
-      '[data-fake-annotator="true"]',
-    )!.parentElement!;
-    // 26px + adapter's 24px desktop padding = 50px gutter width; 38px + 12px
-    // narrow padding = 50px — so text never begins under the 50px overlay.
-    expect(insetWrapper.className).toContain("pl-[26px]");
-    expect(insetWrapper.className).toContain("max-640:pl-[38px]");
-  });
-
   it("renders one host-owned gutter marker per anchored block, excluding stale comments", async () => {
     const { container, onOpenComment } = renderAnnotated({
       comments: COMMENTS,

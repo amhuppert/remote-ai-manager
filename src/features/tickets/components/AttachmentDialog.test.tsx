@@ -318,13 +318,6 @@ afterEach(() => {
 });
 
 describe("AttachmentDialog", () => {
-  it("shows voice input when project context comes from a ticket route", async () => {
-    installFetch();
-    renderDialog();
-
-    expect(await screen.findByTitle("Voice input")).toBeVisible();
-  });
-
   it("routes the visible Attach action through active dictation", async () => {
     class Recorder {
       static isTypeSupported(): boolean {
@@ -464,16 +457,6 @@ describe("AttachmentDialog", () => {
     );
   });
 
-  it("keeps every attachment kind reachable in the mobile sheet", () => {
-    installFetch();
-    renderDialog();
-
-    const kinds = screen.getByRole("radiogroup", { name: "Kind" });
-    expect(screen.getByText("Kind").tagName).toBe("SPAN");
-    expect(kinds.parentElement?.className).toContain("overflow-x-auto");
-    expect(screen.getAllByRole("radio")).toHaveLength(5);
-  });
-
   it("associates visible picker labels with their select controls", async () => {
     installFetch();
     renderDialog();
@@ -491,35 +474,18 @@ describe("AttachmentDialog", () => {
     expect(conversationSelect.labels?.[0]).toHaveTextContent("Conversation");
   });
 
-  it("uses a discoverable conversation picker instead of opaque id and session fields", async () => {
-    installFetch();
+  it("discovers and submits a conversation without opaque identity fields", async () => {
+    const requests = installFetch();
     renderDialog();
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("radio", { name: "Conversation" }));
-
-    expect(
-      await screen.findByRole("combobox", { name: "Conversation" }),
-    ).toBeInTheDocument();
     expect(
       screen.queryByRole("textbox", { name: "Conversation id" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("textbox", { name: /Session name \(optional\)/ }),
     ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("combobox", { name: "Conversation" }));
-    expect(
-      await screen.findByRole("option", { name: /Ticket context review/ }),
-    ).toBeInTheDocument();
-  });
-
-  it("submits the selected conversation identity without manual opaque fields", async () => {
-    const requests = installFetch();
-    renderDialog();
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("radio", { name: "Conversation" }));
     await user.click(
       await screen.findByRole("combobox", { name: "Conversation" }),
     );

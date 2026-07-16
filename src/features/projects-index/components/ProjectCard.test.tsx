@@ -26,8 +26,7 @@ describe("ProjectCard", () => {
   //
   // Behavioral coverage only. The Tailwind migration deleted the legacy
   // `.project-card` / `.cc-badge` class-structure assertions per requirement
-  // 5.1; per-state badge appearance is now exercised by the parity stories
-  // (ProjectCard.stories.tsx / ProjectCard.stories.test.tsx).
+  // 5.1.
   // =========================================================================
 
   it("displays project name, path, and session count (Req 1.2)", () => {
@@ -80,5 +79,69 @@ describe("ProjectCard", () => {
     expect(
       screen.getByRole("button", { name: "Project actions" }),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      name: "idle",
+      project: { activeSessions: 0, hasRunningSession: false },
+      expected: "idle",
+    },
+    {
+      name: "sessions",
+      project: { activeSessions: 2, hasRunningSession: false },
+      expected: "2 sessions",
+    },
+    {
+      name: "running",
+      project: { activeSessions: 2, hasRunningSession: true },
+      expected: "running",
+    },
+  ])("renders the $name project state", ({ project, expected }) => {
+    render(
+      <ProjectCard
+        {...defaultProps}
+        project={{
+          name: "my-app",
+          path: "/home/user/projects/my-app",
+          ...project,
+        }}
+      />,
+    );
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
+  it("renders pinned, archived, and open-menu states", () => {
+    const project = {
+      name: "my-app",
+      path: "/home/user/projects/my-app",
+      activeSessions: 2,
+      hasRunningSession: false,
+    };
+    const { rerender } = render(
+      <ProjectCard {...defaultProps} project={project} pinned />,
+    );
+    expect(screen.getByText("★")).toBeInTheDocument();
+
+    rerender(
+      <ProjectCard
+        {...defaultProps}
+        project={project}
+        archived
+        pinned={false}
+      />,
+    );
+    expect(screen.getByText("archived")).toBeInTheDocument();
+
+    rerender(
+      <ProjectCard
+        {...defaultProps}
+        project={project}
+        menuOpen
+        pinned={false}
+      />,
+    );
+    expect(screen.getByText("Pin Project")).toBeInTheDocument();
+    expect(screen.getByText("Archive Project")).toBeInTheDocument();
   });
 });

@@ -1,9 +1,5 @@
 // @vitest-environment jsdom
-import type {
-  ComponentPropsWithoutRef,
-  ComponentPropsWithRef,
-  ComponentType,
-} from "react";
+import type { ComponentPropsWithoutRef, ComponentPropsWithRef } from "react";
 import {
   cleanup,
   fireEvent,
@@ -26,37 +22,12 @@ import {
   LONG_UNBROKEN_TOKEN,
 } from "./fixtures";
 
-interface AdapterCase {
-  Component: ComponentType<MarkdownProps>;
-  intent: "document" | "message" | "compact";
-}
+type MarkdownIntent = "document" | "message" | "compact";
 
-const ADAPTERS: readonly AdapterCase[] = [
-  { Component: DocumentMarkdown, intent: "document" },
-  { Component: MessageMarkdown, intent: "message" },
-  { Component: CompactMarkdown, intent: "compact" },
-];
-
-function markdownRoot(container: HTMLElement, intent: AdapterCase["intent"]) {
+function markdownRoot(container: HTMLElement, intent: MarkdownIntent) {
   return container.querySelector<HTMLElement>(
     `[data-markdown-intent="${intent}"]`,
   );
-}
-
-async function renderAdapter({ Component, intent }: AdapterCase) {
-  const result = render(<Component content={CANONICAL_MARKDOWN_SHOWCASE} />);
-
-  await waitFor(
-    () => {
-      expect(markdownRoot(result.container, intent)).not.toBeNull();
-    },
-    { timeout: 10_000 },
-  );
-
-  return {
-    ...result,
-    root: markdownRoot(result.container, intent)!,
-  };
 }
 
 afterEach(() => {
@@ -97,9 +68,29 @@ describe("canonical Markdown public API", () => {
   });
 });
 
-describe.each(ADAPTERS)("$intent Markdown semantics", (adapter) => {
-  it(`renders the shared ${CANONICAL_MARKDOWN_FIXTURES.length}-fixture matrix`, async () => {
-    const { root } = await renderAdapter(adapter);
+describe("canonical Markdown semantics", () => {
+  it(`renders the shared ${CANONICAL_MARKDOWN_FIXTURES.length}-fixture matrix and exposes every adapter intent`, async () => {
+    const { container } = render(
+      <>
+        <DocumentMarkdown content={CANONICAL_MARKDOWN_SHOWCASE} />
+        <MessageMarkdown content="Message adapter" />
+        <CompactMarkdown content="Compact adapter" />
+      </>,
+    );
+
+    await waitFor(
+      () => {
+        expect(markdownRoot(container, "document")).not.toBeNull();
+        expect(markdownRoot(container, "message")).toHaveTextContent(
+          "Message adapter",
+        );
+        expect(markdownRoot(container, "compact")).toHaveTextContent(
+          "Compact adapter",
+        );
+      },
+      { timeout: 10_000 },
+    );
+    const root = markdownRoot(container, "document")!;
 
     expect(
       screen.getByRole("heading", { level: 1, name: "Canonical heading" }),
@@ -206,15 +197,24 @@ describe.each(ADAPTERS)("$intent Markdown semantics", (adapter) => {
     ).toHaveClass("max-w-full");
   });
 
-  it("renders empty input as an empty Markdown root", async () => {
-    const { Component, intent } = adapter;
-    const { container } = render(<Component content="" />);
+  it("renders empty input through every adapter as an empty Markdown root", async () => {
+    const { container } = render(
+      <>
+        <DocumentMarkdown content="" />
+        <MessageMarkdown content="" />
+        <CompactMarkdown content="" />
+      </>,
+    );
 
     await waitFor(() => {
-      expect(markdownRoot(container, intent)).not.toBeNull();
+      for (const intent of ["document", "message", "compact"] as const) {
+        expect(markdownRoot(container, intent)).not.toBeNull();
+      }
     });
 
-    expect(markdownRoot(container, intent)).toBeEmptyDOMElement();
+    for (const intent of ["document", "message", "compact"] as const) {
+      expect(markdownRoot(container, intent)).toBeEmptyDOMElement();
+    }
   });
 });
 
@@ -251,24 +251,38 @@ describe("canonical fenced code interaction", () => {
   });
 });
 
-describe.each([
-  { Component: MessageMarkdown, intent: "message" as const },
-  { Component: CompactMarkdown, intent: "compact" as const },
-])("deferred $intent Markdown", ({ Component, intent }) => {
-  it("never duplicates its fallback content", async () => {
-    const marker = `single deferred ${intent} output`;
-    const { container } = render(<Component content={marker} />);
+describe("deferred Markdown", () => {
+  it("never duplicates the message or compact fallback content", async () => {
+    const markers = {
+      message: "single deferred message output",
+      compact: "single deferred compact output",
+    };
+    const { container } = render(
+      <>
+        <MessageMarkdown content={markers.message} />
+        <CompactMarkdown content={markers.compact} />
+      </>,
+    );
 
-    expect(screen.getAllByText(marker)).toHaveLength(1);
-    expect(container.querySelector("[data-markdown-fallback]")).not.toBeNull();
+    for (const marker of Object.values(markers)) {
+      expect(screen.getAllByText(marker)).toHaveLength(1);
+    }
+    expect(container.querySelectorAll("[data-markdown-fallback]")).toHaveLength(
+      2,
+    );
 
     await waitFor(() => {
       expect(
-        markdownRoot(container, intent)?.querySelector("p"),
+        markdownRoot(container, "message")?.querySelector("p"),
+      ).not.toBeNull();
+      expect(
+        markdownRoot(container, "compact")?.querySelector("p"),
       ).not.toBeNull();
     });
 
-    expect(screen.getAllByText(marker)).toHaveLength(1);
+    for (const marker of Object.values(markers)) {
+      expect(screen.getAllByText(marker)).toHaveLength(1);
+    }
     expect(container.querySelector("[data-markdown-fallback]")).toBeNull();
   });
 });

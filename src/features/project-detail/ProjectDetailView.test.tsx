@@ -192,12 +192,46 @@ function renderProjectWithConversations(
 // ===========================================================================
 
 describe("ProjectDetailView", () => {
-  it("renders table with session rows (Req 2.1, 2.2)", async () => {
-    seedSessions(makeSessions(3));
+  it("renders complete session rows and their independent destinations", async () => {
+    const sessions = makeSessions(3);
+    sessions[0] = { ...sessions[0]!, creationMode: "optimistic" };
+    seedSessions(sessions);
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(await screen.findByText("session-1")).toBeInTheDocument();
+
+    const titleLink = (await screen.findByText("session-1")).closest("a");
+    expect(titleLink?.getAttribute("href")).toBe(
+      "/projects/my-project/session-1",
+    );
     expect(screen.getByText("session-2")).toBeInTheDocument();
     expect(screen.getByText("session-3")).toBeInTheDocument();
+    expect(screen.getByText("csm/session-1")).toBeInTheDocument();
+    expect(screen.getByText("csm/session-2")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getAllByText("awaiting")).toHaveLength(2);
+
+    const quickLink = screen.getAllByLabelText("Open in Conversations")[0]!;
+    expect(quickLink.getAttribute("href")).toBe(
+      "/conversations?project=my-project&session=session-1",
+    );
+    expect(quickLink).toHaveAttribute("data-state");
+    expect(quickLink).not.toBe(titleLink);
+    expect(titleLink!.contains(quickLink)).toBe(false);
+    expect(quickLink.contains(titleLink!)).toBe(false);
+    fireEvent.click(quickLink);
+    expect(routerPushMock).not.toHaveBeenCalled();
+
+    expect(
+      screen.getByRole("button", { name: /^Session/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Branch/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Status/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Last Activity/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Prompts/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle("Optimistic session")).toBeInTheDocument();
   });
 
   it("renders empty state when no sessions (Req 2.5)", async () => {
@@ -206,66 +240,6 @@ describe("ProjectDetailView", () => {
     expect(await screen.findByText("No sessions yet")).toBeInTheDocument();
     expect(
       screen.getByText("Create a session to start working in this project."),
-    ).toBeInTheDocument();
-  });
-
-  it("renders branch names in table (Req 2.2)", async () => {
-    seedSessions(makeSessions(2));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(await screen.findByText("csm/session-1")).toBeInTheDocument();
-    expect(screen.getByText("csm/session-2")).toBeInTheDocument();
-  });
-
-  it("renders status badges (Req 2.3)", async () => {
-    seedSessions(makeSessions(2));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(await screen.findByText("running")).toBeInTheDocument();
-    expect(screen.getByText("awaiting")).toBeInTheDocument();
-  });
-
-  it("links session name to detail page (Req 2.4)", async () => {
-    seedSessions(makeSessions(1));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    const link = (await screen.findByText("session-1")).closest("a");
-    expect(link?.getAttribute("href")).toBe("/projects/my-project/session-1");
-  });
-
-  it("renders a conversations quick-link on each session row targeting the filtered /conversations page", async () => {
-    seedSessions(makeSessions(1));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-
-    const quickLink = await screen.findByLabelText("Open in Conversations");
-    expect(quickLink.getAttribute("href")).toBe(
-      "/conversations?project=my-project&session=session-1",
-    );
-    // The quick-link is a Radix tooltip trigger (stamped with data-state) rather
-    // than the legacy data-tooltip attribute.
-    expect(quickLink).toHaveAttribute("data-state");
-  });
-
-  it("keeps the session-landing link independent of the conversations quick-link", async () => {
-    seedSessions(makeSessions(1));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-
-    const titleLink = (await screen.findByText("session-1")).closest("a");
-    expect(titleLink?.getAttribute("href")).toBe(
-      "/projects/my-project/session-1",
-    );
-
-    const quickLink = screen.getByLabelText("Open in Conversations");
-    expect(quickLink).not.toBe(titleLink);
-    expect(titleLink!.contains(quickLink)).toBe(false);
-    expect(quickLink.contains(titleLink!)).toBe(false);
-
-    fireEvent.click(quickLink);
-    expect(routerPushMock).not.toHaveBeenCalled();
-  });
-
-  it("renders primary New session CTA in page header (Req 3.1)", async () => {
-    seedSessions([]);
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(
-      await screen.findByRole("button", { name: /New session/ }),
     ).toBeInTheDocument();
   });
 
@@ -334,38 +308,11 @@ describe("ProjectDetailView", () => {
     expect(screen.queryByLabelText("Project composer")).toBeNull();
   });
 
-  it("renders table with all column headers (Req 2.1)", async () => {
-    seedSessions(makeSessions(1));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(
-      await screen.findByRole("button", { name: /^Session/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Branch/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Status/ })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^Last Activity/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^Prompts/ }),
-    ).toBeInTheDocument();
-  });
-
   it("shows loading state when pending", () => {
     // Hold the session list unresolved so the loading branch renders.
     api.pending("GET", "/api/projects/my-project/sessions");
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
     expect(screen.getByText("Loading sessions...")).toBeInTheDocument();
-  });
-
-  it("renders optimistic mode indicator for optimistic mode sessions", async () => {
-    seedSessions([
-      {
-        ...makeSessions(1)[0]!,
-        creationMode: "optimistic",
-      },
-    ]);
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    expect(await screen.findByTitle("Optimistic session")).toBeInTheDocument();
   });
 
   it("focuses an already-open project conversation from the focus query param (Req 12.1)", async () => {

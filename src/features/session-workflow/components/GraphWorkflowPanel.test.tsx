@@ -387,6 +387,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -435,6 +436,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
   });
 
   it("does not refetch a live transcript on a timer", async () => {
+    vi.useFakeTimers();
     const execution = createCodexExecutionWithRunningTask();
     const resolved = resolveViewingTask(execution, "task-codex-1");
     expect(resolved).not.toBeNull();
@@ -458,12 +460,14 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
         ),
       ).length;
 
-    await waitFor(() => {
-      expect(messageRequestCount()).toBe(1);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(messageRequestCount()).toBe(1);
+      });
     });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await vi.advanceTimersByTimeAsync(1200);
     });
 
     expect(messageRequestCount()).toBe(1);

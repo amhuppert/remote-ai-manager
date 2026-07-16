@@ -34,12 +34,14 @@ export interface OptimisticDeps {
   executePromptStream: typeof executePromptStream;
   dispatchMergeJob: typeof dispatchMergeJob;
   createNotification: typeof createJobNotification;
+  sleep(ms: number): Promise<void>;
 }
 
 export const defaultOptimisticDeps: OptimisticDeps = {
   executePromptStream,
   dispatchMergeJob,
   createNotification: createJobNotification,
+  sleep,
 };
 
 /**
@@ -100,7 +102,7 @@ export async function executeOptimisticWorkflow(
     });
 
     // Brief delay to allow state persistence to settle
-    await sleep(500);
+    await deps.sleep(500);
 
     // Dispatch smart merge with auto-resolve
     deps.dispatchMergeJob({

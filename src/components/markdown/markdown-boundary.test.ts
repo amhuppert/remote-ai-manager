@@ -547,42 +547,45 @@ function componentStyleViolations(
   return violations;
 }
 
-const PRODUCTION_SOURCES = walkFiles(SRC_ROOT, isProductionSource);
-const STYLESHEETS = walkFiles(SRC_ROOT, (file) => file.endsWith(".css"));
+function analyzeProductionSources() {
+  const sources = walkFiles(SRC_ROOT, isProductionSource).map((file) => {
+    const source = parseSource(file);
+    return {
+      file,
+      imports: fileImports(source),
+      forbiddenIdentifierHits: forbiddenIdentifiers(source),
+      styleViolations: componentStyleViolations(file, source),
+    };
+  });
+  const stylesheets = walkFiles(SRC_ROOT, (file) => file.endsWith(".css"));
+  return { sources, stylesheets };
+}
 
 describe("canonical Markdown module boundary", () => {
-  it("confines the renderer stack and deleted renderers to src/components/markdown", () => {
+  it("keeps rendering, parsing, adapter configuration, and generated styling inside the canonical boundary", () => {
+    const { sources, stylesheets } = analyzeProductionSources();
     const violations: string[] = [];
-    for (const file of PRODUCTION_SOURCES) {
-      const source = parseSource(file);
-      for (const imported of fileImports(source)) {
+    for (const {
+      file,
+      imports,
+      forbiddenIdentifierHits,
+      styleViolations,
+    } of sources) {
+      for (const imported of imports) {
         for (const reason of importViolations(file, imported)) {
           violations.push(`${path.relative(SRC_ROOT, file)}: ${reason}`);
         }
       }
-    }
-    expect(violations).toEqual([]);
-  });
-
-  it("keeps the public adapters free of configuration escape-hatch props", () => {
-    const source = parseSource(path.join(CANONICAL_DIR, "Markdown.tsx"));
-    expect(adapterPropMembers(source)).toEqual(["content"]);
-  });
-
-  it("has no deleted Markdown identifiers or Markdown-lite parsers in production code", () => {
-    const violations: string[] = [];
-    for (const file of PRODUCTION_SOURCES) {
-      const hits = forbiddenIdentifiers(parseSource(file));
-      if (hits.length > 0) {
-        violations.push(`${path.relative(SRC_ROOT, file)}: ${hits.join(", ")}`);
+      if (forbiddenIdentifierHits.length > 0) {
+        violations.push(
+          `${path.relative(SRC_ROOT, file)}: ${forbiddenIdentifierHits.join(", ")}`,
+        );
+      }
+      for (const reason of styleViolations) {
+        violations.push(`${path.relative(SRC_ROOT, file)}: ${reason}`);
       }
     }
-    expect(violations).toEqual([]);
-  });
-
-  it("declares no generated Markdown rules under legacy style hooks", () => {
-    const violations: string[] = [];
-    for (const file of STYLESHEETS) {
+    for (const file of stylesheets) {
       for (const reason of cssFileViolations(
         file,
         readFileSync(file, "utf8"),
@@ -590,16 +593,11 @@ describe("canonical Markdown module boundary", () => {
         violations.push(`${path.relative(SRC_ROOT, file)}: ${reason}`);
       }
     }
-    expect(violations).toEqual([]);
-  });
-
-  it("styles no generated Markdown output through component Tailwind selectors", () => {
-    const violations: string[] = [];
-    for (const file of PRODUCTION_SOURCES) {
-      for (const reason of componentStyleViolations(file, parseSource(file))) {
-        violations.push(`${path.relative(SRC_ROOT, file)}: ${reason}`);
-      }
+    const adapterSource = parseSource(path.join(CANONICAL_DIR, "Markdown.tsx"));
+    if (adapterPropMembers(adapterSource).join(",") !== "content") {
+      violations.push("MarkdownProps exposes configuration beyond content");
     }
+
     expect(violations).toEqual([]);
   });
 });

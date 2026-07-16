@@ -115,6 +115,15 @@ describe("DiffPanel", () => {
     expect(activePanel.querySelector(".overflow-auto")).toHaveClass("flex-1");
   });
 
+  it("defaults to commits when there are commits but no uncommitted changes", () => {
+    renderWithQuery(<DiffPanel diff={emptyDiff} commits={sampleCommits} />);
+    expect(screen.getByRole("tab", { name: /Commits/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByText("No changes")).not.toBeInTheDocument();
+  });
+
   it("renders file paths and per-file stats (Req 5.2)", () => {
     render(<DiffPanel diff={sampleDiff} />);
     expect(screen.getByText("src/index.ts")).toBeInTheDocument();

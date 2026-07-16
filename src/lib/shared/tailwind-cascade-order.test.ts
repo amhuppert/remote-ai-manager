@@ -85,7 +85,7 @@ function layeredFlexProbeCss(root: postcss.Root): string {
 }
 
 describe("Tailwind cascade-order backstop (no mixed ownership)", () => {
-  it("emits Tailwind utilities into @layer utilities so unlayered legacy CSS wins on the same element (committed integration)", async () => {
+  it("keeps committed utilities layered so unlayered legacy CSS wins", async () => {
     const globals = readFileSync(globalsPath, "utf8");
     // Force the `.flex` utility + add an unlayered legacy rule, then compile
     // through the same plugin `next build` uses.
@@ -104,10 +104,8 @@ describe("Tailwind cascade-order backstop (no mixed ownership)", () => {
     expect(computeDisplay(probeCss, "flex cc-cascade-probe-legacy")).toBe(
       "block",
     );
-  }, 20000);
 
-  it("a legacy unlayered rule beats a layered utility on the same element", () => {
-    const css = `
+    const layeredControl = `
       @layer theme, base, components, utilities;
       @layer utilities {
         .util {
@@ -118,12 +116,9 @@ describe("Tailwind cascade-order backstop (no mixed ownership)", () => {
         display: block;
       }
     `;
-    // Unlayered `.legacy` wins over layered `.util` despite equal specificity.
-    expect(computeDisplay(css, "util legacy")).toBe("block");
-  });
+    expect(computeDisplay(layeredControl, "util legacy")).toBe("block");
 
-  it("the same utility wins once it is unlayered — proving the cascade LAYER, not source order, protects legacy CSS", () => {
-    const css = `
+    const unlayeredControl = `
       .legacy {
         display: block;
       }
@@ -131,9 +126,6 @@ describe("Tailwind cascade-order backstop (no mixed ownership)", () => {
         display: flex;
       }
     `;
-    // Both unlayered, `.util` declared last → it wins by source order. This is
-    // the regression the layer prevents: remove the layer and the utility takes
-    // over the element.
-    expect(computeDisplay(css, "util legacy")).toBe("flex");
-  });
+    expect(computeDisplay(unlayeredControl, "util legacy")).toBe("flex");
+  }, 20000);
 });

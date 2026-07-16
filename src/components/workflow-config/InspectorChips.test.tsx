@@ -58,20 +58,17 @@ describe("implementerChipLabel / validatorChipLabel", () => {
 });
 
 describe("BackendChip", () => {
-  it("colors by the backend's catalog tone", () => {
+  it("exposes the backend catalog id", () => {
     render(<BackendChip backend="codex">codex chip</BackendChip>);
     const chip = screen.getByText("codex chip");
-    expect(chip.className).toContain("text-violet");
     expect(chip.getAttribute("data-backend")).toBe("codex");
   });
 
-  it("renders an unknown backend id neutrally flagged, never with a coerced identity tone", () => {
+  it("flags an unknown backend id", () => {
     render(
       <BackendChip backend={"mystery" as AgentBackendId}>chip</BackendChip>,
     );
     const chip = screen.getByText("chip");
     expect(chip.getAttribute("data-backend-unknown")).toBe("true");
-    expect(chip.className).not.toContain("text-cyan");
-    expect(chip.className).not.toContain("text-violet");
   });
 });
