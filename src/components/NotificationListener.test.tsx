@@ -370,6 +370,9 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: sessionKeys.detail("proj", "sess"),
     });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.list("proj", "sess"),
+    });
     expect(invalidateQueries).not.toHaveBeenCalledWith({
       queryKey: sessionKeys.all,
     });
@@ -400,6 +403,40 @@ describe("NotificationListener", () => {
         queryKey: conversationKeys.messages("proj", "sess", "conv-1"),
       }),
     );
+  });
+
+  it("projects conversation-status into the session conversation list before prompt routing reads it", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("proj", "sess");
+    client.setQueryData(listKey, [
+      { id: "conv-1", status: "running" },
+      { id: "conv-2", status: "awaiting" },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      status: "awaiting",
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<Array<{ id: string; status: string }>>(listKey);
+      expect(cached?.find((c) => c.id === "conv-1")?.status).toBe("awaiting");
+    });
+    expect(
+      client.getQueryData<Array<{ id: string; status: string }>>(listKey),
+    ).toContainEqual({ id: "conv-2", status: "awaiting" });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: listKey });
   });
 
   // Regression: the compaction status chip derives `stale` at fetch time, so

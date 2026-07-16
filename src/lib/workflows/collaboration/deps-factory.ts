@@ -95,9 +95,10 @@ export interface CreateCollaborationDepsInput {
   mutateConversation?: typeof defaultMutateConversation;
   /**
    * Optional override for the SSE publisher used to broadcast the
-   * `conversation-unread` event after `markConversationAwaiting` completes.
-   * Tests inject a capturing fake; production routes through the typed SSE
-   * publication module so the sidebar updates in real time.
+   * `conversation-status` and `conversation-unread` events after
+   * `markConversationAwaiting` completes. Tests inject a capturing fake;
+   * production routes through the typed SSE publication module so every live
+   * conversation cache receives the terminal state.
    */
   publishSessionStatus?: typeof publishEvent;
 }
@@ -194,7 +195,24 @@ export function createCollaborationDeps(
           conversation.pendingQuestions = null;
         },
       );
-      publishSessionStatus({
+      const statusOutcome = publishSessionStatus({
+        type: "conversation-status",
+        scope: "session",
+        projectName,
+        sessionName,
+        conversationId,
+        status: "awaiting",
+      });
+      if (!statusOutcome.delivered) {
+        logger.warn("collaboration.conversation_status.sse_delivery_failed", {
+          projectName,
+          sessionName,
+          conversationId,
+          error: statusOutcome.error.message,
+        });
+      }
+
+      const unreadOutcome = publishSessionStatus({
         type: "conversation-unread",
         scope: "session",
         projectName,
@@ -202,6 +220,14 @@ export function createCollaborationDeps(
         conversationId,
         unread: true,
       });
+      if (!unreadOutcome.delivered) {
+        logger.warn("collaboration.conversation_unread.sse_delivery_failed", {
+          projectName,
+          sessionName,
+          conversationId,
+          error: unreadOutcome.error.message,
+        });
+      }
     },
     updateConversationBackendRef: (conversationId, ref) =>
       mutateConversation(

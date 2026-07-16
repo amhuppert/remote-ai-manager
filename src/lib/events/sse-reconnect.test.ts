@@ -106,8 +106,12 @@ describe("reconnectReconcile", () => {
     const client = makeClient();
     const detailA = sessionKeys.detail("proj", "sess-a");
     const detailB = sessionKeys.detail("proj", "sess-b");
+    const conversationList = conversationKeys.list("proj", "sess-a");
     client.setQueryData(detailA, { sessionName: "sess-a" });
     client.setQueryData(detailB, { sessionName: "sess-b" });
+    client.setQueryData(conversationList, [
+      { id: "conv-a", status: "running" },
+    ]);
     client.setQueryData(conversationKeys.active(), {
       conversations: [],
       graphWorkflowExecutions: [],
@@ -138,6 +142,7 @@ describe("reconnectReconcile", () => {
 
     expect(client.getQueryState(detailA)?.isInvalidated).toBe(true);
     expect(client.getQueryState(detailB)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(conversationList)?.isInvalidated).toBe(true);
     expect(client.getQueryState(conversationKeys.active())?.isInvalidated).toBe(
       true,
     );

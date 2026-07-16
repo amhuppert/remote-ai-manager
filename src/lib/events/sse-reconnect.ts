@@ -83,6 +83,7 @@ export async function reconnectReconcile(
     void queryClient.invalidateQueries({ queryKey });
   }
 
+  void queryClient.invalidateQueries({ queryKey: conversationKeys.lists() });
   void queryClient.invalidateQueries({ queryKey: conversationKeys.active() });
   void queryClient.invalidateQueries({ queryKey: collaborationKeys.all });
   void queryClient.invalidateQueries({ queryKey: notificationKeys.all });

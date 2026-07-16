@@ -289,7 +289,11 @@ export function registerWorkflowSseReactions(
       void queryClient.invalidateQueries({
         queryKey: collaborationKeys.all,
       });
-      void queryClient.invalidateQueries({ queryKey: sessionDetail });
+      invalidateConversationViews(
+        queryClient,
+        data.projectName,
+        data.sessionName,
+      );
       // The slice writes the final answer onto the conversation
       // transcript via `appendTranscriptEntry`, and progress envelopes
       // can also land while the messages query has stopped polling —
@@ -316,9 +320,6 @@ export function registerWorkflowSseReactions(
           ),
         });
       }
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
       void queryClient.invalidateQueries({
         queryKey: projectKeys.list(),
       });

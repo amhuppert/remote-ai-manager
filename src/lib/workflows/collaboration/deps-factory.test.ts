@@ -189,7 +189,7 @@ describe("createCollaborationDeps", () => {
       fixture.close();
     });
 
-    it("persists unread=true + status=awaiting + cleared pending question, and broadcasts conversation-unread so the conversation pins to 'Finished — unread' (verified by reload)", async () => {
+    it("persists the awaiting state and broadcasts both status and unread projections", async () => {
       fixture = createPersistenceFixture();
       fixture.seedProject(baseInput.projectPath);
       fixture.seedSession(baseInput.projectPath, baseInput.sessionName);
@@ -237,8 +237,15 @@ describe("createCollaborationDeps", () => {
       expect(reloaded!.pendingQuestionId).toBeNull();
       expect(reloaded!.pendingQuestions).toBeNull();
 
-      expect(publishedEvents).toHaveLength(1);
+      expect(publishedEvents).toHaveLength(2);
       expect(publishedEvents[0]).toMatchObject({
+        type: "conversation-status",
+        projectName: "example",
+        sessionName: baseInput.sessionName,
+        conversationId: "conv-A",
+        status: "awaiting",
+      });
+      expect(publishedEvents[1]).toMatchObject({
         type: "conversation-unread",
         projectName: "example",
         sessionName: baseInput.sessionName,

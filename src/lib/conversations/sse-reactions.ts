@@ -52,6 +52,9 @@ export function invalidateConversationViews(
     queryKey: conversationKeys.active(),
   });
   void queryClient.invalidateQueries({
+    queryKey: conversationKeys.list(projectName, sessionName),
+  });
+  void queryClient.invalidateQueries({
     queryKey: sessionKeys.detail(projectName, sessionName),
   });
 }
@@ -146,6 +149,29 @@ function updateProjectConversationListEntry(
   );
 }
 
+function updateSessionConversationListStatus(
+  queryClient: QueryClient,
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+  status: ConversationState["status"],
+): void {
+  queryClient.setQueryData(
+    conversationKeys.list(projectName, sessionName),
+    (prev: unknown) => {
+      if (!Array.isArray(prev)) return prev;
+      return prev.map((conversation) =>
+        conversation !== null &&
+        typeof conversation === "object" &&
+        "id" in conversation &&
+        conversation.id === conversationId
+          ? { ...conversation, status }
+          : conversation,
+      );
+    },
+  );
+}
+
 export function registerConversationSseReactions(
   es: EventSource,
   deps: ConversationSseReactionDeps,
@@ -203,6 +229,13 @@ export function registerConversationSseReactions(
         return;
       }
 
+      updateSessionConversationListStatus(
+        queryClient,
+        data.projectName,
+        data.sessionName,
+        data.conversationId,
+        data.status,
+      );
       invalidateConversationViews(
         queryClient,
         data.projectName,
