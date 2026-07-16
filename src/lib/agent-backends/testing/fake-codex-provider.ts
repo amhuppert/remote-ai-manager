@@ -179,35 +179,42 @@ export function createFakeCodexTaskPort(
 
   const deps: CodexTaskRunnerDeps = {
     createCodex() {
-      const thread = {
-        id: FAKE_CODEX_TASK_THREAD_ID,
-        async run(
-          _input: string,
-          options?: { outputSchema?: unknown; signal?: AbortSignal },
-        ) {
-          lastOutputSchema = options?.outputSchema;
-          const finalResponse =
-            options?.outputSchema !== undefined &&
-            config.structuredOutput !== undefined
-              ? JSON.stringify(config.structuredOutput)
-              : FAKE_CODEX_TASK_TEXT;
-          return {
-            finalResponse,
-            items: [
-              { id: "item-1", type: "agent_message", text: finalResponse },
-            ],
-            usage: {
-              input_tokens: FAKE_CODEX_INPUT_TOKENS,
-              cached_input_tokens: 10,
-              output_tokens: 42,
-            },
-            error: null,
-          };
-        },
-      };
+      // Model the real SDK's id lifecycle: a fresh thread has `id: null`
+      // until the `thread.started` event arrives during its first run, while
+      // a resumed thread knows its id at construction.
+      function makeThread(initialId: string | null) {
+        const thread = {
+          id: initialId,
+          async run(
+            _input: string,
+            options?: { outputSchema?: unknown; signal?: AbortSignal },
+          ) {
+            thread.id = thread.id ?? FAKE_CODEX_TASK_THREAD_ID;
+            lastOutputSchema = options?.outputSchema;
+            const finalResponse =
+              options?.outputSchema !== undefined &&
+              config.structuredOutput !== undefined
+                ? JSON.stringify(config.structuredOutput)
+                : FAKE_CODEX_TASK_TEXT;
+            return {
+              finalResponse,
+              items: [
+                { id: "item-1", type: "agent_message", text: finalResponse },
+              ],
+              usage: {
+                input_tokens: FAKE_CODEX_INPUT_TOKENS,
+                cached_input_tokens: 10,
+                output_tokens: 42,
+              },
+              error: null,
+            };
+          },
+        };
+        return thread;
+      }
       return {
-        startThread: () => thread,
-        resumeThread: () => thread,
+        startThread: () => makeThread(null),
+        resumeThread: (id: string) => makeThread(id),
       };
     },
     buildChildEnv: () => ({ NODE_ENV: "test" }),

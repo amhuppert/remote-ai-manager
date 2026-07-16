@@ -57,9 +57,17 @@ describe("CodexTaskRunner", () => {
       getCodexPricingOverrides: async () => null,
     });
 
-    startThreadMock.mockReturnValue({
-      id: "thread-abc",
-      run: runMock,
+    // Model the real SDK: a fresh thread has `id: null` until the
+    // `thread.started` event arrives during its first run.
+    startThreadMock.mockImplementation(() => {
+      const thread = {
+        id: null as string | null,
+        run: (input: unknown, options?: unknown) => {
+          thread.id = "thread-abc";
+          return runMock(input, options);
+        },
+      };
+      return thread;
     });
     resumeThreadMock.mockReturnValue({
       id: "thread-resumed",
@@ -385,6 +393,24 @@ describe("CodexTaskRunner", () => {
       { seq: 0, backend: "codex", type: "reasoning", raw: items[0] },
       { seq: 1, backend: "codex", type: "command_execution", raw: items[1] },
     ]);
+  });
+
+  it("returns the thread id assigned during a fresh run as the backendRef", async () => {
+    // The real SDK creates fresh threads with `id: null` and assigns the id
+    // only when the `thread.started` event arrives mid-run, so the id must be
+    // read after the turn completes.
+    const thread = {
+      id: null as string | null,
+      run: (input: unknown, options?: unknown) => {
+        thread.id = "thread-late";
+        return runMock(input, options);
+      },
+    };
+    startThreadMock.mockReturnValue(thread);
+
+    const result = await runner.run(makeRequest());
+
+    expect(result.backendRef).toEqual({ backend: "codex", ref: "thread-late" });
   });
 
   it("clears a stale resumed thread while preserving the typed classification", async () => {

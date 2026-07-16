@@ -384,12 +384,14 @@ export class CodexTaskRunner implements AgentTaskRunner {
         thread = codex.startThread(threadOptions);
       }
 
-      threadId = thread.id;
-
       const turn = await runCodexTurn(thread, prompt, {
         ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
         signal: abortController.signal,
       });
+
+      // Read the thread id only after the turn: the SDK assigns a fresh
+      // thread's id when the `thread.started` event arrives mid-run.
+      threadId = thread.id;
 
       if (turn.items && turn.items.length > 0) {
         transcript = toRawTranscriptEntries("codex", turn.items);
