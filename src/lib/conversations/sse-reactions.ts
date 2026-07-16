@@ -79,7 +79,12 @@ function appendMessageToQuery(
   },
 ): void {
   queryClient.setQueryData(queryKey, (prev: unknown) => {
-    if (!Array.isArray(prev)) return [entry];
+    // Only the messages fetch may CREATE a cache entry; appends only patch an
+    // existing one (returning undefined makes setQueryData bail out). Seeding
+    // from an append would cache a history-less fragment for a conversation
+    // streaming in the background, and the fragment's fresh dataUpdatedAt
+    // would suppress the full fetch when that conversation is next opened.
+    if (!Array.isArray(prev)) return prev;
     // Mirror server-side `readConversationMessagesWithSeq` merging:
     // consecutive same-role entries collapse into one TranscriptMessage
     // so the MessageContent grouping logic sees them as a single turn.

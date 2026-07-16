@@ -65,7 +65,7 @@ function renderSurface(
   );
   const source = FakeEventSource.instances.at(-1);
   if (!source) throw new Error("NotificationListener opened no EventSource");
-  return { source, container };
+  return { source, container, client };
 }
 
 // Role drives MessageRow's synchronously-rendered label ("You"/"Claude");
@@ -166,6 +166,53 @@ describe("SSE contract — session-scoped transcript", () => {
 
     expect(screen.queryByText("someone else's row")).toBeNull();
     expect(screen.getByText("No messages yet")).toBeInTheDocument();
+  });
+
+  it("does not seed an absent messages cache from an append", () => {
+    // A conversation streaming in the background has no cache entry (never
+    // fetched, or gc'd). Seeding it from an append would cache a history-less
+    // fragment that a later mount treats as fresh, complete data — the
+    // transcript would render only the streamed tail until a hard refresh.
+    // Only the messages fetch may create the entry; appends only patch it.
+    const { source, client } = renderSurface(
+      <ConversationTranscript
+        scope={{
+          kind: "session",
+          projectName: "proj",
+          sessionName: "sess",
+          conversationId: "conv-1",
+        }}
+        backend="claude"
+      />,
+      [[conversationKeys.messages("proj", "sess", "conv-1"), []]],
+    );
+
+    act(() => {
+      source.emit("message-appended", {
+        type: "message-appended",
+        scope: "session",
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv-bg",
+        seq: 7,
+        message: textMessage("assistant", "tail of a background turn"),
+      });
+      source.emit("message-appended", {
+        type: "message-appended",
+        scope: "project",
+        projectName: "proj",
+        conversationId: "pc-bg",
+        seq: 7,
+        message: textMessage("assistant", "tail of a background turn"),
+      });
+    });
+
+    expect(
+      client.getQueryData(conversationKeys.messages("proj", "sess", "conv-bg")),
+    ).toBeUndefined();
+    expect(
+      client.getQueryData(projectConversationKeys.messages("proj", "pc-bg")),
+    ).toBeUndefined();
   });
 });
 
