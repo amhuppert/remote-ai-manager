@@ -69,6 +69,35 @@ describe("canonical Markdown public API", () => {
 });
 
 describe("canonical Markdown semantics", () => {
+  it("renders cyan chevrons for unordered lists without changing ordered markers", async () => {
+    const content = "- Unordered item\n\n1. Ordered item";
+    const { container } = render(
+      <>
+        <DocumentMarkdown content={content} />
+        <MessageMarkdown content={content} />
+        <CompactMarkdown content={content} />
+      </>,
+    );
+
+    await waitFor(() => {
+      for (const intent of ["document", "message", "compact"] as const) {
+        expect(markdownRoot(container, intent)).not.toBeNull();
+      }
+    });
+
+    for (const intent of ["document", "message", "compact"] as const) {
+      const root = markdownRoot(container, intent)!;
+      const unorderedList = root.querySelector("ul");
+      const orderedList = root.querySelector("ol");
+
+      expect(unorderedList).toHaveClass("list-none");
+      expect(unorderedList?.className).toContain("[&>li]:before:content-['›']");
+      expect(unorderedList?.className).toContain("[&>li]:before:text-cyan");
+      expect(orderedList).toHaveClass("list-decimal");
+      expect(orderedList?.className).not.toContain("before:content");
+    }
+  });
+
   it(`renders the shared ${CANONICAL_MARKDOWN_FIXTURES.length}-fixture matrix and exposes every adapter intent`, async () => {
     const { container } = render(
       <>

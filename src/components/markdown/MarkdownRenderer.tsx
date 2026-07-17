@@ -82,13 +82,13 @@ const PARAGRAPH_CLASSES: Record<MarkdownIntent, string> = {
     "mb-xs min-w-0 break-words text-inherit last:mb-0 [overflow-wrap:anywhere]",
 };
 
+const UNORDERED_LIST_MARKER_CLASSES =
+  "list-none [&>li]:relative [&>li]:before:absolute [&>li]:before:-left-[1.1em] [&>li]:before:font-bold [&>li]:before:text-cyan [&>li]:before:select-none [&>li]:before:content-['›']";
+
 const UNORDERED_LIST_CLASSES: Record<MarkdownIntent, string> = {
-  document:
-    "mb-md min-w-0 list-disc space-y-xs pl-xl marker:text-cyan last:mb-0",
-  message:
-    "my-sm min-w-0 list-disc space-y-xs pl-lg marker:text-cyan last:mb-0",
-  compact:
-    "my-xs min-w-0 list-disc space-y-2xs pl-lg marker:text-cyan last:mb-0",
+  document: `mb-md min-w-0 space-y-xs pl-xl last:mb-0 ${UNORDERED_LIST_MARKER_CLASSES}`,
+  message: `my-sm min-w-0 space-y-xs pl-lg last:mb-0 ${UNORDERED_LIST_MARKER_CLASSES}`,
+  compact: `my-xs min-w-0 space-y-2xs pl-lg last:mb-0 ${UNORDERED_LIST_MARKER_CLASSES}`,
 };
 
 const ORDERED_LIST_CLASSES: Record<MarkdownIntent, string> = {
