@@ -548,3 +548,82 @@ describe("CollabPassage rendering", () => {
     expect(activePips).toHaveLength(0);
   });
 });
+
+describe("CollabPassage pending cards", () => {
+  it("fills the missing lane with a pending draft card while one agent is still drafting", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="drafting"
+        artifacts={[makeAgentOneInitialDraft()]}
+      />,
+    );
+    const pending = document.querySelector('[data-collab-pending="true"]');
+    expect(pending).not.toBeNull();
+    expect(pending?.getAttribute("data-pending-kind")).toBe("initial_draft");
+    expect(pending?.getAttribute("data-agent")).toBe("codex");
+    expect(pending?.closest("[data-card-id]")?.getAttribute("data-lane")).toBe(
+      "right",
+    );
+    // The finished draft and the placeholder share the one parallel drafts row.
+    const draftsRow = document.querySelector('[data-row-kind="drafts"]');
+    expect(draftsRow?.querySelectorAll("[data-card-id]")).toHaveLength(2);
+  });
+
+  it("shows a cross-review placeholder in agent_two's lane once both drafts have landed", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="drafting"
+        artifacts={[makeAgentOneInitialDraft(), makeAgentTwoInitialDraft()]}
+      />,
+    );
+    const pending = document.querySelector('[data-collab-pending="true"]');
+    expect(pending?.getAttribute("data-pending-kind")).toBe("cross_review");
+    expect(pending?.getAttribute("data-agent")).toBe("codex");
+    expect(pending?.textContent).toContain("reviewing Claude's draft");
+    // Both real drafts still render, unaffected by the placeholder.
+    expect(
+      document.querySelectorAll('section[data-kind="initial_draft"]'),
+    ).toHaveLength(2);
+  });
+
+  it("shows a counter-proposal placeholder while agent_two answers a proposal", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="negotiating"
+        artifacts={[makeAgentTwoCrossReview(), makeAgentOneProposedChanges()]}
+      />,
+    );
+    const pending = document.querySelector('[data-collab-pending="true"]');
+    expect(pending?.getAttribute("data-pending-kind")).toBe("counter_proposal");
+    expect(pending?.getAttribute("data-agent")).toBe("codex");
+    expect(pending?.closest("[data-card-id]")?.getAttribute("data-lane")).toBe(
+      "right",
+    );
+  });
+
+  it("renders no pending cards once the passage is terminal", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="converged"
+        artifacts={[
+          makeAgentOneInitialDraft(),
+          makeAgentTwoInitialDraft(),
+          makeAgentTwoCrossReview(),
+          makeAgentOneProposedChanges(),
+          makeAgentTwoCounterProposalRound1(),
+          makeResolutionDecisionFinal(),
+          makeFinalAnswer(),
+        ]}
+      />,
+    );
+    expect(document.querySelector('[data-collab-pending="true"]')).toBeNull();
+  });
+});

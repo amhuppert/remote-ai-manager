@@ -353,7 +353,7 @@ function McpToolList({
         {[0, 1, 2].map((i) => (
           <div
             key={i}
-            className="h-[24px] animate-[mcp-skeleton-shimmer_1.4s_ease-in-out_infinite] rounded-sm bg-[linear-gradient(90deg,var(--bg-raised)_0%,var(--bg-elevated)_50%,var(--bg-raised)_100%)] bg-[length:200%_100%]"
+            className="h-[24px] animate-[skeleton-shimmer_1.4s_ease-in-out_infinite] rounded-sm bg-[linear-gradient(90deg,var(--bg-raised)_0%,var(--bg-elevated)_50%,var(--bg-raised)_100%)] bg-[length:200%_100%]"
             style={{ animationDelay: `${i * 80}ms` }}
           />
         ))}

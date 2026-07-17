@@ -851,15 +851,35 @@ html[data-dev-tools-enabled] nextjs-portal {
   display: block !important;
 }
 
-/* Preserved keyframe (part of the global @keyframes library). Referenced by the
-   migrated MCP tool-discovery skeleton via `animate-[mcp-skeleton-shimmer_…]`;
-   the rest of the `.mcp-*` family migrated to utilities/primitives. */
-@keyframes mcp-skeleton-shimmer {
+/* Shared skeleton-loading keyframe (part of the global @keyframes library).
+   Sweeps a 200%-wide gradient's position for shimmer bars and scan lines.
+   Consumed by the MCP tool-discovery skeleton via `animate-[skeleton-shimmer_…]`
+   and by the collaboration pending cards via the `--animate-collab-*` tokens. */
+@keyframes skeleton-shimmer {
   0% {
     background-position: 200% 0;
   }
   100% {
     background-position: -200% 0;
+  }
+}
+
+/* Collaboration pending-card status ellipsis (CollabPendingCard): a typewriter
+   "" → "." → ".." → "..." cycle on a `::after`, so an agent's "drafting" label
+   reads as in-progress. The `--animate-collab-ellipsis` token carries it. */
+@keyframes collab-ellipsis {
+  0% {
+    content: "";
+  }
+  25% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  75%,
+  100% {
+    content: "...";
   }
 }
 

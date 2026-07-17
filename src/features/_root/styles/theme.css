@@ -219,6 +219,14 @@
   --animate-tk-sse-in: tk-sse-in 1.2s ease-out;
   --animate-tk-sse-out: tk-sse-out 0.15s ease-in forwards;
 
+  /* Collaboration pending-card loading indicators (CollabPendingCard). The
+     `skeleton-shimmer` keyframe (globals.css) drives both the shimmering
+     skeleton bars and the sweeping scan line; `collab-ellipsis` cycles the
+     "drafting…" status ellipsis. Different cadences read as distinct textures. */
+  --animate-collab-shimmer: skeleton-shimmer 1.6s linear infinite;
+  --animate-collab-scan: skeleton-shimmer 1.8s linear infinite;
+  --animate-collab-ellipsis: collab-ellipsis 1.4s steps(4, end) infinite;
+
   @keyframes tk-card-land {
     from {
       box-shadow:

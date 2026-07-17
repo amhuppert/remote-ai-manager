@@ -31,6 +31,11 @@ import CollabCounterProposalCard from "@/features/session/conversation/collab/Co
 import CollabResolutionDecisionCard from "@/features/session/conversation/collab/CollabResolutionDecisionCard";
 import CollabOpenConflictsCard from "@/features/session/conversation/collab/CollabOpenConflictsCard";
 import CollabFinalAnswerMessage from "@/features/session/conversation/collab/CollabFinalAnswerMessage";
+import CollabPendingCard from "@/features/session/conversation/collab/CollabPendingCard";
+import {
+  deriveCollabPendingSteps,
+  type CollabPendingStep,
+} from "@/features/session/conversation/collab/collab-pending";
 import CollabPhaseStrip from "@/features/session/conversation/collab/CollabPhaseStrip";
 import {
   type CollabPhaseStripPhase,
@@ -86,14 +91,14 @@ export interface CollabPassageProps {
   errorSummary?: string;
 }
 
-interface NegotiationRound {
+export interface NegotiationRound {
   round: number;
   proposed?: CollaborationProposedChangesOutput;
   counter?: CollaborationCounterProposalOutput;
   decision?: CollaborationResolutionDecisionOutput;
 }
 
-interface GroupedArtifacts {
+export interface GroupedArtifacts {
   initialDrafts: CollaborationInitialDraftOutput[];
   crossReview?: CollaborationCrossReviewOutput;
   rounds: NegotiationRound[];
@@ -213,9 +218,13 @@ export function buildPhases(
           : "pending";
   phases.push({ kind: { kind: "initial_draft" }, status: draftStatus });
 
+  // Once both drafts land, agent_two's cross-review is the in-flight step even
+  // while the passage status is still "drafting" (no negotiation artifact has
+  // completed yet), so the strip keeps a pulsing pip in step with the pending
+  // cross-review card.
   const crossStatus = grouped.crossReview
     ? "done"
-    : grouped.initialDrafts.length >= 2 && status !== "drafting"
+    : grouped.initialDrafts.length >= 2
       ? "active"
       : "pending";
   phases.push({ kind: { kind: "cross_review" }, status: crossStatus });
@@ -352,6 +361,40 @@ interface BuiltTimeline {
   connectorsByBeforeId: Map<string, ConnectorEntry>;
 }
 
+// Appends a pending (in-flight) placeholder card to the timeline. Pending draft
+// cards merge into the shared parallel drafts row so both lanes read as "both
+// working" at a glance; every other pending card gets its own row keyed to the
+// finished-card row id its section groups on.
+function pushPendingCard(
+  cards: CardEntry[],
+  rows: Array<{ rowId: string; cardIds: string[]; rowKind: string }>,
+  step: CollabPendingStep,
+  modelSettings: CollaborationAgentModelSettings | undefined,
+): void {
+  cards.push({
+    id: step.id,
+    lane: step.lane,
+    ...(step.sourceLaneOverride
+      ? { sourceLaneOverride: step.sourceLaneOverride }
+      : {}),
+    render: () => (
+      <CollabPendingCard step={step} modelSettings={modelSettings} />
+    ),
+  });
+  if (step.mergeIntoDraftsRow) {
+    const draftsRow = rows.find((r) => r.rowId === "drafts");
+    if (!draftsRow) {
+      rows.push({ rowId: "drafts", cardIds: [step.id], rowKind: "drafts" });
+    } else if (step.lane === "left") {
+      draftsRow.cardIds.unshift(step.id);
+    } else {
+      draftsRow.cardIds.push(step.id);
+    }
+    return;
+  }
+  rows.push({ rowId: step.rowId, cardIds: [step.id], rowKind: step.rowKind });
+}
+
 function buildTimeline(
   projectName: string | undefined,
   sessionName: string | undefined,
@@ -364,6 +407,7 @@ function buildTimeline(
   pauseHandlers: CollabPauseHandlers | undefined,
   submittedAnswers: Record<string, string> | undefined,
   onRefClick: ((ref: CollaborationReference) => void) | undefined,
+  status: CollabPassageStatus,
 ): BuiltTimeline {
   const cards: CardEntry[] = [];
   const rows: Array<{ rowId: string; cardIds: string[]; rowKind: string }> = [];
@@ -623,6 +667,14 @@ function buildTimeline(
     });
   }
 
+  // In-flight placeholders for the artifact(s) the agents are still writing.
+  // Each lands in the lane cell its real card will occupy, so the arriving
+  // artifact is a fill-in rather than a layout jump. Appended before connectors
+  // are computed so the frontier card wires up to the preceding beat.
+  for (const step of deriveCollabPendingSteps(grouped, status, primary)) {
+    pushPendingCard(cards, rows, step, settingsFor(step.agent));
+  }
+
   const connectorsByBeforeId = new Map<string, ConnectorEntry>();
   for (let i = 1; i < rows.length; i++) {
     const prevRow = rows[i - 1]!;
@@ -691,6 +743,7 @@ export default function CollabPassage({
         pauseHandlers,
         submittedAnswers,
         onRefClick,
+        status,
       ),
     [
       grouped,
@@ -704,6 +757,7 @@ export default function CollabPassage({
       sessionName,
       onRefClick,
       workflowId,
+      status,
     ],
   );
 
