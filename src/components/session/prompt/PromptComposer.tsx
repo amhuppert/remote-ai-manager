@@ -312,6 +312,10 @@ export default function PromptComposer({
     (open: boolean) => setControlActive("capabilities-mobile", open),
     [setControlActive],
   );
+  const onMobileSheetOpenChange = useCallback(
+    (open: boolean) => setControlActive("mobile-sheet", open),
+    [setControlActive],
+  );
   const [hasSerializedContent, setHasSerializedContent] = useState(
     promptText.trim() !== "" || pendingImages.length > 0,
   );
@@ -553,6 +557,7 @@ export default function PromptComposer({
             onSelectBackend={onBackendChange}
             onAttach={() => fileInputRef.current?.click()}
             attachDisabled={isAtLimit || sending}
+            onSheetOpenChange={onMobileSheetOpenChange}
             debugActive={activeConversation?.debugMode?.active ?? false}
             debugSupported={!!activeConversation}
             onToggleDebug={onDebugToggle}

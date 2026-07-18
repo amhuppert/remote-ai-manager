@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
 import { Dialog, DialogContent } from "@/components/ui/Dialog";
@@ -38,10 +38,14 @@ const MOBILE_PROMPT_OPTION_NAME_RAINBOW =
 // sheet composes the `ui/Dialog` unstyled/edge-anchored variant (which owns the
 // focus trap, focus return, Escape, and outside-press dismissal Radix provides)
 // instead of a hand-rolled `role="dialog"` div toggled by CSS visibility.
+// The scrim must stay at `z-dropdown` — the tier of the Dialog's `overlayStretch`
+// positioning layer that hosts the card. The card lives inside that layer's
+// stacking context, so a higher-tier scrim paints over the card no matter what
+// z-index the card itself carries (see `overlayStretch` in dialog-recipe.ts).
 const MOBILE_SHEET_SCRIM =
-  "fixed inset-0 z-tooltip motion-safe:animate-[fadeIn_0.15s_ease] bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]";
+  "fixed inset-0 z-dropdown motion-safe:animate-[fadeIn_0.15s_ease] bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]";
 const MOBILE_SHEET_CARD =
-  "fixed inset-x-0 bottom-0 z-tooltip flex max-h-[70vh] motion-safe:animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]";
+  "fixed inset-x-0 bottom-0 flex max-h-[70vh] motion-safe:animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]";
 interface ModelOption {
   id: string;
   label: string;
@@ -72,6 +76,16 @@ export interface MobilePromptToolbarProps {
 
   onAttach(): void;
   attachDisabled?: boolean;
+
+  /**
+   * Reports whether either bottom sheet is open. The sheets render in a Radix
+   * portal outside the composer's DOM region, so the composer's focus tracking
+   * cannot see them — without this report, focus moving onto a non-focusable
+   * sheet area (or a disabled row) lands on `body`, the composer counts as
+   * blurred and collapses, and the sheet unmounts mid-interaction. Wire to
+   * `setControlActive` like the other portaled composer controls.
+   */
+  onSheetOpenChange?(open: boolean): void;
 
   debugActive: boolean;
   debugSupported: boolean;
@@ -108,6 +122,7 @@ export default function MobilePromptToolbar({
   onSelectBackend,
   onAttach,
   attachDisabled,
+  onSheetOpenChange,
   debugActive,
   debugSupported,
   onToggleDebug,
@@ -123,6 +138,13 @@ export default function MobilePromptToolbar({
   const [sheet, setSheet] = useState<SheetId>(null);
 
   const closeSheet = useCallback(() => setSheet(null), []);
+
+  // The cleanup also releases the control when the toolbar unmounts while a
+  // sheet is open, so the composer's focus hook is not left held forever.
+  useEffect(() => {
+    onSheetOpenChange?.(sheet !== null);
+    return () => onSheetOpenChange?.(false);
+  }, [sheet, onSheetOpenChange]);
 
   const selectedModelOpt = modelOptions.find((m) => m.id === selectedModel);
   const selectedEffortOpt = effortOptions.find((e) => e.id === selectedEffort);

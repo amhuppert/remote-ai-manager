@@ -54,8 +54,8 @@ export default function CollabControlSheet({
       <DialogContent
         unstyled
         anchor="stretch"
-        scrimClassName="fixed inset-0 z-tooltip motion-safe:animate-[fadeIn_0.15s_ease] bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]"
-        contentClassName="fixed inset-x-0 bottom-0 z-tooltip flex max-h-[70vh] motion-safe:animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]"
+        scrimClassName="fixed inset-0 z-dropdown motion-safe:animate-[fadeIn_0.15s_ease] bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]"
+        contentClassName="fixed inset-x-0 bottom-0 flex max-h-[70vh] motion-safe:animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]"
         aria-label="Collaboration controls"
       >
         <div className="relative mb-xs flex shrink-0 items-center justify-center">

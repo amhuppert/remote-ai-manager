@@ -90,3 +90,37 @@ describe("MobilePromptToolbar sheets (ui/Dialog migration)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+describe("MobilePromptToolbar sheet open-state reporting", () => {
+  // The sheets are portaled outside the composer's DOM region, so the composer
+  // only knows a sheet is open through this report; without it the composer
+  // collapses on the first sheet interaction and unmounts the sheet.
+  it("reports open on sheet open and closed on dismissal", () => {
+    const onSheetOpenChange = vi.fn();
+    renderToolbar({ onSheetOpenChange });
+    expect(onSheetOpenChange).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    expect(onSheetOpenChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
+    expect(onSheetOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("reports open for the Model + Reasoning sheet too", () => {
+    const onSheetOpenChange = vi.fn();
+    renderToolbar({ onSheetOpenChange });
+    fireEvent.click(screen.getByRole("button", { name: /^Model Opus/ }));
+    expect(onSheetOpenChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("releases the report when the toolbar unmounts while a sheet is open", () => {
+    const onSheetOpenChange = vi.fn();
+    const { unmount } = renderToolbar({ onSheetOpenChange });
+    fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    expect(onSheetOpenChange).toHaveBeenLastCalledWith(true);
+
+    unmount();
+    expect(onSheetOpenChange).toHaveBeenLastCalledWith(false);
+  });
+});

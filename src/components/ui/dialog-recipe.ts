@@ -29,6 +29,13 @@ export const overlayCenteringSheet = "max-768:items-end";
 // positions itself with its own `fixed`/`absolute` geometry via
 // `layoutClassName`. Kept out of the centring recipe because a centring flex
 // context would fight a self-positioned card.
+//
+// Stacking invariant: this layer is a sibling rendered AFTER the scrim, so the
+// card paints above the scrim only while both sit at the same `z-dropdown`
+// tier. The layer is a fixed-position stacking context — the card's own
+// z-index cannot escape it — so a consumer `scrimClassName` on a higher tier
+// (z-overlay/z-tooltip) paints the scrim over the card and the dialog appears
+// as a backdrop with no content.
 export const overlayStretch = "fixed inset-0 z-dropdown";
 
 // Card (Radix `*.Content`). `w-full` + a `max-w` cap reproduces the legacy

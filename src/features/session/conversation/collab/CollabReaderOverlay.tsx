@@ -52,8 +52,8 @@ export default function CollabReaderOverlay({
       <DialogContent
         unstyled
         anchor="stretch"
-        scrimClassName="fixed inset-0 z-overlay bg-bg-void"
-        contentClassName="fixed inset-0 z-overlay flex motion-safe:animate-[fadeIn_0.15s_ease] flex-col bg-bg-void outline-none"
+        scrimClassName="fixed inset-0 z-dropdown bg-bg-void"
+        contentClassName="fixed inset-0 flex motion-safe:animate-[fadeIn_0.15s_ease] flex-col bg-bg-void outline-none"
         aria-label="Collaboration reading view"
       >
         <div className="flex min-h-[48px] flex-none items-center gap-xs border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base px-xs pt-[env(safe-area-inset-top,0px)]">
