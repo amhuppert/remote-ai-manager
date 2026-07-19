@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
   ArgumentHint,
+  CodeFormatting,
   ConversationMention,
   ConversationMentionNode,
   deserializePromptDoc,
@@ -336,6 +337,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
           underline: false,
           trailingNode: false,
         }),
+        CodeFormatting,
         Placeholder.configure({ placeholder }),
         ImageMarker,
         SlashCommandMarker,
@@ -441,7 +443,9 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
           onSubmit: () => onSubmitRef.current(),
         }),
       ],
-      content: initialDocument ? deserializePromptDoc(initialDocument) : value,
+      content: deserializePromptDoc(
+        initialDocument ?? { prompt: value, images: [] },
+      ),
       editorProps: {
         attributes: {
           class: "prompt-editor__content-inner",
@@ -452,13 +456,12 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       },
       onUpdate: ({ editor: ed }) => {
         compactInlineIndices(ed, cumulativeRef.current);
-        onChangeRef.current(ed.getText());
-        onDocumentChangeRef.current?.(
-          serializePromptDoc({
-            doc: ed.state.doc,
-            attachments: pendingImagesRef.current,
-          }),
-        );
+        const document = serializePromptDoc({
+          doc: ed.state.doc,
+          attachments: pendingImagesRef.current,
+        });
+        onChangeRef.current(document.prompt);
+        onDocumentChangeRef.current?.(document);
         notifyInlineMarkersIfChanged(
           ed,
           lastMarkerIdsRef,

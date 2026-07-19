@@ -129,6 +129,17 @@ function buildClipboard(files: File[]): {
   };
 }
 
+function pastePlainText(element: HTMLElement, text: string): void {
+  fireEvent.paste(element, {
+    clipboardData: {
+      items: [],
+      files: [],
+      types: ["text/plain"],
+      getData: (type: string) => (type === "text/plain" ? text : ""),
+    },
+  });
+}
+
 describe("PromptEditor", () => {
   it("renders an editable contenteditable surface", () => {
     const { container } = render(
@@ -244,6 +255,293 @@ describe("PromptEditor", () => {
     const pm = container.querySelector(".ProseMirror") as HTMLElement;
     fireEvent.keyDown(pm, { key: "Enter", ctrlKey: true });
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("pastes a complete fenced code block as code and places the cursor after it", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { container } = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+
+    pastePlainText(pm, "```c++\nint main() {\n  return 0;\n}\n```\n");
+
+    expect(ref.current!.editor!.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { language: "c++" },
+          content: [{ type: "text", text: "int main() {\n  return 0;\n}" }],
+        },
+        { type: "paragraph" },
+      ],
+    });
+    expect(ref.current!.serialize([]).prompt).toBe(
+      "```c++\nint main() {\n  return 0;\n}\n```\n",
+    );
+    expect(ref.current!.editor!.state.selection.$from.parent.type.name).toBe(
+      "paragraph",
+    );
+  });
+
+  it("exits a code block when Enter follows a closing fence line", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { container } = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    const editor = ref.current!.editor!;
+    act(() => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "codeBlock",
+            content: [{ type: "text", text: "const answer = 42;\n```" }],
+          },
+        ],
+      });
+      editor.commands.focus("end");
+    });
+
+    fireEvent.keyDown(container.querySelector(".ProseMirror") as HTMLElement, {
+      key: "Enter",
+    });
+
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "codeBlock",
+          content: [{ type: "text", text: "const answer = 42;" }],
+        },
+        { type: "paragraph" },
+      ],
+    });
+    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+  });
+
+  it("removes inline code formatting before deleting its content", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { container } = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    const editor = ref.current!.editor!;
+    act(() => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: "foo",
+                marks: [{ type: "code" }],
+              },
+            ],
+          },
+        ],
+      });
+      editor.commands.setTextSelection(4);
+    });
+
+    fireEvent.keyDown(container.querySelector(".ProseMirror") as HTMLElement, {
+      key: "Backspace",
+    });
+
+    expect(editor.getText()).toBe("foo");
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "foo" }] },
+      ],
+    });
+    expect(ref.current!.serialize([]).prompt).toBe("foo");
+  });
+
+  it("unwraps a preceding code block instead of pulling plain text into it", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { container } = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    const editor = ref.current!.editor!;
+    act(() => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "codeBlock",
+            content: [{ type: "text", text: "foo" }],
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "after" }],
+          },
+        ],
+      });
+      editor.commands.setTextSelection(editor.state.doc.child(0).nodeSize + 1);
+    });
+
+    fireEvent.keyDown(container.querySelector(".ProseMirror") as HTMLElement, {
+      key: "Backspace",
+    });
+
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "foo" }] },
+        { type: "paragraph", content: [{ type: "text", text: "after" }] },
+      ],
+    });
+    expect(ref.current!.serialize([]).prompt).toBe("foo\nafter");
+  });
+
+  it("unwraps a following code block when Delete reaches its boundary", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { container } = render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+    const editor = ref.current!.editor!;
+    act(() => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "before" }],
+          },
+          {
+            type: "codeBlock",
+            content: [{ type: "text", text: "foo" }],
+          },
+        ],
+      });
+      editor.commands.setTextSelection(7);
+    });
+
+    fireEvent.keyDown(container.querySelector(".ProseMirror") as HTMLElement, {
+      key: "Delete",
+    });
+
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "before" }],
+        },
+        { type: "paragraph", content: [{ type: "text", text: "foo" }] },
+      ],
+    });
+    expect(ref.current!.serialize([]).prompt).toBe("before\nfoo");
+  });
+
+  it("reports canonical code markup through onChange", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const onChange = vi.fn();
+    render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value=""
+        onChange={onChange}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    act(() => {
+      ref.current!.editor!.commands.setContent(
+        {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: "foo",
+                  marks: [{ type: "code" }],
+                },
+              ],
+            },
+          ],
+        },
+        { emitUpdate: true },
+      );
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith("`foo`");
+  });
+
+  it("treats initial multiline and angle-bracket text as prompt markup, not HTML", () => {
+    const ref = createRef<PromptEditorHandle>();
+    render(
+      <PromptEditor
+        ref={ref}
+        conversationId="conv-1"
+        value={"first\nsecond\n<literal-value>"}
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    expect(ref.current!.serialize([]).prompt).toBe(
+      "first\nsecond\n<literal-value>",
+    );
   });
 
   it("inserts a chip and forwards the file when an image is pasted", async () => {
@@ -809,7 +1107,7 @@ describe("ticket-ref paste handling", () => {
 
     pasteText(pm, TICKET_REF);
 
-    expect(onChange).toHaveBeenLastCalledWith("command-center#12");
+    expect(onChange).toHaveBeenLastCalledWith(TICKET_REF);
     expect(ref.current!.serialize([]).prompt).toBe(TICKET_REF);
 
     fireEvent.click(

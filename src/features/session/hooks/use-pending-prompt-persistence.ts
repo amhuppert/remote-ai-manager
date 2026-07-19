@@ -8,6 +8,7 @@ import {
 import { createClientLogger } from "@/lib/logging/client-logger";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
+import { deserializePromptDoc } from "@/lib/prompt-editor";
 
 const DEBOUNCE_MS = 500;
 const logger = createClientLogger("pending-prompt-persistence");
@@ -134,7 +135,9 @@ export function usePendingPromptPersistence({
     const editorInstance = editorRef.current?.editor;
     if (editorInstance) {
       if (initial.length > 0) {
-        editorInstance.commands.setContent(initial);
+        editorInstance.commands.setContent(
+          deserializePromptDoc({ prompt: initial, images: [] }),
+        );
       } else {
         editorInstance.commands.clearContent(true);
       }

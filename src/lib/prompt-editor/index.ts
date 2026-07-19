@@ -43,3 +43,4 @@ export type {
   TicketMentionItem,
 } from "./ticket-mention-extension";
 export { TerminalHotkeys } from "./terminal-hotkeys-extension";
+export { CodeFormatting } from "./code-formatting-extension";

@@ -4,8 +4,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import React, { useRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
 import { usePendingPromptPersistence } from "./use-pending-prompt-persistence";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore } from "@/lib/state-store/store";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
@@ -53,6 +56,75 @@ describe("usePendingPromptPersistence", () => {
     expect(typeof result.current.suppressPendingPromptAutosaveAfterSubmit).toBe(
       "function",
     );
+  });
+
+  it("hydrates persisted Markdown as rich editor content without treating it as HTML", async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false },
+      },
+    });
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: "",
+    });
+    const editorHandle: PromptEditorHandle = {
+      editor,
+      serialize: () => ({ prompt: "", images: [] }),
+      clear: () => {},
+      focus: () => {},
+      insertText: () => {},
+    };
+    const pendingPromptText =
+      "before\n```ts\nconst value = '<literal>';\n```\nafter";
+    const activeConversation = {
+      id: "c",
+      pendingPromptText,
+    } as ConversationState;
+
+    const { result } = renderHook(
+      () => {
+        const [promptText, setPromptText] = useState("");
+        const promptTextRef = useRef(promptText);
+        promptTextRef.current = promptText;
+        const editorRef = useRef<PromptEditorHandle | null>(editorHandle);
+        usePendingPromptPersistence({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          activeConversation,
+          promptText,
+          setPromptText,
+          promptTextRef,
+          editorRef,
+        });
+        return { promptText };
+      },
+      { wrapper: wrapper(client) },
+    );
+
+    await waitFor(() =>
+      expect(result.current.promptText).toBe(pendingPromptText),
+    );
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "before" }],
+        },
+        {
+          type: "codeBlock",
+          attrs: { language: "ts" },
+          content: [{ type: "text", text: "const value = '<literal>';" }],
+        },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "after" }],
+        },
+      ],
+    });
+    editor.destroy();
   });
 
   it("requests an immediate compare-and-clear when the prompt is submitted", async () => {
