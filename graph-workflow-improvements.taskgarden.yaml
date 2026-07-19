@@ -273,7 +273,7 @@ work_items:
       immutable; resume from the completed prefix; every accepted edit bumps the
       working-definition revision with a recorded diff.
     lane: friction
-    status: planned
+    status: done
     value: 60
     depends_on: []
     tags: [ dynamic, reliability ]
