@@ -167,7 +167,7 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     buildContext: () => null,
     isFinished: false,
     targetBranch: "main",
-    layout: "default",
+    layout: "split",
     mobilePanel: "chat",
     panelContainerProps: {} as Props["panelContainerProps"],
     promptInputSlot: null,
@@ -284,7 +284,7 @@ describe("SessionContent", () => {
     expect(stage!.contains(composerRow)).toBe(true);
   });
 
-  it.each(["default", "split", "conversation", "diff", "panes"] as const)(
+  it.each(["split", "conversation", "diff", "panes"] as const)(
     "renders the shared composer in the %s layout",
     (layout) => {
       const { container } = renderWithQuery(
@@ -326,7 +326,7 @@ describe("SessionContent", () => {
     it("renders the tab strip above the content area in a non-panes layout with a non-empty working set (2.1)", () => {
       const { container } = renderWithQuery(
         <SessionContent
-          {...makeProps({ layout: "default", openTabs: makeOpenTabs() })}
+          {...makeProps({ layout: "split", openTabs: makeOpenTabs() })}
         />,
       );
       const strip = container.querySelector('[data-testid="stub-tab-strip"]');
@@ -372,7 +372,7 @@ describe("SessionContent", () => {
 
     it("renders neither strip nor grid and keeps the panel when openTabs is undefined (per-conversation route)", () => {
       const { container } = renderWithQuery(
-        <SessionContent {...makeProps({ layout: "default" })} />,
+        <SessionContent {...makeProps({ layout: "split" })} />,
       );
       expect(
         container.querySelector('[data-testid="stub-tab-strip"]'),
@@ -389,7 +389,7 @@ describe("SessionContent", () => {
       const { container } = renderWithQuery(
         <SessionContent
           {...makeProps({
-            layout: "default",
+            layout: "split",
             openTabs: makeOpenTabs({ workingSet: [] }),
           })}
         />,

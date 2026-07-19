@@ -594,16 +594,16 @@ describe("session-detail.store — context-artifact panel", () => {
     expect(useSessionDetailStore.getState().layout).toBe("split");
   });
 
-  it("drops out of panes to the default layout", () => {
+  it("drops out of panes to the split layout", () => {
     useSessionDetailStore.setState({ layout: "panes" });
     useSessionDetailStore.getState().openContextArtifactPanel();
-    expect(useSessionDetailStore.getState().layout).toBe("default");
+    expect(useSessionDetailStore.getState().layout).toBe("split");
   });
 
   it("leaves a right-pane-showing layout untouched", () => {
-    useSessionDetailStore.setState({ layout: "default" });
+    useSessionDetailStore.setState({ layout: "diff" });
     useSessionDetailStore.getState().openContextArtifactPanel();
-    expect(useSessionDetailStore.getState().layout).toBe("default");
+    expect(useSessionDetailStore.getState().layout).toBe("diff");
   });
 });
 

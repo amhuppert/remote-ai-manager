@@ -17,10 +17,6 @@ export const Conversation = {
   args: { activeLayout: "conversation" },
 } satisfies Story;
 
-export const Default = {
-  args: { activeLayout: "default" },
-} satisfies Story;
-
 export const Split = {
   args: { activeLayout: "split" },
 } satisfies Story;

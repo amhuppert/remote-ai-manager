@@ -284,7 +284,7 @@ export default function ConversationWorkspace({
     workingSet: openTabs?.workingSet ?? [],
     activate: openTabs?.activate ?? (() => {}),
     layout: store.layout,
-    onExitPanes: () => handleLayoutChange("default"),
+    onExitPanes: () => handleLayoutChange("conversation"),
   });
 
   const {

@@ -10,23 +10,6 @@ interface LayoutSwitcherProps {
 const layouts: { mode: LayoutMode; tooltip: string; icon: React.ReactNode }[] =
   [
     {
-      mode: "default",
-      tooltip: "Conversation + Diff sidebar",
-      icon: (
-        <svg
-          width="14"
-          height="12"
-          viewBox="0 0 14 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.2"
-        >
-          <rect x="0.5" y="0.5" width="9" height="11" rx="1" />
-          <rect x="10.5" y="0.5" width="3" height="11" rx="1" />
-        </svg>
-      ),
-    },
-    {
       mode: "split",
       tooltip: "Split 50/50",
       icon: (
@@ -83,7 +66,7 @@ const layouts: { mode: LayoutMode; tooltip: string; icon: React.ReactNode }[] =
     },
     {
       mode: "diff",
-      tooltip: "Diff only",
+      tooltip: "Right panel only",
       icon: (
         <svg
           width="14"

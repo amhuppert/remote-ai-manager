@@ -42,7 +42,7 @@ export interface PanesToolbarProps {
   addableConversations: SessionActiveConversation[];
   /** Select a conversation → caller adds it and makes it active. */
   onAdd: (id: string) => void;
-  /** Leave panes mode — the caller sets the layout back to "default". */
+  /** Leave panes mode — the caller sets the layout back to "conversation". */
   onExit: () => void;
 }
 

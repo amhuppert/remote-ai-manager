@@ -13,7 +13,7 @@ const SESSION_B = panelSessionKeyFor("proj", "sess-b");
 /** Put the side panel into a distinctive non-default configuration. */
 function arrangePanelState() {
   const s = useSessionDetailStore.getState();
-  s.switchRightPaneTab("alignment");
+  s.switchRightPaneTab("diff");
   s.openDocument({
     projectName: "proj",
     sessionName: "sess-a",
@@ -89,7 +89,7 @@ describe("session-detail.store — activatePanelSession", () => {
     useSessionDetailStore.getState().activatePanelSession(SESSION_B);
 
     const after = useSessionDetailStore.getState();
-    expect(after.rightPaneTab).toBe("diff");
+    expect(after.rightPaneTab).toBe("alignment");
     expect(after.openDocuments).toEqual([]);
     expect(after.activeDocPath).toBeNull();
     expect(after.specBrowserSelection).toBeNull();
@@ -99,7 +99,7 @@ describe("session-detail.store — activatePanelSession", () => {
   it("returning to a previous session restores its panel snapshot", () => {
     useSessionDetailStore.getState().activatePanelSession(SESSION_A);
     arrangePanelState();
-    useSessionDetailStore.getState().switchRightPaneTab("alignment");
+    useSessionDetailStore.getState().switchRightPaneTab("diff");
 
     useSessionDetailStore.getState().activatePanelSession(SESSION_B);
     useSessionDetailStore.getState().switchRightPaneTab("specs");
@@ -109,7 +109,7 @@ describe("session-detail.store — activatePanelSession", () => {
     useSessionDetailStore.getState().activatePanelSession(SESSION_A);
 
     const restored = useSessionDetailStore.getState();
-    expect(restored.rightPaneTab).toBe("alignment");
+    expect(restored.rightPaneTab).toBe("diff");
     expect(restored.openDocuments).toEqual([
       {
         projectName: "proj",

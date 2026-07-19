@@ -10,29 +10,35 @@ function buttonByLabel(name: string): HTMLButtonElement {
 }
 
 describe("LayoutSwitcher", () => {
-  it("renders five layout mode buttons (Req 3.1)", () => {
-    render(<LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />);
-    expect(screen.getAllByRole("button").length).toBe(5);
+  it("renders four layout mode buttons (Req 3.1)", () => {
+    render(
+      <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
+    );
+    expect(screen.getAllByRole("button").length).toBe(4);
   });
 
-  it("orders panes after split and before diff (Req 3.1)", () => {
-    render(<LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />);
+  it("orders panes after split and before conversation-only (Req 3.1)", () => {
+    render(
+      <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
+    );
     const labels = screen
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label"));
     expect(labels).toEqual([
-      "Conversation + Diff sidebar",
       "Split 50/50",
       "Panes (split-screen)",
       "Conversation only",
-      "Diff only",
+      "Right panel only",
     ]);
   });
 
   it("activates panes layout on click (Req 3.1)", () => {
     const onLayoutChange = vi.fn();
     render(
-      <LayoutSwitcher activeLayout="default" onLayoutChange={onLayoutChange} />,
+      <LayoutSwitcher
+        activeLayout="conversation"
+        onLayoutChange={onLayoutChange}
+      />,
     );
     fireEvent.click(buttonByLabel("Panes (split-screen)"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("panes");
@@ -51,7 +57,10 @@ describe("LayoutSwitcher", () => {
   it("calls onLayoutChange with correct mode on click (Req 4.4)", () => {
     const onLayoutChange = vi.fn();
     render(
-      <LayoutSwitcher activeLayout="default" onLayoutChange={onLayoutChange} />,
+      <LayoutSwitcher
+        activeLayout="conversation"
+        onLayoutChange={onLayoutChange}
+      />,
     );
     fireEvent.click(buttonByLabel("Conversation only"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("conversation");
@@ -59,7 +68,7 @@ describe("LayoutSwitcher", () => {
     fireEvent.click(buttonByLabel("Split 50/50"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("split");
 
-    fireEvent.click(buttonByLabel("Diff only"));
+    fireEvent.click(buttonByLabel("Right panel only"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("diff");
   });
 
@@ -71,25 +80,23 @@ describe("LayoutSwitcher", () => {
     expect(buttonByLabel("Conversation only").getAttribute("data-active")).toBe(
       "false",
     );
-    expect(
-      buttonByLabel("Conversation + Diff sidebar").getAttribute("data-active"),
-    ).toBe("false");
-    expect(buttonByLabel("Diff only").getAttribute("data-active")).toBe(
+    expect(buttonByLabel("Right panel only").getAttribute("data-active")).toBe(
       "false",
     );
   });
 
   it("exposes an accessible name for each mode", () => {
-    render(<LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />);
+    render(
+      <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
+    );
     const labels = screen
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label"));
     expect(labels).toEqual(
       expect.arrayContaining([
         "Conversation only",
-        "Conversation + Diff sidebar",
         "Split 50/50",
-        "Diff only",
+        "Right panel only",
       ]),
     );
   });

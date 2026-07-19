@@ -88,7 +88,7 @@ describe("useTabPaneKeyboard", () => {
       <Harness
         workingSet={workingSet}
         activate={activate}
-        layout="default"
+        layout="split"
         onExitPanes={vi.fn()}
       />,
     );
@@ -107,7 +107,7 @@ describe("useTabPaneKeyboard", () => {
       <Harness
         workingSet={workingSet}
         activate={activate}
-        layout="default"
+        layout="split"
         onExitPanes={vi.fn()}
       />,
     );
@@ -135,7 +135,7 @@ describe("useTabPaneKeyboard", () => {
       <Harness
         workingSet={["a"].map(makeConversation)}
         activate={vi.fn()}
-        layout="default"
+        layout="split"
         onExitPanes={onExitPanes}
       />,
     );

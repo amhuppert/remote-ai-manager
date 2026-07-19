@@ -31,7 +31,7 @@ describe("session-detail.store — layout persistence round-trip (jsdom)", () =>
   });
 
   it("re-hydrates each existing layout unchanged (regression)", () => {
-    const existing: LayoutMode[] = ["conversation", "default", "split", "diff"];
+    const existing: LayoutMode[] = ["conversation", "split", "diff"];
     for (const layout of existing) {
       getState().switchLayout(layout, "cc-test-layout");
       expect(localStorage.getItem("cc-test-layout")).toBe(layout);
@@ -50,5 +50,15 @@ describe("session-detail.store — layout persistence round-trip (jsdom)", () =>
     getState().hydrateLayout("cc-test-layout2");
 
     expect(getState().layout).toBe(defaultLayout);
+  });
+
+  it("falls back to the default for the removed 'default' layout value", () => {
+    // "default" (conversation-majority + narrow right panel) was removed; a
+    // previously saved preference must fall back instead of resurrecting it.
+    localStorage.setItem("cc-test-layout3", "default");
+
+    getState().hydrateLayout("cc-test-layout3");
+
+    expect(getState().layout).toBe("conversation");
   });
 });

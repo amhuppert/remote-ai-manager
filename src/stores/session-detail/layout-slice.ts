@@ -48,14 +48,12 @@ export const createLayoutSlice: SessionDetailSliceCreator<LayoutSlice> = (
 
   // Route the right pane to the artifact tab. Mirrors openDocument's reveal
   // logic: panes and conversation-only give the right pane no column, so
-  // opening switches to a layout that shows it (without persisting over the
-  // user's saved layout preference).
+  // opening switches to the split layout that shows it (without persisting
+  // over the user's saved layout preference).
   openContextArtifactPanel: () =>
     set((state) => {
       state.rightPaneTab = "artifact";
-      if (state.layout === "panes") {
-        state.layout = "default";
-      } else if (state.layout === "conversation") {
+      if (state.layout === "panes" || state.layout === "conversation") {
         state.layout = "split";
       }
     }),

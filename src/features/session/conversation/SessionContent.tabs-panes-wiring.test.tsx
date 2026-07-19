@@ -160,7 +160,7 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     buildContext: () => null,
     isFinished: false,
     targetBranch: "main",
-    layout: "default",
+    layout: "split",
     mobilePanel: "chat",
     panelContainerProps: {} as Props["panelContainerProps"],
     promptInputSlot: null,
@@ -210,7 +210,7 @@ describe("SessionContent tabs/panes wiring", () => {
     it("clicking an inactive tab's body calls openTabs.activate with that id, not closeTab (2.4)", () => {
       const openTabs = makeOpenTabs({ activeId: "conv-a" });
       renderWithQuery(
-        <SessionContent {...makeProps({ layout: "default", openTabs })} />,
+        <SessionContent {...makeProps({ layout: "split", openTabs })} />,
       );
 
       fireEvent.click(tabByTitle("Beta"));
@@ -223,7 +223,7 @@ describe("SessionContent tabs/panes wiring", () => {
     it("clicking a tab's close control calls openTabs.closeTab and NOT activate (2.7/2.8)", () => {
       const openTabs = makeOpenTabs({ activeId: "conv-a" });
       renderWithQuery(
-        <SessionContent {...makeProps({ layout: "default", openTabs })} />,
+        <SessionContent {...makeProps({ layout: "split", openTabs })} />,
       );
 
       const betaTab = tabByTitle("Beta");
@@ -239,7 +239,7 @@ describe("SessionContent tabs/panes wiring", () => {
     it("opening the strip add picker lists addable conversations; selecting one calls addTab and closes the menu (2.9)", () => {
       const openTabs = makeOpenTabs();
       renderWithQuery(
-        <SessionContent {...makeProps({ layout: "default", openTabs })} />,
+        <SessionContent {...makeProps({ layout: "split", openTabs })} />,
       );
 
       // No menu before the trigger is clicked.
@@ -307,7 +307,7 @@ describe("SessionContent tabs/panes wiring", () => {
   });
 
   describe("panes toolbar", () => {
-    it("clicking the toolbar exit calls onLayoutChange('default') (6.4)", () => {
+    it("clicking the toolbar exit calls onLayoutChange('conversation') (6.4)", () => {
       const openTabs = makeOpenTabs();
       const onLayoutChange = vi.fn();
       renderWithQuery(
@@ -318,7 +318,7 @@ describe("SessionContent tabs/panes wiring", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Exit panes" }));
 
-      expect(onLayoutChange).toHaveBeenCalledWith("default");
+      expect(onLayoutChange).toHaveBeenCalledWith("conversation");
     });
 
     it("selecting an addable in the toolbar add picker calls openTabs.addTab (6.2)", () => {

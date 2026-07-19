@@ -39,7 +39,7 @@ const DOCKED_STAGE_CLASS =
 // clips horizontally the overflow is unreachable. `minmax(0,1fr)` pins the
 // minimum to zero so the column stays viewport-width and the markdown wraps.
 const CONTENT_AREA_CLASS =
-  "session-content-area grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-[250ms] ease-[ease] data-[layout=default]:grid-cols-[minmax(0,1fr)_420px] data-[layout=split]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] data-[layout=conversation]:grid-cols-[minmax(0,1fr)] data-[layout=diff]:grid-cols-[minmax(0,1fr)] data-[layout=panes]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=default]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=split]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=diff]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=conversation]:grid-cols-[minmax(0,1fr)]";
+  "session-content-area grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-[250ms] ease-[ease] data-[layout=split]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] data-[layout=conversation]:grid-cols-[minmax(0,1fr)] data-[layout=diff]:grid-cols-[minmax(0,1fr)] data-[layout=panes]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=split]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=diff]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=conversation]:grid-cols-[minmax(0,1fr)]";
 const PROMPT_SLOT_CLASS =
   "min-w-0 shrink-0 border-x-0 border-b-0 border-t border-solid border-border-default bg-bg-base";
 
@@ -230,7 +230,7 @@ export default function SessionContent({
                   openTabs.activate(id);
                   onLayoutChange("conversation");
                 }}
-                onExit={() => onLayoutChange("default")}
+                onExit={() => onLayoutChange("conversation")}
               />
             ) : (
               <>

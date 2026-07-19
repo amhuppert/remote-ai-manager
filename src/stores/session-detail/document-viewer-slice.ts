@@ -70,14 +70,11 @@ export const createDocumentViewerSlice: SessionDetailSliceCreator<
       // column to occupy: panes replaces the content area with a full-width
       // conversation grid, and conversation-only is a single full-width column.
       // A markdown file card clicked in either would otherwise mutate this
-      // state but never reveal the viewer, so opening switches to a layout that
-      // shows it — panes drops to default, conversation-only opens the split
-      // 50/50 view (req 4.3). This intentionally does not persist over the
-      // user's saved layout preference (openDocuments is itself not persisted);
-      // a reload restores it.
-      if (state.layout === "panes") {
-        state.layout = "default";
-      } else if (state.layout === "conversation") {
+      // state but never reveal the viewer, so opening switches to the split
+      // 50/50 view that shows it (req 4.3). This intentionally does not persist
+      // over the user's saved layout preference (openDocuments is itself not
+      // persisted); a reload restores it.
+      if (state.layout === "panes" || state.layout === "conversation") {
         state.layout = "split";
       }
     }),

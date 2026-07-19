@@ -7,12 +7,7 @@ import { agentCapabilityOverridesSchema } from "@/lib/agent-capabilities/schemas
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 
 /** Layout mode for the session detail view */
-export type LayoutMode =
-  | "conversation"
-  | "default"
-  | "split"
-  | "panes"
-  | "diff";
+export type LayoutMode = "conversation" | "split" | "panes" | "diff";
 
 /** Session-level derived status (waiting_for_input > running > awaiting > new > idle) */
 export const derivedSessionStatusSchema = z.enum([

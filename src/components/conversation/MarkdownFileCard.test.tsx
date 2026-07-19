@@ -71,7 +71,7 @@ describe("MarkdownFileCard in MessageContent", () => {
     await user.click(screen.getByRole("button", { name: /guide\.md/ }));
 
     const state = useSessionDetailStore.getState();
-    expect(state.layout).toBe("default");
+    expect(state.layout).toBe("split");
     expect(state.activeDocPath).toBe("docs/guide.md");
     expect(state.rightPaneTab).toBe("docs");
   });

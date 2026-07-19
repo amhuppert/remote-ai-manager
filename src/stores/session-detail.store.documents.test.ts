@@ -55,7 +55,7 @@ describe("session-detail.store — document viewer slice", () => {
     s.openDocument(docRef("a.md"));
 
     const after = useSessionDetailStore.getState();
-    expect(after.layout).toBe("default");
+    expect(after.layout).toBe("split");
     expect(after.activeDocPath).toBe("a.md");
     expect(after.rightPaneTab).toBe("docs");
   });

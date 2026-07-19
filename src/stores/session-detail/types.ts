@@ -338,7 +338,6 @@ export const SIDEBAR_STORAGE_KEY = "cc-sidebar-collapsed";
 
 export const validLayouts: LayoutMode[] = [
   "conversation",
-  "default",
   "split",
   "panes",
   "diff",
@@ -347,7 +346,9 @@ export const validLayouts: LayoutMode[] = [
 export const initialState: SessionDetailState = {
   layout: "conversation",
   mobilePanel: "chat",
-  rightPaneTab: "diff",
+  // Alignment is the default: the diff tab is expensive to render and rarely
+  // the first thing needed, so it must never be the tab a session opens on.
+  rightPaneTab: "alignment",
   isVoiceRecording: false,
   promptPlaceholder: null,
   inFlight: {},

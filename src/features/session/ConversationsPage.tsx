@@ -154,7 +154,7 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
   const handleOpenInTab = useCallback(
     (target: { conversationId: string }) => {
       if (layout === "panes") {
-        switchLayout("default", CONVERSATIONS_LAYOUT_STORAGE_KEY);
+        switchLayout("conversation", CONVERSATIONS_LAYOUT_STORAGE_KEY);
       }
       openConversation({ conversationId: target.conversationId });
     },

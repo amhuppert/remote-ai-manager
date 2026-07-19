@@ -75,7 +75,7 @@ function renderStrip() {
         tddEnabled={false}
         onTddChange={() => {}}
         tddDisabled={false}
-        layout="default"
+        layout="split"
         onLayoutChange={() => {}}
         dsOpen={false}
         dsServers={[]}

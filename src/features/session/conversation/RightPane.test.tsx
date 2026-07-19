@@ -68,9 +68,9 @@ describe("RightPane", () => {
     }
   });
 
-  it("keeps Diff as the default active tab", () => {
+  it("keeps Alignment as the default active tab", () => {
     renderPane();
-    expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Alignment" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
