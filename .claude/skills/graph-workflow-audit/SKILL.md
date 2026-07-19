@@ -36,6 +36,15 @@ approval gates, ask-user-question pauses, charter, shared documents.
   before reading any transcript; use its flags to decide *which* transcripts
   and prompts deserve expensive qualitative reading. Don't hand-tally what
   the script already computes.
+- **Every published number must trace to primary telemetry** — extractor
+  output, DB rows, workflow-logs JSONL, or a transcript tally you can point
+  to. Subagent deep-read summaries are hypotheses, not sources: in a real
+  audit two deep-read agents returned quantifications (a per-iteration
+  dollar split; an errored-call count) that failed verification against the
+  extractor. Before a number ships in a report, re-derive it from the
+  primary source or drop it; when a figure is a floor or inconclusive, say
+  so explicitly (the extractor's "Telemetry confidence" section lists the
+  known limits for the run).
 - Full data-source map (tables, JSONL shapes, paths, ad-hoc query recipes):
   `references/data-sources.md` in this skill directory.
 
@@ -58,13 +67,24 @@ bun run workflow:audit -- --project <path> --session <name>  # by session
 
 It merges `command-center.db` (execution state, event log, conversation
 costs) with `<config-dir>/workflow-logs/<executionId>/` (per-iteration
-timing, prompt sizes, context-token telemetry, validator parse paths) and a
-single-pass scan of every reachable transcript (lineage-corrected cost, tool
-tallies, error counts, background-task kills, re-read churn), and reports:
-overview (including the final-publish diffstat), per-context iteration
-tables, validation verdicts, gate waits, cost by lane/context with a
-transcript-corrected total, timing with gap classification, detector-driven
-friction findings, and detected positives.
+timing, prompt sizes, context-token telemetry, validator parse paths, plus
+`lifecycle.jsonl` for halt/resume/join-retry history and `decisions.jsonl`
+for rotation scheduling) and a single-pass scan of every reachable
+transcript (lineage-corrected cost, tool tallies, error counts,
+background-task kills, re-read churn), and reports: overview (including the
+final-publish diffstat), per-context iteration tables, validation verdicts,
+gate waits, cost by lane/context with a transcript-corrected total, timing
+with gap classification, halt-recovery table with operator wait, detector-
+driven friction findings, detected positives, and a "Telemetry confidence"
+section listing where the run's figures are floors or inconclusive.
+
+**Time semantics:** `agent turns` excludes hung-turn time (reported
+separately); `human waits` counts only configured approval/user-input gates;
+`operator recovery` is halted→resumed wait from lifecycle.jsonl — before
+this metric existed, runs with hours of halt recovery reported zero human
+wait. Gap classifications: `halt_wait` (execution halted), `hung_turn`
+(covered by a dead turn), `validation_compute` (script gate running),
+`agent_work`, `human_wait`, `unexplained`.
 
 **What the detectors flag** (each maps to a known failure mode):
 
@@ -81,9 +101,14 @@ friction findings, and detected positives.
 | `scratch_debris` | The final-publish commit carried scratch files (`.cc/`, `*.log`) into the session branch. Work-product hygiene defect; check what shipped. |
 | `prompt_growth` | Seed prompt grew ≥ 2× across iterations — feedback accumulating instead of resolving. |
 | `parse_fallback` | Validator response needed fenced-JSON/raw fallback — structured output failed; check the raw response in `prompts/<n>.json`. |
-| `stall_gap` | Wall-clock gap covered by neither agent work nor a human gate — orchestration dead air. Correlate with server logs (below). |
+| `stall_gap` | Wall-clock gap covered by neither agent work, a human gate, a halt window, a hung turn, nor a validation run — orchestration dead air. Correlate with server logs (below). |
 | `human_wait` | Gate/question latency ≥ 10 min. Not agent friction, but it is calendar time; note it separately. |
 | `merge_conflict` | Join or context merge hit conflicts/failure. |
+| `recovered_halt` | The run halted mid-flight and was resumed. The execution state clears the halt reason on resume, so without this the run reads as never having halted; the wait shown is operator recovery time. |
+| `hung_turn` | A turn produced no recorded activity for over an hour — likely a dead/silent SDK turn. Its time is EXCLUDED from agent-work totals; treat as a reliability incident, not labor. |
+| `join_retry` | A join needed retry attempts before its final state (final join status hides attempt history) — read lifecycle.jsonl for the sequence. |
+| `rotation_not_applied` | More rotations were scheduled than applied for the context — the lane kept its conversation past the engine's rotate decision. |
+| `cost_gap` | A conversation with real recorded activity has a zero/absent cost row — its spend is missing and the cost total is a floor. |
 
 **Two different "turns" columns.** The iteration table's `prompt cycles` is
 orchestrator prompt→completion cycles (1–3 is normal); the conversation
@@ -127,6 +152,8 @@ brief of this shape, and run them in parallel:
 > Return ~40–60 lines: phase timeline with turn ranges, tallies, waste
 > findings each with 1-line evidence, and a verdict: legitimate heavy
 > lifting vs avoidable churn, plus the single highest-leverage change.
+> Every numeric claim you return must cite the transcript entry range or
+> tally it came from — unattributed numbers will be dropped.
 
 1. **Iteration seed prompts** — `workflow-logs/<exec>/contexts/<id>/prompts/iteration-<n>.md`.
    Is the briefing self-contained? Does it restate sources of truth instead
@@ -228,11 +255,18 @@ docs/reports/graph-workflow-improvement-report.md rather than re-inventing.>
 - **Lane labels ≠ context purpose.** A "Validate: …" *context* still runs in
   the implementer lane; `context_validator` is the separate validator agent.
   Validator invocations often have no conversation cost row (task-runner
-  path) — codex validator usage appears in
-  `graph-workflow-validation-result` events (`reviewArtifact.usage`) and the
-  extractor rolls it up separately; events from before codex cost reporting
-  carry tokens only, so that line can still undercount. Say so in the report
-  if validators ran.
+  path) — validator usage appears in `graph-workflow-validation-result`
+  events (`reviewArtifact.usage`; task/codex artifacts carry tokens,
+  conversation artifacts carry transcript-derived cost) and the extractor
+  rolls it up separately, skipping conversation artifacts whose CC
+  conversation row is already priced. Events from before usage reporting
+  carry tokens only or nothing, so that line can still undercount. Say so in
+  the report if validators ran.
+- **Codex occupancy is unmeasurable.** Codex lanes report a CUMULATIVE
+  processed-token counter with `contextWindowMax: null` (turn records carry
+  `occupancyMeasurable: false`). Never divide that counter by a window or
+  rotation limit; the extractor suppresses occupancy findings for such
+  contexts and lists them under "Telemetry confidence" as inconclusive.
 - **Long `agent_work` gaps are normal** (a single opus turn can run 45+
   min). Only `unexplained` gaps are orchestration problems.
 - **`preReset` events**: a context that was reset keeps its pre-reset event

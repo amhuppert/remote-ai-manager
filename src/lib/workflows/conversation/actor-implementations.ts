@@ -91,6 +91,7 @@ import type { ActorConfig } from "./pre-turn/resolve-model-effort";
 import {
   resolveTurnModelEffort,
   resolveBackendTimeoutMs,
+  resolveBackendStallTimeoutMs,
 } from "./pre-turn/resolve-model-effort";
 import {
   resolveTurnPromptText,
@@ -1363,15 +1364,20 @@ export async function executePromptForMachine(
   runtimeState.backendRuntime = backendRuntime;
 
   // ---------------------------------------------------------------
-  // Safety-net timeout
+  // Safety-net timeout + inactivity (stall) watchdog
   // ---------------------------------------------------------------
   const timeoutMs = resolveBackendTimeoutMs(input.agentBackend, config);
+  const stallTimeoutMs = resolveBackendStallTimeoutMs(
+    input.agentBackend,
+    config,
+  );
   const abortWiring = wireTurnAbort(deps, {
     runtimeState,
     conversationId: input.conversationId,
     sessionName: input.sessionName,
     backend: input.agentBackend,
     timeoutMs,
+    stallTimeoutMs,
     closeRuntime: () => backendRuntime?.close(),
   });
   const abortController = abortWiring.abortController;
@@ -1385,6 +1391,8 @@ export async function executePromptForMachine(
 
   // onEvent: translate backend events into existing SSE emit path
   const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
+    // Every backend event proves the turn is alive, whatever its type.
+    abortWiring.notifyActivity();
     switch (event.type) {
       case "input_accepted": {
         await queuedAccounting.handleInputAccepted();
@@ -1625,16 +1633,29 @@ export async function executePromptForMachine(
 
     if (turnlessFailure && abortController.signal.aborted) {
       const timeoutFired = abortWiring.timeoutFired();
+      const stallFired = abortWiring.stallFired();
       logger.info("prompt.aborted", {
         sessionName: input.sessionName,
-        ...(timeoutFired ? { abortReason: "timeout", timeoutMs } : {}),
+        ...(timeoutFired
+          ? { abortReason: "timeout", timeoutMs }
+          : stallFired
+            ? { abortReason: "stalled", stallTimeoutMs }
+            : {}),
       });
       runtimeState.streamEmit?.("aborted", {
         message: timeoutFired
           ? `Prompt execution timed out after ${timeoutMs}ms`
-          : "Prompt execution was cancelled",
+          : stallFired
+            ? `Prompt execution stalled: no agent activity for ${stallTimeoutMs}ms`
+            : "Prompt execution was cancelled",
       });
-      return buildAbortedTurnResult({ contentBlocks, timeoutFired, timeoutMs });
+      return buildAbortedTurnResult({
+        contentBlocks,
+        timeoutFired,
+        timeoutMs,
+        stallFired,
+        stallTimeoutMs,
+      });
     }
 
     if (turnlessFailure) {
@@ -1669,16 +1690,29 @@ export async function executePromptForMachine(
   } catch (err) {
     if (abortController.signal.aborted) {
       const timeoutFired = abortWiring.timeoutFired();
+      const stallFired = abortWiring.stallFired();
       logger.info("prompt.aborted", {
         sessionName: input.sessionName,
-        ...(timeoutFired ? { abortReason: "timeout", timeoutMs } : {}),
+        ...(timeoutFired
+          ? { abortReason: "timeout", timeoutMs }
+          : stallFired
+            ? { abortReason: "stalled", stallTimeoutMs }
+            : {}),
       });
       runtimeState.streamEmit?.("aborted", {
         message: timeoutFired
           ? `Prompt execution timed out after ${timeoutMs}ms`
-          : "Prompt execution was cancelled",
+          : stallFired
+            ? `Prompt execution stalled: no agent activity for ${stallTimeoutMs}ms`
+            : "Prompt execution was cancelled",
       });
-      return buildAbortedTurnResult({ contentBlocks, timeoutFired, timeoutMs });
+      return buildAbortedTurnResult({
+        contentBlocks,
+        timeoutFired,
+        timeoutMs,
+        stallFired,
+        stallTimeoutMs,
+      });
     }
 
     const errorMsg = getErrorMessage(err);
@@ -1846,7 +1880,9 @@ export async function executePromptForMachine(
     compacted: callResult.compacted ?? false,
     ...(turnAborted && abortWiring.timeoutFired()
       ? { abortReason: "timeout" as const, timeoutMs }
-      : {}),
+      : turnAborted && abortWiring.stallFired()
+        ? { abortReason: "stalled" as const, timeoutMs: stallTimeoutMs }
+        : {}),
     error: effectiveError,
     continuationDisposition,
     ...(callResult.backgroundWait !== undefined
@@ -1935,6 +1971,24 @@ export async function runTaskRunTurnForMachine(
   const abortController = new AbortController();
   deps.registerAbortController(input.conversationId, abortController);
 
+  // Per-run inactivity bound, resolved from config + the backend descriptor
+  // exactly like the streaming prompt path's stall watchdog. A config read
+  // failure degrades to the descriptor default via the runner's own fallback.
+  let taskStallTimeoutMs: number | undefined;
+  try {
+    taskStallTimeoutMs = resolveBackendStallTimeoutMs(
+      input.agentBackend,
+      await deps.readConfig(),
+    );
+  } catch (err) {
+    logger.warn("task_run.stall_timeout_resolution_failed", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      error: getErrorMessage(err),
+    });
+  }
+
   // Semantic execution intent: the facade resolves the runner and capability
   // view from the registry (`deps.getTaskRunner` stays the DI seam for tests).
   const facadeDeps: AgentCallFacadeDeps = {
@@ -1945,6 +1999,9 @@ export async function runTaskRunTurnForMachine(
       ...(input.backendRef !== null ? { resumeRef: input.backendRef } : {}),
       ...(input.timeoutMs !== undefined
         ? { defaultTimeoutMs: input.timeoutMs }
+        : {}),
+      ...(taskStallTimeoutMs !== undefined
+        ? { stallTimeoutMs: taskStallTimeoutMs }
         : {}),
       sandboxMode: "danger-full-access",
       approvalPolicy: "never",

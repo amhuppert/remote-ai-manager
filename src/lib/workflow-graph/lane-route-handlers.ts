@@ -153,6 +153,7 @@ async function prepareContext(
       iterationCount: result.reminderState.iterationCount,
       circuitBreakerThreshold: result.reminderState.circuitBreakerThreshold,
       remainingTaskCount: result.reminderState.remainingTaskCount,
+      contextLimitStopped: false,
     });
     if (reminders.length > 0) {
       log.info("graph-workflow-lane.reminders_emitted", {
@@ -234,6 +235,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
           contextDef?.circuitBreaker.consecutiveFailureThreshold ??
           DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
         remainingTaskCount,
+        contextLimitStopped: contextLimitStop !== null,
       });
       if (reminders.length > 0) {
         body.reminders = reminders;

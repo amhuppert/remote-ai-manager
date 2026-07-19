@@ -2323,6 +2323,7 @@ describe("task validation event publishing (fix-30388517)", () => {
         backend: "claude" as const,
         kind: "conversation" as const,
         ref: "validator-conv",
+        usage: null,
       },
     }));
 
@@ -6693,5 +6694,258 @@ describe("conversation telemetry emission", () => {
     );
     expect(completed).toBeDefined();
     expect(completed?.data).toMatchObject({ completedTaskCount: 2 });
+  });
+});
+
+// -- per-turn billing telemetry on agent_turn_completed ------------------------
+
+describe("per-turn billing on agent_turn_completed", () => {
+  function createCapturingExecutionLogger(executionId: string): {
+    logger: ExecutionLogger;
+    iterationCalls: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }>;
+  } {
+    const iterationCalls: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }> = [];
+    const logger: ExecutionLogger = {
+      executionId,
+      logDir: "/tmp/test-turn-billing",
+      writeManifest() {},
+      lifecycle() {},
+      iteration(_contextId, event, data) {
+        iterationCalls.push({ event, data });
+      },
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision() {},
+    };
+    return { logger, iterationCalls };
+  }
+
+  afterEach(() => {
+    _resetRegistryForTesting();
+  });
+
+  it("emits cumulative cost and per-turn delta derived from conversation telemetry", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    // Reads in call order: pre-turn baseline (reused conversation already at
+    // $1.00), after turn 0 ($1.75), after the follow-up turn ($2.05), then the
+    // iteration-completed telemetry read (clamped to the last value).
+    const costReadings = [1.0, 1.75, 2.05];
+    let readIndex = 0;
+    const readConversationTelemetry = vi.fn(async () => ({
+      costUsd: costReadings[Math.min(readIndex++, costReadings.length - 1)]!,
+      apiTurns: 3,
+      lineageCount: 1,
+      reads: { uniqueFiles: 0, totalReads: 0, repeatReads: 0 },
+      topReReads: [],
+    }));
+
+    let call = 0;
+    const runAgentIteration = vi.fn(async () => {
+      call += 1;
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      if (call >= 2) {
+        current.taskStates["task-plan-2"] = {
+          ...current.taskStates["task-plan-2"]!,
+          status: "completed",
+          summary: "Done",
+          completedAt: "2026-03-27T16:04:00.000Z",
+        };
+      }
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: call >= 2 ? 2 : 1,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      readConversationTelemetry,
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const turnEvents = iterationCalls.filter(
+      (c) => c.event === "iteration.agent_turn_completed",
+    );
+    expect(turnEvents).toHaveLength(2);
+    const first = turnEvents[0]?.data as {
+      cumulativeCostUsd: number | null;
+      costUsdDelta: number | null;
+    };
+    expect(first.cumulativeCostUsd).toBeCloseTo(1.75);
+    expect(first.costUsdDelta).toBeCloseTo(0.75);
+    const second = turnEvents[1]?.data as {
+      cumulativeCostUsd: number | null;
+      costUsdDelta: number | null;
+    };
+    expect(second.cumulativeCostUsd).toBeCloseTo(2.05);
+    expect(second.costUsdDelta).toBeCloseTo(0.3);
+  });
+
+  it("emits null billing fields when telemetry is unavailable", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      for (const taskId of ["task-plan-1", "task-plan-2"]) {
+        current.taskStates[taskId] = {
+          ...current.taskStates[taskId]!,
+          status: "completed",
+          summary: "Done",
+          completedAt: "2026-03-27T16:02:00.000Z",
+        };
+      }
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const turnEvents = iterationCalls.filter(
+      (c) => c.event === "iteration.agent_turn_completed",
+    );
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]?.data).toMatchObject({
+      cumulativeCostUsd: null,
+      costUsdDelta: null,
+    });
+    // No window max reported (codex-style cumulative counter): the record
+    // must say so explicitly, so audits stop dividing cumulative counters.
+    expect(turnEvents[0]?.data).toMatchObject({ occupancyMeasurable: false });
+  });
+
+  it("marks occupancy measurable when the backend reports a context window max", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      for (const taskId of ["task-plan-1", "task-plan-2"]) {
+        current.taskStates[taskId] = {
+          ...current.taskStates[taskId]!,
+          status: "completed",
+          summary: "Done",
+          completedAt: "2026-03-27T16:02:00.000Z",
+        };
+      }
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: 120000,
+        contextWindowMax: 200000,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const turnEvents = iterationCalls.filter(
+      (c) => c.event === "iteration.agent_turn_completed",
+    );
+    expect(turnEvents[0]?.data).toMatchObject({
+      contextTokens: 120000,
+      contextWindowMax: 200000,
+      occupancyMeasurable: true,
+    });
   });
 });

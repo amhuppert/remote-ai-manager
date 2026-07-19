@@ -1095,6 +1095,190 @@ describe("execution loop", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("recovers once, on a fresh rotated conversation, when the implementer turn stalls", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          pendingApproval: null,
+          pendingUserInput: null,
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+      laneStates: {
+        "ctx-1": {
+          implementer: {
+            backend: "codex",
+            refKind: "conversation",
+            lane: "implementer",
+            contextId: "ctx-1",
+            workflowConversationId: "conv-1",
+            sessionRef: { backend: "codex", ref: "thread-1" },
+            metrics: { rotateBeforeNextTurn: false },
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    });
+
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(
+      async (_projectPath: string, _sessionName: string, errInput) => {
+        expect(errInput).toEqual({
+          contextId: "ctx-1",
+          errorMessage:
+            "Prompt execution stalled: no agent activity for 1200000ms",
+        });
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "ready";
+        const lane = next.laneStates["ctx-1"]?.["implementer"];
+        if (lane?.backend === "codex") {
+          lane.metrics.rotateBeforeNextTurn = true;
+        }
+        harness.setCurrent(next);
+        return next;
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          if (iterationCallCount === 1) {
+            throw new AgentTurnFailedError(
+              "Prompt execution stalled: no agent activity for 1200000ms",
+              {
+                contextId: "ctx-1",
+                engine: "codex",
+                cause: "stall",
+                originalMessage:
+                  "Prompt execution stalled: no agent activity for 1200000ms",
+              },
+            );
+          }
+
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 2;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.taskStates["task-1"]!.status = "completed";
+          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(2);
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(result.status).toBe("completed");
+  });
+
+  it("halts with the stall cause when a second stall follows the recovery attempt", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          pendingApproval: null,
+          pendingUserInput: null,
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    const stallError = () =>
+      new AgentTurnFailedError(
+        "Prompt execution stalled: no agent activity for 1200000ms",
+        {
+          contextId: "ctx-1",
+          engine: "codex",
+          cause: "stall",
+          originalMessage:
+            "Prompt execution stalled: no agent activity for 1200000ms",
+        },
+      );
+
+    const recoverRetryableIterationError = vi.fn(async () => {
+      const next = structuredClone(harness.getCurrent());
+      next.contextStates["ctx-1"]!.status = "ready";
+      harness.setCurrent(next);
+      return next;
+    });
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw stallError();
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "agent_turn_failed",
+      cause: "stall",
+    });
+  });
+
   it("retries once when the iteration fails before prompt delivery", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {

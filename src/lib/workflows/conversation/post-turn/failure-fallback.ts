@@ -41,11 +41,13 @@ export function buildFailedTurnResult(input: {
   };
 }
 
-/** Aborted-turn result (user cancel or safety-net timeout). */
+/** Aborted-turn result (user cancel, safety-net timeout, or stall). */
 export function buildAbortedTurnResult(input: {
   contentBlocks: MessageContentBlock[];
   timeoutFired: boolean;
   timeoutMs: number;
+  stallFired?: boolean;
+  stallTimeoutMs?: number;
 }): PromptActorResult {
   return {
     ...NULL_USAGE_FIELDS,
@@ -54,7 +56,12 @@ export function buildAbortedTurnResult(input: {
     compacted: false,
     ...(input.timeoutFired
       ? { abortReason: "timeout" as const, timeoutMs: input.timeoutMs }
-      : {}),
+      : input.stallFired
+        ? {
+            abortReason: "stalled" as const,
+            timeoutMs: input.stallTimeoutMs ?? 0,
+          }
+        : {}),
     error: null,
     continuationDisposition: "retain",
   };

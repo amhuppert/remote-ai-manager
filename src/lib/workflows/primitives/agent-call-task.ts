@@ -47,6 +47,8 @@ export interface DispatchTaskRunDeps {
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
+  /** Per-run inactivity bound forwarded to the runner (see AgentTaskRequest). */
+  stallTimeoutMs?: number;
   sandboxMode?: AgentTaskRequest["sandboxMode"];
   approvalPolicy?: AgentTaskRequest["approvalPolicy"];
   networkAccessEnabled?: boolean;
@@ -119,6 +121,9 @@ export async function dispatchTaskRun(
       ? { outputSchema: request.outputSchema }
       : {}),
     ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+    ...(deps.stallTimeoutMs !== undefined
+      ? { stallTimeoutMs: deps.stallTimeoutMs }
+      : {}),
     ...(request.tooling
       ? { tooling: { portableMcp: request.tooling as PortableMcpConfig } }
       : {}),

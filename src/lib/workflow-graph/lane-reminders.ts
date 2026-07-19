@@ -30,6 +30,12 @@ export interface LaneReminderInput {
   remainingTaskCount: number;
   /** Halt reason when the verb hit the 409 halt path; `null` on the success path. */
   halted: string | null;
+  /**
+   * True when this task-complete response carries the rotation-gate
+   * `stopInstruction`. A context-limit stop demands an immediate handoff, so
+   * work-prompting reminders must not compete with it.
+   */
+  contextLimitStopped: boolean;
 }
 
 export interface LaneReminderRule {
@@ -75,14 +81,30 @@ const laneAutonomy: LaneReminderRule = {
     'This lane is autonomous — `cctl ask` is unavailable here. If genuinely blocked, send `cctl workflow collab request --brief "<specific question>"` and stop.',
 };
 
+const finalTaskSelfCheck: LaneReminderRule = {
+  id: "final-task-self-check",
+  verbs: ["task-complete"],
+  evidence:
+    "Native SDD execution audit (docs/reports/workflow-audits/2026-07-19-native-sdd-execution-audit.md): 2/20 contexts passed first validation; green unit tests masked unreachable runtime capabilities and recurring invariant violations because turns ended without a final check against the acceptance criteria.",
+  when: (input) =>
+    input.remainingTaskCount === 0 &&
+    input.halted === null &&
+    !input.contextLimitStopped,
+  text: () =>
+    "That was the last remaining task — the context validator reviews this context next. Before ending your turn, re-verify each acceptance criterion (and each charter invariant, if the charter declares any) against your actual changes, not your tests' assumptions: confirm every capability you introduced is reachable through a production call path, not only exported and unit-tested. Fix any gap now, then end your turn.",
+};
+
 /**
- * The v1 rule set, in priority order. `computeLaneReminders` evaluates rules in
+ * The rule set, in priority order. `computeLaneReminders` evaluates rules in
  * this order and caps at the first two eligible texts, so array position is the
- * priority (admission-rule clause 4).
+ * priority (admission-rule clause 4). The self-check outranks lane-autonomy:
+ * at the final completion the pre-validation check is worth more than the
+ * generic collab pointer.
  */
 export const LANE_REMINDER_RULES: LaneReminderRule[] = [
   iterationBudget,
   haltedStop,
+  finalTaskSelfCheck,
   laneAutonomy,
 ];
 

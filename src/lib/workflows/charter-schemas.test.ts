@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   sourceOfTruthSchema,
   workflowCharterSchema,
+  type CharterInvariant,
   type SourceOfTruth,
   type WorkflowCharter,
 } from "./charter-schemas";
@@ -21,6 +22,17 @@ function makeSource(overrides: Partial<SourceOfTruth> = {}): SourceOfTruth {
   };
 }
 
+function makeInvariant(
+  overrides: Partial<CharterInvariant> = {},
+): CharterInvariant {
+  return {
+    id: "server-side-enforcement",
+    statement:
+      "Every gate is enforced server-side; UI-only enforcement does not satisfy a gating criterion.",
+    ...overrides,
+  };
+}
+
 function makeMaximalCharter(): WorkflowCharter {
   return {
     mission: "Deliver a correct floor/round conversion across the trainer.",
@@ -29,6 +41,14 @@ function makeMaximalCharter(): WorkflowCharter {
     vocabulary: ["floor = round toward zero", "round = nearest integer"],
     testStrategy: "Pin behavior with a fixture matching the prototype.",
     knownAmbiguities: ["AC-7 wording contradicts the prototype"],
+    invariants: [
+      makeInvariant(),
+      makeInvariant({
+        id: "pinned-revision-targeting",
+        statement:
+          "Reads during an active run resolve against the pinned approved revision, never the latest.",
+      }),
+    ],
     sourcesOfTruth: [
       makeSource({ rank: 1, id: "design-prototype" }),
       makeSource({
@@ -205,6 +225,46 @@ describe("workflowCharterSchema", () => {
         issue.path.includes("sourcesOfTruth") && issue.path.includes(1),
     );
     expect(pointsAtEntry).toBe(true);
+  });
+
+  it("parses a maximal charter's invariants", () => {
+    const parsed = workflowCharterSchema.parse(makeMaximalCharter());
+    expect(parsed.invariants).toHaveLength(2);
+    expect(parsed.invariants?.[0]?.id).toBe("server-side-enforcement");
+  });
+
+  it("accepts an omitted invariants list", () => {
+    const { invariants: _invariants, ...withoutInvariants } =
+      makeMaximalCharter();
+    void _invariants;
+    const result = workflowCharterSchema.safeParse(withoutInvariants);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects duplicate invariant ids, naming the id and pointing at the offending entry", () => {
+    const result = workflowCharterSchema.safeParse({
+      ...makeMaximalCharter(),
+      invariants: [
+        makeInvariant({ id: "evidence-binding" }),
+        makeInvariant({ id: "evidence-binding" }),
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const message = result.error.issues.map((i) => i.message).join(" ");
+    expect(message).toContain("evidence-binding");
+    const pointsAtEntry = result.error.issues.some(
+      (issue) => issue.path.includes("invariants") && issue.path.includes(1),
+    );
+    expect(pointsAtEntry).toBe(true);
+  });
+
+  it("rejects an invariant with an empty statement", () => {
+    const result = workflowCharterSchema.safeParse({
+      ...makeMaximalCharter(),
+      invariants: [makeInvariant({ statement: "" })],
+    });
+    expect(result.success).toBe(false);
   });
 
   it("accepts non-contiguous but unique ranks", () => {

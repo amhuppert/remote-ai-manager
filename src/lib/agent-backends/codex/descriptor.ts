@@ -16,6 +16,7 @@ import {
   getDefaultCodexModel,
   getCodexReasoningLevelsForModel,
 } from "../schemas";
+import { CODEX_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 
 function codexModel(
   id: string,
@@ -51,6 +52,12 @@ export const codexBackendMetadata: AgentBackendMetadata = {
   ],
   defaultModelId: getDefaultCodexModel(),
   defaultTimeoutMs: null,
+  // Codex turns stream thread events steadily (reasoning, command start/end),
+  // so dead air beyond a long command's duration means the model stream hung
+  // (incident 2026-07-18: 9h37m of silence from a live process with no
+  // whole-turn timeout configured). 20 minutes is ~2x the longest observed
+  // legitimate quiet gap (a full pre-merge gate run as one command).
+  defaultStallTimeoutMs: CODEX_DEFAULT_STALL_TIMEOUT_MS,
 };
 
 export const codexConversationCapabilities: BackendConversationCapabilities = {

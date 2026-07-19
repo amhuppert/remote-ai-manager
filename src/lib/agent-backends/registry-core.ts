@@ -46,6 +46,7 @@ export const backendMetadataIntegritySchema = z.object({
     .min(1),
   defaultModelId: z.string().min(1),
   defaultTimeoutMs: z.number().positive().nullable(),
+  defaultStallTimeoutMs: z.number().positive().nullable().optional(),
 });
 
 /** Runtime belt for the declared conversation capability vocabularies. */

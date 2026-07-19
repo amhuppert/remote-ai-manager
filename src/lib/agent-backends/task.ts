@@ -40,6 +40,13 @@ export interface AgentTaskRequest {
    * `timedOut`). Lets a job-shaped caller cancel a live run.
    */
   signal?: AbortSignal;
+  /**
+   * Per-run inactivity bound: with no backend event for this long the run is
+   * presumed hung and torn down through the timeout abort path, with the
+   * error naming the stall. Unset falls back to the adapter's descriptor
+   * default; 0 (or a negative value) disables the bound.
+   */
+  stallTimeoutMs?: number;
 }
 
 export interface AgentTaskResult {

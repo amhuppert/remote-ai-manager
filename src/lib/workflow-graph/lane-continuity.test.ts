@@ -2232,3 +2232,118 @@ describe("primitive lane-service integration", () => {
     expect(lanesB[0]?.workflowId).toBe("exec-B");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rotation decision reconciliation (scheduled vs applied telemetry)
+// ---------------------------------------------------------------------------
+
+describe("rotation decision reconciliation", () => {
+  function captureDecisions(): {
+    decisions: Array<{ event: string; data?: Record<string, unknown> }>;
+    unregister: () => void;
+  } {
+    const decisions: Array<{ event: string; data?: Record<string, unknown> }> =
+      [];
+    const capturingLogger: ExecutionLogger = {
+      executionId: "exec-1",
+      logDir: "",
+      writeManifest() {},
+      lifecycle() {},
+      iteration() {},
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision(event, data) {
+        decisions.push({ event, data });
+      },
+    };
+    registerExecutionLogger(capturingLogger);
+    return { decisions, unregister: () => unregisterExecutionLogger("exec-1") };
+  }
+
+  it("suppresses duplicate rotation.scheduled while a rotation is already pending", async () => {
+    const { decisions, unregister } = captureDecisions();
+    try {
+      const lane = makeClaudeSessionState({ conversationId: "conv-1" });
+      const flaggedLane = {
+        ...lane,
+        metrics: { ...lane.metrics, rotateBeforeNextTurn: true },
+      };
+      await record(
+        makeHarness(),
+        makeExecution({ laneStates: laneStatesByContext(flaggedLane) }),
+        "implementer",
+        {
+          backend: "claude",
+          contextTokens: 150000,
+          contextWindowMax: 200000,
+          contextLimitTokens: 100000,
+        },
+      );
+      expect(
+        decisions.filter((d) => d.event === "rotation.scheduled"),
+      ).toHaveLength(0);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("emits a validator.rotation decision when a validator lane rotates", async () => {
+    const { decisions, unregister } = captureDecisions();
+    try {
+      const harness = makeHarness();
+      const svc = createGraphLaneContinuity(harness.deps);
+      await svc.resolveValidatorCall({
+        execution: makeExecution(),
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+        lane: "context_validator",
+        backend: "claude",
+        strategy: "conversation",
+      });
+      const rotations = decisions.filter(
+        (d) => d.event === "validator.rotation",
+      );
+      expect(rotations).toHaveLength(1);
+      expect(rotations[0]?.data).toMatchObject({
+        contextId: "ctx-1",
+        lane: "context_validator",
+        engine: "claude",
+        reason: "no_prior_lane",
+      });
+    } finally {
+      unregister();
+    }
+  });
+
+  it("emits no validator.rotation decision on the reuse path", async () => {
+    const { decisions, unregister } = captureDecisions();
+    try {
+      const harness = makeHarness();
+      const svc = createGraphLaneContinuity(harness.deps);
+      const existingLane = makeClaudeSessionState({
+        lane: "context_validator",
+        conversationId: "conv-val",
+      });
+      await svc.resolveValidatorCall({
+        execution: makeExecution({
+          laneStates: laneStatesByContext(existingLane),
+        }),
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+        lane: "context_validator",
+        backend: "claude",
+        strategy: "conversation",
+      });
+      expect(
+        decisions.filter((d) => d.event === "validator.rotation"),
+      ).toHaveLength(0);
+    } finally {
+      unregister();
+    }
+  });
+});

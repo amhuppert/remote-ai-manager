@@ -317,6 +317,22 @@ function isAbortCausedTurnFailure(error: unknown): boolean {
   );
 }
 
+/**
+ * An implementer turn torn down by the per-turn inactivity watchdog. Provably
+ * dead air (not a validation or provider failure), so the loop grants one
+ * automatic recovery: the context resets to ready with a rotation scheduled,
+ * and the retry runs on a fresh conversation instead of the stalled thread.
+ */
+function isStallCausedTurnFailure(error: unknown): boolean {
+  const unwrapped =
+    error instanceof IterationFailureWithProgressError
+      ? error.originalError
+      : error;
+  return (
+    unwrapped instanceof AgentTurnFailedError && unwrapped.cause === "stall"
+  );
+}
+
 function hasPendingCollaborations(execution: GraphWorkflowExecution): boolean {
   return Object.keys(execution.pendingCollaborations ?? {}).length > 0;
 }
@@ -1464,8 +1480,9 @@ export function createGraphWorkflowExecutionLoop(
               retryableRecoveryAttempts.get(contextId) ?? 0;
             const recoverRetryableIterationError =
               deps.workflowManager.recoverRetryableIterationError;
+            const stallRecovery = isStallCausedTurnFailure(error);
             const canRecover =
-              isRetryableIterationError(error) &&
+              (isRetryableIterationError(error) || stallRecovery) &&
               recoveryAttempts < 1 &&
               recoverRetryableIterationError;
 
@@ -1481,6 +1498,7 @@ export function createGraphWorkflowExecutionLoop(
             execLogger?.decision("iteration.retryable_error_detected", {
               contextId,
               error: errorMessage,
+              recoveryKind: stallRecovery ? "stall" : "transport",
               recoveryAttempt: recoveryAttempts + 1,
               maxRecoveryAttempts: 1,
             });
@@ -1488,6 +1506,7 @@ export function createGraphWorkflowExecutionLoop(
               executionId: execution.id,
               contextId,
               error: errorMessage,
+              recoveryKind: stallRecovery ? "stall" : "transport",
               recoveryAttempt: recoveryAttempts + 1,
             });
             execution = await recoverRetryableIterationError(

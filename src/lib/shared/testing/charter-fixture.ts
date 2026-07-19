@@ -23,6 +23,16 @@ export function makeTestCharter(
     vocabulary: ["charter: the workflow-global source-of-truth brief"],
     testStrategy: "TDD red-green-refactor with round-trip durability contracts",
     knownAmbiguities: ["scope of the AeroTrainer floor/round case"],
+    invariants: [
+      {
+        id: "server-side-enforcement",
+        statement: "Every gate is enforced server-side, not only in the UI",
+      },
+      {
+        id: "production-shaped-fixtures",
+        statement: "Test fixtures mirror production event shapes",
+      },
+    ],
     sourcesOfTruth: [
       {
         rank: 1,

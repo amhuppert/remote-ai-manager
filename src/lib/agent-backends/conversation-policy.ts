@@ -21,6 +21,7 @@ export interface ConversationTurnConfig {
     model?: string;
     reasoningEffort?: string;
     timeoutMs?: number | null;
+    stallTimeoutMs?: number | null;
   };
 }
 
@@ -104,6 +105,24 @@ export function resolveConfiguredConversationTimeoutMs(
   }
   return resolveConfiguredTimeoutMs(
     getBackendDescriptor(backend).metadata.defaultTimeoutMs,
+  );
+}
+
+/**
+ * Resolve the per-turn inactivity (stall) bound for a backend: an explicit
+ * config value wins (null = disabled), else the descriptor's declared
+ * default. Returns 0 when disabled, mirroring the safety-net timeout's
+ * "0 means unbounded" convention.
+ */
+export function resolveConfiguredStallTimeoutMs(
+  backend: AgentBackendId,
+  config: ConversationTurnConfig,
+): number {
+  if (backend === "codex" && config.codex?.stallTimeoutMs !== undefined) {
+    return resolveConfiguredTimeoutMs(config.codex.stallTimeoutMs);
+  }
+  return resolveConfiguredTimeoutMs(
+    getBackendDescriptor(backend).metadata.defaultStallTimeoutMs,
   );
 }
 

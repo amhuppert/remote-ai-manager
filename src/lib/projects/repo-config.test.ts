@@ -328,6 +328,7 @@ describe("executeRepoValidationCommand", () => {
       output: "",
       timedOut: false,
       message: null,
+      command: "/projects/foo/validate.sh",
     });
   });
 

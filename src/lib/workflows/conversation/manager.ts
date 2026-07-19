@@ -106,7 +106,7 @@ export interface ConversationTurnProjection {
   structuredOutput?: unknown;
   aborted: boolean;
   compacted: boolean;
-  abortReason?: "timeout" | "user" | "shutdown";
+  abortReason?: "timeout" | "stalled" | "user" | "shutdown";
   timeoutMs?: number;
   error: string | null;
   backgroundWait?: BackgroundWaitSummary;

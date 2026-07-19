@@ -81,6 +81,23 @@ describe("createConfigReader", () => {
 
     expect(config.codex?.pricing).toEqual(pricing);
   });
+
+  it("reads codex.timeoutMs and codex.stallTimeoutMs from disk under the names consumers use", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        codex: { enabled: true, timeoutMs: 300_000, stallTimeoutMs: 60_000 },
+      }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+
+    expect(config.codex?.timeoutMs).toBe(300_000);
+    expect(config.codex?.stallTimeoutMs).toBe(60_000);
+  });
 });
 
 describe("createConfigReader readConfig caching", () => {

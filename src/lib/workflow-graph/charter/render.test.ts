@@ -114,6 +114,38 @@ describe("renderCharterDigest", () => {
     expect(digest).toContain("Do not change unrelated rounding utilities");
   });
 
+  it("renders declared invariants with their ids ahead of the source hierarchy", () => {
+    const digest = renderCharterDigest(
+      makeCharter({
+        invariants: [
+          {
+            id: "server-side-enforcement",
+            statement: "Every gate is enforced server-side.",
+          },
+          {
+            id: "evidence-binding",
+            statement: "Evidence is bound to its producing execution.",
+          },
+        ],
+      }),
+    );
+
+    expect(digest).toContain("server-side-enforcement");
+    expect(digest).toContain("Every gate is enforced server-side.");
+    expect(digest).toContain("Evidence is bound to its producing execution.");
+    // Invariants are load-bearing for every context; they render before the
+    // source hierarchy so they are read ahead of precedence bookkeeping.
+    expect(digest.indexOf("server-side-enforcement")).toBeLessThan(
+      digest.indexOf("Source-of-truth hierarchy"),
+    );
+  });
+
+  it("omits the invariants section when the charter declares none", () => {
+    const digest = renderCharterDigest(makeCharter());
+
+    expect(digest.toLowerCase()).not.toContain("invariant");
+  });
+
   it("keeps long source descriptions within the digest budget", () => {
     const longDescription = "x".repeat(2000);
     const digest = renderCharterDigest(
@@ -169,6 +201,19 @@ describe("computeCharterHash", () => {
     expect(computeCharterHash(makeCharter())).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("changes when an invariant statement changes", () => {
+    const withInvariant = makeCharter({
+      invariants: [{ id: "inv", statement: "Original statement." }],
+    });
+    const edited = makeCharter({
+      invariants: [{ id: "inv", statement: "Edited statement." }],
+    });
+
+    expect(computeCharterHash(edited)).not.toBe(
+      computeCharterHash(withInvariant),
+    );
+  });
+
   it("changes when the highest-authority source's description changes", () => {
     const original = makeCharter();
     const edited = makeCharter({
@@ -203,6 +248,24 @@ describe("renderCharterMarkdown", () => {
     expect(markdown).toContain("floor: round toward negative infinity");
     expect(markdown).toContain("Unit-test pure functions directly.");
     expect(markdown).toContain("Tie-breaking at .5 is intentionally bankers'.");
+  });
+
+  it("renders declared invariants with their ids", () => {
+    const markdown = renderCharterMarkdown(
+      makeCharter({
+        invariants: [
+          {
+            id: "pinned-revision-targeting",
+            statement: "Reads resolve against the pinned approved revision.",
+          },
+        ],
+      }),
+    );
+
+    expect(markdown).toContain("pinned-revision-targeting");
+    expect(markdown).toContain(
+      "Reads resolve against the pinned approved revision.",
+    );
   });
 
   it("renders the full untruncated source description (unlike the digest)", () => {

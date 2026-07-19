@@ -173,8 +173,10 @@ export function createGraphWorkflowImplementerRunner(
 
     if (result.aborted) {
       const timedOut = result.abortReason === "timeout";
-      const message =
-        timedOut && result.timeoutMs !== undefined
+      const stalled = result.abortReason === "stalled";
+      const message = stalled
+        ? `Prompt execution stalled: no agent activity for ${result.timeoutMs ?? 0}ms`
+        : timedOut && result.timeoutMs !== undefined
           ? `Prompt execution timed out after ${result.timeoutMs}ms`
           : "Prompt execution was aborted";
       logger.warn("graph-workflow.implementer.turn_aborted", {
@@ -192,7 +194,7 @@ export function createGraphWorkflowImplementerRunner(
       throw new AgentTurnFailedError(message, {
         contextId: input.contextId,
         engine: input.backend,
-        cause: timedOut ? "timeout" : "abort",
+        cause: stalled ? "stall" : timedOut ? "timeout" : "abort",
         originalMessage: message,
       });
     }

@@ -51,6 +51,9 @@ export const claudeBackendMetadata: AgentBackendMetadata = {
   ],
   defaultModelId: getDefaultClaudeModel(),
   defaultTimeoutMs: null,
+  // Disabled: Claude turns legitimately go quiet during background-task
+  // waits, and `claudeTimeoutMs` (default 1h) already bounds a hung turn.
+  defaultStallTimeoutMs: null,
 };
 
 export const claudeConversationCapabilities: BackendConversationCapabilities = {

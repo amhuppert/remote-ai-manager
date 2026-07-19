@@ -10,9 +10,11 @@ import {
 } from "@/lib/workflow-graph/execution-index";
 import {
   buildGraphWorkflowValidationReviewArtifact,
+  type GraphWorkflowValidationConversationUsage,
   type GraphWorkflowValidationEventSessionRef,
   type GraphWorkflowValidationReviewArtifact,
 } from "@/lib/workflow-graph/event-schemas";
+import { readConversationTelemetry } from "@/lib/workflow-graph/conversation-telemetry";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneKind,
@@ -183,6 +185,15 @@ export function buildContextValidationPrompt(
     ? [buildAskUserQuestionsReminderSection(), ""]
     : [];
 
+  // Active checking, not preamble: rendered only when the charter declares
+  // invariants so the guidance never references a section that isn't there.
+  const invariantGuidanceLines =
+    input.charter?.invariants && input.charter.invariants.length > 0
+      ? [
+          "- **Check every charter invariant.** The charter above declares invariants that must hold for every change. For each invariant that applies to this context's changes, verify it actually holds in the implementation; when one is violated, raise an issue and cite the invariant id in the issue description.",
+        ]
+      : [];
+
   return [
     charterSection + "# Context Validation",
     "",
@@ -196,6 +207,8 @@ export function buildContextValidationPrompt(
     "",
     "- **Intent over strict wording.** Acceptance criteria may be imprecise. Use judgment to decide whether the completed work satisfies the intent of the criteria. Do not reject work that meets the spirit of the criteria simply because the wording differs or a detail is fuzzy.",
     "- **Respect context scope boundaries.** This execution context is one step in a larger graph workflow. Work that is explicitly out of scope for this context — for example, type updates or cleanup handled by a downstream context, or integration work reserved for another context — must not cause this context to fail. If the current context produced the intermediate state it is responsible for, treat that as success even if the wider codebase is not yet fully consistent.",
+    "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. The only exemption is explicit deferral: an acceptance-criteria clause naming the downstream context that owns the wiring. With a named owner, record the deferral in your `summary` instead of failing; with no named owner, raise an issue.",
+    ...invariantGuidanceLines,
     "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
     "- **Do not enforce deterministic checks.** You must not fail the context for failing tests, type errors, lint violations, build failures, or compile errors. Those concerns are handled separately by the project's pre-merge validation script and are not your responsibility. Focus on judgments that only a reviewing agent can make.",
     "",
@@ -471,6 +484,15 @@ export interface ValidatorRunnerDeps {
     sessionName: string,
     conversationId: string,
   ): Promise<LaneConversationPendingState | null>;
+  /**
+   * Read cost/turn telemetry for a validator CC conversation after its turn.
+   * Defaults to the transcript-backed reader. Conversation-strategy
+   * validators have no task-runner usage payload, so without this read every
+   * conversation-validator decision is unpriced in cost audits.
+   */
+  readValidatorConversationTelemetry?(
+    conversationId: string,
+  ): Promise<GraphWorkflowValidationConversationUsage | null>;
 }
 
 const validatorLogger = createLogger("graph-workflow-validator");
@@ -660,6 +682,16 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const getProjectDisplayName =
     deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
+  const readValidatorConversationTelemetry =
+    deps.readValidatorConversationTelemetry ??
+    (async (
+      conversationId: string,
+    ): Promise<GraphWorkflowValidationConversationUsage | null> => {
+      const summary = await readConversationTelemetry(conversationId);
+      return summary === null
+        ? null
+        : { costUsd: summary.costUsd, apiTurns: summary.apiTurns };
+    });
   const computeValidationDiffScope =
     deps.computeValidationDiffScope ?? defaultComputeValidationDiffScope;
   const readLaneConversation =
@@ -1198,12 +1230,16 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       lane,
       resolved.conversationId,
     );
+    const conversationUsage = await readValidatorConversationTelemetry(
+      resolved.conversationId,
+    );
     const reviewArtifact = buildGraphWorkflowValidationReviewArtifact({
       backend,
       strategy,
       ref: resolved.conversationId,
       response: text,
       usage: null,
+      conversationUsage,
     });
 
     execLogger?.validation(contextId, "validator.result_parsed", {

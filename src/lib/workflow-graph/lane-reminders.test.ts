@@ -18,6 +18,7 @@ function input(overrides: Partial<LaneReminderInput> = {}): LaneReminderInput {
     circuitBreakerThreshold: 3,
     remainingTaskCount: 1,
     halted: null,
+    contextLimitStopped: false,
     ...overrides,
   };
 }
@@ -30,10 +31,11 @@ const ALL_VERBS: LaneVerb[] = [
 ];
 
 describe("lane reminder rules — metadata (admission rule)", () => {
-  it("exposes exactly the three v1 rules, each with a non-empty evidence field", () => {
+  it("exposes exactly the four rules in priority order, each with a non-empty evidence field", () => {
     expect(LANE_REMINDER_RULES.map((r) => r.id)).toEqual([
       "iteration-budget",
       "halted-stop",
+      "final-task-self-check",
       "lane-autonomy",
     ]);
     for (const rule of LANE_REMINDER_RULES) {
@@ -144,6 +146,100 @@ describe("lane-autonomy rule", () => {
         expect(reminders).toEqual([]);
       }
     }
+  });
+});
+
+describe("final-task-self-check rule", () => {
+  it("fires when the last task completes and directs a pre-validation self-check", () => {
+    // threshold 5 keeps iteration-budget silent; iteration 0 keeps lane-autonomy
+    // silent, isolating the self-check.
+    const reminders = computeLaneReminders(
+      input({
+        remainingTaskCount: 0,
+        iterationCount: 0,
+        circuitBreakerThreshold: 5,
+      }),
+    );
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]).toContain("acceptance criterion");
+    expect(reminders[0]).toContain("charter invariant");
+    expect(reminders[0]).toContain("production call path");
+    expect(reminders[0]).toContain("end your turn");
+  });
+
+  it("does not fire while tasks remain", () => {
+    expect(
+      computeLaneReminders(
+        input({
+          remainingTaskCount: 1,
+          iterationCount: 0,
+          circuitBreakerThreshold: 5,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not fire when the rotation gate stopped this turn", () => {
+    // A context-limit stop instructs an immediate handoff; starting a
+    // self-check pass would contradict it.
+    expect(
+      computeLaneReminders(
+        input({
+          remainingTaskCount: 0,
+          contextLimitStopped: true,
+          iterationCount: 0,
+          circuitBreakerThreshold: 5,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("yields to halted-stop when the workflow is halted", () => {
+    const reminders = computeLaneReminders(
+      input({
+        remainingTaskCount: 0,
+        halted: "iteration halted: circuit_breaker",
+        iterationCount: 0,
+        circuitBreakerThreshold: 5,
+      }),
+    );
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]).toContain("iteration halted: circuit_breaker");
+  });
+
+  it("only fires for the task-complete verb", () => {
+    for (const verb of ALL_VERBS) {
+      const reminders = computeLaneReminders(
+        input({
+          verb,
+          remainingTaskCount: 0,
+          iterationCount: 0,
+          circuitBreakerThreshold: 5,
+        }),
+      );
+      if (verb === "task-complete") {
+        expect(reminders).toHaveLength(1);
+        expect(reminders[0]).toContain("acceptance criterion");
+      } else {
+        expect(reminders).toEqual([]);
+      }
+    }
+  });
+
+  it("outranks lane-autonomy under the cap on the final completion", () => {
+    // iteration 2, threshold 3 → iteration-budget AND lane-autonomy eligible;
+    // remaining 0 adds the self-check. Cap 2 keeps budget + self-check — at the
+    // final completion the self-check beats the generic collab pointer.
+    const reminders = computeLaneReminders(
+      input({
+        remainingTaskCount: 0,
+        iterationCount: 2,
+        circuitBreakerThreshold: 3,
+      }),
+    );
+    expect(reminders).toHaveLength(2);
+    expect(reminders[0]).toContain("used 2 of 3 iterations");
+    expect(reminders[1]).toContain("acceptance criterion");
   });
 });
 

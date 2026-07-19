@@ -16,6 +16,7 @@ import {
 import type { ScriptValidationOutcome } from "@/lib/workflows/primitives/script-validation-gate";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { defaultGitClient } from "@/lib/git/client";
 
 const logger = createLogger("script-validator-runner");
 
@@ -45,16 +46,33 @@ export interface ScriptValidatorInput {
 }
 
 /**
+ * Identity of the tree a validation ran against. A gate that "passed" on a
+ * tree that then changed before certification is undetectable without this;
+ * null fields mean git state could not be resolved (best-effort).
+ */
+export interface ValidationTreeState {
+  headSha: string | null;
+  dirty: boolean | null;
+}
+
+/**
  * The shared script-validation gate vocabulary, narrowed to this runner's
  * guarantee: every failure it reports has a persisted log artifact, so
  * downstream remediation (the reopened graph task) can point the implementer
- * at the full output.
+ * at the full output. Pass/fail outcomes additionally carry the validated
+ * tree's identity and the resolved command, keying the result to
+ * (tree SHA, command) for audits.
  */
 export type ScriptValidatorOutcome =
-  | Exclude<ScriptValidationOutcome, { kind: "fail" }>
+  | (Exclude<ScriptValidationOutcome, { kind: "fail" }> & {
+      treeState?: ValidationTreeState;
+      command?: string | null;
+    })
   | (Extract<ScriptValidationOutcome, { kind: "fail" }> & {
       logFilePath: string;
       logRelativePath: string;
+      treeState?: ValidationTreeState;
+      command?: string | null;
     });
 
 export interface ScriptValidatorDeps {
@@ -73,6 +91,12 @@ export interface ScriptValidatorDeps {
   ): Promise<string | undefined>;
   now(): Date;
   /**
+   * Resolve the validated worktree's HEAD SHA and dirtiness. Best-effort:
+   * null fields on any git failure — identity stamping must never fail the
+   * validation itself.
+   */
+  resolveTreeState?(worktreePath: string): Promise<ValidationTreeState>;
+  /**
    * Optional injected `ArtifactRegistry`. When omitted, an
    * `ArtifactRegistry` is constructed from `deps.writeFile`/`deps.mkdir` so the
    * production write path always goes through the shared
@@ -82,6 +106,27 @@ export interface ScriptValidatorDeps {
   artifactRegistry?: ArtifactRegistry;
 }
 
+async function defaultResolveTreeState(
+  worktreePath: string,
+): Promise<ValidationTreeState> {
+  try {
+    const head = await defaultGitClient.git(
+      ["rev-parse", "HEAD"],
+      worktreePath,
+    );
+    const status = await defaultGitClient.git(
+      ["status", "--porcelain=v1"],
+      worktreePath,
+    );
+    return {
+      headSha: head.stdout.trim() || null,
+      dirty: status.stdout.trim().length > 0,
+    };
+  } catch {
+    return { headSha: null, dirty: null };
+  }
+}
+
 const defaultDeps: ScriptValidatorDeps = {
   executeRepoValidationCommand: defaultExecuteRepoValidationCommand,
   writeFile: async (filePath, contents) => {
@@ -89,6 +134,7 @@ const defaultDeps: ScriptValidatorDeps = {
   },
   mkdir: (dirPath, opts) => defaultMkdir(dirPath, opts),
   now: () => new Date(),
+  resolveTreeState: defaultResolveTreeState,
 };
 
 const LOG_DIR_SEGMENTS = [".cc", "workflow"] as const;
@@ -102,6 +148,8 @@ function buildLogFileHeader(
   input: ScriptValidatorInput,
   now: Date,
   branchName: string,
+  treeState: ValidationTreeState,
+  command: string | null,
 ): string {
   return [
     "# Pre-merge validation failure",
@@ -110,6 +158,8 @@ function buildLogFileHeader(
     `context: ${input.contextId}`,
     `session: ${input.sessionName}`,
     `branch: ${branchName}`,
+    `tree: ${treeState.headSha ?? "unknown"}${treeState.dirty === true ? " (dirty)" : ""}`,
+    `command: ${command ?? "unknown"}`,
     "",
   ].join("\n");
 }
@@ -124,6 +174,11 @@ export function createScriptValidatorRunner(
       input.executionTarget?.worktreePath ?? input.worktreePath;
     const targetBranchName =
       input.executionTarget?.branchName ?? input.branchName;
+
+    // Resolved before the command runs: this identifies the tree the result
+    // certifies, even if the command itself mutates build artifacts.
+    const resolveTreeState = deps.resolveTreeState ?? defaultResolveTreeState;
+    const treeState = await resolveTreeState(targetWorktreePath);
 
     let result: RepoValidationCommandResult;
     try {
@@ -162,8 +217,10 @@ export function createScriptValidatorRunner(
       logger.info("script_validator.pass", {
         executionId: input.executionId,
         contextId: input.contextId,
+        headSha: treeState.headSha,
+        dirty: treeState.dirty,
       });
-      return { kind: "pass" };
+      return { kind: "pass", treeState, command: result.command ?? null };
     }
 
     const now = deps.now();
@@ -172,7 +229,13 @@ export function createScriptValidatorRunner(
     const logRelativePath = path.join(relativeDir, fileName);
     const logFilePath = path.join(targetWorktreePath, logRelativePath);
 
-    const header = buildLogFileHeader(input, now, targetBranchName);
+    const header = buildLogFileHeader(
+      input,
+      now,
+      targetBranchName,
+      treeState,
+      result.command ?? null,
+    );
     const body =
       result.output.length > 0 ? result.output : "(no output captured)";
     const content = `${header}\n${body}\n`;
@@ -229,6 +292,8 @@ export function createScriptValidatorRunner(
       logFilePath,
       logRelativePath,
       timedOut: result.timedOut,
+      treeState,
+      command: result.command ?? null,
     };
   }
 

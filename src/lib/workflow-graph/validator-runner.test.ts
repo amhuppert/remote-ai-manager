@@ -488,6 +488,69 @@ describe("buildContextValidationPrompt", () => {
     );
   });
 
+  it("requires a production call path for wiring criteria and allows only named downstream deferral", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
+    expect(guidance).toContain("production call path");
+    expect(guidance).toContain("no production caller");
+    // Deferral must be explicit: only an acceptance-criteria clause naming the
+    // downstream owner exempts missing wiring from failing this context.
+    expect(guidance.toLowerCase()).toContain(
+      "the downstream context that owns the wiring",
+    );
+  });
+
+  it("instructs the validator to check each charter invariant and cite its id when invariants are declared", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      charter: {
+        ...charter,
+        invariants: [
+          {
+            id: "server-side-enforcement",
+            statement: "Every gate is enforced server-side.",
+          },
+        ],
+      },
+    });
+
+    const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
+    expect(guidance.toLowerCase()).toContain("invariant");
+    expect(guidance).toContain("cite the invariant id");
+    // The digest above the guidance carries the declared invariant itself.
+    expect(prompt).toContain("server-side-enforcement");
+  });
+
+  it("omits the invariant-check instruction when the charter declares no invariants", () => {
+    const withoutInvariants = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      charter,
+    });
+    const withoutCharter = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    for (const prompt of [withoutInvariants, withoutCharter]) {
+      const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
+      expect(guidance.toLowerCase()).not.toContain("invariant");
+    }
+  });
+
   it("begins with the charter digest and a pointer to charter.md when a charter is supplied", () => {
     const prompt = buildContextValidationPrompt({
       context,
@@ -869,6 +932,7 @@ describe("createValidatorRunner", () => {
         backend: TESTFAKE_BACKEND_ID,
         kind: "conversation",
         ref: "testfake-conversation",
+        usage: null,
       });
       expect(result.metadata.sessionRef).toEqual({
         backend: TESTFAKE_BACKEND_ID,
@@ -881,6 +945,105 @@ describe("createValidatorRunner", () => {
       _resetBackendRegistryForTesting();
       bootstrapBackends();
     }
+  });
+
+  it("attaches transcript-derived usage to conversation-strategy review artifacts", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+    );
+    const readValidatorConversationTelemetry = vi.fn(async () => ({
+      costUsd: 4.21,
+      apiTurns: 9,
+    }));
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      readValidatorConversationTelemetry,
+      continuityService: {
+        async resolveValidatorCall(input) {
+          return {
+            execution: input.execution,
+            sessionAction: "create",
+            strategy: "conversation",
+            backend: input.backend,
+            conversationId: "conv-val-9",
+          };
+        },
+        async recordLaneTurnOutcome(input) {
+          return input.execution;
+        },
+      },
+    });
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(readValidatorConversationTelemetry).toHaveBeenCalledWith(
+      "conv-val-9",
+    );
+    expect(result.metadata.reviewArtifact).toEqual({
+      backend: "claude",
+      kind: "conversation",
+      ref: "conv-val-9",
+      usage: { costUsd: 4.21, apiTurns: 9 },
+    });
+  });
+
+  it("records a null-usage conversation artifact when telemetry is unreadable", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      readValidatorConversationTelemetry: async () => null,
+      continuityService: {
+        async resolveValidatorCall(input) {
+          return {
+            execution: input.execution,
+            sessionAction: "create",
+            strategy: "conversation",
+            backend: input.backend,
+            conversationId: "conv-val-10",
+          };
+        },
+        async recordLaneTurnOutcome(input) {
+          return input.execution;
+        },
+      },
+    });
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(result.metadata.reviewArtifact).toEqual({
+      backend: "claude",
+      kind: "conversation",
+      ref: "conv-val-10",
+      usage: null,
+    });
   });
 
   it("runContextValidator forwards the prompt and schema to executeWorkflowTaskRun and returns the parsed result", async () => {
@@ -1515,6 +1678,7 @@ describe("context validator continuity runtime integration", () => {
       backend: "claude",
       kind: "conversation",
       ref: "conv-val-1",
+      usage: null,
     });
     expect(createConversation).toHaveBeenCalledOnce();
     expect(
@@ -1541,6 +1705,7 @@ describe("context validator continuity runtime integration", () => {
       backend: "claude",
       kind: "conversation",
       ref: "conv-val-1",
+      usage: null,
     });
     // Conversation actor handles resumeRef threading internally; the validator
     // routes through executeWorkflowTaskRun with the same conversationId across

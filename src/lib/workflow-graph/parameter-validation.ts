@@ -139,6 +139,7 @@ type CharterFieldKey =
   | "vocabulary"
   | "testStrategy"
   | "knownAmbiguities"
+  | "invariant.statement"
   | "source.label"
   | "source.locator"
   | "source.description"
@@ -151,6 +152,7 @@ const CHARTER_FIELD_KEYS: readonly CharterFieldKey[] = [
   "vocabulary",
   "testStrategy",
   "knownAmbiguities",
+  "invariant.statement",
   "source.label",
   "source.locator",
   "source.description",
@@ -295,6 +297,21 @@ function buildScannedFieldAccessors(
       (charter) => charter.knownAmbiguities,
     ),
   ];
+
+  // Invariant `id` is structural (validators cite it in issues) and therefore
+  // NOT substitutable — only the statement text participates.
+  (definition.charter.invariants ?? []).forEach((_invariant, index) => {
+    accessors.push(
+      stringFieldAccessor(
+        `charter.invariants[${index}].statement`,
+        (def) => def.charter.invariants?.[index],
+        (invariant) => invariant.statement,
+        (invariant, value) => {
+          invariant.statement = value;
+        },
+      ),
+    );
+  });
 
   definition.charter.sourcesOfTruth.forEach((_source, index) => {
     const prefix = `charter.sourcesOfTruth[${index}]`;

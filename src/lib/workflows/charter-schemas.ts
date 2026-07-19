@@ -41,6 +41,16 @@ export const sourceOfTruthSchema = z.object({
 });
 export type SourceOfTruth = z.infer<typeof sourceOfTruthSchema>;
 
+// A cross-cutting rule that constrains HOW every context implements (not WHAT
+// one context builds). Rendered into both the implementer and validator
+// prompts; validators check each applicable invariant and cite its `id` in
+// issues, so ids must be stable and unique within the charter.
+export const charterInvariantSchema = z.object({
+  id: z.string().min(1),
+  statement: z.string().min(1),
+});
+export type CharterInvariant = z.infer<typeof charterInvariantSchema>;
+
 export const workflowCharterSchema = z
   .object({
     mission: z.string().min(1),
@@ -49,6 +59,7 @@ export const workflowCharterSchema = z
     vocabulary: z.array(z.string()).optional(),
     testStrategy: z.string().optional(),
     knownAmbiguities: z.array(z.string()).optional(),
+    invariants: z.array(charterInvariantSchema).optional(),
     sourcesOfTruth: z.array(sourceOfTruthSchema).min(1),
   })
   .superRefine((charter, ctx) => {
@@ -63,6 +74,19 @@ export const workflowCharterSchema = z
         code: "custom",
         message: `duplicate precedence rank ${source.rank} on source '${source.id}' (already used by source at index ${firstIndex}); ranks must be unique within the charter`,
         path: ["sourcesOfTruth", index, "rank"],
+      });
+    });
+    const seenInvariantIds = new Map<string, number>();
+    (charter.invariants ?? []).forEach((invariant, index) => {
+      const firstIndex = seenInvariantIds.get(invariant.id);
+      if (firstIndex === undefined) {
+        seenInvariantIds.set(invariant.id, index);
+        return;
+      }
+      ctx.addIssue({
+        code: "custom",
+        message: `duplicate invariant id '${invariant.id}' (already used by invariant at index ${firstIndex}); ids must be unique within the charter`,
+        path: ["invariants", index, "id"],
       });
     });
   });

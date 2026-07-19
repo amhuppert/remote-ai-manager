@@ -47,11 +47,27 @@ export function renderCharterDigest(charter: WorkflowCharter): string {
   const sections: string[] = [
     "# Workflow Charter",
     `## Mission\n${charter.mission}`,
+  ];
+
+  // Invariants render ahead of the source hierarchy: they are active per-change
+  // obligations for every context, not precedence bookkeeping.
+  if (charter.invariants && charter.invariants.length > 0) {
+    sections.push(
+      [
+        "## Invariants (hold for every change)",
+        ...charter.invariants.map(
+          (invariant) => `- \`${invariant.id}\` — ${invariant.statement}`,
+        ),
+      ].join("\n"),
+    );
+  }
+
+  sections.push(
     [
       "## Source-of-truth hierarchy (highest authority first)",
       ...rankedSources(charter).map(renderDigestSourceLine),
     ].join("\n"),
-  ];
+  );
 
   if (charter.nonGoals && charter.nonGoals.length > 0) {
     sections.push(
@@ -126,6 +142,12 @@ export function renderCharterMarkdown(charter: WorkflowCharter): string {
   const sections: Array<string | null> = [
     "# Workflow Charter",
     `## Mission\n${charter.mission}`,
+    renderBulletSection(
+      "Invariants (hold for every change)",
+      charter.invariants?.map(
+        (invariant) => `\`${invariant.id}\` — ${invariant.statement}`,
+      ),
+    ),
     renderBulletSection("Conventions", charter.conventions),
     renderBulletSection("Non-goals", charter.nonGoals),
     renderBulletSection("Vocabulary", charter.vocabulary),

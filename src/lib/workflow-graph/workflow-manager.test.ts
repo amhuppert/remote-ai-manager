@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -6927,5 +6928,125 @@ describe("graph workflow manager", () => {
         expect(afterRepo.createCalls[0]?.definitionId).toBe("unrelated-flow-9");
       });
     });
+  });
+});
+
+// -- halt/resume lifecycle attribution (audit telemetry) ------------------------
+
+describe("halt/resume lifecycle attribution", () => {
+  it("stamps actor on the halt event and echoes the resolved halt on resume", async () => {
+    _resetRegistryForTesting();
+    const executionId = "exec-halt-resume-audit";
+    const repository = createRepository(
+      createWorkflowExecution({ id: executionId, status: "running" }),
+    );
+
+    const lifecycleCalls: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }> = [];
+    const capturingLogger: ExecutionLogger = {
+      executionId,
+      logDir: "/tmp/test-halt-resume",
+      writeManifest() {},
+      lifecycle(event, data) {
+        lifecycleCalls.push({ event, data });
+      },
+      iteration() {},
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision() {},
+    };
+    registerExecutionLogger(capturingLogger);
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    await manager.send("/repo", "session-1", {
+      type: "halt",
+      reason: {
+        type: "circuit_breaker",
+        contextId: "context-plan",
+        condition: "retry_exhaustion",
+        summary: null,
+      },
+    });
+
+    const halted = lifecycleCalls.find((c) => c.event === "execution.halted");
+    expect(halted).toBeDefined();
+    expect(halted?.data).toMatchObject({ actor: "system" });
+
+    await manager.resume("/repo", "session-1");
+
+    // Resume registers its own disk-backed logger; assert on the durable
+    // artifact the audit extractor actually reads.
+    const configDir = process.env["CC_CONFIG_DIR"]!;
+    const lifecyclePath = nodePath.join(
+      configDir,
+      "workflow-logs",
+      executionId,
+      "lifecycle.jsonl",
+    );
+    const lines = readFileSync(lifecyclePath, "utf-8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const resumed = lines.find((line) => line.event === "execution.resumed");
+    expect(resumed).toBeDefined();
+    expect(resumed).toMatchObject({
+      actor: "operator",
+      resolvedHaltType: "circuit_breaker",
+      resolvedHaltContextId: "context-plan",
+      previousStatus: "halted",
+    });
+  });
+
+  it("stamps the operator actor on pause", async () => {
+    _resetRegistryForTesting();
+    const executionId = "exec-pause-audit";
+    const repository = createRepository(
+      createWorkflowExecution({ id: executionId, status: "running" }),
+    );
+    const lifecycleCalls: Array<{
+      event: string;
+      data: Record<string, unknown> | undefined;
+    }> = [];
+    const capturingLogger: ExecutionLogger = {
+      executionId,
+      logDir: "/tmp/test-pause",
+      writeManifest() {},
+      lifecycle(event, data) {
+        lifecycleCalls.push({ event, data });
+      },
+      iteration() {},
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision() {},
+    };
+    registerExecutionLogger(capturingLogger);
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    await manager.send("/repo", "session-1", { type: "pause" });
+
+    const paused = lifecycleCalls.find((c) => c.event === "execution.paused");
+    expect(paused).toBeDefined();
+    expect(paused?.data).toMatchObject({ actor: "operator" });
+    unregisterExecutionLogger(executionId);
   });
 });

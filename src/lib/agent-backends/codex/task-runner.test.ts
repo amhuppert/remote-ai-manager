@@ -559,6 +559,114 @@ describe("CodexTaskRunner", () => {
     expect(result.error).toBeNull();
   });
 
+  describe("stall watchdog", () => {
+    it("aborts a run with no backend activity after stallTimeoutMs and reports the stall", async () => {
+      vi.useFakeTimers();
+      try {
+        runMock.mockImplementation(
+          (_prompt: string, opts: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              opts.signal?.addEventListener("abort", () => {
+                const err = new Error("aborted");
+                err.name = "AbortError";
+                reject(err);
+              });
+            }),
+        );
+
+        const promise = runner.run(
+          makeRequest({ timeoutMs: 0, stallTimeoutMs: 1_000 }),
+        );
+        await vi.advanceTimersByTimeAsync(1_000);
+        const result = await promise;
+
+        expect(result.timedOut).toBe(true);
+        expect(result.error).toBe(
+          "Task stalled: no backend activity for 1000ms",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("applies the codex default stall bound when the request sets none", async () => {
+      vi.useFakeTimers();
+      try {
+        runMock.mockImplementation(
+          (_prompt: string, opts: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              opts.signal?.addEventListener("abort", () => {
+                const err = new Error("aborted");
+                err.name = "AbortError";
+                reject(err);
+              });
+            }),
+        );
+
+        const promise = runner.run(makeRequest({ timeoutMs: 0 }));
+        await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+        const result = await promise;
+
+        expect(result.timedOut).toBe(true);
+        expect(result.error).toBe(
+          "Task stalled: no backend activity for 1200000ms",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not trip while streamed events keep arriving", async () => {
+      vi.useFakeTimers();
+      try {
+        startThreadMock.mockImplementation(() => {
+          const thread = {
+            id: null as string | null,
+            runStreamed: async () => {
+              thread.id = "thread-stream";
+              return {
+                events: (async function* () {
+                  for (let i = 0; i < 5; i++) {
+                    await new Promise((r) => setTimeout(r, 800));
+                    yield {
+                      type: "item.completed",
+                      item: {
+                        id: `msg-${i}`,
+                        type: "agent_message",
+                        text: `part ${i}`,
+                      },
+                    };
+                  }
+                  yield {
+                    type: "turn.completed",
+                    usage: {
+                      input_tokens: 1,
+                      cached_input_tokens: 0,
+                      output_tokens: 1,
+                    },
+                  };
+                })(),
+              };
+            },
+          };
+          return thread;
+        });
+
+        const promise = runner.run(
+          makeRequest({ timeoutMs: 0, stallTimeoutMs: 1_000 }),
+        );
+        await vi.advanceTimersByTimeAsync(4_100);
+        const result = await promise;
+
+        expect(result.timedOut).toBe(false);
+        expect(result.error).toBeNull();
+        expect(result.text).toBe("part 4");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe("cost estimation", () => {
     // beforeEach runMock usage: 12 input (3 cached), 7 output.
 

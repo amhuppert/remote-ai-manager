@@ -1038,10 +1038,15 @@ export function createGraphWorkflowIterationOrchestrator(
     });
 
     if (outcome.kind === "pass") {
-      execLogger?.validation(input.contextId, "script_validation.passed", {});
+      execLogger?.validation(input.contextId, "script_validation.passed", {
+        headSha: outcome.treeState?.headSha ?? null,
+        dirty: outcome.treeState?.dirty ?? null,
+        command: outcome.command ?? null,
+      });
       logger.info("graph-workflow.script_validation.passed", {
         executionId: execution.id,
         contextId: input.contextId,
+        headSha: outcome.treeState?.headSha ?? null,
       });
       return "pass";
     }
@@ -1094,6 +1099,9 @@ export function createGraphWorkflowIterationOrchestrator(
       summary: gate.reason,
       logRelativePath: outcome.logRelativePath,
       timedOut: outcome.timedOut,
+      headSha: outcome.treeState?.headSha ?? null,
+      dirty: outcome.treeState?.dirty ?? null,
+      command: outcome.command ?? null,
     });
     logger.info("graph-workflow.script_validation.failed", {
       executionId: execution.id,
@@ -2315,6 +2323,46 @@ export function createGraphWorkflowIterationOrchestrator(
 
       let stoppedForCollaboration = false;
 
+      // Per-turn billing (audit telemetry): conversation-grained cost cannot
+      // attribute dollars to iterations or turns, so each turn record carries
+      // the transcript's cumulative cost and this turn's delta. Baseline
+      // before the first turn — a reused conversation starts non-zero.
+      let previousCumulativeCostUsd: number | null = null;
+      const readTurnBilling = async (): Promise<{
+        cumulativeCostUsd: number | null;
+        costUsdDelta: number | null;
+      }> => {
+        if (!deps.readConversationTelemetry || !execLogger) {
+          return { cumulativeCostUsd: null, costUsdDelta: null };
+        }
+        try {
+          const telemetry = await deps.readConversationTelemetry(
+            conversation.id,
+          );
+          const cumulative = telemetry?.costUsd ?? null;
+          const delta =
+            cumulative === null
+              ? null
+              : Math.max(0, cumulative - (previousCumulativeCostUsd ?? 0));
+          if (cumulative !== null) {
+            previousCumulativeCostUsd = cumulative;
+          }
+          return { cumulativeCostUsd: cumulative, costUsdDelta: delta };
+        } catch {
+          // Billing telemetry must never fail the turn that emits it.
+          return { cumulativeCostUsd: null, costUsdDelta: null };
+        }
+      };
+      if (deps.readConversationTelemetry && execLogger) {
+        try {
+          previousCumulativeCostUsd =
+            (await deps.readConversationTelemetry(conversation.id))?.costUsd ??
+            null;
+        } catch {
+          previousCumulativeCostUsd = null;
+        }
+      }
+
       let agentResult = await deps.runAgentIteration({
         ...agentCallBase,
         prompt: initialPrompt,
@@ -2323,10 +2371,17 @@ export function createGraphWorkflowIterationOrchestrator(
       await recordTurnOutcome(agentResult);
       completedTurnCount += 1;
 
+      const initialTurnBilling = await readTurnBilling();
       execLogger?.iteration(input.contextId, "iteration.agent_turn_completed", {
         turnNumber: 0,
         contextTokens: agentResult.contextTokens,
         contextWindowMax: agentResult.contextWindowMax,
+        // Without a window max, contextTokens is a backend-specific counter
+        // (codex: cumulative processed tokens) and MUST NOT be read as window
+        // occupancy downstream.
+        occupancyMeasurable: agentResult.contextWindowMax !== null,
+        cumulativeCostUsd: initialTurnBilling.cumulativeCostUsd,
+        costUsdDelta: initialTurnBilling.costUsdDelta,
       });
 
       logBackgroundWaitLifecycle({
@@ -2469,6 +2524,7 @@ export function createGraphWorkflowIterationOrchestrator(
         await recordTurnOutcome(agentResult);
         completedTurnCount += 1;
 
+        const followUpTurnBilling = await readTurnBilling();
         execLogger?.iteration(
           input.contextId,
           "iteration.agent_turn_completed",
@@ -2476,6 +2532,9 @@ export function createGraphWorkflowIterationOrchestrator(
             turnNumber: attempt,
             contextTokens: agentResult.contextTokens,
             contextWindowMax: agentResult.contextWindowMax,
+            occupancyMeasurable: agentResult.contextWindowMax !== null,
+            cumulativeCostUsd: followUpTurnBilling.cumulativeCostUsd,
+            costUsdDelta: followUpTurnBilling.costUsdDelta,
           },
         );
 

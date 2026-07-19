@@ -111,3 +111,72 @@ describe("wireTurnAbort", () => {
     );
   });
 });
+
+describe("wireTurnAbort stall watchdog", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function makeStallInput(overrides: { stallTimeoutMs?: number } = {}) {
+    return {
+      ...makeInput(),
+      stallTimeoutMs: overrides.stallTimeoutMs ?? 0,
+    };
+  }
+
+  it("arms no stall watchdog when stallTimeoutMs is 0", () => {
+    const input = makeStallInput({ stallTimeoutMs: 0 });
+
+    const wiring = wireTurnAbort(makeDeps(), input);
+    vi.advanceTimersByTime(10_000_000);
+
+    expect(wiring.stallFired()).toBe(false);
+    expect(input.closeRuntime).not.toHaveBeenCalled();
+  });
+
+  it("aborts (before closing the runtime) when no activity arrives within stallTimeoutMs", () => {
+    const input = makeStallInput({ stallTimeoutMs: 5_000 });
+    let abortedWhenClosed: boolean | undefined;
+    input.closeRuntime.mockImplementation(() => {
+      abortedWhenClosed = input.runtimeState.abortController.signal.aborted;
+    });
+
+    const wiring = wireTurnAbort(makeDeps(), input);
+    expect(wiring.stallFired()).toBe(false);
+
+    vi.advanceTimersByTime(5_000);
+
+    expect(wiring.stallFired()).toBe(true);
+    expect(wiring.timeoutFired()).toBe(false);
+    expect(input.closeRuntime).toHaveBeenCalledTimes(1);
+    expect(abortedWhenClosed).toBe(true);
+  });
+
+  it("notifyActivity resets the stall deadline so an active turn never trips", () => {
+    const input = makeStallInput({ stallTimeoutMs: 5_000 });
+
+    const wiring = wireTurnAbort(makeDeps(), input);
+    for (let i = 0; i < 10; i++) {
+      vi.advanceTimersByTime(4_000);
+      wiring.notifyActivity();
+    }
+    expect(wiring.stallFired()).toBe(false);
+
+    vi.advanceTimersByTime(5_000);
+    expect(wiring.stallFired()).toBe(true);
+  });
+
+  it("cleanup disarms the stall watchdog", () => {
+    const input = makeStallInput({ stallTimeoutMs: 5_000 });
+
+    const wiring = wireTurnAbort(makeDeps(), input);
+    wiring.cleanup();
+    vi.advanceTimersByTime(60_000);
+
+    expect(wiring.stallFired()).toBe(false);
+    expect(input.closeRuntime).not.toHaveBeenCalled();
+  });
+});

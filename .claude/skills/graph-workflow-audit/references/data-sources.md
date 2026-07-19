@@ -83,20 +83,30 @@ Written live by `src/lib/workflow-graph/execution-logger.ts`. Every record:
 - `_manifest.json` — definition snapshot + per-context iteration/task counts
   + file index. Start here.
 - `lifecycle.jsonl` — execution started/resumed/paused/completed/halted,
-  shared_document.created/updated.
-- `decisions.jsonl` — context.scheduled, implementer rotation,
+  merge.retry_attempted, shared_document.created/updated. Halt/pause/resume
+  records carry `actor` (`system`/`operator`); `execution.resumed` echoes
+  `resolvedHaltType`/`resolvedHaltContextId` so halt→resume pairs (operator
+  recovery wait) are verifiable.
+- `decisions.jsonl` — context.scheduled, `rotation.scheduled` (emitted once
+  per pending rotation, on the flag's false→true transition),
+  `implementer.rotation` / `validator.rotation` (applications; reason
+  `context_changed` is a lane switch, not a real rotation),
   max_iterations.reached: the scheduler's choices.
 - `contexts/<contextId>/`
   - `iterations.jsonl` — `iteration.started` (`iterationNumber`, `model`,
     `reasoningEffort`, `incompleteTaskIds`), `iteration.conversation_resolved`
     (`conversationId` — recovers rotated conversations),
     `iteration.prompt_sent` (`promptLength`, `promptMode`),
-    `iteration.agent_turn_completed` (`contextTokens`, `contextWindowMax`),
+    `iteration.agent_turn_completed` (`contextTokens`, `contextWindowMax`,
+    `occupancyMeasurable`, `cumulativeCostUsd`, `costUsdDelta` — per-turn
+    billing from the conversation transcript),
     `iteration.follow_up_sent/skipped`, `iteration.completed`
     (`completedTaskCount`, `remainingTaskCount`, `consecutiveFailureCount`)
   - `tasks.jsonl` — completion attempts, validation passed/failed,
     added_by_agent, reopened
-  - `validation.jsonl` — validator started/invoked/result_parsed/remediation
+  - `validation.jsonl` — validator started/invoked/result_parsed/remediation;
+    `script_validation.passed/failed` carry `headSha`, `dirty`, `command` —
+    the tree identity the gate result certifies
   - `validation-transcript.jsonl` — full validator reasoning:
     `validator.transcript_begin` (engine, attempt) +
     `validator.transcript_item` (verbatim backend payloads)

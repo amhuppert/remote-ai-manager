@@ -101,11 +101,16 @@ export const globalConfigSchema = z.object({
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
+// Field names must match codexConfigSchema exactly — the loader merges the
+// parsed raw file into GlobalConfig by key, with no renaming. A historical
+// `timeout` key here silently no-opped because every consumer reads
+// `timeoutMs`; stray legacy `timeout` keys in config.json are now stripped.
 const rawCodexConfigSchema = z.object({
   enabled: z.boolean().optional(),
   model: z.string().optional(),
   reasoningEffort: codexReasoningEffortSchema.optional(),
-  timeout: z.number().positive().nullable().optional(),
+  timeoutMs: z.number().positive().nullable().optional(),
+  stallTimeoutMs: z.number().positive().nullable().optional(),
   pricing: codexPricingTableSchema.optional(),
 });
 

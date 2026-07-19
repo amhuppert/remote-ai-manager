@@ -130,6 +130,13 @@ export interface AgentBackendMetadata {
   models: readonly BackendModelInfo[];
   defaultModelId: string;
   defaultTimeoutMs: number | null;
+  /**
+   * Default per-turn inactivity bound: a turn producing no backend events for
+   * this long is presumed hung and aborted (see stall-watchdog.ts). Null or
+   * absent disables the bound for backends whose turns have legitimate long
+   * silences (e.g. Claude background-task waits) or another safety net.
+   */
+  defaultStallTimeoutMs?: number | null;
 }
 
 export interface AgentBackendConversationFacet {

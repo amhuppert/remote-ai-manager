@@ -319,3 +319,78 @@ describe("createScriptValidatorRunner", () => {
     );
   });
 });
+
+describe("tree-addressed validation identity", () => {
+  it("stamps tree identity and command on a pass outcome", async () => {
+    const deps = createDeps({
+      executeRepoValidationCommand: vi.fn(async () => ({
+        executed: true,
+        pass: true,
+        stdout: "ok",
+        stderr: "",
+        output: "ok",
+        timedOut: false,
+        message: null,
+        command: "/projects/acme/scripts/pre-merge.sh",
+      })),
+      resolveTreeState: vi.fn(async () => ({
+        headSha: "abc123def",
+        dirty: false,
+      })),
+    });
+    const runner = createScriptValidatorRunner(deps);
+
+    const outcome = await runner.runScriptValidator(BASE_INPUT);
+
+    expect(outcome.kind).toBe("pass");
+    if (outcome.kind !== "pass") return;
+    expect(outcome.treeState).toEqual({ headSha: "abc123def", dirty: false });
+    expect(outcome.command).toBe("/projects/acme/scripts/pre-merge.sh");
+    expect(deps.resolveTreeState).toHaveBeenCalledWith(BASE_INPUT.worktreePath);
+  });
+
+  it("stamps tree identity on a fail outcome and writes it into the log header", async () => {
+    const writeFile = vi.fn(async (_filePath: string, _contents: string) => {});
+    const deps = createDeps({
+      executeRepoValidationCommand: vi.fn(async () => ({
+        executed: true,
+        pass: false,
+        stdout: "",
+        stderr: "1 test failed",
+        output: "1 test failed",
+        timedOut: false,
+        message: "Pre-merge validation failed",
+        command: "/projects/acme/scripts/pre-merge.sh",
+      })),
+      resolveTreeState: vi.fn(async () => ({
+        headSha: "abc123def",
+        dirty: true,
+      })),
+      writeFile,
+    });
+    const runner = createScriptValidatorRunner(deps);
+
+    const outcome = await runner.runScriptValidator(BASE_INPUT);
+
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind !== "fail") return;
+    expect(outcome.treeState).toEqual({ headSha: "abc123def", dirty: true });
+    expect(outcome.command).toBe("/projects/acme/scripts/pre-merge.sh");
+    const written = writeFile.mock.calls[0]?.[1] ?? "";
+    expect(written).toContain("tree: abc123def (dirty)");
+    expect(written).toContain("command: /projects/acme/scripts/pre-merge.sh");
+  });
+
+  it("degrades to null identity when git state cannot be resolved", async () => {
+    const deps = createDeps({
+      resolveTreeState: vi.fn(async () => ({ headSha: null, dirty: null })),
+    });
+    const runner = createScriptValidatorRunner(deps);
+
+    const outcome = await runner.runScriptValidator(BASE_INPUT);
+
+    expect(outcome.kind).toBe("pass");
+    if (outcome.kind !== "pass") return;
+    expect(outcome.treeState).toEqual({ headSha: null, dirty: null });
+  });
+});

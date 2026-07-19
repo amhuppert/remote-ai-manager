@@ -196,6 +196,20 @@ const graphWorkflowValidationReviewUsageSchema = z.object({
   costUsd: z.number().nullable().default(null),
 });
 
+/**
+ * Usage for conversation-strategy validators, derived from the conversation
+ * transcript after the turn. Token counts are not projected from transcripts,
+ * so this carries the billable figures the transcript does report — without
+ * it every conversation-validator decision is unpriced in cost audits.
+ */
+const graphWorkflowValidationConversationUsageSchema = z.object({
+  costUsd: z.number().nullable().default(null),
+  apiTurns: z.number().int().min(0).nullable().default(null),
+});
+export type GraphWorkflowValidationConversationUsage = z.infer<
+  typeof graphWorkflowValidationConversationUsageSchema
+>;
+
 function normalizeLegacyValidationReviewArtifact(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
   const record = value as Record<string, unknown>;
@@ -227,6 +241,9 @@ export const graphWorkflowValidationReviewArtifactSchema = z.preprocess(
       backend: agentBackendIdShapeSchema,
       kind: z.literal("conversation"),
       ref: z.string().trim().min(1),
+      usage: graphWorkflowValidationConversationUsageSchema
+        .nullable()
+        .default(null),
     }),
     z.object({
       backend: agentBackendIdShapeSchema,
@@ -252,6 +269,8 @@ export function buildGraphWorkflowValidationReviewArtifact(input: {
     outputTokens: number;
     costUsd: number | null;
   } | null;
+  /** Transcript-derived usage for conversation-strategy validators. */
+  conversationUsage?: GraphWorkflowValidationConversationUsage | null;
 }): GraphWorkflowValidationReviewArtifact | null {
   if (input.ref === null) return null;
   if (input.strategy === "conversation") {
@@ -259,6 +278,7 @@ export function buildGraphWorkflowValidationReviewArtifact(input: {
       backend: input.backend,
       kind: "conversation",
       ref: input.ref,
+      usage: input.conversationUsage ?? null,
     };
   }
   return {

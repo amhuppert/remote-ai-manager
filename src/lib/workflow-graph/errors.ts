@@ -10,14 +10,14 @@ export type DirtyPath = {
 type AgentTurnFailedInit = {
   contextId: string;
   engine: AgentBackendId;
-  cause: "sdk_error" | "abort" | "timeout" | "unknown";
+  cause: "sdk_error" | "abort" | "timeout" | "stall" | "unknown";
   originalMessage: string;
 };
 
 export class AgentTurnFailedError extends Error {
   readonly contextId: string;
   readonly engine: AgentBackendId;
-  readonly cause: "sdk_error" | "abort" | "timeout" | "unknown";
+  readonly cause: "sdk_error" | "abort" | "timeout" | "stall" | "unknown";
   readonly originalMessage: string;
 
   constructor(message: string, init: AgentTurnFailedInit) {

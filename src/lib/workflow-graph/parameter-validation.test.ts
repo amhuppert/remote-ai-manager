@@ -903,6 +903,8 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
       "vocabulary",
       "testStrategy",
       "knownAmbiguities",
+      "invariant.id",
+      "invariant.statement",
       "source.id",
       "source.label",
       "source.locator",
@@ -920,6 +922,12 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
       vocabulary: [sentinelFor("vocabulary")],
       testStrategy: sentinelFor("testStrategy"),
       knownAmbiguities: [sentinelFor("knownAmbiguities")],
+      invariants: [
+        {
+          id: sentinelFor("invariant.id"),
+          statement: sentinelFor("invariant.statement"),
+        },
+      ],
       sourcesOfTruth: [
         {
           rank: 1,
@@ -937,11 +945,15 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
     return { charter: charterValue, sentinelByField };
   }
 
-  // `source.id` is the ONE structural-but-rendered string field: render.ts
-  // prints it (markdown: `- id: \`<id>\``) as a stable structural identifier,
-  // but it is intentionally NOT substitutable (substituting an id would break
-  // graph wiring). Every OTHER rendered string field MUST be registered.
-  const NON_SUBSTITUTABLE_RENDERED_STRING_FIELDS = new Set(["source.id"]);
+  // `source.id` and `invariant.id` are the structural-but-rendered string
+  // fields: render.ts prints them as stable structural identifiers (validators
+  // cite invariant ids in issues), but they are intentionally NOT substitutable
+  // (substituting an id would break wiring/citations). Every OTHER rendered
+  // string field MUST be registered.
+  const NON_SUBSTITUTABLE_RENDERED_STRING_FIELDS = new Set([
+    "source.id",
+    "invariant.id",
+  ]);
 
   it("registers exactly the rendered, substitutable charter text fields (catches over- AND under-registration)", () => {
     const { charter: sentineledCharter, sentinelByField } =
@@ -997,6 +1009,7 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
       "vocabulary",
       "testStrategy",
       "knownAmbiguities",
+      "invariant.statement",
       "source.label",
       "source.locator",
       "source.description",
@@ -1025,6 +1038,8 @@ describe("forEachScannedField visits exactly the registered surface", () => {
   function charterFieldKind(locator: string): string | null {
     const sourceMatch = /^charter\.sourcesOfTruth\[\d+\]\.(\w+)$/.exec(locator);
     if (sourceMatch) return `source.${sourceMatch[1]}`;
+    const invariantMatch = /^charter\.invariants\[\d+\]\.(\w+)$/.exec(locator);
+    if (invariantMatch) return `invariant.${invariantMatch[1]}`;
     const charterMatch = /^charter\.([A-Za-z]+)(?:\[\d+\])?$/.exec(locator);
     if (charterMatch) return charterMatch[1] ?? null;
     return null;
@@ -1047,6 +1062,12 @@ describe("forEachScannedField visits exactly the registered surface", () => {
         vocabulary: ["term: meaning"],
         testStrategy: "unit + integration",
         knownAmbiguities: ["scope of X"],
+        invariants: [
+          {
+            id: "server-side-enforcement",
+            statement: "Gates enforce serverside",
+          },
+        ],
         sourcesOfTruth: [
           {
             rank: 1,

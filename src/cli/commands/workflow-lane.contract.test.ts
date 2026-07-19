@@ -337,7 +337,8 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
 
   it("renders server-computed lane reminders on a near-threshold success", async () => {
     // iterationCount 2, default threshold 3 → the real completeTask handler
-    // computes iteration-budget + lane-autonomy; the CLI renders them verbatim.
+    // computes iteration-budget + (this being the fixture's final task) the
+    // final-task self-check; the CLI renders them verbatim.
     const result = await runCli(
       ["workflow", "task", "complete", "task-plan-1", "--summary", "done"],
       laneEnv,
@@ -353,7 +354,9 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
     expect(result.stdout).toContain(
       "reminder: This context has used 2 of 3 iterations",
     );
-    expect(result.stdout).toContain("reminder: This lane is autonomous");
+    expect(result.stdout).toContain(
+      "reminder: That was the last remaining task",
+    );
   });
 
   it("surfaces the server-computed halted-stop reminder on the real 409 halt", async () => {

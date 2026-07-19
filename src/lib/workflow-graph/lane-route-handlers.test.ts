@@ -120,6 +120,12 @@ function buildRunningExecution(
     limit?: number;
     lane?: GraphWorkflowAgentSessionState;
     iterationCount?: number;
+    /**
+     * Adds a second pending task to context-plan so completing task-plan-1
+     * leaves work remaining (the base fixture has a single task, making every
+     * completion a final-task completion).
+     */
+    secondPlanTask?: boolean;
   } = {},
 ): GraphWorkflowExecution {
   const base = createWorkflowExecution();
@@ -138,9 +144,42 @@ function buildRunningExecution(
         worktreePath: null,
         branchName: null,
         isolation: "session",
+        totalTaskCount: options.secondPlanTask ? 2 : planState.totalTaskCount,
       },
     },
   };
+
+  if (options.secondPlanTask) {
+    running.workingDefinition = {
+      ...running.workingDefinition,
+      tasks: [
+        ...running.workingDefinition.tasks,
+        {
+          id: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          title: "Write plan",
+          instructions: "Document the implementation plan.",
+          source: "user",
+        },
+      ],
+    };
+    running.taskStates = {
+      ...running.taskStates,
+      "task-plan-2": {
+        taskId: "task-plan-2",
+        contextId: "context-plan",
+        order: 2,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+    };
+  }
 
   if (options.limit !== undefined) {
     running.workingDefinition = {
@@ -318,9 +357,9 @@ describe("lane route handlers — complete task", () => {
   });
 
   it("attaches lane reminders to the success body when the iteration budget is near the threshold", async () => {
-    // iterationCount 2, default threshold 3 → iteration-budget fires (3−2=1≤2)
-    // AND lane-autonomy fires (2≥2); both are computed from the returned
-    // post-completion execution state, capped at 2 in rule-array order.
+    // iterationCount 2, default threshold 3 → iteration-budget fires (3−2=1≤2),
+    // and completing the fixture's only task makes this a final completion, so
+    // final-task-self-check fires too; lane-autonomy (2≥2) is capped out.
     const { context } = buildContext({
       execution: buildRunningExecution({ iterationCount: 2 }),
     });
@@ -339,11 +378,12 @@ describe("lane route handlers — complete task", () => {
     expect(body.reminders[0]).toContain(
       "script validators run before agent validators",
     );
-    expect(body.reminders[1]).toContain("cctl workflow collab request");
+    expect(body.reminders[1]).toContain("acceptance criterion");
   });
 
-  it("omits the reminders field entirely when no rule fires", async () => {
-    // Default fixture: iterationCount 0, threshold 3 → no rule fires.
+  it("attaches the final-task self-check reminder when the last task completes", async () => {
+    // Default fixture: single task, iterationCount 0 → the self-check is the
+    // only rule firing on the final completion.
     const { context } = buildContext();
     const handlers = createLaneRouteHandlers(makeDeps(context));
 
@@ -355,8 +395,54 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(true);
+    expect(body.remainingTaskCount).toBe(0);
+    expect(body.reminders).toHaveLength(1);
+    expect(body.reminders[0]).toContain("acceptance criterion");
+    expect(body.reminders[0]).toContain("charter invariant");
+  });
+
+  it("omits the reminders field entirely when no rule fires", async () => {
+    // Second pending task keeps the completion non-final; iterationCount 0,
+    // threshold 3 → no rule fires.
+    const { context } = buildContext({
+      execution: buildRunningExecution({ secondPlanTask: true }),
+    });
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "done" }),
+      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.remainingTaskCount).toBe(1);
     expect(body.reminders).toBeUndefined();
     expect("reminders" in body).toBe(false);
+  });
+
+  it("suppresses the final-task self-check when the rotation gate stops the turn", async () => {
+    // Over-limit occupancy issues the stopInstruction on the final completion;
+    // the self-check must not compete with the immediate-handoff order.
+    const { context } = buildContext({
+      execution: buildRunningExecution({ limit: 100, lane: makeClaudeLane() }),
+      readLiveOccupancy: () => ({
+        contextTokens: 200,
+        compactedThisTurn: false,
+      }),
+    });
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "done" }),
+      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.stopInstruction).toContain("CONTEXT LIMIT REACHED");
+    expect(body.reminders).toBeUndefined();
   });
 
   it("attaches the halted-stop reminder to the 409 halt body", async () => {

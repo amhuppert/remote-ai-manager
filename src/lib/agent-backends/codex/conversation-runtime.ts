@@ -328,11 +328,21 @@ export class CodexConversationRuntime
       }
     }
 
-    const failure =
-      acc.failure ??
-      (acc.errorMessage != null
-        ? codexFailureClassifier.classify(acc.errorMessage)
-        : null);
+    // Abort honesty: a cancelled turn is aborted even when the codex process
+    // answers the interrupt "gracefully" — a turn.failed event (e.g.
+    // "Aborted: user") followed by a clean stream end, with no throw. Without
+    // this, an external cancellation (pause, safety-net, stall watchdog)
+    // misclassifies as a provider sdk_error.
+    if (input.signal.aborted) {
+      acc.aborted = true;
+    }
+
+    const failure = acc.aborted
+      ? null
+      : (acc.failure ??
+        (acc.errorMessage != null
+          ? codexFailureClassifier.classify(acc.errorMessage)
+          : null));
 
     // A missing rollout proves the ref unusable. A local process crash only
     // invalidates a first-turn rollout; graceful provider failures and crashes
@@ -393,6 +403,9 @@ export class CodexConversationRuntime
       continuationDisposition: result.continuationDisposition,
       contentBlockCount: contentBlocks.length,
       costUsd: result.costUsd,
+      // Codex reports CUMULATIVE processed input tokens for the thread, not
+      // window occupancy — that is why contextWindowMax stays null.
+      cumulativeInputTokens: acc.usage?.input_tokens ?? null,
     });
 
     return result;

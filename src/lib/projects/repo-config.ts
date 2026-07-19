@@ -48,6 +48,11 @@ export interface RepoValidationCommandResult {
   output: string;
   timedOut: boolean;
   message: string | null;
+  /**
+   * Resolved script path that ran, for audit identity of the validation
+   * result. Null/absent when nothing executed.
+   */
+  command?: string | null;
 }
 
 const defaultDeps: RepoConfigDeps = {
@@ -151,6 +156,7 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
         output,
         timedOut: false,
         message: null,
+        command: scriptPath,
       };
     } catch (err) {
       const childErr = err as Error & {
@@ -174,6 +180,7 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
         message: timedOut
           ? `Pre-merge validation timed out after ${timeoutSec}s`
           : "Pre-merge validation failed",
+        command: scriptPath,
       };
     }
   }

@@ -651,6 +651,28 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       laneState?.refKind !== expectedRefKind ||
       (expectedRefKind === "backend" && laneState?.sessionRef === undefined);
 
+    // Validator lanes schedule rotations through the same recordLaneTurnOutcome
+    // path as implementers, so without this decision their applications are
+    // invisible and scheduled-vs-applied reconciliation always shows a deficit.
+    if (rotate) {
+      const execLogger = getExecutionLogger(execution.id);
+      execLogger?.decision("validator.rotation", {
+        contextId,
+        lane,
+        engine: backend,
+        reason: rotationReason(
+          laneState,
+          contextId,
+          continuityEnabled,
+          pinned,
+          backend,
+        ),
+        continuityEnabled,
+        previousContextId: laneState?.contextId ?? null,
+        previousEngine: laneState?.backend ?? null,
+      });
+    }
+
     if (strategy === "conversation") {
       if (rotate) {
         const reason = rotationReason(
@@ -705,6 +727,15 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           contextId,
           conversationId,
           reason: "conversation_not_found",
+        });
+        getExecutionLogger(execution.id)?.decision("validator.rotation", {
+          contextId,
+          lane,
+          engine: backend,
+          reason: "stale_recovery",
+          continuityEnabled,
+          previousContextId: laneState?.contextId ?? null,
+          previousEngine: laneState?.backend ?? null,
         });
 
         const { laneState: newLaneState, conversationId: freshId } =
@@ -889,7 +920,13 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       outcome.compactedThisTurn === true &&
       outcome.contextLimitTokens !== undefined;
 
-    if (overLimit || compactionUnderLimit) {
+    // Emit the schedule decision only on the false→true flag transition:
+    // re-emitting on every over-limit turn makes scheduled-vs-applied
+    // reconciliation in decisions.jsonl arithmetically meaningless (audit:
+    // 47 scheduled vs 26 applied read as lost rotations when most were
+    // duplicate schedules of one pending rotation).
+    const alreadyScheduled = laneState.metrics.rotateBeforeNextTurn === true;
+    if ((overLimit || compactionUnderLimit) && !alreadyScheduled) {
       const reason: "context_over_limit" | "compaction_detected" = overLimit
         ? "context_over_limit"
         : "compaction_detected";

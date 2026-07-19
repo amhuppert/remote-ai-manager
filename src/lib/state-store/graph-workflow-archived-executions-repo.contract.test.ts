@@ -495,7 +495,16 @@ function buildMaximalExecution(): unknown {
       type: "recovery_error",
       message: "could not recover lane state",
     },
-    secondaryHaltReasons: [{ type: "aborted" }],
+    secondaryHaltReasons: [
+      { type: "aborted" },
+      {
+        type: "agent_turn_failed",
+        contextId: "ctx-1",
+        engine: "codex",
+        cause: "stall",
+        message: "Prompt execution stalled: no agent activity for 1200000ms",
+      },
+    ],
     pendingCollaborations: {
       "collab-1": {
         workflowId: "wf-maximal",

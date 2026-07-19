@@ -233,6 +233,14 @@ export interface AuditInput {
   events: AuditEvent[];
   conversations: AuditConversationRow[];
   contextLogs: Record<string, ContextLogs>;
+  /**
+   * Execution-level lifecycle records (workflow-logs/<id>/lifecycle.jsonl).
+   * The only durable trace of recovered halts and join retry attempts — the
+   * execution state retains final outcomes only.
+   */
+  lifecycle?: JsonlRecord[];
+  /** Cross-cutting decision records (workflow-logs/<id>/decisions.jsonl). */
+  decisions?: JsonlRecord[];
   paths: { workflowLogsDir: string | null; transcriptsDir: string | null };
   /** Diffstat of the final_publish join commit; loader-supplied, best-effort. */
   finalPublish?: { commitSha: string; files: PublishFileStat[] } | null;
@@ -244,7 +252,31 @@ export interface AuditInput {
 
 export type Severity = "high" | "medium" | "info";
 export type HaltClass = "infrastructure" | "agent" | "user" | "unknown";
-export type GapClassification = "agent_work" | "human_wait" | "unexplained";
+export type GapClassification =
+  | "agent_work"
+  | "human_wait"
+  | "halt_wait"
+  | "hung_turn"
+  | "validation_compute"
+  | "unexplained";
+
+/** One halted→resumed pair from lifecycle.jsonl; resumedAt null while halted. */
+export interface HaltRecoveryReport {
+  haltedAt: string;
+  resumedAt: string | null;
+  waitMs: number | null;
+  haltType: string;
+  contextId: string | null;
+}
+
+/**
+ * A known measurement limitation of this report — figures the reader must
+ * treat as floors or inconclusive rather than measured truth.
+ */
+export interface ConfidenceNote {
+  kind: string;
+  summary: string;
+}
 
 export interface IterationReport {
   iterationNumber: number;
@@ -312,6 +344,17 @@ export interface ContextReport {
   firstActivityAt: string | null;
   lastActivityAt: string | null;
   agentTurnMs: number;
+  /**
+   * Time inside turn intervals that exceeded the hung-turn threshold with no
+   * intermediate record — excluded from agentTurnMs so a dead turn does not
+   * read as productive labor.
+   */
+  hungTurnMs: number;
+  scriptValidationRuns: { started: number; passed: number; failed: number };
+  /** rotation.scheduled decisions for this context (decisions.jsonl). */
+  rotationScheduledCount: number;
+  /** implementer.rotation applications, excluding plain context switches. */
+  rotationAppliedCount: number;
   iterations: IterationReport[];
   validations: ValidationReport[];
   approvalWaits: WaitReport[];
@@ -394,7 +437,17 @@ export interface AuditReport {
   time: {
     wallClockMs: number | null;
     agentTurnMsTotal: number;
+    /** Total time inside hung turn intervals, excluded from agentTurnMsTotal. */
+    hungTurnMsTotal: number;
     humanWaitMsTotal: number;
+    /**
+     * Total halted→resumed wait from lifecycle.jsonl. Distinct from
+     * humanWaitMsTotal, which only counts configured approval/user-input
+     * gates: a halt has no gate event, so before this metric existed a run
+     * with hours of operator recovery reported zero human wait.
+     */
+    operatorRecoveryWaitMsTotal: number;
+    haltRecoveries: HaltRecoveryReport[];
     gaps: GapReport[];
   };
   publish: {
@@ -406,6 +459,8 @@ export interface AuditReport {
   } | null;
   friction: Finding[];
   positives: Finding[];
+  /** Measurement limitations — where this report's figures are floors or inconclusive. */
+  confidence: ConfidenceNote[];
   pointers: {
     workflowLogsDir: string | null;
     transcripts: Array<{
@@ -721,6 +776,21 @@ const ROTATION_OVERRUN_FACTOR = 1.5;
 const BACKGROUND_KILL_THRESHOLD = 3;
 const SCRATCH_FILES_RENDER_CAP = 3;
 const COST_MISMATCH_RENDER_CAP = 3;
+/**
+ * A turn-start record followed by nothing for this long is treated as hung,
+ * not as productive agent work. Chosen well above legitimate long turns
+ * observed in real runs (heavy subagent sweeps run ~30-45m) but far below
+ * the multi-hour silent-turn incidents this exists to surface.
+ */
+const HUNG_TURN_THRESHOLD_MS = 60 * 60 * 1000;
+const COST_GAP_MIN_TOOL_CALLS = 20;
+const COST_GAP_MIN_TURNS = 5;
+/** Halt types that mean a join/merge attempt failed. */
+const MERGE_CLASS_HALT_TYPES = new Set([
+  "merge_failure",
+  "join_failure",
+  "merge_precondition_failed",
+]);
 
 const AGENT_TURN_START_EVENTS = new Set([
   "iteration.prompt_sent",
@@ -731,6 +801,7 @@ const VALIDATOR_WORK_START_EVENTS = new Set([
   "task_validator.started",
   "validator.invoked",
 ]);
+const SCRIPT_VALIDATION_START_EVENTS = new Set(["script_validation.started"]);
 
 interface TimelinePoint {
   at: number;
@@ -781,25 +852,105 @@ function buildIterations(records: JsonlRecord[]): IterationReport[] {
   return iterations;
 }
 
-/** Intervals during which an agent (implementer or validator) was working. */
-function buildWorkIntervals(logs: ContextLogs): Interval[] {
+/** start-event record → next record, for records that bound their own end. */
+function collectStartToNextIntervals(
+  records: JsonlRecord[],
+  startEvents: Set<string>,
+): Interval[] {
   const intervals: Interval[] = [];
-  const collect = (records: JsonlRecord[], startEvents: Set<string>) => {
-    for (let i = 0; i < records.length - 1; i++) {
-      const record = records[i];
-      const next = records[i + 1];
-      if (record === undefined || next === undefined) continue;
-      if (!startEvents.has(record.event)) continue;
-      const start = parseIso(record.timestamp);
-      const end = parseIso(next.timestamp);
-      if (start !== null && end !== null && end > start) {
-        intervals.push({ start, end });
-      }
+  for (let i = 0; i < records.length - 1; i++) {
+    const record = records[i];
+    const next = records[i + 1];
+    if (record === undefined || next === undefined) continue;
+    if (!startEvents.has(record.event)) continue;
+    const start = parseIso(record.timestamp);
+    const end = parseIso(next.timestamp);
+    if (start !== null && end !== null && end > start) {
+      intervals.push({ start, end });
     }
-  };
-  collect(logs.iterations, AGENT_TURN_START_EVENTS);
-  collect(logs.validation, VALIDATOR_WORK_START_EVENTS);
+  }
   return intervals;
+}
+
+interface TurnIntervalSplit {
+  work: Interval[];
+  hung: Array<Interval & { startedAt: string }>;
+}
+
+/**
+ * Splits implementer turn intervals into productive work vs hung turns. A
+ * turn interval runs from its start record to the next record in the log; a
+ * trailing turn with no successor is bounded by the execution's last known
+ * activity, because a turn that never wrote another record is exactly the
+ * hung case this exists to catch.
+ */
+function splitTurnIntervals(
+  records: JsonlRecord[],
+  lastActivityMs: number | null,
+): TurnIntervalSplit {
+  const work: Interval[] = [];
+  const hung: TurnIntervalSplit["hung"] = [];
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (record === undefined || !AGENT_TURN_START_EVENTS.has(record.event)) {
+      continue;
+    }
+    const start = parseIso(record.timestamp);
+    if (start === null) continue;
+    const next = records[i + 1];
+    const end = next !== undefined ? parseIso(next.timestamp) : lastActivityMs;
+    if (end === null || end <= start) continue;
+    if (end - start > HUNG_TURN_THRESHOLD_MS) {
+      hung.push({ start, end, startedAt: record.timestamp });
+    } else {
+      work.push({ start, end });
+    }
+  }
+  return { work, hung };
+}
+
+/** Pairs execution.halted with the next execution.resumed, FIFO. */
+function pairHaltRecoveries(lifecycle: JsonlRecord[]): HaltRecoveryReport[] {
+  const recoveries: HaltRecoveryReport[] = [];
+  const pending: Array<{
+    at: string;
+    haltType: string;
+    contextId: string | null;
+  }> = [];
+  for (const record of lifecycle) {
+    if (record.event === "execution.halted") {
+      const reason = asRecord(record.fields.haltReason);
+      pending.push({
+        at: record.timestamp,
+        haltType:
+          (reason !== null ? fieldStr(reason, "type") : null) ?? "unknown",
+        contextId: reason !== null ? fieldStr(reason, "contextId") : null,
+      });
+    } else if (record.event === "execution.resumed") {
+      const halt = pending.shift();
+      if (halt === undefined) continue;
+      const start = parseIso(halt.at);
+      const end = parseIso(record.timestamp);
+      recoveries.push({
+        haltedAt: halt.at,
+        resumedAt: record.timestamp,
+        waitMs:
+          start !== null && end !== null && end > start ? end - start : null,
+        haltType: halt.haltType,
+        contextId: halt.contextId,
+      });
+    }
+  }
+  for (const halt of pending) {
+    recoveries.push({
+      haltedAt: halt.at,
+      resumedAt: null,
+      waitMs: null,
+      haltType: halt.haltType,
+      contextId: halt.contextId,
+    });
+  }
+  return recoveries;
 }
 
 function pairWaits(
@@ -893,6 +1044,59 @@ const EMPTY_LOGS: ContextLogs = {
 
 export function buildAuditReport(input: AuditInput): AuditReport {
   const { execution, events, conversations, contextLogs } = input;
+  const lifecycle = input.lifecycle ?? [];
+  const decisions = input.decisions ?? [];
+
+  // Latest timestamp across everything we can see — bounds trailing turn
+  // intervals and unresolved halt windows for an execution still in flight.
+  let lastActivityMs = parseIso(execution.completedAt);
+  const bumpLastActivity = (at: number | null) => {
+    if (at !== null) lastActivityMs = Math.max(lastActivityMs ?? at, at);
+  };
+  bumpLastActivity(parseIso(execution.startedAt));
+  for (const event of events) bumpLastActivity(parseIso(event.occurredAt));
+  for (const record of lifecycle) bumpLastActivity(parseIso(record.timestamp));
+  for (const logs of Object.values(contextLogs)) {
+    for (const record of [
+      ...logs.iterations,
+      ...logs.tasks,
+      ...logs.validation,
+    ]) {
+      bumpLastActivity(parseIso(record.timestamp));
+    }
+  }
+
+  // ---- lifecycle-derived recovery and retry history --------------------
+  const haltRecoveries = pairHaltRecoveries(lifecycle);
+  const joinRetryCounts = new Map<string, number>();
+  for (const record of lifecycle) {
+    if (record.event !== "merge.retry_attempted") continue;
+    const target =
+      fieldStr(record.fields, "joinId") ??
+      fieldStr(record.fields, "contextId") ??
+      "unknown";
+    joinRetryCounts.set(target, (joinRetryCounts.get(target) ?? 0) + 1);
+  }
+
+  // ---- rotation decisions (scheduled vs applied) -----------------------
+  const rotationScheduled = new Map<string, number>();
+  const rotationApplied = new Map<string, number>();
+  for (const record of decisions) {
+    const contextId = fieldStr(record.fields, "contextId");
+    if (contextId === null) continue;
+    if (record.event === "rotation.scheduled") {
+      rotationScheduled.set(
+        contextId,
+        (rotationScheduled.get(contextId) ?? 0) + 1,
+      );
+    } else if (
+      (record.event === "implementer.rotation" ||
+        record.event === "validator.rotation") &&
+      fieldStr(record.fields, "reason") !== "context_changed"
+    ) {
+      rotationApplied.set(contextId, (rotationApplied.get(contextId) ?? 0) + 1);
+    }
+  }
 
   // ---- conversation attribution --------------------------------------
   const laneByConversation = new Map<
@@ -985,25 +1189,60 @@ export function buildAuditReport(input: AuditInput): AuditReport {
 
   const workIntervals: Interval[] = [];
   const humanIntervals: Interval[] = [];
+  const hungIntervals: Interval[] = [];
+  const validationComputeIntervals: Interval[] = [];
+  const hungTurnsByContext = new Map<
+    string,
+    Array<{ startedAt: string; durationMs: number }>
+  >();
   const contexts: ContextReport[] = [];
 
   for (const contextId of contextIds) {
     const state = execution.contextStates[contextId] ?? EMPTY_CONTEXT_STATE;
     const logs = contextLogs[contextId] ?? EMPTY_LOGS;
     const iterations = buildIterations(logs.iterations);
-    const contextWork = buildWorkIntervals(logs);
-    workIntervals.push(...contextWork);
+    const turnSplit = splitTurnIntervals(logs.iterations, lastActivityMs);
+    workIntervals.push(...turnSplit.work);
+    workIntervals.push(
+      ...collectStartToNextIntervals(
+        logs.validation,
+        VALIDATOR_WORK_START_EVENTS,
+      ),
+    );
+    validationComputeIntervals.push(
+      ...collectStartToNextIntervals(
+        logs.validation,
+        SCRIPT_VALIDATION_START_EVENTS,
+      ),
+    );
+    hungIntervals.push(...turnSplit.hung);
+    if (turnSplit.hung.length > 0) {
+      hungTurnsByContext.set(
+        contextId,
+        turnSplit.hung.map((interval) => ({
+          startedAt: interval.startedAt,
+          durationMs: interval.end - interval.start,
+        })),
+      );
+    }
 
     let agentTurnMs = 0;
-    for (let i = 0; i < logs.iterations.length - 1; i++) {
-      const record = logs.iterations[i];
-      const next = logs.iterations[i + 1];
-      if (record === undefined || next === undefined) continue;
-      if (!AGENT_TURN_START_EVENTS.has(record.event)) continue;
-      const start = parseIso(record.timestamp);
-      const end = parseIso(next.timestamp);
-      if (start !== null && end !== null && end > start) {
-        agentTurnMs += end - start;
+    for (const interval of turnSplit.work) {
+      agentTurnMs += interval.end - interval.start;
+    }
+    let hungTurnMs = 0;
+    for (const interval of turnSplit.hung) {
+      hungTurnMs += interval.end - interval.start;
+    }
+
+    const scriptValidationRuns = { started: 0, passed: 0, failed: 0 };
+    for (const record of logs.validation) {
+      if (record.event === "script_validation.started") {
+        scriptValidationRuns.started += 1;
+      } else if (record.event === "script_validation.passed") {
+        scriptValidationRuns.passed += 1;
+      } else if (record.event === "script_validation.failed") {
+        scriptValidationRuns.failed += 1;
       }
     }
 
@@ -1109,6 +1348,10 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       lastActivityAt:
         lastActivity !== null ? new Date(lastActivity).toISOString() : null,
       agentTurnMs,
+      hungTurnMs,
+      scriptValidationRuns,
+      rotationScheduledCount: rotationScheduled.get(contextId) ?? 0,
+      rotationAppliedCount: rotationApplied.get(contextId) ?? 0,
       iterations,
       validations: buildValidations(events, contextId),
       approvalWaits,
@@ -1185,13 +1428,27 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   }
   const correctedTotalUsd = anyTranscriptCost ? correctedSum : null;
 
+  // Validator spend that is invisible in conversation cost rows: response
+  // artifacts (task-strategy runs have no conversation row at all) and
+  // conversation artifacts whose CC conversation row recorded no cost.
+  // Accepts both the legacy `engine`/`threadId` artifact shape and the
+  // current `backend`/`kind` shape.
+  const pricedConversationIds = new Set(
+    conversations
+      .filter((row) => row.totalCostUsd !== null && row.totalCostUsd > 0)
+      .map((row) => row.id),
+  );
   let validators: AuditReport["cost"]["validators"] = null;
   for (const event of events) {
     if (event.type !== "graph-workflow-validation-result") continue;
     const artifact = asRecord(event.fields.reviewArtifact);
-    if (artifact === null || artifact.engine !== "codex") continue;
+    if (artifact === null) continue;
     const usage = asRecord(artifact.usage);
     if (usage === null) continue;
+    if (artifact.kind === "conversation") {
+      const ref = fieldStr(artifact, "ref");
+      if (ref !== null && pricedConversationIds.has(ref)) continue;
+    }
     validators ??= {
       estimatedUsd: 0,
       inputTokens: 0,
@@ -1252,6 +1509,23 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     (sum, context) => sum + context.agentTurnMs,
     0,
   );
+  const hungTurnMsTotal = contexts.reduce(
+    (sum, context) => sum + context.hungTurnMs,
+    0,
+  );
+  const operatorRecoveryWaitMsTotal = haltRecoveries.reduce(
+    (sum, recovery) => sum + (recovery.waitMs ?? 0),
+    0,
+  );
+  const haltIntervals: Interval[] = [];
+  for (const recovery of haltRecoveries) {
+    const start = parseIso(recovery.haltedAt);
+    // An unresolved halt idles the execution through the end of the data.
+    const end = parseIso(recovery.resumedAt) ?? lastActivityMs;
+    if (start !== null && end !== null && end > start) {
+      haltIntervals.push({ start, end });
+    }
+  }
 
   const points: TimelinePoint[] = [];
   if (startedMs !== null)
@@ -1277,6 +1551,9 @@ export function buildAuditReport(input: AuditInput): AuditReport {
 
   const mergedWork = mergeIntervals(workIntervals);
   const mergedHuman = mergeIntervals(humanIntervals);
+  const mergedHalt = mergeIntervals(haltIntervals);
+  const mergedHung = mergeIntervals(hungIntervals);
+  const mergedValidationCompute = mergeIntervals(validationComputeIntervals);
   const gaps: GapReport[] = [];
   for (let i = 0; i < points.length - 1; i++) {
     const from = points[i];
@@ -1285,12 +1562,18 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     const gapMs = to.at - from.at;
     if (gapMs <= GAP_THRESHOLD_MS) continue;
     const gap: Interval = { start: from.at, end: to.at };
-    const humanOverlap = overlapMs(gap, mergedHuman);
-    const workOverlap = overlapMs(gap, mergedWork);
+    // Precedence: a halted execution does nothing regardless of what else
+    // was nominally open, and a hung turn must not read as agent work.
     let classification: GapClassification;
-    if (humanOverlap / gapMs > 0.5) {
+    if (overlapMs(gap, mergedHalt) / gapMs > 0.5) {
+      classification = "halt_wait";
+    } else if (overlapMs(gap, mergedHuman) / gapMs > 0.5) {
       classification = "human_wait";
-    } else if (workOverlap / gapMs > 0.5) {
+    } else if (overlapMs(gap, mergedHung) / gapMs > 0.5) {
+      classification = "hung_turn";
+    } else if (overlapMs(gap, mergedValidationCompute) / gapMs > 0.5) {
+      classification = "validation_compute";
+    } else if (overlapMs(gap, mergedWork) / gapMs > 0.5) {
       classification = "agent_work";
     } else {
       classification = "unexplained";
@@ -1328,6 +1611,39 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       severity: pending ? "medium" : "high",
       contextId: reason.contextId,
       summary: `${pending ? "pending halt" : "halted"}: ${reason.type} (${haltClass} failure)${detail.length > 0 ? ` — ${detail}` : ""}`,
+    });
+  }
+
+  // Recovered halts vanish from the execution state (the halt reason is
+  // cleared on resume), so without these findings a run with hours of
+  // mid-flight recovery reads as if it never halted at all.
+  for (const recovery of haltRecoveries) {
+    if (recovery.resumedAt === null) continue;
+    friction.push({
+      kind: "recovered_halt",
+      severity: "medium",
+      contextId: recovery.contextId,
+      summary: `halted (${recovery.haltType}) at ${recovery.haltedAt}, resumed after ${formatMaybeMs(recovery.waitMs)} of operator recovery wait`,
+    });
+  }
+
+  for (const [contextId, hungTurns] of hungTurnsByContext) {
+    for (const turn of hungTurns) {
+      friction.push({
+        kind: "hung_turn",
+        severity: "high",
+        contextId,
+        summary: `turn started ${turn.startedAt} produced no recorded activity for ${formatMs(turn.durationMs)} — likely hung/silent; excluded from agent-work time`,
+      });
+    }
+  }
+
+  for (const [joinId, retries] of joinRetryCounts) {
+    friction.push({
+      kind: "join_retry",
+      severity: "medium",
+      contextId: null,
+      summary: `join "${joinId}" needed ${retries} retry attempt(s) before its final state — see lifecycle.jsonl for the attempt history`,
     });
   }
 
@@ -1427,7 +1743,14 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         summary: `merge status "${context.mergeStatus}"`,
       });
     }
-    if (context.rotationLimitTokens !== null) {
+    // Occupancy arithmetic is only valid when the backend reported a real
+    // context window: codex lanes carry a CUMULATIVE processed-token counter
+    // with no window max, and dividing a cumulative counter by the rotation
+    // limit produces arithmetically invalid "overruns".
+    if (
+      context.rotationLimitTokens !== null &&
+      context.contextWindowMax !== null
+    ) {
       let worst: IterationReport | null = null;
       for (const iteration of context.iterations) {
         if (iteration.maxContextTokens === null) continue;
@@ -1448,6 +1771,14 @@ export function buildAuditReport(input: AuditInput): AuditReport {
           summary: `iteration ${worst.iterationNumber} peaked at ${worst.maxContextTokens} tokens — ${ratio.toFixed(1)}× the configured rotation limit (${context.rotationLimitTokens}); rotation only takes effect at the iteration boundary, so a long turn outruns it and risks a hard mid-task stop`,
         });
       }
+    }
+    if (context.rotationScheduledCount > context.rotationAppliedCount) {
+      friction.push({
+        kind: "rotation_not_applied",
+        severity: "medium",
+        contextId: context.contextId,
+        summary: `${context.rotationScheduledCount} rotation(s) scheduled but only ${context.rotationAppliedCount} applied — the lane kept its conversation past the point the engine decided to rotate it`,
+      });
     }
     let contextKills = 0;
     let contextCompactions = 0;
@@ -1494,6 +1825,31 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       severity: "medium",
       contextId: null,
       summary: `${costMismatches.length} conversation(s) whose recorded cost diverges from the transcript's lineage total (rows written before the accrual fix are inflated): ${shown}${worst.length > COST_MISMATCH_RENDER_CAP ? ` — and ${worst.length - COST_MISMATCH_RENDER_CAP} more` : ""}. Prefer the corrected total.`,
+    });
+  }
+
+  // A zero/absent cost row on a conversation that clearly did work is a
+  // telemetry hole, not a free conversation — the total is a floor.
+  const costGapConversations: ConversationReport[] = [];
+  for (const conversation of conversationReports) {
+    const recorded = conversation.costUsd;
+    if (recorded !== null && recorded > 0) continue;
+    // A transcript-derived cost exists: the corrected total already fixes it.
+    if (conversation.transcript?.costUsd != null) continue;
+    const toolCalls = conversation.transcript?.toolUseCount ?? 0;
+    const turns = Math.max(
+      conversation.turns ?? 0,
+      conversation.transcript?.apiTurns ?? 0,
+    );
+    if (toolCalls < COST_GAP_MIN_TOOL_CALLS && turns < COST_GAP_MIN_TURNS) {
+      continue;
+    }
+    costGapConversations.push(conversation);
+    friction.push({
+      kind: "cost_gap",
+      severity: "medium",
+      contextId: conversation.contextId,
+      summary: `conversation \`${conversation.conversationId}\` recorded ${recorded === null ? "no cost" : formatUsd(recorded)} despite ${toolCalls > 0 ? `${toolCalls} tool call(s)` : `${turns} sdk turn(s)`} — its spend is missing from the total`,
     });
   }
 
@@ -1588,6 +1944,12 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       (context) =>
         context.mergeStatus === "conflicts" ||
         context.mergeStatus === "merged-failed",
+    ) ||
+    // Final join states hide the attempt history: a join that failed, halted
+    // the run, and succeeded on retry is not a clean merge.
+    joinRetryCounts.size > 0 ||
+    haltRecoveries.some((recovery) =>
+      MERGE_CLASS_HALT_TYPES.has(recovery.haltType),
     );
   if (joinEntries.length > 0 && !anyMergeTrouble) {
     positives.push({
@@ -1642,6 +2004,57 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     });
   }
 
+  // ---- telemetry confidence ---------------------------------------------
+  const confidence: ConfidenceNote[] = [];
+  const occupancyUnmeasurable = contexts.filter(
+    (context) =>
+      context.peakContextTokens !== null && context.contextWindowMax === null,
+  );
+  if (occupancyUnmeasurable.length > 0) {
+    confidence.push({
+      kind: "occupancy_unmeasurable",
+      summary: `context window occupancy is unmeasurable for ${occupancyUnmeasurable
+        .map((c) => c.contextId)
+        .join(
+          ", ",
+        )}: token counters exist but no window max was recorded (codex reports cumulative processed tokens, not occupancy) — treat occupancy and rotation-overrun conclusions for these contexts as inconclusive`,
+    });
+  }
+  const validatorUnpriced = validators?.unpricedEventCount ?? 0;
+  if (validatorUnpriced > 0) {
+    confidence.push({
+      kind: "unpriced_validators",
+      summary: `${validatorUnpriced} of ${validators?.usageEventCount ?? 0} validator decision(s) recorded tokens but no cost — validator spend is a floor`,
+    });
+  }
+  if (missingCostCount > 0) {
+    confidence.push({
+      kind: "missing_conversation_costs",
+      summary: `${missingCostCount} conversation(s) have no recorded cost — the cost total is a floor`,
+    });
+  }
+  if (costGapConversations.length > 0) {
+    confidence.push({
+      kind: "cost_gaps",
+      summary: `${costGapConversations.length} active conversation(s) recorded zero/absent cost — the cost total is a floor`,
+    });
+  }
+  const unscannedCount = conversationReports.filter(
+    (conversation) => conversation.transcript === null,
+  ).length;
+  if (unscannedCount > 0) {
+    confidence.push({
+      kind: "transcripts_unscanned",
+      summary: `${unscannedCount} of ${conversationReports.length} conversation transcript(s) could not be scanned — transcript-derived checks (cost correction, tool stats, compactions) skipped for them`,
+    });
+  }
+  if (hungTurnMsTotal > 0) {
+    confidence.push({
+      kind: "hung_turns_excluded",
+      summary: `${formatMs(hungTurnMsTotal)} of hung-turn time was excluded from the agent-work total — aggregate turn time is not comparable to reports produced before this exclusion`,
+    });
+  }
+
   const contextStatesList = Object.values(execution.contextStates);
   return {
     overview: {
@@ -1679,12 +2092,16 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     time: {
       wallClockMs,
       agentTurnMsTotal,
+      hungTurnMsTotal,
       humanWaitMsTotal,
+      operatorRecoveryWaitMsTotal,
+      haltRecoveries,
       gaps: reportedGaps,
     },
     publish,
     friction,
     positives,
+    confidence,
     pointers: {
       workflowLogsDir: input.paths.workflowLogsDir,
       transcripts: conversationReports.map((c) => ({
@@ -1808,7 +2225,7 @@ export function renderMarkdown(report: AuditReport): string {
   if (report.cost.validators !== null) {
     const v = report.cost.validators;
     lines.push(
-      `- context validators (codex, not in the total above): est. ${formatUsd(v.estimatedUsd)} · ` +
+      `- context validators (not in the total above): est. ${formatUsd(v.estimatedUsd)} · ` +
         `${formatTokens(v.inputTokens)} in (${formatTokens(v.cachedInputTokens)} cached) / ${formatTokens(v.outputTokens)} out` +
         (v.unpricedEventCount > 0
           ? ` — ${v.unpricedEventCount}/${v.usageEventCount} validation(s) recorded tokens only, so the estimate undercounts`
@@ -1820,8 +2237,27 @@ export function renderMarkdown(report: AuditReport): string {
   lines.push("## Time");
   lines.push("");
   lines.push(
-    `Wall clock ${formatMaybeMs(report.time.wallClockMs)} · agent turns ${formatMs(report.time.agentTurnMsTotal)} · human waits ${formatMs(report.time.humanWaitMsTotal)}`,
+    `Wall clock ${formatMaybeMs(report.time.wallClockMs)} · agent turns ${formatMs(report.time.agentTurnMsTotal)}` +
+      (report.time.hungTurnMsTotal > 0
+        ? ` · hung turns ${formatMs(report.time.hungTurnMsTotal)} (excluded from agent turns)`
+        : "") +
+      ` · human waits ${formatMs(report.time.humanWaitMsTotal)}` +
+      (report.time.haltRecoveries.length > 0
+        ? ` · operator recovery ${formatMs(report.time.operatorRecoveryWaitMsTotal)}`
+        : ""),
   );
+  if (report.time.haltRecoveries.length > 0) {
+    lines.push("");
+    lines.push("Halt recoveries (operator wait between halt and resume):");
+    lines.push("");
+    lines.push("| halted | type | context | resumed | wait |");
+    lines.push("|---|---|---|---|---|");
+    for (const recovery of report.time.haltRecoveries) {
+      lines.push(
+        `| ${recovery.haltedAt} | ${recovery.haltType} | ${recovery.contextId ?? "—"} | ${recovery.resumedAt ?? "not resumed"} | ${formatMaybeMs(recovery.waitMs)} |`,
+      );
+    }
+  }
   if (report.time.gaps.length > 0) {
     lines.push("");
     lines.push("Largest gaps between recorded activity:");
@@ -1925,6 +2361,19 @@ export function renderMarkdown(report: AuditReport): string {
     }
   }
   lines.push("");
+
+  if (report.confidence.length > 0) {
+    lines.push("## Telemetry confidence");
+    lines.push("");
+    lines.push(
+      "Known measurement limits of this report — treat the figures involved as floors or inconclusive:",
+    );
+    lines.push("");
+    for (const note of report.confidence) {
+      lines.push(`- ${note.kind}: ${note.summary}`);
+    }
+    lines.push("");
+  }
 
   lines.push("## Where to dig deeper");
   lines.push("");

@@ -672,8 +672,85 @@ describe("validator cost rollup", () => {
     });
 
     const md = renderMarkdown(report);
-    expect(md).toContain("context validators (codex");
+    expect(md).toContain("context validators");
     expect(md).toContain("$0.40");
+  });
+
+  it("rolls up modern backend-shaped response artifacts", () => {
+    const input = baseInput();
+    input.events.push(
+      evt(T("11:20:00"), {
+        type: "graph-workflow-validation-result",
+        executionId: "exec-1",
+        contextId: "impl",
+        validatorType: "context",
+        pass: true,
+        summary: "GO",
+        reopenTaskIds: [],
+        issues: [],
+        reviewArtifact: {
+          backend: "codex",
+          kind: "response",
+          ref: "th-1",
+          response: "{}",
+          usage: {
+            inputTokens: 50_000,
+            cachedInputTokens: 10_000,
+            outputTokens: 2_000,
+            costUsd: 0.2,
+          },
+        },
+      }),
+    );
+    const report = buildAuditReport(input);
+    expect(report.cost.validators?.estimatedUsd).toBeCloseTo(0.2);
+    expect(report.cost.validators?.inputTokens).toBe(50_000);
+    expect(report.cost.validators?.usageEventCount).toBe(1);
+  });
+
+  it("counts conversation-artifact usage only when the conversation row is unpriced", () => {
+    const input = baseInput();
+    input.events.push(
+      // conv-val already carries a priced conversation row ($1.25) — counting
+      // its artifact usage again would double-count the same spend.
+      evt(T("11:57:00"), {
+        type: "graph-workflow-validation-result",
+        executionId: "exec-1",
+        contextId: "validate",
+        validatorType: "context",
+        pass: true,
+        summary: "GO",
+        reopenTaskIds: [],
+        issues: [],
+        reviewArtifact: {
+          backend: "claude",
+          kind: "conversation",
+          ref: "conv-val",
+          usage: { costUsd: 1.25, apiTurns: 3 },
+        },
+      }),
+      // conv-extra has a null-cost conversation row: the artifact usage is
+      // the only record of this validator decision's spend.
+      evt(T("11:58:00"), {
+        type: "graph-workflow-validation-result",
+        executionId: "exec-1",
+        contextId: "validate",
+        validatorType: "context",
+        pass: true,
+        summary: "GO",
+        reopenTaskIds: [],
+        issues: [],
+        reviewArtifact: {
+          backend: "claude",
+          kind: "conversation",
+          ref: "conv-extra",
+          usage: { costUsd: 2.5, apiTurns: 4 },
+        },
+      }),
+    );
+    const report = buildAuditReport(input);
+    expect(report.cost.validators?.estimatedUsd).toBeCloseTo(2.5);
+    expect(report.cost.validators?.usageEventCount).toBe(1);
   });
 });
 
@@ -1061,5 +1138,421 @@ describe("renderMarkdown", () => {
       .filter((line) => line.includes("issue ")).length;
     expect(rendered).toBeLessThanOrEqual(5);
     expect(md).toContain("more");
+  });
+});
+
+describe("halt recovery and operator wait", () => {
+  it("pairs execution.halted with execution.resumed into operator recovery waits", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:32:00"), "execution.halted", {
+        haltReason: {
+          type: "join_failure",
+          contextId: "impl",
+          message: "pre-merge validation failed",
+        },
+      }),
+      rec(T("11:45:00"), "execution.resumed", { previousStatus: "halted" }),
+    ];
+    const report = buildAuditReport(input);
+    expect(report.time.operatorRecoveryWaitMsTotal).toBe(
+      ms("11:45:00") - ms("11:32:00"),
+    );
+    expect(report.time.haltRecoveries).toHaveLength(1);
+    const recovery = report.time.haltRecoveries[0];
+    expect(recovery?.haltType).toBe("join_failure");
+    expect(recovery?.contextId).toBe("impl");
+    expect(recovery?.resumedAt).toBe(T("11:45:00"));
+    const recovered = report.friction.filter(
+      (f) => f.kind === "recovered_halt",
+    );
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.summary).toContain("join_failure");
+  });
+
+  it("classifies gaps inside a halt window as halt_wait, not stall", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:32:00"), "execution.halted", {
+        haltReason: { type: "join_failure", contextId: "impl" },
+      }),
+      rec(T("11:45:00"), "execution.resumed", {}),
+    ];
+    const report = buildAuditReport(input);
+    const gap = report.time.gaps.find((g) => g.startedAt === T("11:32:00"));
+    expect(gap?.classification).toBe("halt_wait");
+    expect(report.friction.some((f) => f.kind === "stall_gap")).toBe(false);
+  });
+
+  it("reports an unresolved trailing halt with a null wait", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:50:00"), "execution.halted", {
+        haltReason: { type: "circuit_breaker", contextId: "validate" },
+      }),
+    ];
+    const report = buildAuditReport(input);
+    expect(report.time.haltRecoveries).toHaveLength(1);
+    expect(report.time.haltRecoveries[0]?.resumedAt).toBeNull();
+    expect(report.time.haltRecoveries[0]?.waitMs).toBeNull();
+    expect(report.time.operatorRecoveryWaitMsTotal).toBe(0);
+    // Unresolved halts are already reported via the execution's halt state —
+    // no recovered_halt finding for a halt that never resumed.
+    expect(report.friction.some((f) => f.kind === "recovered_halt")).toBe(
+      false,
+    );
+  });
+
+  it("withholds clean_merges when a merge-class halt was recovered", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:32:00"), "execution.halted", {
+        haltReason: { type: "join_failure", contextId: "impl" },
+      }),
+      rec(T("11:45:00"), "execution.resumed", {}),
+    ];
+    const report = buildAuditReport(input);
+    expect(report.positives.map((p) => p.kind)).not.toContain("clean_merges");
+  });
+});
+
+describe("hung turn detection", () => {
+  function hungInput(): AuditInput {
+    const input = baseInput();
+    input.contextLogs.impl = {
+      iterations: [
+        rec(T("10:00:05"), "iteration.started", {
+          iterationNumber: 1,
+          model: "opus",
+        }),
+        rec(T("10:00:05"), "iteration.conversation_resolved", {
+          conversationId: "conv-impl",
+        }),
+        rec(T("10:00:06"), "iteration.prompt_sent", { promptLength: 10000 }),
+        rec(T("11:30:00"), "iteration.agent_turn_completed", {
+          turnNumber: 0,
+          contextTokens: 400000,
+          contextWindowMax: 1000000,
+        }),
+        rec(T("11:31:00"), "iteration.completed", {
+          iterationNumber: 1,
+          completedTaskCount: 2,
+          remainingTaskCount: 0,
+        }),
+      ],
+      tasks: [],
+      validation: [],
+      validatorResponses: [],
+    };
+    return input;
+  }
+
+  it("excludes over-threshold turn intervals from agent-work time and flags them", () => {
+    const report = buildAuditReport(hungInput());
+    const impl = report.contexts.find((c) => c.contextId === "impl");
+    expect(impl?.hungTurnMs).toBe(ms("11:30:00") - ms("10:00:06"));
+    expect(impl?.agentTurnMs).toBe(0);
+    expect(report.time.hungTurnMsTotal).toBe(ms("11:30:00") - ms("10:00:06"));
+    const hung = report.friction.filter((f) => f.kind === "hung_turn");
+    expect(hung).toHaveLength(1);
+    expect(hung[0]?.severity).toBe("high");
+    expect(hung[0]?.contextId).toBe("impl");
+  });
+
+  it("classifies gaps covered by a hung turn as hung_turn, not agent_work", () => {
+    const report = buildAuditReport(hungInput());
+    const gap = report.time.gaps.find((g) => g.startedAt === T("10:00:06"));
+    expect(gap?.classification).toBe("hung_turn");
+  });
+
+  it("flags a trailing unterminated turn bounded by the execution's last activity", () => {
+    const input = baseInput();
+    input.contextLogs.impl = {
+      iterations: [
+        rec(T("10:00:05"), "iteration.started", { iterationNumber: 1 }),
+        rec(T("10:00:06"), "iteration.prompt_sent", { promptLength: 10000 }),
+      ],
+      tasks: [],
+      validation: [],
+      validatorResponses: [],
+    };
+    const report = buildAuditReport(input);
+    const impl = report.contexts.find((c) => c.contextId === "impl");
+    // Bounded by execution.completedAt (12:00), the latest known activity.
+    expect(impl?.hungTurnMs).toBe(ms("12:00:00") - ms("10:00:06"));
+    expect(impl?.agentTurnMs).toBe(0);
+    expect(report.friction.some((f) => f.kind === "hung_turn")).toBe(true);
+  });
+
+  it("keeps ordinary turn intervals in agent-work time", () => {
+    const report = buildAuditReport(baseInput());
+    const impl = report.contexts.find((c) => c.contextId === "impl");
+    expect(impl?.hungTurnMs).toBe(0);
+    expect(impl?.agentTurnMs).toBeGreaterThan(0);
+    expect(report.friction.some((f) => f.kind === "hung_turn")).toBe(false);
+  });
+});
+
+describe("script validation visibility", () => {
+  it("counts script validation runs and classifies their windows as validation_compute", () => {
+    const input = baseInput();
+    input.contextLogs.impl = {
+      ...input.contextLogs.impl!,
+      validation: [
+        rec(T("10:05:00"), "script_validation.started", {
+          command: "bun run test",
+        }),
+        rec(T("10:25:00"), "script_validation.failed", { exitCode: 1 }),
+      ],
+    };
+    const report = buildAuditReport(input);
+    const impl = report.contexts.find((c) => c.contextId === "impl");
+    expect(impl?.scriptValidationRuns).toEqual({
+      started: 1,
+      passed: 0,
+      failed: 1,
+    });
+    const gap = report.time.gaps.find((g) => g.startedAt === T("10:05:00"));
+    expect(gap?.classification).toBe("validation_compute");
+    expect(
+      report.friction.some(
+        (f) => f.kind === "stall_gap" && f.summary.includes("10:05"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("occupancy confidence", () => {
+  it("suppresses rotation_overrun and reports inconclusive occupancy when no window max exists", () => {
+    const raw = baseExecutionRaw();
+    (
+      raw.workingDefinition as { executionContexts: unknown[] }
+    ).executionContexts = [
+      {
+        id: "impl",
+        title: "Implement",
+        iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
+      },
+      { id: "validate", title: "Validate" },
+    ];
+    (raw.laneStates as Record<string, Record<string, unknown>>).impl = {
+      implementer: {
+        lane: "implementer",
+        engine: "codex",
+        sessionRef: { conversationId: "conv-impl" },
+        lastContextTokens: 750000,
+        lastContextWindowMax: null,
+      },
+    };
+    const input: AuditInput = {
+      ...baseInput(),
+      execution: mustParseExecution(raw),
+    };
+    // Strip window max from turn records: a codex lane never reports one.
+    input.contextLogs.impl = {
+      ...input.contextLogs.impl!,
+      iterations: input.contextLogs.impl!.iterations.map((record) =>
+        record.event === "iteration.agent_turn_completed"
+          ? {
+              ...record,
+              fields: { ...record.fields, contextWindowMax: null },
+            }
+          : record,
+      ),
+    };
+    const report = buildAuditReport(input);
+    const impl = report.contexts.find((c) => c.contextId === "impl");
+    expect(impl?.peakOccupancyPct).toBeNull();
+    expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
+      false,
+    );
+    const note = report.confidence.find(
+      (c) => c.kind === "occupancy_unmeasurable",
+    );
+    expect(note).toBeDefined();
+    expect(note?.summary).toContain("impl");
+  });
+
+  it("still flags rotation_overrun when the window max is known", () => {
+    const raw = baseExecutionRaw();
+    (
+      raw.workingDefinition as { executionContexts: unknown[] }
+    ).executionContexts = [
+      {
+        id: "impl",
+        title: "Implement",
+        iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
+      },
+      { id: "validate", title: "Validate" },
+    ];
+    const input: AuditInput = {
+      ...baseInput(),
+      execution: mustParseExecution(raw),
+    };
+    const report = buildAuditReport(input);
+    expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
+      true,
+    );
+  });
+});
+
+describe("cost gaps", () => {
+  it("flags a zero-cost conversation with substantial recorded activity", () => {
+    const input = baseInput();
+    input.conversations.push({
+      id: "conv-zero",
+      role: null,
+      totalCostUsd: 0,
+      totalDurationMs: 2400000,
+      totalTurns: 40,
+      contextTokens: null,
+      contextWindowMax: null,
+      transcriptPath: "/t/conv-zero.jsonl",
+      transcriptScan: {
+        costUsd: null,
+        lineageCount: 0,
+        apiTurns: null,
+        toolUseCount: 100,
+        toolCounts: [],
+        toolErrorCount: 0,
+        backgroundTasksKilled: 0,
+        modelFallbacks: 0,
+        compactions: 0,
+        reads: { uniqueFiles: 0, totalReads: 0, repeatReads: 0 },
+        topReReads: [],
+      },
+    });
+    const report = buildAuditReport(input);
+    const gaps = report.friction.filter((f) => f.kind === "cost_gap");
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]?.summary).toContain("conv-zero");
+  });
+
+  it("does not flag inactive conversations that merely lack a cost row", () => {
+    // conv-extra in the base fixture has a null cost and no activity signals.
+    const report = buildAuditReport(baseInput());
+    expect(report.friction.some((f) => f.kind === "cost_gap")).toBe(false);
+  });
+});
+
+describe("rotation reconciliation", () => {
+  it("flags scheduled rotations that were never applied", () => {
+    const input = baseInput();
+    input.decisions = [
+      rec(T("10:30:00"), "rotation.scheduled", {
+        contextId: "impl",
+        lane: "implementer",
+        reason: "context_over_limit",
+      }),
+      rec(T("10:50:00"), "rotation.scheduled", {
+        contextId: "impl",
+        reason: "context_over_limit",
+      }),
+      rec(T("11:00:00"), "rotation.scheduled", {
+        contextId: "impl",
+        reason: "compaction_detected",
+      }),
+      rec(T("10:45:00"), "implementer.rotation", {
+        contextId: "impl",
+        reason: "rotation_scheduled",
+      }),
+      // Lane switching to a different context is not a rotation application.
+      rec(T("11:40:00"), "implementer.rotation", {
+        contextId: "impl",
+        reason: "context_changed",
+      }),
+    ];
+    const report = buildAuditReport(input);
+    const impl = report.contexts.find((c) => c.contextId === "impl");
+    expect(impl?.rotationScheduledCount).toBe(3);
+    expect(impl?.rotationAppliedCount).toBe(1);
+    const finding = report.friction.find(
+      (f) => f.kind === "rotation_not_applied",
+    );
+    expect(finding).toBeDefined();
+    expect(finding?.contextId).toBe("impl");
+    expect(finding?.summary).toContain("3");
+    expect(finding?.summary).toContain("1");
+  });
+
+  it("stays silent when every scheduled rotation was applied, counting validator rotations", () => {
+    const input = baseInput();
+    input.decisions = [
+      rec(T("10:30:00"), "rotation.scheduled", {
+        contextId: "impl",
+        reason: "context_over_limit",
+      }),
+      rec(T("10:45:00"), "implementer.rotation", {
+        contextId: "impl",
+        reason: "rotation_scheduled",
+      }),
+      rec(T("11:00:00"), "rotation.scheduled", {
+        contextId: "validate",
+        lane: "context_validator",
+        reason: "context_over_limit",
+      }),
+      rec(T("11:05:00"), "validator.rotation", {
+        contextId: "validate",
+        lane: "context_validator",
+        reason: "rotation_scheduled",
+      }),
+    ];
+    const report = buildAuditReport(input);
+    expect(report.friction.some((f) => f.kind === "rotation_not_applied")).toBe(
+      false,
+    );
+    expect(
+      report.contexts.find((c) => c.contextId === "validate")
+        ?.rotationAppliedCount,
+    ).toBe(1);
+  });
+});
+
+describe("join attempt history", () => {
+  it("surfaces join retries and withholds clean_merges", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("10:52:00"), "merge.retry_attempted", {
+        joinId: "join-1",
+        attempt: 2,
+      }),
+      rec(T("10:57:00"), "merge.retry_attempted", {
+        joinId: "join-1",
+        attempt: 3,
+      }),
+    ];
+    const report = buildAuditReport(input);
+    const retry = report.friction.find((f) => f.kind === "join_retry");
+    expect(retry).toBeDefined();
+    expect(retry?.summary).toContain("join-1");
+    expect(retry?.summary).toContain("2");
+    expect(report.positives.map((p) => p.kind)).not.toContain("clean_merges");
+  });
+});
+
+describe("telemetry confidence", () => {
+  it("reports unscanned transcripts and unpriced validator decisions", () => {
+    // Every base-fixture conversation lacks a transcript scan.
+    const report = buildAuditReport(baseInput());
+    const unscanned = report.confidence.find(
+      (c) => c.kind === "transcripts_unscanned",
+    );
+    expect(unscanned).toBeDefined();
+    expect(unscanned?.summary).toContain("4");
+  });
+
+  it("renders the confidence section, recovery table, and hung/recovery time totals", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:32:00"), "execution.halted", {
+        haltReason: { type: "join_failure", contextId: "impl" },
+      }),
+      rec(T("11:45:00"), "execution.resumed", {}),
+    ];
+    const md = renderMarkdown(buildAuditReport(input));
+    expect(md).toContain("## Telemetry confidence");
+    expect(md).toContain("operator recovery");
+    expect(md).toContain("Halt recoveries");
+    expect(md).toContain("join_failure");
   });
 });

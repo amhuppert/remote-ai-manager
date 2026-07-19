@@ -30,6 +30,7 @@ import {
 import "@/lib/shared/sdk-env";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createClaudeFailureClassifier } from "./failure-classifier";
+import { createStallWatchdog } from "../stall-watchdog";
 
 const logger = createLogger("claude:task-runner");
 const claudeFailureClassifier = createClaudeFailureClassifier();
@@ -217,6 +218,21 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       else externalSignal.addEventListener("abort", onExternalAbort);
     }
 
+    // Inactivity watchdog: disabled unless the caller passes a bound (the
+    // claude descriptor declares no default — background-task waits produce
+    // legitimate long silences and claudeTimeoutMs already caps a hung turn).
+    const stallTimeoutMs = input.stallTimeoutMs ?? 0;
+    const stallWatchdog = createStallWatchdog({
+      stallTimeoutMs,
+      onStall: () => {
+        logger.warn("claude-task-runner.stalled", {
+          workingDirectory: input.workingDirectory,
+          stallTimeoutMs,
+        });
+        abortController.abort();
+      },
+    });
+
     let sessionId: string | null = null;
     const textBlocks: string[] = [];
     const rawMessages: unknown[] = [];
@@ -259,6 +275,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       });
 
       for await (const message of stream) {
+        stallWatchdog.touch();
         const msg = message as SDKMessage;
         rawMessages.push(message);
 
@@ -298,7 +315,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         }
       }
     } catch (err) {
-      if (!timedOut) {
+      if (!timedOut && !stallWatchdog.fired()) {
         error = getErrorMessage(err);
         logger.error("claude-task-runner.query_error", {
           workingDirectory: input.workingDirectory,
@@ -307,6 +324,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       }
     } finally {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      stallWatchdog.cancel();
       externalSignal?.removeEventListener("abort", onExternalAbort);
     }
 
@@ -318,7 +336,11 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       !isolatedOneShot && input.resumeRef?.backend === "claude"
         ? input.resumeRef
         : null;
-    const finalError = error ?? (timedOut ? "Task timed out" : null);
+    const stalled = stallWatchdog.fired();
+    if (stalled) timedOut = true;
+    const finalError = stalled
+      ? `Task stalled: no backend activity for ${stallTimeoutMs}ms`
+      : (error ?? (timedOut ? "Task timed out" : null));
     const continuation = resolveTaskContinuation(
       observedBackendRef ?? priorBackendRef,
       finalError,

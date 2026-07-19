@@ -561,4 +561,43 @@ describe("graph workflow implementer runner", () => {
 
     expect(getConversation).not.toHaveBeenCalled();
   });
+
+  it("throws a stall-specific error when the turn's inactivity watchdog fired", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      aborted: true,
+      compacted: false,
+      abortReason: "stalled" as const,
+      timeoutMs: 1_200_000,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await expect(
+      runner.runIteration({
+        projectPath: "/repo",
+        session: makeSession(),
+        prompt: "Implement feature",
+        conversationId: "conversation-1",
+        executionId: "execution-1",
+        contextId: "context-plan",
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "xhigh",
+        toolServer: { servers: [] },
+      }),
+    ).rejects.toMatchObject({
+      cause: "stall",
+      originalMessage:
+        "Prompt execution stalled: no agent activity for 1200000ms",
+    });
+
+    expect(getConversation).not.toHaveBeenCalled();
+  });
 });

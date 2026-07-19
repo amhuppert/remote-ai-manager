@@ -27,7 +27,12 @@ import {
 } from "@/lib/agent-backends/schemas";
 import { readConfig } from "@/lib/config/loader";
 import { estimateCodexCostUsd } from "./pricing";
-import { toSdkModelReasoningEffort, toStringEnv } from "./shared";
+import {
+  CODEX_DEFAULT_STALL_TIMEOUT_MS,
+  toSdkModelReasoningEffort,
+  toStringEnv,
+} from "./shared";
+import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
 
@@ -137,7 +142,11 @@ function eventMessage(value: unknown): string | null {
 async function runCodexTurn(
   thread: CodexTaskThread,
   prompt: CodexTaskInput,
-  options: { outputSchema?: unknown; signal?: AbortSignal },
+  options: {
+    outputSchema?: unknown;
+    signal?: AbortSignal;
+    onActivity?: () => void;
+  },
 ): Promise<CodexTaskTurn> {
   if (typeof thread.runStreamed !== "function") {
     return thread.run(prompt, options);
@@ -150,6 +159,7 @@ async function runCodexTurn(
   let error: string | null = null;
 
   for await (const event of streamed.events) {
+    options.onActivity?.();
     if (!isRecord(event) || typeof event.type !== "string") continue;
 
     if (event.type === "item.completed") {
@@ -362,6 +372,21 @@ export class CodexTaskRunner implements AgentTaskRunner {
       else externalSignal.addEventListener("abort", onExternalAbort);
     }
 
+    // Inactivity watchdog: unlike the whole-run timeout above, this only
+    // trips on dead air — every streamed thread event resets it.
+    const stallTimeoutMs =
+      input.stallTimeoutMs ?? CODEX_DEFAULT_STALL_TIMEOUT_MS;
+    const stallWatchdog = createStallWatchdog({
+      stallTimeoutMs,
+      onStall: () => {
+        logger.warn("codex-task-runner.stalled", {
+          workingDirectory: input.workingDirectory,
+          stallTimeoutMs,
+        });
+        abortController.abort();
+      },
+    });
+
     let threadId: string | null = null;
     let text: string | null = null;
     let structuredOutput: unknown;
@@ -387,6 +412,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       const turn = await runCodexTurn(thread, prompt, {
         ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
         signal: abortController.signal,
+        onActivity: () => stallWatchdog.touch(),
       });
 
       // Read the thread id only after the turn: the SDK assigns a fresh
@@ -454,6 +480,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
     } finally {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      stallWatchdog.cancel();
       externalSignal?.removeEventListener("abort", onExternalAbort);
     }
 
@@ -462,7 +489,13 @@ export class CodexTaskRunner implements AgentTaskRunner {
       : wasResume
         ? input.resumeRef!
         : null;
-    const finalError = error ?? (timedOut ? "Task timed out" : null);
+    // A stall abort may surface as an AbortError throw or as a graceful
+    // turn.failed reply to the interrupt; either way the stall is the cause.
+    const stalled = stallWatchdog.fired();
+    if (stalled) timedOut = true;
+    const finalError = stalled
+      ? `Task stalled: no backend activity for ${stallTimeoutMs}ms`
+      : (error ?? (timedOut ? "Task timed out" : null));
     const failure =
       finalError === null ? null : codexFailureClassifier.classify(finalError);
     const continuationDisposition =
@@ -477,6 +510,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       workingDirectory: input.workingDirectory,
       threadId,
       timedOut,
+      stalled,
       hasError: !!error,
       executionProfile: input.executionProfile ?? "standard",
     });

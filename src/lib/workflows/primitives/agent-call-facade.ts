@@ -88,6 +88,7 @@ interface TaskRunnerResolution {
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
+  stallTimeoutMs?: number;
   sandboxMode?: AgentTaskRequest["sandboxMode"];
   approvalPolicy?: AgentTaskRequest["approvalPolicy"];
   networkAccessEnabled?: boolean;
@@ -110,6 +111,8 @@ export interface TaskExecutionIntent {
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
+  /** Per-run inactivity bound forwarded to the runner (see AgentTaskRequest). */
+  stallTimeoutMs?: number;
   sandboxMode?: AgentTaskRequest["sandboxMode"];
   approvalPolicy?: AgentTaskRequest["approvalPolicy"];
   networkAccessEnabled?: boolean;
@@ -370,6 +373,9 @@ async function resolveTaskRunnerResolution(
       ...(intent.defaultTimeoutMs !== undefined
         ? { defaultTimeoutMs: intent.defaultTimeoutMs }
         : {}),
+      ...(intent.stallTimeoutMs !== undefined
+        ? { stallTimeoutMs: intent.stallTimeoutMs }
+        : {}),
       ...(intent.sandboxMode !== undefined
         ? { sandboxMode: intent.sandboxMode }
         : {}),
@@ -431,6 +437,9 @@ async function executeTaskRun(
       : {}),
     ...(resolution.defaultTimeoutMs !== undefined
       ? { defaultTimeoutMs: resolution.defaultTimeoutMs }
+      : {}),
+    ...(resolution.stallTimeoutMs !== undefined
+      ? { stallTimeoutMs: resolution.stallTimeoutMs }
       : {}),
     ...(resolution.sandboxMode !== undefined
       ? { sandboxMode: resolution.sandboxMode }

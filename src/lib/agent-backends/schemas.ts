@@ -105,6 +105,11 @@ export const codexConfigSchema = z.object({
   model: z.string().optional().default("gpt-5.4"),
   reasoningEffort: codexReasoningEffortSchema.optional(),
   timeoutMs: z.number().positive().nullable().optional(),
+  /**
+   * Per-turn inactivity bound override; unset falls back to the codex
+   * descriptor's default, explicit null disables the bound.
+   */
+  stallTimeoutMs: z.number().positive().nullable().optional(),
   pricing: codexPricingTableSchema.optional(),
 });
 export type CodexConfig = z.infer<typeof codexConfigSchema>;

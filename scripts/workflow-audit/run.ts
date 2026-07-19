@@ -467,6 +467,12 @@ export function loadAuditInput(
     events,
     conversations,
     contextLogs: logsDirExists ? loadContextLogs(executionLogsDir) : {},
+    lifecycle: logsDirExists
+      ? readJsonlFile(path.join(executionLogsDir, "lifecycle.jsonl"))
+      : [],
+    decisions: logsDirExists
+      ? readJsonlFile(path.join(executionLogsDir, "decisions.jsonl"))
+      : [],
     paths: {
       workflowLogsDir: logsDirExists ? executionLogsDir : null,
       transcriptsDir: deps.transcriptsDir,

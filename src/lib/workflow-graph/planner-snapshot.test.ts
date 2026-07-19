@@ -147,6 +147,16 @@ describe("planner workflow generation — fixture snapshot", () => {
               "Prefer early returns",
               "Zod schemas are the source of truth",
             ],
+            "invariants": [
+              {
+                "id": "server-side-enforcement",
+                "statement": "Every gate is enforced server-side, not only in the UI",
+              },
+              {
+                "id": "production-shaped-fixtures",
+                "statement": "Test fixtures mirror production event shapes",
+              },
+            ],
             "knownAmbiguities": [
               "scope of the AeroTrainer floor/round case",
             ],

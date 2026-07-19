@@ -31,3 +31,11 @@ export function toStringEnv(
   }
   return result;
 }
+
+/**
+ * Default per-turn inactivity bound for codex turns and task runs. Single
+ * source for the descriptor metadata literal and the task runner's fallback
+ * when a request carries no explicit `stallTimeoutMs` (incident 2026-07-18:
+ * a codex model turn hung silently for 9h37m with no bound).
+ */
+export const CODEX_DEFAULT_STALL_TIMEOUT_MS = 20 * 60 * 1000;

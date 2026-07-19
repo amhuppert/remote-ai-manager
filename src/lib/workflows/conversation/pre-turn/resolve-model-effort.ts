@@ -14,6 +14,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   resolveConfiguredConversationTimeoutMs,
   resolveConfiguredConversationTurnSettings,
+  resolveConfiguredStallTimeoutMs,
   type ConversationTurnConfig,
 } from "@/lib/agent-backends/conversation-policy";
 
@@ -80,4 +81,15 @@ export function resolveBackendTimeoutMs(
   config: ActorConfig,
 ): number {
   return resolveConfiguredConversationTimeoutMs(backend, config);
+}
+
+/**
+ * Resolve the per-turn inactivity (stall) bound for a turn based on the
+ * backend. Returns 0 when the backend has no stall bound.
+ */
+export function resolveBackendStallTimeoutMs(
+  backend: AgentBackendId,
+  config: ActorConfig,
+): number {
+  return resolveConfiguredStallTimeoutMs(backend, config);
 }

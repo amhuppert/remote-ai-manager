@@ -1156,6 +1156,27 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
+    it("reports aborted, not a provider failure, when an external abort surfaces as a graceful turn.failed", async () => {
+      // Incident shape (2026-07-18 pause of the hung SDD turn): the abort
+      // signal fires, codex answers the interrupt with turn.failed
+      // ("Aborted: user") and the stream ENDS without throwing. The turn was
+      // cancelled — it must classify as aborted, never as an sdk_error.
+      const abortController = new AbortController();
+      const thread = makeThread([threadStarted(), turnFailed("Aborted: user")]);
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      abortController.abort();
+      const result = await runtime.sendTurn(
+        makeTurnInput({ signal: abortController.signal }),
+      );
+
+      expect(result.aborted).toBe(true);
+      expect(result.failure).toBeNull();
+      // A cancelled resume leaves the server-side thread viable.
+      expect(result.continuationDisposition).toBe("retain");
+    });
+
     it("returns backendRef null when thread.started never arrived before failure", async () => {
       const thread = makeThread([], {
         runStreamedThrows: new Error("Spawn failed"),

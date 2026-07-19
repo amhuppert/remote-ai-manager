@@ -10,6 +10,10 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import {
+  createStallWatchdog,
+  type StallWatchdog,
+} from "@/lib/agent-backends/stall-watchdog";
 import type { ConversationRuntimeState } from "../runtime-state";
 
 const logger = createLogger("conversation-actor");
@@ -29,6 +33,10 @@ export interface TurnAbortWiring {
   abortController: AbortController;
   /** True once the safety-net timeout fired (read on abort exit paths). */
   timeoutFired(): boolean;
+  /** True once the inactivity watchdog fired (read on abort exit paths). */
+  stallFired(): boolean;
+  /** Record backend activity: resets the inactivity deadline. */
+  notifyActivity(): void;
   /** Clear the timeout and unregister the controller (turn `finally`). */
   cleanup(): void;
 }
@@ -44,6 +52,12 @@ export function wireTurnAbort(
     sessionName: string;
     backend: string;
     timeoutMs: number;
+    /**
+     * Per-turn inactivity bound (0 disables). Fed by `notifyActivity()` from
+     * the turn's backend-event stream; a turn with no events for this long is
+     * presumed hung and torn down like a timeout, but reported as `stalled`.
+     */
+    stallTimeoutMs?: number;
     /** Closes the live backend runtime when the safety-net timeout fires. */
     closeRuntime(): void;
   },
@@ -80,14 +94,32 @@ export function wireTurnAbort(
     }, input.timeoutMs);
   }
 
+  const stallTimeoutMs = input.stallTimeoutMs ?? 0;
+  const stallWatchdog: StallWatchdog = createStallWatchdog({
+    stallTimeoutMs,
+    onStall: () => {
+      logger.warn("prompt.stalled", {
+        sessionName: input.sessionName,
+        backend: input.backend,
+        conversationId: input.conversationId,
+        stallTimeoutMs,
+      });
+      abortController.abort();
+      input.closeRuntime();
+    },
+  });
+
   return {
     abortController,
     timeoutFired: () => timeoutFired,
+    stallFired: () => stallWatchdog.fired(),
+    notifyActivity: () => stallWatchdog.touch(),
     cleanup: () => {
       if (runtimeState.timeoutHandle) {
         clearTimeout(runtimeState.timeoutHandle);
         runtimeState.timeoutHandle = undefined;
       }
+      stallWatchdog.cancel();
       deps.unregisterAbortController(input.conversationId, abortController);
     },
   };

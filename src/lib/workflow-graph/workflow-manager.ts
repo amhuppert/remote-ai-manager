@@ -791,7 +791,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         conversationIdsToAbort,
       );
       const execLogger = getExecutionLogger(nextExecution.id);
-      execLogger?.lifecycle("execution.paused");
+      execLogger?.lifecycle("execution.paused", { actor: "operator" });
       logger.info("graph-workflow.execution.paused", {
         executionId: nextExecution.id,
       });
@@ -817,7 +817,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       );
       await stopLaneDevServers({ execution: nextExecution, projectPath });
       const execLogger = getExecutionLogger(nextExecution.id);
-      execLogger?.lifecycle("execution.aborted");
+      execLogger?.lifecycle("execution.aborted", { actor: "operator" });
       execLogger?.writeManifest(nextExecution);
       unregisterExecutionLogger(nextExecution.id);
       logger.info("graph-workflow.execution.aborted", {
@@ -876,6 +876,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("execution.halted", {
       haltReason,
+      actor: "system",
     });
     execLogger?.writeManifest(nextExecution);
     unregisterExecutionLogger(nextExecution.id);
@@ -892,6 +893,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     options?: GraphWorkflowResumeOptions,
   ): Promise<GraphWorkflowExecution> {
     let previousStatus: GraphWorkflowStatus | null = null;
+    // Holder object rather than a `let`: TS flow analysis does not see the
+    // closure assignment, so a bare local reads as never at the emit site.
+    const resumeCapture: {
+      resolvedHaltReason: GraphWorkflowHaltReason | null;
+    } = { resolvedHaltReason: null };
     let hasInterrupted = false;
     let mergeRetryContextIds: string[] = [];
     let resetJoinIds: string[] = [];
@@ -909,6 +915,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         }
 
         previousStatus = execution.status;
+        // Captured before the clear below: the resume event echoes which halt
+        // it resolved, so lifecycle.jsonl halt→resume pairs stay verifiable.
+        resumeCapture.resolvedHaltReason = execution.haltReason;
 
         // Resume is a manual retry decision: concluded-failed joins go back to
         // pending (per-lane merge progress survives) so the loop re-runs them,
@@ -1024,6 +1033,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     registerExecutionLogger(execLogger);
     execLogger.lifecycle("execution.resumed", {
       previousStatus,
+      actor: "operator",
+      resolvedHaltType: resumeCapture.resolvedHaltReason?.type ?? null,
+      // Not every halt variant carries a contextId (e.g. recovery_error).
+      resolvedHaltContextId:
+        resumeCapture.resolvedHaltReason !== null &&
+        "contextId" in resumeCapture.resolvedHaltReason
+          ? (resumeCapture.resolvedHaltReason.contextId ?? null)
+          : null,
       hasInterruptedTasks: hasInterrupted,
       resetContextIds: Object.values(nextExecution.contextStates)
         .filter((cs) => cs.status === "ready")
@@ -1149,6 +1166,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       execLogger?.lifecycle("execution.halted", {
         haltReason: normalizedExecution.haltReason,
         cause: "restart_drain_resumed",
+        actor: "system",
       });
       execLogger?.writeManifest(normalizedExecution);
       unregisterExecutionLogger(normalizedExecution.id);
@@ -1997,6 +2015,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     execLogger?.lifecycle("execution.halted", {
       haltReason: nextExecution.haltReason,
       cause: "drain_and_halt",
+      actor: "system",
     });
     execLogger?.writeManifest(nextExecution);
     unregisterExecutionLogger(nextExecution.id);

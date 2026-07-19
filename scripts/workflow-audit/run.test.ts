@@ -305,6 +305,46 @@ describe("loadAuditInput", () => {
     ).toBeNull();
   });
 
+  it("loads execution-level lifecycle and decision records", () => {
+    const executionDir = path.join(logsBaseDir, ACTIVE_ID);
+    writeFileSync(
+      path.join(executionDir, "lifecycle.jsonl"),
+      [
+        JSON.stringify({
+          timestamp: "2026-07-04T10:50:00.000Z",
+          event: "execution.halted",
+          haltReason: { type: "join_failure", contextId: "impl" },
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-04T11:05:00.000Z",
+          event: "execution.resumed",
+          previousStatus: "halted",
+        }),
+      ].join("\n"),
+    );
+    writeFileSync(
+      path.join(executionDir, "decisions.jsonl"),
+      JSON.stringify({
+        timestamp: "2026-07-04T10:30:00.000Z",
+        event: "rotation.scheduled",
+        contextId: "impl",
+        reason: "context_over_limit",
+      }),
+    );
+    const input = loadAuditInput(
+      { db, logsBaseDir, transcriptsDir: null },
+      { executionId: ACTIVE_ID },
+    );
+    expect(input?.lifecycle).toHaveLength(2);
+    expect(input?.lifecycle?.[0]?.event).toBe("execution.halted");
+    expect(input?.decisions).toHaveLength(1);
+    expect(input?.decisions?.[0]?.fields.contextId).toBe("impl");
+
+    const report = buildAuditReport(input!);
+    expect(report.time.haltRecoveries).toHaveLength(1);
+    expect(report.time.operatorRecoveryWaitMsTotal).toBe(15 * 60 * 1000);
+  });
+
   it("feeds buildAuditReport end to end", () => {
     const input = loadAuditInput(
       { db, logsBaseDir, transcriptsDir: "/transcripts" },

@@ -278,7 +278,7 @@ export interface PromptActorResult {
   aborted: boolean;
   /** True when the SDK auto-compacted the context at least once this turn. */
   compacted: boolean;
-  abortReason?: "timeout" | "user" | "shutdown";
+  abortReason?: "timeout" | "stalled" | "user" | "shutdown";
   timeoutMs?: number;
   error: string | null;
   /**
