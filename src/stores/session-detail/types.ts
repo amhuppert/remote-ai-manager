@@ -202,6 +202,38 @@ export interface SessionUiSlice {
   clearMessageNavRequest: () => void;
 }
 
+/**
+ * The side-panel configuration saved per session so switching sessions can
+ * restore what the user was looking at (tab, open documents, spec selection).
+ * Browser-side only — nothing here is persisted across reloads.
+ */
+export interface PanelSessionSnapshot {
+  rightPaneTab: RightPaneTab;
+  openDocuments: DocumentRef[];
+  activeDocPath: string | null;
+  specBrowserSelection: SpecBrowserSelection | null;
+  pendingTrayExpanded: boolean;
+}
+
+export interface PanelSessionSlice {
+  /** Key of the session whose side-panel state the store currently holds. */
+  panelSessionKey: string | null;
+  /** Saved side-panel snapshots for previously visited sessions. */
+  panelSessionMemory: Record<string, PanelSessionSnapshot>;
+  activatePanelSession: (key: string) => void;
+}
+
+/**
+ * Composite session identity for panel memory. NUL cannot appear in directory
+ * names, so the join is unambiguous for any project/session pair.
+ */
+export function panelSessionKeyFor(
+  projectName: string,
+  sessionName: string,
+): string {
+  return `${projectName}\u0000${sessionName}`;
+}
+
 export interface ResetSlice {
   resetConversationState: () => void;
   resetStore: () => void;
@@ -212,6 +244,7 @@ export type SessionDetailStore = LayoutSlice &
   SidebarSlice &
   DocumentViewerSlice &
   SessionUiSlice &
+  PanelSessionSlice &
   ResetSlice;
 
 /** The state-only projection: every field slices contribute, no actions. */
@@ -233,6 +266,8 @@ export type SessionDetailState = Pick<
   | "docActivationNonce"
   | "pendingTrayExpanded"
   | "feedbackTarget"
+  | "panelSessionKey"
+  | "panelSessionMemory"
   | "isVoiceRecording"
   | "promptPlaceholder"
   | "showDeleteConfirm"
@@ -333,4 +368,6 @@ export const initialState: SessionDetailState = {
   pendingTrayExpanded: false,
   feedbackTarget: null,
   messageNavRequest: null,
+  panelSessionKey: null,
+  panelSessionMemory: {},
 };

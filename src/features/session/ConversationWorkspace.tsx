@@ -30,6 +30,7 @@ import { useSessionPageQueries } from "@/features/session/hooks/use-session-page
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
 import type { SessionWorkspaceSlices } from "@/features/session/hooks/session-workspace-slices";
 import { useApprovalGate } from "@/features/session/hooks/use-approval-gate";
+import { useActivatePanelSession } from "@/stores/session-detail.store";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import { CONVERSATIONS_LAYOUT_STORAGE_KEY } from "@/features/session/conversations-page-state";
@@ -231,10 +232,14 @@ export default function ConversationWorkspace({
     fireAndForgetRef.current = false;
   }, [clearImages, setInlineMarkerIds, fireAndForgetRef]);
 
+  const activatePanelSession = useActivatePanelSession();
   useSessionLifecycle({
     resetConversationState: store.resetConversationState,
     clearDraftComposerState,
     clearConversationMessages: store.clearConversationMessages,
+    activatePanelSession,
+    projectName,
+    sessionName,
     conversationId,
     session,
     pendingQuestionId: store.pendingQuestionId,

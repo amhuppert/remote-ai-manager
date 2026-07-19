@@ -338,7 +338,9 @@ describe("session-detail.store — resetConversationState", () => {
 
     const after = useSessionDetailStore.getState();
     expect(after.mobilePanel).toBe("chat");
-    expect(after.rightPaneTab).toBe("diff");
+    // The right pane is session-scoped, not conversation-scoped: the active
+    // tab survives conversation switches (see the panel-session tests).
+    expect(after.rightPaneTab).toBe("docs");
     expect(after.pendingQuestionId).toBeNull();
   });
 

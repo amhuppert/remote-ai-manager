@@ -3,6 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import { createDocumentViewerSlice } from "./session-detail/document-viewer-slice";
 import { createInFlightSlice } from "./session-detail/in-flight-slice";
 import { createLayoutSlice } from "./session-detail/layout-slice";
+import { createPanelSessionSlice } from "./session-detail/panel-session-slice";
 import { createResetSlice } from "./session-detail/reset-slice";
 import { createSessionUiSlice } from "./session-detail/session-ui-slice";
 import { createSidebarSlice } from "./session-detail/sidebar-slice";
@@ -14,7 +15,11 @@ export type {
   OptimisticAgentSettings,
   SessionDetailState,
 } from "./session-detail/types";
-export { EMPTY_IN_FLIGHT, selectInFlightFor } from "./session-detail/types";
+export {
+  EMPTY_IN_FLIGHT,
+  selectInFlightFor,
+  panelSessionKeyFor,
+} from "./session-detail/types";
 
 /**
  * The session-detail workspace store, composed from concern-scoped slices under
@@ -30,6 +35,7 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
     ...createSidebarSlice(...args),
     ...createDocumentViewerSlice(...args),
     ...createSessionUiSlice(...args),
+    ...createPanelSessionSlice(...args),
     ...createResetSlice(...args),
   })),
 );
@@ -204,6 +210,8 @@ export const useTogglePendingTray = () =>
   useSessionDetailStore((s) => s.togglePendingTray);
 export const useSetFeedbackTarget = () =>
   useSessionDetailStore((s) => s.setFeedbackTarget);
+export const useActivatePanelSession = () =>
+  useSessionDetailStore((s) => s.activatePanelSession);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
 export const useResetConversationState = () =>

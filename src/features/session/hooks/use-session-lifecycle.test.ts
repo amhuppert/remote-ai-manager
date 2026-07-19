@@ -3,6 +3,7 @@
 import { renderHook } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
+import { panelSessionKeyFor } from "@/stores/session-detail.store";
 import {
   useSessionLifecycle,
   autoFocusStrippedUrl,
@@ -45,6 +46,9 @@ function makeArgs(
     resetConversationState: vi.fn(),
     clearDraftComposerState: vi.fn(),
     clearConversationMessages: vi.fn(),
+    activatePanelSession: vi.fn(),
+    projectName: "proj",
+    sessionName: "sess",
     conversationId: "c",
     session: undefined,
     pendingQuestionId: null,
@@ -92,6 +96,50 @@ describe("useSessionLifecycle", () => {
     // Switching the active conversation runs the leave-cleanup exactly once.
     expect(resetConversationState).toHaveBeenCalledTimes(1);
     expect(clearDraftComposerState).toHaveBeenCalledTimes(1);
+  });
+
+  it("activates the panel session for the workspace's session identity", () => {
+    const activatePanelSession = vi.fn();
+    const { rerender } = renderHook(
+      (props: UseSessionLifecycleArgs) => useSessionLifecycle(props),
+      {
+        initialProps: makeArgs({
+          projectName: "proj",
+          sessionName: "sess-a",
+          conversationId: "a1",
+          activatePanelSession,
+        }),
+      },
+    );
+    expect(activatePanelSession).toHaveBeenCalledTimes(1);
+    expect(activatePanelSession).toHaveBeenCalledWith(
+      panelSessionKeyFor("proj", "sess-a"),
+    );
+
+    // Conversation switches within the same session leave the panel alone.
+    rerender(
+      makeArgs({
+        projectName: "proj",
+        sessionName: "sess-a",
+        conversationId: "a2",
+        activatePanelSession,
+      }),
+    );
+    expect(activatePanelSession).toHaveBeenCalledTimes(1);
+
+    // A cross-session switch re-activates with the new session's key.
+    rerender(
+      makeArgs({
+        projectName: "proj",
+        sessionName: "sess-b",
+        conversationId: "b1",
+        activatePanelSession,
+      }),
+    );
+    expect(activatePanelSession).toHaveBeenCalledTimes(2);
+    expect(activatePanelSession).toHaveBeenLastCalledWith(
+      panelSessionKeyFor("proj", "sess-b"),
+    );
   });
 });
 

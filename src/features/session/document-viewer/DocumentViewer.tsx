@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
 import type { DocumentRef } from "@/lib/document-comments/schemas";
 import {
@@ -18,6 +18,7 @@ import {
 import DocumentSurface from "./DocumentSurface";
 import DocumentTabs from "./DocumentTabs";
 import ReadOnlyDocumentSurface from "./ReadOnlyDocumentSurface";
+import { readDocScroll, saveDocScroll } from "./doc-scroll-memory";
 
 /** Split a canonical `docPath` into its filename and directory. */
 function splitDocPath(docPath: string): { fileName: string; dir: string } {
@@ -166,8 +167,40 @@ function OpenDocumentPane({
     ? classifyDocumentContentError(contentQuery.error)
     : null;
 
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const hasContent = contentQuery.data != null;
+
+  // Restore the remembered scroll position once content is in the DOM (a pane
+  // remounts when the user returns to this session or re-opens a closed tab;
+  // within a session the pane stays mounted and the DOM keeps the position).
+  // Layout effect: the position must land before paint, and the markdown body
+  // renders synchronously with `content`, so scrollHeight is final here. The
+  // browser clamps a stale value that exceeds the current content height.
+  useLayoutEffect(() => {
+    if (!hasContent) return;
+    const saved = readDocScroll(docRef);
+    if (saved === undefined) return;
+    const viewport = wrapRef.current?.querySelector("[data-markdown-viewport]");
+    if (viewport) viewport.scrollTop = saved;
+  }, [hasContent, docRef]);
+
   return (
-    <div className={cn("min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")}>
+    <div
+      ref={wrapRef}
+      className={cn("min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")}
+      // Scroll events don't bubble, but the capture phase sees descendant
+      // scrolls — this tracks the markdown viewport without re-attaching a
+      // listener across its loading/loaded/error remounts.
+      onScrollCapture={(event) => {
+        const el = event.target;
+        if (
+          el instanceof HTMLElement &&
+          el.dataset.markdownViewport !== undefined
+        ) {
+          saveDocScroll(docRef, el.scrollTop);
+        }
+      }}
+    >
       {docRef.docPath.startsWith("/") ? (
         <ReadOnlyDocumentSurface
           content={contentQuery.data?.content ?? null}

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
+import { panelSessionKeyFor } from "@/stores/session-detail.store";
 
 /**
  * The current URL with the one-shot autoFocus param removed. Pure so the
@@ -31,6 +32,14 @@ export interface UseSessionLifecycleArgs {
    */
   clearDraftComposerState: () => void;
   clearConversationMessages: () => void;
+  /**
+   * Stash/restore the side panel per session (see panel-session-slice). Keyed
+   * by project+session, so conversation switches within one session never fire
+   * it and the panel (active tab, open docs, scroll) carries over untouched.
+   */
+  activatePanelSession: (key: string) => void;
+  projectName: string;
+  sessionName: string;
   conversationId: string;
   session: SessionState | undefined;
   pendingQuestionId: string | null;
@@ -42,6 +51,9 @@ export function useSessionLifecycle({
   resetConversationState,
   clearDraftComposerState,
   clearConversationMessages,
+  activatePanelSession,
+  projectName,
+  sessionName,
   conversationId,
   session,
   pendingQuestionId,
@@ -60,6 +72,14 @@ export function useSessionLifecycle({
       clearDraftComposerState();
     };
   }, [conversationId, resetConversationState, clearDraftComposerState]);
+
+  // Stash the previous session's side panel and restore this session's. Runs
+  // after the reset cleanup above (all cleanups precede setups within a
+  // commit), and that reset preserves the panel fields, so the outgoing
+  // session's panel state is still intact when it is stashed here.
+  useEffect(() => {
+    activatePanelSession(panelSessionKeyFor(projectName, sessionName));
+  }, [projectName, sessionName, activatePanelSession]);
 
   useEffect(() => {
     clearConversationMessages();

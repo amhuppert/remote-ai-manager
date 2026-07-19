@@ -18,6 +18,9 @@ export const createResetSlice: SessionDetailSliceCreator<ResetSlice> = (
   // conversation — it belongs to each conversation, not to the workspace that
   // happens to display it — so a workspace swap must not clear another
   // conversation's streaming turn out from under the panes/peek surfaces.
+  // The side panel (active tab, open documents, spec selection) is session-
+  // scoped: it survives conversation switches and is stashed/restored per
+  // session by the panel-session slice, not cleared here.
   resetConversationState: () =>
     set((state) => ({
       ...initialState,
@@ -27,6 +30,14 @@ export const createResetSlice: SessionDetailSliceCreator<ResetSlice> = (
       sidebarSessionFilter: state.sidebarSessionFilter,
       layout: state.layout,
       inFlight: state.inFlight,
+      rightPaneTab: state.rightPaneTab,
+      openDocuments: state.openDocuments,
+      activeDocPath: state.activeDocPath,
+      docActivationNonce: state.docActivationNonce,
+      specBrowserSelection: state.specBrowserSelection,
+      pendingTrayExpanded: state.pendingTrayExpanded,
+      panelSessionKey: state.panelSessionKey,
+      panelSessionMemory: state.panelSessionMemory,
     })),
 
   resetStore: () => {
