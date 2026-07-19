@@ -238,6 +238,7 @@ export default function ConnectedWorkflowBuilderPage({
                 {
                   label: projectName,
                   href: `/projects/${encodeURIComponent(projectName)}`,
+                  isProject: true,
                 },
                 { label: "workflow-builder" },
               ]

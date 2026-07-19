@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/ui/cn";
@@ -10,18 +10,26 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
+import {
+  BreadcrumbProjectSwitcher,
+  BreadcrumbSessionSwitcher,
+} from "@/components/topbar/NavSwitchers";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import {
   activeConversationHref,
   activeConversationNeedsAttention,
 } from "@/lib/active-conversations/row-helpers";
 import { useClientStateReady } from "@/hooks/use-client-state-ready";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 interface BreadcrumbSegment {
   label: string;
   href?: string;
+  isProject?: boolean;
   isSession?: boolean;
 }
+
+type OpenSwitcher = "project" | "session" | null;
 
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
@@ -49,6 +57,34 @@ export default function Topbar({
     getServerHydrationSnapshot,
   );
   const pathname = usePathname();
+
+  // Breadcrumb switchers: the flagged project/session segments upgrade from
+  // plain links to dropdown switchers. The session switcher needs the active
+  // project (its list is project-scoped), so it falls back to a link when no
+  // project segment exists. One switcher open at a time.
+  const projectSegment = breadcrumbs.find((seg) => seg.isProject);
+  const sessionSegment = breadcrumbs.find((seg) => seg.isSession);
+  const activeProjectName = projectSegment?.label ?? null;
+  const [openSwitcher, setOpenSwitcher] = useState<OpenSwitcher>(null);
+  // `keepActiveInOverlay` while one of OUR switchers is open so the same chord
+  // toggles it closed; any other overlay (dialogs, menus) still suppresses.
+  useAppHotkey(
+    "switchProject",
+    () => setOpenSwitcher((open) => (open === "project" ? null : "project")),
+    {
+      enabled: projectSegment !== undefined,
+      keepActiveInOverlay: openSwitcher !== null,
+    },
+  );
+  useAppHotkey(
+    "switchSession",
+    () => setOpenSwitcher((open) => (open === "session" ? null : "session")),
+    {
+      enabled: sessionSegment !== undefined && activeProjectName !== null,
+      keepActiveInOverlay: openSwitcher !== null,
+    },
+  );
+
   const { data: activeConvosData } = useActiveConversationsQuery();
   const clientStateReady = useClientStateReady();
   const pinnedConversations = clientStateReady
@@ -99,12 +135,37 @@ export default function Topbar({
               isLast &&
                 "max-768:min-w-0 max-768:overflow-hidden max-768:text-ellipsis max-768:whitespace-nowrap",
             );
+            const switcherLayout = cn(
+              isLast && "max-768:min-w-0 max-768:overflow-hidden",
+              !isLast && "max-768:hidden",
+            );
             return (
               <span key={seg.href ?? seg.label} style={{ display: "contents" }}>
                 {i > 0 && (
                   <span className="text-text-tertiary max-768:hidden">/</span>
                 )}
-                {seg.href ? (
+                {seg.isProject ? (
+                  <BreadcrumbProjectSwitcher
+                    projectName={seg.label}
+                    open={openSwitcher === "project"}
+                    onOpenChange={(open) =>
+                      setOpenSwitcher(open ? "project" : null)
+                    }
+                    siblingOpen={openSwitcher === "session"}
+                    triggerLayoutClassName={switcherLayout}
+                  />
+                ) : seg.isSession && activeProjectName !== null ? (
+                  <BreadcrumbSessionSwitcher
+                    projectName={activeProjectName}
+                    sessionName={seg.label}
+                    open={openSwitcher === "session"}
+                    onOpenChange={(open) =>
+                      setOpenSwitcher(open ? "session" : null)
+                    }
+                    siblingOpen={openSwitcher === "project"}
+                    triggerLayoutClassName={switcherLayout}
+                  />
+                ) : seg.href ? (
                   <Link
                     href={seg.href}
                     className={cn(

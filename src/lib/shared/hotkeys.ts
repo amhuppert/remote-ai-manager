@@ -31,7 +31,9 @@ export type HotkeyId =
   | "activateOpenTab"
   | "exitPanes"
   | "expandThinkingBlocks"
-  | "collapseThinkingBlocks";
+  | "collapseThinkingBlocks"
+  | "switchProject"
+  | "switchSession";
 
 export type HotkeyRegistry = Record<HotkeyId, HotkeyDefinition>;
 
@@ -196,6 +198,27 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     label: "Collapse thinking blocks",
     description: "Collapse all thinking blocks in the active conversation",
     category: "navigation",
+  },
+  // mod+k (the design's first choice for the session switcher) is owned by
+  // focusSidebarSearch/focusCommandConsole, so the switchers use the free
+  // mod+p / mod+j chords instead.
+  switchProject: {
+    id: "switchProject",
+    keys: "mod+p",
+    label: "Switch project",
+    description: "Open the project switcher in the top bar",
+    category: "navigation",
+    enableOnFormTags: true,
+    enableOnContentEditable: true,
+  },
+  switchSession: {
+    id: "switchSession",
+    keys: "mod+j",
+    label: "Switch session",
+    description: "Open the session switcher in the top bar",
+    category: "navigation",
+    enableOnFormTags: true,
+    enableOnContentEditable: true,
   },
 };
 

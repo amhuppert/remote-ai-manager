@@ -40,7 +40,7 @@ describe("LoadingSessionView", () => {
     expect(screen.getByText("sess-1")).toBeInTheDocument();
   });
 
-  it("URL-encodes the project name in the breadcrumb href but shows the decoded label", () => {
+  it("renders the project and session breadcrumbs as switcher triggers with decoded labels", () => {
     renderWithQuery(
       <LoadingSessionView
         projectName="my-proj"
@@ -48,10 +48,13 @@ describe("LoadingSessionView", () => {
         decodedProjectName="my proj"
       />,
     );
-    const decodedLink = screen.getByText("my proj").closest("a");
-    expect(decodedLink?.getAttribute("href")).toBe("/projects/my-proj");
-
-    const sessionLink = screen.getByText("sess-1").closest("a");
-    expect(sessionLink?.getAttribute("href")).toBe("/projects/my-proj/sess-1");
+    // The flagged segments upgrade to dropdown switchers (navigation happens
+    // on selection — encoding is covered by NavSwitchers.test.tsx); the root
+    // stays a plain link.
+    expect(screen.getByRole("button", { name: "my proj" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "sess-1" })).toBeInTheDocument();
+    expect(
+      screen.getByText("projects").closest("a")?.getAttribute("href"),
+    ).toBe("/projects");
   });
 });

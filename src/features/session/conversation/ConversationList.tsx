@@ -264,6 +264,7 @@ export default function ConversationList({
           {
             label: projectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
           },
           {
             label: sessionName,

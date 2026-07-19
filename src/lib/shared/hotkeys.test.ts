@@ -25,6 +25,8 @@ describe("HOTKEY_REGISTRY", () => {
       "exitPanes",
       "expandThinkingBlocks",
       "collapseThinkingBlocks",
+      "switchProject",
+      "switchSession",
     ];
     for (const id of expectedIds) {
       expect(HOTKEY_REGISTRY[id]).toBeDefined();

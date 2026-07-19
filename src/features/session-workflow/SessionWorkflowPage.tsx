@@ -52,6 +52,7 @@ export default function SessionWorkflowPage() {
           {
             label: decodedProjectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
           },
           {
             label: sessionName,

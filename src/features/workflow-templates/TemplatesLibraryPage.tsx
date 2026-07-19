@@ -63,6 +63,7 @@ export default function TemplatesLibraryPage(): React.JSX.Element {
           {
             label: decodedProjectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
           },
           {
             label: sessionName,

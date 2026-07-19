@@ -289,6 +289,7 @@ export default function ProjectDetailView({
           {
             label: projectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
           },
         ]}
         globalStatus={

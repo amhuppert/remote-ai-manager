@@ -570,6 +570,7 @@ export default function SessionDiffViewer({
             {
               label: decodedProjectName,
               href: `/projects/${encodeURIComponent(projectName)}`,
+              isProject: true,
             },
             {
               label: sessionName,
@@ -597,6 +598,7 @@ export default function SessionDiffViewer({
           {
             label: decodedProjectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
           },
           {
             label: sessionName,

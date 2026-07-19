@@ -187,6 +187,7 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
                 {
                   label: resolved.projectName,
                   href: `/projects/${encodeURIComponent(resolved.projectName)}`,
+                  isProject: true,
                 },
                 {
                   label: resolved.sessionName,

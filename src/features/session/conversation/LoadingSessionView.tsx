@@ -26,6 +26,7 @@ export default function LoadingSessionView({
           {
             label: decodedProjectName,
             href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
           },
           {
             label: sessionName,
