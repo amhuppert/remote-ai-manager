@@ -10,8 +10,10 @@ const haltCardBase =
 const haltPathsClass =
   "list-none p-0 m-0 flex flex-col gap-[2px] font-mono text-[0.7rem] [&_li]:text-text-secondary [&_code]:inline-block [&_code]:min-w-[1.5em] [&_code]:text-amber [&_code]:mr-[6px]";
 
+// No max-height of its own: hosts own the height bound (the card's scroll
+// wrapper below, or the halt-details dialog's scrolling body).
 const haltPreClass =
-  "font-mono text-[0.7rem] bg-[var(--cc-graph-ink-a40)] border border-border-dim rounded-sm py-[6px] px-[8px] m-0 whitespace-pre-wrap break-words text-text-secondary max-h-[160px] overflow-auto";
+  "font-mono text-[0.7rem] bg-[var(--cc-graph-ink-a40)] border border-border-dim rounded-sm py-[6px] px-[8px] m-0 whitespace-pre-wrap break-words text-text-secondary";
 interface FormattedHaltReason {
   headline: string;
   detail: ReactNode | null;
@@ -35,8 +37,16 @@ function renderDirtyPathList(
   );
 }
 
+export interface FormatHaltReasonOptions {
+  /** Omit the per-file conflict list from a join_failure detail, for hosts
+   *  that render their own richer conflict presentation (the halt-details
+   *  dialog's recovery form). */
+  omitConflictFiles?: boolean;
+}
+
 export function formatGraphWorkflowHaltReason(
   reason: GraphWorkflowHaltReason,
+  options: FormatHaltReasonOptions = {},
 ): FormattedHaltReason {
   switch (reason.type) {
     case "merge_precondition_failed":
@@ -83,7 +93,7 @@ export function formatGraphWorkflowHaltReason(
         reason.joinKind === "final_publish" ? "Final publish" : "Context join";
       const scope = reason.contextId ? ` in ${reason.contextId}` : "";
       const conflictsList =
-        reason.conflictFiles.length > 0 ? (
+        reason.conflictFiles.length > 0 && !options.omitConflictFiles ? (
           <ul className={haltPathsClass}>
             {reason.conflictFiles.map((path) => (
               <li key={path}>
@@ -155,29 +165,24 @@ export function formatGraphWorkflowHaltReason(
 export interface ContextHaltCardProps {
   primary: GraphWorkflowHaltReason;
   secondary?: GraphWorkflowHaltReason[];
-  variant?: "banner" | "card";
 }
 
 export default function ContextHaltCard({
   primary,
   secondary = [],
-  variant = "banner",
 }: ContextHaltCardProps) {
   const [expanded, setExpanded] = useState(false);
   const formatted = formatGraphWorkflowHaltReason(primary);
   return (
-    <div
-      className={cn(
-        haltCardBase,
-        variant === "card" ? "mb-md" : "mt-[6px] basis-full",
-      )}
-      role="alert"
-    >
+    <div className={cn(haltCardBase, "mb-md")} role="alert">
       <div className="text-[0.8rem] font-semibold tracking-[0.01em] text-red">
         {formatted.headline}
       </div>
       {formatted.detail && (
-        <div className="text-[0.72rem] text-text-secondary [&_p]:m-0">
+        <div
+          data-testid="halt-detail"
+          className="max-h-[240px] overflow-y-auto text-[0.72rem] text-text-secondary [&_p]:m-0"
+        >
           {formatted.detail}
         </div>
       )}
@@ -198,7 +203,7 @@ export default function ContextHaltCard({
             {secondary.length === 1 ? "failure" : "failures"}
           </button>
           {expanded && (
-            <ul className="mx-0 mt-[6px] mb-0 flex list-none flex-col gap-[8px] border-t border-dashed border-[var(--cc-red-a25)] px-0 pt-[8px] pb-0 [&_li]:text-[0.72rem] [&_li]:text-text-secondary [&_strong]:font-semibold [&_strong]:text-text-primary">
+            <ul className="mx-0 mt-[6px] mb-0 flex max-h-[240px] list-none flex-col gap-[8px] overflow-y-auto border-t border-dashed border-[var(--cc-red-a25)] px-0 pt-[8px] pb-0 [&_li]:text-[0.72rem] [&_li]:text-text-secondary [&_strong]:font-semibold [&_strong]:text-text-primary">
               {secondary.map((reason, idx) => {
                 const f = formatGraphWorkflowHaltReason(reason);
                 return (

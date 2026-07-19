@@ -728,7 +728,6 @@ function OverviewView({
           <ContextHaltCard
             primary={execution.haltReason}
             secondary={execution.secondaryHaltReasons}
-            variant="card"
           />
         )}
 
@@ -1071,9 +1070,7 @@ function DetailView({
               <AskQuestionPanel {...userInputPanel} compact />
             </section>
           )}
-          {contextHaltReason && (
-            <ContextHaltCard primary={contextHaltReason} variant="card" />
-          )}
+          {contextHaltReason && <ContextHaltCard primary={contextHaltReason} />}
 
           <div className={wbOverviewStatGrid}>
             <div className={wbOverviewStat}>

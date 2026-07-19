@@ -89,38 +89,54 @@ const validatorInfra: GraphWorkflowHaltReason = {
   summary: null,
 };
 
+const longJoinFailure: GraphWorkflowHaltReason = {
+  type: "join_failure",
+  joinId: "join-final",
+  joinKind: "final_publish",
+  contextId: null,
+  sourceLaneIds: ["lane-a", "lane-b", "lane-c"],
+  targetLaneId: "__session__",
+  message:
+    "Pre-merge validation failed\n$ bun scripts/generate-build-info.ts\n$ bun scripts/seam-adoption.ts --check\n$ bun run build:info && NODE_ENV=production next build && bun run build:cli",
+  conflictFiles: Array.from(
+    { length: 40 },
+    (_, i) => `src/lib/specs/generated-file-${i}.ts`,
+  ),
+};
+
 export const CircuitBreaker: Story = {
-  args: { primary: circuitBreaker, variant: "card" },
+  args: { primary: circuitBreaker },
 };
 
 export const MaxIterations: Story = {
-  args: { primary: maxIterations, variant: "card" },
+  args: { primary: maxIterations },
 };
 
 export const RecoveryError: Story = {
-  args: { primary: recoveryError, variant: "card" },
+  args: { primary: recoveryError },
 };
 
 export const MergeFailure: Story = {
-  args: { primary: mergeFailure, variant: "card" },
+  args: { primary: mergeFailure },
 };
 
 export const MergePreconditionFailed: Story = {
-  args: { primary: mergePrecondition, variant: "card" },
+  args: { primary: mergePrecondition },
 };
 
 export const ValidatorInfraError: Story = {
-  args: { primary: validatorInfra, variant: "card" },
+  args: { primary: validatorInfra },
 };
 
-export const BannerVariant: Story = {
-  args: { primary: circuitBreaker, variant: "banner" },
+/** A join failure with dozens of conflict files: the detail region scrolls
+ *  inside its height bound instead of growing the card. */
+export const LongJoinFailureBounded: Story = {
+  args: { primary: longJoinFailure },
 };
 
 export const WithSecondaryHalts: Story = {
   args: {
     primary: circuitBreaker,
     secondary: [maxIterations, mergeFailure],
-    variant: "card",
   },
 };

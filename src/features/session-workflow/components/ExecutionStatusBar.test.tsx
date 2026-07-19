@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -150,42 +151,104 @@ describe("ExecutionStatusBar awaiting-approval chip", () => {
   });
 });
 
-describe("ExecutionStatusBar halt banner", () => {
-  it("renders merge_precondition_failed headline, truncated dirty paths, and action text", () => {
-    const haltReason: GraphWorkflowHaltReason = {
-      type: "merge_precondition_failed",
-      contextId: "context-implement",
-      targetBranch: "csm/session-1",
-      dirtyPaths: [
-        { path: "src/a.ts", statusCode: " M", tracked: true },
-        { path: "src/b.ts", statusCode: " M", tracked: true },
-      ],
-      totalDirtyCount: 4,
-      message: "Target branch 'csm/session-1' has 4 uncommitted change(s)",
-    };
+const longJoinFailure: GraphWorkflowHaltReason = {
+  type: "join_failure",
+  joinId: "join-final",
+  joinKind: "final_publish",
+  contextId: null,
+  sourceLaneIds: ["lane-a", "lane-b", "lane-c"],
+  targetLaneId: "__session__",
+  message:
+    "Pre-merge validation failed\n$ bun scripts/generate-build-info.ts\n$ bun run build:cli\nDetected additional lockfiles",
+  conflictFiles: [
+    "src/lib/specs/compiler.ts",
+    "src/lib/specs/policy.ts",
+    "src/lib/specs/queries.ts",
+  ],
+};
 
+describe("ExecutionStatusBar halt display", () => {
+  it("keeps the bar to a one-line summary: headline visible, detail withheld", () => {
     render(
       <ExecutionStatusBar
         {...baseProps}
-        execution={makeExecution({ haltReason })}
+        execution={makeExecution({ haltReason: longJoinFailure })}
       />,
     );
 
+    const summary = screen.getByRole("alert");
+    expect(summary).toHaveTextContent(
+      "Final publish failed — 3 source lane(s) → __session__",
+    );
+    // The long message body and per-file conflict list must stay out of the
+    // bar — they previously grew it past the viewport.
     expect(
-      screen.getByText(/Cannot merge into csm\/session-1/),
+      screen.queryByText(/Pre-merge validation failed/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("src/lib/specs/compiler.ts"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+  });
+
+  it("opens a details dialog with the full message, conflict files, guidance, and recovery form", async () => {
+    const user = userEvent.setup();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ haltReason: longJoinFailure })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Pre-merge validation failed/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/4 uncommitted change\(s\)/)).toBeInTheDocument();
-    expect(screen.getByText("src/a.ts")).toBeInTheDocument();
-    expect(screen.getByText("src/b.ts")).toBeInTheDocument();
-    expect(screen.getByText("+2 more")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /Commit, stash, or discard those changes in the session worktree/,
-      ),
+      within(dialog).getByText("src/lib/specs/compiler.ts"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Resolve conflicts in the target worktree/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: /retry merge/i }),
     ).toBeInTheDocument();
   });
 
-  it("renders a +N more failures chip when secondaryHaltReasons is non-empty", () => {
+  it("retries the join merge with per-file guidance entered in the dialog", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        onResume={onResume}
+        execution={makeExecution({ haltReason: longJoinFailure })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(
+      within(dialog).getByLabelText("Guidance for src/lib/specs/compiler.ts"),
+      "keep the lane-a side",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: /retry merge/i }),
+    );
+
+    expect(onResume).toHaveBeenCalledWith([
+      {
+        file: "src/lib/specs/compiler.ts",
+        decision: "rejected",
+        feedback: "keep the lane-a side",
+      },
+    ]);
+  });
+
+  it("counts secondary failures in the summary and lists them in the dialog", async () => {
+    const user = userEvent.setup();
     const haltReason: GraphWorkflowHaltReason = {
       type: "merge_precondition_failed",
       contextId: "context-a",
@@ -221,10 +284,45 @@ describe("ExecutionStatusBar halt banner", () => {
       />,
     );
 
-    expect(screen.getByText("+2 more failures")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("+2 more");
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Agent turn failed in context-b \(claude\)/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Agent turn failed in context-c \(codex\)/),
+    ).toBeInTheDocument();
   });
 
-  it("does not render a halt banner when haltReason is null", () => {
+  it("resumes from the dialog footer for a non-join halt", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const haltReason: GraphWorkflowHaltReason = {
+      type: "agent_turn_failed",
+      contextId: "context-b",
+      engine: "claude",
+      cause: "sdk_error",
+      message: "SDK stream ended unexpectedly",
+    };
+
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        onResume={onResume}
+        execution={makeExecution({ haltReason })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Resume" }));
+
+    expect(onResume).toHaveBeenCalledWith();
+  });
+
+  it("does not render a halt summary when haltReason is null", () => {
     render(
       <ExecutionStatusBar
         {...baseProps}
@@ -235,5 +333,8 @@ describe("ExecutionStatusBar halt banner", () => {
       />,
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Details" }),
+    ).not.toBeInTheDocument();
   });
 });

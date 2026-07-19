@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
-import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
-import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";
+import { formatGraphWorkflowHaltReason } from "@/components/workflow-graph/ContextHaltCard";
+import HaltDetailsDialog from "./HaltDetailsDialog";
 
 export type ExecutionControlAction = "pause" | "resume" | "abort" | "clear";
 
@@ -17,6 +17,8 @@ const wbBtnDefault =
   "bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary hover:border-border-strong";
 const wbBtnPrimary =
   "bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)] hover:bg-[var(--cc-cyan-a20)] hover:shadow-[0_0_12px_var(--cyan-glow)]";
+const wbBtnDanger =
+  "bg-transparent text-red border-[var(--cc-red-a35)] hover:bg-[var(--cc-red-a08)] hover:border-[var(--cc-red-border)]";
 const execControlBtn = "max-768:min-h-[44px]";
 
 const execBadgeBase =
@@ -113,6 +115,7 @@ export default function ExecutionStatusBar({
     () => createExecutionIndex(definition, execution),
     [definition, execution],
   );
+  const [haltDetailsOpen, setHaltDetailsOpen] = useState(false);
   const contextTitle = getActiveContextTitle(execution, index);
   const awaitingApprovalCount = countAwaitingApproval(execution);
   const taskTitle = getFirstIncompleteTaskTitle(execution, index);
@@ -123,6 +126,9 @@ export default function ExecutionStatusBar({
   const showClear = terminalStatuses.has(execution.status);
   const haltReason = execution.haltReason;
   const secondaryHaltReasons = execution.secondaryHaltReasons;
+  const haltHeadline = haltReason
+    ? formatGraphWorkflowHaltReason(haltReason).headline
+    : null;
 
   return (
     <div className="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2 max-768:flex-wrap max-768:gap-sm">
@@ -152,25 +158,48 @@ export default function ExecutionStatusBar({
         )}
       </div>
 
-      <div className="text-[0.72rem] text-text-secondary max-768:hidden">
-        {contextTitle && (
-          <>
-            Context:{" "}
-            <strong className="font-semibold text-text-primary">
-              {contextTitle}
-            </strong>
-          </>
-        )}
-        {contextTitle && taskTitle && " · "}
-        {taskTitle && (
-          <>
-            Task:{" "}
-            <strong className="font-semibold text-text-primary">
-              {taskTitle}
-            </strong>
-          </>
-        )}
-      </div>
+      {haltReason && haltHeadline ? (
+        // One line, truncated: the bar's height never depends on the size of
+        // the failure. The full output lives in the details dialog.
+        <div className="flex min-w-0 flex-1 items-center gap-sm max-768:order-last max-768:basis-full">
+          <span
+            role="alert"
+            title={haltHeadline}
+            className="min-w-0 flex-1 truncate text-[0.74rem] font-medium text-red"
+          >
+            {haltHeadline}
+            {secondaryHaltReasons.length > 0 &&
+              ` (+${secondaryHaltReasons.length} more)`}
+          </span>
+          <button
+            type="button"
+            className={cn(wbBtn, wbBtnXs, wbBtnDanger, execControlBtn)}
+            onClick={() => setHaltDetailsOpen(true)}
+          >
+            Details
+          </button>
+        </div>
+      ) : (
+        <div className="text-[0.72rem] text-text-secondary max-768:hidden">
+          {contextTitle && (
+            <>
+              Context:{" "}
+              <strong className="font-semibold text-text-primary">
+                {contextTitle}
+              </strong>
+            </>
+          )}
+          {contextTitle && taskTitle && " · "}
+          {taskTitle && (
+            <>
+              Task:{" "}
+              <strong className="font-semibold text-text-primary">
+                {taskTitle}
+              </strong>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="ml-auto flex gap-sm">
         {showPause && (
@@ -241,26 +270,23 @@ export default function ExecutionStatusBar({
       </div>
 
       {haltReason && (
-        <ContextHaltCard
+        <HaltDetailsDialog
+          open={haltDetailsOpen}
+          onOpenChange={setHaltDetailsOpen}
           primary={haltReason}
           secondary={secondaryHaltReasons}
-          variant="banner"
+          conflictAnalysis={
+            haltReason.type === "join_failure"
+              ? (execution.joins[haltReason.joinId]?.conflicts?.analysis ??
+                null)
+              : null
+          }
+          canResume={showResume}
+          onResume={onResume}
+          isMutating={isMutating}
+          isResuming={pendingAction === "resume"}
         />
       )}
-      {haltReason?.type === "join_failure" &&
-        haltReason.conflictFiles.length > 0 && (
-          <JoinConflictRecoveryCard
-            conflictFiles={haltReason.conflictFiles}
-            analysis={
-              execution.joins[haltReason.joinId]?.conflicts?.analysis ?? null
-            }
-            onRetry={(guidance) =>
-              onResume(guidance.length > 0 ? guidance : undefined)
-            }
-            isRetrying={pendingAction === "resume"}
-            disabled={isMutating}
-          />
-        )}
     </div>
   );
 }
