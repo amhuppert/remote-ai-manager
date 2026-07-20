@@ -69,6 +69,29 @@ describe("canonical Markdown public API", () => {
 });
 
 describe("canonical Markdown semantics", () => {
+  it("preserves soft line breaks after the rendered adapters replace their fallbacks", async () => {
+    const content = "First line\nSecond line";
+    const { container } = render(
+      <>
+        <DocumentMarkdown content={content} />
+        <MessageMarkdown content={content} />
+        <CompactMarkdown content={content} />
+      </>,
+    );
+
+    await waitFor(() => {
+      for (const intent of ["document", "message", "compact"] as const) {
+        expect(markdownRoot(container, intent)).not.toBeNull();
+      }
+    });
+
+    for (const intent of ["document", "message", "compact"] as const) {
+      const root = markdownRoot(container, intent)!;
+      expect(root).toHaveClass("whitespace-pre-wrap");
+      expect(root.querySelector("p")?.textContent).toBe(content);
+    }
+  });
+
   it("renders cyan chevrons for unordered lists without changing ordered markers", async () => {
     const content = "- Unordered item\n\n1. Ordered item";
     const { container } = render(

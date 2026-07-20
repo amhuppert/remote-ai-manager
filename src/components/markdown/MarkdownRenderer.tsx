@@ -36,11 +36,11 @@ interface MarkdownRendererProps {
 
 const ROOT_CLASSES: Record<MarkdownIntent, string> = {
   document:
-    "min-w-0 max-w-full break-words px-xl py-[20px] font-body text-[0.95rem] leading-[1.75] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong max-640:px-md max-640:py-lg",
+    "min-w-0 max-w-full whitespace-pre-wrap break-words px-xl py-[20px] font-body text-[0.95rem] leading-[1.75] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong max-640:px-md max-640:py-lg",
   message:
-    "min-w-0 max-w-full break-words font-body text-[0.9rem] leading-[1.65] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
+    "min-w-0 max-w-full whitespace-pre-wrap break-words font-body text-[0.9rem] leading-[1.65] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
   compact:
-    "min-w-0 max-w-full break-words font-body text-[0.78rem] leading-[1.5] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
+    "min-w-0 max-w-full whitespace-pre-wrap break-words font-body text-[0.78rem] leading-[1.5] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
 };
 
 const HEADING_CLASSES: Record<
