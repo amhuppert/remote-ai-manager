@@ -17,10 +17,15 @@ interface QuickTicketButtonProps {
   presentation?: "icon" | "menu-item";
 }
 
-function QuickTicketIcon(): React.JSX.Element {
+// The size attributes matter in the menu-item presentation: menu items apply no
+// CSS sizing to child SVGs (unlike IconButton), so an unsized SVG falls back to
+// the replaced-element default of 300×150 and blows out the mobile menu.
+function QuickTicketIcon({ size }: { size?: number }): React.JSX.Element {
   return (
     <svg
       viewBox="0 0 16 16"
+      width={size}
+      height={size}
       fill="none"
       stroke="currentColor"
       strokeWidth="1.5"
@@ -56,7 +61,7 @@ export default function QuickTicketButton({
   if (presentation === "menu-item") {
     return (
       <DropdownMenuItem onSelect={handleOpen}>
-        <QuickTicketIcon />
+        <QuickTicketIcon size={14} />
         Quick ticket
         <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>
       </DropdownMenuItem>
