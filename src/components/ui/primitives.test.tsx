@@ -165,6 +165,20 @@ describe("IconButton", () => {
 });
 
 describe("FormField", () => {
+  it("styles a native file selector as a design-system button", () => {
+    const { getByLabelText } = render(
+      <FormInput type="file" aria-label="Context file" />,
+    );
+
+    expect(getByLabelText("Context file")).toHaveClass(
+      "file:border-border-default",
+      "file:bg-bg-surface",
+      "file:text-text-primary",
+      "hover:file:border-border-strong",
+      "hover:file:bg-bg-raised",
+    );
+  });
+
   it("forwards native label, input, hint, and error semantics", () => {
     const { getByLabelText, getByRole, getByText } = render(
       <>

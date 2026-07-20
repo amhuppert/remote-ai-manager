@@ -59,3 +59,13 @@ export const Placeholder: Story = {
     </div>
   ),
 };
+
+export const FileInput: Story = {
+  render: () => (
+    <FormGroup layoutClassName="w-[320px]">
+      <FormLabel htmlFor="context-file">File</FormLabel>
+      <FormInput id="context-file" type="file" />
+      <FormHint>Attach supporting context to the ticket.</FormHint>
+    </FormGroup>
+  ),
+};

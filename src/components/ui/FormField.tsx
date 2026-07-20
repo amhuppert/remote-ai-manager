@@ -42,7 +42,7 @@ export function FormLabel({ layoutClassName, ...rest }: FormLabelProps) {
 // first contributes its `::placeholder` colour. This is the merged effective
 // recipe: padding 9px 12px, 0.82rem, hover border-strong, focus cyan + glow ring.
 const formInputBase =
-  "w-full px-[12px] py-[9px] bg-bg-base border border-solid border-border-default rounded-md text-text-primary font-mono text-[0.82rem] outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)]";
+  "w-full px-[12px] py-[9px] bg-bg-base border border-solid border-border-default rounded-md text-text-primary font-mono text-[0.82rem] outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)] file:mr-md file:cursor-pointer file:rounded-sm file:border file:border-solid file:border-border-default file:bg-bg-surface file:px-[10px] file:py-[5px] file:font-mono file:text-[0.72rem] file:font-medium file:text-text-primary file:transition-all file:duration-150 file:ease-[ease] hover:file:border-border-strong hover:file:bg-bg-raised";
 
 export type FormInputProps = Omit<
   InputHTMLAttributes<HTMLInputElement>,

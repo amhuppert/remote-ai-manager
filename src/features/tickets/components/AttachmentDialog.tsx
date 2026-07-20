@@ -14,7 +14,12 @@ import {
   DialogTitle,
   DialogActions,
 } from "@/components/ui/Dialog";
-import { FormError, FormGroup, FormLabel } from "@/components/ui/FormField";
+import {
+  FormError,
+  FormGroup,
+  FormInput,
+  FormLabel,
+} from "@/components/ui/FormField";
 import {
   SegmentedControl,
   SegmentedControlItem,
@@ -63,8 +68,8 @@ const KIND_OPTIONS: ReadonlyArray<{
   { kind: "note", label: "Note" },
 ];
 
-// The `FormInput` primitive's recipe, applied to elements it cannot render
-// (textarea, file input) — same approach as CreateSessionModal.
+// The `FormInput` primitive's recipe, applied to the multiline input it cannot
+// render — same approach as CreateSessionModal.
 const FIELD_CLASS =
   "box-border w-full rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] font-mono text-[0.82rem] text-text-primary outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)] disabled:opacity-60";
 
@@ -254,13 +259,12 @@ export default function AttachmentDialog({
         {kind === "file" && (
           <FormGroup>
             <FormLabel htmlFor="attachment-dialog-file">File</FormLabel>
-            <input
+            <FormInput
               id="attachment-dialog-file"
               type="file"
               required
               disabled={pending}
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className={FIELD_CLASS}
             />
           </FormGroup>
         )}
