@@ -64,3 +64,11 @@ export function attachmentGetCommand(
 ): string {
   return `cctl ticket attachment get ${quoteAgentCommandArgument(identifier)} ${quoteAgentCommandArgument(attachmentId)}`;
 }
+
+/** Retry command for a conversation attachment snapshot. */
+export function attachmentRefreshCommand(
+  identifier: string,
+  attachmentId: string,
+): string {
+  return `cctl ticket attachment refresh ${quoteAgentCommandArgument(identifier)} ${quoteAgentCommandArgument(attachmentId)}`;
+}

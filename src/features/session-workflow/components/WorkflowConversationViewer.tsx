@@ -6,6 +6,7 @@ import ConversationTranscript, {
   type TranscriptNav,
 } from "@/components/conversation/ConversationTranscript";
 import { useSessionQuery } from "@/lib/sessions/queries";
+import { useQuickTicketConversationRegistration } from "@/components/quick-ticket/useQuickTicketConversationRegistration";
 
 interface WorkflowConversationViewerProps {
   projectName: string;
@@ -33,6 +34,12 @@ export default function WorkflowConversationViewer({
   const conversationStatus = sessionQuery.data?.conversations.find(
     (c) => c.id === conversationId,
   )?.status;
+  useQuickTicketConversationRegistration({
+    projectName,
+    sessionName,
+    conversationId,
+    title: taskTitle,
+  });
 
   const panelBodyRef = useRef<HTMLDivElement | null>(null);
   const [nav, setNav] = useState<TranscriptNav | null>(null);

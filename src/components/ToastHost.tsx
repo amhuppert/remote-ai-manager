@@ -169,16 +169,20 @@ export function GenericToastSource(): React.JSX.Element | null {
   const dismiss = useDismissToast();
   if (toasts.length === 0) return null;
   return (
-    <>
+    <section
+      aria-label="Notifications"
+      className="pointer-events-none fixed bottom-md left-1/2 z-dropdown flex max-h-[calc(100vh_-_var(--spacing-3xl))] w-max max-w-[calc(100vw_-_var(--spacing-lg))] [transform:translateX(-50%)] flex-col items-center gap-sm overflow-y-auto p-sm"
+    >
       {toasts.map((t) => (
         <Toast
           key={t.id}
           message={t.message}
           action={t.action}
           onDismiss={() => dismiss(t.id)}
+          placement="stacked"
         />
       ))}
-    </>
+    </section>
   );
 }
 

@@ -33,7 +33,8 @@ export type HotkeyId =
   | "expandThinkingBlocks"
   | "collapseThinkingBlocks"
   | "switchProject"
-  | "switchSession";
+  | "switchSession"
+  | "quickTicket";
 
 export type HotkeyRegistry = Record<HotkeyId, HotkeyDefinition>;
 
@@ -217,6 +218,15 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     label: "Switch session",
     description: "Open the session switcher in the top bar",
     category: "navigation",
+    enableOnFormTags: true,
+    enableOnContentEditable: true,
+  },
+  quickTicket: {
+    id: "quickTicket",
+    keys: "mod+shift+k",
+    label: "Quick ticket",
+    description: "Open the quick-ticket dialog",
+    category: "general",
     enableOnFormTags: true,
     enableOnContentEditable: true,
   },

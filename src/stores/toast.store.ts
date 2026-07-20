@@ -22,15 +22,14 @@ interface ToastState {
 }
 
 interface ToastActions {
-  push: (message: string, options?: ToastOptions) => void;
+  push: (message: string, options?: ToastOptions) => string;
+  replaceAction: (id: string, message: string, action: ToastAction) => void;
   dismiss: (id: string) => void;
 }
 
 type ToastStore = ToastState & ToastActions;
 
 const TOAST_TTL_MS = 2200;
-/** Actionable toasts stay up long enough to reach and press the button. */
-const ACTION_TOAST_TTL_MS = 6000;
 
 const useToastStore = create<ToastStore>()(
   immer((set, get) => ({
@@ -43,10 +42,20 @@ const useToastStore = create<ToastStore>()(
       set((state) => {
         state.toasts.push({ id, message, createdAt, action });
       });
-      setTimeout(
-        () => get().dismiss(id),
-        action ? ACTION_TOAST_TTL_MS : TOAST_TTL_MS,
-      );
+      if (!action) setTimeout(() => get().dismiss(id), TOAST_TTL_MS);
+      return id;
+    },
+
+    replaceAction: (id: string, message: string, action: ToastAction) => {
+      const replacement = { id, message, createdAt: Date.now(), action };
+      set((state) => {
+        const index = state.toasts.findIndex((toast) => toast.id === id);
+        if (index === -1) {
+          state.toasts.push(replacement);
+          return;
+        }
+        state.toasts[index] = replacement;
+      });
     },
 
     dismiss: (id: string) =>
@@ -60,8 +69,16 @@ export const useToasts = (): ToastItem[] => useToastStore((s) => s.toasts);
 export const useDismissToast = (): ((id: string) => void) =>
   useToastStore((s) => s.dismiss);
 
-export function pushToast(message: string, options?: ToastOptions): void {
-  useToastStore.getState().push(message, options);
+export function pushToast(message: string, options?: ToastOptions): string {
+  return useToastStore.getState().push(message, options);
+}
+
+export function replaceActionToast(
+  id: string,
+  message: string,
+  action: ToastAction,
+): void {
+  useToastStore.getState().replaceAction(id, message, action);
 }
 
 export function dismissToast(id: string): void {

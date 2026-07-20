@@ -293,7 +293,16 @@ describe("CodexTaskRunner", () => {
     expect(passedOptions).not.toHaveProperty("config");
   });
 
-  it("returns unsupported before invoking Codex when isolated one-shot cannot be guaranteed", async () => {
+  it("maps isolated one-shot execution to a fresh constrained Codex thread", async () => {
+    const items = [
+      { type: "command_execution", command: "pwd", exit_code: 0 },
+      { type: "agent_message", text: "done" },
+    ];
+    runMock.mockResolvedValue({
+      finalResponse: "done",
+      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+      items,
+    });
     listNativeCodexMcpServers.mockResolvedValue([
       {
         name: "native-tools",
@@ -308,6 +317,7 @@ describe("CodexTaskRunner", () => {
         sandboxMode: "danger-full-access",
         networkAccessEnabled: true,
         webSearchMode: "live",
+        additionalDirectories: ["/must-not-be-added"],
         tooling: {
           portableMcp: {
             servers: [
@@ -322,15 +332,97 @@ describe("CodexTaskRunner", () => {
       }),
     );
 
-    expect(vi.mocked(Codex)).not.toHaveBeenCalled();
-    expect(startThreadMock).not.toHaveBeenCalled();
-    expect(resumeThreadMock).not.toHaveBeenCalled();
-    expect(listNativeCodexMcpServers).not.toHaveBeenCalled();
-    expect(result.backendRef).toBeNull();
-    expect(result.error).toBe(
-      'CodexTaskRunner does not support execution profile "isolated-one-shot"',
+    const codexOptions = vi.mocked(Codex).mock.calls[0]?.[0];
+    expect(codexOptions?.config).toEqual({
+      apps: { _default: { enabled: false } },
+      features: {
+        apps: false,
+        auth_elicitation: false,
+        browser_use: false,
+        browser_use_external: false,
+        browser_use_full_cdp_access: false,
+        code_mode: false,
+        code_mode_host: false,
+        code_mode_only: false,
+        computer_use: false,
+        deferred_executor: false,
+        enable_fanout: false,
+        enable_mcp_apps: false,
+        goals: false,
+        hooks: false,
+        image_generation: false,
+        in_app_browser: false,
+        js_repl: false,
+        js_repl_tools_only: false,
+        memories: false,
+        memory_tool: false,
+        multi_agent: false,
+        multi_agent_mode: false,
+        multi_agent_v2: false,
+        plugin_sharing: false,
+        plugins: false,
+        remote_plugin: false,
+        request_permissions: false,
+        request_permissions_tool: false,
+        search_tool: false,
+        shell_tool: false,
+        skill_mcp_dependency_install: false,
+        standalone_web_search: false,
+        tool_call_mcp_elicitation: false,
+        tool_search: false,
+        tool_suggest: false,
+        unified_exec: false,
+        web_search: false,
+        web_search_cached: false,
+        web_search_request: false,
+        workspace_dependencies: false,
+      },
+      developer_instructions: "",
+      history: { persistence: "none" },
+      include_apps_instructions: false,
+      include_collaboration_mode_instructions: false,
+      include_environment_context: false,
+      include_permissions_instructions: false,
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
+      mcp_servers: {
+        "native-tools": {
+          command: "native-server",
+          enabled: false,
+        },
+      },
+      project_doc_fallback_filenames: [],
+      project_doc_max_bytes: 0,
+      skills: {
+        bundled: { enabled: false },
+        include_instructions: false,
+      },
+    });
+    expect(codexOptions?.config).not.toHaveProperty("instructions");
+    expect(startThreadMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        networkAccessEnabled: false,
+        webSearchMode: "disabled",
+      }),
     );
-    expect(result.failure?.kind).toBe("capability_unavailable");
+    expect(startThreadMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "additionalDirectories",
+    );
+    expect(resumeThreadMock).not.toHaveBeenCalled();
+    expect(listNativeCodexMcpServers).toHaveBeenCalledTimes(1);
+    expect(result.backendRef).toBeNull();
+    expect(result.text).toBe("done");
+    expect(result.error).toBeNull();
+    expect(result.failure).toBeNull();
+    expect(result.transcript).toEqual([
+      { seq: 0, backend: "codex", type: "command_execution", raw: items[0] },
+      { seq: 1, backend: "codex", type: "agent_message", raw: items[1] },
+    ]);
   });
 
   it("captures turn.items as a lossless transcript", async () => {

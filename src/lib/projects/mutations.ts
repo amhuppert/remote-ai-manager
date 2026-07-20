@@ -73,6 +73,7 @@ function rollbackProjectCaches(
 function invalidateProjectCaches(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: projectKeys.list() });
   void queryClient.invalidateQueries({ queryKey: projectKeys.preferences() });
+  void queryClient.invalidateQueries({ queryKey: projectKeys.commandCenter() });
 }
 
 export function useArchiveProjectMutation() {

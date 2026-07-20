@@ -13,6 +13,10 @@ import type {
   ActiveConversation,
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
+import {
+  useQuickTicketStore,
+  type QuickTicketStoreState,
+} from "@/stores/quick-ticket.store";
 
 // next/link is an external framework module, not an internal seam; the
 // sanctioned client-test pattern (@/test/fetch-fixture) covers only the network
@@ -23,6 +27,22 @@ vi.mock(
   "next/link",
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
+
+const navigationState = vi.hoisted(() => ({ pathname: "/projects" }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => navigationState.pathname,
+}));
+
+const RESET_QUICK_TICKET_STATE: QuickTicketStoreState = {
+  open: false,
+  lifecycleRevision: 0,
+  bugMode: false,
+  draft: null,
+  draftStashed: false,
+  draftRestored: false,
+  contextSnapshot: null,
+  conversationRegistry: [],
+};
 
 let api: FetchFixture;
 
@@ -117,6 +137,9 @@ async function findNeedsLink(): Promise<HTMLAnchorElement> {
 
 describe("Topbar", () => {
   beforeEach(() => {
+    navigationState.pathname = "/projects";
+    window.history.replaceState({}, "", "/projects");
+    useQuickTicketStore.setState(RESET_QUICK_TICKET_STATE);
     api = installFetchFixture();
     // Topbar always issues these two GETs; default them to empty so tests that
     // don't care about attention state render a quiet bar.
@@ -205,6 +228,26 @@ describe("Topbar", () => {
     expect(link).toHaveTextContent("Tickets");
   });
 
+  it("renders Quick ticket before Tickets and opens a route-context draft", async () => {
+    navigationState.pathname = "/projects/command-center";
+    window.history.replaceState({}, "", "/projects/command-center");
+    const user = userEvent.setup();
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
+
+    const quickTicket = screen.getByRole("button", { name: "Quick ticket" });
+    const tickets = screen.getByTitle("Tickets");
+    expect(
+      quickTicket.compareDocumentPosition(tickets) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.click(quickTicket);
+    expect(useQuickTicketStore.getState()).toMatchObject({
+      open: true,
+      contextSnapshot: { projectName: "command-center" },
+    });
+  });
+
   it("renders Specs as a global navigation peer", () => {
     renderWithQuery(<Topbar breadcrumbs={[]} page="specs" />);
     const link = screen.getByTitle("Specs");
@@ -231,6 +274,10 @@ describe("Topbar", () => {
     await user.click(more);
 
     expect(
+      screen.getByRole("menuitem", { name: /Quick ticket/ }),
+    ).toBeInTheDocument();
+
+    expect(
       screen.getByRole("menuitem", { name: "Workflow Atlas" }),
     ).toHaveAttribute("href", "/workflows");
     expect(
@@ -241,6 +288,32 @@ describe("Topbar", () => {
     ).toHaveAttribute("href", "/config");
 
     expect(screen.getByRole("navigation")).toHaveClass("max-[360px]:hidden");
+  });
+
+  it("opens Quick ticket from the mobile destinations menu", async () => {
+    navigationState.pathname = "/tickets";
+    window.history.replaceState({}, "", "/tickets?project=command-center");
+    const user = userEvent.setup();
+    renderWithQuery(<Topbar breadcrumbs={[]} page="tickets" />);
+
+    await user.click(screen.getByRole("button", { name: "More destinations" }));
+    await user.click(screen.getByRole("menuitem", { name: /Quick ticket/ }));
+
+    expect(useQuickTicketStore.getState()).toMatchObject({
+      open: true,
+      contextSnapshot: { projectName: "command-center" },
+    });
+  });
+
+  it("gates both Quick ticket affordances on the configuration route", async () => {
+    navigationState.pathname = "/config";
+    window.history.replaceState({}, "", "/config");
+    const user = userEvent.setup();
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
+
+    expect(screen.queryByRole("button", { name: "Quick ticket" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "More destinations" }));
+    expect(screen.queryByRole("menuitem", { name: /Quick ticket/ })).toBeNull();
   });
 
   it("hydrates without replacing the tree when attention data is already cached on the client", async () => {

@@ -7,9 +7,12 @@ import {
   renderAttachmentIndexLines,
   type AttachmentIndexEntry,
 } from "@/lib/tickets/attachment-index";
+import { attachmentRefreshCommand } from "@/lib/tickets/attachment-commands";
 import { parseTicketIdentifier } from "@/lib/tickets/references";
 import {
+  effectiveSnapshotStatus,
   startTicketOutputSchema,
+  createTicketResponseSchema,
   ticketAttachmentSchema,
   ticketDetailSchema,
   ticketListItemSchema,
@@ -19,6 +22,7 @@ import {
   ticketStatusSchema,
   ticketWorkTypeSchema,
   deletedTicketSchema,
+  type TicketAttachment,
   type TicketDetail,
   type TicketLinkSummary,
   type TicketListItem,
@@ -47,7 +51,7 @@ import {
  * `cctl ticket` — the agent ticket command group (ticket-system design §CLI
  * Contract): CRUD (`create|list|get|update|delete`), context attachment
  * (`attach <kind>` for the five kinds), and per-attachment operations
- * (`attachment get|update|remove`). Ticket references come in two forms: a
+ * (`attachment get|update|refresh|remove`). Ticket references come in two forms: a
  * bare `<number>` resolving through the ambient project scope, and the
  * cross-scope `<project>#<number>` that works from any conversation. All
  * deterministic checks (subcommand, flags, reference shape, enum values, file
@@ -404,15 +408,16 @@ async function runTicketCreate(
   });
   if (result.kind !== "ok") return failureFromRequest(result, json);
 
-  const parsed = ticketDetailSchema.safeParse(result.body);
+  const parsed = createTicketResponseSchema.safeParse(result.body);
   if (!parsed.success) return invalidResponseFailure("ticket create", json);
-  const humanBody = `created ${identifierOf(parsed.data)}  ${parsed.data.title}\n`;
+  const humanBody = `created ${identifierOf(parsed.data.ticket)}  ${parsed.data.ticket.title}\n`;
   // Terminal: no hint.
   return {
     exitCode: EXIT_OK,
     stdout: render(json, humanBody, {
       ok: true,
-      ticket: parsed.data,
+      ticket: parsed.data.ticket,
+      warnings: parsed.data.warnings,
     }),
     stderr: "",
   };
@@ -1151,7 +1156,7 @@ function attachedResult(
 }
 
 // ---------------------------------------------------------------------------
-// ticket attachment get|update|remove
+// ticket attachment get|update|refresh|remove
 // ---------------------------------------------------------------------------
 
 /**
@@ -1159,7 +1164,7 @@ function attachedResult(
  * the CLI renders the fields below and forwards everything the server sent in
  * the `--json` envelope unchanged.
  */
-const resolvedAttachmentSchema = z.discriminatedUnion("kind", [
+const resolvedAttachmentSchema = z.union([
   z.looseObject({
     kind: z.literal("file"),
     attachment: ticketAttachmentSchema,
@@ -1179,6 +1184,23 @@ const resolvedAttachmentSchema = z.discriminatedUnion("kind", [
     markdown: z.string(),
     capturedAt: z.string(),
     readCommands: z.array(z.string()),
+  }),
+  z.looseObject({
+    kind: z.literal("conversation"),
+    state: z.literal("pending"),
+    attachment: ticketAttachmentSchema,
+    conversationId: z.string(),
+    sessionName: z.string().nullable(),
+    retryCommand: z.string(),
+  }),
+  z.looseObject({
+    kind: z.literal("conversation"),
+    state: z.literal("failed"),
+    attachment: ticketAttachmentSchema,
+    conversationId: z.string(),
+    sessionName: z.string().nullable(),
+    error: z.string(),
+    retryCommand: z.string(),
   }),
   z.looseObject({
     kind: z.literal("session"),
@@ -1214,6 +1236,36 @@ const removedAttachmentSchema = z.object({
 });
 type ResolvedAttachmentBody = z.infer<typeof resolvedAttachmentSchema>;
 
+function unresolvedConversationRefreshResult(
+  attachment: TicketAttachment,
+  identifier: string,
+): ResolvedAttachmentBody | null {
+  const payload = attachment.payload;
+  if (payload.kind !== "conversation") return null;
+  const state = effectiveSnapshotStatus(payload);
+  if (state === "captured") return null;
+  const retryCommand = attachmentRefreshCommand(identifier, attachment.id);
+  if (state === "pending") {
+    return {
+      kind: "conversation",
+      state,
+      attachment,
+      conversationId: payload.conversationId,
+      sessionName: payload.sessionName,
+      retryCommand,
+    };
+  }
+  return {
+    kind: "conversation",
+    state,
+    attachment,
+    conversationId: payload.conversationId,
+    sessionName: payload.sessionName,
+    error: payload.snapshotError ?? "Conversation snapshot capture failed.",
+    retryCommand,
+  };
+}
+
 function renderResolvedText(
   resolved: ResolvedAttachmentBody,
   identifier: string,
@@ -1231,6 +1283,17 @@ function renderResolvedText(
     return `${header}\n${meta}\n\n${content}\n`;
   }
   if (resolved.kind === "conversation") {
+    if ("state" in resolved) {
+      const status =
+        resolved.state === "pending"
+          ? "snapshot pending"
+          : `snapshot failed: ${resolved.error}`;
+      return `${header}\nconversation: ${resolved.conversationId}${
+        resolved.sessionName !== null
+          ? ` (session ${resolved.sessionName})`
+          : ""
+      }\n${status}\nretry: ${resolved.retryCommand}\n`;
+    }
     const sourceLine =
       resolved.source === "live_compaction"
         ? "source: live compaction of the conversation"
@@ -1277,9 +1340,14 @@ async function runTicketAttachment(
 ): Promise<CliResult> {
   const json = flags.json;
   const verb = rest[0];
-  if (verb !== "get" && verb !== "update" && verb !== "remove") {
+  if (
+    verb !== "get" &&
+    verb !== "update" &&
+    verb !== "refresh" &&
+    verb !== "remove"
+  ) {
     return usageFailure(
-      "ticket attachment requires a subcommand: get, update, or remove",
+      "ticket attachment requires a subcommand: get, update, refresh, or remove",
       json,
     );
   }
@@ -1391,6 +1459,48 @@ async function runTicketAttachment(
       stdout: render(
         json,
         `updated attachment ${attachmentId} on ${identifier}\n`,
+        { ok: true, attachment: parsed.data },
+      ),
+      stderr: "",
+    };
+  }
+
+  if (verb === "refresh") {
+    const result = await cliRequest(host, {
+      server,
+      token,
+      tokenSource,
+      method: "POST",
+      path: `${requestPath}/refresh-snapshot`,
+    });
+    if (result.kind !== "ok") return failureFromRequest(result, json);
+
+    const parsed = ticketAttachmentSchema.safeParse(result.body);
+    if (!parsed.success) {
+      return invalidResponseFailure(
+        `attachment refresh ${attachmentId} on ${identifier}`,
+        json,
+      );
+    }
+    const unresolved = unresolvedConversationRefreshResult(
+      parsed.data,
+      identifier,
+    );
+    if (unresolved !== null) {
+      return {
+        exitCode: EXIT_OK,
+        stdout: render(json, renderResolvedText(unresolved, identifier), {
+          ok: true,
+          attachment: unresolved,
+        }),
+        stderr: "",
+      };
+    }
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(
+        json,
+        `refreshed conversation snapshot ${attachmentId} on ${identifier}\n`,
         { ok: true, attachment: parsed.data },
       ),
       stderr: "",

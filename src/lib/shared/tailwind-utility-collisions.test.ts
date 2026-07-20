@@ -65,6 +65,10 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}TddToggle.tsx`,
   `${path.sep}components${path.sep}CardContextMenu.tsx`,
   `${path.sep}components${path.sep}Topbar.tsx`,
+  `${path.sep}components${path.sep}topbar${path.sep}NavSwitchers.tsx`,
+  `${path.sep}components${path.sep}topbar${path.sep}QuickTicketButton.tsx`,
+  `${path.sep}components${path.sep}topbar${path.sep}QuickTicketButton.stories.tsx`,
+  `${path.sep}components${path.sep}quick-ticket${path.sep}`,
   `${path.sep}components${path.sep}WorkRailMain.tsx`,
   `${path.sep}components${path.sep}ApprovalGatePanel.tsx`,
   // Stage B-5b agent-capability drawer-shell slice: the whole directory goes
@@ -227,6 +231,7 @@ const UTILITY_FIRST_PATHS = [
   // just now redundant); the shared globals-chrome consumers are file-scoped.
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}`,
   `${path.sep}components${path.sep}Toast.tsx`,
+  `${path.sep}components${path.sep}ToastHost.tsx`,
   `${path.sep}features${path.sep}session${path.sep}ConversationWorkspace.tsx`,
   `${path.sep}app${path.sep}projects${path.sep}[name]${path.sep}[session]${path.sep}conflicts${path.sep}page.tsx`,
   // global-workflow-templates library + launch UI: authored utility-first against

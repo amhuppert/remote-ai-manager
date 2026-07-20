@@ -29,8 +29,11 @@ import {
   type TicketService,
 } from "./service";
 import { resolveTicketProjectOr404 } from "./route-resolution";
+import { readBodyBounded } from "./bounded-body";
 
 const logger = createLogger("tickets.routes");
+
+export const MAX_TICKET_CREATE_BODY_BYTES = 4 * 1024 * 1024;
 
 export interface TicketsRouteDeps {
   /** Lazy so importing this module (route shells do) never opens the DB. */
@@ -218,6 +221,58 @@ export async function jsonBodyOrNull(
   }
 }
 
+type BoundedJsonBodyResult =
+  | { kind: "value"; value: Record<string, unknown> }
+  | { kind: "invalid" }
+  | { kind: "too_large"; sizeBytes: number };
+
+async function boundedCreateJsonBody(
+  request: Request,
+): Promise<BoundedJsonBodyResult> {
+  const declaredLength = Number(request.headers.get("content-length") ?? "");
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > MAX_TICKET_CREATE_BODY_BYTES
+  ) {
+    return { kind: "too_large", sizeBytes: declaredLength };
+  }
+
+  const bounded = await readBodyBounded(
+    request.body,
+    MAX_TICKET_CREATE_BODY_BYTES,
+  );
+  if (!bounded.ok) {
+    return { kind: "too_large", sizeBytes: bounded.receivedBytes };
+  }
+
+  try {
+    const body: unknown = JSON.parse(new TextDecoder().decode(bounded.bytes));
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return { kind: "invalid" };
+    }
+    return { kind: "value", value: body as Record<string, unknown> };
+  } catch {
+    logger.info("tickets.routes.invalid_json_body", {
+      path: new URL(request.url).pathname,
+    });
+    return { kind: "invalid" };
+  }
+}
+
+function createPayloadTooLargeResponse(sizeBytes: number): Response {
+  return NextResponse.json(
+    {
+      error: `Ticket create body exceeds the ${MAX_TICKET_CREATE_BODY_BYTES}-byte limit`,
+      code: "payload_too_large",
+      details: {
+        sizeBytes,
+        maxBytes: MAX_TICKET_CREATE_BODY_BYTES,
+      },
+    },
+    { status: 413 },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -285,21 +340,34 @@ export function createTicketsRouteHandlers(
         projectName,
       );
       if (!project.ok) return project.response;
-      const body = await jsonBodyOrNull(request);
-      if (body === null) {
+      const body = await boundedCreateJsonBody(request);
+      if (body.kind === "too_large") {
+        logger.info("tickets.routes.create_body_rejected", {
+          projectName,
+          sizeBytes: body.sizeBytes,
+          maxBytes: MAX_TICKET_CREATE_BODY_BYTES,
+        });
+        return createPayloadTooLargeResponse(body.sizeBytes);
+      }
+      if (body.kind === "invalid") {
         return validationFailedResponse([
           { path: "", message: "request body must be a JSON object" },
         ]);
       }
 
       const parsed = createTicketServiceInputSchema.safeParse({
-        ...body,
+        ...body.value,
         projectName,
       });
       if (!parsed.success) {
         return validationFailedResponse(toTicketValidationIssues(parsed.error));
       }
-      return ticketResponse(await deps.getService().create(parsed.data), 201);
+      const result = await deps.getService().create(parsed.data);
+      if (!result.ok) return ticketErrorResponse(result.error);
+      return NextResponse.json(
+        { ticket: result.value, warnings: result.warnings },
+        { status: 201 },
+      );
     },
 
     async detailGET(request, context) {

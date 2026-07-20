@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html { font-size: 15px; height: 100dvh; overflow: clip; -webkit-font-smoothing: antialiased; }
+    body { margin: 0; background: var(--bg-void); color: var(--text-primary); font-family: var(--font-body); overflow: clip; height: 100%; }
+    a { color: var(--text-secondary); text-decoration: none; }
+    a:hover { color: var(--text-primary); }
+    body::before { content: ""; position: fixed; inset: 0; z-index: 9999; pointer-events: none; opacity: 0.025; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E"); background-repeat: repeat; background-size: 256px 256px; }
+    body::after { content: ""; position: fixed; inset: 0; z-index: 9998; pointer-events: none; background: repeating-linear-gradient(transparent 0px, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @keyframes qtFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes qtSlideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes qtSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes qtToastIn { from { transform: translate(-50%, 8px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+    @keyframes qtRowIn { from { opacity: 0; background: var(--cyan-glow); } to { opacity: 1; background: transparent; } }
+    @keyframes qtSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.001s !important; } }
+  </style>
+</helmet>
+
+<div data-screen-label="Command Center" style="display: flex; flex-direction: column; height: 100dvh; overflow: clip; background: var(--bg-void); color: var(--text-primary); font-family: var(--font-body);">
+
+  <!-- ============ TOPBAR (recreated from src/components/Topbar.tsx) ============ -->
+  <header style="position: sticky; top: 0; z-index: 100; display: flex; height: 48px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); background: var(--cc-topbar-bg); padding: 0 16px; backdrop-filter: blur(16px) saturate(140%); flex-shrink: 0;">
+    <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+      <a href="#" onClick="{{ goTickets }}" style="font-family: var(--font-display); font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em; color: var(--cyan); text-shadow: 0 0 20px var(--cyan-glow-text);">CC</a>
+      <div style="height: 20px; width: 1px; background: var(--border-default);"></div>
+      <nav style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary);">
+        <sc-if value="{{ isTickets }}" hint-placeholder-val="{{ true }}">
+          <span>tickets</span>
+        </sc-if>
+        <sc-if value="{{ isSession }}" hint-placeholder-val="{{ false }}">
+          <button type="button" title="Switch project" onClick="{{ noop }}" style="margin: 0; display: inline-flex; cursor: pointer; align-items: center; gap: 5px; border-radius: 4px; border: none; background: transparent; padding: 3px 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1; white-space: nowrap; color: var(--text-secondary); transition: color 120ms ease, background 120ms ease;" style-hover="background: var(--bg-hover); color: var(--text-primary);">
+            <span>command-center</span>
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+          <span style="color: var(--text-tertiary);">/</span>
+          <button type="button" title="Switch session" onClick="{{ noop }}" style="margin: 0; display: inline-flex; cursor: pointer; align-items: center; gap: 5px; border-radius: 4px; border: none; background: transparent; padding: 3px 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1; white-space: nowrap; font-weight: 600; color: var(--text-primary); transition: color 120ms ease, background 120ms ease;" style-hover="background: var(--bg-hover);">
+            <span>quick-ticket-dialog</span>
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+        </sc-if>
+      </nav>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+
+      <!-- NEW: Quick Ticket affordance — quiet permanent chrome, first slot of the right cluster -->
+      <span style="position: relative; display: inline-flex;" onMouseEnter="{{ tipQtOn }}" onMouseLeave="{{ tipOff }}">
+        <button type="button" aria-label="Quick ticket" onClick="{{ openDialog }}" onFocus="{{ tipQtOn }}" onBlur="{{ tipOff }}" style="display: inline-flex; height: 28px; width: 30px; align-items: center; justify-content: center; border-radius: 4px; border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease; padding: 0;" style-hover="border-color: var(--cyan); background: var(--bg-hover); color: var(--text-primary);" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="4" width="9.5" height="8" rx="1.4" stroke="currentColor" stroke-width="1.2"></rect><path d="M3.7 6.8 H8.8 M3.7 9.2 H6.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path><path d="M13.2 5.6 V10.4 M10.8 8 H15.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></svg>
+        </button>
+        <sc-if value="{{ tipQt }}" hint-placeholder-val="{{ false }}">
+          <span role="tooltip" style="position: absolute; top: 34px; right: 0; z-index: 600; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-elevated); padding: 5px 8px; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-primary); box-shadow: var(--cc-shadow-menu); animation: qtFadeIn 0.12s ease;">
+            Quick ticket
+            <kbd style="border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-base); padding: 1px 6px; font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-secondary);">{{ hotkeyLabel }}</kbd>
+          </span>
+        </sc-if>
+      </span>
+
+      <button type="button" title="Tickets" onClick="{{ goTickets }}" style="{{ ticketsPillStyle }}" style-hover="border-color: var(--cyan); background: var(--bg-hover); color: var(--text-primary);">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9.5" rx="1.4" stroke="currentColor" stroke-width="1.2"></rect><path d="M4.5 6.5 H11.5 M4.5 9 H8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+        <span style="line-height: 1;">Tickets</span>
+      </button>
+      <button type="button" title="Workflow Atlas" onClick="{{ noop }}" style="display: inline-flex; height: 28px; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid var(--border-default); background: transparent; padding: 0 10px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease;" style-hover="border-color: var(--cyan); background: var(--bg-hover); color: var(--text-primary);">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="3.5" cy="3.5" r="2.1" stroke="currentColor" stroke-width="1.2"></circle><circle cx="12.5" cy="3.5" r="2.1" stroke="currentColor" stroke-width="1.2"></circle><circle cx="8" cy="12.5" r="2.1" stroke="currentColor" stroke-width="1.2"></circle><path d="M5 4.5 L11 4.5 M4.5 5.2 L7.4 11 M11.5 5.2 L8.6 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+        <span style="line-height: 1;">Workflows</span>
+      </button>
+      <button type="button" title="Global Workflow Templates" onClick="{{ noop }}" style="display: inline-flex; height: 28px; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid var(--border-default); background: transparent; padding: 0 10px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease;" style-hover="border-color: var(--cyan); background: var(--bg-hover); color: var(--text-primary);">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="4.5" width="9" height="9" rx="1.4" stroke="currentColor" stroke-width="1.2"></rect><path d="M5 4.5 V3.4 A1.4 1.4 0 0 1 6.4 2 H13 A1 1 0 0 1 14 3 V9.6 A1.4 1.4 0 0 1 12.6 11 H11.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <span style="line-height: 1;">Templates</span>
+      </button>
+      <button type="button" title="System Configuration" onClick="{{ noop }}" style="display: flex; height: 30px; width: 30px; align-items: center; justify-content: center; border-radius: 4px; border: none; background: transparent; color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease; padding: 0;" style-hover="background: var(--bg-hover); color: var(--text-primary);">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.92 2.91 L6.54 1.15 L9.46 1.15 L9.08 2.91 A5.2 5.2 0 0 1 10.83 3.64 L11.81 2.13 L13.87 4.19 L12.36 5.17 A5.2 5.2 0 0 1 13.09 6.92 L14.85 6.54 L14.85 9.46 L13.09 9.08 A5.2 5.2 0 0 1 12.36 10.83 L13.87 11.81 L11.81 13.87 L10.83 12.36 A5.2 5.2 0 0 1 9.08 13.09 L9.46 14.85 L6.54 14.85 L6.92 13.09 A5.2 5.2 0 0 1 5.17 12.36 L4.19 13.87 L2.13 11.81 L3.64 10.83 A5.2 5.2 0 0 1 2.91 9.08 L1.15 9.46 L1.15 6.54 L2.91 6.92 A5.2 5.2 0 0 1 3.64 5.17 L2.13 4.19 L4.19 2.13 L5.17 3.64 A5.2 5.2 0 0 1 6.92 2.91 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"></path><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"></circle></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============ /tickets PAGE (recreated from TicketsPage/TicketFilters/TicketList) ============ -->
+  <sc-if value="{{ isTickets }}" hint-placeholder-val="{{ true }}">
+    <main data-screen-label="Tickets page" style="flex: 1; width: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; animation: qtFadeIn 0.2s ease;">
+      <div style="display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border-dim); padding: 8px 24px;">
+        <div style="display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px;">
+          <h1 style="margin: 0; font-family: var(--font-display); font-size: 1.05rem; line-height: 1.05; font-weight: 800; white-space: nowrap; color: var(--text-primary);">tickets <span style="color: var(--cyan); text-shadow: 0 0 24px var(--cyan-glow-text);">·</span></h1>
+          <span style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-family: var(--font-mono); font-size: 0.72rem; white-space: nowrap; color: var(--text-tertiary);">{{ ticketCount }} tickets</span>
+            <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-tertiary);">·</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px; border-radius: 9999px; border: 1px solid var(--border-subtle); background: var(--bg-raised); padding: 1px 7px; font-size: 0.7rem; white-space: nowrap; color: var(--text-secondary);">
+              <span aria-hidden="true" style="height: 6px; width: 6px; border-radius: 9999px; background: var(--cyan); box-shadow: 0 0 6px var(--cyan-glow); animation: pulse-dot 2.5s ease infinite;"></span>
+              1 in progress
+            </span>
+          </span>
+        </div>
+        <div style="display: flex; flex-shrink: 0; align-items: center; gap: 8px;">
+          <button type="button" onClick="{{ openDialog }}" style="display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 6px; border: 1px solid var(--cyan); background: var(--cyan); color: var(--text-inverse); font-family: var(--font-mono); font-weight: 600; padding: 6px 12px; font-size: 0.72rem; cursor: pointer; transition: all 0.15s ease;" style-hover="background: var(--cyan-dim); border-color: var(--cyan-dim); box-shadow: 0 0 20px var(--cyan-glow);" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3 V13 M3 8 H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>
+            New ticket
+          </button>
+          <div style="display: inline-flex; align-items: center; gap: 2px; border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 2px;">
+            <span style="display: inline-flex; height: 22px; align-items: center; justify-content: center; border-radius: 3px; padding: 0 10px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; background: var(--cyan-glow); color: var(--cyan);">List</span>
+            <span style="display: inline-flex; height: 22px; align-items: center; justify-content: center; border-radius: 3px; padding: 0 10px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease;" style-hover="background: var(--bg-hover); color: var(--text-primary);">Board</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-dim); padding: 8px 24px;">
+        <span style="font-family: var(--font-mono); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary);">Filter</span>
+        <span style="display: inline-flex; height: 36px; width: 170px; cursor: pointer; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 0 12px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 500; color: var(--text-secondary); transition: all 0.15s ease;" style-hover="border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary);">All projects <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+        <span style="display: inline-flex; height: 36px; width: 150px; cursor: pointer; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 0 12px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 500; color: var(--text-secondary); transition: all 0.15s ease;" style-hover="border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary);">All types <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+        <span style="display: inline-flex; height: 36px; width: 150px; cursor: pointer; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 0 12px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 500; color: var(--text-secondary); transition: all 0.15s ease;" style-hover="border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary);">All statuses <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+        <span style="height: 16px; width: 1px; background: var(--border-default);"></span>
+        <span style="font-family: var(--font-mono); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary);">Sort</span>
+        <span style="display: inline-flex; height: 36px; width: 160px; cursor: pointer; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 0 12px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 500; color: var(--text-secondary); transition: all 0.15s ease;" style-hover="border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary);">Last updated <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+        <span style="margin-left: auto; font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-tertiary);">{{ ticketCount }} of {{ ticketCount }} shown</span>
+      </div>
+
+      <div role="table" aria-label="Tickets">
+        <div role="row" style="display: grid; grid-template-columns: 3px minmax(120px, 160px) minmax(180px, 1fr) 96px 118px 52px minmax(0, 190px) 64px 44px; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-subtle); padding: 6px 12px 6px 0;">
+          <span></span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); padding-left: 13px;">Ticket</span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary);">Title</span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary);">Type</span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary);">Status</span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); text-align: right;">Ctx</span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary);">Session</span>
+          <span style="font-family: var(--font-mono); font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); text-align: right;">Updated</span>
+          <span></span>
+        </div>
+
+        <sc-for list="{{ rows }}" as="row" hint-placeholder-count="5">
+          <div role="row" style="{{ row.rowStyle }}">
+            <span></span>
+            <span aria-hidden="true" style="{{ row.railStyle }}"></span>
+            <span role="cell" style="min-width: 0; padding-left: 13px;">
+              <span style="display: block; overflow: hidden; font-family: var(--font-mono); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; transition: color 0.15s ease;" style-hover="color: var(--cyan);">{{ row.ident }}</span>
+            </span>
+            <span role="cell" style="min-width: 0;">
+              <span style="display: block; overflow: hidden; font-family: var(--font-mono); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; transition: color 0.15s ease;" style-hover="color: var(--cyan);">{{ row.title }}</span>
+            </span>
+            <span role="cell">
+              <span style="{{ row.badgeStyle }}">{{ row.typeLabel }}</span>
+            </span>
+            <span role="cell" style="{{ row.statusCellStyle }}">
+              <span aria-hidden="true" style="{{ row.dotStyle }}"></span>
+              {{ row.statusLabel }}
+            </span>
+            <span role="cell" style="{{ row.ctxStyle }}">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="opacity: 0.8;"><path d="M13 7.5 L8.2 12.3 A3.2 3.2 0 0 1 3.7 7.8 L8.8 2.7 A2.1 2.1 0 0 1 11.8 5.7 L6.9 10.6 A1 1 0 0 1 5.5 9.2 L10 4.7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+              {{ row.ctx }}
+            </span>
+            <span role="cell" style="min-width: 0;">
+              <sc-if value="{{ row.session }}" hint-placeholder-val="{{ false }}">
+                <button type="button" onClick="{{ goSession }}" title="Open session" style="display: inline-flex; max-width: 100%; overflow: hidden; align-items: center; gap: 6px; border-radius: 9999px; border: 1px solid var(--border-subtle); background: var(--bg-raised); padding: 2px 9px; font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease;" style-hover="border-color: var(--border-default); background: var(--bg-elevated); color: var(--text-primary);">
+                  <span aria-hidden="true" style="height: 6px; width: 6px; flex-shrink: 0; border-radius: 9999px; background: var(--green); box-shadow: 0 0 6px var(--green-glow); animation: pulse-dot 2.5s ease infinite;"></span>
+                  <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.session }}</span>
+                </button>
+              </sc-if>
+              <sc-if value="{{ row.noSession }}" hint-placeholder-val="{{ true }}">
+                <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-tertiary);">—</span>
+              </sc-if>
+            </span>
+            <span role="cell" style="text-align: right; font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-secondary); font-variant-numeric: tabular-nums;">{{ row.updated }}</span>
+            <span role="cell" style="display: flex; justify-content: flex-end;">
+              <button type="button" aria-label="Ticket actions" style="display: inline-flex; height: 24px; width: 24px; align-items: center; justify-content: center; border-radius: 4px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; transition: all 0.15s ease; padding: 0;" style-hover="background: var(--bg-hover); color: var(--text-primary);">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="3" r="1.4"></circle><circle cx="8" cy="8" r="1.4"></circle><circle cx="8" cy="13" r="1.4"></circle></svg>
+              </button>
+            </span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding: 10px 24px; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-tertiary);">Live via SSE — rows appear, move and vanish without refresh</div>
+    </main>
+  </sc-if>
+
+  <!-- ============ SESSION PAGE backdrop (info strip per SessionInfoStrip.tsx; conversation panel) ============ -->
+  <sc-if value="{{ isSession }}" hint-placeholder-val="{{ false }}">
+    <main data-screen-label="Session page" style="flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: clip; animation: qtFadeIn 0.2s ease;">
+      <div style="position: relative; z-index: 5; border-bottom: 1px solid var(--border-default); background: var(--bg-base); font-family: var(--font-mono); font-size: 0.72rem;">
+        <div style="display: flex; align-items: center; gap: 16px; padding: 6px 12px;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); cursor: pointer;" title="Copy worktree path" style-hover="color: var(--text-primary);">
+            <span style="font-size: 0.6rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-tertiary);">worktree</span>
+            <span>…/worktrees/quick-ticket-dialog</span>
+          </span>
+          <span style="display: inline-block; height: 16px; width: 1px; flex-shrink: 0; background: var(--border-default);"></span>
+          <span style="display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); line-height: 1;">
+            <span aria-hidden="true" style="height: 6px; width: 6px; flex-shrink: 0; border-radius: 9999px; background: var(--cyan); box-shadow: 0 0 6px var(--cyan-glow); animation: pulse-dot 1.5s ease-in-out infinite;"></span>
+            Running
+          </span>
+          <span style="display: inline-block; height: 16px; width: 1px; flex-shrink: 0; background: var(--border-default);"></span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary);">
+            <span style="font-size: 0.6rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-tertiary);">context</span>
+            <span style="position: relative; display: inline-block; height: 4px; width: 64px; border-radius: 9999px; background: var(--bg-raised); overflow: hidden;"><span style="position: absolute; inset: 0 58% 0 0; background: var(--cyan); box-shadow: 0 0 6px var(--cyan-glow);"></span></span>
+            <span style="font-variant-numeric: tabular-nums;">42%</span>
+          </span>
+          <span style="display: inline-block; height: 16px; width: 1px; flex-shrink: 0; background: var(--border-default);"></span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500;">TDD off</span>
+          <span style="margin-left: auto; display: inline-flex; flex-shrink: 0; align-items: center; gap: 8px; color: var(--text-tertiary);">
+            <span style="display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; border: 1px solid var(--border-subtle); background: var(--bg-raised); padding: 2px 9px; font-size: 0.68rem; color: var(--text-secondary);">branch csm/quick-ticket-dialog</span>
+            <button type="button" aria-label="Session actions" style="display: inline-flex; height: 24px; width: 24px; align-items: center; justify-content: center; border-radius: 4px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; padding: 0; transition: all 0.15s ease;" style-hover="background: var(--bg-hover); color: var(--text-primary);">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="3" r="1.4"></circle><circle cx="8" cy="8" r="1.4"></circle><circle cx="8" cy="13" r="1.4"></circle></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; background: var(--bg-void);">
+        <div style="max-width: 860px; margin: 0 auto; padding: 24px 24px 16px; display: flex; flex-direction: column; gap: 16px;">
+          <div style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-tertiary);">
+            <span style="font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;">conversation</span>
+            <span style="color: var(--text-secondary);">Wire the quick-ticket hotkey through useAppHotkey</span>
+            <span>· conv_8f3k2p</span>
+          </div>
+          <div style="border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-base); padding: 12px 16px;">
+            <div style="font-family: var(--font-mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 8px;">prompt · 12:38</div>
+            <div style="font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.55; color: var(--text-primary);">Register the quick-ticket chord in HOTKEY_REGISTRY and route it through useAppHotkey so overlays suppress it. Keep it enabled on form tags — the whole point is capture from anywhere.</div>
+          </div>
+          <div style="padding: 4px 16px 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 10px;">claude · high effort · 12:39</div>
+            <div style="font-family: var(--font-body); font-size: 0.88rem; line-height: 1.65; color: var(--text-primary); display: flex; flex-direction: column; gap: 10px;">
+              <p style="margin: 0;">Registered <span style="font-family: var(--font-mono); font-size: 0.78rem; background: var(--bg-raised); border-radius: 4px; padding: 1px 5px;">quickTicket</span> in the registry with <span style="font-family: var(--font-mono); font-size: 0.78rem; background: var(--bg-raised); border-radius: 4px; padding: 1px 5px;">enableOnFormTags</span> and <span style="font-family: var(--font-mono); font-size: 0.78rem; background: var(--bg-raised); border-radius: 4px; padding: 1px 5px;">enableOnContentEditable</span>, so the chord fires from the composer, the diff pane, and the Tiptap editor.</p>
+              <p style="margin: 0;">One open question: the overlay scope currently suppresses every registered hotkey while a dialog is mounted. The quick-ticket chord should keep the same behavior — a second press while its own dialog is open should not stack a second instance.</p>
+            </div>
+          </div>
+          <div style="border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-base); padding: 10px 12px; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-tertiary); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <span>Prompt — @ to mention, / for commands</span>
+            <span style="border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 1px 6px; font-size: 0.62rem; color: var(--text-secondary);">↩</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- ============ QUICK TICKET DIALOG ============ -->
+  <sc-if value="{{ open }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; inset: 0; z-index: 200; background: var(--cc-overlay-scrim); backdrop-filter: blur(8px); animation: qtFadeIn 0.15s ease;" onClick="{{ requestCloseFromScrim }}"></div>
+    <div style="{{ overlayCenterStyle }}">
+      <div role="dialog" aria-modal="true" aria-label="New ticket" data-screen-label="Quick ticket dialog" style="{{ cardStyle }}" onClick="{{ stop }}">
+
+        <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px;">
+          <h2 style="margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 1.2rem; color: var(--text-primary);">New ticket</h2>
+          <sc-if value="{{ draftRestored }}" hint-placeholder-val="{{ false }}">
+            <span style="display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-tertiary);">
+              Draft restored
+              <button type="button" onClick="{{ clearRestoredDraft }}" style="border: none; background: transparent; padding: 0; font-family: var(--font-mono); font-size: 0.68rem; font-weight: 600; color: var(--text-secondary); text-decoration: underline; text-underline-offset: 2px; cursor: pointer;" style-hover="color: var(--red);">Discard</button>
+            </span>
+          </sc-if>
+        </div>
+
+        <!-- CC bug mode switch row -->
+        <span style="position: relative; display: block; margin-bottom: 16px;" onMouseEnter="{{ tipCcOn }}" onMouseLeave="{{ tipOff }}">
+          <div style="{{ modeRowStyle }}">
+            <span aria-hidden="true" style="{{ modeIconStyle }}">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 4.6 A2.9 2.9 0 0 1 10.9 7.5 V9.8 A2.9 2.9 0 0 1 5.1 9.8 V7.5 A2.9 2.9 0 0 1 8 4.6 Z" stroke="currentColor" stroke-width="1.2"></path><path d="M6.2 3.2 L5.2 1.9 M9.8 3.2 L10.8 1.9 M5.1 7.6 H2.4 M10.9 7.6 H13.6 M5.5 10.6 L3.4 12.3 M10.5 10.6 L12.6 12.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+            </span>
+            <span style="display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px;">
+              <span style="font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; color: var(--text-primary);">Command Center bug report</span>
+              <span style="font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-tertiary);">{{ modeHint }}</span>
+            </span>
+            <button type="button" role="switch" aria-checked="{{ bugMode }}" aria-label="Command Center bug report mode" disabled="{{ switchDisabled }}" onClick="{{ toggleBugMode }}" style="{{ switchTrackStyle }}" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">
+              <span style="{{ switchKnobStyle }}"></span>
+            </button>
+          </div>
+          <sc-if value="{{ tipCc }}" hint-placeholder-val="{{ false }}">
+            <span role="tooltip" style="position: absolute; top: -30px; right: 0; z-index: 600; white-space: nowrap; border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-elevated); padding: 5px 8px; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-primary); box-shadow: var(--cc-shadow-menu); animation: qtFadeIn 0.12s ease;">The Command Center project isn't resolvable on this instance</span>
+          </sc-if>
+        </span>
+
+        <!-- Project + Work type (collapses in bug mode) -->
+        <div style="{{ targetWrapStyle }}" inert="{{ targetInert }}">
+          <div style="{{ targetInnerStyle }}">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+              <div>
+                <label style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-bottom: 8px;">Project</label>
+                <span style="position: relative; display: block;">
+                  <button type="button" aria-haspopup="listbox" aria-expanded="{{ projectMenu }}" onClick="{{ toggleProjectMenu }}" style="{{ projectTriggerStyle }}" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">
+                    <span style="overflow: hidden; text-overflow: ellipsis;">{{ projectDisplay }}</span>
+                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7; flex-shrink: 0;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <sc-if value="{{ projectMenu }}" hint-placeholder-val="{{ false }}">
+                    <div role="listbox" style="position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 400; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-elevated); box-shadow: var(--cc-shadow-menu); padding: 4px; animation: qtFadeIn 0.12s ease;">
+                      <sc-for list="{{ projectOptions }}" as="opt" hint-placeholder-count="3">
+                        <button type="button" role="option" aria-selected="{{ opt.selected }}" onClick="{{ opt.pick }}" style="{{ opt.style }}" style-hover="background: var(--cc-cyan-a08);">
+                          <span style="width: 13px; display: inline-flex; flex-shrink: 0;">
+                            <sc-if value="{{ opt.selected }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="color: var(--cyan);"><path d="M3 8.5 L6.2 11.5 L13 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg></sc-if>
+                          </span>
+                          {{ opt.name }}
+                        </button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </span>
+                <sc-if value="{{ projectIssue }}" hint-placeholder-val="{{ false }}">
+                  <p role="alert" style="margin: 4px 0 0; font-family: var(--font-mono); font-size: 0.72rem; color: var(--red);">Choose an owning project.</p>
+                </sc-if>
+              </div>
+              <div>
+                <label style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-bottom: 8px;">Work type</label>
+                <span style="position: relative; display: block;">
+                  <button type="button" aria-haspopup="listbox" aria-expanded="{{ typeMenu }}" onClick="{{ toggleTypeMenu }}" style="{{ typeTriggerStyle }}" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">
+                    <span style="overflow: hidden; text-overflow: ellipsis;">{{ workTypeLabel }}</span>
+                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="opacity: 0.7; flex-shrink: 0;"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <sc-if value="{{ typeMenu }}" hint-placeholder-val="{{ false }}">
+                    <div role="listbox" style="position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 400; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-elevated); box-shadow: var(--cc-shadow-menu); padding: 4px; animation: qtFadeIn 0.12s ease;">
+                      <sc-for list="{{ typeOptions }}" as="opt" hint-placeholder-count="5">
+                        <button type="button" role="option" aria-selected="{{ opt.selected }}" onClick="{{ opt.pick }}" style="{{ opt.style }}" style-hover="background: var(--cc-cyan-a08);">
+                          <span style="width: 13px; display: inline-flex; flex-shrink: 0;">
+                            <sc-if value="{{ opt.selected }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="color: var(--cyan);"><path d="M3 8.5 L6.2 11.5 L13 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg></sc-if>
+                          </span>
+                          {{ opt.name }}
+                        </button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Title -->
+        <div style="margin-bottom: 16px;">
+          <label for="qt-title" style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-bottom: 8px;">Title</label>
+          <input id="qt-title" ref="{{ titleRef }}" value="{{ title }}" onChange="{{ onTitle }}" placeholder="What needs to happen" disabled="{{ pending }}" style="box-sizing: border-box; width: 100%; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-base); padding: 9px 12px; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-primary); outline: 0; transition: border-color 0.15s ease, box-shadow 0.15s ease;" style-hover="border-color: var(--border-strong);" style-focus="border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-glow);">
+          <sc-if value="{{ titleIssue }}" hint-placeholder-val="{{ false }}">
+            <p role="alert" style="margin: 4px 0 0; font-family: var(--font-mono); font-size: 0.72rem; color: var(--red);">Title is required.</p>
+          </sc-if>
+        </div>
+
+        <!-- Description -->
+        <div style="margin-bottom: 16px;">
+          <label for="qt-desc" style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-bottom: 8px;">Description — markdown, optional</label>
+          <textarea id="qt-desc" rows="{{ descRows }}" value="{{ desc }}" onChange="{{ onDesc }}" placeholder="## Problem…" disabled="{{ pending }}" style="box-sizing: border-box; width: 100%; resize: vertical; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-base); padding: 9px 12px; font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5; color: var(--text-primary); outline: 0; transition: border-color 0.15s ease, box-shadow 0.15s ease;" style-hover="border-color: var(--border-strong);" style-focus="border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-glow);"></textarea>
+        </div>
+
+        <!-- Context section (generic mode, conversation in view) -->
+        <div style="{{ contextWrapStyle }}" inert="{{ contextInert }}">
+          <div style="overflow: hidden; min-height: 0;">
+            <div style="margin-bottom: 16px;">
+              <div style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-bottom: 8px;">Context</div>
+              <div style="display: flex; align-items: flex-start; gap: 8px; border-radius: 6px; border: 1px solid var(--border-subtle); background: var(--bg-base); padding: 8px 10px;">
+                <span aria-hidden="true" style="display: inline-flex; height: 26px; width: 26px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 4px; background: var(--green-glow); color: var(--green);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 3.5 H13 V10.5 H8.5 L5.5 13 V10.5 H3 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"></path></svg>
+                </span>
+                <span style="display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px;">
+                  <span style="font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Wire the quick-ticket hotkey through useAppHotkey</span>
+                  <span style="font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-tertiary);">conversation · compaction snapshot generates after create</span>
+                </span>
+                <button type="button" aria-label="Remove conversation from ticket" onClick="{{ removeConv }}" style="display: inline-flex; height: 22px; width: 22px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 4px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; transition: all 0.15s ease; padding: 0;" style-hover="background: var(--bg-hover); color: var(--red);">
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Diagnostic bundle panel (CC bug mode) -->
+        <div style="{{ bundleWrapStyle }}" inert="{{ bundleInert }}">
+          <div style="overflow: hidden; min-height: 0;">
+            <div style="margin-bottom: 16px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">
+                <span style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary);">Diagnostic bundle</span>
+                <span style="display: inline-flex; align-items: center; gap: 8px;">
+                  <sc-if value="{{ hasRemoved }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" onClick="{{ restoreRemoved }}" style="border: none; background: transparent; padding: 0; font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; color: var(--text-tertiary); text-decoration: underline; text-underline-offset: 2px; cursor: pointer;" style-hover="color: var(--cyan);">restore removed</button>
+                  </sc-if>
+                  <span style="display: inline-flex; align-items: center; border-radius: 9999px; background: var(--bg-raised); padding: 1px 8px; font-family: var(--font-mono); font-size: 0.64rem; font-weight: 600; letter-spacing: 0.06em; color: var(--text-secondary);">{{ bundleCount }} of 7</span>
+                </span>
+              </div>
+              <div style="border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-base); overflow: hidden;">
+                <sc-for list="{{ bundleRows }}" as="item" hint-placeholder-count="7">
+                  <div style="{{ item.rowStyle }}">
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 7px 10px;">
+                      <span aria-hidden="true" style="display: inline-flex; height: 22px; width: 22px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 4px; background: var(--cyan-glow); color: var(--cyan);">
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="{{ item.icon }}" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                      </span>
+                      <sc-if value="{{ item.isShot }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" aria-label="Expand screenshot" onClick="{{ item.toggle }}" style="display: inline-flex; flex-shrink: 0; height: 24px; width: 40px; border-radius: 3px; border: 1px solid var(--border-default); background: var(--bg-surface); overflow: hidden; cursor: zoom-in; padding: 0; position: relative;">
+                          <span aria-hidden="true" style="position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--bg-raised); border-bottom: 1px solid var(--border-subtle);"></span>
+                          <span aria-hidden="true" style="position: absolute; top: 8px; left: 4px; width: 14px; height: 2px; background: var(--border-strong); border-radius: 1px;"></span>
+                          <span aria-hidden="true" style="position: absolute; top: 13px; left: 4px; right: 4px; bottom: 3px; border: 1px solid var(--border-subtle); border-radius: 2px; background: var(--bg-base);"></span>
+                          <span aria-hidden="true" style="position: absolute; top: 16px; left: 7px; width: 10px; height: 1.5px; background: var(--cyan-dim); opacity: 0.7;"></span>
+                        </button>
+                      </sc-if>
+                      <button type="button" onClick="{{ item.toggle }}" aria-expanded="{{ item.expanded }}" style="display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; border: none; background: transparent; padding: 0; text-align: left; cursor: pointer;">
+                        <span style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; color: var(--text-primary);">{{ item.label }}</span>
+                        <span style="font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.value }}</span>
+                      </button>
+                      <span aria-hidden="true" style="{{ item.chevStyle }}">
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                      </span>
+                      <button type="button" aria-label="{{ item.removeLabel }}" onClick="{{ item.remove }}" style="display: inline-flex; height: 22px; width: 22px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 4px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; transition: all 0.15s ease; padding: 0;" style-hover="background: var(--bg-hover); color: var(--red);">
+                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+                      </button>
+                    </div>
+                    <sc-if value="{{ item.expanded }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding: 0 10px 9px 40px;">
+                        <sc-if value="{{ item.isShot }}" hint-placeholder-val="{{ false }}">
+                          <div style="height: 110px; border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-surface); position: relative; overflow: hidden;">
+                            <span aria-hidden="true" style="position: absolute; inset: 0 0 auto 0; height: 16px; background: var(--bg-raised); border-bottom: 1px solid var(--border-subtle);"></span>
+                            <span aria-hidden="true" style="position: absolute; top: 4px; left: 8px; font-family: var(--font-mono); font-size: 0.5rem; font-weight: 800; color: var(--cyan);">CC</span>
+                            <span aria-hidden="true" style="position: absolute; top: 24px; left: 10px; width: 30%; height: 4px; background: var(--border-strong); border-radius: 2px;"></span>
+                            <span aria-hidden="true" style="position: absolute; top: 36px; left: 10px; right: 10px; bottom: 10px; border: 1px solid var(--border-subtle); border-radius: 3px; background: var(--bg-base);"></span>
+                            <span aria-hidden="true" style="position: absolute; top: 46px; left: 20px; width: 45%; height: 3px; background: var(--text-tertiary); opacity: 0.4; border-radius: 2px;"></span>
+                            <span aria-hidden="true" style="position: absolute; top: 56px; left: 20px; width: 60%; height: 3px; background: var(--text-tertiary); opacity: 0.3; border-radius: 2px;"></span>
+                            <span aria-hidden="true" style="position: absolute; top: 66px; left: 20px; width: 38%; height: 3px; background: var(--cyan-dim); opacity: 0.6; border-radius: 2px;"></span>
+                            <span style="position: absolute; right: 8px; bottom: 6px; font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-tertiary);">captured 12:41 · before dialog opened</span>
+                          </div>
+                        </sc-if>
+                        <sc-for list="{{ item.detail }}" as="line" hint-placeholder-count="3">
+                          <div style="font-family: var(--font-mono); font-size: 0.68rem; line-height: 1.7; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;">{{ line }}</div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <p style="margin: 6px 0 0; font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-tertiary);">Everything above attaches to the ticket — remove anything you don't want captured.</p>
+            </div>
+          </div>
+        </div>
+
+        <sc-if value="{{ error }}" hint-placeholder-val="{{ false }}">
+          <div role="alert" style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-family: var(--font-mono); font-size: 0.72rem; color: var(--red);">
+            <span style="flex: 1;">{{ error }}</span>
+            <button type="button" onClick="{{ submit }}" style="flex-shrink: 0; border: 1px solid var(--cc-red-border); border-radius: 6px; background: transparent; padding: 3px 10px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; color: var(--red); cursor: pointer; transition: all 0.15s ease;" style-hover="background: var(--red-glow);">Retry</button>
+          </div>
+        </sc-if>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-tertiary);">
+            <kbd style="border-radius: 4px; border: 1px solid var(--border-default); background: var(--bg-base); padding: 1px 6px; font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-secondary);">⌘ ↩</kbd>
+            create
+          </span>
+          <span style="margin-left: auto; display: inline-flex; gap: 8px;">
+            <button type="button" onClick="{{ requestClose }}" style="display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); font-family: var(--font-mono); font-weight: 500; padding: 10px 18px; font-size: 0.78rem; cursor: pointer; transition: all 0.15s ease;" style-hover="background: var(--bg-hover); border-color: var(--border-default); color: var(--cyan);" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">Cancel</button>
+            <button type="button" onClick="{{ submit }}" disabled="{{ pending }}" aria-busy="{{ pending }}" style="{{ createBtnStyle }}" style-focus="outline: 2px solid var(--cyan); outline-offset: 2px;">
+              <sc-if value="{{ pending }}" hint-placeholder-val="{{ false }}">
+                <span aria-hidden="true" style="display: inline-block; height: 12px; width: 12px; border-radius: 9999px; border: 1.5px solid currentColor; border-top-color: transparent; animation: qtSpin 0.7s linear infinite;"></span>
+              </sc-if>
+              {{ createLabel }}
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Confirm-discard (draft safety = confirm) -->
+  <sc-if value="{{ confirmDiscard }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; inset: 0; z-index: 500; background: var(--cc-overlay-scrim); backdrop-filter: blur(8px); animation: qtFadeIn 0.15s ease;"></div>
+    <div style="position: fixed; inset: 0; z-index: 500; display: flex; align-items: center; justify-content: center;">
+      <div role="alertdialog" aria-modal="true" aria-label="Discard draft" style="position: relative; width: 100%; max-width: 400px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 10px; padding: 24px; animation: qtSlideUp 0.2s ease;">
+        <h2 style="margin: 0 0 16px; font-family: var(--font-display); font-weight: 700; font-size: 1.2rem; color: var(--text-primary);">Discard draft?</h2>
+        <p style="margin: 0 0 16px; font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.55; color: var(--text-secondary);">The ticket text you typed will be lost.</p>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" onClick="{{ keepEditing }}" style="display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); font-family: var(--font-mono); font-weight: 500; padding: 10px 18px; font-size: 0.78rem; cursor: pointer; transition: all 0.15s ease;" style-hover="background: var(--bg-hover); border-color: var(--border-default); color: var(--cyan);">Keep editing</button>
+          <button type="button" onClick="{{ discardDraft }}" style="display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid var(--cc-red-border); background: transparent; color: var(--red); font-family: var(--font-mono); font-weight: 500; padding: 10px 18px; font-size: 0.78rem; cursor: pointer; transition: all 0.15s ease;" style-hover="background: var(--red-glow); border-color: var(--red-dim);">Discard</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Success toast -->
+  <sc-if value="{{ toastMsg }}" hint-placeholder-val="{{ false }}">
+    <div role="status" aria-live="polite" onClick="{{ dismissToast }}" style="position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 300; display: inline-flex; align-items: center; border-radius: 9999px; border: 1px solid var(--cyan-dim); background: rgba(20, 25, 35, 0.96); padding: 10px 18px; font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-primary); box-shadow: 0 8px 24px var(--cc-black-a50), 0 0 18px var(--cyan-glow); cursor: pointer; animation: qtToastIn 0.25s ease; white-space: nowrap;">
+      <span style="color: var(--cyan); font-weight: 600;">{{ toastMsg }}</span>
+      <span style="margin-left: 6px;">created</span>
+      <button type="button" onClick="{{ viewTicket }}" style="margin-left: 12px; display: inline-flex; cursor: pointer; align-items: center; border-radius: 9999px; border: 1px solid var(--cyan-dim); background: transparent; padding: 2px 10px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; color: var(--cyan); transition: all 0.15s ease;" style-hover="background: var(--cyan-glow);">View ticket</button>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;ccResolvable&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Scenario&quot;, &quot;description&quot;: &quot;Off: the CC bug-report switch renders disabled with its explanatory tooltip&quot; },
+  &quot;createOutcome&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;success&quot;, &quot;failure&quot;], &quot;default&quot;: &quot;success&quot;, &quot;tsType&quot;: &quot;\&quot;success\&quot; | \&quot;failure\&quot;&quot;, &quot;section&quot;: &quot;Scenario&quot;, &quot;description&quot;: &quot;Failure: submit returns a create error with Retry&quot; },
+  &quot;draftSafety&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;restore&quot;, &quot;confirm&quot;], &quot;default&quot;: &quot;restore&quot;, &quot;tsType&quot;: &quot;\&quot;restore\&quot; | \&quot;confirm\&quot;&quot;, &quot;section&quot;: &quot;Scenario&quot;, &quot;description&quot;: &quot;Escape with typed text: silently keep a draft vs ask before discarding&quot; }
+}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.titleRef = React.createRef();
+    this.state = {
+      route: 'session', isMobile: false,
+      open: false, bugMode: false,
+      title: '', desc: '', project: '', workType: 'feature', convAttached: false,
+      projectMenu: false, typeMenu: false,
+      removed: [], expanded: null,
+      pending: false, error: null, issues: [],
+      draft: null, draftRestored: false, confirmDiscard: false,
+      toast: null, created: [], highlight: null, tip: null,
+    };
+  }
+
+  componentDidMount() {
+    this.mq = window.matchMedia('(max-width: 768px)');
+    this.onMq = () => this.setState({ isMobile: this.mq.matches });
+    this.onMq();
+    this.mq.addEventListener('change', this.onMq);
+    this.onKey = (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+        e.preventDefault();
+        if (this.state.open) this.requestClose(); else this.openDialog();
+        return;
+      }
+      if (!this.state.open && !this.state.confirmDiscard) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (this.state.confirmDiscard) { this.setState({ confirmDiscard: false }); return; }
+        if (this.state.projectMenu || this.state.typeMenu) { this.setState({ projectMenu: false, typeMenu: false }); return; }
+        if (this.state.expanded !== null) { this.setState({ expanded: null }); return; }
+        this.requestClose();
+        return;
+      }
+      if (mod && e.key === 'Enter' && this.state.open && !this.state.confirmDiscard) { e.preventDefault(); this.submit(); }
+    };
+    window.addEventListener('keydown', this.onKey);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('keydown', this.onKey);
+    this.mq.removeEventListener('change', this.onMq);
+    clearTimeout(this.t1); clearTimeout(this.t2);
+  }
+
+  ctx() {
+    return this.state.route === 'session'
+      ? { project: 'command-center', conv: true }
+      : { project: '', conv: false };
+  }
+
+  focusTitle() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (this.titleRef.current) this.titleRef.current.focus();
+    }));
+  }
+
+  openDialog() {
+    const c = this.ctx();
+    const d = this.state.draft;
+    const base = { open: true, projectMenu: false, typeMenu: false, confirmDiscard: false, pending: false, error: null, issues: [], expanded: null, tip: null };
+    if (d) this.setState({ ...base, ...d, draftRestored: true });
+    else this.setState({ ...base, bugMode: false, title: '', desc: '', project: c.project, workType: 'feature', convAttached: c.conv, removed: [], draftRestored: false });
+    this.focusTitle();
+  }
+
+  isDirty() { return this.state.title.trim().length > 0 || this.state.desc.trim().length > 0; }
+
+  requestClose() {
+    const mode = this.props.draftSafety ?? 'restore';
+    if (this.isDirty()) {
+      if (mode === 'confirm') { this.setState({ confirmDiscard: true }); return; }
+      const s = this.state;
+      this.setState({ open: false, projectMenu: false, typeMenu: false, draft: { bugMode: s.bugMode, title: s.title, desc: s.desc, project: s.project, workType: s.workType, convAttached: s.convAttached, removed: s.removed } });
+      return;
+    }
+    this.setState({ open: false, draft: null, projectMenu: false, typeMenu: false });
+  }
+
+  submit() {
+    const s = this.state;
+    if (s.pending || !s.open) return;
+    const effProject = s.bugMode ? 'command-center' : s.project;
+    const issues = [];
+    if (effProject.length === 0) issues.push('project');
+    if (s.title.trim().length === 0) issues.push('title');
+    if (issues.length > 0) {
+      this.setState({ issues });
+      // Match source: focus the FIRST invalid field — project select before title.
+      if (issues.includes('project')) {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const el = document.querySelector('[aria-haspopup="listbox"]');
+          if (el) el.focus();
+        }));
+      } else if (issues.includes('title')) this.focusTitle();
+      return;
+    }
+    this.setState({ pending: true, error: null, issues: [] });
+    clearTimeout(this.t1);
+    this.t1 = setTimeout(() => {
+      if ((this.props.createOutcome ?? 'success') === 'failure') {
+        this.setState({ pending: false, error: "Couldn't create the ticket — POST /api/tickets 502" });
+        return;
+      }
+      const num = 214 + this.state.created.length;
+      const ident = effProject + '#' + num;
+      const ctxCount = s.bugMode ? (7 - s.removed.length) : (s.convAttached ? 1 : 0);
+      const row = { id: 'new' + num, ident, title: s.title.trim(), workType: s.bugMode ? 'bug' : s.workType, ctx: ctxCount };
+      this.setState({ pending: false, open: false, draft: null, created: [...this.state.created, row], toast: ident, highlight: ident });
+      clearTimeout(this.t2);
+      this.t2 = setTimeout(() => this.setState({ toast: null }), 7000);
+    }, 800);
+  }
+
+  renderVals() {
+    const s = this.state;
+    const p = this.props;
+    const ccResolvable = p.ccResolvable ?? true;
+    const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
+    const hotkeyLabel = mac ? '\u2318 \u21E7 T' : 'Ctrl \u21E7 T';
+
+    const TYPE_LABELS = { feature: 'Feature', bug: 'Bug', research: 'Research', tech_debt: 'Tech debt', performance: 'Performance' };
+    const TYPE_ORDER = ['feature', 'bug', 'research', 'tech_debt', 'performance'];
+    const PROJECTS = ['command-center', 'taskgarden', 'voice-relay'];
+
+    // ---- tickets list rows ----
+    const STATUS = {
+      not_started: { label: 'Not Started', text: 'var(--text-secondary)', dot: 'background: var(--text-tertiary);', rail: 'background: var(--text-tertiary); opacity: 0.25;' },
+      in_progress: { label: 'In Progress', text: 'var(--cyan)', dot: 'background: var(--cyan); box-shadow: 0 0 6px var(--cyan-glow); animation: pulse-dot 1.5s ease infinite;', rail: 'background: var(--cyan); box-shadow: 0 0 8px var(--cyan-glow);' },
+      done: { label: 'Done', text: 'var(--green)', dot: 'background: var(--green); box-shadow: 0 0 6px var(--green-glow);', rail: 'background: var(--green); opacity: 0.55;' },
+      blocked: { label: 'Blocked', text: 'var(--red)', dot: 'background: var(--red); box-shadow: 0 0 6px var(--red-glow);', rail: 'background: var(--red); box-shadow: 0 0 8px var(--red-glow);' },
+      closed: { label: 'Closed', text: 'var(--text-tertiary)', dot: 'background: var(--text-tertiary);', rail: 'background: var(--text-tertiary); opacity: 0.15;' },
+    };
+    const BADGE = {
+      feature: 'background: var(--cyan-glow); color: var(--cyan);',
+      bug: 'background: var(--red-glow); color: var(--red);',
+      research: 'background: var(--violet-glow); color: var(--violet);',
+      tech_debt: 'background: var(--amber-glow); color: var(--amber);',
+      performance: 'background: var(--green-glow); color: var(--green);',
+    };
+    const baseRows = [
+      { id: 'r1', ident: 'command-center#212', title: 'Quick-ticket dialog: draft safety on Escape', workType: 'feature', status: 'in_progress', ctx: 3, session: 'quick-ticket-dialog', updated: '12m' },
+      { id: 'r2', ident: 'command-center#209', title: 'Bundle panel: recent errors truncate at 200 chars', workType: 'bug', status: 'not_started', ctx: 5, session: null, updated: '2h' },
+      { id: 'r3', ident: 'taskgarden#87', title: 'Graph node: validator pill overflows at 4+ validators', workType: 'bug', status: 'blocked', ctx: 1, session: null, updated: '1d' },
+      { id: 'r4', ident: 'voice-relay#31', title: 'Latency probe: compare relay vs direct capture', workType: 'research', status: 'done', ctx: 2, session: null, updated: '3d' },
+      { id: 'r5', ident: 'command-center#201', title: 'Migrate remaining dialogs onto the Radix wrappers', workType: 'tech_debt', status: 'closed', ctx: 0, session: null, updated: '6d' },
+    ];
+    const createdRows = s.created.map((c) => ({ id: c.id, ident: c.ident, title: c.title, workType: c.workType, status: 'not_started', ctx: c.ctx, session: null, updated: 'now' }));
+    // Source grid is tuned for the full desktop shell; at narrower preview widths
+    // shrink the fixed Ticket/Session tracks so the 1fr title stays readable.
+    const gridCols = 'grid-template-columns: 3px minmax(120px, 160px) minmax(180px, 1fr) 96px 118px 52px minmax(0, 190px) 64px 44px;';
+    const rows = [...createdRows.reverse(), ...baseRows].map((r) => {
+      const sv = STATUS[r.status];
+      const hl = s.highlight === r.ident ? ' animation: qtRowIn 2s ease;' : '';
+      return {
+        ...r,
+        noSession: r.session === null,
+        typeLabel: TYPE_LABELS[r.workType].toLowerCase(),
+        statusLabel: sv.label,
+        rowStyle: 'position: relative; display: grid; ' + gridCols + ' align-items: center; gap: 8px; border-bottom: 1px solid var(--border-subtle); padding: 9px 12px 9px 0; transition: background 0.15s ease;' + hl,
+        railStyle: 'position: absolute; top: 0; bottom: 0; left: 0; width: 3px; ' + sv.rail,
+        badgeStyle: 'display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 9999px; white-space: nowrap; line-height: 1.3; ' + BADGE[r.workType],
+        statusCellStyle: 'display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: ' + sv.text + ';',
+        dotStyle: 'height: 6px; width: 6px; flex-shrink: 0; border-radius: 9999px; ' + sv.dot,
+        ctxStyle: 'display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; font-family: var(--font-mono); font-size: 0.76rem; font-weight: 500; color: ' + (r.ctx === 0 ? 'var(--text-tertiary)' : 'var(--text-secondary)') + ';',
+      };
+    });
+
+    // ---- diagnostic bundle ----
+    const BUNDLE = [
+      { key: 'route', label: 'Route + view state', value: '/projects/command-center/quick-ticket-dialog · pane chat',
+        icon: 'M8 1.8 A6.2 6.2 0 1 1 7.99 1.8 M8 5.2 A2.8 2.8 0 1 1 7.99 5.2 M8 1.8 V4 M8 12 V14.2 M1.8 8 H4 M12 8 H14.2',
+        detail: ['url        /projects/command-center/quick-ticket-dialog?c=conv_8f3k2p', 'conversation  conv_8f3k2p (active)', 'pane       chat · scroll anchor msg_412'] },
+      { key: 'ids', label: 'Identity IDs + deep links', value: 'project · session · conversation · workflow exec',
+        icon: 'M6.5 9.5 L9.5 6.5 M5.2 7.8 L3.9 9.1 A2.5 2.5 0 0 0 7.4 12.6 L8.7 11.3 M10.8 8.2 L12.1 6.9 A2.5 2.5 0 0 0 8.6 3.4 L7.3 4.7',
+        detail: ['project      command-center', 'session      quick-ticket-dialog', 'conversation conv_8f3k2p', 'workflow     wf_exec_02hdq7 (running)', 'link         https://cc-ops-1.tail4a2.ts.net/projects/command-center/quick-ticket-dialog?c=conv_8f3k2p'] },
+      { key: 'conv', label: 'Conversation', value: 'Wire the quick-ticket hotkey through useAppHotkey',
+        icon: 'M3 3.5 H13 V10.5 H8.5 L5.5 13 V10.5 H3 Z',
+        detail: ['compaction snapshot generates after create — no waiting here', 'captured against conv_8f3k2p · 34 messages'] },
+      { key: 'cctl', label: 'cctl command crib', value: '4 ready-to-run commands for the implementing agent',
+        icon: 'M3 4.5 L6.5 8 L3 11.5 M8 12 H13',
+        detail: ['cctl conversations show conv_8f3k2p', 'cctl sessions info command-center quick-ticket-dialog', 'cctl workflows exec-log wf_exec_02hdq7', 'cctl attachments fetch <snapshot-key>'] },
+      { key: 'build', label: 'Server build + environment', value: 'v0.4.2 · sha 9f2c41d · node 22.11',
+        icon: 'M3 5.5 L8 3 L13 5.5 V10.5 L8 13 L3 10.5 Z M3 5.5 L8 8 L13 5.5 M8 8 V13',
+        detail: ['build   2026-07-18T21:04Z', 'sha     9f2c41d', 'host    cc-ops-1.tail4a2.ts.net · next 15.3 · node 22.11'] },
+      { key: 'shot', label: 'Screenshot', value: 'page state before the dialog opened', isShot: true,
+        icon: 'M2.5 5 H5 L6.2 3.5 H9.8 L11 5 H13.5 V12.5 H2.5 Z M8 6.8 A2.2 2.2 0 1 1 7.99 6.8',
+        detail: [] },
+      { key: 'errors', label: 'Recent client errors', value: '2 console · 1 network · last 10 min',
+        icon: 'M8 2.5 L14.5 13 H1.5 Z M8 6.5 V9.5 M8 11.4 V11.6',
+        detail: ['12:41:07  GET /api/context-artifacts → 504', "12:40:52  TypeError: activeConversation is undefined (SessionInfoStrip.tsx:162)", '12:39:18  Warning: flushSync was called from inside a lifecycle method'] },
+    ];
+    const bundleRows = BUNDLE.filter((b) => !s.removed.includes(b.key)).map((b, i, arr) => ({
+      ...b,
+      isShot: b.isShot === true,
+      expanded: s.expanded === b.key,
+      removeLabel: 'Remove ' + b.label + ' from bundle',
+      rowStyle: i < arr.length - 1 ? 'border-bottom: 1px solid var(--border-dim);' : '',
+      chevStyle: 'display: inline-flex; flex-shrink: 0; color: var(--text-tertiary); opacity: 0.7; transition: transform 0.15s ease;' + (s.expanded === b.key ? ' transform: rotate(180deg);' : ''),
+      toggle: () => this.setState({ expanded: s.expanded === b.key ? null : b.key }),
+      remove: () => this.setState({ removed: [...s.removed, b.key], expanded: s.expanded === b.key ? null : s.expanded }),
+    }));
+
+    // ---- dialog computed styles ----
+    const sheet = s.isMobile;
+    const overlayCenterStyle = 'position: fixed; inset: 0; z-index: 200; display: flex; justify-content: center; ' + (sheet ? 'align-items: flex-end;' : 'align-items: center;') + ' pointer-events: none;';
+    const cardStyle = 'pointer-events: auto; position: relative; width: 100%; background: var(--bg-surface); border: 1px solid var(--border-default); overflow-y: auto; ' + (sheet
+      ? 'max-width: 100%; max-height: 100dvh; border-radius: 10px 10px 0 0; padding: 16px 12px calc(16px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; animation: qtSheetUp 0.25s ease;'
+      : 'max-width: 480px; max-height: calc(100dvh - 48px); border-radius: 10px; padding: 24px; animation: qtSlideUp 0.2s ease;');
+
+    const switchOn = s.bugMode;
+    const switchDisabled = !ccResolvable;
+    const modeRowStyle = 'display: flex; align-items: center; gap: 10px; border-radius: 6px; border: 1px solid ' + (switchOn ? 'var(--border-default)' : 'var(--border-subtle)') + '; background: var(--bg-base); padding: 8px 10px; transition: border-color 0.15s ease;' + (switchDisabled ? ' opacity: 0.45;' : '');
+    const modeIconStyle = 'display: inline-flex; height: 26px; width: 26px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.15s ease; ' + (switchOn ? 'background: var(--red-glow); color: var(--red);' : 'background: var(--bg-raised); color: var(--text-tertiary);');
+    const switchTrackStyle = 'position: relative; display: inline-flex; height: 18px; width: 34px; flex-shrink: 0; align-items: center; border-radius: 9999px; border: 1px solid ' + (switchOn ? 'var(--cyan)' : 'var(--border-default)') + '; background: ' + (switchOn ? 'var(--cyan-glow)' : 'var(--bg-raised)') + ';' + (switchOn ? ' box-shadow: 0 0 8px var(--cyan-glow);' : '') + ' cursor: ' + (switchDisabled ? 'not-allowed' : 'pointer') + '; transition: all 0.15s ease; padding: 0;';
+    const switchKnobStyle = 'position: absolute; left: 1px; top: 1px; height: 14px; width: 14px; border-radius: 9999px; background: ' + (switchOn ? '#ffffff' : 'var(--text-tertiary)') + '; transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), background 0.15s ease; transform: translateX(' + (switchOn ? '16px' : '0px') + ');';
+    const modeHint = switchDisabled
+      ? 'unavailable on this instance'
+      : (switchOn ? 'files to command-center · type bug · bundle below' : 'retarget to command-center and attach a diagnostic bundle');
+
+    // visibility flips at the end of the collapse (transition on visibility is
+    // discrete but delayable), so hidden controls leave the tab order.
+    const collapse = (open) => 'display: grid; grid-template-rows: ' + (open ? '1fr' : '0fr') + '; visibility: ' + (open ? 'visible' : 'hidden') + '; transition: grid-template-rows 0.25s ease, visibility 0s linear ' + (open ? '0s' : '0.25s') + ';';
+    const targetWrapStyle = collapse(!s.bugMode);
+    const contextWrapStyle = collapse(!s.bugMode && s.convAttached);
+    const bundleWrapStyle = collapse(s.bugMode);
+
+    const triggerBase = 'display: inline-flex; height: 36px; width: 100%; cursor: pointer; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-surface); padding: 0 12px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 500; white-space: nowrap; transition: all 0.15s ease;';
+    const projectTriggerStyle = triggerBase + (s.projectMenu ? ' border-color: var(--cyan-dim); color: var(--text-primary); box-shadow: 0 0 0 3px var(--cyan-glow);' : ' color: ' + (s.project ? 'var(--text-secondary)' : 'var(--text-tertiary)') + ';');
+    const typeTriggerStyle = triggerBase + (s.typeMenu ? ' border-color: var(--cyan-dim); color: var(--text-primary); box-shadow: 0 0 0 3px var(--cyan-glow);' : ' color: var(--text-secondary);');
+
+    const optBase = 'display: flex; width: 100%; cursor: pointer; align-items: center; gap: 6px; border-radius: 4px; border: none; padding: 7px 10px 7px 8px; text-align: left; font-family: var(--font-mono); font-size: 0.74rem; font-weight: 500; transition: background 0.1s ease;';
+    const projectOptions = PROJECTS.map((name) => ({
+      name,
+      selected: s.project === name,
+      style: optBase + (s.project === name ? ' background: var(--cyan-glow); color: var(--cyan);' : ' background: transparent; color: var(--text-primary);'),
+      pick: () => this.setState({ project: name, projectMenu: false, issues: s.issues.filter((x) => x !== 'project') }),
+    }));
+    const typeOptions = TYPE_ORDER.map((t) => ({
+      name: TYPE_LABELS[t],
+      selected: s.workType === t,
+      style: optBase + (s.workType === t ? ' background: var(--cyan-glow); color: var(--cyan);' : ' background: transparent; color: var(--text-primary);'),
+      pick: () => this.setState({ workType: t, typeMenu: false }),
+    }));
+
+    const createBtnStyle = 'display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 6px; border: 1px solid var(--cyan); background: var(--cyan); color: var(--text-inverse); font-family: var(--font-mono); font-weight: 600; padding: 10px 18px; font-size: 0.78rem; cursor: pointer; transition: all 0.15s ease;' + (s.pending ? ' opacity: 0.75; cursor: wait;' : '');
+
+    const ticketsPillStyle = 'display: inline-flex; height: 28px; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid ' + (s.route === 'tickets' ? 'var(--cyan)' : 'var(--border-default)') + '; background: transparent; padding: 0 10px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: ' + (s.route === 'tickets' ? 'var(--text-primary)' : 'var(--text-secondary)') + '; cursor: pointer; transition: all 0.15s ease;';
+
+    return {
+      isTickets: s.route === 'tickets', isSession: s.route === 'session',
+      goTickets: (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ route: 'tickets' }); },
+      goSession: () => this.setState({ route: 'session' }),
+      noop: () => {},
+      hotkeyLabel, ticketsPillStyle,
+      ticketCount: 5 + s.created.length,
+      rows,
+
+      open: s.open,
+      openDialog: () => this.openDialog(),
+      requestClose: () => this.requestClose(),
+      requestCloseFromScrim: () => this.requestClose(),
+      stop: (e) => e.stopPropagation(),
+      overlayCenterStyle, cardStyle,
+      draftRestored: s.draftRestored && s.draft !== null,
+      clearRestoredDraft: () => {
+        const c = this.ctx();
+        this.setState({ draft: null, draftRestored: false, bugMode: false, title: '', desc: '', project: c.project, workType: 'feature', convAttached: c.conv, removed: [], error: null, issues: [] });
+        this.focusTitle();
+      },
+
+      bugMode: s.bugMode, switchDisabled,
+      toggleBugMode: () => { if (!switchDisabled) this.setState({ bugMode: !s.bugMode, projectMenu: false, typeMenu: false, expanded: null }); },
+      modeRowStyle, modeIconStyle, switchTrackStyle, switchKnobStyle, modeHint,
+      tipQt: s.tip === 'qt', tipCc: s.tip === 'cc' && switchDisabled,
+      tipQtOn: () => this.setState({ tip: 'qt' }), tipCcOn: () => this.setState({ tip: 'cc' }), tipOff: () => this.setState({ tip: null }),
+
+      targetWrapStyle, contextWrapStyle, bundleWrapStyle,
+      // overflow hidden clips the open Project/Type listboxes — only clip while collapsed.
+      targetInnerStyle: 'min-height: 0; overflow: ' + (s.bugMode ? 'hidden' : 'visible') + ';',
+      // inert (DOM-level, immune to CSS overrides): true when collapsed, undefined
+      // when open so the attribute is omitted entirely.
+      targetInert: s.bugMode ? '' : undefined,
+      contextInert: (!s.bugMode && s.convAttached) ? undefined : '',
+      bundleInert: s.bugMode ? undefined : '',
+      projectMenu: s.projectMenu, typeMenu: s.typeMenu,
+      toggleProjectMenu: () => this.setState({ projectMenu: !s.projectMenu, typeMenu: false }),
+      toggleTypeMenu: () => this.setState({ typeMenu: !s.typeMenu, projectMenu: false }),
+      projectTriggerStyle, typeTriggerStyle, projectOptions, typeOptions,
+      projectDisplay: s.project.length > 0 ? s.project : 'Choose project…',
+      workTypeLabel: TYPE_LABELS[s.workType],
+      projectIssue: s.issues.includes('project'),
+      titleIssue: s.issues.includes('title'),
+
+      title: s.title, desc: s.desc, titleRef: this.titleRef,
+      descRows: sheet ? 3 : 4,
+      onTitle: (e) => this.setState({ title: e.target.value, issues: s.issues.filter((x) => x !== 'title') }),
+      onDesc: (e) => this.setState({ desc: e.target.value }),
+      pending: s.pending, error: s.error,
+      createLabel: s.bugMode ? 'File bug report' : 'Create ticket',
+      createBtnStyle,
+      submit: () => this.submit(),
+
+      convAttached: s.convAttached && !s.bugMode,
+      removeConv: () => this.setState({ convAttached: false }),
+
+      bundleRows,
+      bundleCount: 7 - s.removed.length,
+      hasRemoved: s.removed.length > 0,
+      restoreRemoved: () => this.setState({ removed: [] }),
+
+      confirmDiscard: s.confirmDiscard,
+      keepEditing: () => { this.setState({ confirmDiscard: false }); this.focusTitle(); },
+      discardDraft: () => this.setState({ confirmDiscard: false, open: false, draft: null }),
+
+      toastMsg: s.toast,
+      dismissToast: () => this.setState({ toast: null }),
+      viewTicket: (e) => { e.stopPropagation(); this.setState({ toast: null, route: 'tickets' }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

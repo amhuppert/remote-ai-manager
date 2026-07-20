@@ -18,9 +18,13 @@ describe("VoiceRecordButton", () => {
     ).toBeInTheDocument();
 
     rerender(<VoiceRecordButton {...props} isRecording elapsedTime={1} />);
-    expect(
-      screen.getByRole("button", { name: "Stop recording" }),
-    ).toBeInTheDocument();
+    const recordingButton = screen.getByRole("button", {
+      name: "Stop recording",
+    });
+    expect(recordingButton).toBeInTheDocument();
+    expect(recordingButton.className).toContain(
+      "motion-safe:data-[recording=true]:animate-[voice-recording-pulse_1.5s_ease-in-out_infinite]",
+    );
 
     rerender(<VoiceRecordButton {...props} isProcessing />);
     expect(

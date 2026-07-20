@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
   conversationAttachmentPayloadSchema,
+  effectiveSnapshotStatus,
   ticketAttachmentPayloadSchema,
   ticketAttachmentSchema,
   ticketSchema,
@@ -81,6 +82,44 @@ export type ConversationSnapshotUpdate = z.infer<
   typeof conversationSnapshotUpdateSchema
 >;
 
+export const compareAndSwapConversationSnapshotInputSchema =
+  conversationSnapshotUpdateSchema.extend({
+    ticketId: z.string().min(1),
+  });
+export type CompareAndSwapConversationSnapshotInput = z.infer<
+  typeof compareAndSwapConversationSnapshotInputSchema
+>;
+
+export type CompareAndSwapConversationSnapshotResult =
+  | {
+      status: "won";
+      attachment: TicketAttachment;
+      ticketUpdatedAt: string;
+    }
+  | { status: "lost"; currentPayload: TicketAttachment["payload"] }
+  | { status: "missing" };
+
+export const recoverPendingConversationSnapshotsInputSchema = z.object({
+  updatedAt: z.string().min(1),
+  snapshotError: z.string().min(1).max(500),
+});
+export type RecoverPendingConversationSnapshotsInput = z.infer<
+  typeof recoverPendingConversationSnapshotsInputSchema
+>;
+
+export interface RecoveredConversationSnapshot {
+  ticketId: string;
+  attachmentId: string;
+  projectPath: string;
+  ticketNumber: number;
+  ticketUpdatedAt: string;
+}
+
+export type ConversationSnapshotSwapFailure = Exclude<
+  CompareAndSwapConversationSnapshotResult,
+  { status: "won" }
+>;
+
 export const linkStartedSessionInputSchema = z.object({
   id: z.string().min(1),
   projectPath: z.string().min(1),
@@ -124,14 +163,26 @@ export class TicketSessionNotLinkableError extends Error {
   }
 }
 
+export class ConversationSnapshotSwapError extends Error {
+  constructor(
+    readonly attachmentId: string,
+    readonly result: ConversationSnapshotSwapFailure,
+  ) {
+    super(
+      `conversation snapshot compare-and-swap ${result.status} for attachment ${attachmentId}`,
+    );
+    this.name = "ConversationSnapshotSwapError";
+  }
+}
+
 /** Focused per-turn ticket view; session history is intentionally excluded. */
 export type LinkedTicketContext = Omit<TicketDetail, "sessions">;
 
 export interface TicketsRepo {
   create(input: PersistTicketInput): Promise<Ticket>;
-  createWithConversationAttachment(
+  createWithAttachments(
     input: PersistTicketInput,
-    attachment: TicketAttachment,
+    attachments: TicketAttachment[],
   ): Promise<TicketDetail>;
   list(query: TicketListQuery): Promise<TicketListItem[]>;
   findListItem(
@@ -148,6 +199,13 @@ export interface TicketsRepo {
   updateAttachment(
     input: UpdateAttachmentInput,
   ): Promise<TicketAttachment | null>;
+  compareAndSwapConversationSnapshot(
+    input: CompareAndSwapConversationSnapshotInput,
+  ): Promise<CompareAndSwapConversationSnapshotResult>;
+  /** Marks process-orphaned pending snapshots failed during startup. */
+  recoverPendingConversationSnapshots(
+    input: RecoverPendingConversationSnapshotsInput,
+  ): Promise<RecoveredConversationSnapshot[]>;
   deleteAttachment(
     identity: DeleteAttachmentInput,
   ): Promise<DeletedAttachmentResult | null>;
@@ -450,7 +508,14 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
   const findAttachmentStmt = db.prepare(
     `SELECT * FROM ticket_attachments WHERE id = ? AND ticket_id = ? LIMIT 1`,
   );
-  const adoptConversationSnapshotStmt = db.prepare(
+  const allAttachmentsWithTicketIdentityStmt = db.prepare(
+    `SELECT a.*, t.project_path AS ticket_project_path,
+            t.ticket_number AS ticket_number
+     FROM ticket_attachments a
+     JOIN tickets t ON t.id = a.ticket_id
+     ORDER BY a.created_at ASC, a.id ASC`,
+  );
+  const compareAndSwapConversationSnapshotStmt = db.prepare(
     `UPDATE ticket_attachments
      SET payload_json = @payload_json, updated_at = @updated_at
      WHERE id = @attachment_id
@@ -537,31 +602,49 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
     };
   }
 
-  const createTicketTx = db.transaction(
-    (input: PersistTicketInput, attachment: TicketAttachment | null) => {
-      ensureProjectStmt.run(input.projectPath);
-      const counter = getCounterStmt.get(input.projectPath) as {
-        last_number: number;
-      };
-      insertTicketStmt.run({
-        id: input.id,
-        project_path: input.projectPath,
-        ticket_number: counter.last_number,
-        title: input.title,
-        description: input.description,
-        work_type: input.workType,
-        status: input.status,
-        created_at: input.createdAt,
-        updated_at: input.updatedAt,
-      });
-      if (attachment) {
+  function insertTicket(input: PersistTicketInput): number {
+    ensureProjectStmt.run(input.projectPath);
+    const counter = getCounterStmt.get(input.projectPath) as {
+      last_number: number;
+    };
+    insertTicketStmt.run({
+      id: input.id,
+      project_path: input.projectPath,
+      ticket_number: counter.last_number,
+      title: input.title,
+      description: input.description,
+      work_type: input.workType,
+      status: input.status,
+      created_at: input.createdAt,
+      updated_at: input.updatedAt,
+    });
+    return counter.last_number;
+  }
+
+  const createTicketTx = db.transaction(insertTicket);
+
+  const createWithAttachmentsTx = db.transaction(
+    (
+      input: PersistTicketInput,
+      attachments: TicketAttachment[],
+    ): TicketDetail => {
+      const number = insertTicket(input);
+      for (const attachment of attachments) {
         insertAttachmentStmt.run(attachmentBind(attachment));
       }
-      return counter.last_number;
+      const detail = readDetail(input.projectPath, number);
+      if (detail === null) {
+        throw new PersistenceError({
+          kind: "not_found",
+          entity: "ticket",
+          identifier: input.id,
+        });
+      }
+      return detail;
     },
   );
 
-  function advanceTicketRevision(ticketId: string, requested: string): string {
+  function ticketRevisionFor(ticketId: string, requested: string): string {
     const rawTicket: unknown = findTicketByIdStmt.get(ticketId);
     if (rawTicket === undefined) {
       throw new PersistenceError({
@@ -570,13 +653,128 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
         identifier: ticketId,
       });
     }
-    const revision = nextTicketRevision(
-      rowToTicket(rawTicket).updatedAt,
-      requested,
-    );
+    return nextTicketRevision(rowToTicket(rawTicket).updatedAt, requested);
+  }
+
+  function advanceTicketRevision(ticketId: string, requested: string): string {
+    const revision = ticketRevisionFor(ticketId, requested);
     setTicketUpdatedAtStmt.run(revision, ticketId);
     return revision;
   }
+
+  type ConversationSnapshotRowSwapResult =
+    | { status: "won"; attachment: TicketAttachment }
+    | ConversationSnapshotSwapFailure;
+
+  function compareAndSwapConversationSnapshotAtRevision(
+    ticketId: string,
+    update: ConversationSnapshotUpdate,
+    revision: string,
+  ): ConversationSnapshotRowSwapResult {
+    const result = compareAndSwapConversationSnapshotStmt.run({
+      attachment_id: update.attachmentId,
+      ticket_id: ticketId,
+      previous_payload_json: JSON.stringify(update.previousPayload),
+      payload_json: JSON.stringify(update.payload),
+      updated_at: revision,
+    });
+    const rawCurrent: unknown = findAttachmentStmt.get(
+      update.attachmentId,
+      ticketId,
+    );
+    if (rawCurrent === undefined) return { status: "missing" };
+    const current = rowToAttachment(rawCurrent);
+    if (result.changes === 0) {
+      return { status: "lost", currentPayload: current.payload };
+    }
+    return { status: "won", attachment: current };
+  }
+
+  const compareAndSwapConversationSnapshotTx = db.transaction(
+    (
+      input: CompareAndSwapConversationSnapshotInput,
+    ): CompareAndSwapConversationSnapshotResult => {
+      const rawCurrent: unknown = findAttachmentStmt.get(
+        input.attachmentId,
+        input.ticketId,
+      );
+      if (rawCurrent === undefined) return { status: "missing" };
+      const revision = ticketRevisionFor(input.ticketId, input.updatedAt);
+      const result = compareAndSwapConversationSnapshotAtRevision(
+        input.ticketId,
+        input,
+        revision,
+      );
+      if (result.status !== "won") return result;
+      setTicketUpdatedAtStmt.run(revision, input.ticketId);
+      return { ...result, ticketUpdatedAt: revision };
+    },
+  );
+
+  const recoverPendingConversationSnapshotsTx = db.transaction(
+    (
+      input: RecoverPendingConversationSnapshotsInput,
+    ): RecoveredConversationSnapshot[] => {
+      const recovered: RecoveredConversationSnapshot[] = [];
+      const rows = allAttachmentsWithTicketIdentityStmt.all() as Array<
+        Record<string, unknown>
+      >;
+      for (const row of rows) {
+        const attachment = rowToAttachment(row);
+        const payload = attachment.payload;
+        if (
+          payload.kind !== "conversation" ||
+          effectiveSnapshotStatus(payload) !== "pending"
+        ) {
+          continue;
+        }
+
+        const revision = ticketRevisionFor(
+          attachment.ticketId,
+          input.updatedAt,
+        );
+        const result = compareAndSwapConversationSnapshotAtRevision(
+          attachment.ticketId,
+          {
+            attachmentId: attachment.id,
+            previousPayload: payload,
+            payload: {
+              ...payload,
+              snapshotStatus: "failed",
+              snapshotError: input.snapshotError,
+            },
+            updatedAt: input.updatedAt,
+          },
+          revision,
+        );
+        if (result.status !== "won") continue;
+
+        setTicketUpdatedAtStmt.run(revision, attachment.ticketId);
+        const projectPath = row["ticket_project_path"];
+        const ticketNumber = row["ticket_number"];
+        if (
+          typeof projectPath !== "string" ||
+          typeof ticketNumber !== "number"
+        ) {
+          throw new PersistenceError({
+            kind: "validation",
+            entity: "ticket_attachment",
+            identifier: attachment.id,
+            issues:
+              "startup snapshot recovery requires a valid parent ticket identity",
+          });
+        }
+        recovered.push({
+          ticketId: attachment.ticketId,
+          attachmentId: attachment.id,
+          projectPath,
+          ticketNumber,
+          ticketUpdatedAt: revision,
+        });
+      }
+      return recovered;
+    },
+  );
 
   function assertSessionLinkTarget(
     input: z.output<typeof linkStartedSessionInputSchema>,
@@ -644,7 +842,7 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
       for (const demotion of input.staleLinkDemotions ?? []) {
         endLinkAndTouchTicket(demotion);
       }
-      const revision = advanceTicketRevision(
+      const revision = ticketRevisionFor(
         ticketId,
         latestTimestamp([
           input.linkedAt,
@@ -655,13 +853,14 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
         ]),
       );
       for (const update of input.conversationSnapshotUpdates ?? []) {
-        adoptConversationSnapshotStmt.run({
-          attachment_id: update.attachmentId,
-          ticket_id: ticketId,
-          previous_payload_json: JSON.stringify(update.previousPayload),
-          payload_json: JSON.stringify(update.payload),
-          updated_at: revision,
-        });
+        const result = compareAndSwapConversationSnapshotAtRevision(
+          ticketId,
+          update,
+          revision,
+        );
+        if (result.status === "lost") {
+          throw new ConversationSnapshotSwapError(update.attachmentId, result);
+        }
       }
       insertLinkStmt.run({
         id: input.id,
@@ -772,52 +971,41 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
       const validated = persistTicketInputSchema.parse(input);
       return writeQueue.withWriteQueue("tickets.create", async () => {
         return timed("create", { id: validated.id }, () => {
-          const number = createTicketTx.immediate(validated, null);
+          const number = createTicketTx.immediate(validated);
           return { ...validated, number };
         });
       });
     },
 
-    async createWithConversationAttachment(input, attachment) {
+    async createWithAttachments(input, attachments) {
       const validatedInput = persistTicketInputSchema.parse(input);
-      const validatedAttachment = ticketAttachmentSchema.parse(attachment);
-      if (validatedAttachment.ticketId !== validatedInput.id) {
-        throw new PersistenceError({
-          kind: "validation",
-          entity: "ticket_attachment",
-          identifier: validatedAttachment.id,
-          issues: "attachment.ticketId must match the created ticket id",
-        });
-      }
-      if (validatedAttachment.payload.kind !== "conversation") {
-        throw new PersistenceError({
-          kind: "validation",
-          entity: "ticket_attachment",
-          identifier: validatedAttachment.id,
-          issues: "combined create requires a conversation payload",
-        });
+      const validatedAttachments = ticketAttachmentSchema
+        .array()
+        .parse(attachments);
+      for (const attachment of validatedAttachments) {
+        if (attachment.ticketId !== validatedInput.id) {
+          throw new PersistenceError({
+            kind: "validation",
+            entity: "ticket_attachment",
+            identifier: attachment.id,
+            issues: "attachment.ticketId must match the created ticket id",
+          });
+        }
       }
       return writeQueue.withWriteQueue(
-        "tickets.createWithConversationAttachment",
+        "tickets.createWithAttachments",
         async () => {
           return timed(
-            "createWithConversationAttachment",
-            { id: validatedInput.id, attachmentId: validatedAttachment.id },
-            () => {
-              const number = createTicketTx.immediate(
-                validatedInput,
-                validatedAttachment,
-              );
-              const detail = readDetail(validatedInput.projectPath, number);
-              if (!detail) {
-                throw new PersistenceError({
-                  kind: "not_found",
-                  entity: "ticket",
-                  identifier: validatedInput.id,
-                });
-              }
-              return detail;
+            "createWithAttachments",
+            {
+              id: validatedInput.id,
+              attachmentCount: validatedAttachments.length,
             },
+            () =>
+              createWithAttachmentsTx.immediate(
+                validatedInput,
+                validatedAttachments,
+              ),
           );
         },
       );
@@ -973,6 +1161,37 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
           () => updateAttachmentTx.immediate(validated),
         );
       });
+    },
+
+    async compareAndSwapConversationSnapshot(input) {
+      const validated =
+        compareAndSwapConversationSnapshotInputSchema.parse(input);
+      return writeQueue.withWriteQueue(
+        "tickets.compareAndSwapConversationSnapshot",
+        async () => {
+          return timed(
+            "compareAndSwapConversationSnapshot",
+            {
+              id: validated.attachmentId,
+              ticketId: validated.ticketId,
+            },
+            () => compareAndSwapConversationSnapshotTx.immediate(validated),
+          );
+        },
+      );
+    },
+
+    async recoverPendingConversationSnapshots(input) {
+      const validated =
+        recoverPendingConversationSnapshotsInputSchema.parse(input);
+      return writeQueue.withWriteQueue(
+        "tickets.recoverPendingConversationSnapshots",
+        async () => {
+          return timed("recoverPendingConversationSnapshots", {}, () =>
+            recoverPendingConversationSnapshotsTx.immediate(validated),
+          );
+        },
+      );
     },
 
     async linkStartedSession(input) {

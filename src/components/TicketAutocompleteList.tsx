@@ -12,7 +12,7 @@ import {
 import {
   TICKET_STATUS_VISUALS,
   TICKET_WORK_TYPE_LABELS,
-} from "@/features/tickets/ticket-visuals";
+} from "@/lib/tickets/ticket-visuals";
 import type { TicketStatus, TicketWorkType } from "@/lib/tickets/schemas";
 import { cn } from "@/lib/ui/cn";
 

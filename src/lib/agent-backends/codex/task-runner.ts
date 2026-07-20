@@ -39,6 +39,49 @@ import { createCodexFailureClassifier } from "./failure-classifier";
 const logger = createLogger("codex:task-runner");
 const codexFailureClassifier = createCodexFailureClassifier();
 
+const ISOLATED_ONE_SHOT_CODEX_FEATURES = {
+  apps: false,
+  auth_elicitation: false,
+  browser_use: false,
+  browser_use_external: false,
+  browser_use_full_cdp_access: false,
+  code_mode: false,
+  code_mode_host: false,
+  code_mode_only: false,
+  computer_use: false,
+  deferred_executor: false,
+  enable_fanout: false,
+  enable_mcp_apps: false,
+  goals: false,
+  hooks: false,
+  image_generation: false,
+  in_app_browser: false,
+  js_repl: false,
+  js_repl_tools_only: false,
+  memories: false,
+  memory_tool: false,
+  multi_agent: false,
+  multi_agent_mode: false,
+  multi_agent_v2: false,
+  plugin_sharing: false,
+  plugins: false,
+  remote_plugin: false,
+  request_permissions: false,
+  request_permissions_tool: false,
+  search_tool: false,
+  shell_tool: false,
+  skill_mcp_dependency_install: false,
+  standalone_web_search: false,
+  tool_call_mcp_elicitation: false,
+  tool_search: false,
+  tool_suggest: false,
+  unified_exec: false,
+  web_search: false,
+  web_search_cached: false,
+  web_search_request: false,
+  workspace_dependencies: false,
+} as const;
+
 function classifiedContinuation(
   backendRef: AgentSessionRef | null,
   error: unknown,
@@ -206,27 +249,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
   constructor(private readonly deps: CodexTaskRunnerDeps = defaultDeps) {}
 
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
-    if (input.executionProfile === "isolated-one-shot") {
-      const error =
-        'CodexTaskRunner does not support execution profile "isolated-one-shot"';
-      logger.warn("codex-task-runner.execution_profile_unsupported", {
-        workingDirectory: input.workingDirectory,
-        executionProfile: input.executionProfile,
-      });
-      return {
-        backendRef: null,
-        text: null,
-        usage: null,
-        error,
-        timedOut: false,
-        failure: {
-          kind: "capability_unavailable",
-          message: error,
-          retryable: false,
-        },
-        continuationDisposition: "retain",
-      };
-    }
+    const isolatedOneShot = input.executionProfile === "isolated-one-shot";
 
     let validatedReasoningEffort: CodexReasoningEffort | undefined;
     if (input.reasoningEffort !== undefined) {
@@ -241,7 +264,9 @@ export class CodexTaskRunner implements AgentTaskRunner {
         });
         return {
           ...classifiedContinuation(
-            input.resumeRef?.backend === "codex" ? input.resumeRef : null,
+            !isolatedOneShot && input.resumeRef?.backend === "codex"
+              ? input.resumeRef
+              : null,
             error,
           ),
           text: null,
@@ -255,14 +280,22 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     const threadOptions: ThreadOptions = {
       workingDirectory: input.workingDirectory,
-      sandboxMode: input.sandboxMode ?? "danger-full-access",
-      approvalPolicy: input.approvalPolicy ?? "never",
-      webSearchMode: input.webSearchMode ?? "disabled",
+      sandboxMode: isolatedOneShot
+        ? "read-only"
+        : (input.sandboxMode ?? "danger-full-access"),
+      approvalPolicy: isolatedOneShot
+        ? "never"
+        : (input.approvalPolicy ?? "never"),
+      webSearchMode: isolatedOneShot
+        ? "disabled"
+        : (input.webSearchMode ?? "disabled"),
       skipGitRepoCheck: input.skipGitRepoCheck ?? true,
-      ...(input.networkAccessEnabled !== undefined
-        ? { networkAccessEnabled: input.networkAccessEnabled }
-        : {}),
-      ...(input.additionalDirectories
+      ...(isolatedOneShot
+        ? { networkAccessEnabled: false }
+        : input.networkAccessEnabled !== undefined
+          ? { networkAccessEnabled: input.networkAccessEnabled }
+          : {}),
+      ...(!isolatedOneShot && input.additionalDirectories
         ? { additionalDirectories: input.additionalDirectories }
         : {}),
       // Always pin a model. With no model the Codex SDK falls back to its own
@@ -279,7 +312,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     logger.info("codex-task-runner.start", {
       workingDirectory: input.workingDirectory,
-      hasResume: !!input.resumeRef,
+      hasResume: !isolatedOneShot && !!input.resumeRef,
       timeoutMs: input.timeoutMs,
       sandboxMode: threadOptions.sandboxMode,
       approvalPolicy: threadOptions.approvalPolicy,
@@ -288,7 +321,11 @@ export class CodexTaskRunner implements AgentTaskRunner {
       executionProfile: input.executionProfile ?? "standard",
     });
 
-    if (input.resumeRef != null && input.resumeRef.backend !== "codex") {
+    if (
+      !isolatedOneShot &&
+      input.resumeRef != null &&
+      input.resumeRef.backend !== "codex"
+    ) {
       const error = `Cannot resume a ${input.resumeRef.backend} session with CodexTaskRunner`;
       logger.error("codex-task-runner.resume_backend_mismatch", {
         resumeBackend: input.resumeRef.backend,
@@ -311,7 +348,22 @@ export class CodexTaskRunner implements AgentTaskRunner {
       CLAUDECODE: "",
     });
     let mcpServersConfig: Record<string, unknown> | undefined;
-    if (input.tooling?.portableMcp) {
+    if (isolatedOneShot) {
+      const nativeServers = await listNativeMcpServers(
+        input.workingDirectory,
+        env,
+        this.deps,
+      );
+      mcpServersConfig = buildCodexMcpServersConfig({
+        managedMcpServers: {},
+        nativeServers,
+      });
+      logger.info("codex-task-runner.mcp_config", {
+        serverCount: Object.keys(mcpServersConfig).length,
+        managedServerCount: 0,
+        disabledNativeServerCount: Object.keys(mcpServersConfig).length,
+      });
+    } else if (input.tooling?.portableMcp) {
       const translated = translatePortableMcpToCodex(input.tooling.portableMcp);
       if (translated.droppedFields.length > 0) {
         logger.warn("codex-task-runner.mcp_dropped_fields", {
@@ -338,11 +390,38 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     const codexOptions: CodexOptions = {
       env,
-      ...(mcpServersConfig !== undefined
+      ...(isolatedOneShot
         ? {
-            config: { mcp_servers: mcpServersConfig } as CodexOptions["config"],
+            config: {
+              apps: { _default: { enabled: false } },
+              developer_instructions: "",
+              features: ISOLATED_ONE_SHOT_CODEX_FEATURES,
+              history: { persistence: "none" },
+              include_apps_instructions: false,
+              include_collaboration_mode_instructions: false,
+              include_environment_context: false,
+              include_permissions_instructions: false,
+              memories: {
+                dedicated_tools: false,
+                generate_memories: false,
+                use_memories: false,
+              },
+              mcp_servers: mcpServersConfig ?? {},
+              project_doc_fallback_filenames: [],
+              project_doc_max_bytes: 0,
+              skills: {
+                bundled: { enabled: false },
+                include_instructions: false,
+              },
+            } as CodexOptions["config"],
           }
-        : {}),
+        : mcpServersConfig !== undefined
+          ? {
+              config: {
+                mcp_servers: mcpServersConfig,
+              } as CodexOptions["config"],
+            }
+          : {}),
     };
 
     const prompt = buildPrompt(input);
@@ -394,13 +473,13 @@ export class CodexTaskRunner implements AgentTaskRunner {
     let transcript: AgentTranscriptEntry[] | undefined;
     let error: string | null = null;
     let processFailed = false;
-    const wasResume = input.resumeRef?.backend === "codex";
+    const wasResume = !isolatedOneShot && input.resumeRef?.backend === "codex";
 
     try {
       const codex = this.deps.createCodex(codexOptions);
 
       let thread;
-      if (input.resumeRef?.backend === "codex") {
+      if (!isolatedOneShot && input.resumeRef?.backend === "codex") {
         logger.info("codex-task-runner.resume", {
           threadId: input.resumeRef.ref,
         });
@@ -484,11 +563,13 @@ export class CodexTaskRunner implements AgentTaskRunner {
       externalSignal?.removeEventListener("abort", onExternalAbort);
     }
 
-    const candidateBackendRef = threadId
-      ? { backend: "codex" as const, ref: threadId }
-      : wasResume
-        ? input.resumeRef!
-        : null;
+    const candidateBackendRef = isolatedOneShot
+      ? null
+      : threadId
+        ? { backend: "codex" as const, ref: threadId }
+        : wasResume
+          ? input.resumeRef!
+          : null;
     // A stall abort may surface as an AbortError throw or as a graceful
     // turn.failed reply to the interrupt; either way the stall is the cause.
     const stalled = stallWatchdog.fired();

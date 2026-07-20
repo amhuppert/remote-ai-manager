@@ -368,8 +368,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl ticket start <number | project#number> --mode <agent|prepared> [--backend <claude|codex> --model <model> --effort <level>]`
 - `cctl ticket attach` — attach described context to a ticket
   - `cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"`
-- `cctl ticket attachment` — read, edit, and remove ticket attachments
-  - `cctl ticket attachment <get|update|remove> <number | project#number> <attachmentId>`
+- `cctl ticket attachment` — read, edit, refresh, and remove ticket attachments
+  - `cctl ticket attachment <get|update|refresh|remove> <number | project#number> <attachmentId>`
 - `cctl ticket attach file` — attach a file snapshot
   - `cctl ticket attach file <number | project#number> <path> --description "<what and why>" [--media-type <mime>]`
 - `cctl ticket attach conversation` — attach a conversation's compaction snapshot
@@ -384,6 +384,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl ticket attachment get <number | project#number> <attachmentId>`
 - `cctl ticket attachment update` — edit an attachment's description or note body
   - `cctl ticket attachment update <number | project#number> <attachmentId> [--description "<what and why>"] [--markdown "<note body>"]`
+- `cctl ticket attachment refresh` — retry a conversation snapshot capture
+  - `cctl ticket attachment refresh <number | project#number> <attachmentId>`
 - `cctl ticket attachment remove` — remove an attachment
   - `cctl ticket attachment remove <number | project#number> <attachmentId>`
 

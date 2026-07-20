@@ -12,11 +12,13 @@ import {
 } from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import {
   useAddTicketAttachmentMutation,
   useEditTicketAttachmentMutation,
+  useRefreshConversationSnapshotMutation,
   useRemoveTicketAttachmentMutation,
 } from "@/lib/tickets/mutations";
 import { useResolveTicketAttachmentQuery } from "@/lib/tickets/queries";
@@ -29,6 +31,7 @@ import type {
   TicketAttachment,
   TicketAttachmentKind,
 } from "@/lib/tickets/schemas";
+import { effectiveSnapshotStatus } from "@/lib/tickets/schemas";
 import { pushToast } from "@/stores/toast.store";
 import { cn } from "@/lib/ui/cn";
 import { formatRelativeTime } from "../format-relative-time";
@@ -36,7 +39,7 @@ import AttachmentDialog from "./AttachmentDialog";
 import {
   TICKET_STATUS_VISUALS,
   TICKET_WORK_TYPE_LABELS,
-} from "../ticket-visuals";
+} from "@/lib/tickets/ticket-visuals";
 
 export interface AttachmentIndexProps {
   projectName: string;
@@ -309,6 +312,7 @@ function AttachmentEntry({
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const restoreEditFocusRef = useRef(false);
   const removeMutation = useRemoveTicketAttachmentMutation();
+  const refreshSnapshotMutation = useRefreshConversationSnapshotMutation();
   const visual = KIND_VISUALS[attachment.payload.kind];
   const panelIdPrefix = useId();
   const previewPanelId = `${panelIdPrefix}-preview`;
@@ -337,6 +341,26 @@ function AttachmentEntry({
       .catch(() => {
         pushToast(
           `Couldn't remove the ${visual.label} attachment — it was restored`,
+        );
+      });
+  };
+
+  const snapshotStatus =
+    attachment.payload.kind === "conversation"
+      ? effectiveSnapshotStatus(attachment.payload)
+      : null;
+  const refreshSnapshot = () => {
+    void refreshSnapshotMutation
+      .mutateAsync({
+        projectName,
+        number,
+        attachmentId: attachment.id,
+      })
+      .catch((error: unknown) => {
+        pushToast(
+          error instanceof Error
+            ? `Couldn't refresh the snapshot — ${error.message}`
+            : "Couldn't refresh the snapshot",
         );
       });
   };
@@ -382,6 +406,18 @@ function AttachmentEntry({
       <div className="flex flex-wrap items-center gap-sm pl-2xl max-768:pl-0">
         <AttachmentLink attachment={attachment} />
         <span className="ml-auto flex shrink-0 items-center gap-sm">
+          {snapshotStatus === "pending" || snapshotStatus === "failed" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Retry snapshot"
+              loading={refreshSnapshotMutation.isPending}
+              onClick={refreshSnapshot}
+            >
+              Retry snapshot
+            </Button>
+          ) : null}
           <button
             ref={editButtonRef}
             type="button"
@@ -447,13 +483,37 @@ function EntryMetadata({
           {payload.fileName} · {formatBytes(payload.sizeBytes)}
         </span>
       );
-    case "conversation":
+    case "conversation": {
+      const status = effectiveSnapshotStatus(payload);
+      if (status === "pending") {
+        return (
+          <>
+            <span className={METADATA_CLASS}>
+              {payload.sessionName ?? payload.conversationId}
+            </span>
+            <StatusChip tone="amber">snapshotting…</StatusChip>
+          </>
+        );
+      }
+      if (status === "failed") {
+        return (
+          <>
+            <span className={METADATA_CLASS}>
+              {payload.sessionName ?? payload.conversationId}
+            </span>
+            <StatusChip tone="red">snapshot failed</StatusChip>
+          </>
+        );
+      }
       return (
         <span className={METADATA_CLASS}>
           {payload.sessionName ?? payload.conversationId} · captured{" "}
-          {formatRelativeTime(payload.snapshotCapturedAt)}
+          {payload.snapshotCapturedAt === null
+            ? "time unavailable"
+            : formatRelativeTime(payload.snapshotCapturedAt)}
         </span>
       );
+    }
     case "session":
       return <span className={METADATA_CLASS}>{payload.sessionName}</span>;
     case "related_ticket": {
@@ -604,6 +664,21 @@ function ResolvedContent({
         </pre>
       );
     case "conversation":
+      if ("state" in resolved) {
+        if (resolved.state === "pending") {
+          return (
+            <span className="font-mono text-[0.72rem] text-amber">
+              Snapshot capture is still in progress. Retry if it appears stuck.
+            </span>
+          );
+        }
+        return (
+          <div className="flex flex-col gap-xs font-mono text-[0.72rem] text-red">
+            <span role="alert">{resolved.error}</span>
+            <span className="text-text-tertiary">{resolved.retryCommand}</span>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col gap-sm">
           <span className="font-mono text-[0.66rem] tracking-[0.05em] text-text-tertiary uppercase">

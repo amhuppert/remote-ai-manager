@@ -252,6 +252,66 @@ describe("linkStartedSession", () => {
     expect(detail.attachments[0]?.payload).toEqual(refreshedPayload);
     expect(detail.attachments[0]?.updatedAt).toBe(detail.updatedAt);
   });
+
+  it("rolls back the link when conversation snapshot adoption loses its compare-and-swap", async () => {
+    const ticket = await createTicket();
+    const pendingPayload = {
+      kind: "conversation" as const,
+      projectPath: PROJECT_PATH,
+      sessionName: "csm/origin",
+      conversationId: "conversation-1",
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "pending" as const,
+    };
+    const winnerPayload = {
+      ...pendingPayload,
+      snapshotKey: "t-1/attachment-1/winner.md",
+      snapshotCapturedAt: "2026-07-02T00:00:00.000Z",
+      snapshotStatus: "captured" as const,
+    };
+    await repo.addAttachment({
+      id: "attachment-1",
+      ticketId: ticket.id,
+      description: "Earlier investigation",
+      payload: winnerPayload,
+      createdAt: "2026-07-02T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    });
+    const before = await repo.find(PROJECT_PATH, ticket.number);
+    insertSession("csm/new", "2026-07-04T00:00:00.000Z");
+    const loserPayload = {
+      ...winnerPayload,
+      snapshotKey: "t-1/attachment-1/loser.md",
+      snapshotCapturedAt: "2026-07-05T00:00:00.000Z",
+    };
+
+    await expect(
+      repo.linkStartedSession({
+        ...makeLinkInput(ticket, "csm/new"),
+        conversationSnapshotUpdates: [
+          {
+            attachmentId: "attachment-1",
+            previousPayload: pendingPayload,
+            payload: loserPayload,
+            updatedAt: "2026-07-05T00:00:00.000Z",
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      name: "ConversationSnapshotSwapError",
+      result: { status: "lost", currentPayload: winnerPayload },
+    });
+
+    const after = await repo.find(PROJECT_PATH, ticket.number);
+    expect(after?.status).toBe("not_started");
+    expect(after?.sessions).toEqual([]);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
+    expect(after?.attachments[0]?.payload).toEqual(winnerPayload);
+    expect(after?.attachments[0]?.updatedAt).toBe(
+      before?.attachments[0]?.updatedAt,
+    );
+  });
 });
 
 describe("active vs historical derivation (instance guard)", () => {

@@ -33,6 +33,7 @@ import {
   type TicketSessionOverview,
 } from "./attachment-service";
 import type {
+  ConversationAttachmentPayload,
   ResolvedAttachment,
   TicketAttachment,
   TicketDetail,
@@ -185,18 +186,35 @@ function snapshotKeyOf(attachment: TicketAttachment): string {
   if (payload.kind !== "file" && payload.kind !== "conversation") {
     throw new Error(`payload kind ${payload.kind} has no snapshot`);
   }
+  if (payload.snapshotKey === null) {
+    throw new Error("conversation snapshot has no captured blob");
+  }
   return payload.snapshotKey;
 }
 
-function expectResolvedKind<K extends ResolvedAttachment["kind"]>(
+type CapturedResolvedConversation = Extract<
+  ResolvedAttachment,
+  { kind: "conversation"; source: string }
+>;
+
+function expectResolvedKind(
   value: ResolvedAttachment,
-  kind: K,
-): Extract<ResolvedAttachment, { kind: K }> {
+  kind: "conversation",
+): CapturedResolvedConversation;
+function expectResolvedKind<
+  K extends Exclude<ResolvedAttachment["kind"], "conversation">,
+>(value: ResolvedAttachment, kind: K): Extract<ResolvedAttachment, { kind: K }>;
+function expectResolvedKind(
+  value: ResolvedAttachment,
+  kind: ResolvedAttachment["kind"],
+): ResolvedAttachment {
   if (value.kind !== kind) {
     throw new Error(`expected resolved kind ${kind}, got ${value.kind}`);
   }
-  // Discriminant verified at runtime just above.
-  return value as Extract<ResolvedAttachment, { kind: K }>;
+  if (kind === "conversation" && "state" in value) {
+    throw new Error(`expected captured conversation, got ${value.state}`);
+  }
+  return value;
 }
 
 function attachmentEvents() {
@@ -256,6 +274,52 @@ describe("add note", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("validation_failed");
+    expect(attachmentEvents()).toHaveLength(0);
+  });
+
+  it("uses an explicit note attachment id and treats a retry as already appended", async () => {
+    const ticket = await createTicket();
+    const service = makeService();
+    const input = {
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      attachmentId: `ticket-enrichment:${ticket.id}:agent-triage`,
+      description: "Agent triage",
+      payload: { kind: "note" as const, markdown: "## Triage" },
+    };
+
+    const first = expectOk(await service.add(input));
+    const second = expectOk(await service.add(input));
+
+    expect(first.id).toBe(input.attachmentId);
+    expect(second).toEqual(first);
+    expect(attachmentEvents()).toHaveLength(1);
+    expect((await repo.find(PROJECT_PATH, ticket.number))?.attachments).toEqual(
+      [first],
+    );
+  });
+
+  it("rejects explicit ids for blob-backed attachment kinds", async () => {
+    const ticket = await createTicket();
+    const service = makeService();
+
+    const result = await service.add({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      attachmentId: "caller-selected-file-id",
+      description: "file",
+      payload: {
+        kind: "file",
+        fileName: "source.txt",
+        mediaType: "text/plain",
+        bytes: Buffer.from("source"),
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "validation_failed" },
+    });
     expect(attachmentEvents()).toHaveLength(0);
   });
 
@@ -474,6 +538,7 @@ describe("add conversation", () => {
       sessionName: "feature-work",
       conversationId: CONVERSATION_ID,
       snapshotCapturedAt: "2026-07-10T01:00:00.000Z",
+      snapshotStatus: "captured",
     });
     const stored = await contentStore.read(snapshotKeyOf(attachment));
     expect(Buffer.from(stored).toString("utf8")).toBe(
@@ -739,6 +804,91 @@ describe("remove", () => {
     );
   });
 
+  it.each([
+    {
+      status: "pending" as const,
+      payload: {
+        kind: "conversation" as const,
+        projectPath: PROJECT_PATH,
+        sessionName: null,
+        conversationId: CONVERSATION_ID,
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "pending" as const,
+      },
+    },
+    {
+      status: "failed" as const,
+      payload: {
+        kind: "conversation" as const,
+        projectPath: PROJECT_PATH,
+        sessionName: null,
+        conversationId: CONVERSATION_ID,
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "failed" as const,
+        snapshotError: "Snapshot capture failed safely.",
+      },
+    },
+  ])(
+    "removes a $status conversation without attempting blob cleanup",
+    async ({ payload }) => {
+      const ticket = await createTicket();
+      const attachment = await repo.addAttachment({
+        id: `conversation-${payload.snapshotStatus}`,
+        ticketId: ticket.id,
+        description: "Conversation awaiting a snapshot",
+        payload,
+        createdAt: "2026-07-10T00:00:00.000Z",
+        updatedAt: "2026-07-10T00:00:00.000Z",
+      });
+      const deleteSpy = vi.spyOn(contentStore, "delete");
+      const service = makeService();
+
+      const result = await service.remove({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        attachmentId: attachment.id,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(deleteSpy).not.toHaveBeenCalled();
+      expect(await repo.find(PROJECT_PATH, ticket.number)).toMatchObject({
+        attachments: [],
+      });
+    },
+  );
+
+  it("reclaims a captured conversation snapshot", async () => {
+    const ticket = await createTicket();
+    const service = makeService();
+    const attachment = expectOk(
+      await service.add({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        description: "Captured conversation",
+        payload: {
+          kind: "conversation",
+          projectName: PROJECT_NAME,
+          sessionName: null,
+          conversationId: CONVERSATION_ID,
+        },
+      }),
+    );
+    const snapshotKey = snapshotKeyOf(attachment);
+
+    const result = await service.remove({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      attachmentId: attachment.id,
+    });
+
+    expect(result.ok).toBe(true);
+    await expect(contentStore.read(snapshotKey)).rejects.toMatchObject({
+      code: "snapshot_not_found",
+    });
+  });
+
   it("returns the repository's committed ticket revision when the service clock is behind", async () => {
     const ticket = await createTicket();
     const requestedAt = "2026-07-08T00:00:00.000Z";
@@ -946,6 +1096,99 @@ describe("resolve", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("content_unavailable");
+  });
+
+  it("returns the canonical pending arm without consulting live or retained content", async () => {
+    const ticket = await createTicket();
+    const payload: ConversationAttachmentPayload = {
+      kind: "conversation",
+      projectPath: PROJECT_PATH,
+      sessionName: "feature-work",
+      conversationId: CONVERSATION_ID,
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "pending",
+    };
+    const attachment = await repo.addAttachment({
+      id: "pending-conversation",
+      ticketId: ticket.id,
+      description: "Conversation snapshot in progress",
+      payload,
+      createdAt: "2026-07-10T00:00:00.000Z",
+      updatedAt: "2026-07-10T00:00:00.000Z",
+    });
+    const readSpy = vi.spyOn(contentStore, "read");
+    const service = makeService({
+      conversationExists: () =>
+        Promise.reject(new Error("pending resolve consulted source")),
+      getLiveCompaction: () =>
+        Promise.reject(new Error("pending resolve consulted live content")),
+    });
+
+    const resolved = expectOk(
+      await service.resolve({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        attachmentId: attachment.id,
+      }),
+    );
+
+    expect(resolved).toMatchObject({
+      kind: "conversation",
+      state: "pending",
+      conversationId: CONVERSATION_ID,
+      sessionName: "feature-work",
+      retryCommand: `cctl ticket attachment refresh '${PROJECT_NAME}#${ticket.number}' '${attachment.id}'`,
+    });
+    expect(readSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns the canonical failed arm with only the persisted safe error", async () => {
+    const ticket = await createTicket();
+    const safeError = "Conversation snapshot capture was interrupted.";
+    const payload: ConversationAttachmentPayload = {
+      kind: "conversation",
+      projectPath: PROJECT_PATH,
+      sessionName: null,
+      conversationId: CONVERSATION_ID,
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "failed",
+      snapshotError: safeError,
+    };
+    const attachment = await repo.addAttachment({
+      id: "failed-conversation",
+      ticketId: ticket.id,
+      description: "Conversation snapshot failed",
+      payload,
+      createdAt: "2026-07-10T00:00:00.000Z",
+      updatedAt: "2026-07-10T00:00:00.000Z",
+    });
+    const readSpy = vi.spyOn(contentStore, "read");
+    const service = makeService({
+      conversationExists: () =>
+        Promise.reject(new Error("failed resolve consulted source")),
+      getLiveCompaction: () =>
+        Promise.reject(new Error("failed resolve consulted live content")),
+    });
+
+    const resolved = expectOk(
+      await service.resolve({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        attachmentId: attachment.id,
+      }),
+    );
+
+    expect(resolved).toMatchObject({
+      kind: "conversation",
+      state: "failed",
+      conversationId: CONVERSATION_ID,
+      sessionName: null,
+      error: safeError,
+      retryCommand: `cctl ticket attachment refresh '${PROJECT_NAME}#${ticket.number}' '${attachment.id}'`,
+    });
+    expect(readSpy).not.toHaveBeenCalled();
   });
 
   it("prefers the live compaction with read commands while the source exists", async () => {

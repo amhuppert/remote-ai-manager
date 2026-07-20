@@ -82,6 +82,24 @@ describe("createConfigReader", () => {
     expect(config.codex?.pricing).toEqual(pricing);
   });
 
+  it("round-trips the file-only Command Center project override", async () => {
+    const configDir = await createTempConfigDir();
+    const rawConfig = {
+      baseDir: "/projects",
+      commandCenterProjectName: "command-center",
+    };
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify(rawConfig),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+
+    await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
+    await expect(reader.readConfig()).resolves.toMatchObject(rawConfig);
+  });
+
   it("reads codex.timeoutMs and codex.stallTimeoutMs from disk under the names consumers use", async () => {
     const configDir = await createTempConfigDir();
     await writeFile(

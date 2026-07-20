@@ -14,6 +14,7 @@ import {
   BreadcrumbProjectSwitcher,
   BreadcrumbSessionSwitcher,
 } from "@/components/topbar/NavSwitchers";
+import QuickTicketButton from "@/components/topbar/QuickTicketButton";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import {
   activeConversationHref,
@@ -208,6 +209,7 @@ export default function Topbar({
             )}
           </Link>
         )}
+        <QuickTicketButton pathname={pathname} />
         <Link
           href="/specs"
           className={cn(
@@ -402,6 +404,7 @@ export default function Topbar({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <QuickTicketButton pathname={pathname} presentation="menu-item" />
             <DropdownMenuItem asChild>
               <Link href="/specs">Specs</Link>
             </DropdownMenuItem>

@@ -83,6 +83,7 @@ const rawCompactionConfigSchema = z.object({
 
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
+  commandCenterProjectName: z.string().min(1).optional(),
   ignorePatterns: z.array(z.string()),
   claudeTimeoutMs: z.number(),
   defaultModel: claudeModelSchema.default("opus"),
@@ -116,6 +117,7 @@ const rawCodexConfigSchema = z.object({
 
 export const rawGlobalConfigSchema = z.object({
   baseDir: z.string().optional(),
+  commandCenterProjectName: z.string().min(1).optional(),
   ignorePatterns: z.array(z.string()).optional(),
   claudeTimeoutMs: z.number().optional(),
   defaultModel: claudeModelSchema.optional(),

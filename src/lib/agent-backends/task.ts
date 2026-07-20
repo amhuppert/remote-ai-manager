@@ -8,9 +8,8 @@ import type {
 
 /**
  * Semantic execution shape for a backend task. `isolated-one-shot` requests a
- * fresh, non-persistent turn with inherited tools and provider configuration
- * disabled. An adapter that cannot guarantee the contract returns an explicit
- * unsupported profile result without invoking its provider.
+ * fresh turn with provider-supported isolation controls applied and no
+ * continuation reference returned to the caller.
  */
 export type AgentTaskExecutionProfile = "standard" | "isolated-one-shot";
 

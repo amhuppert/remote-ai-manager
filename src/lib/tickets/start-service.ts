@@ -8,6 +8,7 @@ import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
+  ConversationSnapshotSwapError,
   projectNameFromPath,
   TicketSessionNotLinkableError,
   type ConversationSnapshotUpdate,
@@ -30,8 +31,10 @@ import type {
 } from "./materializer";
 import { ticketOperationKey, type TicketOperationLock } from "./operation-lock";
 import {
+  effectiveSnapshotStatus,
   ticketStartModeSchema,
   type StartTicketOutput,
+  type ConversationAttachmentPayload,
   type TicketAttachment,
   type TicketDetail,
   type TicketError,
@@ -249,7 +252,7 @@ interface PendingStaleLinkDemotion {
 }
 
 interface PreparedConversationSnapshot {
-  previousSnapshotKey: string;
+  previousSnapshotKey: string | null;
   candidateSnapshotKey: string;
   update: ConversationSnapshotUpdate;
 }
@@ -278,6 +281,39 @@ function classifyStaleLink(
   }
   if (liveness.finished) return "finished";
   return null;
+}
+
+function hasSameConversationSource(
+  left: ConversationAttachmentPayload,
+  right: ConversationAttachmentPayload,
+): boolean {
+  return (
+    left.projectPath === right.projectPath &&
+    left.sessionName === right.sessionName &&
+    left.conversationId === right.conversationId
+  );
+}
+
+function capturedSnapshotWinnerFor(
+  update: ConversationSnapshotUpdate,
+  error: ConversationSnapshotSwapError,
+): ConversationAttachmentPayload | null {
+  if (error.result.status !== "lost") return null;
+  if (effectiveSnapshotStatus(update.previousPayload) !== "pending") {
+    return null;
+  }
+  if (effectiveSnapshotStatus(update.payload) !== "captured") return null;
+
+  const current = error.result.currentPayload;
+  if (current.kind !== "conversation") return null;
+  if (effectiveSnapshotStatus(current) !== "captured") return null;
+  if (current.snapshotKey === null || current.snapshotCapturedAt === null) {
+    return null;
+  }
+  const sameSource =
+    hasSameConversationSource(update.previousPayload, update.payload) &&
+    hasSameConversationSource(update.previousPayload, current);
+  return sameSource ? current : null;
 }
 
 // ============================================================
@@ -356,12 +392,17 @@ export function createTicketStartService(
       const adopted =
         current?.payload.kind === "conversation" &&
         current.payload.snapshotKey === snapshot.candidateSnapshotKey;
-      await deleteSnapshotBestEffort(
-        adopted ? snapshot.previousSnapshotKey : snapshot.candidateSnapshotKey,
-        ticketId,
-        snapshot.update.attachmentId,
-        adopted ? "retire_previous" : "discard_candidate",
-      );
+      const retiredKey = adopted
+        ? snapshot.previousSnapshotKey
+        : snapshot.candidateSnapshotKey;
+      if (retiredKey !== null) {
+        await deleteSnapshotBestEffort(
+          retiredKey,
+          ticketId,
+          snapshot.update.attachmentId,
+          adopted ? "retire_previous" : "discard_candidate",
+        );
+      }
     }
   }
 
@@ -393,6 +434,19 @@ export function createTicketStartService(
             ticketId: ticket.id,
             attachmentId: attachment.id,
           });
+          if (effectiveSnapshotStatus(payload) !== "captured") {
+            await discardConversationSnapshots(
+              ticket.id,
+              conversationSnapshots,
+            );
+            return fail({
+              code: "context_preparation_failed",
+              phase: "content",
+              reason:
+                payload.snapshotError ??
+                "The source conversation is unavailable.",
+            });
+          }
           refreshed.push(attachment);
           continue;
         }
@@ -417,9 +471,13 @@ export function createTicketStartService(
           text: ensured.markdown,
         });
         const nextPayload = {
-          ...payload,
+          kind: "conversation" as const,
+          projectPath: payload.projectPath,
+          sessionName: payload.sessionName,
+          conversationId: payload.conversationId,
           snapshotKey: candidate.snapshotKey,
           snapshotCapturedAt: ensured.capturedAt,
+          snapshotStatus: "captured" as const,
         };
         conversationSnapshots.push({
           previousSnapshotKey: payload.snapshotKey,
@@ -520,6 +578,57 @@ export function createTicketStartService(
       const linked = await attempt(reconciled);
       logStaleLinkDemotions(reconciled);
       return { linked, demotions: reconciled };
+    }
+  }
+
+  async function linkWithSnapshotWinnerReconciliation(
+    identifier: string,
+    projectPath: string,
+    number: number,
+    sessionName: string,
+    sessionCreatedAt: string,
+    mode: TicketStartMode,
+    staleLinks: PendingStaleLinkDemotion[],
+    conversationSnapshotUpdates: ConversationSnapshotUpdate[],
+  ): Promise<{
+    linked: TicketDetail;
+    demotions: PendingStaleLinkDemotion[];
+  }> {
+    let remainingUpdates = conversationSnapshotUpdates;
+    while (true) {
+      try {
+        return await linkWithReconcileRetry(
+          projectPath,
+          number,
+          sessionName,
+          sessionCreatedAt,
+          mode,
+          staleLinks,
+          remainingUpdates,
+        );
+      } catch (error) {
+        if (!(error instanceof ConversationSnapshotSwapError)) throw error;
+        const updateIndex = remainingUpdates.findIndex(
+          (update) => update.attachmentId === error.attachmentId,
+        );
+        const update = remainingUpdates[updateIndex];
+        if (updateIndex < 0 || update === undefined) throw error;
+        const winner = capturedSnapshotWinnerFor(update, error);
+        if (winner === null) throw error;
+        logger.info("start.snapshot_winner_verification_retry", {
+          identifier,
+          attachmentId: update.attachmentId,
+        });
+        remainingUpdates = remainingUpdates.map((candidate, index) =>
+          index === updateIndex
+            ? {
+                ...candidate,
+                previousPayload: winner,
+                payload: winner,
+              }
+            : candidate,
+        );
+      }
     }
   }
 
@@ -661,7 +770,8 @@ export function createTicketStartService(
         title: ticket.title,
         description: ticket.description,
       });
-      const linkResult = await linkWithReconcileRetry(
+      const linkResult = await linkWithSnapshotWinnerReconciliation(
+        identifier,
         projectPath,
         number,
         sessionName,
@@ -784,7 +894,7 @@ export function createTicketStartService(
         projectName,
         ticketNumber: number,
         listItem,
-        attachmentIndexChanged: false,
+        attachmentIndexChanged: prepared.value.conversationSnapshots.length > 0,
         linkedSessionName: sessionName,
       });
     } catch (error) {

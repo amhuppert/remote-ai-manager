@@ -14,7 +14,7 @@ import {
   TICKET_STATUS_VISUALS,
   TICKET_WORK_TYPE_LABELS,
   TICKET_WORK_TYPE_ORDER,
-} from "../ticket-visuals";
+} from "@/lib/tickets/ticket-visuals";
 
 // Radix Select item values must be non-empty, so the "no filter" choice is a
 // sentinel that maps to null in the shared filter shape.

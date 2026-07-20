@@ -11,6 +11,7 @@ import {
   EmptyStateDesc,
 } from "@/components/ui/EmptyState";
 import { WithTooltip } from "@/components/ui/WithTooltip";
+import { useQuickTicketConversationRegistration } from "@/components/quick-ticket/useQuickTicketConversationRegistration";
 import { parseConversationsPageParams } from "@/lib/conversations/hrefs";
 import { useConversationLookupQuery } from "@/lib/conversations/queries";
 import {
@@ -175,6 +176,17 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
 
   const resolved =
     renderState.kind === "workspace" ? renderState.conversation : null;
+  useQuickTicketConversationRegistration(
+    resolved === null
+      ? null
+      : {
+          projectName: resolved.projectName,
+          sessionName: resolved.sessionName,
+          conversationId: resolved.conversationId,
+          title:
+            resolved.conversationName ?? resolved.summary ?? "Conversation",
+        },
+  );
 
   return (
     <div className="app" data-page="detail" data-mobile-panel={mobilePanel}>

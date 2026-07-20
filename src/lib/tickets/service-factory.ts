@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import packageMetadata from "../../../package.json";
+import { getTaskRunner } from "@/lib/agent-backends/registry";
+import { BUILD_INFO } from "@/lib/build-info";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
@@ -18,6 +21,7 @@ import {
   deleteSessionIfCurrent,
 } from "@/lib/sessions/service";
 import { publishEvent } from "@/lib/events/publication";
+import { createLogger } from "@/lib/logging";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import {
   createReferenceDocument,
@@ -51,6 +55,10 @@ import {
   type TicketAttachmentService,
 } from "./attachment-service";
 import {
+  createCreateAttachmentPlanner,
+  type CreateAttachmentPlanner,
+} from "./create-attachment-planner";
+import {
   createTicketCommandRunner,
   type TicketCommandRunner,
 } from "./slash-command";
@@ -60,6 +68,11 @@ import {
   type TicketContentStore,
 } from "./content-store";
 import { createTicketKickoffQueuer, type TicketKickoffQueuer } from "./kickoff";
+import { composeQuickTicketDiagnosticReport } from "./diagnostics";
+import {
+  createTicketEnrichmentService,
+  type TicketEnrichmentService,
+} from "./enrichment";
 import {
   createLiveTicketContextProvider,
   type LiveTicketContextProvider,
@@ -77,11 +90,22 @@ import {
   type TicketOperationLock,
 } from "./operation-lock";
 import { getTicketProjectOperationGate } from "./project-operation-gate";
+import type {
+  QuickTicketConversationContext,
+  QuickTicketDiagnostics,
+  TicketDetail,
+} from "./schemas";
 import { createTicketService, type TicketService } from "./service";
+import {
+  createConversationSnapshotRefreshService,
+  type ConversationSnapshotRefreshService,
+} from "./snapshot-refresh";
 import {
   createTicketStartService,
   type TicketStartService,
 } from "./start-service";
+
+const logger = createLogger("tickets.service-factory");
 
 /**
  * One repo per process: it shares the module-level write queue so ticket
@@ -126,11 +150,82 @@ export function getTicketOperationLock(): TicketOperationLock {
   );
 }
 
+function quickTicketDiagnosticEnvironment() {
+  return {
+    sha: BUILD_INFO.sha,
+    buildTime: BUILD_INFO.buildTime,
+    appVersion: packageMetadata.version,
+    platform: `${process.platform}-${process.arch}-node${process.versions.node}`,
+  };
+}
+
+function scheduleTicketEnrichment(input: {
+  ticket: TicketDetail;
+  diagnostics: QuickTicketDiagnostics;
+  conversationContext?: QuickTicketConversationContext;
+}): void {
+  void (async () => {
+    const backend = (await readConfig()).defaultAgentBackend;
+    await getTicketEnrichmentService().enrich({
+      projectName: input.ticket.projectName,
+      projectPath: input.ticket.projectPath,
+      ticketId: input.ticket.id,
+      number: input.ticket.number,
+      title: input.ticket.title,
+      description: input.ticket.description,
+      diagnosticsMarkdown: composeQuickTicketDiagnosticReport(
+        input.diagnostics,
+        quickTicketDiagnosticEnvironment(),
+      ),
+      ...(input.conversationContext !== undefined
+        ? { conversationContext: input.conversationContext }
+        : {}),
+      backend,
+    });
+  })().catch((error: unknown) => {
+    logger.warn("tickets.service_factory.enrichment_schedule_failed", {
+      projectName: input.ticket.projectName,
+      number: input.ticket.number,
+      ticketId: input.ticket.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+function getCreateTicketAttachmentPlanner(): CreateAttachmentPlanner {
+  return getGlobalSingleton("__cc_create_ticket_attachment_planner", () =>
+    createCreateAttachmentPlanner({
+      resolveAvailableProjectPath(projectName) {
+        return resolveProjectPath(projectName);
+      },
+      conversationExists,
+      captureScreenshot(input) {
+        return getTicketContentStore().capture(input);
+      },
+      deleteSnapshot(snapshotKey) {
+        return getTicketContentStore().delete(snapshotKey);
+      },
+      diagnosticEnvironment: quickTicketDiagnosticEnvironment,
+      scheduleConversationSnapshotRefresh(input) {
+        getConversationSnapshotRefreshService().schedule(input);
+      },
+      scheduleEnrichment: scheduleTicketEnrichment,
+      generateId() {
+        return randomUUID();
+      },
+      now() {
+        return new Date().toISOString();
+      },
+    }),
+  );
+}
+
 /** One service per process, like the state store it writes through. */
 export function getTicketService(): TicketService {
   return getGlobalSingleton("__cc_ticket_service", () =>
     createTicketService({
       repo: getTicketsRepo(),
+      attachmentPlanner: getCreateTicketAttachmentPlanner(),
       resolveProjectPath(projectName) {
         return getTicketProjectResolver().resolveKnownProjectPath(projectName);
       },
@@ -379,6 +474,59 @@ export function getTicketAttachmentService(): TicketAttachmentService {
       },
       generateId() {
         return randomUUID();
+      },
+    }),
+  );
+}
+
+/** One snapshot refresher per process, sharing the ticket repo and content store. */
+export function getConversationSnapshotRefreshService(): ConversationSnapshotRefreshService {
+  return getGlobalSingleton("__cc_conversation_snapshot_refresh_service", () =>
+    createConversationSnapshotRefreshService({
+      repo: getTicketsRepo(),
+      contentStore: getTicketContentStore(),
+      resolveProjectPath(projectName) {
+        return getTicketProjectResolver().resolveKnownProjectPath(projectName);
+      },
+      runProjectTicketOperation(projectPath, operation) {
+        return getTicketProjectOperationGate().runTicketOperation(
+          projectPath,
+          operation,
+        );
+      },
+      ensureConversationCompaction(input) {
+        return ensureConversationCompactionForProduction(
+          input,
+          "ticket_attachment_refresh",
+        );
+      },
+      publish: publishEvent,
+      now() {
+        return new Date().toISOString();
+      },
+      generateId() {
+        return randomUUID();
+      },
+    }),
+  );
+}
+
+/** One best-effort triage service per process. */
+function getTicketEnrichmentService(): TicketEnrichmentService {
+  return getGlobalSingleton("__cc_ticket_enrichment_service", () =>
+    createTicketEnrichmentService({
+      getTaskRunner,
+      async appendTriageNote(input) {
+        const result = await getTicketAttachmentService().add({
+          projectName: input.projectName,
+          number: input.number,
+          attachmentId: input.attachmentId,
+          description: input.description,
+          payload: { kind: "note", markdown: input.markdown },
+        });
+        if (!result.ok) {
+          throw new Error(`triage note append failed: ${result.error.code}`);
+        }
       },
     }),
   );

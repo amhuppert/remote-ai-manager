@@ -39,6 +39,7 @@ import {
   TICKET_COMMAND_JSON_SCHEMA,
   ticketCommandOutputSchema,
 } from "@/lib/tickets/slash-command";
+import { TICKET_ENRICHMENT_OUTPUT_SCHEMA } from "@/lib/tickets/enrichment";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/structured-output-gate";
 
 const KEYWORD_SAMPLES: Record<
@@ -237,6 +238,10 @@ const CLAUDE_BOUND_SCHEMA_INVENTORY: ReadonlyArray<{
   },
   { label: "AGENT_RUN_OUTPUT_SCHEMA", schema: AGENT_RUN_OUTPUT_SCHEMA },
   { label: "TICKET_COMMAND_JSON_SCHEMA", schema: TICKET_COMMAND_JSON_SCHEMA },
+  {
+    label: "TICKET_ENRICHMENT_OUTPUT_SCHEMA",
+    schema: TICKET_ENRICHMENT_OUTPUT_SCHEMA,
+  },
 ];
 
 describe("Claude-bound schema inventory guardrail (T2.4)", () => {

@@ -7,7 +7,7 @@ import {
   TicketContentError,
   type TicketContentStore,
 } from "./content-store";
-import type { TicketAttachment } from "./schemas";
+import { effectiveSnapshotStatus, type TicketAttachment } from "./schemas";
 
 const logger = createLogger("tickets.materialize");
 
@@ -76,8 +76,28 @@ function assertSafeSegment(value: string, label: string): void {
   }
 }
 
+type ConversationAttachmentPayload = Extract<
+  TicketAttachment["payload"],
+  { kind: "conversation" }
+>;
+
+type CapturedConversationAttachmentPayload = ConversationAttachmentPayload & {
+  snapshotKey: string;
+  snapshotCapturedAt: string;
+};
+
+function isCapturedConversationAttachmentPayload(
+  payload: ConversationAttachmentPayload,
+): payload is CapturedConversationAttachmentPayload {
+  return (
+    effectiveSnapshotStatus(payload) === "captured" &&
+    payload.snapshotKey !== null &&
+    payload.snapshotCapturedAt !== null
+  );
+}
+
 function renderConversationMarkdown(
-  payload: Extract<TicketAttachment["payload"], { kind: "conversation" }>,
+  payload: CapturedConversationAttachmentPayload,
   snapshotMarkdown: string,
 ): string {
   const sessionLine =
@@ -96,7 +116,7 @@ function renderConversationMarkdown(
     `- Source: ${sessionLine}`,
     `- Compaction snapshot captured at: ${payload.snapshotCapturedAt}`,
     "",
-    "This is a creation-time compaction snapshot. Read the source transcript",
+    "This is a retained compaction snapshot. Read the source transcript",
     "for anything newer (cheapest first):",
     "",
     commands,
@@ -166,6 +186,11 @@ export function createTicketMaterializer(
           continue;
         }
         if (payload.kind === "conversation") {
+          if (!isCapturedConversationAttachmentPayload(payload)) {
+            throw new Error(
+              `conversation attachment ${attachment.id} snapshot is ${effectiveSnapshotStatus(payload)}`,
+            );
+          }
           assertSafeSegment(payload.conversationId, "conversationId");
           const relativePath = path.posix.join(
             TICKET_WORKTREE_DIRNAME,

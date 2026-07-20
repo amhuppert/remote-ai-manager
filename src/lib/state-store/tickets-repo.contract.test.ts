@@ -16,6 +16,7 @@ import { createWriteQueue, type WriteQueue } from "./write-queue";
 import {
   ticketAttachmentSchema,
   ticketSchema,
+  type ConversationAttachmentPayload,
   type Ticket,
   type TicketAttachment,
 } from "@/lib/tickets/schemas";
@@ -270,29 +271,82 @@ describe("ticket CRUD", () => {
   });
 });
 
-describe("createWithConversationAttachment", () => {
-  it("creates the ticket and its conversation attachment in one write", async () => {
-    const input = makeCreateInput({ title: "From slash command" });
-    const attachment = makeConversationAttachment(input.id);
+describe("createWithAttachments", () => {
+  it("creates the ticket with every attachment and reloads them in deterministic order", async () => {
+    const input = makeCreateInput({ title: "Quick ticket bundle" });
+    const conversation = makeConversationAttachment(input.id, {
+      id: "a-conversation",
+      createdAt: "2026-07-10T00:00:00.003Z",
+    });
+    const report = makeAttachment(input.id, {
+      id: "a-report",
+      description: "Diagnostic report",
+      createdAt: "2026-07-10T00:00:00.001Z",
+    });
+    const screenshot = makeAttachment(input.id, {
+      id: "a-screenshot",
+      description: "Screenshot",
+      payload: {
+        kind: "file",
+        fileName: "page-state.png",
+        snapshotKey: `${input.id}/a-screenshot/page-state.png`,
+        mediaType: "image/png",
+        sizeBytes: 128,
+        sha256: "deadbeef",
+      },
+      createdAt: "2026-07-10T00:00:00.002Z",
+    });
 
-    const detail = await repo.createWithConversationAttachment(
-      input,
-      attachment,
-    );
+    const detail = await repo.createWithAttachments(input, [
+      conversation,
+      screenshot,
+      report,
+    ]);
 
     expect(detail.number).toBe(1);
-    expect(detail.attachments).toHaveLength(1);
-    expect(detail.attachments[0]?.payload.kind).toBe("conversation");
+    expect(detail.attachments.map((attachment) => attachment.id)).toEqual([
+      "a-report",
+      "a-screenshot",
+      "a-conversation",
+    ]);
+    expect(
+      detail.attachments.map((attachment) => attachment.payload.kind),
+    ).toEqual(["note", "file", "conversation"]);
   });
 
-  it("rejects a non-conversation payload", async () => {
+  it("supports a combined create with no attachments", async () => {
     const input = makeCreateInput();
-    await expect(
-      repo.createWithConversationAttachment(input, makeAttachment(input.id)),
-    ).rejects.toThrow();
+
+    const detail = await repo.createWithAttachments(input, []);
+
+    expect(detail.number).toBe(1);
+    expect(detail.attachments).toEqual([]);
   });
 
-  it("rolls back the ticket and the counter when the attachment insert fails", async () => {
+  it("validates every attachment before touching the database", async () => {
+    const input = makeCreateInput();
+    const valid = makeAttachment(input.id);
+    const wrongTicket = makeAttachment("another-ticket");
+
+    await expect(
+      repo.createWithAttachments(input, [valid, wrongTicket]),
+    ).rejects.toThrow();
+
+    const tickets = db.prepare("SELECT COUNT(*) AS n FROM tickets").get() as {
+      n: number;
+    };
+    const attachments = db
+      .prepare("SELECT COUNT(*) AS n FROM ticket_attachments")
+      .get() as { n: number };
+    const counter = db
+      .prepare("SELECT last_number FROM ticket_counters WHERE project_path = ?")
+      .get(PROJECT_PATH);
+    expect(tickets.n).toBe(0);
+    expect(attachments.n).toBe(0);
+    expect(counter).toBeUndefined();
+  });
+
+  it("rolls back the ticket, earlier attachments, and counter when a later insert fails", async () => {
     const existing = await repo.create(makeCreateInput());
     const clash = await repo.addAttachment(
       makeConversationAttachment(existing.id),
@@ -300,20 +354,56 @@ describe("createWithConversationAttachment", () => {
 
     const input = makeCreateInput();
     await expect(
-      repo.createWithConversationAttachment(
-        input,
+      repo.createWithAttachments(input, [
+        makeAttachment(input.id, { id: "inserted-before-clash" }),
         makeConversationAttachment(input.id, { id: clash.id }),
-      ),
+      ]),
     ).rejects.toThrow();
 
-    // Nothing persisted: no second ticket, and the counter did not advance.
+    // Nothing from the attempted create persisted: no second ticket or first
+    // attachment, and the counter did not advance.
     const tickets = db.prepare("SELECT COUNT(*) AS n FROM tickets").get() as {
       n: number;
     };
     expect(tickets.n).toBe(1);
+    const insertedBeforeClash = db
+      .prepare("SELECT id FROM ticket_attachments WHERE id = ?")
+      .get("inserted-before-clash");
+    expect(insertedBeforeClash).toBeUndefined();
 
     const next = await repo.create(makeCreateInput());
     expect(next.number).toBe(2);
+  });
+
+  it("rolls back all writes when the transaction-internal detail read fails", async () => {
+    db.exec(`
+      CREATE TRIGGER corrupt_combined_create_attachment
+      AFTER INSERT ON ticket_attachments
+      WHEN NEW.id = 'a-corrupt-on-read'
+      BEGIN
+        UPDATE ticket_attachments SET description = '' WHERE id = NEW.id;
+      END
+    `);
+    const input = makeCreateInput();
+
+    await expect(
+      repo.createWithAttachments(input, [
+        makeAttachment(input.id, { id: "a-corrupt-on-read" }),
+      ]),
+    ).rejects.toThrow();
+
+    const tickets = db.prepare("SELECT COUNT(*) AS n FROM tickets").get() as {
+      n: number;
+    };
+    const attachments = db
+      .prepare("SELECT COUNT(*) AS n FROM ticket_attachments")
+      .get() as { n: number };
+    const counter = db
+      .prepare("SELECT last_number FROM ticket_counters WHERE project_path = ?")
+      .get(PROJECT_PATH);
+    expect(tickets.n).toBe(0);
+    expect(attachments.n).toBe(0);
+    expect(counter).toBeUndefined();
   });
 });
 
@@ -589,5 +679,64 @@ describe("durability contracts", () => {
       // JSON); persist returns the repo-normalized mutation revision.
       fieldPolicies: {},
     });
+  });
+
+  it.each<[string, ConversationAttachmentPayload]>([
+    [
+      "legacy captured",
+      {
+        kind: "conversation",
+        projectPath: PROJECT_PATH,
+        sessionName: "csm/legacy",
+        conversationId: "legacy-conversation",
+        snapshotKey: "ticket-content/legacy.md",
+        snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+      },
+    ],
+    [
+      "explicit captured",
+      {
+        kind: "conversation",
+        projectPath: PROJECT_PATH,
+        sessionName: "csm/captured",
+        conversationId: "captured-conversation",
+        snapshotKey: "ticket-content/captured.md",
+        snapshotCapturedAt: "2026-07-10T00:00:01.000Z",
+        snapshotStatus: "captured",
+      },
+    ],
+    [
+      "pending",
+      {
+        kind: "conversation",
+        projectPath: PROJECT_PATH,
+        sessionName: null,
+        conversationId: "pending-conversation",
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "pending",
+      },
+    ],
+    [
+      "failed",
+      {
+        kind: "conversation",
+        projectPath: PROJECT_PATH,
+        sessionName: null,
+        conversationId: "failed-conversation",
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "failed",
+        snapshotError: "The source conversation is unavailable.",
+      },
+    ],
+  ])("round-trips the %s conversation payload arm", async (_label, payload) => {
+    const ticket = await repo.create(makeCreateInput());
+    const attachment = makeConversationAttachment(ticket.id, { payload });
+
+    const persisted = await repo.addAttachment(attachment);
+
+    const reloaded = await repo.find(PROJECT_PATH, ticket.number);
+    expect(reloaded?.attachments).toEqual([persisted]);
   });
 });

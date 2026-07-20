@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  conversationAttachmentPayloadSchema,
+  createTicketResponseSchema,
   createTicketInputSchema,
+  effectiveSnapshotStatus,
+  quickTicketDiagnosticsSchema,
   resolvedAttachmentSchema,
   ticketAttachmentPayloadSchema,
   ticketAttachmentSchema,
@@ -125,6 +129,44 @@ describe("createTicketInput", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("accepts cross-project conversation context and bounded diagnostics", () => {
+    const parsed = createTicketInputSchema.parse({
+      title: "Quick ticket loses the active pane",
+      workType: "bug",
+      conversationContext: {
+        sourceProjectName: "observed-project",
+        sessionName: null,
+        conversationId: "conv-1",
+        title: "Conversation title",
+      },
+      diagnostics: makeDiagnostics(),
+      autoStartRequested: true,
+    });
+
+    expect(parsed.conversationContext?.sourceProjectName).toBe(
+      "observed-project",
+    );
+    expect(parsed.diagnostics?.screenshot?.mediaType).toBe("image/png");
+    expect(parsed.autoStartRequested).toBe(true);
+  });
+
+  it("rejects diagnostics for non-bug tickets", () => {
+    const result = createTicketInputSchema.safeParse({
+      title: "Feature with a diagnostic bundle",
+      workType: "feature",
+      diagnostics: makeDiagnostics(),
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["diagnostics"],
+        message: "diagnostics are only available for bug tickets",
+      }),
+    );
+  });
 });
 
 describe("attachment payload union", () => {
@@ -144,6 +186,94 @@ describe("attachment payload union", () => {
       snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
     };
     expect(ticketAttachmentPayloadSchema.parse(payload)).toEqual(payload);
+  });
+
+  it.each([
+    {
+      label: "legacy captured",
+      payload: {
+        snapshotKey: "ticket-content/t-1/a-2/compaction.md",
+        snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+      },
+      effective: "captured",
+    },
+    {
+      label: "explicit captured",
+      payload: {
+        snapshotKey: "ticket-content/t-1/a-2/compaction.md",
+        snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+        snapshotStatus: "captured",
+      },
+      effective: "captured",
+    },
+    {
+      label: "pending",
+      payload: {
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "pending",
+      },
+      effective: "pending",
+    },
+    {
+      label: "failed",
+      payload: {
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "failed",
+        snapshotError: "Conversation snapshot could not be captured.",
+      },
+      effective: "failed",
+    },
+  ] as const)("accepts the $label conversation snapshot state", (fixture) => {
+    const payload = conversationAttachmentPayloadSchema.parse({
+      kind: "conversation",
+      projectPath: "/repos/command-center",
+      sessionName: "csm/ticket-work",
+      conversationId: "c-9",
+      ...fixture.payload,
+    });
+
+    expect(effectiveSnapshotStatus(payload)).toBe(fixture.effective);
+  });
+
+  it.each([
+    {
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+    },
+    {
+      snapshotKey: "ticket-content/t-1/a-2/compaction.md",
+      snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+      snapshotStatus: "pending",
+    },
+    {
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "failed",
+    },
+    {
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "pending",
+      snapshotError: "not allowed",
+    },
+    {
+      snapshotKey: "ticket-content/t-1/a-2/compaction.md",
+      snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+      snapshotStatus: "captured",
+      snapshotError: "not allowed",
+    },
+  ])("rejects an impossible conversation snapshot state %#", (state) => {
+    expect(
+      conversationAttachmentPayloadSchema.safeParse({
+        kind: "conversation",
+        projectPath: "/repos/command-center",
+        sessionName: null,
+        conversationId: "c-9",
+        ...state,
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts a session payload", () => {
@@ -193,6 +323,113 @@ describe("attachment payload union", () => {
         markdown: "## context",
       }).success,
     ).toBe(false);
+  });
+});
+
+const ONE_PIXEL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+function makeDiagnostics() {
+  return {
+    capturedAt: "2026-07-19T12:00:00.000Z",
+    route: {
+      url: "/projects/observed/session?c=conv-1",
+      viewState: "pane=chat; activeTab=conversation",
+    },
+    identities: {
+      projectName: "observed",
+      sessionName: "session",
+      conversationId: "conv-1",
+      workflowExecutionId: "workflow-1",
+      deepLinks: [
+        {
+          label: "Conversation",
+          href: "/projects/observed/session?c=conv-1",
+        },
+      ],
+    },
+    clientErrors: [
+      {
+        ts: "2026-07-19T11:59:00.000Z",
+        kind: "console" as const,
+        message: "Request failed",
+        stackHead: ["at submit (QuickTicketDialog.tsx:1:1)"],
+      },
+    ],
+    screenshot: {
+      mediaType: "image/png" as const,
+      base64: ONE_PIXEL_PNG_BASE64,
+      width: 1,
+      height: 1,
+    },
+    removed: ["build"] as const,
+  };
+}
+
+describe("quickTicketDiagnosticsSchema", () => {
+  it("accepts bounded, canonical diagnostic facts", () => {
+    expect(quickTicketDiagnosticsSchema.parse(makeDiagnostics())).toEqual(
+      makeDiagnostics(),
+    );
+  });
+
+  it("rejects duplicate removed bundle keys", () => {
+    expect(
+      quickTicketDiagnosticsSchema.safeParse({
+        ...makeDiagnostics(),
+        removed: ["build", "build"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects mismatched screenshot magic bytes", () => {
+    expect(
+      quickTicketDiagnosticsSchema.safeParse({
+        ...makeDiagnostics(),
+        screenshot: {
+          ...makeDiagnostics().screenshot,
+          mediaType: "image/webp",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects oversized client-error collections and fields", () => {
+    const error = makeDiagnostics().clientErrors[0];
+    expect(
+      quickTicketDiagnosticsSchema.safeParse({
+        ...makeDiagnostics(),
+        clientErrors: Array.from({ length: 26 }, () => error),
+      }).success,
+    ).toBe(false);
+    expect(
+      quickTicketDiagnosticsSchema.safeParse({
+        ...makeDiagnostics(),
+        clientErrors: [{ ...error, message: "x".repeat(501) }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("createTicketResponseSchema", () => {
+  it("keeps the created detail and safe warnings in separate fields", () => {
+    const response = createTicketResponseSchema.parse({
+      ticket: {
+        ...validTicket,
+        projectName: "command-center",
+        attachments: [],
+        sessions: [],
+      },
+      warnings: [
+        {
+          code: "conversation_source_unavailable",
+          message: "Conversation context was omitted.",
+        },
+      ],
+    });
+
+    expect(response.ticket.id).toBe("t-1");
+    expect(response.warnings[0]?.code).toBe("conversation_source_unavailable");
   });
 });
 
@@ -497,6 +734,54 @@ describe("resolvedAttachmentSchema", () => {
         identifierSnapshot: "command-center#9",
       }).success,
     ).toBe(false);
+  });
+
+  it.each([
+    {
+      state: "pending",
+      attachment: {
+        ...attachment,
+        payload: {
+          kind: "conversation",
+          projectPath: "/repos/source",
+          sessionName: null,
+          conversationId: "conv-1",
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus: "pending",
+        },
+      },
+      conversationId: "conv-1",
+      sessionName: null,
+      retryCommand: "cctl ticket attachment refresh command-center#12 a-1",
+    },
+    {
+      state: "failed",
+      attachment: {
+        ...attachment,
+        payload: {
+          kind: "conversation",
+          projectPath: "/repos/source",
+          sessionName: "session",
+          conversationId: "conv-1",
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus: "failed",
+          snapshotError: "Conversation snapshot could not be captured.",
+        },
+      },
+      conversationId: "conv-1",
+      sessionName: "session",
+      error: "Conversation snapshot could not be captured.",
+      retryCommand: "cctl ticket attachment refresh command-center#12 a-1",
+    },
+  ] as const)("accepts a resolved conversation in $state state", (resolved) => {
+    expect(
+      resolvedAttachmentSchema.safeParse({
+        kind: "conversation",
+        ...resolved,
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects an unknown kind", () => {

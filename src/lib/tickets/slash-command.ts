@@ -528,6 +528,7 @@ export function createTicketCommandRunner(
         conversationId: input.conversationId,
         snapshotKey,
         snapshotCapturedAt: ensured.capturedAt,
+        snapshotStatus: "captured",
       },
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -535,7 +536,7 @@ export function createTicketCommandRunner(
 
     let detail: TicketDetail;
     try {
-      detail = await deps.repo.createWithConversationAttachment(
+      detail = await deps.repo.createWithAttachments(
         {
           id: ticketId,
           projectPath: input.projectPath,
@@ -546,7 +547,7 @@ export function createTicketCommandRunner(
           createdAt: timestamp,
           updatedAt: timestamp,
         },
-        attachment,
+        [attachment],
       );
     } catch (err) {
       await compensateSnapshot(snapshotKey);

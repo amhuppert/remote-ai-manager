@@ -39,6 +39,24 @@ const noopCallbacks = {
 };
 
 describe("GraphWorkflowPanel", () => {
+  it("exposes the active execution identity for contextual diagnostics", () => {
+    const execution = createWorkflowExecution({ id: "workflow-observed" });
+    const view = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    expect(
+      view.container
+        .querySelector("[data-workflow-execution-id]")
+        ?.getAttribute("data-workflow-execution-id"),
+    ).toBe("workflow-observed");
+  });
+
   it("renders empty state when no execution exists", () => {
     renderWithQuery(
       <GraphWorkflowPanel

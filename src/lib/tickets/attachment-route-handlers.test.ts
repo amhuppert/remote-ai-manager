@@ -146,6 +146,17 @@ beforeEach(async () => {
   idSeq = 0;
   ticketService = createTicketService({
     repo,
+    attachmentPlanner: {
+      async plan() {
+        return {
+          attachments: [],
+          pendingConversationAttachmentIds: [],
+          warnings: [],
+          compensate: async () => {},
+          afterCommit: () => {},
+        };
+      },
+    },
     resolveProjectPath,
     resolveAvailableProjectPath: resolveProjectPath,
     deleteTicketContent: () => Promise.resolve(),

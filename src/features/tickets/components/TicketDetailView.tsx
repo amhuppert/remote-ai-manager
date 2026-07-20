@@ -47,7 +47,7 @@ import {
   TICKET_STATUS_VISUALS,
   TICKET_WORK_TYPE_LABELS,
   TICKET_WORK_TYPE_ORDER,
-} from "../ticket-visuals";
+} from "@/lib/tickets/ticket-visuals";
 import AttachmentIndex from "./AttachmentIndex";
 import CopyTicketReferenceButton from "@/components/references/CopyTicketReferenceButton";
 import StartTicketDialog, {

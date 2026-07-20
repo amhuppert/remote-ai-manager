@@ -42,7 +42,7 @@ function Modal({
 }: {
   open?: boolean;
   size?: "default" | "confirm";
-  mobileSheet?: boolean;
+  mobileSheet?: boolean | "full-height";
 }): React.JSX.Element {
   return (
     <Dialog open={open}>
@@ -124,6 +124,14 @@ describe("Dialog", () => {
     expect(card.className).toContain(
       "max-768:motion-safe:animate-[slideUpSheet_0.25s_ease]",
     );
+    expect(card.className).not.toContain("max-768:h-[100dvh]");
+  });
+
+  it("fills the mobile viewport only for the full-height sheet variant", () => {
+    render(<Modal open mobileSheet="full-height" />);
+    const card = screen.getByRole("dialog");
+    expect(card.className).toContain("max-768:rounded-b-none");
+    expect(card.className).toContain("max-768:h-[100dvh]");
   });
 
   it("gives the title and description their CC recipes", () => {

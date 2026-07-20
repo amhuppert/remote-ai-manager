@@ -16,11 +16,21 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import {
+  createCreateAttachmentPlanner,
+  type CreateAttachmentPlannerDeps,
+} from "./create-attachment-planner";
+import {
   createTicketsRouteHandlers,
+  MAX_TICKET_CREATE_BODY_BYTES,
   parseProjectNameParam,
   resolveIdentity,
   type TicketsRouteHandlers,
 } from "./route-handlers";
+import {
+  createTicketResponseSchema,
+  ticketDetailSchema,
+  type QuickTicketDiagnostics,
+} from "./schemas";
 import { createTicketService } from "./service";
 
 type Db = InstanceType<typeof Database>;
@@ -84,11 +94,16 @@ async function resolveProjectPath(name: string): Promise<string | null> {
 let db: Db;
 let handlers: TicketsRouteHandlers;
 let projectAvailable: boolean;
+let unavailableProjectNames: Set<string>;
+let conversationExists: ReturnType<
+  typeof vi.fn<CreateAttachmentPlannerDeps["conversationExists"]>
+>;
 
 async function resolveAvailableProjectPath(
   name: string,
 ): Promise<string | null> {
-  return projectAvailable ? resolveProjectPath(name) : null;
+  if (!projectAvailable || unavailableProjectNames.has(name)) return null;
+  return resolveProjectPath(name);
 }
 
 beforeEach(() => {
@@ -99,10 +114,45 @@ beforeEach(() => {
   insertProject.run(PROJECT_PATH);
   insertProject.run(OTHER_PROJECT_PATH);
   projectAvailable = true;
+  unavailableProjectNames = new Set();
+  conversationExists = vi.fn(async () => true);
   let idSeq = 0;
+  let attachmentIdSeq = 0;
   let clock = 0;
+  function now(): string {
+    clock += 1;
+    return `2026-07-10T00:00:${String(clock).padStart(2, "0")}.000Z`;
+  }
   const service = createTicketService({
     repo: createTicketsRepo(db, createWriteQueue()),
+    attachmentPlanner: createCreateAttachmentPlanner({
+      resolveAvailableProjectPath,
+      conversationExists,
+      async captureScreenshot(input) {
+        return {
+          snapshotKey: `${input.ticketId}/${input.attachmentId}/${input.fileName}`,
+          fileName: input.fileName,
+          sizeBytes: input.bytes.byteLength,
+          sha256: "route-test-screenshot-sha",
+        };
+      },
+      async deleteSnapshot() {},
+      diagnosticEnvironment() {
+        return {
+          sha: "route-test-sha",
+          buildTime: "2026-07-10T00:00:00.000Z",
+          appVersion: "0.1.0",
+          platform: "route-test-platform",
+        };
+      },
+      scheduleConversationSnapshotRefresh() {},
+      scheduleEnrichment() {},
+      generateId() {
+        attachmentIdSeq += 1;
+        return `attachment-${attachmentIdSeq}`;
+      },
+      now,
+    }),
     resolveProjectPath,
     resolveAvailableProjectPath,
     deleteTicketContent: () => Promise.resolve(),
@@ -110,10 +160,7 @@ beforeEach(() => {
     runProjectTicketOperation: (_projectPath, operation) =>
       operation({ projectDeletionPrecededOperation: false }),
     runTicketOperation: (_key, fn) => fn(),
-    now: () => {
-      clock += 1;
-      return `2026-07-10T00:00:${String(clock).padStart(2, "0")}.000Z`;
-    },
+    now,
     generateId: () => {
       idSeq += 1;
       return `ticket-${idSeq}`;
@@ -147,6 +194,36 @@ function createRequest(body: unknown): Request {
   });
 }
 
+function diagnostics(
+  conversationId: string,
+  overrides: Partial<QuickTicketDiagnostics> = {},
+): QuickTicketDiagnostics {
+  return {
+    capturedAt: "2026-07-19T12:00:00.000Z",
+    route: {
+      url: `/projects/${OTHER_PROJECT_NAME}/conversations/${conversationId}`,
+      viewState: "pane=conversation",
+    },
+    identities: {
+      projectName: OTHER_PROJECT_NAME,
+      conversationId,
+      deepLinks: [],
+    },
+    clientErrors: [],
+    removed: [],
+    ...overrides,
+  };
+}
+
+async function postCreateTicket(body: unknown, projectName = PROJECT_NAME) {
+  const response = await handlers.projectCreatePOST(
+    createRequest(body),
+    projectContext(projectName),
+  );
+  expect(response.status).toBe(201);
+  return createTicketResponseSchema.parse(await response.json());
+}
+
 async function createTicket(
   overrides: Partial<{
     projectName: string;
@@ -155,14 +232,14 @@ async function createTicket(
     status: string;
     description: string;
   }> = {},
-): Promise<Record<string, unknown>> {
+) {
   const { projectName = PROJECT_NAME, ...body } = overrides;
-  const response = await handlers.projectCreatePOST(
-    createRequest({ title: "Ship tickets", workType: "feature", ...body }),
-    projectContext(projectName),
+  const payload = await postCreateTicket(
+    { title: "Ship tickets", workType: "feature", ...body },
+    projectName,
   );
-  expect(response.status).toBe(201);
-  return (await response.json()) as Record<string, unknown>;
+  expect(payload.warnings).toEqual([]);
+  return payload.ticket;
 }
 
 describe("global list GET /api/tickets", () => {
@@ -295,6 +372,160 @@ describe("create POST /api/projects/:name/tickets", () => {
     expect(detail["sessions"]).toEqual([]);
   });
 
+  it("persists generic conversation context from a source project that differs from the ticket target", async () => {
+    const payload = await postCreateTicket({
+      title: "Cross-project context",
+      workType: "feature",
+      conversationContext: {
+        sourceProjectName: OTHER_PROJECT_NAME,
+        sessionName: "source-session",
+        conversationId: "source-conversation",
+        title: "Observed source conversation",
+      },
+    });
+
+    expect(payload.warnings).toEqual([]);
+    expect(payload.ticket).toMatchObject({
+      projectName: PROJECT_NAME,
+      projectPath: PROJECT_PATH,
+    });
+    expect(payload.ticket.attachments).toEqual([
+      expect.objectContaining({
+        description: "Observed source conversation",
+        payload: {
+          kind: "conversation",
+          projectPath: OTHER_PROJECT_PATH,
+          sessionName: "source-session",
+          conversationId: "source-conversation",
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus: "pending",
+        },
+      }),
+    ]);
+    expect(conversationExists).toHaveBeenCalledWith(
+      OTHER_PROJECT_PATH,
+      "source-session",
+      "source-conversation",
+    );
+  });
+
+  it("persists project-level conversation context from another project in diagnostics bug mode", async () => {
+    const conversationId = "project-conversation";
+    const payload = await postCreateTicket({
+      title: "Command Center bug",
+      workType: "bug",
+      diagnostics: diagnostics(conversationId),
+      conversationContext: {
+        sourceProjectName: OTHER_PROJECT_NAME,
+        sessionName: null,
+        conversationId,
+        title: "Project conversation",
+      },
+    });
+
+    expect(payload.warnings).toEqual([]);
+    expect(payload.ticket).toMatchObject({
+      projectName: PROJECT_NAME,
+      projectPath: PROJECT_PATH,
+      workType: "bug",
+    });
+    expect(
+      payload.ticket.attachments.map((attachment) => attachment.payload.kind),
+    ).toEqual(["note", "conversation"]);
+    expect(payload.ticket.attachments[1]).toMatchObject({
+      description: "Conversation active when the bug was observed",
+      payload: {
+        kind: "conversation",
+        projectPath: OTHER_PROJECT_PATH,
+        sessionName: null,
+        conversationId,
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "pending",
+      },
+    });
+    expect(conversationExists).toHaveBeenCalledWith(
+      OTHER_PROJECT_PATH,
+      null,
+      conversationId,
+    );
+  });
+
+  it("creates with a warning and omits context when only the source project is unavailable", async () => {
+    unavailableProjectNames.add(OTHER_PROJECT_NAME);
+
+    const payload = await postCreateTicket({
+      title: "Stale source project",
+      workType: "feature",
+      conversationContext: {
+        sourceProjectName: OTHER_PROJECT_NAME,
+        sessionName: null,
+        conversationId: "stale-conversation",
+      },
+    });
+
+    expect(payload.ticket.projectName).toBe(PROJECT_NAME);
+    expect(payload.ticket.attachments).toEqual([]);
+    expect(payload.warnings).toEqual([
+      {
+        code: "conversation_source_unavailable",
+        message:
+          "Conversation context was not attached because project 'other-repo' is unavailable.",
+      },
+    ]);
+    expect(conversationExists).not.toHaveBeenCalled();
+
+    const persistedResponse = await handlers.detailGET(
+      new Request(
+        `http://localhost/api/projects/${PROJECT_NAME}/tickets/${payload.ticket.number}`,
+      ),
+      detailContext(PROJECT_NAME, String(payload.ticket.number)),
+    );
+    expect(persistedResponse.status).toBe(200);
+    const persisted = ticketDetailSchema.parse(await persistedResponse.json());
+    expect(persisted.attachments).toEqual([]);
+  });
+
+  it("persists a failed conversation row when the source project resolves but the conversation is unknown", async () => {
+    conversationExists.mockResolvedValue(false);
+
+    const payload = await postCreateTicket({
+      title: "Stale source conversation",
+      workType: "feature",
+      conversationContext: {
+        sourceProjectName: OTHER_PROJECT_NAME,
+        sessionName: null,
+        conversationId: "unknown-conversation",
+      },
+    });
+
+    expect(payload.warnings).toEqual([]);
+    expect(payload.ticket.attachments).toHaveLength(1);
+    expect(payload.ticket.attachments[0]?.payload).toEqual({
+      kind: "conversation",
+      projectPath: OTHER_PROJECT_PATH,
+      sessionName: null,
+      conversationId: "unknown-conversation",
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "failed",
+      snapshotError: "The source conversation is unavailable.",
+    });
+
+    const persistedResponse = await handlers.detailGET(
+      new Request(
+        `http://localhost/api/projects/${PROJECT_NAME}/tickets/${payload.ticket.number}`,
+      ),
+      detailContext(PROJECT_NAME, String(payload.ticket.number)),
+    );
+    expect(persistedResponse.status).toBe(200);
+    const persisted = ticketDetailSchema.parse(await persistedResponse.json());
+    expect(persisted.attachments[0]?.payload).toEqual(
+      payload.ticket.attachments[0]?.payload,
+    );
+  });
+
   it("rejects a missing project-name param with 400 issues before resolution", async () => {
     const response = await handlers.projectCreatePOST(
       createRequest({ title: "x", workType: "feature" }),
@@ -317,6 +548,27 @@ describe("create POST /api/projects/:name/tickets", () => {
     expect(issues.some((issue) => issue["path"] === "title")).toBe(true);
   });
 
+  it("rejects diagnostics for a non-bug ticket", async () => {
+    const response = await handlers.projectCreatePOST(
+      createRequest({
+        title: "Feature with diagnostics",
+        workType: "feature",
+        diagnostics: diagnostics("conversation-1"),
+      }),
+      projectContext(PROJECT_NAME),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["code"]).toBe("validation_failed");
+    expect(body["issues"]).toContainEqual(
+      expect.objectContaining({
+        path: "diagnostics",
+        message: "diagnostics are only available for bug tickets",
+      }),
+    );
+  });
+
   it("rejects a non-JSON body with 400", async () => {
     const response = await handlers.projectCreatePOST(
       new Request("http://localhost/api/projects/x/tickets", {
@@ -328,6 +580,56 @@ describe("create POST /api/projects/:name/tickets", () => {
     expect(response.status).toBe(400);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body["code"]).toBe("validation_failed");
+  });
+
+  it("rejects a declared oversized create body before reading it", async () => {
+    const response = await handlers.projectCreatePOST(
+      new Request("http://localhost/api/projects/x/tickets", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(MAX_TICKET_CREATE_BODY_BYTES + 1),
+        },
+        body: JSON.stringify({ title: "x", workType: "bug" }),
+      }),
+      projectContext(PROJECT_NAME),
+    );
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({
+      code: "payload_too_large",
+      details: { maxBytes: MAX_TICKET_CREATE_BODY_BYTES },
+    });
+  });
+
+  it("cuts off a streamed create body whose declared length is dishonest", async () => {
+    let cancelled = false;
+    const chunk = new Uint8Array(1024 * 1024);
+    let emitted = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+        emitted += chunk.byteLength;
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await handlers.projectCreatePOST(
+      new Request("http://localhost/api/projects/x/tickets", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": "2",
+        },
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+      projectContext(PROJECT_NAME),
+    );
+
+    expect(response.status).toBe(413);
+    expect(cancelled).toBe(true);
   });
 
   it("returns 404 for an unknown project", async () => {

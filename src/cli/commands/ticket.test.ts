@@ -59,6 +59,8 @@ const sampleDetail = {
   sessions: [],
 };
 
+const sampleCreateResponse = { ticket: sampleDetail, warnings: [] };
+
 const sampleListItem = {
   id: "ticket-1",
   projectPath: "/repos/cc",
@@ -118,7 +120,7 @@ describe("cctl ticket dispatch", () => {
 
 describe("cctl ticket create", () => {
   it("POSTs to the project create endpoint and reports the identifier", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail, 201));
+    const host = makeHost(() => jsonResponse(sampleCreateResponse, 201));
     const result = await runCli(
       [
         "ticket",
@@ -148,7 +150,7 @@ describe("cctl ticket create", () => {
   });
 
   it("carries the ticket detail in the --json envelope", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail, 201));
+    const host = makeHost(() => jsonResponse(sampleCreateResponse, 201));
     const result = await runCli(
       ["ticket", "create", "--title", "Fix", "--type", "bug", "--json"],
       baseEnv,
@@ -197,7 +199,7 @@ describe("cctl ticket create", () => {
   });
 
   it("passes an explicit --status through to the request body", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail, 201));
+    const host = makeHost(() => jsonResponse(sampleCreateResponse, 201));
     await runCli(
       [
         "ticket",
@@ -1078,6 +1080,67 @@ describe("cctl ticket attachment", () => {
     expect(result.stdout).toContain("cctl conversation compaction get conv-9");
   });
 
+  it.each([
+    {
+      state: "pending" as const,
+      error: undefined,
+      expected: "snapshot pending",
+    },
+    {
+      state: "failed" as const,
+      error: "Compaction timed out.",
+      expected: "snapshot failed: Compaction timed out.",
+    },
+  ])(
+    "renders a $state conversation snapshot with its retry command",
+    async (fixture) => {
+      const retryCommand = "cctl ticket attachment refresh 'cc#12' 'att-1'";
+      const attachment = sampleAttachment("att-1", {
+        kind: "conversation",
+        projectPath: "/repos/cc",
+        sessionName: null,
+        conversationId: "conv-9",
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: fixture.state,
+        ...(fixture.error !== undefined
+          ? { snapshotError: fixture.error }
+          : {}),
+      });
+      const host = makeHost(() =>
+        jsonResponse({
+          kind: "conversation",
+          state: fixture.state,
+          attachment,
+          conversationId: "conv-9",
+          sessionName: null,
+          ...(fixture.error !== undefined ? { error: fixture.error } : {}),
+          retryCommand,
+        }),
+      );
+
+      const text = await runCli(
+        ["ticket", "attachment", "get", "12", "att-1"],
+        baseEnv,
+        host,
+      );
+      const json = await runCli(
+        ["ticket", "attachment", "get", "12", "att-1", "--json"],
+        baseEnv,
+        host,
+      );
+
+      expect(text.exitCode).toBe(0);
+      expect(text.stdout).toContain(fixture.expected);
+      expect(text.stdout).toContain(retryCommand);
+      expect(JSON.parse(json.stdout).attachment).toMatchObject({
+        kind: "conversation",
+        state: fixture.state,
+        retryCommand,
+      });
+    },
+  );
+
   it("carries the resolved attachment in the --json envelope", async () => {
     const host = makeHost(() =>
       jsonResponse({
@@ -1122,6 +1185,88 @@ describe("cctl ticket attachment", () => {
     });
   });
 
+  it("POSTs refresh-snapshot and returns the captured attachment", async () => {
+    const attachment = sampleAttachment("att-1", {
+      kind: "conversation",
+      projectPath: "/repos/cc",
+      sessionName: null,
+      conversationId: "conv-9",
+      snapshotKey: "ticket-1/att-1/compaction-refresh.md",
+      snapshotCapturedAt: "2026-01-02T00:00:00Z",
+      snapshotStatus: "captured",
+    });
+    const host = makeHost(() => jsonResponse(attachment));
+
+    const result = await runCli(
+      ["ticket", "attachment", "refresh", "12", "att-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("refreshed conversation snapshot att-1");
+    expect(host.requests[0]?.init.method).toBe("POST");
+    expect(new URL(host.requests[0]!.url).pathname).toBe(
+      "/api/projects/cc/tickets/12/attachments/att-1/refresh-snapshot",
+    );
+  });
+
+  it.each([
+    {
+      state: "pending" as const,
+      error: undefined,
+      expected: "snapshot pending",
+    },
+    {
+      state: "failed" as const,
+      error: "Compaction timed out.",
+      expected: "snapshot failed: Compaction timed out.",
+    },
+  ])(
+    "renders a canonical $state result when refresh loses the snapshot race",
+    async (fixture) => {
+      const attachment = sampleAttachment("att-1", {
+        kind: "conversation",
+        projectPath: "/repos/cc",
+        sessionName: null,
+        conversationId: "conv-9",
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: fixture.state,
+        ...(fixture.error !== undefined
+          ? { snapshotError: fixture.error }
+          : {}),
+      });
+      const host = makeHost(() => jsonResponse(attachment));
+
+      const text = await runCli(
+        ["ticket", "attachment", "refresh", "12", "att-1"],
+        baseEnv,
+        host,
+      );
+      const json = await runCli(
+        ["ticket", "attachment", "refresh", "12", "att-1", "--json"],
+        baseEnv,
+        host,
+      );
+
+      const retryCommand = "cctl ticket attachment refresh 'cc#12' 'att-1'";
+      expect(text.exitCode).toBe(0);
+      expect(text.stdout).toContain(fixture.expected);
+      expect(text.stdout).toContain(retryCommand);
+      expect(text.stdout).not.toContain("refreshed conversation snapshot");
+      expect(JSON.parse(json.stdout).attachment).toMatchObject({
+        kind: "conversation",
+        state: fixture.state,
+        attachment: {
+          id: "att-1",
+          payload: { snapshotStatus: fixture.state },
+        },
+        retryCommand,
+      });
+    },
+  );
+
   it("exits 2 before any network call when update has no field flags", async () => {
     const host = makeHost(() => jsonResponse({}));
     const result = await runCli(
@@ -1153,7 +1298,7 @@ describe("cctl ticket attachment", () => {
   });
 
   it("exits 2 before any network call on extra positional arguments for every verb", async () => {
-    for (const verb of ["get", "update", "remove"] as const) {
+    for (const verb of ["get", "update", "refresh", "remove"] as const) {
       const host = makeHost(() => jsonResponse({}));
       const result = await runCli(
         [
@@ -1245,6 +1390,10 @@ describe("cctl ticket malformed 2xx response contracts", () => {
     [
       "attachment remove",
       ["ticket", "attachment", "remove", "12", "att-1", "--json"],
+    ],
+    [
+      "attachment refresh",
+      ["ticket", "attachment", "refresh", "12", "att-1", "--json"],
     ],
   ] as const)("fails %s instead of reporting success", async (_label, argv) => {
     const host = makeHost(() => jsonResponse({ nope: true }));
@@ -1406,7 +1555,7 @@ describe("cctl ticket help", () => {
       host,
     );
     expect(attachment.exitCode).toBe(0);
-    for (const verb of ["get", "update", "remove"]) {
+    for (const verb of ["get", "update", "refresh", "remove"]) {
       expect(attachment.stdout).toContain(`ticket attachment ${verb}`);
     }
   });

@@ -3,6 +3,7 @@ import {
   useToastStoreForTesting,
   pushToast,
   dismissToast,
+  replaceActionToast,
 } from "./toast.store";
 
 describe("toast.store", () => {
@@ -50,7 +51,7 @@ describe("toast.store", () => {
     expect(useToastStoreForTesting.getState().toasts).toHaveLength(1);
   });
 
-  it("stores an action and keeps actionable toasts up for 6000ms", () => {
+  it("stores an action and keeps actionable toasts until explicit dismissal", () => {
     const onClick = vi.fn();
     pushToast("Couldn't move command-center#9 to Done — rolled back", {
       action: { label: "Retry", onClick },
@@ -60,9 +61,43 @@ describe("toast.store", () => {
     toast.action?.onClick();
     expect(onClick).toHaveBeenCalledTimes(1);
 
-    vi.advanceTimersByTime(5999);
+    vi.advanceTimersByTime(60_000);
     expect(useToastStoreForTesting.getState().toasts).toHaveLength(1);
-    vi.advanceTimersByTime(1);
+
+    dismissToast(toast.id);
     expect(useToastStoreForTesting.getState().toasts).toHaveLength(0);
+  });
+
+  it("replaces an actionable toast in place and restores it if already dismissed", () => {
+    const viewTicket = vi.fn();
+    const openConversation = vi.fn();
+    const id = pushToast("command-center#9 created — starting agent…", {
+      action: { label: "View ticket", onClick: viewTicket },
+    });
+
+    replaceActionToast(id, "Agent queued on command-center#9", {
+      label: "Open conversation",
+      onClick: openConversation,
+    });
+
+    expect(useToastStoreForTesting.getState().toasts).toEqual([
+      expect.objectContaining({
+        id,
+        message: "Agent queued on command-center#9",
+        action: expect.objectContaining({ label: "Open conversation" }),
+      }),
+    ]);
+
+    dismissToast(id);
+    replaceActionToast(id, "Agent already active on command-center#9", {
+      label: "Open session",
+      onClick: vi.fn(),
+    });
+    expect(useToastStoreForTesting.getState().toasts).toEqual([
+      expect.objectContaining({
+        id,
+        message: "Agent already active on command-center#9",
+      }),
+    ]);
   });
 });

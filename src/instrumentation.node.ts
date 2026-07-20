@@ -22,6 +22,9 @@ import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
 import { createAgentRunsRepo } from "./lib/agent-runs/repo";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";
+import { createTicketsRepo } from "./lib/state-store/tickets-repo";
+import { getSharedWriteQueue } from "./lib/state-store/write-queue";
+import { recoverInterruptedConversationSnapshots as recoverInterruptedConversationSnapshotsForStartup } from "./lib/tickets/snapshot-refresh";
 import { registerProductionSpecWorkflowComposition } from "./lib/specs/production-workflow-composition";
 
 const logger = createLogger("startup");
@@ -43,6 +46,8 @@ export interface StartupDeps {
   sweepInterruptedCompactions(): number;
   /** Marks orphaned running agent-run rows failed; returns the swept count. */
   recoverStaleAgentRuns(): number;
+  /** Marks orphaned pending conversation snapshots failed. */
+  recoverInterruptedConversationSnapshots(): Promise<number>;
   verifyServerBaseUrl(): void;
 }
 
@@ -71,6 +76,11 @@ const defaultStartupDeps: StartupDeps = {
     ),
   recoverStaleAgentRuns: () =>
     createAgentRunsRepo(getStateDb()).recoverStaleAgentRuns(),
+  recoverInterruptedConversationSnapshots: () =>
+    recoverInterruptedConversationSnapshotsForStartup({
+      repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
+      now: () => new Date().toISOString(),
+    }),
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -106,6 +116,19 @@ export function createStartupRegistrar(
     }
 
     deps.registerSpecWorkflowComposition?.();
+
+    try {
+      const recovered = await deps.recoverInterruptedConversationSnapshots();
+      if (recovered > 0) {
+        logger.info("startup.interrupted_conversation_snapshots_recovered", {
+          count: recovered,
+        });
+      }
+    } catch (err) {
+      logger.error("startup.conversation_snapshot_recovery_failed", {
+        error: getErrorMessage(err),
+      });
+    }
 
     // A compaction run lives only in the compaction service's in-memory
     // single-flight map, so rows still `pending` now were interrupted by the

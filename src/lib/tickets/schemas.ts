@@ -65,16 +65,72 @@ const fileAttachmentPayloadSchema = z
   })
   .strict();
 
+export const conversationSnapshotStatusSchema = z.enum([
+  "pending",
+  "captured",
+  "failed",
+]);
+export type ConversationSnapshotStatus = z.infer<
+  typeof conversationSnapshotStatusSchema
+>;
+
 export const conversationAttachmentPayloadSchema = z
   .object({
     kind: z.literal("conversation"),
     projectPath: z.string().min(1),
     sessionName: z.string().nullable(),
     conversationId: z.string().min(1),
-    snapshotKey: z.string().min(1),
-    snapshotCapturedAt: z.string().min(1),
+    snapshotKey: z.string().min(1).nullable(),
+    snapshotCapturedAt: z.string().min(1).nullable(),
+    snapshotStatus: conversationSnapshotStatusSchema.optional(),
+    snapshotError: z.string().min(1).max(500).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((payload, context) => {
+    const status = payload.snapshotStatus ?? "captured";
+    const captured = status === "captured";
+    if (captured !== (payload.snapshotKey !== null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["snapshotKey"],
+        message: captured
+          ? "captured snapshots require a key"
+          : `${status} snapshots cannot have a key`,
+      });
+    }
+    if (captured !== (payload.snapshotCapturedAt !== null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["snapshotCapturedAt"],
+        message: captured
+          ? "captured snapshots require a capture timestamp"
+          : `${status} snapshots cannot have a capture timestamp`,
+      });
+    }
+    if (status === "failed" && payload.snapshotError === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["snapshotError"],
+        message: "failed snapshots require a safe error",
+      });
+    }
+    if (status !== "failed" && payload.snapshotError !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["snapshotError"],
+        message: `${status} snapshots cannot have an error`,
+      });
+    }
+  });
+export type ConversationAttachmentPayload = z.infer<
+  typeof conversationAttachmentPayloadSchema
+>;
+
+export function effectiveSnapshotStatus(
+  payload: ConversationAttachmentPayload,
+): ConversationSnapshotStatus {
+  return payload.snapshotStatus ?? "captured";
+}
 
 const sessionAttachmentPayloadSchema = z
   .object({
@@ -250,6 +306,23 @@ export const resolvedAttachmentSchema = z.union([
     readCommands: z.array(z.string()),
   }),
   z.object({
+    kind: z.literal("conversation"),
+    state: z.literal("pending"),
+    attachment: ticketAttachmentSchema,
+    conversationId: z.string().min(1),
+    sessionName: z.string().nullable(),
+    retryCommand: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("conversation"),
+    state: z.literal("failed"),
+    attachment: ticketAttachmentSchema,
+    conversationId: z.string().min(1),
+    sessionName: z.string().nullable(),
+    error: z.string().min(1).max(500),
+    retryCommand: z.string().min(1),
+  }),
+  z.object({
     kind: z.literal("session"),
     attachment: ticketAttachmentSchema,
     projectName: z.string().min(1),
@@ -294,12 +367,212 @@ export const ticketListQuerySchema = z.object({
 });
 export type TicketListQuery = z.infer<typeof ticketListQuerySchema>;
 
-export const createTicketInputSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().default(""),
-  workType: ticketWorkTypeSchema,
-  status: ticketStatusSchema.default(TICKET_DEFAULT_STATUS),
+export const quickTicketBundleKeySchema = z.enum([
+  "route",
+  "identities",
+  "conversation",
+  "cctl",
+  "build",
+  "screenshot",
+  "clientErrors",
+]);
+export type QuickTicketBundleKey = z.infer<typeof quickTicketBundleKeySchema>;
+
+export const quickTicketClientErrorSchema = z
+  .object({
+    ts: z.iso.datetime(),
+    kind: z.enum(["window", "unhandledrejection", "console", "query"]),
+    message: z.string().min(1).max(500),
+    stackHead: z.array(z.string().min(1).max(500)).max(3),
+  })
+  .strict();
+export type QuickTicketClientError = z.infer<
+  typeof quickTicketClientErrorSchema
+>;
+
+const MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024;
+const MAX_SCREENSHOT_BASE64_LENGTH = Math.ceil(MAX_SCREENSHOT_BYTES / 3) * 4;
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const CANONICAL_BASE64_PATTERN =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function decodedBase64Size(value: string): number {
+  if (value.length === 0) return 0;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
+function decodeBase64Prefix(value: string, byteLimit: number): number[] {
+  const bytes: number[] = [];
+  let accumulator = 0;
+  let bitCount = 0;
+  for (const character of value) {
+    if (character === "=") break;
+    const digit = BASE64_ALPHABET.indexOf(character);
+    if (digit < 0) return [];
+    accumulator = (accumulator << 6) | digit;
+    bitCount += 6;
+    if (bitCount < 8) continue;
+    bitCount -= 8;
+    bytes.push((accumulator >> bitCount) & 0xff);
+    if (bytes.length === byteLimit) return bytes;
+    accumulator &= (1 << bitCount) - 1;
+  }
+  return bytes;
+}
+
+function hasScreenshotMagic(
+  base64: string,
+  mediaType: "image/png" | "image/webp",
+): boolean {
+  const bytes = decodeBase64Prefix(base64, 12);
+  if (mediaType === "image/png") {
+    const png = [137, 80, 78, 71, 13, 10, 26, 10];
+    return png.every((value, index) => bytes[index] === value);
+  }
+  return (
+    bytes[0] === 82 &&
+    bytes[1] === 73 &&
+    bytes[2] === 70 &&
+    bytes[3] === 70 &&
+    bytes[8] === 87 &&
+    bytes[9] === 69 &&
+    bytes[10] === 66 &&
+    bytes[11] === 80
+  );
+}
+
+export const quickTicketScreenshotSchema = z
+  .object({
+    mediaType: z.enum(["image/webp", "image/png"]),
+    base64: z
+      .string()
+      .min(1)
+      .max(MAX_SCREENSHOT_BASE64_LENGTH)
+      .regex(CANONICAL_BASE64_PATTERN),
+    width: z.number().int().positive().max(8192),
+    height: z.number().int().positive().max(8192),
+  })
+  .strict()
+  .superRefine((screenshot, context) => {
+    if (decodedBase64Size(screenshot.base64) > MAX_SCREENSHOT_BYTES) {
+      context.addIssue({
+        code: "custom",
+        path: ["base64"],
+        message: "screenshot exceeds the 2 MB decoded limit",
+      });
+    }
+    if (screenshot.width * screenshot.height > 16_777_216) {
+      context.addIssue({
+        code: "custom",
+        path: ["width"],
+        message: "screenshot dimensions exceed the pixel limit",
+      });
+    }
+    if (!hasScreenshotMagic(screenshot.base64, screenshot.mediaType)) {
+      context.addIssue({
+        code: "custom",
+        path: ["base64"],
+        message: "screenshot bytes do not match its media type",
+      });
+    }
+  });
+
+export const quickTicketDiagnosticsSchema = z
+  .object({
+    capturedAt: z.iso.datetime(),
+    route: z
+      .object({
+        url: z.string().min(1).max(4096),
+        viewState: z.string().max(2000),
+      })
+      .strict(),
+    identities: z
+      .object({
+        projectName: z.string().min(1).max(200).optional(),
+        sessionName: z.string().min(1).max(200).optional(),
+        conversationId: z.string().min(1).max(200).optional(),
+        workflowExecutionId: z.string().min(1).max(200).optional(),
+        deepLinks: z
+          .array(
+            z
+              .object({
+                label: z.string().min(1).max(100),
+                href: z.string().min(1).max(4096),
+              })
+              .strict(),
+          )
+          .max(12),
+      })
+      .strict(),
+    clientErrors: z.array(quickTicketClientErrorSchema).max(25),
+    screenshot: quickTicketScreenshotSchema.optional(),
+    removed: z
+      .array(quickTicketBundleKeySchema)
+      .max(quickTicketBundleKeySchema.options.length),
+  })
+  .strict()
+  .superRefine((diagnostics, context) => {
+    if (new Set(diagnostics.removed).size !== diagnostics.removed.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["removed"],
+        message: "removed bundle keys must be unique",
+      });
+    }
+  });
+export type QuickTicketDiagnostics = z.infer<
+  typeof quickTicketDiagnosticsSchema
+>;
+
+export const quickTicketConversationContextSchema = z
+  .object({
+    sourceProjectName: z.string().min(1).max(200),
+    sessionName: z.string().min(1).max(200).nullable(),
+    conversationId: z.string().min(1).max(200),
+    title: z.string().min(1).max(500).optional(),
+  })
+  .strict();
+export type QuickTicketConversationContext = z.infer<
+  typeof quickTicketConversationContextSchema
+>;
+
+export const quickTicketCreateWarningSchema = z.discriminatedUnion("code", [
+  z.object({
+    code: z.literal("conversation_source_unavailable"),
+    message: z.string().min(1).max(500),
+  }),
+]);
+export type QuickTicketCreateWarning = z.infer<
+  typeof quickTicketCreateWarningSchema
+>;
+
+export const createTicketResponseSchema = z.object({
+  ticket: ticketDetailSchema,
+  warnings: z.array(quickTicketCreateWarningSchema),
 });
+export type CreateTicketResponse = z.infer<typeof createTicketResponseSchema>;
+
+export const createTicketInputSchema = z
+  .object({
+    title: z.string().min(1),
+    description: z.string().default(""),
+    workType: ticketWorkTypeSchema,
+    status: ticketStatusSchema.default(TICKET_DEFAULT_STATUS),
+    conversationContext: quickTicketConversationContextSchema.optional(),
+    diagnostics: quickTicketDiagnosticsSchema.optional(),
+    autoStartRequested: z.boolean().optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.diagnostics && input.workType !== "bug") {
+      context.addIssue({
+        code: "custom",
+        path: ["diagnostics"],
+        message: "diagnostics are only available for bug tickets",
+      });
+    }
+  });
 export type CreateTicketInput = z.infer<typeof createTicketInputSchema>;
 
 export const updateTicketFieldsSchema = z.object({

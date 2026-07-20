@@ -231,16 +231,14 @@ describe("useArchiveProjectMutation", () => {
       { wrapper: wrapperFor(client) },
     );
 
-    const delayedCreate = result.current.create
-      .mutateAsync({
-        projectName: "doomed",
-        input: {
-          title: "Committed before project deletion",
-          description: "",
-          workType: "feature",
-        },
-      })
-      .catch(() => undefined);
+    const delayedCreate = result.current.create.mutateAsync({
+      projectName: "doomed",
+      input: {
+        title: "Committed before project deletion",
+        description: "",
+        workType: "feature",
+      },
+    });
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     await result.current.deleteProject.mutateAsync({
       projectName: "doomed",
@@ -260,8 +258,11 @@ describe("useArchiveProjectMutation", () => {
       attachments: [],
       sessions: [],
     };
-    resolveCreate(jsonResponse(created, 201));
-    await delayedCreate;
+    resolveCreate(jsonResponse({ ticket: created, warnings: [] }, 201));
+    await expect(delayedCreate).resolves.toEqual({
+      ticket: created,
+      warnings: [],
+    });
 
     expect(client.getQueryData<TicketListItem[]>(ticketListKey)).toEqual([]);
     expect(client.getQueryData(ticketKeys.detail("doomed", 1))).toBeUndefined();
@@ -532,11 +533,13 @@ describe("useDeleteProjectMutation", () => {
     const client = makeClient();
     const listKey = projectKeys.list();
     const prefsKey = projectKeys.preferences();
+    const commandCenterKey = projectKeys.commandCenter();
     client.setQueryData<DiscoveredProject[]>(listKey, []);
     client.setQueryData<ProjectPreferences>(prefsKey, {
       archived: [],
       pinned: [],
     });
+    client.setQueryData(commandCenterKey, { projectName: "p1" });
     const ticketListKey = ticketKeys.list(normalizeTicketListFilters({}));
     const ticketDetailKey = ticketKeys.detail("p1", 1);
     const ticketLinksKey = ticketKeys.sessionLinks("p1");
@@ -563,6 +566,7 @@ describe("useDeleteProjectMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(prefsKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(commandCenterKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(ticketListKey)?.isInvalidated).toBe(true);
       expect(client.getQueryData(ticketDetailKey)).toBeUndefined();
       expect(client.getQueryData(ticketLinksKey)).toBeUndefined();

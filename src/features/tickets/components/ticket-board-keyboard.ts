@@ -7,7 +7,7 @@
 import type { KeyboardCoordinateGetter } from "@dnd-kit/core";
 
 import type { TicketStatus } from "@/lib/tickets/schemas";
-import { TICKET_STATUS_ORDER } from "../ticket-visuals";
+import { TICKET_STATUS_ORDER } from "@/lib/tickets/ticket-visuals";
 
 interface RectLike {
   top: number;

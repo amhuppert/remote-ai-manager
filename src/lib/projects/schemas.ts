@@ -25,6 +25,13 @@ export const discoveredProjectSchema = z.object({
   hasRunningSession: z.boolean(),
 });
 
+export const commandCenterProjectResponseSchema = z.object({
+  projectName: z.string().min(1).nullable(),
+});
+export type CommandCenterProjectResponse = z.infer<
+  typeof commandCenterProjectResponseSchema
+>;
+
 export const projectPreferencesResponseSchema = z.object({
   archived: z.array(z.string()),
   pinned: z.array(z.string()),

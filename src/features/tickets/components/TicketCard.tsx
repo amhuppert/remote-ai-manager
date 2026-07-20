@@ -29,7 +29,7 @@ import {
   TICKET_STATUS_ORDER,
   TICKET_STATUS_VISUALS,
   TICKET_WORK_TYPE_LABELS,
-} from "../ticket-visuals";
+} from "@/lib/tickets/ticket-visuals";
 
 export interface TicketCardProps extends React.HTMLAttributes<HTMLDivElement> {
   item: TicketListItem;

@@ -113,9 +113,9 @@ function applyTicketChangedEventToCaches(
       event.ticketNumber,
     );
   } else if (overlay === null) {
-    // The lean event carries only list fields, so an open detail view must
-    // refetch to reflect changes from any source (req 9.8) — exact single-key
-    // invalidation, a refetch only when that detail is actively cached.
+    // The lean event carries only list fields, so the detail-key prefix is
+    // invalidated to refresh an active detail and any nested attachment
+    // previews while marking inactive matches stale (req 9.8).
     // While an optimistic mutation is pending, refetching the detail would
     // overwrite the optimistic detail patch; the owning mutation's onSettled
     // hygiene invalidation covers the same key once the server has settled.

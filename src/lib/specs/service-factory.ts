@@ -510,7 +510,13 @@ async function ticketAttachmentContent(
     case "note":
       return attachment.payload.markdown;
     case "file":
+      return Buffer.from(
+        await getTicketContentStore().read(attachment.payload.snapshotKey),
+      ).toString("utf8");
     case "conversation":
+      if (attachment.payload.snapshotKey === null) {
+        return JSON.stringify(attachment.payload);
+      }
       return Buffer.from(
         await getTicketContentStore().read(attachment.payload.snapshotKey),
       ).toString("utf8");

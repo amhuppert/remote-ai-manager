@@ -154,6 +154,39 @@ export const MobileSheet: Story = {
   ),
 };
 
+/** Full-height mobile sheet for workflows whose footer stays viewport-pinned. */
+export const FullHeightMobileSheet: Story = {
+  parameters: { viewport: { defaultViewport: "mobile1" } },
+  render: () => (
+    <Dialog defaultOpen>
+      <DialogTrigger asChild>
+        <Button>New ticket</Button>
+      </DialogTrigger>
+      <DialogContent mobileSheet="full-height">
+        <DialogTitle>New ticket</DialogTitle>
+        <DialogDescription>
+          The sheet fills the mobile viewport while its workflow owns the
+          internal scrolling and footer placement.
+        </DialogDescription>
+        <FormGroup>
+          <FormLabel htmlFor="full-height-sheet-title">Title</FormLabel>
+          <FormInput id="full-height-sheet-title" defaultValue="Fix startup" />
+        </FormGroup>
+        <DialogActions>
+          <DialogClose asChild>
+            <Button variant="default" size="sm" touch>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button variant="primary" size="sm" touch>
+            Create
+          </Button>
+        </DialogActions>
+      </DialogContent>
+    </Dialog>
+  ),
+};
+
 /**
  * The `unstyled` + `anchor="stretch"` escape hatch: a right-edge slide-over that
  * owns its own box model via `layoutClassName` while Radix keeps the focus trap,

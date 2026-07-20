@@ -1,5 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { compactionConfigSchema } from "./schemas";
+import {
+  compactionConfigSchema,
+  globalConfigSchema,
+  rawGlobalConfigSchema,
+} from "./schemas";
+
+describe("commandCenterProjectName config", () => {
+  it("is retained by the raw disk schema", () => {
+    expect(
+      rawGlobalConfigSchema.parse({
+        commandCenterProjectName: "command-center",
+      }),
+    ).toEqual({ commandCenterProjectName: "command-center" });
+  });
+
+  it("is retained by the normalized global schema", () => {
+    const parsed = globalConfigSchema.parse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      claudeTimeoutMs: 60_000,
+      commandCenterProjectName: "command-center",
+    });
+
+    expect(parsed.commandCenterProjectName).toBe("command-center");
+  });
+
+  it("rejects an empty override", () => {
+    expect(
+      rawGlobalConfigSchema.safeParse({ commandCenterProjectName: "" }).success,
+    ).toBe(false);
+  });
+});
 
 describe("compactionConfigSchema", () => {
   it("materializes backend/model/effort defaults but leaves timeout unset", () => {

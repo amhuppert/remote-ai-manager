@@ -6,6 +6,7 @@ import { TooltipProvider as UiTooltipProvider } from "@/components/ui/Tooltip";
 import ToastHost from "@/components/ToastHost";
 import DevToolsGate from "@/components/DevToolsGate";
 import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
+import QuickTicketHost from "@/components/quick-ticket/QuickTicketHost";
 import "@/app/globals.css";
 
 const anybody = Anybody({
@@ -61,7 +62,10 @@ export default function RootLayout({
       </head>
       <body>
         <Providers>
-          <UiTooltipProvider>{children}</UiTooltipProvider>
+          <UiTooltipProvider>
+            {children}
+            <QuickTicketHost />
+          </UiTooltipProvider>
           <NotificationListener />
           <ToastHost />
 

@@ -38,6 +38,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      recoverInterruptedConversationSnapshots: async () => 0,
     });
 
     await register();
@@ -86,6 +87,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      recoverInterruptedConversationSnapshots: async () => 0,
     });
 
     await expect(register()).resolves.not.toThrow();
@@ -141,6 +143,10 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep");
         return 0;
       },
+      recoverInterruptedConversationSnapshots: async () => {
+        calls.push("conversation-snapshot-recovery");
+        return 0;
+      },
     });
 
     await register();
@@ -158,6 +164,12 @@ describe("createStartupRegistrar", () => {
     );
     expect(calls.indexOf("migrations")).toBeLessThan(
       calls.indexOf("agent-run-sweep"),
+    );
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("conversation-snapshot-recovery"),
+    );
+    expect(calls.indexOf("conversation-snapshot-recovery")).toBeLessThan(
+      calls.indexOf("rehydrate"),
     );
   });
 
@@ -191,6 +203,7 @@ describe("createStartupRegistrar", () => {
       },
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      recoverInterruptedConversationSnapshots: async () => 0,
     });
 
     await register();
@@ -237,12 +250,17 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep-failed");
         throw new Error("simulated agent-run sweep failure");
       },
+      recoverInterruptedConversationSnapshots: async () => {
+        calls.push("conversation-snapshot-recovery-failed");
+        throw new Error("simulated conversation snapshot recovery failure");
+      },
     });
 
     await expect(register()).resolves.not.toThrow();
     expect(calls).toContain("envelope-recovery-failed");
     expect(calls).toContain("compaction-sweep-failed");
     expect(calls).toContain("agent-run-sweep-failed");
+    expect(calls).toContain("conversation-snapshot-recovery-failed");
     expect(calls).toContain("notifications");
   });
 
@@ -301,6 +319,10 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep");
         return 0;
       },
+      recoverInterruptedConversationSnapshots: async () => {
+        calls.push("conversation-snapshot-recovery");
+        return 0;
+      },
     });
 
     await expect(register()).rejects.toThrow("simulated migration failure");
@@ -345,6 +367,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      recoverInterruptedConversationSnapshots: async () => 0,
     });
 
     await register();
@@ -387,6 +410,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      recoverInterruptedConversationSnapshots: async () => 0,
     });
 
     await expect(register()).resolves.not.toThrow();

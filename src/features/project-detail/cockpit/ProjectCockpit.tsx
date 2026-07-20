@@ -14,6 +14,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import { IconButton } from "@/components/ui/IconButton";
 import { WithTooltip } from "@/components/ui/WithTooltip";
+import { useQuickTicketConversationRegistration } from "@/components/quick-ticket/useQuickTicketConversationRegistration";
 import { cn } from "@/lib/ui/cn";
 import {
   useSendProjectPrompt,
@@ -263,6 +264,19 @@ export default function ProjectCockpit({
 
   const activeConversation =
     activeTabId !== null ? byId.get(activeTabId) : undefined;
+  useQuickTicketConversationRegistration(
+    activeConversation === undefined
+      ? null
+      : {
+          projectName,
+          sessionName: null,
+          conversationId: activeConversation.id,
+          title:
+            activeConversation.name ??
+            activeConversation.summary ??
+            "Conversation",
+        },
+  );
   // Backend is fixed to the conversation's once initialized (promptCount > 0);
   // before the first turn it tracks the user's pre-init selection so the
   // composer toggle works for new tabs (Req 7.3).

@@ -138,6 +138,18 @@ async function addConversationAttachment(
   return { attachment, snapshot };
 }
 
+function pendingConversationPayload() {
+  return {
+    kind: "conversation" as const,
+    projectPath: PROJECT_PATH,
+    sessionName: null,
+    conversationId: CONVERSATION_ID,
+    snapshotKey: null,
+    snapshotCapturedAt: null,
+    snapshotStatus: "pending" as const,
+  };
+}
+
 function makeService(overrides: Partial<TicketStartServiceDeps> = {}): {
   service: TicketStartService;
   recorded: Recorded;
@@ -381,6 +393,7 @@ describe("start", () => {
     expect(sessionEvents[0]).toMatchObject({
       change: "session",
       ticketNumber: ticket.number,
+      attachmentIndexChanged: false,
       linkedSessionName: expectedName,
     });
   });
@@ -585,6 +598,9 @@ describe("start", () => {
     });
     if (conversationPayload?.kind !== "conversation") return;
     expect(conversationPayload.snapshotKey).not.toBe(snapshot.snapshotKey);
+    if (conversationPayload.snapshotKey === null) {
+      throw new Error("expected captured conversation snapshot");
+    }
     const refreshedBlob = await contentStore.read(
       conversationPayload.snapshotKey,
     );
@@ -601,6 +617,15 @@ describe("start", () => {
     )?.payload;
     expect(persistedPayload).toEqual(conversationPayload);
     expect(result.value.ticket.attachments).toEqual(persisted?.attachments);
+    expect(
+      recorded.events.map((event) => ticketChangedEventSchema.parse(event)),
+    ).toEqual([
+      expect.objectContaining({
+        change: "session",
+        ticketNumber: ticket.number,
+        attachmentIndexChanged: true,
+      }),
+    ]);
   });
 
   it("commits safely and discards the refresh candidate when the conversation attachment is removed before the snapshot CAS", async () => {
@@ -618,6 +643,9 @@ describe("start", () => {
           throw new Error("expected refreshed conversation candidate");
         }
         candidateSnapshotKey = candidate.payload.snapshotKey;
+        if (candidateSnapshotKey === null) {
+          throw new Error("expected captured conversation snapshot");
+        }
         expect(candidateSnapshotKey).not.toBe(snapshot.snapshotKey);
         await expect(
           contentStore.read(candidateSnapshotKey),
@@ -652,6 +680,182 @@ describe("start", () => {
       {
         code: "snapshot_not_found",
       },
+    );
+  });
+
+  it("accepts a captured background winner after preparing a pending conversation snapshot", async () => {
+    const ticket = await createTicket();
+    const attachmentId = "conv-background-winner";
+    const pendingPayload = pendingConversationPayload();
+    const linkStartedSession = vi.spyOn(repo, "linkStartedSession");
+    await repo.addAttachment({
+      id: attachmentId,
+      ticketId: ticket.id,
+      description: "current investigation",
+      payload: pendingPayload,
+      createdAt: nextNow(),
+      updatedAt: nextNow(),
+    });
+    let candidateSnapshotKey: string | null = null;
+    let winnerSnapshotKey: string | null = null;
+    const { service, recorded } = makeService({
+      async materializeTicketContext(input) {
+        const prepared = input.attachments.find(
+          (attachment) => attachment.id === attachmentId,
+        );
+        if (prepared?.payload.kind !== "conversation") {
+          throw new Error("expected prepared conversation snapshot");
+        }
+        candidateSnapshotKey = prepared.payload.snapshotKey;
+        if (candidateSnapshotKey === null) {
+          throw new Error("expected captured start candidate");
+        }
+
+        const winner = await contentStore.captureText({
+          ticketId: ticket.id,
+          attachmentId,
+          fileName: "background-winner.md",
+          text: "## background compaction",
+        });
+        winnerSnapshotKey = winner.snapshotKey;
+        const winnerPayload = {
+          ...pendingPayload,
+          snapshotKey: winner.snapshotKey,
+          snapshotCapturedAt: "2026-07-10T02:00:00.000Z",
+          snapshotStatus: "captured" as const,
+        };
+        await expect(
+          repo.compareAndSwapConversationSnapshot({
+            ticketId: ticket.id,
+            attachmentId,
+            previousPayload: pendingPayload,
+            payload: winnerPayload,
+            updatedAt: nextNow(),
+          }),
+        ).resolves.toMatchObject({ status: "won" });
+        return [];
+      },
+    });
+
+    const result = await service.start({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      mode: "prepared",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(recorded.deletions).toEqual([]);
+    expect(linkStartedSession).toHaveBeenCalledTimes(2);
+    expect(
+      linkStartedSession.mock.calls[1]?.[0].conversationSnapshotUpdates,
+    ).toEqual([
+      expect.objectContaining({
+        attachmentId,
+        previousPayload: expect.objectContaining({
+          snapshotKey: winnerSnapshotKey,
+          snapshotStatus: "captured",
+        }),
+        payload: expect.objectContaining({
+          snapshotKey: winnerSnapshotKey,
+          snapshotStatus: "captured",
+        }),
+      }),
+    ]);
+    const persisted = await repo.find(PROJECT_PATH, ticket.number);
+    const persistedPayload = persisted?.attachments.find(
+      (attachment) => attachment.id === attachmentId,
+    )?.payload;
+    expect(persistedPayload).toMatchObject({
+      kind: "conversation",
+      snapshotKey: winnerSnapshotKey,
+      snapshotStatus: "captured",
+    });
+    expect(result.value.ticket.attachments).toEqual(persisted?.attachments);
+    expect(
+      recorded.events.map((event) => ticketChangedEventSchema.parse(event)),
+    ).toEqual([
+      expect.objectContaining({
+        change: "session",
+        ticketNumber: ticket.number,
+        attachmentIndexChanged: true,
+      }),
+    ]);
+    if (winnerSnapshotKey === null || candidateSnapshotKey === null) return;
+    await expect(contentStore.read(winnerSnapshotKey)).resolves.toBeTruthy();
+    await expect(contentStore.read(candidateSnapshotKey)).rejects.toMatchObject(
+      { code: "snapshot_not_found" },
+    );
+  });
+
+  it("rejects a failed background result after preparing a pending conversation snapshot", async () => {
+    const ticket = await createTicket();
+    const attachmentId = "conv-background-failure";
+    const pendingPayload = pendingConversationPayload();
+    await repo.addAttachment({
+      id: attachmentId,
+      ticketId: ticket.id,
+      description: "current investigation",
+      payload: pendingPayload,
+      createdAt: nextNow(),
+      updatedAt: nextNow(),
+    });
+    let candidateSnapshotKey: string | null = null;
+    const { service, recorded } = makeService({
+      async materializeTicketContext(input) {
+        const prepared = input.attachments.find(
+          (attachment) => attachment.id === attachmentId,
+        );
+        if (prepared?.payload.kind !== "conversation") {
+          throw new Error("expected prepared conversation snapshot");
+        }
+        candidateSnapshotKey = prepared.payload.snapshotKey;
+        await expect(
+          repo.compareAndSwapConversationSnapshot({
+            ticketId: ticket.id,
+            attachmentId,
+            previousPayload: pendingPayload,
+            payload: {
+              ...pendingPayload,
+              snapshotStatus: "failed",
+              snapshotError: "Background capture failed.",
+            },
+            updatedAt: nextNow(),
+          }),
+        ).resolves.toMatchObject({ status: "won" });
+        return [];
+      },
+    });
+
+    const result = await service.start({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      mode: "prepared",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "context_preparation_failed", phase: "preparation" },
+    });
+    expect(recorded.deletions).toHaveLength(1);
+    const persisted = await repo.find(PROJECT_PATH, ticket.number);
+    expect(persisted).toMatchObject({
+      status: "not_started",
+      sessions: [],
+      attachments: [
+        {
+          id: attachmentId,
+          payload: {
+            kind: "conversation",
+            snapshotStatus: "failed",
+            snapshotError: "Background capture failed.",
+          },
+        },
+      ],
+    });
+    if (candidateSnapshotKey === null) return;
+    await expect(contentStore.read(candidateSnapshotKey)).rejects.toMatchObject(
+      { code: "snapshot_not_found" },
     );
   });
 
@@ -755,6 +959,94 @@ describe("start", () => {
     expect(ensure).not.toHaveBeenCalled();
     const blob = await contentStore.read(snapshot.snapshotKey);
     expect(Buffer.from(blob).toString("utf8")).toBe("retained snapshot");
+  });
+
+  it.each(["pending", "failed"] as const)(
+    "captures a %s conversation snapshot before materialization",
+    async (snapshotStatus) => {
+      const ticket = await createTicket();
+      const attachment = await repo.addAttachment({
+        id: `conv-${snapshotStatus}`,
+        ticketId: ticket.id,
+        description: "current investigation",
+        payload: {
+          kind: "conversation",
+          projectPath: PROJECT_PATH,
+          sessionName: null,
+          conversationId: CONVERSATION_ID,
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus,
+          ...(snapshotStatus === "failed"
+            ? { snapshotError: "Earlier capture was interrupted." }
+            : {}),
+        },
+        createdAt: nextNow(),
+        updatedAt: nextNow(),
+      });
+      const { service, recorded } = makeService();
+
+      const result = await service.start({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        mode: "prepared",
+      });
+
+      expect(result.ok).toBe(true);
+      const materializedPayload =
+        recorded.materializations[0]?.attachments.find(
+          (candidate) => candidate.id === attachment.id,
+        )?.payload;
+      expect(materializedPayload).toMatchObject({
+        kind: "conversation",
+        snapshotStatus: "captured",
+      });
+      if (materializedPayload?.kind !== "conversation") return;
+      expect(materializedPayload.snapshotKey).not.toBeNull();
+      expect(materializedPayload.snapshotCapturedAt).not.toBeNull();
+      expect(materializedPayload).not.toHaveProperty("snapshotError");
+    },
+  );
+
+  it("fails content preparation when a pending snapshot source disappeared", async () => {
+    const ticket = await createTicket();
+    await repo.addAttachment({
+      id: "conv-pending-missing",
+      ticketId: ticket.id,
+      description: "current investigation",
+      payload: {
+        kind: "conversation",
+        projectPath: PROJECT_PATH,
+        sessionName: null,
+        conversationId: CONVERSATION_ID,
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "pending",
+      },
+      createdAt: nextNow(),
+      updatedAt: nextNow(),
+    });
+    const { service, recorded } = makeService({
+      conversationExists() {
+        return Promise.resolve(false);
+      },
+    });
+
+    const result = await service.start({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      mode: "prepared",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "context_preparation_failed",
+        phase: "content",
+        reason: "The source conversation is unavailable.",
+      },
+    });
+    expect(recorded.provisions).toEqual([]);
   });
 
   it("materializes strictly from the entry snapshot even when attachments change mid-start", async () => {

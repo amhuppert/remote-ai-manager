@@ -27,6 +27,7 @@ describe("HOTKEY_REGISTRY", () => {
       "collapseThinkingBlocks",
       "switchProject",
       "switchSession",
+      "quickTicket",
     ];
     for (const id of expectedIds) {
       expect(HOTKEY_REGISTRY[id]).toBeDefined();
@@ -100,6 +101,18 @@ describe("HOTKEY_REGISTRY", () => {
   it("clearInput has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     expect(HOTKEY_REGISTRY.clearInput.enableOnContentEditable).toBe(true);
+  });
+
+  it("quickTicket uses the vetted chord from form fields and contenteditable", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.quickTicket).toMatchObject({
+      id: "quickTicket",
+      keys: "mod+shift+k",
+      label: "Quick ticket",
+      category: "general",
+      enableOnFormTags: true,
+      enableOnContentEditable: true,
+    });
   });
 
   it("activateOpenTab binds mod+1..mod+9 in the navigation category", async () => {

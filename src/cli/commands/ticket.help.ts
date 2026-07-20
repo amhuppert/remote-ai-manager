@@ -421,11 +421,11 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["ticket", "attachment"],
-    summary: "read, edit, and remove ticket attachments",
+    summary: "read, edit, refresh, and remove ticket attachments",
     description:
       "Operate on one attachment by its id (from the index shown by 'ticket get' or 'ticket list'). Works in any ticket status, including after work has started.",
     usage: [
-      `cctl ticket attachment <get|update|remove> ${REF_PLACEHOLDER} <attachmentId>`,
+      `cctl ticket attachment <get|update|refresh|remove> ${REF_PLACEHOLDER} <attachmentId>`,
     ],
     flags: [],
     examples: [],
@@ -488,6 +488,31 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     related: [
       { command: "ticket attachment get", oneLiner: "read before editing" },
       { command: "ticket attachment remove", oneLiner: "remove it instead" },
+    ],
+  },
+  {
+    path: ["ticket", "attachment", "refresh"],
+    summary: "retry a conversation snapshot capture",
+    description:
+      "Retry snapshot capture for a pending or failed conversation attachment. The operation is compare-and-swap safe when another refresher or ticket start wins first.",
+    usage: [`cctl ticket attachment refresh ${REF_PLACEHOLDER} <attachmentId>`],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl ticket attachment refresh 12 att-3f9a",
+        explanation:
+          "captures the conversation compaction and adopts it if this retry wins",
+      },
+    ],
+    related: [
+      {
+        command: "ticket attachment get",
+        oneLiner: "check snapshot state and retrieve captured content",
+      },
+      {
+        command: "ticket attachment remove",
+        oneLiner: "remove unavailable context",
+      },
     ],
   },
   {

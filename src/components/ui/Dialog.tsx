@@ -13,6 +13,7 @@ import {
   cardBase,
   cardSize,
   cardSheet,
+  cardSheetFullHeight,
   dialogTitle,
   dialogDescription,
   dialogActions,
@@ -99,8 +100,11 @@ type DialogContentProps = Omit<
 > & {
   /** Card width: `default` (480px) or `confirm` (400px). Ignored when `unstyled`. */
   size?: DialogSize;
-  /** Dock to a full-width bottom sheet below 768px (the legacy `.modal` sheet). */
-  mobileSheet?: boolean;
+  /**
+   * Dock to a full-width bottom sheet below 768px (the legacy `.modal` sheet).
+   * Use `full-height` when the sheet must fill the mobile viewport.
+   */
+  mobileSheet?: boolean | "full-height";
   /**
    * Drop the padded card appearance recipe. The consumer owns the whole card box
    * model via `contentClassName`; Radix behaviour and the scrim stay. For a
@@ -175,6 +179,7 @@ export function DialogContent({
                   cardBase,
                   cardSize[size],
                   mobileSheet && cardSheet,
+                  mobileSheet === "full-height" && cardSheetFullHeight,
                   layoutClassName,
                 )
           }

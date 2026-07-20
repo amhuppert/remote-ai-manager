@@ -10,14 +10,25 @@ import {
   createTicketAttachmentRouteHandlers,
   type TicketAttachmentRouteHandlers,
 } from "@/lib/tickets/attachment-route-handlers";
-import { createTicketContentStore } from "@/lib/tickets/content-store";
+import {
+  createTicketContentStore,
+  type TicketContentStore,
+} from "@/lib/tickets/content-store";
+import {
+  createConversationSnapshotRefreshRouteHandlers,
+  type ConversationSnapshotRefreshRouteHandlers,
+} from "@/lib/tickets/snapshot-refresh-route-handlers";
+import { createConversationSnapshotRefreshService } from "@/lib/tickets/snapshot-refresh";
 import { createTicketService } from "@/lib/tickets/service";
 import {
   createTicketsRouteHandlers,
   type TicketsRouteHandlers,
 } from "@/lib/tickets/route-handlers";
 import { _createTestDb } from "@/lib/state-store/state-db";
-import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
+import {
+  createTicketsRepo,
+  type TicketsRepo,
+} from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { runCli } from "../core";
 import type { CliEnv, CliHost } from "../shared";
@@ -51,8 +62,11 @@ async function resolveProjectPath(name: string): Promise<string | null> {
 
 let dir: string;
 let db: Db;
+let repo: TicketsRepo;
+let contentStore: TicketContentStore;
 let handlers: TicketsRouteHandlers;
 let attachmentHandlers: TicketAttachmentRouteHandlers;
+let snapshotRefreshHandlers: ConversationSnapshotRefreshRouteHandlers;
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "cctl-ticket-"));
@@ -66,7 +80,7 @@ beforeEach(async () => {
   insertProject.run(PROJECT_PATH);
   insertProject.run(OTHER_PROJECT_PATH);
 
-  const repo = createTicketsRepo(db, createWriteQueue());
+  repo = createTicketsRepo(db, createWriteQueue());
   let idSeq = 0;
   let clock = 0;
   const now = () => {
@@ -79,6 +93,17 @@ beforeEach(async () => {
   };
   const service = createTicketService({
     repo,
+    attachmentPlanner: {
+      async plan() {
+        return {
+          attachments: [],
+          pendingConversationAttachmentIds: [],
+          warnings: [],
+          compensate: async () => {},
+          afterCommit: () => {},
+        };
+      },
+    },
     resolveProjectPath,
     resolveAvailableProjectPath: resolveProjectPath,
     deleteTicketContent: () => Promise.resolve(),
@@ -97,7 +122,7 @@ beforeEach(async () => {
     auth,
   });
 
-  const contentStore = createTicketContentStore({
+  contentStore = createTicketContentStore({
     contentRoot: path.join(dir, "ticket-content"),
     listTicketIdsForProject: () => Promise.resolve([]),
   });
@@ -134,6 +159,25 @@ beforeEach(async () => {
   attachmentHandlers = createTicketAttachmentRouteHandlers({
     getTicketService: () => service,
     getAttachmentService: () => attachmentService,
+    auth,
+  });
+  const snapshotRefreshService = createConversationSnapshotRefreshService({
+    repo,
+    contentStore,
+    resolveProjectPath,
+    runProjectTicketOperation: (_projectPath, operation) => operation(),
+    ensureConversationCompaction: () =>
+      Promise.resolve({
+        ok: true,
+        markdown: "## Refreshed compaction",
+        capturedAt: "2026-07-10T03:00:00.000Z",
+      }),
+    publish: () => ({ delivered: true }),
+    now,
+    generateId,
+  });
+  snapshotRefreshHandlers = createConversationSnapshotRefreshRouteHandlers({
+    getService: () => snapshotRefreshService,
     auth,
   });
 });
@@ -178,6 +222,9 @@ function makeHost(): CliHost & { fetchCount: () => number } {
           return init.method === "POST"
             ? attachmentHandlers.addPOST(request, context)
             : attachmentHandlers.indexGET(request, context);
+        }
+        if (segments[7] === "refresh-snapshot" && init.method === "POST") {
+          return snapshotRefreshHandlers.refreshPOST(request, context);
         }
         if (init.method === "PATCH") {
           return attachmentHandlers.editPATCH(request, context);
@@ -747,6 +794,59 @@ describe("cctl ticket against the real route handlers", () => {
         host,
       );
       expect(JSON.parse(after.stdout).attachmentIndex).toEqual([]);
+    });
+
+    it("refreshes a pending conversation snapshot through the real route and store", async () => {
+      const host = makeHost();
+      await runCli(
+        ["ticket", "create", "--title", "Host", "--type", "bug"],
+        makeEnv(),
+        host,
+      );
+      const ticket = await repo.find(PROJECT_PATH, 1);
+      expect(ticket).not.toBeNull();
+      await repo.addAttachment({
+        id: "pending-conversation",
+        ticketId: ticket!.id,
+        description: "Conversation being compacted",
+        payload: {
+          kind: "conversation",
+          projectPath: PROJECT_PATH,
+          sessionName: "investigation",
+          conversationId: "conv-1",
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus: "pending",
+        },
+        createdAt: "2026-07-10T00:10:00.000Z",
+        updatedAt: "2026-07-10T00:10:00.000Z",
+      });
+
+      const refreshed = await runCli(
+        [
+          "ticket",
+          "attachment",
+          "refresh",
+          "1",
+          "pending-conversation",
+          "--json",
+        ],
+        makeEnv(),
+        host,
+      );
+
+      expect(refreshed.exitCode).toBe(0);
+      expect(JSON.parse(refreshed.stdout).attachment.payload).toMatchObject({
+        kind: "conversation",
+        snapshotStatus: "captured",
+        snapshotCapturedAt: "2026-07-10T03:00:00.000Z",
+      });
+      const persisted = await repo.find(PROJECT_PATH, 1);
+      expect(
+        persisted?.attachments.find(
+          (attachment) => attachment.id === "pending-conversation",
+        )?.payload,
+      ).toMatchObject({ snapshotStatus: "captured" });
     });
 
     it("exits 1 with attachment_not_found for an unknown attachment id", async () => {

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { runCli } from "@/cli/core";
 import type { CliEnv, CliHost } from "@/cli/shared";
-import { conversationReadCommands } from "./attachment-commands";
+import {
+  attachmentRefreshCommand,
+  conversationReadCommands,
+} from "./attachment-commands";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -10,6 +13,16 @@ function jsonResponse(body: unknown): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+describe("ticket attachment commands", () => {
+  it("shell-quotes both coordinates in the canonical refresh command", () => {
+    expect(
+      attachmentRefreshCommand("source project#12", "attachment one"),
+    ).toBe(
+      "cctl ticket attachment refresh 'source project#12' 'attachment one'",
+    );
+  });
+});
 
 describe("ticket attachment conversation commands", () => {
   it("shell-quotes source coordinates so generated commands stay executable", () => {

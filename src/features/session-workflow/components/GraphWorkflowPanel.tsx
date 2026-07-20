@@ -175,7 +175,10 @@ export default function GraphWorkflowPanel({
 
   return (
     <ReactFlowProvider>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        data-workflow-execution-id={execution.id}
+      >
         <ExecutionStatusBar
           execution={execution}
           onPause={onPause}

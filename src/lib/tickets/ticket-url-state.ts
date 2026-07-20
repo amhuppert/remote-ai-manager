@@ -32,7 +32,7 @@ function parseEnumParam<T>(
 }
 
 export function parseTicketsPageState(
-  params: URLSearchParams,
+  params: Pick<URLSearchParams, "get">,
 ): TicketsPageState {
   const project = params.get("project");
   return {

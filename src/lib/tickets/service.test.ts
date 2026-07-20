@@ -27,8 +27,14 @@ import {
 import {
   ticketChangedEventSchema,
   ticketStatusSchema,
+  type QuickTicketCreateWarning,
+  type TicketAttachment,
   type TicketChangedEvent,
 } from "./schemas";
+import type {
+  CreateAttachmentPlan,
+  PlanCreateAttachmentsInput,
+} from "./create-attachment-planner";
 import { createTicketService, type TicketService } from "./service";
 
 type Db = InstanceType<typeof Database>;
@@ -49,6 +55,9 @@ let projectGateDepth: number;
 let eventPublishedInsideProjectGate: boolean;
 let enterProjectGate: (projectPath: string) => void;
 let projectDeletionPrecededOperation: boolean;
+let planCreateAttachments: (
+  input: PlanCreateAttachmentsInput,
+) => Promise<CreateAttachmentPlan>;
 
 let idSeq: number;
 let clock: number;
@@ -73,6 +82,13 @@ beforeEach(() => {
   gatedProjectPaths = [];
   enterProjectGate = () => {};
   projectDeletionPrecededOperation = false;
+  planCreateAttachments = async () => ({
+    attachments: [],
+    pendingConversationAttachmentIds: [],
+    warnings: [],
+    compensate: async () => {},
+    afterCommit: () => {},
+  });
   idSeq = 0;
   clock = 0;
   repo = createTicketsRepo(db, createWriteQueue());
@@ -82,6 +98,11 @@ beforeEach(() => {
       name === PROJECT_NAME ? PROJECT_PATH : null,
     resolveAvailableProjectPath: async (name) =>
       name === PROJECT_NAME && projectAvailable ? PROJECT_PATH : null,
+    attachmentPlanner: {
+      plan(input) {
+        return planCreateAttachments(input);
+      },
+    },
     publish: (event) => publishImpl(event),
     deleteTicketContent: (ticketId) => deleteTicketContentImpl(ticketId),
     runProjectTicketOperation: async (projectPath, operation) => {
@@ -236,6 +257,108 @@ describe("create", () => {
     if (result.ok) return;
     expect(result.error.code).toBe("validation_failed");
     expect(projectAvailable).toBe(true);
+    expect(await repo.list({ sort: "updated" })).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it("persists the planner's attachments, publishes their real count, and runs post-commit work", async () => {
+    const afterCommit = vi.fn<CreateAttachmentPlan["afterCommit"]>();
+    const warning: QuickTicketCreateWarning = {
+      code: "conversation_source_unavailable",
+      message: "Conversation context was omitted.",
+    };
+    planCreateAttachments = async (input) => {
+      const attachment: TicketAttachment = {
+        id: "attachment-1",
+        ticketId: input.ticketId,
+        description: "Diagnostic report",
+        payload: { kind: "note", markdown: "# Report" },
+        createdAt: "2026-07-10T00:00:02.000Z",
+        updatedAt: "2026-07-10T00:00:02.000Z",
+      };
+      return {
+        attachments: [attachment],
+        pendingConversationAttachmentIds: [],
+        warnings: [warning],
+        compensate: async () => {},
+        afterCommit,
+      };
+    };
+
+    const result = await service.create({
+      projectName: PROJECT_NAME,
+      title: "Bug report",
+      workType: "bug",
+      diagnostics: {
+        capturedAt: "2026-07-19T12:00:00.000Z",
+        route: { url: "/projects", viewState: "list" },
+        identities: { deepLinks: [] },
+        clientErrors: [],
+        removed: [],
+      },
+      autoStartRequested: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.attachments).toHaveLength(1);
+    expect(result.warnings).toEqual([warning]);
+    expect(afterCommit).toHaveBeenCalledWith(result.value);
+    const event = ticketChanged(events.at(-1)!);
+    expect(event.listItem?.attachmentCount).toBe(1);
+    expect(event.attachmentIndexChanged).toBe(true);
+  });
+
+  it("keeps a committed create successful and runs post-commit work when event preparation fails", async () => {
+    const afterCommit = vi.fn<CreateAttachmentPlan["afterCommit"]>();
+    planCreateAttachments = async () => ({
+      attachments: [],
+      pendingConversationAttachmentIds: [],
+      warnings: [],
+      compensate: async () => {},
+      afterCommit,
+    });
+    vi.spyOn(repo, "findListItem").mockRejectedValueOnce(
+      new Error("read unavailable"),
+    );
+
+    const result = await createTicket();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(afterCommit).toHaveBeenCalledWith(result.value);
+    expect(events).toHaveLength(0);
+    const persisted = await service.get({
+      projectName: PROJECT_NAME,
+      number: result.value.number,
+    });
+    expect(persisted.ok).toBe(true);
+  });
+
+  it("compensates planned blobs when the guaranteed precommit create rejects", async () => {
+    const compensate = vi.fn<CreateAttachmentPlan["compensate"]>();
+    const afterCommit = vi.fn<CreateAttachmentPlan["afterCommit"]>();
+    planCreateAttachments = async () => ({
+      attachments: [
+        {
+          id: "attachment-1",
+          ticketId: "wrong-ticket",
+          description: "Screenshot",
+          payload: { kind: "note", markdown: "report" },
+          createdAt: "2026-07-10T00:00:02.000Z",
+          updatedAt: "2026-07-10T00:00:02.000Z",
+        },
+      ],
+      pendingConversationAttachmentIds: [],
+      warnings: [],
+      compensate,
+      afterCommit,
+    });
+
+    await expect(createTicket()).rejects.toThrow();
+
+    expect(compensate).toHaveBeenCalledTimes(1);
+    expect(afterCommit).not.toHaveBeenCalled();
     expect(await repo.list({ sort: "updated" })).toEqual([]);
     expect(events).toEqual([]);
   });
@@ -465,6 +588,11 @@ describe("delete", () => {
     const lock = createTicketOperationLock();
     service = createTicketService({
       repo: createTicketsRepo(db, createWriteQueue()),
+      attachmentPlanner: {
+        plan(input) {
+          return planCreateAttachments(input);
+        },
+      },
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       resolveAvailableProjectPath: async (name) =>

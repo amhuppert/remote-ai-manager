@@ -26,7 +26,7 @@ function formatTime(seconds: number): string {
 const btnClass = cn(
   "voice-btn relative flex h-[36px] w-[36px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-solid border-border-default bg-transparent text-[1rem] text-text-secondary transition-all duration-150 ease-[ease]",
   "data-[recording=false]:hover:border-border-strong data-[recording=false]:hover:bg-bg-hover data-[recording=false]:hover:text-text-primary",
-  "data-[recording=true]:animate-[voice-recording-pulse_1.5s_ease-in-out_infinite] data-[recording=true]:border-red data-[recording=true]:text-red",
+  "data-[recording=true]:border-red data-[recording=true]:text-red motion-safe:data-[recording=true]:animate-[voice-recording-pulse_1.5s_ease-in-out_infinite]",
   "disabled:cursor-not-allowed disabled:opacity-40",
 );
 

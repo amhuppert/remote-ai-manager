@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import Topbar from "@/components/Topbar";
@@ -17,15 +17,15 @@ import {
 import type { TicketListFilters } from "@/lib/tickets/list-filters";
 import { useTicketListQuery } from "@/lib/tickets/queries";
 import type { TicketListItem } from "@/lib/tickets/schemas";
-import CreateTicketDialog from "./components/CreateTicketDialog";
-import TicketBoard from "./components/TicketBoard";
-import TicketFilters, { ticketFiltersActive } from "./components/TicketFilters";
-import TicketList from "./components/TicketList";
 import {
   parseTicketsPageState,
   ticketsPageHref,
   type TicketsView,
-} from "./ticket-url-state";
+} from "@/lib/tickets/ticket-url-state";
+import { useQuickTicketStore } from "@/stores/quick-ticket.store";
+import TicketBoard from "./components/TicketBoard";
+import TicketFilters, { ticketFiltersActive } from "./components/TicketFilters";
+import TicketList from "./components/TicketList";
 
 export default function TicketsPage(): React.JSX.Element {
   // useSearchParams() forces a CSR bailout during prerender; Next.js requires
@@ -49,7 +49,7 @@ function TicketsPageInner(): React.JSX.Element {
   );
   const { view, filters } = state;
   const filtersAreActive = ticketFiltersActive(filters);
-  const [createOpen, setCreateOpen] = useState(false);
+  const openQuickTicket = useQuickTicketStore((store) => store.openQuickTicket);
 
   const listQuery = useTicketListQuery({
     projectName: filters.projectName ?? undefined,
@@ -99,6 +99,13 @@ function TicketsPageInner(): React.JSX.Element {
     });
   }, [handleFiltersChange, filters]);
 
+  const handleNewTicket = useCallback(() => {
+    openQuickTicket({
+      pathname: "/tickets",
+      searchParams: new URLSearchParams(searchParams.toString()),
+    });
+  }, [openQuickTicket, searchParams]);
+
   return (
     <div className="app" data-page="tickets">
       <Topbar page="tickets" breadcrumbs={[{ label: "tickets" }]} />
@@ -144,11 +151,7 @@ function TicketsPageInner(): React.JSX.Element {
             data-ticket-page-actions
             className="flex shrink-0 items-center gap-sm max-768:w-full max-768:justify-between"
           >
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setCreateOpen(true)}
-            >
+            <Button variant="primary" size="sm" onClick={handleNewTicket}>
               <PlusIcon />
               New ticket
             </Button>
@@ -233,12 +236,6 @@ function TicketsPageInner(): React.JSX.Element {
           </>
         )}
       </main>
-
-      <CreateTicketDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        initialProjectName={filters.projectName}
-      />
     </div>
   );
 }

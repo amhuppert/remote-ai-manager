@@ -28,6 +28,7 @@ import {
   useCreateTicketMutation,
   useDeleteTicketMutation,
   useEditTicketAttachmentMutation,
+  useRefreshConversationSnapshotMutation,
   useRemoveTicketAttachmentMutation,
   useStartTicketMutation,
   useUpdateTicketMutation,
@@ -746,7 +747,7 @@ describe("useCreateTicketMutation", () => {
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:00:00.000Z",
     });
-    resolveFetch(jsonResponse(created, 201));
+    resolveFetch(jsonResponse({ ticket: created, warnings: [] }, 201));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(
@@ -780,13 +781,16 @@ describe("useCreateTicketMutation", () => {
     });
     resolveFetch(
       jsonResponse(
-        detail({
-          id: "t2",
-          number: 2,
-          title: "New ticket",
-          workType: "bug",
-          updatedAt: "2026-07-02T00:00:00.000Z",
-        }),
+        {
+          ticket: detail({
+            id: "t2",
+            number: 2,
+            title: "New ticket",
+            workType: "bug",
+            updatedAt: "2026-07-02T00:00:00.000Z",
+          }),
+          warnings: [],
+        },
         201,
       ),
     );
@@ -841,7 +845,7 @@ describe("useCreateTicketMutation", () => {
         client.getQueryData<TicketListItem[]>(allKey)?.[0]?.title,
       );
     });
-    requests[0]!.resolve(jsonResponse(created, 201));
+    requests[0]!.resolve(jsonResponse({ ticket: created, warnings: [] }, 201));
 
     const updated = detail({
       ...created,
@@ -850,7 +854,7 @@ describe("useCreateTicketMutation", () => {
     });
     requests[1]!.resolve(jsonResponse(updated));
     await expect(update).resolves.toEqual(updated);
-    await expect(create).resolves.toEqual(created);
+    await expect(create).resolves.toEqual({ ticket: created, warnings: [] });
     unsubscribe();
 
     expect(observedTitles).not.toContain("Created title");
@@ -906,7 +910,7 @@ describe("useCreateTicketMutation", () => {
       }
     });
 
-    requests[0]!.resolve(jsonResponse(created, 201));
+    requests[0]!.resolve(jsonResponse({ ticket: created, warnings: [] }, 201));
 
     const deleted = {
       id: created.id,
@@ -916,7 +920,7 @@ describe("useCreateTicketMutation", () => {
     };
     requests[1]!.resolve(jsonResponse(deleted));
     await expect(remove).resolves.toEqual(deleted);
-    await expect(create).resolves.toEqual(created);
+    await expect(create).resolves.toEqual({ ticket: created, warnings: [] });
     unsubscribe();
 
     expect(wasReinserted).toBe(false);
@@ -1333,6 +1337,83 @@ describe("useEditTicketAttachmentMutation", () => {
       expect(observedDetail.refetch).toHaveBeenCalled();
     } finally {
       observedDetail.unsubscribe();
+    }
+  });
+});
+
+describe("useRefreshConversationSnapshotMutation", () => {
+  it("refetches ticket detail after a failed retry so pending snapshot state converges", async () => {
+    const client = makeClient();
+    const detailKey = ticketKeys.detail("alpha", 1);
+    const pendingAttachment = attachment({
+      id: "conversation-1",
+      payload: {
+        kind: "conversation",
+        projectPath: "/projects/alpha",
+        sessionName: "investigation",
+        conversationId: "conversation-1",
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "pending",
+      },
+    });
+    const failedAttachment = attachment({
+      ...pendingAttachment,
+      payload: {
+        kind: "conversation",
+        projectPath: "/projects/alpha",
+        sessionName: "investigation",
+        conversationId: "conversation-1",
+        snapshotKey: null,
+        snapshotCapturedAt: null,
+        snapshotStatus: "failed",
+        snapshotError: "Compaction timed out",
+      },
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    });
+    client.setQueryData(
+      detailKey,
+      detail({ id: "t1", attachments: [pendingAttachment] }),
+    );
+    const refetchDetail = vi.fn(async () =>
+      detail({ id: "t1", attachments: [failedAttachment] }),
+    );
+    const observer = new QueryObserver(client, {
+      queryKey: detailKey,
+      queryFn: refetchDetail,
+      retry: false,
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ error: "Compaction timed out" }, 500),
+    );
+
+    try {
+      const { result } = renderHook(
+        () => useRefreshConversationSnapshotMutation(),
+        { wrapper: wrapperFor(client) },
+      );
+
+      await expect(
+        result.current.mutateAsync({
+          projectName: "alpha",
+          number: 1,
+          attachmentId: pendingAttachment.id,
+        }),
+      ).rejects.toThrow("Compaction timed out");
+
+      await waitFor(() => {
+        expect(refetchDetail).toHaveBeenCalledTimes(1);
+        expect(
+          client.getQueryData<TicketDetail>(detailKey)?.attachments[0]?.payload,
+        ).toMatchObject({
+          snapshotStatus: "failed",
+          snapshotError: "Compaction timed out",
+        });
+      });
+    } finally {
+      unsubscribe();
     }
   });
 });

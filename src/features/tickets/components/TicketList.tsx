@@ -30,7 +30,7 @@ import { ticketIdentifier } from "../ticket-reference";
 import {
   TICKET_STATUS_VISUALS,
   TICKET_WORK_TYPE_LABELS,
-} from "../ticket-visuals";
+} from "@/lib/tickets/ticket-visuals";
 import { useAnimatedTicketItems } from "./use-animated-ticket-items";
 
 // Handoff row grid: rail · id · title · type · status · CTX · session ·

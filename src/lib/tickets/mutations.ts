@@ -47,6 +47,7 @@ import { ticketKeys } from "./query-keys";
 import { replayTicketChangedEvent } from "./sse-reducer";
 import {
   createTicketInputSchema,
+  createTicketResponseSchema,
   deletedTicketAttachmentSchema,
   deletedTicketSchema,
   startTicketOutputSchema,
@@ -230,21 +231,21 @@ export function useCreateTicketMutation() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
         },
-        ticketDetailSchema,
+        createTicketResponseSchema,
       ),
-    onSuccess: async (created) => {
+    onSuccess: async ({ ticket }) => {
       const releaseGate = await acquireTicketMutationGate(
         queryClient,
-        created.projectName,
-        created.number,
+        ticket.projectName,
+        ticket.number,
       );
       try {
         await cancelTicketQueries(
           queryClient,
-          created.projectName,
-          created.number,
+          ticket.projectName,
+          ticket.number,
         ).catch(() => undefined);
-        applyDetailToCaches(queryClient, created);
+        applyDetailToCaches(queryClient, ticket);
       } finally {
         releaseGate();
       }
@@ -253,7 +254,7 @@ export function useCreateTicketMutation() {
       queueTicketInvalidation(
         queryClient,
         created ? projectName : null,
-        created?.number ?? null,
+        created?.ticket.number ?? null,
         true,
       );
     },
@@ -844,6 +845,56 @@ export function useEditTicketAttachmentMutation() {
         context?.releaseGate,
         false,
       );
+    },
+  });
+}
+
+export interface RefreshConversationSnapshotVars {
+  projectName: string;
+  number: number;
+  attachmentId: string;
+}
+
+export function useRefreshConversationSnapshotMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      number,
+      attachmentId,
+    }: RefreshConversationSnapshotVars) =>
+      mutationFetch(
+        `${ticketUrl(projectName, number)}/attachments/${encodeURIComponent(attachmentId)}/refresh-snapshot`,
+        "refresh-conversation-snapshot",
+        { method: "POST" },
+        ticketAttachmentSchema,
+      ),
+    onSuccess: (updated, { projectName, number }) => {
+      patchDetailAttachments(
+        queryClient,
+        projectName,
+        number,
+        (attachments) =>
+          attachments.map((attachment) =>
+            attachment.id === updated.id ? updated : attachment,
+          ),
+        updated.updatedAt,
+      );
+    },
+    onSettled: (_data, _error, { projectName, number, attachmentId }) => {
+      void queryClient.invalidateQueries({
+        queryKey: ticketKeys.detail(projectName, number),
+        exact: true,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ticketKeys.attachmentResolve(
+          projectName,
+          number,
+          attachmentId,
+        ),
+        exact: true,
+      });
     },
   });
 }

@@ -6,12 +6,14 @@ import {
   type TicketsRepo,
 } from "@/lib/state-store/tickets-repo";
 import {
+  attachmentRefreshCommand,
   conversationReadCommands,
   ticketFollowCommand,
 } from "./attachment-commands";
 import { TicketContentError, type TicketContentStore } from "./content-store";
 import { publishTicketChange } from "./events";
 import {
+  effectiveSnapshotStatus,
   ticketAttachmentSchema,
   type ResolvedAttachment,
   type TicketAttachment,
@@ -67,6 +69,7 @@ export const addTicketAttachmentPayloadInputSchema = z.discriminatedUnion(
 export const addTicketAttachmentServiceInputSchema = z.object({
   projectName: z.string().min(1),
   number: z.number().int().positive(),
+  attachmentId: z.string().min(1).optional(),
   description: descriptionSchema,
   payload: addTicketAttachmentPayloadInputSchema,
 });
@@ -393,6 +396,7 @@ export function createTicketAttachmentService(
             conversationId: payload.conversationId,
             snapshotKey: snapshot.snapshotKey,
             snapshotCapturedAt: ensured.capturedAt,
+            snapshotStatus: "captured",
           },
         };
       }
@@ -469,6 +473,7 @@ export function createTicketAttachmentService(
 
   async function resolvePayload(
     attachment: TicketAttachment,
+    identifier: string,
   ): Promise<TicketResult<ResolvedAttachment>> {
     const payload = attachment.payload;
     switch (payload.kind) {
@@ -509,6 +514,50 @@ export function createTicketAttachmentService(
       }
 
       case "conversation": {
+        const snapshotStatus = effectiveSnapshotStatus(payload);
+        const retryCommand = attachmentRefreshCommand(
+          identifier,
+          attachment.id,
+        );
+        if (snapshotStatus === "pending") {
+          return {
+            ok: true,
+            value: {
+              kind: "conversation",
+              state: "pending",
+              attachment,
+              conversationId: payload.conversationId,
+              sessionName: payload.sessionName,
+              retryCommand,
+            },
+          };
+        }
+        if (snapshotStatus === "failed") {
+          return {
+            ok: true,
+            value: {
+              kind: "conversation",
+              state: "failed",
+              attachment,
+              conversationId: payload.conversationId,
+              sessionName: payload.sessionName,
+              error:
+                payload.snapshotError ??
+                "Conversation snapshot capture failed.",
+              retryCommand,
+            },
+          };
+        }
+        if (
+          payload.snapshotKey === null ||
+          payload.snapshotCapturedAt === null
+        ) {
+          return fail({
+            code: "content_unavailable",
+            attachmentId: attachment.id,
+            reason: "captured conversation snapshot metadata is incomplete",
+          });
+        }
         const sourceAvailable = await deps.conversationExists(
           payload.projectPath,
           payload.sessionName,
@@ -644,9 +693,32 @@ export function createTicketAttachmentService(
           issues: toTicketValidationIssues(parsed.error),
         });
       }
-      const { projectName, number, description, payload } = parsed.data;
+      const {
+        projectName,
+        number,
+        attachmentId: requestedId,
+        description,
+        payload,
+      } = parsed.data;
+      if (requestedId !== undefined && payload.kind !== "note") {
+        return validationFailed(
+          "attachmentId",
+          "explicit attachment ids are only supported for idempotent notes",
+        );
+      }
       return withTicket(projectName, number, async (ticket) => {
-        const attachmentId = deps.generateId();
+        const attachmentId = requestedId ?? deps.generateId();
+        const existing = ticket.attachments.find(
+          (attachment) => attachment.id === attachmentId,
+        );
+        if (existing !== undefined) {
+          logger.info("tickets.attachments.add_idempotent_hit", {
+            projectName,
+            number,
+            attachmentId,
+          });
+          return { ok: true, value: existing };
+        }
         const built = await buildPayload(ticket, attachmentId, payload);
         if (!built.ok) return built;
 
@@ -671,6 +743,20 @@ export function createTicketAttachmentService(
         try {
           inserted = await deps.repo.addAttachment(attachment);
         } catch (error) {
+          if (requestedId !== undefined) {
+            const current = await deps.repo.findById(ticket.id);
+            const concurrent = current?.attachments.find(
+              (candidate) => candidate.id === requestedId,
+            );
+            if (concurrent !== undefined) {
+              logger.info("tickets.attachments.add_idempotent_race", {
+                projectName,
+                number,
+                attachmentId: requestedId,
+              });
+              return { ok: true, value: concurrent };
+            }
+          }
           if (snapshotKey !== null) {
             // Compensation ignores the start lock: a start materializes from
             // its lock-entry snapshot, which cannot reference a row that never
@@ -775,7 +861,14 @@ export function createTicketAttachmentService(
           deletedResult;
 
         const payload = deleted.payload;
-        if (payload.kind === "file" || payload.kind === "conversation") {
+        if (payload.kind === "file") {
+          await reclaimRemovedBlob(ticket.id, payload.snapshotKey);
+        }
+        if (
+          payload.kind === "conversation" &&
+          effectiveSnapshotStatus(payload) === "captured" &&
+          payload.snapshotKey !== null
+        ) {
           await reclaimRemovedBlob(ticket.id, payload.snapshotKey);
         }
 
@@ -818,7 +911,10 @@ export function createTicketAttachmentService(
           });
         }
 
-        const resolved = await resolvePayload(attachment);
+        const resolved = await resolvePayload(
+          attachment,
+          formatTicketIdentifier(projectName, number),
+        );
         logger.debug("tickets.attachments.resolved", {
           projectName,
           number,

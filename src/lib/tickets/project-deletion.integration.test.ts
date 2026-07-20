@@ -70,6 +70,17 @@ describe("ticket operations racing project deletion", () => {
     });
     const ticketService = createTicketService({
       repo,
+      attachmentPlanner: {
+        async plan() {
+          return {
+            attachments: [],
+            pendingConversationAttachmentIds: [],
+            warnings: [],
+            compensate: async () => {},
+            afterCommit: () => {},
+          };
+        },
+      },
       resolveProjectPath: async () => PROJECT_PATH,
       resolveAvailableProjectPath: async () => PROJECT_PATH,
       deleteTicketContent(ticketId) {

@@ -124,6 +124,7 @@ async function captureConversationAttachment(
       conversationId: CONVERSATION_ID,
       snapshotKey: snapshot.snapshotKey,
       snapshotCapturedAt: "2026-07-09T12:00:00.000Z",
+      snapshotStatus: "captured",
     },
   );
 }
@@ -211,6 +212,39 @@ describe("createTicketMaterializer", () => {
       expect(markdown).toContain(command);
     }
   });
+
+  it.each([
+    { status: "pending" as const, error: undefined },
+    {
+      status: "failed" as const,
+      error: "Conversation snapshot capture failed.",
+    },
+  ])(
+    "rejects a $status conversation before reading snapshot content",
+    async ({ status, error }) => {
+      const attachment = baseAttachment(
+        CONVERSATION_ATTACHMENT_ID,
+        "unavailable conversation",
+        {
+          kind: "conversation",
+          projectPath: PROJECT_PATH,
+          sessionName: "older-session",
+          conversationId: CONVERSATION_ID,
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus: status,
+          ...(error === undefined ? {} : { snapshotError: error }),
+        },
+      );
+      const readSpy = vi.spyOn(store, "read");
+
+      await expect(materialize([attachment])).rejects.toThrow(
+        `conversation attachment ${CONVERSATION_ATTACHMENT_ID} snapshot is ${status}`,
+      );
+      expect(readSpy).not.toHaveBeenCalled();
+      expect(registered).toEqual([]);
+    },
+  );
 
   it("skips note, session, and related-ticket attachments without writes or registrations", async () => {
     const attachments: TicketAttachment[] = [

@@ -4,7 +4,10 @@ import type { Announcements } from "@dnd-kit/core";
 
 import type { TicketListItem, TicketStatus } from "@/lib/tickets/schemas";
 import { ticketIdentifier } from "../ticket-reference";
-import { TICKET_STATUS_ORDER, TICKET_STATUS_VISUALS } from "../ticket-visuals";
+import {
+  TICKET_STATUS_ORDER,
+  TICKET_STATUS_VISUALS,
+} from "@/lib/tickets/ticket-visuals";
 
 export function groupTicketsByStatus(
   items: readonly TicketListItem[],

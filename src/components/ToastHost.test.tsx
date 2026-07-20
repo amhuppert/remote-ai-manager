@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useNotificationStore } from "@/stores/notification.store";
 import { useToastStoreForTesting } from "@/stores/toast.store";
-import ToastHost from "./ToastHost";
+import ToastHost, { GenericToastSource } from "./ToastHost";
 
 const pushMock = vi.fn();
 
@@ -124,6 +124,52 @@ describe("ToastHost", () => {
     render(<ToastHost />);
 
     expect(screen.getByText("Archived 3 sessions")).toBeInTheDocument();
+  });
+
+  it("stacks simultaneous generic toasts while keeping their actions reachable", () => {
+    const retry = vi.fn();
+    act(() => {
+      useToastStoreForTesting.setState({
+        toasts: [
+          {
+            id: "t1",
+            message: "First notification",
+            createdAt: 0,
+            action: { label: "Retry", onClick: retry },
+          },
+          { id: "t2", message: "Second notification", createdAt: 1 },
+        ],
+      });
+    });
+
+    render(<GenericToastSource />);
+
+    const stack = screen.getByRole("region", { name: "Notifications" });
+    expect(stack).not.toHaveAttribute("aria-live");
+    expect(stack).toHaveClass(
+      "fixed",
+      "flex",
+      "flex-col",
+      "gap-sm",
+      "overflow-y-auto",
+      "pointer-events-none",
+    );
+
+    const statuses = within(stack).getAllByRole("status");
+    expect(statuses).toHaveLength(2);
+    for (const status of statuses) {
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(status).toHaveClass("pointer-events-auto");
+      expect(status).not.toHaveClass("fixed");
+      expect(status).not.toHaveClass("animate-bulk-float-in");
+      expect(status).toHaveClass("motion-safe:animate-fade-in");
+    }
+
+    fireEvent.click(within(stack).getByRole("button", { name: "Retry" }));
+
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("First notification")).not.toBeInTheDocument();
+    expect(screen.getByText("Second notification")).toBeInTheDocument();
   });
 
   it("mounts every toast source simultaneously through one host", () => {

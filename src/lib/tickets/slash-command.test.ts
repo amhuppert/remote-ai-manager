@@ -417,11 +417,15 @@ describe("createTicketCommandRunner", () => {
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
       snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+      snapshotStatus: "captured",
     });
 
     // The compaction snapshot blob exists in the content store.
     if (attachment.payload.kind !== "conversation") {
       throw new Error("expected conversation payload");
+    }
+    if (attachment.payload.snapshotKey === null) {
+      throw new Error("expected captured conversation snapshot");
     }
     const blob = await contentStore.read(attachment.payload.snapshotKey);
     expect(Buffer.from(blob).toString("utf8")).toBe(

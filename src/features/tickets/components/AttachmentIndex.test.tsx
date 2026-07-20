@@ -289,3 +289,103 @@ describe("AttachmentIndex markdown previews", () => {
     expect(within(entry).getByText(/retained compaction/)).toBeInTheDocument();
   });
 });
+
+describe("AttachmentIndex conversation snapshot states", () => {
+  const pendingAttachment: TicketAttachment = {
+    ...CONVERSATION_ATTACHMENT,
+    id: "pending-snapshot",
+    description: "Snapshot in progress",
+    payload: {
+      kind: "conversation",
+      projectPath: "/repos/command-center",
+      sessionName: "csm/design-collab",
+      conversationId: "conv-abc123",
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "pending",
+    },
+  };
+  const failedAttachment: TicketAttachment = {
+    ...CONVERSATION_ATTACHMENT,
+    id: "failed-snapshot",
+    description: "Snapshot failed",
+    payload: {
+      kind: "conversation",
+      projectPath: "/repos/command-center",
+      sessionName: "csm/design-collab",
+      conversationId: "conv-abc123",
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "failed",
+      snapshotError: "Compaction timed out",
+    },
+  };
+
+  function renderConversationSnapshot(attachment: TicketAttachment) {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Infinity },
+        mutations: { retry: false },
+      },
+    });
+    queryClient.setQueryData(ticketKeys.detail("command-center", 12), {
+      ...DETAIL,
+      attachments: [attachment],
+    });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <CacheBackedIndex />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("labels a pending snapshot without pretending it was captured", async () => {
+    renderConversationSnapshot(pendingAttachment);
+
+    const entry = await screen.findByRole("listitem", {
+      name: "Snapshot in progress",
+    });
+    expect(within(entry).getByText("snapshotting…")).toBeInTheDocument();
+    expect(within(entry).queryByText(/captured/)).not.toBeInTheDocument();
+    expect(
+      within(entry).getByRole("button", { name: "Retry snapshot" }),
+    ).toBeInTheDocument();
+  });
+
+  it("retries a failed snapshot and reconciles the captured attachment", async () => {
+    const capturedAttachment: TicketAttachment = {
+      ...failedAttachment,
+      payload: {
+        kind: "conversation",
+        projectPath: "/repos/command-center",
+        sessionName: "csm/design-collab",
+        conversationId: "conv-abc123",
+        snapshotKey: "ticket-content/ticket-12/failed-snapshot/snapshot.md",
+        snapshotCapturedAt: "2026-07-19T12:00:00.000Z",
+        snapshotStatus: "captured",
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(capturedAttachment)),
+    );
+    renderConversationSnapshot(failedAttachment);
+    const user = userEvent.setup();
+
+    const entry = await screen.findByRole("listitem", {
+      name: "Snapshot failed",
+    });
+    expect(within(entry).getByText("snapshot failed")).toBeInTheDocument();
+    await user.click(
+      within(entry).getByRole("button", { name: "Retry snapshot" }),
+    );
+
+    await waitFor(() =>
+      expect(within(entry).getByText(/captured/)).toBeInTheDocument(),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/projects/command-center/tickets/12/attachments/failed-snapshot/refresh-snapshot",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+});

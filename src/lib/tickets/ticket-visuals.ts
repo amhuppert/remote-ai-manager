@@ -1,19 +1,9 @@
-/**
- * Static visual maps for ticket status and work type per the Claude Design
- * handoff (§2 status & type visual language). Static records — mirroring
- * StatusPill's approach — keep every class literal scannable by Tailwind and
- * avoid `data-[status=…]` variants, whose underscores rewrite to spaces.
- */
-
 import type { TicketStatus, TicketWorkType } from "@/lib/tickets/schemas";
 
 export interface TicketStatusVisual {
   label: string;
-  /** Uppercase mono label colour. */
   text: string;
-  /** 6px status dot: fill + glow (+ pulse while in progress). */
   dot: string;
-  /** 3px row rail: fill + opacity (+ glow for the loud states). */
   rail: string;
 }
 

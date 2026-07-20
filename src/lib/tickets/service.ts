@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { TicketsRepo } from "@/lib/state-store/tickets-repo";
+import type { CreateAttachmentPlanner } from "./create-attachment-planner";
 import { publishTicketChange } from "./events";
 import { ticketOperationKey } from "./operation-lock";
 import type { TicketProjectOperationContext } from "./project-operation-gate";
@@ -12,6 +13,7 @@ import {
   ticketListQuerySchema,
   updateTicketFieldsSchema,
   type DeletedTicket,
+  type QuickTicketCreateWarning,
   type TicketChangedEvent,
   type TicketDetail,
   type TicketError,
@@ -27,9 +29,10 @@ const logger = createLogger("tickets.service");
 // Service boundary inputs (safeParsed; project identity by name)
 // ============================================================
 
-export const createTicketServiceInputSchema = createTicketInputSchema.extend({
-  projectName: z.string().min(1),
-});
+export const createTicketServiceInputSchema =
+  createTicketInputSchema.safeExtend({
+    projectName: z.string().min(1),
+  });
 export type CreateTicketServiceInput = z.input<
   typeof createTicketServiceInputSchema
 >;
@@ -54,15 +57,24 @@ export type ListTicketsServiceQuery = z.input<
 // ============================================================
 
 export interface TicketService {
-  create(input: CreateTicketServiceInput): Promise<TicketResult<TicketDetail>>;
+  create(input: CreateTicketServiceInput): Promise<TicketCreateResult>;
   list(query: ListTicketsServiceQuery): Promise<TicketResult<TicketListItem[]>>;
   get(identity: TicketIdentity): Promise<TicketResult<TicketDetail>>;
   update(input: UpdateTicketServiceInput): Promise<TicketResult<TicketDetail>>;
   delete(identity: TicketIdentity): Promise<TicketResult<DeletedTicket>>;
 }
 
+export type TicketCreateResult =
+  | {
+      ok: true;
+      value: TicketDetail;
+      warnings: QuickTicketCreateWarning[];
+    }
+  | { ok: false; error: TicketError };
+
 export interface TicketServiceDeps {
   repo: TicketsRepo;
+  attachmentPlanner: CreateAttachmentPlanner;
   /** Resolves retained project identity even when its checkout is missing. */
   resolveProjectPath(projectName: string): Promise<string | null>;
   /** Resolves only a currently available checkout that can own new work. */
@@ -100,6 +112,12 @@ function validationFailed<T>(issues: TicketValidationIssue[]): TicketResult<T> {
   return { ok: false, error: { code: "validation_failed", issues } };
 }
 
+function createValidationFailed(
+  issues: TicketValidationIssue[],
+): TicketCreateResult {
+  return { ok: false, error: { code: "validation_failed", issues } };
+}
+
 function ticketNotFound<T>(
   projectName: string,
   number: number,
@@ -121,6 +139,7 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
     projectName: string,
     ticketNumber: number,
     listItem: TicketListItem | null,
+    attachmentIndexChanged = false,
   ): void {
     publishTicketChange({
       publish: deps.publish,
@@ -129,7 +148,7 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
       projectName,
       ticketNumber,
       listItem,
-      attachmentIndexChanged: false,
+      attachmentIndexChanged,
     });
   }
 
@@ -158,14 +177,20 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
         logger.info("tickets.service.create.invalid_input", {
           issueCount: parsed.error.issues.length,
         });
-        return validationFailed(toTicketValidationIssues(parsed.error));
+        return createValidationFailed(toTicketValidationIssues(parsed.error));
       }
-      const { projectName, ...fields } = parsed.data;
+      const {
+        projectName,
+        conversationContext,
+        diagnostics,
+        autoStartRequested,
+        ...fields
+      } = parsed.data;
       const candidateProjectPath =
         await deps.resolveAvailableProjectPath(projectName);
       if (candidateProjectPath === null) {
         logger.info("tickets.service.create.unknown_project", { projectName });
-        return validationFailed([unknownProjectIssue(projectName)]);
+        return createValidationFailed([unknownProjectIssue(projectName)]);
       }
 
       return deps.runProjectTicketOperation(
@@ -178,7 +203,7 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
                 projectName,
               },
             );
-            return validationFailed([unknownProjectIssue(projectName)]);
+            return createValidationFailed([unknownProjectIssue(projectName)]);
           }
           const currentProjectPath =
             await deps.resolveAvailableProjectPath(projectName);
@@ -186,47 +211,77 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
             logger.info("tickets.service.create.project_unavailable", {
               projectName,
             });
-            return validationFailed([unknownProjectIssue(projectName)]);
+            return createValidationFailed([unknownProjectIssue(projectName)]);
           }
 
+          const ticketId = deps.generateId();
           const timestamp = deps.now();
-          const ticket = await deps.repo.create({
-            id: deps.generateId(),
-            projectPath: currentProjectPath,
-            title: fields.title,
-            description: fields.description,
-            workType: fields.workType,
-            status: fields.status,
-            createdAt: timestamp,
-            updatedAt: timestamp,
+          const plan = await deps.attachmentPlanner.plan({
+            ticketId,
+            ...(conversationContext !== undefined
+              ? { conversationContext }
+              : {}),
+            ...(diagnostics !== undefined ? { diagnostics } : {}),
+            ...(autoStartRequested !== undefined ? { autoStartRequested } : {}),
           });
+          let detail: TicketDetail;
+          try {
+            detail = await deps.repo.createWithAttachments(
+              {
+                id: ticketId,
+                projectPath: currentProjectPath,
+                title: fields.title,
+                description: fields.description,
+                workType: fields.workType,
+                status: fields.status,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+              },
+              plan.attachments,
+            );
+          } catch (error) {
+            await plan.compensate();
+            throw error;
+          }
 
-          const detail: TicketDetail = {
-            ...ticket,
-            projectName,
-            attachments: [],
-            sessions: [],
-          };
           logger.info("tickets.service.created", {
             projectName,
-            number: ticket.number,
-            workType: ticket.workType,
-            status: ticket.status,
+            number: detail.number,
+            workType: detail.workType,
+            status: detail.status,
+            attachmentCount: detail.attachments.length,
+            warningCount: plan.warnings.length,
           });
-          publishChange("created", projectName, ticket.number, {
-            id: ticket.id,
-            projectPath: ticket.projectPath,
-            projectName,
-            number: ticket.number,
-            title: ticket.title,
-            workType: ticket.workType,
-            status: ticket.status,
-            attachmentCount: 0,
-            activeSessionName: null,
-            createdAt: ticket.createdAt,
-            updatedAt: ticket.updatedAt,
-          });
-          return { ok: true, value: detail };
+          try {
+            const listItem = await deps.repo.findListItem(
+              currentProjectPath,
+              detail.number,
+            );
+            publishChange(
+              "created",
+              projectName,
+              detail.number,
+              listItem,
+              detail.attachments.length > 0,
+            );
+          } catch (error) {
+            logger.warn("tickets.service.change_event_preparation_failed", {
+              projectName,
+              number: detail.number,
+              operation: "create",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          try {
+            plan.afterCommit(detail);
+          } catch (error) {
+            logger.warn("tickets.service.post_create_schedule_failed", {
+              projectName,
+              number: detail.number,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          return { ok: true, value: detail, warnings: plan.warnings };
         },
       );
     },
