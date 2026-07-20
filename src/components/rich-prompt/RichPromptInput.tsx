@@ -51,6 +51,8 @@ export interface RichPromptInputProps {
   onVoiceStateChange?(busy: boolean): void;
   initialImages?: readonly ImagePayload[];
   showSubmitControl?: boolean;
+  /** Submit even when the document is empty (e.g. optional description fields). */
+  allowEmptySubmit?: boolean;
 }
 
 const actionButtonClass =
@@ -82,6 +84,7 @@ export const RichPromptInput = forwardRef<
     onVoiceStateChange,
     initialImages,
     showSubmitControl = true,
+    allowEmptySubmit = false,
   },
   ref,
 ) {
@@ -123,9 +126,15 @@ export const RichPromptInput = forwardRef<
   const submit = useCallback(() => {
     if (disabled || readOnly) return;
     const document = serialize();
-    if (!document.prompt.trim() && document.images.length === 0) return;
+    if (
+      !allowEmptySubmit &&
+      !document.prompt.trim() &&
+      document.images.length === 0
+    ) {
+      return;
+    }
     onSubmit(document);
-  }, [disabled, onSubmit, readOnly, serialize]);
+  }, [allowEmptySubmit, disabled, onSubmit, readOnly, serialize]);
   const handleValueChange = useCallback(
     (text: string) => {
       onValueChange(text);
@@ -148,7 +157,13 @@ export const RichPromptInput = forwardRef<
     focus: () => editorRef.current?.focus(),
     isFocused: focused && !disabled && !readOnly,
     onStopAndSubmit: (document) => {
-      if (!document.prompt.trim() && document.images.length === 0) return;
+      if (
+        !allowEmptySubmit &&
+        !document.prompt.trim() &&
+        document.images.length === 0
+      ) {
+        return;
+      }
       onSubmit(document);
     },
     hotkeyEnabled: !disabled && !readOnly,

@@ -153,6 +153,27 @@ describe("RichPromptInput", () => {
     });
   });
 
+  it("submits an empty document when allowEmptySubmit is set", async () => {
+    const onSubmit = vi.fn();
+    const ref = createRef<RichPromptInputHandle>();
+    render(
+      <RichPromptInput
+        ref={ref}
+        capabilityContext={{ projectName: "command-center" }}
+        value=""
+        onValueChange={() => {}}
+        onSubmit={onSubmit}
+        ariaLabel="Description"
+        submitLabel="Create ticket"
+        allowEmptySubmit
+      />,
+    );
+
+    act(() => ref.current?.primaryAction());
+
+    expect(onSubmit).toHaveBeenCalledWith({ prompt: "", images: [] });
+  });
+
   it("treats a reference-only document as submittable and reports canonical markup", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();

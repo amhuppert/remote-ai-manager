@@ -317,6 +317,7 @@ function TicketDossier({
             projectName={detail.projectName}
             number={detail.number}
             description={detail.description}
+            attachments={detail.attachments}
           />
 
           <AttachmentIndex

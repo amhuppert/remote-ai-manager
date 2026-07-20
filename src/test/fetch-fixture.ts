@@ -55,6 +55,8 @@ export interface RecordedRequest {
   searchParams: URLSearchParams;
   /** Parsed JSON request body; null when absent or not valid JSON. */
   jsonBody: unknown;
+  /** Multipart body; null when the request body is not FormData. */
+  formBody: FormData | null;
 }
 
 export interface RouteReply {
@@ -131,6 +133,7 @@ function toRecordedRequest(
     pathname: parsed.pathname,
     searchParams: parsed.searchParams,
     jsonBody,
+    formBody: init?.body instanceof FormData ? init.body : null,
   };
 }
 

@@ -16,10 +16,13 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { ChatIcon, ChevronRightIcon, CloseIcon } from "@/components/icons";
 import {
-  MultilineInput,
   MultilinePrimaryActionScope,
   useMultilinePrimaryActionRegistry,
 } from "@/components/MultilineInput";
+import {
+  RichPromptInput,
+  type RichPromptInputHandle,
+} from "@/components/rich-prompt/RichPromptInput";
 import { Button } from "@/components/ui/Button";
 import { CheckboxField } from "@/components/ui/Checkbox";
 import {
@@ -56,6 +59,12 @@ import {
 } from "@/lib/projects/queries";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import {
+  pastedImageUploadFile,
+  planDescriptionImageSync,
+  type DescriptionImageUpload,
+} from "@/lib/tickets/description-images";
+import {
+  useAddTicketAttachmentMutation,
   useCreateTicketMutation,
   useStartTicketMutation,
 } from "@/lib/tickets/mutations";
@@ -77,6 +86,9 @@ import {
   isQuickTicketDraftDirty,
   useQuickTicketStore,
 } from "@/stores/quick-ticket.store";
+import AttachmentDialog, {
+  type QueuedTicketAttachment,
+} from "@/features/tickets/components/AttachmentDialog";
 import {
   captureQuickTicketScreenshot,
   type QuickTicketScreenshot,
@@ -84,9 +96,6 @@ import {
 import { reconcileQuickTicketStart } from "./start-reconciliation";
 
 const logger = createClientLogger("quick-ticket");
-
-const FIELD_CLASS =
-  "box-border min-h-[88px] w-full resize-y rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] font-mono text-[0.82rem] text-text-primary outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)] disabled:opacity-60";
 
 const MODE_UNAVAILABLE_REASON =
   "The Command Center project isn't resolvable on this instance";
@@ -104,6 +113,14 @@ const BUNDLE_LABELS: Record<QuickTicketBundleKey, string> = {
 type ScreenshotState =
   | { status: "idle" | "capturing" | "failed" }
   | { status: "ready"; screenshot: QuickTicketScreenshot };
+
+const QUEUED_KIND_LABELS: Record<QueuedTicketAttachment["kind"], string> = {
+  file: "file",
+  conversation: "conversation",
+  session: "session",
+  related_ticket: "related ticket",
+  note: "note",
+};
 
 function currentLocation() {
   return {
@@ -218,6 +235,8 @@ export default function QuickTicketDialog({
   const commandCenterQuery = useCommandCenterProjectQuery(open);
   const createMutation = useCreateTicketMutation();
   const startMutation = useStartTicketMutation();
+  const addAttachmentMutation = useAddTicketAttachmentMutation();
+  const descriptionRef = useRef<RichPromptInputHandle | null>(null);
   const { captureOpener, restoreOpener } = useOpenerFocus();
   const primaryActions = useMultilinePrimaryActionRegistry();
   const projectId = useId();
@@ -243,6 +262,10 @@ export default function QuickTicketDialog({
   >(null);
   const [titleIssue, setTitleIssue] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [queuedAttachments, setQueuedAttachments] = useState<
+    QueuedTicketAttachment[]
+  >([]);
+  const [addContextOpen, setAddContextOpen] = useState(false);
 
   const projectOptions = useMemo(() => {
     const names = new Set(
@@ -401,7 +424,11 @@ export default function QuickTicketDialog({
     invalidateCapture();
     setScreenshot({ status: "idle" });
     const state = useQuickTicketStore.getState();
-    state.closeQuickTicket({ stashDraft: isQuickTicketDraftDirty(state) });
+    const stashDraft = isQuickTicketDraftDirty(state);
+    // Queued context (which can hold Files) lives in component state, so it
+    // survives a stash/restore cycle but resets with a discarded draft.
+    if (!stashDraft) setQueuedAttachments([]);
+    state.closeQuickTicket({ stashDraft });
   }, [invalidateCapture]);
 
   const setBugReportMode = (enabled: boolean) => {
@@ -560,7 +587,72 @@ export default function QuickTicketDialog({
     );
   };
 
-  const submit = async (descriptionOverride?: string) => {
+  const attachPastedImages = async (
+    ticket: Pick<TicketDetail, "projectName" | "number">,
+    uploads: readonly DescriptionImageUpload[],
+  ) => {
+    let failed = 0;
+    for (const upload of uploads) {
+      try {
+        await addAttachmentMutation.mutateAsync({
+          projectName: ticket.projectName,
+          number: ticket.number,
+          description: upload.description,
+          file: pastedImageUploadFile(upload),
+          fileName: upload.fileName,
+          mediaType: upload.mediaType,
+        });
+      } catch (error) {
+        failed += 1;
+        logger.warn("quick_ticket.pasted_image_attach_failed", {
+          projectName: ticket.projectName,
+          ticketNumber: ticket.number,
+          fileName: upload.fileName,
+          message: error instanceof Error ? error.message : "unknown error",
+        });
+      }
+    }
+    if (failed > 0) {
+      showTicketCreated(
+        ticket.projectName,
+        ticket.number,
+        `${failed} of ${uploads.length} pasted ${uploads.length === 1 ? "image" : "images"} couldn't be attached to ${formatTicketIdentifier(ticket.projectName, ticket.number)}`,
+      );
+    }
+  };
+
+  const attachQueuedContext = async (
+    ticket: Pick<TicketDetail, "projectName" | "number">,
+    queued: readonly QueuedTicketAttachment[],
+  ) => {
+    let failed = 0;
+    for (const attachment of queued) {
+      try {
+        await addAttachmentMutation.mutateAsync({
+          projectName: ticket.projectName,
+          number: ticket.number,
+          ...attachment.request,
+        });
+      } catch (error) {
+        failed += 1;
+        logger.warn("quick_ticket.queued_context_attach_failed", {
+          projectName: ticket.projectName,
+          ticketNumber: ticket.number,
+          kind: attachment.kind,
+          message: error instanceof Error ? error.message : "unknown error",
+        });
+      }
+    }
+    if (failed > 0) {
+      showTicketCreated(
+        ticket.projectName,
+        ticket.number,
+        `${failed} of ${queued.length} queued context ${queued.length === 1 ? "attachment" : "attachments"} couldn't be added to ${formatTicketIdentifier(ticket.projectName, ticket.number)}`,
+      );
+    }
+  };
+
+  const submit = async () => {
     if (draft === null || pending) return;
     const invalidProject = draft.projectName.length === 0;
     const invalidTitle = draft.title.trim().length === 0;
@@ -596,6 +688,21 @@ export default function QuickTicketDialog({
             title: conversation.title,
           }
         : undefined;
+    const promptDoc = descriptionRef.current?.serialize() ?? {
+      prompt: draft.description,
+      images: [],
+    };
+    const imagePlan = planDescriptionImageSync({
+      editorImages: promptDoc.images.map((image) => ({
+        id: image.attachmentId,
+        mediaType: image.mediaType,
+        base64Data: image.base64Data,
+        ...(image.inlineMarkerIndex !== undefined
+          ? { inlineMarkerIndex: image.inlineMarkerIndex }
+          : {}),
+      })),
+      existing: [],
+    });
     try {
       logger.info("quick_ticket.create_started", {
         projectName: draft.projectName,
@@ -606,7 +713,7 @@ export default function QuickTicketDialog({
         projectName: draft.projectName,
         input: {
           title: draft.title.trim(),
-          description: descriptionOverride ?? draft.description,
+          description: promptDoc.prompt,
           workType: draft.workType,
           ...(conversationContext === undefined ? {} : { conversationContext }),
           ...(bugMode ? { diagnostics: diagnostics() } : {}),
@@ -637,6 +744,14 @@ export default function QuickTicketDialog({
           warning.message,
         );
       }
+      if (imagePlan.uploads.length > 0) {
+        void attachPastedImages(result.ticket, imagePlan.uploads);
+      }
+      if (queuedAttachments.length > 0) {
+        const queued = queuedAttachments;
+        setQueuedAttachments([]);
+        void attachQueuedContext(result.ticket, queued);
+      }
       if (draft.autoStart) {
         void startCreatedTicket(result.ticket, createdToastId);
       }
@@ -651,7 +766,16 @@ export default function QuickTicketDialog({
     }
   };
 
-  const requestSubmit = () => primaryActions.primaryAction(() => void submit());
+  const requestSubmit = () => {
+    const description = descriptionRef.current;
+    if (description?.isVoiceBusy() === true) {
+      // Finalizing dictation routes back through onSubmit once the
+      // transcription lands, so the dictated text is part of the ticket.
+      description.primaryAction();
+      return;
+    }
+    primaryActions.primaryAction(() => void submit());
+  };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -666,6 +790,10 @@ export default function QuickTicketDialog({
 
   const discardRestoredDraft = () => {
     invalidateCapture();
+    // The rich editor seeds from the draft only at mount, so clear it
+    // explicitly alongside the store reset.
+    descriptionRef.current?.clear();
+    setQueuedAttachments([]);
     useQuickTicketStore.getState().discardQuickTicketDraft(currentLocation());
     setScreenshot({ status: "idle" });
     setDiagnosticFacts(null);
@@ -996,19 +1124,24 @@ export default function QuickTicketDialog({
                 <FormLabel htmlFor="quick-ticket-description">
                   Description
                 </FormLabel>
-                <MultilineInput
+                <RichPromptInput
                   id="quick-ticket-description"
-                  className={FIELD_CLASS}
+                  ref={descriptionRef}
+                  capabilityContext={{ projectName: draft.projectName }}
                   value={draft.description}
-                  disabled={pending}
-                  voiceProjectName={draft.projectName || null}
-                  placeholder="Add useful context (optional)"
                   onValueChange={(description) =>
                     useQuickTicketStore.getState().updateQuickTicketDraft({
                       description,
                     })
                   }
-                  onPrimaryAction={(description) => void submit(description)}
+                  onSubmit={() => void submit()}
+                  ariaLabel="Description"
+                  placeholder="Add useful context (optional) — paste images to attach them"
+                  submitLabel="Create ticket"
+                  showSubmitControl={false}
+                  disabled={pending}
+                  allowEmptySubmit
+                  onError={pushToast}
                 />
               </FormGroup>
 
@@ -1057,6 +1190,72 @@ export default function QuickTicketDialog({
                   </div>
                 </section>
               ) : null}
+
+              <section
+                className="mb-lg"
+                aria-labelledby="quick-ticket-extra-context"
+              >
+                <div className="mb-sm flex items-center justify-between gap-md">
+                  <h3
+                    id="quick-ticket-extra-context"
+                    className="font-mono text-[0.68rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
+                  >
+                    Additional context
+                  </h3>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() => setAddContextOpen(true)}
+                  >
+                    Add context
+                  </Button>
+                </div>
+                {queuedAttachments.length === 0 ? (
+                  <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
+                    Files, conversations, sessions, related tickets, or notes —
+                    attached right after the ticket is created.
+                  </p>
+                ) : (
+                  <ul className="m-0 flex list-none flex-col gap-xs p-0">
+                    {queuedAttachments.map((attachment) => (
+                      <li
+                        key={attachment.localId}
+                        className="flex items-center gap-sm rounded-md border border-solid border-border-subtle bg-bg-base p-sm"
+                      >
+                        <StatusChip tone="cyan">
+                          {QUEUED_KIND_LABELS[attachment.kind]}
+                        </StatusChip>
+                        <div className="min-w-0 flex-1">
+                          <p className="m-0 truncate font-mono text-[0.76rem] text-text-primary">
+                            {attachment.request.description}
+                          </p>
+                          <p className="m-0 truncate font-mono text-[0.68rem] text-text-tertiary">
+                            {attachment.summary}
+                          </p>
+                        </div>
+                        <IconButton
+                          type="button"
+                          variant="ghost"
+                          aria-label="Remove queued context"
+                          disabled={pending}
+                          onClick={() =>
+                            setQueuedAttachments((current) =>
+                              current.filter(
+                                (candidate) =>
+                                  candidate.localId !== attachment.localId,
+                              ),
+                            )
+                          }
+                        >
+                          <CloseIcon size={14} />
+                        </IconButton>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
 
               {bugMode ? (
                 <section
@@ -1320,6 +1519,16 @@ export default function QuickTicketDialog({
           </form>
         </MultilinePrimaryActionScope>
       </DialogContent>
+      {/* Outside the primary-action scope so its inputs never route the
+          outer form's Cmd+Enter; queued items attach after create. */}
+      <AttachmentDialog
+        projectName={draft.projectName}
+        open={addContextOpen}
+        onOpenChange={setAddContextOpen}
+        onQueue={(attachment) =>
+          setQueuedAttachments((current) => [...current, attachment])
+        }
+      />
     </Dialog>
   );
 }

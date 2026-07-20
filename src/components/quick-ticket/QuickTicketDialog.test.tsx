@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import { pastedImageDescription } from "@/lib/tickets/description-images";
 import type { TicketDetail } from "@/lib/tickets/schemas";
 import {
   useQuickTicketStore,
@@ -101,6 +102,30 @@ beforeEach(() => {
   useQuickTicketStore.setState(RESET_STATE);
   useToastStoreForTesting.setState({ toasts: [] });
   document.body.replaceChildren();
+  // Tiptap (the rich description editor) needs DOM measurement APIs jsdom
+  // does not implement.
+  document.elementFromPoint = () => document.body;
+  Range.prototype.getClientRects = () =>
+    ({
+      length: 0,
+      item: () => null,
+      [Symbol.iterator]: function* () {},
+    }) as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  URL.createObjectURL = () => "blob:quick-ticket-test";
+  URL.revokeObjectURL = () => {};
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -569,10 +594,15 @@ describe("QuickTicketDialog", () => {
       }
     }
     vi.stubGlobal("MediaRecorder", Recorder);
-    vi.stubGlobal("navigator", {
-      ...navigator,
-      platform: "Linux",
-      mediaDevices: {
+    // Override targeted navigator properties rather than replacing the global
+    // — Tiptap reads prototype-hosted fields (userAgent) a spread would drop.
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux",
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
         getUserMedia: async () => ({
           getTracks: () => [{ stop: vi.fn() }],
         }),
@@ -1159,5 +1189,217 @@ describe("QuickTicketDialog", () => {
     expect(
       screen.queryByText("Choose an owning project."),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("QuickTicketDialog pasted description images", () => {
+  function buildClipboard(files: File[]): {
+    items: DataTransferItem[];
+    files: File[];
+    getData: () => string;
+    types: string[];
+  } {
+    const items = files.map(
+      (f) =>
+        ({
+          kind: "file",
+          type: f.type,
+          getAsFile: () => f,
+        }) as unknown as DataTransferItem,
+    );
+    return { items, files, getData: () => "", types: [] };
+  }
+
+  it("references the pasted image in the description and attaches it after create", async () => {
+    api.reply("POST", "/api/projects/other-project/tickets", (request) => ({
+      status: 201,
+      json: {
+        ticket: {
+          ...CREATED_TICKET,
+          projectName: "other-project",
+          description: (request.jsonBody as { description: string })
+            .description,
+        },
+        warnings: [],
+      },
+    }));
+    api.json("POST", "/api/projects/other-project/tickets/14/attachments", {
+      id: "att-img",
+      ticketId: CREATED_TICKET.id,
+      description: pastedImageDescription(1),
+      payload: {
+        kind: "file",
+        fileName: "pasted-image-1.png",
+        snapshotKey: "snap-att-img",
+        mediaType: "image/png",
+        sizeBytes: 7,
+        sha256: "sha",
+      },
+      createdAt: "2026-07-19T12:00:01.000Z",
+      updatedAt: "2026-07-19T12:00:01.000Z",
+    });
+    open("/projects/other-project");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    await user.type(await screen.findByLabelText("Title"), "Show the glitch");
+    const editor = screen.getByLabelText("Description");
+    await user.click(editor);
+    await user.type(editor, "See ");
+    fireEvent.paste(editor, {
+      clipboardData: buildClipboard([
+        new File(["payload"], "glitch.png", { type: "image/png" }),
+      ]),
+    });
+    await screen.findByText("#1");
+
+    await user.click(screen.getByRole("button", { name: "Create ticket" }));
+
+    await waitFor(() =>
+      expect(
+        api.requestsTo("POST", "/api/projects/other-project/tickets"),
+      ).toHaveLength(1),
+    );
+    const createBody = api.requestsTo(
+      "POST",
+      "/api/projects/other-project/tickets",
+    )[0]?.jsonBody as { description: string };
+    expect(createBody.description).toContain("See ");
+    expect(createBody.description).toContain("[Image #1]");
+
+    await waitFor(() =>
+      expect(
+        api.requestsTo(
+          "POST",
+          "/api/projects/other-project/tickets/14/attachments",
+        ),
+      ).toHaveLength(1),
+    );
+    const upload = api.requestsTo(
+      "POST",
+      "/api/projects/other-project/tickets/14/attachments",
+    )[0]!;
+    expect(upload.formBody).not.toBeNull();
+    const metadata = JSON.parse(String(upload.formBody?.get("metadata"))) as {
+      description: string;
+      fileName: string;
+      mediaType: string;
+    };
+    expect(metadata.description).toBe(pastedImageDescription(1));
+    expect(metadata.fileName).toBe("pasted-image-1.png");
+    expect(metadata.mediaType).toBe("image/png");
+    expect(upload.formBody?.get("file")).toBeInstanceOf(File);
+  });
+});
+
+describe("QuickTicketDialog queued context", () => {
+  it("queues a note in the add-context dialog and attaches it after create", async () => {
+    api.reply("POST", "/api/projects/other-project/tickets", {
+      status: 201,
+      json: {
+        ticket: { ...CREATED_TICKET, projectName: "other-project" },
+        warnings: [],
+      },
+    });
+    api.json("POST", "/api/projects/other-project/tickets/14/attachments", {
+      id: "att-note",
+      ticketId: CREATED_TICKET.id,
+      description: "Steps to reproduce",
+      payload: { kind: "note", markdown: "## Repro\n1. open the page" },
+      createdAt: "2026-07-19T12:00:01.000Z",
+      updatedAt: "2026-07-19T12:00:01.000Z",
+    });
+    open("/projects/other-project");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    await user.type(await screen.findByLabelText("Title"), "Repro attached");
+    await user.click(screen.getByRole("button", { name: "Add context" }));
+    await user.click(await screen.findByRole("radio", { name: "Note" }));
+    await user.type(screen.getByLabelText("Markdown"), "repro steps");
+    await user.type(
+      screen.getByLabelText("Description", {
+        selector: "textarea",
+      }),
+      "Steps to reproduce",
+    );
+    await user.click(screen.getByRole("button", { name: "Attach" }));
+
+    // The queued entry renders in the dialog before the ticket exists.
+    expect(await screen.findByText("Steps to reproduce")).toBeInTheDocument();
+    expect(
+      api.requestsTo(
+        "POST",
+        "/api/projects/other-project/tickets/14/attachments",
+      ),
+    ).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Create ticket" }));
+
+    await waitFor(() =>
+      expect(
+        api.requestsTo(
+          "POST",
+          "/api/projects/other-project/tickets/14/attachments",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(
+      api.requestsTo(
+        "POST",
+        "/api/projects/other-project/tickets/14/attachments",
+      )[0]?.jsonBody,
+    ).toEqual({
+      description: "Steps to reproduce",
+      payload: { kind: "note", markdown: "repro steps" },
+    });
+  });
+
+  it("removes a queued attachment before create", async () => {
+    api.reply("POST", "/api/projects/other-project/tickets", {
+      status: 201,
+      json: {
+        ticket: { ...CREATED_TICKET, projectName: "other-project" },
+        warnings: [],
+      },
+    });
+    open("/projects/other-project");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    await user.type(await screen.findByLabelText("Title"), "No context");
+    await user.click(screen.getByRole("button", { name: "Add context" }));
+    await user.click(await screen.findByRole("radio", { name: "Note" }));
+    await user.type(screen.getByLabelText("Markdown"), "obsolete");
+    await user.type(
+      screen.getByLabelText("Description", { selector: "textarea" }),
+      "Will be removed",
+    );
+    await user.click(screen.getByRole("button", { name: "Attach" }));
+    await screen.findByText("Will be removed");
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove queued context" }),
+    );
+    expect(screen.queryByText("Will be removed")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create ticket" }));
+    await waitFor(() =>
+      expect(
+        api.requestsTo("POST", "/api/projects/other-project/tickets"),
+      ).toHaveLength(1),
+    );
+    expect(
+      api.requestsTo(
+        "POST",
+        "/api/projects/other-project/tickets/14/attachments",
+      ),
+    ).toHaveLength(0);
   });
 });

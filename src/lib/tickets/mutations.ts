@@ -60,7 +60,7 @@ import {
 } from "./schemas";
 
 type AttachmentPayloadInput = AddTicketAttachmentServiceInput["payload"];
-type JsonAttachmentPayloadInput = Exclude<
+export type JsonAttachmentPayloadInput = Exclude<
   AttachmentPayloadInput,
   { kind: "file" }
 >;

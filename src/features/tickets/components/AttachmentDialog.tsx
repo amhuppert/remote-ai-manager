@@ -38,23 +38,48 @@ import { useAllConversationsQuery } from "@/lib/conversations/queries";
 import { useProjectsQuery } from "@/lib/projects/queries";
 import { useProjectConversationsQuery } from "@/lib/project-conversations-client/queries";
 import { useSessionsQuery } from "@/lib/sessions/queries";
-import { useAddTicketAttachmentMutation } from "@/lib/tickets/mutations";
+import {
+  useAddTicketAttachmentMutation,
+  type JsonAttachmentPayloadInput,
+} from "@/lib/tickets/mutations";
 import { useTicketListQuery } from "@/lib/tickets/queries";
 import type { TicketAttachmentKind } from "@/lib/tickets/schemas";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 
 import FieldGroupLabel from "./FieldGroupLabel";
 
+/** The attachment request minus its target — the ticket may not exist yet. */
+export type QueuedTicketAttachmentRequest = { description: string } & (
+  | { payload: JsonAttachmentPayloadInput; file?: never }
+  | { file: File; fileName?: string; mediaType?: string; payload?: never }
+);
+
+export interface QueuedTicketAttachment {
+  /** Stable client key for list rendering and removal. */
+  localId: string;
+  kind: TicketAttachmentKind;
+  /** Human summary of the target (file name, session, ticket reference…). */
+  summary: string;
+  request: QueuedTicketAttachmentRequest;
+}
+
 export interface AttachmentDialogProps {
   projectName: string;
-  number: number;
+  /** Owning ticket; absent in queue mode where the ticket does not exist yet. */
+  number?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /**
    * File uploads are owned by the index (in-entry progress + failure panel
    * with Retry/Discard), so submitting a file hands off and closes.
+   * Required unless `onQueue` is set.
    */
-  onFileSubmit: (input: { file: File; description: string }) => void;
+  onFileSubmit?: (input: { file: File; description: string }) => void;
+  /**
+   * Queue mode: hand the composed attachment back instead of POSTing it —
+   * used by surfaces that create the ticket later (quick ticket creation).
+   */
+  onQueue?: (attachment: QueuedTicketAttachment) => void;
 }
 
 const KIND_OPTIONS: ReadonlyArray<{
@@ -79,11 +104,13 @@ export default function AttachmentDialog({
   open,
   onOpenChange,
   onFileSubmit,
+  onQueue,
 }: AttachmentDialogProps): React.JSX.Element {
   const [kind, setKind] = useState<TicketAttachmentKind>("file");
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [conversationId, setConversationId] = useState("");
+  const [conversationLabel, setConversationLabel] = useState("");
   const [sessionName, setSessionName] = useState("");
   const [targetProject, setTargetProject] = useState(projectName);
   const [ticketNumber, setTicketNumber] = useState("");
@@ -105,6 +132,7 @@ export default function AttachmentDialog({
     setDescription("");
     setFile(null);
     setConversationId("");
+    setConversationLabel("");
     setSessionName("");
     setTargetProject(projectName);
     setTicketNumber("");
@@ -163,7 +191,17 @@ export default function AttachmentDialog({
     }
     if (kind === "file") {
       if (file === null) return;
-      onFileSubmit({ file, description: nextDescription });
+      if (onQueue !== undefined) {
+        onQueue({
+          localId: crypto.randomUUID(),
+          kind,
+          summary: file.name,
+          request: { description: nextDescription, file },
+        });
+        close(false);
+        return;
+      }
+      onFileSubmit?.({ file, description: nextDescription });
       close(false);
       return;
     }
@@ -194,6 +232,34 @@ export default function AttachmentDialog({
       }
     })();
 
+    if (onQueue !== undefined) {
+      const summary = (() => {
+        switch (payload.kind) {
+          case "conversation":
+            return conversationLabel.length > 0
+              ? conversationLabel
+              : conversationId;
+          case "session":
+            return `${targetProject} / ${sessionName}`;
+          case "related_ticket":
+            return `${targetProject}#${parsedNumber}`;
+          case "note":
+            return nextMarkdown.length > 60
+              ? `${nextMarkdown.slice(0, 60)}…`
+              : nextMarkdown;
+        }
+      })();
+      onQueue({
+        localId: crypto.randomUUID(),
+        kind: payload.kind,
+        summary,
+        request: { description: nextDescription, payload },
+      });
+      close(false);
+      return;
+    }
+
+    if (number === undefined) return;
     const generation = requestGeneration.capture();
     addMutation.mutate(
       { projectName, number, description: nextDescription, payload },
@@ -281,6 +347,7 @@ export default function AttachmentDialog({
             }}
             onSelect={(selection) => {
               setConversationId(selection.conversationId);
+              setConversationLabel(selection.label);
               setSessionName(selection.sessionName);
               setTargetProject(selection.projectName);
             }}
@@ -457,6 +524,7 @@ interface ConversationTargetSelectProps {
     projectName: string;
     sessionName: string;
     conversationId: string;
+    label: string;
   }) => void;
 }
 
@@ -520,6 +588,7 @@ function ConversationTargetSelect({
               projectName,
               sessionName: selected.sessionName,
               conversationId: selected.id,
+              label: selected.label,
             });
           }}
           disabled={
@@ -679,7 +748,7 @@ function SessionTargetSelect({
 
 interface RelatedTicketTargetSelectProps {
   owningProjectName: string;
-  owningTicketNumber: number;
+  owningTicketNumber: number | undefined;
   projectName: string;
   ticketNumber: string;
   disabled: boolean;
@@ -700,6 +769,7 @@ function RelatedTicketTargetSelect({
   const ticketsQuery = useTicketListQuery({ projectName });
   const tickets = (ticketsQuery.data ?? []).filter(
     (ticket) =>
+      owningTicketNumber === undefined ||
       ticket.projectName !== owningProjectName ||
       ticket.number !== owningTicketNumber,
   );

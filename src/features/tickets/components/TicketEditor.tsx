@@ -1,16 +1,30 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 
-import {
-  MultilineInput,
-  runMultilinePrimaryAction,
-  type MultilineInputActionHandle,
-} from "@/components/MultilineInput";
 import { DocumentMarkdown } from "@/components/markdown/Markdown";
+import {
+  RichPromptInput,
+  type RichPromptInputHandle,
+} from "@/components/rich-prompt/RichPromptInput";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
-import { useUpdateTicketMutation } from "@/lib/tickets/mutations";
+import { imageMediaTypeSchema, type ImagePayload } from "@/lib/images/schemas";
+import {
+  collectDescriptionImageRefs,
+  pastedImageUploadFile,
+  planDescriptionImageSync,
+  type DescriptionImageRef,
+} from "@/lib/tickets/description-images";
+import {
+  useAddTicketAttachmentMutation,
+  useEditTicketAttachmentMutation,
+  useRemoveTicketAttachmentMutation,
+  useUpdateTicketMutation,
+} from "@/lib/tickets/mutations";
+import { ticketQueries } from "@/lib/tickets/queries";
+import type { TicketAttachment } from "@/lib/tickets/schemas";
 import { pushToast } from "@/stores/toast.store";
 import { ticketIdentifier } from "../ticket-reference";
 
@@ -152,46 +166,166 @@ export function TicketTitleEditor({
 }
 
 // ---------------------------------------------------------------------------
-// Description — Edit swaps the rendered markdown for a textarea + Save/Cancel.
+// Description — Edit swaps the rendered markdown for the rich prompt editor
+// (image paste/chips + voice) + Save/Cancel. Pasted images persist as file
+// attachments linked through their deterministic description
+// (`pastedImageDescription`), so saving executes a sync plan: upload new
+// images first (references need backing), then the description text, then
+// renumber/demotion syncs, then deletions of de-referenced images.
 // ---------------------------------------------------------------------------
 
 export interface TicketDescriptionEditorProps extends TicketEditorTarget {
   description: string;
+  attachments: readonly TicketAttachment[];
+}
+
+interface DescriptionEditSession {
+  initialImages: ImagePayload[];
+  refs: DescriptionImageRef[];
 }
 
 export function TicketDescriptionEditor({
   projectName,
   number,
   description,
+  attachments,
 }: TicketDescriptionEditorProps): React.JSX.Element {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const mutation = useUpdateTicketMutation();
+  const [preparing, setPreparing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [session, setSession] = useState<DescriptionEditSession | null>(null);
+  const richRef = useRef<RichPromptInputHandle | null>(null);
+  const queryClient = useQueryClient();
+  const updateMutation = useUpdateTicketMutation();
+  const addAttachmentMutation = useAddTicketAttachmentMutation();
+  const editAttachmentMutation = useEditTicketAttachmentMutation();
+  const removeAttachmentMutation = useRemoveTicketAttachmentMutation();
   const editButtonId = useId();
-  const descriptionActionRef = useRef<MultilineInputActionHandle | null>(null);
   const requestFocusRestore = useFocusReturn(editing, editButtonId);
 
   const cancel = () => {
     requestFocusRestore();
     setEditing(false);
+    setSession(null);
   };
 
-  const submit = (completedDraft?: string) => {
-    const nextDraft = completedDraft ?? draft;
-    requestFocusRestore();
-    setEditing(false);
-    if (nextDraft === description) return;
-    void mutation
-      .mutateAsync({
-        projectName,
-        number,
-        fields: { description: nextDraft },
-      })
-      .catch(() => {
-        pushToast(
-          `Couldn't save the description for ${ticketIdentifier({ projectName, number })} — rolled back`,
-        );
-      });
+  const startEdit = async () => {
+    if (preparing) return;
+    setPreparing(true);
+    try {
+      const refs = collectDescriptionImageRefs(attachments);
+      const initialImages = await Promise.all(
+        refs.map(async (ref): Promise<ImagePayload> => {
+          const resolved = await queryClient.fetchQuery(
+            ticketQueries.attachmentResolve(
+              projectName,
+              number,
+              ref.attachmentId,
+            ),
+          );
+          if (resolved.kind !== "file" || resolved.encoding !== "base64") {
+            throw new Error("pasted image bytes are unavailable");
+          }
+          return {
+            attachmentId: ref.attachmentId,
+            mediaType: imageMediaTypeSchema.parse(resolved.mediaType),
+            base64Data: resolved.content,
+            inlineMarkerIndex: ref.index,
+          };
+        }),
+      );
+      setSession({ initialImages, refs });
+      setDraft(description);
+      setEditing(true);
+    } catch {
+      pushToast(
+        `Couldn't load the pasted images for ${ticketIdentifier({ projectName, number })} — try again`,
+      );
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const save = async () => {
+    const handle = richRef.current;
+    if (handle === null || session === null || saving) return;
+    const serialized = handle.serialize();
+    const plan = planDescriptionImageSync({
+      editorImages: serialized.images.map((image) => ({
+        id: image.attachmentId,
+        mediaType: image.mediaType,
+        base64Data: image.base64Data,
+        ...(image.inlineMarkerIndex !== undefined
+          ? { inlineMarkerIndex: image.inlineMarkerIndex }
+          : {}),
+      })),
+      existing: session.refs,
+    });
+    const descriptionChanged = serialized.prompt !== description;
+    const planEmpty =
+      plan.uploads.length === 0 &&
+      plan.descriptionSyncs.length === 0 &&
+      plan.deletions.length === 0;
+    if (!descriptionChanged && planEmpty) {
+      cancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      for (const upload of plan.uploads) {
+        await addAttachmentMutation.mutateAsync({
+          projectName,
+          number,
+          description: upload.description,
+          file: pastedImageUploadFile(upload),
+          fileName: upload.fileName,
+          mediaType: upload.mediaType,
+        });
+      }
+      if (descriptionChanged) {
+        await updateMutation.mutateAsync({
+          projectName,
+          number,
+          fields: { description: serialized.prompt },
+        });
+      }
+      for (const sync of plan.descriptionSyncs) {
+        await editAttachmentMutation.mutateAsync({
+          projectName,
+          number,
+          attachmentId: sync.attachmentId,
+          description: sync.description,
+        });
+      }
+      for (const attachmentId of plan.deletions) {
+        await removeAttachmentMutation.mutateAsync({
+          projectName,
+          number,
+          attachmentId,
+        });
+      }
+      requestFocusRestore();
+      setEditing(false);
+      setSession(null);
+    } catch {
+      pushToast(
+        `Couldn't save the description for ${ticketIdentifier({ projectName, number })} — some changes may not have applied`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveAction = () => {
+    const handle = richRef.current;
+    if (handle?.isVoiceBusy() === true) {
+      // Finalizing dictation routes back through onSubmit once transcription
+      // lands, so the dictated text is part of the saved document.
+      handle.primaryAction();
+      return;
+    }
+    void save();
   };
 
   return (
@@ -206,51 +340,57 @@ export function TicketDescriptionEditor({
             variant="ghost"
             size="sm"
             layoutClassName="ml-auto"
-            onClick={() => {
-              setDraft(description);
-              setEditing(true);
-            }}
+            disabled={preparing}
+            onClick={() => void startEdit()}
           >
+            {preparing && <Spinner size="sm" tone="inherit" />}
             Edit
           </Button>
         )}
       </div>
-      {editing ? (
-        <div className="flex flex-col gap-sm">
-          <MultilineInput
-            rows={6}
+      {editing && session !== null ? (
+        <div
+          className="flex flex-col gap-sm"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            event.preventDefault();
+            cancel();
+          }}
+        >
+          <RichPromptInput
+            ref={richRef}
+            capabilityContext={{ projectName }}
             value={draft}
             onValueChange={setDraft}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault();
-              cancel();
-            }}
-            onPrimaryAction={submit}
-            actionRef={descriptionActionRef}
-            voiceProjectName={projectName}
-            autoFocus
-            aria-label="Ticket description"
-            className="box-border w-full resize-y rounded-md border border-solid border-cyan-dim bg-bg-base px-[12px] py-[10px] font-mono text-[0.8rem] leading-[1.6] text-text-primary shadow-[0_0_0_2px_var(--color-cyan-glow)] outline-none"
+            onSubmit={() => void save()}
+            initialImages={session.initialImages}
+            ariaLabel="Ticket description"
+            placeholder="Describe the work — paste images to attach them inline"
+            submitLabel="Save"
+            showSubmitControl={false}
+            disabled={saving}
+            onError={pushToast}
           />
           <div className="flex items-center gap-sm">
             <Button
               variant="primary"
               size="sm"
-              onClick={() =>
-                runMultilinePrimaryAction(
-                  [descriptionActionRef.current],
-                  submit,
-                )
-              }
+              disabled={saving}
+              onClick={saveAction}
             >
+              {saving && <Spinner size="sm" tone="inherit" />}
               Save
             </Button>
-            <Button variant="ghost" size="sm" onClick={cancel}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={saving}
+              onClick={cancel}
+            >
               Cancel
             </Button>
             <span className="font-mono text-[0.68rem] text-text-tertiary">
-              Markdown supported
+              Markdown supported · pasted images attach to the ticket
             </span>
           </div>
         </div>
