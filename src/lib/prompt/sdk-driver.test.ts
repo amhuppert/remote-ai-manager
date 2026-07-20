@@ -1853,7 +1853,7 @@ describe("conversation command interception", () => {
     });
   });
 
-  it("passes the full RunCommandInput (with rawText) to the dispatcher", async () => {
+  it("passes the submitted model and effort with the command to the dispatcher", async () => {
     const dispatchConversationCommand = vi.fn(async () => ({
       status: "dispatched" as const,
       jobId: "job-1",
@@ -1868,6 +1868,9 @@ describe("conversation command interception", () => {
       "/merge keep it short",
       vi.fn(),
       "conv-123",
+      "gpt-5.6-sol",
+      undefined,
+      { effort: "ultra", backend: "codex" },
     );
 
     expect(dispatchConversationCommand).toHaveBeenCalledWith({
@@ -1877,6 +1880,8 @@ describe("conversation command interception", () => {
       conversationId: "conv-123",
       parsed: { command: "merge", hint: "keep it short" },
       rawText: "/merge keep it short",
+      modelId: "gpt-5.6-sol",
+      effort: "ultra",
     });
   });
 

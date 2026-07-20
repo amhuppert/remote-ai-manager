@@ -223,6 +223,23 @@ describe("resolveTurnModelEffort", () => {
     ).toEqual({ effectiveModel: "gpt-5-codex-mini", effectiveEffort: "low" });
   });
 
+  it("continues on the last selected model when an intervening command has no selection metadata", () => {
+    const config = {
+      ...baseConfig,
+      codex: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+    };
+
+    expect(
+      resolveTurnModelEffort({
+        backend: "codex",
+        config,
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [userTurn("gpt-5.6-sol", "ultra"), userTurn()],
+      }),
+    ).toEqual({ effectiveModel: "gpt-5.6-sol", effectiveEffort: "ultra" });
+  });
+
   it("falls back to config default effort when the last user turn recorded a model but no effort", () => {
     const config = {
       ...baseConfig,

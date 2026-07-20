@@ -685,6 +685,8 @@ export async function executePromptStream(
       hintLength: parsedCommand.hint.length,
       sessionName: session.sessionName,
       conversationId,
+      modelId: modelId ?? null,
+      effort: options?.effort ?? null,
     });
     if (!resolvedDeps.dispatchConversationCommand) {
       logger.error("prompt.command_dispatcher_unavailable", {
@@ -709,6 +711,8 @@ export async function executePromptStream(
         conversationId,
         parsed: parsedCommand,
         rawText: promptText,
+        ...(modelId !== undefined ? { modelId } : {}),
+        ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       });
       logger.info("prompt.command_complete", {
         command: parsedCommand.command,
