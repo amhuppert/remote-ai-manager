@@ -30,6 +30,8 @@ export interface GraphWorkflowEventsRepo {
     events: GraphWorkflowExecutionEvent[],
   ): void;
   findByExecution(executionId: string): GraphWorkflowExecutionEvent[];
+  findRecordsByExecution(executionId: string): GraphWorkflowEventRecord[];
+  findRecordById(id: number): GraphWorkflowEventRecord | null;
   findTail(executionId: string, limit: number): GraphWorkflowExecutionEvent[];
   findLatestForContext(
     executionId: string,
@@ -44,12 +46,22 @@ export interface GraphWorkflowEventsRepo {
   deleteByExecution(executionId: string): void;
 }
 
+export interface GraphWorkflowEventRecord extends GraphWorkflowExecutionEvent {
+  id: number;
+  executionId: string;
+}
+
 interface EventStorageRow {
   occurred_at: string;
   event_type: string;
   context_id: string | null;
   pre_reset: number;
   event_json: string;
+}
+
+interface EventRecordStorageRow extends EventStorageRow {
+  id: number;
+  execution_id: string;
 }
 
 /**
@@ -144,6 +156,31 @@ function rowToDomain(
   return result.data;
 }
 
+function rowToRecord(rawRow: unknown): GraphWorkflowEventRecord {
+  if (
+    typeof rawRow !== "object" ||
+    rawRow === null ||
+    !("id" in rawRow) ||
+    typeof rawRow.id !== "number" ||
+    !("execution_id" in rawRow) ||
+    typeof rawRow.execution_id !== "string"
+  ) {
+    return logAndThrowValidationFailure("unknown", [
+      {
+        code: "invalid_record_shape",
+        path: [],
+        message: "event record requires numeric id and execution_id",
+      },
+    ]);
+  }
+  const row = rawRow as EventRecordStorageRow;
+  return {
+    id: row.id,
+    executionId: row.execution_id,
+    ...rowToDomain(row.execution_id, row),
+  };
+}
+
 function timed<T>(
   op: string,
   identifier: { executionId?: string; contextId?: string },
@@ -180,6 +217,20 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
        FROM graph_workflow_events
       WHERE execution_id = ?
       ORDER BY id ASC`,
+  );
+  const findRecordsByExecutionStmt = db.prepare(
+    `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
+            event_json
+       FROM graph_workflow_events
+      WHERE execution_id = ?
+      ORDER BY id ASC`,
+  );
+  const findRecordByIdStmt = db.prepare(
+    `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
+            event_json
+       FROM graph_workflow_events
+      WHERE id = ?
+      LIMIT 1`,
   );
   const findTailStmt = db.prepare(
     `SELECT occurred_at, event_type, context_id, pre_reset, event_json
@@ -245,6 +296,18 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
       return timed("findByExecution", { executionId }, () => {
         const rows = findByExecutionStmt.all(executionId) as unknown[];
         return rows.map((row) => rowToDomain(executionId, row));
+      });
+    },
+    findRecordsByExecution(executionId) {
+      return timed("findRecordsByExecution", { executionId }, () => {
+        const rows = findRecordsByExecutionStmt.all(executionId) as unknown[];
+        return rows.map(rowToRecord);
+      });
+    },
+    findRecordById(id) {
+      return timed("findRecordById", {}, () => {
+        const row: unknown = findRecordByIdStmt.get(id);
+        return row === undefined ? null : rowToRecord(row);
       });
     },
     findTail(executionId, limit) {

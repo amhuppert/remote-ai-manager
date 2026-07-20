@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { pushNotificationConfigSchema } from "@/lib/notifications/schemas";
 import {
   ALL_FIELD_PATHS,
   deepGet,
@@ -58,6 +59,20 @@ describe("ALL_FIELD_PATHS", () => {
       "compaction.timeoutMs",
     ]) {
       expect(ALL_FIELD_PATHS).toContain(path);
+    }
+  });
+
+  it("tracks every push notification trigger so they are dirty-tracked and saved", () => {
+    // A trigger key missing here renders in NotificationsSection but never
+    // dirties the form nor enters buildSavePayload, so the toggle silently
+    // fails to persist. Derive the expected paths from the schema so new
+    // triggers cannot drift out of sync.
+    const triggerKeys = Object.keys(
+      pushNotificationConfigSchema.parse({}).triggers,
+    );
+    expect(triggerKeys.length).toBeGreaterThan(0);
+    for (const key of triggerKeys) {
+      expect(ALL_FIELD_PATHS).toContain(`pushNotification.triggers.${key}`);
     }
   });
 });

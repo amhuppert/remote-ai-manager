@@ -88,6 +88,7 @@ const activeConversations: ActiveConversationsResponse = {
   conversations: [currentProjectConversation, otherProjectConversation],
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 function renderSidebarWithActiveData(
@@ -197,6 +198,28 @@ describe("ConversationSidebar", () => {
     );
   });
 
+  it("surfaces an active spec execution from the feed in the Active work rail", () => {
+    renderSidebarWithActiveData({
+      ...activeConversations,
+      specExecutions: [
+        {
+          executionId: "spec-execution-1",
+          state: "definition_review",
+          specSlug: "native-sdd",
+          specName: "Native SDD",
+          projectPath: "/home/alex/github/remote-ai-manager",
+          projectName: "remote-ai-manager",
+          sessionName: "spec-session",
+          createdAt: "2026-05-15T12:00:00.000Z",
+        },
+      ],
+    });
+
+    const section = screen.getByRole("region", { name: "Active work" });
+    expect(within(section).getByText("Native SDD")).not.toBeNull();
+    expect(within(section).getByText(/Definition review/)).not.toBeNull();
+  });
+
   it("can hide the session-scoped new conversation action for the project cockpit rail", () => {
     renderSidebarWithActiveData(activeConversations, {
       showNewConversationButton: false,
@@ -248,6 +271,7 @@ describe("ConversationSidebar", () => {
         ],
         graphWorkflowExecutions: [],
         activeCollaborationExecutions: [],
+        specExecutions: [],
       });
 
       // The OK button only renders when an acknowledge handler is wired — it
@@ -308,6 +332,7 @@ describe("ConversationSidebar", () => {
       conversations: [gatedSessionConversation, currentProjectConversation],
       graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
+      specExecutions: [],
     });
 
     fireEvent.contextMenu(
@@ -347,6 +372,7 @@ describe("ConversationSidebar", () => {
         // the suspended flag must come from the row's standing payload.
         graphWorkflowExecutions: [],
         activeCollaborationExecutions: [],
+        specExecutions: [],
       });
 
       fireEvent.click(
@@ -423,6 +449,7 @@ describe("ConversationSidebar", () => {
       conversations: [sessionScopedConversation, currentProjectConversation],
       graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
+      specExecutions: [],
     };
 
     function jsonResponse(body: unknown): Response {
@@ -681,6 +708,7 @@ describe("ConversationSidebar", () => {
       ],
       graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
+      specExecutions: [],
     });
 
     expect(screen.getByRole("tab", { name: "Needs 1" })).not.toBeNull();

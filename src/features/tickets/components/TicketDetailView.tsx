@@ -49,11 +49,12 @@ import {
   TICKET_WORK_TYPE_ORDER,
 } from "../ticket-visuals";
 import AttachmentIndex from "./AttachmentIndex";
-import CopyTicketReferenceButton from "./CopyTicketReferenceButton";
+import CopyTicketReferenceButton from "@/components/references/CopyTicketReferenceButton";
 import StartTicketDialog, {
   StartTicketConflictAlert,
 } from "./StartTicketDialog";
 import { TicketDescriptionEditor, TicketTitleEditor } from "./TicketEditor";
+import TicketSpecsCard from "./TicketSpecsCard";
 
 export interface TicketDetailViewProps {
   projectName: string;
@@ -338,6 +339,7 @@ function TicketDossier({
             sessionLinksFetching={sessionLinksQuery.isFetching}
             onRetrySessionLinks={() => void sessionLinksQuery.refetch()}
           />
+          <TicketSpecsCard detail={detail} />
         </div>
       </div>
 

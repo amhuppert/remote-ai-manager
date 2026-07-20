@@ -98,6 +98,7 @@ import {
   composeUserTranscriptBlocks,
 } from "./pre-turn/document-feedback";
 import { persistTurnImages } from "./pre-turn/image-persistence";
+import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
 import type {
   CapabilitySeed,
   ProjectCapabilitySeed,
@@ -1474,8 +1475,19 @@ export async function executePromptForMachine(
   // Prepend debug mode instructions to the rewritten prompt text. Backends
   // receive a single string with `[Image #N]` markers; image data is carried
   // separately on `imageRefs`.
-  const effectivePrompt = buildEffectivePrompt(
+  const agentFacingPromptText = expandNativeSpecCommandForAgent(
     assembled.rewrittenPromptText,
+  );
+  if (agentFacingPromptText !== assembled.rewrittenPromptText) {
+    logger.info("prompt.native_spec_command_expanded", {
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      requestLength: assembled.rewrittenPromptText.length,
+    });
+  }
+
+  const effectivePrompt = buildEffectivePrompt(
+    agentFacingPromptText,
     false,
     [],
     input.debugMode,

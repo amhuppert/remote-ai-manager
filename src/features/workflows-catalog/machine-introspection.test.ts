@@ -125,7 +125,8 @@ describe("introspectMachine", () => {
     ]);
     expect(byId.get("mergingMain")?.invokes).toEqual(["mergeMain"]);
     expect(byId.get("preparing")?.invokes).toEqual(["prepare"]);
-    expect(byId.get("publishing")?.invokes).toEqual(["publish"]);
+    expect(byId.get("publishing")?.invokes).toEqual(["deliveryGate"]);
+    expect(byId.get("publishingCandidate")?.invokes).toEqual(["publish"]);
     expect(byId.get("discarding")?.invokes).toEqual(["discardParkedRef"]);
   });
 });

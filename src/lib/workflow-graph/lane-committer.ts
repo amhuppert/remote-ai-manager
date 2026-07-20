@@ -1,6 +1,7 @@
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   commitChanges as defaultCommitChanges,
+  getHeadCommit as defaultGetHeadCommit,
   hasUncommittedChanges as defaultHasUncommittedChanges,
 } from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
@@ -16,15 +17,23 @@ interface LaneCommitterInput {
   contextId: string;
   laneId: string;
   laneWorktreePath: string;
+  /** Lane HEAD captured before the context's first turn, or null when the
+   *  capture failed/never happened. Baseline for adopting agent-made commits
+   *  as the context's snapshot when the commit phase finds a clean worktree. */
+  preTurnHeadSha: string | null;
 }
 
 type LaneCommitterResult =
   | { status: "committed"; snapshot: GraphWorkflowExecutionLaneCommitSnapshot }
+  | { status: "adopted"; snapshot: GraphWorkflowExecutionLaneCommitSnapshot }
   | { status: "skipped" }
   | { status: "failed"; errorMessage: string };
 
 export interface LaneCommitter {
   commit(input: LaneCommitterInput): Promise<LaneCommitterResult>;
+  /** Best-effort HEAD capture for the adoption baseline: never throws,
+   *  returns null when HEAD cannot be resolved. */
+  resolveHead(worktreePath: string): Promise<string | null>;
 }
 
 export interface LaneCommitterDeps {
@@ -34,6 +43,7 @@ export interface LaneCommitterDeps {
     message: string,
     options?: { skipHooks?: boolean },
   ): Promise<{ hash: string }>;
+  resolveHeadSha(worktreePath: string): Promise<string | null>;
   now(): string;
 }
 
@@ -41,16 +51,53 @@ export function createLaneCommitter(
   deps: LaneCommitterDeps = {
     hasUncommittedChanges: defaultHasUncommittedChanges,
     commitChanges: defaultCommitChanges,
+    resolveHeadSha: defaultGetHeadCommit,
     now: () => new Date().toISOString(),
   },
 ): LaneCommitter {
+  async function resolveHead(worktreePath: string): Promise<string | null> {
+    try {
+      return await deps.resolveHeadSha(worktreePath);
+    } catch {
+      return null;
+    }
+  }
+
   return {
+    resolveHead,
     async commit(input) {
       const { projectPath, sessionName, contextId, laneId, laneWorktreePath } =
         input;
 
       const hasChanges = await deps.hasUncommittedChanges(laneWorktreePath);
       if (!hasChanges) {
+        // Implementer agents routinely commit their own work during the turn,
+        // leaving the worktree clean here. Adopt the moved HEAD as the
+        // context's commit snapshot so the evidence chain (lane-commit event
+        // → commit evidence → changedCode) still records the delivered work.
+        // Without a pre-turn baseline we skip conservatively rather than
+        // attribute fork-point or join-merge commits to this context.
+        if (input.preTurnHeadSha !== null) {
+          const headSha = await resolveHead(laneWorktreePath);
+          if (headSha !== null && headSha !== input.preTurnHeadSha) {
+            const snapshot: GraphWorkflowExecutionLaneCommitSnapshot = {
+              contextId,
+              sha: headSha,
+              committedAt: deps.now(),
+            };
+            logger.info("graph-workflow.lane_commit.adopted_head", {
+              projectPath,
+              sessionName,
+              contextId,
+              laneId,
+              laneWorktreePath,
+              preTurnHeadSha: input.preTurnHeadSha,
+              hash: headSha,
+              committedAt: snapshot.committedAt,
+            });
+            return { status: "adopted", snapshot };
+          }
+        }
         logger.info("graph-workflow.lane_commit.skipped", {
           projectPath,
           sessionName,

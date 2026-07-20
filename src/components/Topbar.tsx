@@ -34,7 +34,7 @@ type OpenSwitcher = "project" | "session" | null;
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
   /** Controls which right-side content to show */
-  page: "projects" | "sessions" | "detail" | "workflows" | "tickets";
+  page: "projects" | "sessions" | "detail" | "workflows" | "tickets" | "specs";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
   /** Global status indicators — rendered when page !== "detail" */
@@ -100,6 +100,7 @@ export default function Topbar({
   const needsHref =
     firstPinned !== null ? activeConversationHref(firstPinned) : null;
   const ticketsActive = pathname?.startsWith("/tickets") ?? false;
+  const specsActive = pathname?.startsWith("/specs") ?? false;
   const workflowsActive = pathname?.startsWith("/workflows") ?? false;
   const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
@@ -207,6 +208,39 @@ export default function Topbar({
             )}
           </Link>
         )}
+        <Link
+          href="/specs"
+          className={cn(
+            "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
+            specsActive
+              ? "border-cyan text-text-primary!"
+              : "border-border-default text-text-secondary!",
+          )}
+          title="Specs"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M4 2.5 H10.5 L13 5 V13.5 H4 Z"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M10.5 2.5 V5 H13 M6 8.2 L7.4 9.6 L10 6.8"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="leading-none">Specs</span>
+        </Link>
         <Link
           href="/tickets"
           className={cn(
@@ -368,6 +402,9 @@ export default function Topbar({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem asChild>
+              <Link href="/specs">Specs</Link>
+            </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/workflows">Workflow Atlas</Link>
             </DropdownMenuItem>

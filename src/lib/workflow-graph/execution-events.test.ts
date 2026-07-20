@@ -949,6 +949,63 @@ describe("graph workflow execution event publisher", () => {
     expect(laneEvents).toEqual([]);
   });
 
+  it("emits each appended lane commit snapshot as a context-addressable event", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-07-18T13:58:00.000Z",
+    });
+    const lane = {
+      laneId: "lane-1",
+      kind: "worktree" as const,
+      status: "active" as const,
+      worktreePath: "/worktrees/lane-1",
+      branchName: "lane-1",
+      includedContextIds: ["context-plan"],
+      lastCommittingContextId: "context-plan",
+      commitSnapshots: [],
+      createdAt: "2026-07-18T13:00:00.000Z",
+      updatedAt: "2026-07-18T13:00:00.000Z",
+    };
+    const previousExecution = createWorkflowExecution({
+      executionLanes: { "lane-1": lane },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      executionLanes: {
+        "lane-1": {
+          ...lane,
+          commitSnapshots: [
+            {
+              contextId: "context-plan",
+              sha: "commit-abc",
+              committedAt: "2026-07-18T13:57:00.000Z",
+            },
+          ],
+          updatedAt: "2026-07-18T13:57:00.000Z",
+        },
+      },
+    });
+
+    const rows = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    expect(rows.map((row) => row.event)).toContainEqual({
+      type: "graph-workflow-lane-commit",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: nextExecution.id,
+      contextId: "context-plan",
+      laneId: "lane-1",
+      sha: "commit-abc",
+      committedAt: "2026-07-18T13:57:00.000Z",
+    });
+  });
+
   it("emits a graph-workflow-join-status event when a join is newly created (pending)", () => {
     const broadcast = vi.fn();
     const publisher = createGraphWorkflowExecutionEventPublisher({

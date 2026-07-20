@@ -9,6 +9,7 @@ import type {
   TicketLinkSummary,
   TicketSessionLink,
 } from "@/lib/tickets/schemas";
+import type { TicketSpecReadThrough } from "@/lib/specs/queries";
 import TicketDetailView from "@/features/tickets/components/TicketDetailView";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +118,7 @@ interface MockDetailOptions {
   sessionLinks?:
     | Record<string, TicketLinkSummary>
     | ((fetchIndex: number) => Record<string, TicketLinkSummary>);
+  linkedSpecs?: TicketSpecReadThrough["specs"];
 }
 
 function linkSummariesFromDetail(
@@ -140,7 +142,12 @@ function linkSummariesFromDetail(
 
 function mockDetailFetch(
   detail: TicketDetail,
-  { failPatches = 0, start = "success", sessionLinks }: MockDetailOptions,
+  {
+    failPatches = 0,
+    start = "success",
+    sessionLinks,
+    linkedSpecs = [],
+  }: MockDetailOptions,
 ) {
   let served = detail;
   let patchFailuresLeft = failPatches;
@@ -156,6 +163,14 @@ function mockDetailFetch(
     const startMatch = parsed.pathname.match(
       /^\/api\/projects\/([^/]+)\/tickets\/(\d+)\/start$/,
     );
+
+    if (
+      method === "GET" &&
+      parsed.pathname ===
+        `/api/specs/${encodeURIComponent(detail.projectName)}/ticket-read-through/${detail.number}`
+    ) {
+      return Response.json({ specs: linkedSpecs });
+    }
 
     if (
       method === "GET" &&
@@ -233,10 +248,16 @@ function DetailHarness({
   failPatches = 0,
   start = "success",
   sessionLinks,
+  linkedSpecs,
 }: {
   detail: TicketDetail;
 } & MockDetailOptions): React.JSX.Element {
-  const cleanup = mockDetailFetch(detail, { failPatches, start, sessionLinks });
+  const cleanup = mockDetailFetch(detail, {
+    failPatches,
+    start,
+    sessionLinks,
+    linkedSpecs,
+  });
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", cleanup, { once: true });
   }
@@ -287,6 +308,37 @@ type Story = StoryObj<typeof meta>;
  */
 export const FullDossier: Story = {
   render: () => <DetailHarness detail={makeDetail()} />,
+};
+
+/**
+ * Linked spec state is read through live: composite phase, criterion proof
+ * progress, workflow status, and an amendment-changed source task share one
+ * card without changing the ticket's own In Progress lifecycle.
+ */
+export const LinkedSpecReadThrough: Story = {
+  render: () => (
+    <DetailHarness
+      detail={makeDetail()}
+      linkedSpecs={[
+        {
+          specId: "spec-native-sdd",
+          slug: "native-sdd",
+          name: "Native spec-driven development",
+          revision: 5,
+          phase: { primary: "executing", authoringFacet: "draft" },
+          criteriaProgress: { proven: 7, total: 12 },
+          linkedTasks: [
+            {
+              taskElementId: "task-ticket-read-through",
+              taskHandle: "T7",
+              sourceTaskState: "changed",
+              workStatus: "running",
+            },
+          ],
+        },
+      ]}
+    />
+  ),
 };
 
 /**

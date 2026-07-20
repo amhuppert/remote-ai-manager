@@ -109,6 +109,18 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     }
   }
 
+  /** Read the worktree's current HEAD commit SHA.
+   *  Returns null when HEAD cannot be resolved (unborn branch, not a repo). */
+  async function getHeadCommit(worktreePath: string): Promise<string | null> {
+    try {
+      const { stdout } = await git(worktreePath, ["rev-parse", "HEAD"]);
+      const sha = stdout.trim();
+      return sha.length > 0 ? sha : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** True when the worktree has an unconcluded merge (MERGE_HEAD exists). */
   async function isMergeInProgress(worktreePath: string): Promise<boolean> {
     try {
@@ -293,6 +305,7 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     hasUncommittedChanges,
     collectChangeSummary,
     getCurrentBranch,
+    getHeadCommit,
     commitChanges,
     getCommitLog,
     getCommitDiff,
@@ -308,6 +321,7 @@ const defaultOps = createCommitsOperations();
 export const hasUncommittedChanges = defaultOps.hasUncommittedChanges;
 export const collectChangeSummary = defaultOps.collectChangeSummary;
 export const getCurrentBranch = defaultOps.getCurrentBranch;
+export const getHeadCommit = defaultOps.getHeadCommit;
 export const commitChanges = defaultOps.commitChanges;
 export const getCommitLog = defaultOps.getCommitLog;
 export const getCommitDiff = defaultOps.getCommitDiff;

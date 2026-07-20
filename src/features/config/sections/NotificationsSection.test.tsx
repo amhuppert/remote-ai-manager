@@ -5,7 +5,7 @@ import { NotificationsSection } from "./NotificationsSection";
 import { makeController } from "./test-controller";
 
 describe("NotificationsSection", () => {
-  it("renders Provider and Triggers groups with all five trigger toggles", () => {
+  it("renders Provider and Triggers groups with every trigger toggle", () => {
     const { controller } = makeController();
     render(<NotificationsSection controller={controller} />);
     expect(
@@ -18,6 +18,8 @@ describe("NotificationsSection", () => {
     expect(screen.getByText(/Workflow Completed/i)).toBeVisible();
     expect(screen.getByText(/Workflow Halted/i)).toBeVisible();
     expect(screen.getByText(/Conversation Idle/i)).toBeVisible();
+    expect(screen.getByText(/Spec Approval Requested/i)).toBeVisible();
+    expect(screen.getByText(/Spec Approval Granted/i)).toBeVisible();
   });
 
   it("editing Topic flows through the controller", () => {
@@ -40,5 +42,18 @@ describe("NotificationsSection", () => {
       .querySelector('[role="switch"]')! as HTMLElement;
     fireEvent.click(toggle);
     expect(getState().pushNotification?.triggers?.workflowHalted).toBe(false);
+  });
+
+  it("toggling a spec approval trigger updates the trigger flag", () => {
+    const { controller, getState } = makeController();
+    render(<NotificationsSection controller={controller} />);
+    const toggle = screen
+      .getByText(/Spec Approval Requested/i)
+      .closest("[data-field]")!
+      .querySelector('[role="switch"]')! as HTMLElement;
+    fireEvent.click(toggle);
+    expect(getState().pushNotification?.triggers?.specApprovalRequested).toBe(
+      false,
+    );
   });
 });

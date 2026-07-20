@@ -9,6 +9,7 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { TicketRefAttrs } from "@/lib/tickets/schemas";
 import { segmentTextByRefs } from "@/lib/conversations/ref-segments";
+import { getReferenceByXmlTag } from "@/lib/prompt-editor/reference-registry";
 import { MessageMarkdown } from "@/components/markdown/Markdown";
 import DefaultConversationLinkChip from "./ConversationLinkChip";
 import DefaultMessageRefLinkChip from "./MessageRefLinkChip";
@@ -39,6 +40,9 @@ export function createMessageTextWithRefs(
     return (
       <>
         {segments.map((segment, index) => {
+          if (segment.type === "text") {
+            return <deps.MessageMarkdown key={index} content={segment.text} />;
+          }
           if (segment.type === "conversation-ref") {
             return (
               <deps.ConversationLinkChip key={index} attrs={segment.attrs} />
@@ -50,7 +54,10 @@ export function createMessageTextWithRefs(
           if (segment.type === "ticket-ref") {
             return <deps.TicketRefChip key={index} attrs={segment.attrs} />;
           }
-          return <deps.MessageMarkdown key={index} content={segment.text} />;
+          const reference = getReferenceByXmlTag(segment.type);
+          if (!reference) return null;
+          const TranscriptChip = reference.TranscriptChip;
+          return <TranscriptChip key={index} attrs={segment.attrs} />;
         })}
       </>
     );

@@ -9,6 +9,7 @@ import type {
   JobNotification,
   ProjectConversationNotification,
   PushNotificationConfig,
+  SpecNotification,
 } from "@/lib/notifications/schemas";
 import * as pushMod from "../notifications/push";
 
@@ -30,6 +31,9 @@ const pushConfig: PushNotificationConfig = {
     workflowCompleted: true,
     workflowHalted: true,
     conversationIdle: true,
+    specApprovalRequested: true,
+    specApprovalGranted: true,
+    specPolicyAdmitted: true,
   },
 };
 
@@ -48,6 +52,29 @@ function makeNotification(
     branchName: "csm/feature",
     jobId: "job-1",
     jobType: "merge",
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeSpecNotification(
+  overrides: Partial<SpecNotification> = {},
+): SpecNotification {
+  return {
+    id: "spec-notification-1",
+    source: "spec",
+    type: "spec-approval-requested",
+    title: "Spec approval required",
+    message: "Native SDD needs design approval for D2.",
+    read: false,
+    projectName: "my-project",
+    sessionName: "native-sdd",
+    specId: "spec-1",
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    gate: "design",
+    gateRequestId: "request-1",
+    deepLinkId: "D2",
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -195,6 +222,40 @@ describe("pushForNotification", () => {
       "conversation-idle",
     );
   });
+
+  it.each([
+    ["spec-approval-requested", "spec-approval-requested"],
+    ["spec-approval-granted", "spec-approval-granted"],
+    ["spec-policy-admitted", "spec-policy-admitted"],
+    // Waiver/attention rows reuse the existing spec approval trigger config.
+    ["spec-waiver-requested", "spec-approval-requested"],
+    ["spec-attention-resolved", "spec-approval-granted"],
+  ] as const)(
+    "maps %s to its user-configurable trigger",
+    async (type, trigger) => {
+      await pushForNotification(
+        pushConfig,
+        makeSpecNotification({
+          type,
+          ...(type === "spec-approval-granted"
+            ? { approvalId: "approval-1" }
+            : {}),
+        }),
+      );
+
+      expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+        trigger,
+        title:
+          type === "spec-approval-requested"
+            ? "Spec approval required"
+            : "Spec approval required",
+        message: "Native SDD needs design approval for D2.",
+        projectName: "my-project",
+        sessionName: "native-sdd",
+        contextName: "Native SDD · D2",
+      });
+    },
+  );
 });
 
 describe("pushForConversationStatus", () => {

@@ -68,6 +68,7 @@ function makeDeps(
     readLastAssistantContent: async () => null,
     listProjectConversations: async () => projectConvs,
     listActiveGraphWorkflowExecutions: async () => new Map(),
+    listActiveSpecExecutions: async () => [],
   };
 }
 

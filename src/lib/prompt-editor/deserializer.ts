@@ -3,9 +3,7 @@ import {
   segmentTextByRefs,
   type RefSegment,
 } from "@/lib/conversations/ref-segments";
-import { conversationRefAttrsToMentionAttrs } from "./conversation-mention-node";
-import { messageRefAttrsToMentionAttrs } from "./message-mention-node";
-import { ticketRefAttrsToMentionAttrs } from "./ticket-mention-node";
+import { getReferenceByXmlTag } from "./reference-registry";
 import type { SerializedPromptDoc } from "./serializer";
 
 interface InlineTextSegment {
@@ -123,23 +121,14 @@ export function deserializePromptDoc(
         pushText(token.raw, true);
         continue;
       }
-      if (token.type === "conversation-ref") {
-        content.push({
-          type: "conversationMention",
-          attrs: conversationRefAttrsToMentionAttrs(token.attrs),
-        });
-        continue;
-      }
-      if (token.type === "message-ref") {
-        content.push({
-          type: "messageMention",
-          attrs: messageRefAttrsToMentionAttrs(token.attrs),
-        });
-        continue;
-      }
+      // Reference tokens map through the registry so every ref kind
+      // (conversation/message/ticket plus the spec element family) rebuilds
+      // its mention node from one source of truth.
+      const reference = getReferenceByXmlTag(token.type);
+      if (!reference) continue;
       content.push({
-        type: "ticketMention",
-        attrs: ticketRefAttrsToMentionAttrs(token.attrs),
+        type: reference.nodeName,
+        attrs: reference.parseAttrs(token.attrs),
       });
     }
 

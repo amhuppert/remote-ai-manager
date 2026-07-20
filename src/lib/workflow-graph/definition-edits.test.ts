@@ -31,6 +31,50 @@ function tasksOf(
 }
 
 describe("applyDefinitionEdits", () => {
+  it("refuses a batch touching a locked path atomically with amend-at-source guidance", () => {
+    const record = createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition({
+        lockedRegions: [
+          {
+            paths: ["/tasks/task-plan-1/instructions"],
+            sourceUri: "contract://plans/revision-7",
+            reason: "Task instructions are contract-derived",
+          },
+        ],
+      }),
+    });
+    const before = structuredClone(record);
+
+    const result = applyDefinitionEdits(
+      record,
+      ops(
+        {
+          type: "update-workflow",
+          description: "This earlier operation must not leak",
+        },
+        {
+          type: "update-task",
+          taskId: "task-plan-1",
+          instructions: "Edit the compiled contract downstream.",
+        },
+      ),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "region_locked",
+        operationIndex: 1,
+        field: "/tasks/task-plan-1/instructions",
+      }),
+    ]);
+    expect(result.issues[0]?.message).toContain(
+      "amend at source contract://plans/revision-7",
+    );
+    expect(record).toEqual(before);
+  });
+
   it("updates a single task's instructions, touching nothing else", () => {
     const record = createWorkflowDefinitionRecord();
     const result = applyDefinitionEdits(

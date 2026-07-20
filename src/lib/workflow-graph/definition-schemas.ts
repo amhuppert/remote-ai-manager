@@ -36,6 +36,22 @@ export type WorkflowConfigOverride = z.infer<
 // Graph Workflow Semantic Definition + Execution Context
 // ============================================================
 
+export const workflowOriginSchema = z.object({
+  sourceUri: z.string().min(1),
+  label: z.string().min(1).optional(),
+});
+export type WorkflowOrigin = z.infer<typeof workflowOriginSchema>;
+
+// Region paths may use JSON Pointer (`/tasks/task-1/instructions`) or the
+// equivalent dot/bracket form. Stable ids/names are preferred for array
+// members; numeric indexes are also accepted.
+export const workflowLockedRegionSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1),
+  sourceUri: z.string().min(1),
+  reason: z.string().min(1),
+});
+export type WorkflowLockedRegion = z.infer<typeof workflowLockedRegionSchema>;
+
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -53,6 +69,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
+  origin: workflowOriginSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
@@ -239,6 +256,9 @@ export type WorkflowPrerequisite = z.infer<typeof prerequisiteSchema>;
 
 export const workflowSemanticDefinitionSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
+  approvalRequired: z.boolean().optional(),
+  origin: workflowOriginSchema.optional(),
+  lockedRegions: z.array(workflowLockedRegionSchema).optional(),
   workflowConfig: workflowConfigOverrideSchema.default({}),
   charter: workflowCharterSchema,
   parameters: z.array(parameterDeclarationSchema).default([]),
@@ -258,6 +278,7 @@ export const graphWorkflowResolvedContextSchema = z.object({
   title: z.string().trim().min(1),
   description: z.string().trim().min(1).optional(),
   acceptanceCriteria: z.string().trim().min(1),
+  origin: workflowOriginSchema.optional(),
   implementer: graphWorkflowAgentConfigSchema,
   contextValidator: graphWorkflowAgentValidatorConfigSchema.nullable(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.default({
@@ -286,6 +307,9 @@ export type GraphWorkflowResolvedContext = z.infer<
 
 export const resolvedWorkflowSemanticDefinitionSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
+  approvalRequired: z.boolean().optional(),
+  origin: workflowOriginSchema.optional(),
+  lockedRegions: z.array(workflowLockedRegionSchema).optional(),
   executionContexts: z.array(graphWorkflowResolvedContextSchema).default([]),
   tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
   edges: z.array(graphWorkflowContextEdgeSchema).default([]),

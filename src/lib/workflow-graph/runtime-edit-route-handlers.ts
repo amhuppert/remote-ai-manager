@@ -156,6 +156,7 @@ interface LiveEditFailure {
   error: string;
   issues?: WorkflowGraphValidationError[];
   currentLiveRevision?: number;
+  instruction?: string;
 }
 
 type LiveEditGateResult =
@@ -229,10 +230,11 @@ function evaluateLiveEditRequest(
     return {
       ok: false,
       failure: {
-        status: 400,
+        status: applied.code === "region_locked" ? 409 : 400,
         code: applied.code,
         error: "live edit was rejected",
         issues: applied.issues,
+        ...(applied.instruction ? { instruction: applied.instruction } : {}),
       },
     };
   }
@@ -263,6 +265,9 @@ function respondLiveEditFailure(failure: LiveEditFailure): Response {
   }
   if (failure.issues) {
     body["issues"] = failure.issues.map(formatDefinitionEditIssue);
+  }
+  if (failure.instruction) {
+    body["instruction"] = failure.instruction;
   }
   return NextResponse.json(body, { status: failure.status });
 }

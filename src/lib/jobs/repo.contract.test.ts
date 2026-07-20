@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -36,8 +36,8 @@ afterEach(() => {
  * `jobRecordSchema` populated to a distinctive non-default value, so the
  * schema-driven durability harness can prove no column — including the optional
  * terminal metadata (`completedAt`, `mergeHash`, `commitHash`, `conflictCount`,
- * `errorMessage`) and the JSON-encoded `conflictFiles` column — is dropped on
- * write or reset to its default on read.
+ * `errorMessage`), final-publish identity, and the JSON-encoded `conflictFiles`
+ * column — is dropped on write or reset to its default on read.
  *
  * `status` is a TERMINAL value (`completed`) so the update write path that
  * carries the terminal metadata is exercised. `conflictFiles` carries multiple
@@ -62,6 +62,15 @@ function buildMaximalJobRecord(): JobRecord {
     conflictCount: 2,
     conflictFiles: ["src/alpha.ts", "src/beta.ts"],
     errorMessage: "Auto-merge halted on overlapping edits",
+    executionId: "workflow-execution-maximal",
+    finalPublish: true,
+    candidateValidation: {
+      validationRef: "validation-maximal",
+      validatedSha: "validated-sha-abc123",
+      validatedTreeHash: "validated-tree-def456",
+      commandIdentity: "./scripts/pre-merge.sh",
+      outcome: "pass",
+    },
   });
 }
 
@@ -76,6 +85,13 @@ const fieldPolicies = {
 
 describe("job-records durability contract", () => {
   it("round-trips every persisted durable job-record key path through the real repo", async () => {
+    expect(Object.keys(jobRecordSchema.shape)).toEqual(
+      expect.arrayContaining([
+        "executionId",
+        "finalPublish",
+        "candidateValidation",
+      ]),
+    );
     await assertRoundTripDurability({
       label: "job-records",
       schema: jobRecordSchema,
@@ -92,6 +108,9 @@ describe("job-records durability contract", () => {
           sessionName: fixture.sessionName,
           branchName: fixture.branchName,
           startedAt: fixture.startedAt,
+          executionId: fixture.executionId,
+          finalPublish: fixture.finalPublish,
+          candidateValidation: fixture.candidateValidation,
         });
         repo.updateJobRecord(fixture.jobId, {
           status: fixture.status,
@@ -109,6 +128,12 @@ describe("job-records durability contract", () => {
             : {}),
           ...(fixture.errorMessage !== undefined
             ? { errorMessage: fixture.errorMessage }
+            : {}),
+          ...(fixture.executionId !== undefined
+            ? { executionId: fixture.executionId }
+            : {}),
+          ...(fixture.candidateValidation !== undefined
+            ? { candidateValidation: fixture.candidateValidation }
             : {}),
         });
         const expected = repo.getJobRecord(fixture.jobId);

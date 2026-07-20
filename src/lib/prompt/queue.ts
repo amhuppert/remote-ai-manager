@@ -21,6 +21,7 @@ import {
 } from "@/lib/images/transcript-images";
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
+import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
@@ -241,12 +242,14 @@ export async function queueMessage(
   // Backend-delivery content (in-turn live delivery): the agent receives prose,
   // never a `document_feedback` block (not a valid SDK block). Derive the prose
   // from the items when feedback is present.
+  const agentFacingText =
+    text && !documentFeedback ? expandNativeSpecCommandForAgent(text) : text;
   const deliveryContent = documentFeedback
     ? buildQueueContent({
         text: formatDocumentFeedbackPrompt(documentFeedback.items),
         images,
       })
-    : content;
+    : buildQueueContent({ text: agentFacingText, images });
 
   const entry = await deps.enqueue({
     projectPath,
@@ -349,6 +352,16 @@ export async function queueMessage(
   }
 
   try {
+    if (text && agentFacingText !== text) {
+      logger.info("queue.native_spec_command_expanded", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        sessionName,
+        conversationId,
+        messageIds: [entry.id],
+        deliveryAttemptId,
+        requestLength: text.length,
+      });
+    }
     await runtime.queueUserInput({ content: deliveryContent });
   } catch (err) {
     const error = getErrorMessage(err);

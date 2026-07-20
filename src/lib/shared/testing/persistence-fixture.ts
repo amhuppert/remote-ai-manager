@@ -21,11 +21,13 @@ import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/gra
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createProjectsRepo } from "@/lib/state-store/projects-repo";
 import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
+import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import type { ConversationsRepo } from "@/lib/state-store/conversations-repo";
 import type { GraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import type { ProjectsRepo } from "@/lib/state-store/projects-repo";
 import type { SessionsRepo } from "@/lib/state-store/sessions-repo";
+import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 import type { Db } from "@/lib/state-store/schemas";
 import { _createTestDb, truncateAllTables } from "@/lib/state-store/state-db";
 import { createStateStore, type StateStore } from "@/lib/state-store/store";
@@ -57,6 +59,7 @@ export interface PersistenceFixture {
   readonly deps: ConversationSeamDeps;
   readonly graphWorkflowEvents: GraphWorkflowEventsRepo;
   readonly graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
+  readonly specs: SpecsRepo;
   seedProject(rootPath: string): void;
   seedSession(
     projectPath: string,
@@ -104,6 +107,7 @@ export function createPersistenceFixture(): PersistenceFixture {
     graphWorkflowEvents: GraphWorkflowEventsRepo;
     graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   };
+  const specs = createSpecsRepo(db, writeQueue);
 
   const store = createStateStore({ db, writeQueue, repos });
 
@@ -118,6 +122,7 @@ export function createPersistenceFixture(): PersistenceFixture {
     deps,
     graphWorkflowEvents: repos.graphWorkflowEvents,
     graphWorkflowArchivedExecutions: repos.graphWorkflowArchivedExecutions,
+    specs,
     seedProject(rootPath) {
       repos.projects.upsert({ rootPath });
     },

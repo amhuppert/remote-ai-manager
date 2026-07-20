@@ -9,8 +9,11 @@
  * `commitChanges`.
  */
 
+import { randomUUID } from "node:crypto";
 import { fromPromise } from "xstate";
 import { createLogger } from "@/lib/logging";
+import { defaultGitClient } from "@/lib/git/client";
+import type { CandidateValidationFact } from "@/lib/jobs/schemas";
 import type { RepoValidationCommandResult } from "@/lib/projects/repo-config";
 import type { GateFailResult } from "@/lib/workflows/primitives/gate-vocabulary";
 import {
@@ -79,7 +82,7 @@ export interface RunValidationInput {
   targetBranch?: string;
   timeoutMs: number;
 }
-export type RunValidationOutput = void;
+export type RunValidationOutput = CandidateValidationFact | null;
 
 // ============================================================
 // Merge/commit validation outcome mapping
@@ -127,9 +130,10 @@ export function validationFixLoopError(
 
 export interface MergeValidationDeps {
   readGlobalConfig(): Promise<{ preMergeTimeoutMs?: number }>;
-  readRepoConfig(
-    projectPath: string,
-  ): Promise<{ preMergeTimeoutMs?: number } | null>;
+  readRepoConfig(projectPath: string): Promise<{
+    preMergeTimeoutMs?: number;
+    preMergeCommand?: string | null;
+  } | null>;
   executeRepoValidationCommand(params: {
     projectPath: string;
     worktreePath: string;
@@ -144,6 +148,8 @@ export interface MergeValidationDeps {
     message: string,
     options?: { skipHooks?: boolean },
   ): Promise<{ hash: string }>;
+  resolveGitObject(worktreePath: string, ref: string): Promise<string>;
+  createValidationRef(): string;
 }
 
 /**
@@ -155,7 +161,7 @@ export interface MergeValidationDeps {
 export async function performMergeValidation(
   input: RunValidationInput,
   deps: MergeValidationDeps,
-): Promise<void> {
+): Promise<RunValidationOutput> {
   // Timeout precedence: per-repo `CommandCenter.json` `preMergeTimeoutMs` >
   // global config ("Limits and Timeouts") `preMergeTimeoutMs` > the machine's
   // hardcoded default (`input.timeoutMs`). Both config reads are best-effort —
@@ -170,15 +176,21 @@ export async function performMergeValidation(
     // Best-effort: fall through to the next timeout source.
   }
 
-  let perRepoTimeoutMs: number | undefined;
+  let repoConfig:
+    | {
+        preMergeTimeoutMs?: number;
+        preMergeCommand?: string | null;
+      }
+    | null
+    | undefined;
   try {
-    perRepoTimeoutMs = (await deps.readRepoConfig(input.projectPath))
-      ?.preMergeTimeoutMs;
+    repoConfig = await deps.readRepoConfig(input.projectPath);
   } catch {
     // Best-effort: fall through to the next timeout source.
   }
 
-  const timeoutMs = perRepoTimeoutMs ?? globalTimeoutMs ?? input.timeoutMs;
+  const timeoutMs =
+    repoConfig?.preMergeTimeoutMs ?? globalTimeoutMs ?? input.timeoutMs;
 
   const result = await deps.executeRepoValidationCommand({
     projectPath: input.projectPath,
@@ -195,7 +207,7 @@ export async function performMergeValidation(
       projectPath: input.projectPath,
       sessionName: input.sessionName,
     });
-    return;
+    return null;
   }
 
   if (gate.status === "fail") {
@@ -228,6 +240,28 @@ export async function performMergeValidation(
     projectPath: input.projectPath,
     sessionName: input.sessionName,
   });
+
+  const [validatedSha, validatedTreeHash] = await Promise.all([
+    deps.resolveGitObject(input.worktreePath, "HEAD"),
+    deps.resolveGitObject(input.worktreePath, "HEAD^{tree}"),
+  ]);
+  const fact: CandidateValidationFact = {
+    validationRef: deps.createValidationRef(),
+    validatedSha,
+    validatedTreeHash,
+    commandIdentity: repoConfig?.preMergeCommand ?? "preMergeCommand",
+    outcome: "pass",
+  };
+  logger.info("validation_fix.candidate_fact_created", {
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    validationRef: fact.validationRef,
+    validatedSha: fact.validatedSha,
+    validatedTreeHash: fact.validatedTreeHash,
+    commandIdentity: fact.commandIdentity,
+    outcome: fact.outcome,
+  });
+  return fact;
 }
 
 export interface FixValidationInput {
@@ -284,12 +318,24 @@ export const runValidation = fromPromise<
   const { hasUncommittedChanges, commitChanges } =
     await import("@/lib/git/commits");
 
-  await performMergeValidation(input, {
+  return performMergeValidation(input, {
     readGlobalConfig: readConfig,
     readRepoConfig,
     executeRepoValidationCommand,
     hasUncommittedChanges,
     commitChanges,
+    async resolveGitObject(worktreePath, ref) {
+      const { stdout } = await defaultGitClient.git(
+        ["rev-parse", ref],
+        worktreePath,
+      );
+      const resolved = stdout.trim();
+      if (!resolved) {
+        throw new Error(`git rev-parse ${ref} returned empty output`);
+      }
+      return resolved;
+    },
+    createValidationRef: randomUUID,
   });
 });
 

@@ -30,6 +30,7 @@ import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import { normalizeTicketListFilters } from "@/lib/tickets/list-filters";
 import type { TicketListItem } from "@/lib/tickets/schemas";
+import { specSseCacheKeys } from "@/lib/specs/sse-reducer";
 
 const notificationStoreMocks = vi.hoisted(() => ({
   addOrUpdateJob: vi.fn(),
@@ -147,6 +148,40 @@ describe("NotificationListener", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     stubHiddenDocument(false);
+  });
+
+  it("registers spec reactions and clears an approval banner from the shared SSE bus", async () => {
+    const client = makeClient();
+    const detailKey = specSseCacheKeys.detail(
+      "/repos/command-center",
+      "native-sdd",
+    );
+    client.setQueryData(detailKey, {
+      spec: { id: "spec-1", slug: "native-sdd" },
+      approvalBanner: { message: "Approval required" },
+    });
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+    es.emit("spec-approval-changed", {
+      type: "spec-approval-changed",
+      kind: "approval-granted",
+      projectPath: "/repos/command-center",
+      specId: "spec-1",
+      specSlug: "native-sdd",
+      occurredAt: "2026-07-18T14:00:00.000Z",
+      revisionId: "revision-1",
+      subjectId: "requirement-1",
+    });
+
+    await waitFor(() =>
+      expect(client.getQueryData(detailKey)).toEqual({
+        spec: { id: "spec-1", slug: "native-sdd" },
+        approvalBanner: null,
+      }),
+    );
   });
 
   it("invalidates MCP config queries when tools are refreshed", async () => {

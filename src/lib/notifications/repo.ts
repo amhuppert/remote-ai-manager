@@ -18,6 +18,7 @@ import { timedSync } from "@/lib/logging/timed";
 import {
   jobNotificationSchema,
   notificationSchema,
+  specNotificationSchema,
 } from "@/lib/notifications/schemas";
 import type { JobType } from "@/lib/jobs/schemas";
 import type {
@@ -26,6 +27,8 @@ import type {
   Notification,
   ProjectConversationNotification,
   ProjectConversationNotificationType,
+  SpecNotification,
+  SpecNotificationType,
 } from "@/lib/notifications/schemas";
 import { PersistenceError } from "@/lib/shared/errors";
 import {
@@ -44,7 +47,7 @@ const notificationLogger = createLogger("state-store.notifications");
 const notificationRowSchema = registerTrustedSchema(
   z.object({
     id: z.string(),
-    source: z.enum(["job", "project-conversation"]),
+    source: z.enum(["job", "project-conversation", "spec"]),
     type: z.string(),
     title: z.string(),
     message: z.string(),
@@ -64,6 +67,13 @@ const notificationRowSchema = registerTrustedSchema(
     conversation_status: z.string().nullable(),
     dedupe_key: z.string().nullable(),
     error_message: z.string().nullable(),
+    spec_id: z.string().nullable(),
+    spec_slug: z.string().nullable(),
+    spec_name: z.string().nullable(),
+    spec_gate: z.string().nullable(),
+    spec_gate_request_id: z.string().nullable(),
+    spec_deep_link_id: z.string().nullable(),
+    spec_approval_id: z.string().nullable(),
     created_at: z.string(),
   }),
   "notificationRowSchema",
@@ -116,6 +126,20 @@ function parseJobNotificationOrFail(
   identifier: string | undefined,
 ): JobNotification {
   const result = jobNotificationSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowNotificationValidationFailure(
+      identifier,
+      result.error.issues,
+    );
+  }
+  return result.data;
+}
+
+function parseSpecNotificationOrFail(
+  candidate: unknown,
+  identifier: string | undefined,
+): SpecNotification {
+  const result = specNotificationSchema.safeParse(candidate);
   if (!result.success) {
     return logAndThrowNotificationValidationFailure(
       identifier,
@@ -217,10 +241,21 @@ function rowToNotification(rawRow: unknown): Notification {
     if (conflictFilesResult.value !== undefined)
       candidate.conflictFiles = conflictFilesResult.value;
     if (row.target_branch !== null) candidate.targetBranch = row.target_branch;
-  } else {
+  } else if (row.source === "project-conversation") {
     candidate.conversationId = row.conversation_id;
     candidate.conversationName = row.conversation_name;
     candidate.status = row.conversation_status;
+  } else {
+    candidate.sessionName = row.session_name;
+    candidate.specId = row.spec_id;
+    candidate.specSlug = row.spec_slug;
+    candidate.specName = row.spec_name;
+    candidate.gate = row.spec_gate;
+    candidate.gateRequestId = row.spec_gate_request_id;
+    candidate.deepLinkId = row.spec_deep_link_id;
+    if (row.spec_approval_id !== null) {
+      candidate.approvalId = row.spec_approval_id;
+    }
   }
 
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
@@ -263,6 +298,22 @@ export interface CreateProjectConversationNotificationInput {
   dedupeKey: string;
 }
 
+export interface CreateSpecNotificationInput {
+  type: SpecNotificationType;
+  title: string;
+  message: string;
+  projectName: string;
+  sessionName: string | null;
+  specId: string;
+  specSlug: string;
+  specName: string;
+  gate: SpecNotification["gate"];
+  gateRequestId: string;
+  deepLinkId: string;
+  approvalId?: string;
+  dedupeKey: string;
+}
+
 export interface GetNotificationsOptions {
   unread?: boolean;
   limit?: number;
@@ -291,11 +342,21 @@ export interface CreateProjectConversationNotificationResult {
   created: boolean;
 }
 
+export interface CreateSpecNotificationResult {
+  notification: SpecNotification;
+  created: boolean;
+}
+
 export interface NotificationsRepo {
   createJobNotification(input: CreateNotificationInput): JobNotification;
   createProjectConversationNotification(
     input: CreateProjectConversationNotificationInput,
   ): CreateProjectConversationNotificationResult;
+  createSpecNotification(
+    input: CreateSpecNotificationInput,
+  ): CreateSpecNotificationResult;
+  /** All spec-source notifications for the spec, oldest first. */
+  findSpecNotificationsBySpecId(specId: string): SpecNotification[];
   getNotifications(options?: GetNotificationsOptions): PaginatedNotifications;
   deleteNotification(id: string): boolean;
   markAsRead(id: string): MarkAsReadResult;
@@ -331,6 +392,45 @@ export function createNotificationsRepo(db: Db): NotificationsRepo {
         message: "Expected project-conversation notification for dedupe key",
       },
     ]);
+  }
+
+  function getSpecNotificationByDedupeKey(
+    dedupeKey: string,
+  ): SpecNotification | undefined {
+    const row = db
+      .prepare(
+        "SELECT * FROM notifications WHERE source = 'spec' AND dedupe_key = ?",
+      )
+      .get(dedupeKey) as unknown;
+    if (row === undefined) return undefined;
+    const notification = rowToNotification(row);
+    if (notification.source === "spec") return notification;
+    return logAndThrowNotificationValidationFailure(notification.id, [
+      {
+        code: "invalid_source",
+        message: "Expected spec notification for dedupe key",
+      },
+    ]);
+  }
+
+  function findSpecNotificationsBySpecId(specId: string): SpecNotification[] {
+    const rows = db
+      .prepare(
+        `SELECT * FROM notifications
+          WHERE source = 'spec' AND spec_id = ?
+          ORDER BY created_at ASC, id ASC`,
+      )
+      .all(specId) as unknown[];
+    return rows.map((row) => {
+      const notification = rowToNotification(row);
+      if (notification.source === "spec") return notification;
+      return logAndThrowNotificationValidationFailure(notification.id, [
+        {
+          code: "invalid_source",
+          message: "Expected spec notification for spec id lookup",
+        },
+      ]);
+    });
   }
 
   function createJobNotification(
@@ -493,9 +593,93 @@ export function createNotificationsRepo(db: Db): NotificationsRepo {
     );
   }
 
+  function createSpecNotification(
+    input: CreateSpecNotificationInput,
+  ): CreateSpecNotificationResult {
+    const existing = getSpecNotificationByDedupeKey(input.dedupeKey);
+    if (existing !== undefined) {
+      return { notification: existing, created: false };
+    }
+
+    const id = randomUUID();
+    return timedSync(
+      notificationLogger,
+      "state-db.createSpecNotification",
+      {
+        notificationId: id,
+        notificationType: input.type,
+        projectName: input.projectName,
+        specId: input.specId,
+        gateRequestId: input.gateRequestId,
+      },
+      () => {
+        const candidate = {
+          id,
+          source: "spec" as const,
+          type: input.type,
+          title: input.title,
+          message: input.message,
+          read: false,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          specId: input.specId,
+          specSlug: input.specSlug,
+          specName: input.specName,
+          gate: input.gate,
+          gateRequestId: input.gateRequestId,
+          deepLinkId: input.deepLinkId,
+          ...(input.approvalId === undefined
+            ? {}
+            : { approvalId: input.approvalId }),
+          createdAt: sqliteUtcNow(),
+        };
+        const validated = parseSpecNotificationOrFail(candidate, id);
+        const result = db
+          .prepare(
+            `INSERT OR IGNORE INTO notifications (
+               id, source, type, title, message, read, project_name,
+               session_name, dedupe_key, spec_id, spec_slug, spec_name,
+               spec_gate, spec_gate_request_id, spec_deep_link_id,
+               spec_approval_id, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            validated.id,
+            validated.source,
+            validated.type,
+            validated.title,
+            validated.message,
+            validated.read ? 1 : 0,
+            validated.projectName,
+            validated.sessionName,
+            input.dedupeKey,
+            validated.specId,
+            validated.specSlug,
+            validated.specName,
+            validated.gate,
+            validated.gateRequestId,
+            validated.deepLinkId,
+            validated.approvalId ?? null,
+            validated.createdAt,
+          );
+
+        if (result.changes === 0) {
+          const duplicate = getSpecNotificationByDedupeKey(input.dedupeKey);
+          if (duplicate !== undefined) {
+            return { notification: duplicate, created: false };
+          }
+        }
+
+        return { notification: validated, created: true };
+      },
+    );
+  }
+
   return {
     createJobNotification,
     createProjectConversationNotification,
+    createSpecNotification,
+    findSpecNotificationsBySpecId,
 
     getNotifications(options: GetNotificationsOptions = {}) {
       const { unread, limit = 50, offset = 0 } = options;

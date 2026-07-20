@@ -8,6 +8,51 @@
 import type { BaseWorkflowContext } from "../types";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
 
+export interface CriterionOutcome {
+  criterionId: string;
+  criterionHandle: string;
+  outcome: string;
+  reason?: string;
+}
+
+export interface CandidateValidationFact {
+  validationRef: string;
+  validatedSha: string;
+  validatedTreeHash: string;
+  commandIdentity: string;
+  outcome: "pass" | "fail";
+}
+
+export interface DeliveryGateEvaluateInput {
+  workflowExecutionId: string;
+  preparedSha: string;
+  expectedTargetSha: string;
+  projectPath: string;
+  candidateValidation?: CandidateValidationFact;
+}
+
+export type DeliveryGateEvaluation =
+  | {
+      status: "pass";
+      satisfied: CriterionOutcome[];
+      deferred: string[];
+    }
+  | {
+      status: "refused";
+      unmet: CriterionOutcome[];
+      instruction: string;
+    };
+
+export interface DeliveryGateEvaluator {
+  evaluate(input: DeliveryGateEvaluateInput): Promise<DeliveryGateEvaluation>;
+}
+
+export interface DeliveryGateHaltReason {
+  type: "delivery_gate_failed";
+  unmet: CriterionOutcome[];
+  instruction: string;
+}
+
 /** Phase tracking for SSE broadcast. */
 export type MergePhase =
   | "committing-uncommitted"
@@ -139,6 +184,15 @@ export interface MergeContext extends BaseWorkflowContext {
    * Defaults to true via MergeInput.
    */
   finalizeSessionOnPublish: boolean;
+
+  /** Workflow execution linkage used by the injected delivery gate. */
+  executionId: string | null;
+
+  /** Validation result for the candidate prepared by this merge job. */
+  candidateValidation: CandidateValidationFact | null;
+
+  /** Machine-readable refusal emitted when the delivery gate blocks publish. */
+  haltReason: DeliveryGateHaltReason | null;
 }
 
 /** Input required to create a merge workflow actor. */
@@ -172,6 +226,12 @@ export interface MergeInput {
   maxCasAttempts?: number;
   /** Defaults to true; graph fan-in passes false so it doesn't finalize the session. */
   finalizeSessionOnPublish?: boolean;
+  /** Workflow execution linkage for delivery-gate evaluation. */
+  executionId?: string;
+  /** This completed merge closes the workflow's final publish join. */
+  finalPublish?: boolean;
+  /** Persisted validation fact supplied to the delivery-gate evaluator. */
+  candidateValidation?: CandidateValidationFact;
 }
 
 /** Events the merge machine can receive. */
@@ -189,10 +249,12 @@ export interface MergeOutput {
   expectedTargetSha: string | null;
   parkedRef: string | null;
   refreshWarning: string | null;
+  candidateValidation: CandidateValidationFact | null;
+  haltReason: DeliveryGateHaltReason | null;
   /**
    * Phase to retain on the terminal job record. Null for terminal statuses
    * that clear phase (completed/failed/conflicts/discarded); "awaiting-land"
    * for ready-to-land.
    */
-  phase: string | null;
+  phase: MergePhase | null;
 }

@@ -163,12 +163,26 @@ const activeCollaborationExecutionSchema = z.object({
   updatedAt: z.string(),
 });
 
+// The feed only ever serves active executions, so the state enum is narrowed
+// to the active subset of SpecExecutionState rather than importing it whole.
+const activeSpecExecutionSchema = z.object({
+  executionId: z.string(),
+  state: z.enum(["definition_review", "running"]),
+  specSlug: z.string(),
+  specName: z.string(),
+  projectPath: z.string(),
+  projectName: z.string(),
+  sessionName: z.string(),
+  createdAt: z.string(),
+});
+
 export type ActiveGraphWorkflowExecution = z.infer<
   typeof activeGraphWorkflowExecutionSchema
 >;
 export type ActiveCollaborationExecution = z.infer<
   typeof activeCollaborationExecutionSchema
 >;
+export type ActiveSpecExecutionItem = z.infer<typeof activeSpecExecutionSchema>;
 
 export const activeConversationsResponseSchema = z.object({
   conversations: z.array(activeConversationSchema),
@@ -178,6 +192,7 @@ export const activeConversationsResponseSchema = z.object({
   activeCollaborationExecutions: z
     .array(activeCollaborationExecutionSchema)
     .default([]),
+  specExecutions: z.array(activeSpecExecutionSchema).default([]),
 });
 export type ActiveConversationsResponse = z.infer<
   typeof activeConversationsResponseSchema

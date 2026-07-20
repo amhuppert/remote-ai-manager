@@ -252,7 +252,7 @@ describe("status-bus wire contract — job-status shapes, merge dispatch, optimi
           AnalyzeConflictsInput
         >(async () => ({ status: "analyzed", conflicts: [] })),
         runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
-          async () => undefined,
+          async () => null,
         ),
         fixValidation: fromPromise<FixValidationOutput, FixValidationInput>(
           async () => ({ status: "fixed" }),
@@ -320,8 +320,9 @@ describe("status-bus wire contract — job-status shapes, merge dispatch, optimi
   });
 
   it("executeOptimisticWorkflow dispatches a merge job after a successful prompt run (preserving the smart-merge entrypoint as the optimistic terminal step)", async () => {
-    const dispatchSpy =
-      vi.fn<(typeof defaultOptimisticDeps)["dispatchMergeJob"]>();
+    const dispatchSpy = vi
+      .fn<(typeof defaultOptimisticDeps)["dispatchMergeJob"]>()
+      .mockReturnValue({ ok: true, value: { jobId: "optimistic-job-1" } });
     const promptSpy =
       vi.fn<(typeof defaultOptimisticDeps)["executePromptStream"]>();
     const notificationSpy =

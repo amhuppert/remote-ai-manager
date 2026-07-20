@@ -1,0 +1,2004 @@
+{
+  "namespace": "CommandCenterUI",
+  "components": [
+    {
+      "name": "Accordion",
+      "sourcePath": "components/ui/Accordion/Accordion.jsx"
+    },
+    {
+      "name": "AlertDialog",
+      "sourcePath": "components/ui/AlertDialog/AlertDialog.jsx"
+    },
+    {
+      "name": "Autocomplete",
+      "sourcePath": "components/ui/Autocomplete/Autocomplete.jsx"
+    },
+    {
+      "name": "BackendToggle",
+      "sourcePath": "components/components/BackendToggle/BackendToggle.jsx"
+    },
+    { "name": "Badge", "sourcePath": "components/ui/Badge/Badge.jsx" },
+    {
+      "name": "BranchSelector",
+      "sourcePath": "components/components/BranchSelector/BranchSelector.jsx"
+    },
+    { "name": "Button", "sourcePath": "components/ui/Button/Button.jsx" },
+    {
+      "name": "CardContextMenu",
+      "sourcePath": "components/components/CardContextMenu/CardContextMenu.jsx"
+    },
+    { "name": "Checkbox", "sourcePath": "components/ui/Checkbox/Checkbox.jsx" },
+    {
+      "name": "Collapsible",
+      "sourcePath": "components/ui/Collapsible/Collapsible.jsx"
+    },
+    {
+      "name": "CollapsibleText",
+      "sourcePath": "components/components/CollapsibleText/CollapsibleText.jsx"
+    },
+    {
+      "name": "ConfirmDialog",
+      "sourcePath": "components/components/ConfirmDialog/ConfirmDialog.jsx"
+    },
+    {
+      "name": "ContextFillIndicator",
+      "sourcePath": "components/components/ContextFillIndicator/ContextFillIndicator.jsx"
+    },
+    {
+      "name": "ContextMenu",
+      "sourcePath": "components/ui/ContextMenu/ContextMenu.jsx"
+    },
+    {
+      "name": "ConversationNav",
+      "sourcePath": "components/components/ConversationNav/ConversationNav.jsx"
+    },
+    {
+      "name": "CopyableId",
+      "sourcePath": "components/components/CopyableId/CopyableId.jsx"
+    },
+    { "name": "Dialog", "sourcePath": "components/ui/Dialog/Dialog.jsx" },
+    {
+      "name": "DropdownMenu",
+      "sourcePath": "components/ui/DropdownMenu/DropdownMenu.jsx"
+    },
+    {
+      "name": "EffortLabel",
+      "sourcePath": "components/conversation/EffortLabel/EffortLabel.jsx"
+    },
+    {
+      "name": "EmptyState",
+      "sourcePath": "components/ui/EmptyState/EmptyState.jsx"
+    },
+    {
+      "name": "FormField",
+      "sourcePath": "components/ui/FormField/FormField.jsx"
+    },
+    {
+      "name": "IconButton",
+      "sourcePath": "components/ui/IconButton/IconButton.jsx"
+    },
+    {
+      "name": "MarkdownContent",
+      "sourcePath": "components/components/MarkdownContent/MarkdownContent.jsx"
+    },
+    {
+      "name": "MergeToast",
+      "sourcePath": "components/components/MergeToast/MergeToast.jsx"
+    },
+    {
+      "name": "ModelSelector",
+      "sourcePath": "components/components/ModelSelector/ModelSelector.jsx"
+    },
+    { "name": "Popover", "sourcePath": "components/ui/Popover/Popover.jsx" },
+    { "name": "Progress", "sourcePath": "components/ui/Progress/Progress.jsx" },
+    {
+      "name": "RadioGroup",
+      "sourcePath": "components/ui/RadioGroup/RadioGroup.jsx"
+    },
+    {
+      "name": "ReasoningLevelSelector",
+      "sourcePath": "components/components/ReasoningLevelSelector/ReasoningLevelSelector.jsx"
+    },
+    {
+      "name": "SectionHeader",
+      "sourcePath": "components/ui/SectionHeader/SectionHeader.jsx"
+    },
+    {
+      "name": "SegmentedControl",
+      "sourcePath": "components/ui/SegmentedControl/SegmentedControl.jsx"
+    },
+    { "name": "Select", "sourcePath": "components/ui/Select/Select.jsx" },
+    {
+      "name": "StatusDot",
+      "sourcePath": "components/ui/StatusDot/StatusDot.jsx"
+    },
+    { "name": "Switch", "sourcePath": "components/ui/Switch/Switch.jsx" },
+    { "name": "Tabs", "sourcePath": "components/ui/Tabs/Tabs.jsx" },
+    {
+      "name": "TddToggle",
+      "sourcePath": "components/components/TddToggle/TddToggle.jsx"
+    },
+    { "name": "Tooltip", "sourcePath": "components/ui/Tooltip/Tooltip.jsx" }
+  ],
+  "startingPoints": [],
+  "cards": [
+    {
+      "path": "components/components/BackendToggle/BackendToggle.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/BranchSelector/BranchSelector.html",
+      "group": "components"
+    },
+    {
+      "path": "components/components/CardContextMenu/CardContextMenu.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/CollapsibleText/CollapsibleText.html",
+      "group": "components"
+    },
+    {
+      "path": "components/components/ConfirmDialog/ConfirmDialog.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/ContextFillIndicator/ContextFillIndicator.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/ConversationNav/ConversationNav.html",
+      "group": "components"
+    },
+    {
+      "path": "components/components/CopyableId/CopyableId.html",
+      "group": "components"
+    },
+    {
+      "path": "components/components/MarkdownContent/MarkdownContent.html",
+      "group": "components"
+    },
+    {
+      "path": "components/components/MergeToast/MergeToast.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/ModelSelector/ModelSelector.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/ReasoningLevelSelector/ReasoningLevelSelector.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/components/TddToggle/TddToggle.html",
+      "group": "components",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/conversation/EffortLabel/EffortLabel.html",
+      "group": "conversation",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/Accordion/Accordion.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/AlertDialog/AlertDialog.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/Autocomplete/Autocomplete.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    { "path": "components/ui/Badge/Badge.html", "group": "ui" },
+    {
+      "path": "components/ui/Button/Button.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    { "path": "components/ui/Checkbox/Checkbox.html", "group": "ui" },
+    {
+      "path": "components/ui/Collapsible/Collapsible.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/ContextMenu/ContextMenu.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/Dialog/Dialog.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/DropdownMenu/DropdownMenu.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    { "path": "components/ui/EmptyState/EmptyState.html", "group": "ui" },
+    { "path": "components/ui/FormField/FormField.html", "group": "ui" },
+    {
+      "path": "components/ui/IconButton/IconButton.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/Popover/Popover.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    { "path": "components/ui/Progress/Progress.html", "group": "ui" },
+    { "path": "components/ui/RadioGroup/RadioGroup.html", "group": "ui" },
+    {
+      "path": "components/ui/SectionHeader/SectionHeader.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/SegmentedControl/SegmentedControl.html",
+      "group": "ui"
+    },
+    {
+      "path": "components/ui/Select/Select.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    { "path": "components/ui/StatusDot/StatusDot.html", "group": "ui" },
+    { "path": "components/ui/Switch/Switch.html", "group": "ui" },
+    {
+      "path": "components/ui/Tabs/Tabs.html",
+      "group": "ui",
+      "viewport": "900x700"
+    },
+    {
+      "path": "components/ui/Tooltip/Tooltip.html",
+      "group": "ui",
+      "viewport": "900x700"
+    }
+  ],
+  "templates": [],
+  "hasThumbnailHtml": false,
+  "globalCssPaths": ["fonts/fonts.css", "_ds_bundle.css", "styles.css"],
+  "tokens": [
+    {
+      "name": "--font-sans",
+      "value": "ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',\n    'Noto Color Emoji'",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-mono",
+      "value": "var(--font-geist-mono), \"Geist Mono\", monospace",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-red-500",
+      "value": "oklch(63.7% 0.237 25.331)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-black",
+      "value": "#000",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-white",
+      "value": "#fff",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing",
+      "value": "0.25rem",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--text-sm",
+      "value": "0.875rem",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--text-base",
+      "value": "1rem",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--text-base--line-height",
+      "value": "calc(1.5 / 1)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-weight-normal",
+      "value": "400",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-weight-medium",
+      "value": "500",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-weight-semibold",
+      "value": "600",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-weight-bold",
+      "value": "700",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-weight-extrabold",
+      "value": "800",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--tracking-normal",
+      "value": "0em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--radius-xs",
+      "value": "0.125rem",
+      "kind": "radius",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--radius-sm",
+      "value": "4px",
+      "kind": "radius",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--radius-md",
+      "value": "6px",
+      "kind": "radius",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--radius-lg",
+      "value": "10px",
+      "kind": "radius",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--shadow-lg",
+      "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--ease-out",
+      "value": "cubic-bezier(0, 0, 0.2, 1)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--default-transition-duration",
+      "value": "150ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--default-transition-timing-function",
+      "value": "cubic-bezier(0.4, 0, 0.2, 1)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-bg-void",
+      "value": "#06090f",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-bg-base",
+      "value": "#0b1019",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-bg-surface",
+      "value": "#111825",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-bg-raised",
+      "value": "#172033",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-bg-elevated",
+      "value": "#1a2740",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-bg-hover",
+      "value": "#1c2841",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-border-dim",
+      "value": "#141d2e",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-border-subtle",
+      "value": "#1a2338",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-border-default",
+      "value": "#243048",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-border-strong",
+      "value": "#2e3d5c",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-cyan",
+      "value": "#00e5ff",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-cyan-dim",
+      "value": "#00b8cc",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-cyan-glow",
+      "value": "rgba(0, 229, 255, 0.15)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-cyan-glow-strong",
+      "value": "rgba(0, 229, 255, 0.3)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-cyan-glow-text",
+      "value": "rgba(0, 229, 255, 0.6)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-amber",
+      "value": "#ffb300",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-amber-dim",
+      "value": "#cc8f00",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-amber-glow",
+      "value": "rgba(255, 179, 0, 0.15)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-green",
+      "value": "#00e676",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-green-dim",
+      "value": "#00b85c",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-green-glow",
+      "value": "rgba(0, 230, 118, 0.15)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-blue",
+      "value": "#448aff",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-blue-dim",
+      "value": "#2979ff",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-blue-glow",
+      "value": "rgba(68, 138, 255, 0.15)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-red",
+      "value": "#ff3d5a",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-red-dim",
+      "value": "#cc3148",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-red-glow",
+      "value": "rgba(255, 61, 90, 0.12)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-red-text",
+      "value": "#e8506c",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-violet",
+      "value": "#c77dff",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-violet-dim",
+      "value": "#9d56d6",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-violet-glow",
+      "value": "rgba(199, 125, 255, 0.15)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-violet-glow-strong",
+      "value": "rgba(199, 125, 255, 0.3)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-rainbow-glow",
+      "value": "rgba(155, 89, 182, 0.15)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--background-image-rainbow",
+      "value": "linear-gradient(\n    90deg,\n    #ff6b6b,\n    #ffa500,\n    #ffd93d,\n    #6bcb77,\n    #4d96ff,\n    #9b59b6,\n    #ff6b6b\n  )",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--background-image-rainbow-tint",
+      "value": "linear-gradient(\n    90deg,\n    rgba(255, 107, 107, 0.14),\n    rgba(255, 165, 0, 0.12),\n    rgba(255, 217, 61, 0.1),\n    rgba(107, 203, 119, 0.12),\n    rgba(77, 150, 255, 0.14),\n    rgba(155, 89, 182, 0.13),\n    rgba(255, 107, 107, 0.14)\n  )",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-text-primary",
+      "value": "#dce2f0",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-text-secondary",
+      "value": "#7b899f",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-text-tertiary",
+      "value": "#738699",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--color-text-inverse",
+      "value": "#06090f",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-2xs",
+      "value": "2px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-xs",
+      "value": "4px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-sm",
+      "value": "8px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-md",
+      "value": "12px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-lg",
+      "value": "16px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-xl",
+      "value": "24px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-2xl",
+      "value": "32px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-3xl",
+      "value": "48px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-section",
+      "value": "24px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--spacing-header-content",
+      "value": "8px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-base",
+      "value": "0",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-raised",
+      "value": "1",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-sticky",
+      "value": "10",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-header",
+      "value": "50",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-panel",
+      "value": "90",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-nav",
+      "value": "100",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-dropdown",
+      "value": "200",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-toast",
+      "value": "300",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-menu",
+      "value": "1000",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-popover",
+      "value": "1100",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--z-index-tooltip",
+      "value": "99999",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--animate-pulse-dot",
+      "value": "pulse-dot 2.5s ease-in-out infinite",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--animate-fade-in",
+      "value": "fadeIn 0.3s ease",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--animate-bulk-float-in",
+      "value": "bulk-float-in 0.18s ease",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--shadow-dropdown",
+      "value": "0 12px 32px rgba(0, 0, 0, 0.35)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--shadow-menu",
+      "value": "0 12px 32px rgba(0, 0, 0, 0.35)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-display",
+      "value": "var(--font-anybody), \"Anybody\", sans-serif",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--font-body",
+      "value": "var(--font-manrope), \"Manrope\", sans-serif",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css"
+    },
+    {
+      "name": "--tw-translate-x",
+      "value": "calc(calc(1 / 2 * 100%) * -1)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".-translate-x-1\\/2"
+    },
+    {
+      "name": "--tw-translate-x",
+      "value": "12px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".translate-x-\\[12px\\]"
+    },
+    {
+      "name": "--tw-translate-x",
+      "value": "16px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".translate-x-\\[16px\\]"
+    },
+    {
+      "name": "--tw-translate-y",
+      "value": "calc(calc(1 / 2 * 100%) * -1)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".-translate-y-1\\/2"
+    },
+    {
+      "name": "--tw-translate-y",
+      "value": "-1px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".-translate-y-px"
+    },
+    {
+      "name": "--tw-border-style",
+      "value": "dashed",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".border-dashed"
+    },
+    {
+      "name": "--tw-border-style",
+      "value": "none",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".border-none"
+    },
+    {
+      "name": "--tw-border-style",
+      "value": "solid",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".border-solid"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.1",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.1\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.2",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.2\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.3",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.3\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.4",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.4\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.05",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.05\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.5",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.5\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.6",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.6\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.7",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.7\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.25",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.25\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.35",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.35\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.45",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.45\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.55",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.55\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1.62",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-\\[1\\.62\\]"
+    },
+    {
+      "name": "--tw-leading",
+      "value": "1",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".leading-none"
+    },
+    {
+      "name": "--tw-font-weight",
+      "value": "var(--font-sans,inherit)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".font-\\[var\\(--font-sans\\"
+    },
+    {
+      "name": "--tw-font-weight",
+      "value": "var(--font-weight-bold)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".font-bold"
+    },
+    {
+      "name": "--tw-font-weight",
+      "value": "var(--font-weight-extrabold)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".font-extrabold"
+    },
+    {
+      "name": "--tw-font-weight",
+      "value": "var(--font-weight-medium)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".font-medium"
+    },
+    {
+      "name": "--tw-font-weight",
+      "value": "var(--font-weight-normal)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".font-normal"
+    },
+    {
+      "name": "--tw-font-weight",
+      "value": "var(--font-weight-semibold)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".font-semibold"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "-0.01em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[-0\\.01em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "-0.02em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[-0\\.02em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "-0.03em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[-0\\.03em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.01em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.01em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.1em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.1em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.02em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.02em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.03em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.03em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.04em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.04em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.05em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.05em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.06em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.06em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.07em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.07em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.08em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.08em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0.12em",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\.12em\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "0",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-\\[0\\]"
+    },
+    {
+      "name": "--tw-tracking",
+      "value": "var(--tracking-normal)",
+      "kind": "font",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tracking-normal"
+    },
+    {
+      "name": "--tw-ordinal",
+      "value": "ordinal",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".ordinal"
+    },
+    {
+      "name": "--tw-numeric-spacing",
+      "value": "tabular-nums",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".tabular-nums"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "-16px 0 48px var(--tw-shadow-color, var(--cc-black-a55))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[-16px_0_48px_var\\(--cc-black-a55\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 -8px 24px var(--tw-shadow-color, var(--cc-black-a50))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_-8px_24px_color-mix\\(in_srgb\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 0 1px var(--tw-shadow-color, var(--cc-red-a40)), 0 0 6px var(--tw-shadow-color, var(--cc-red-a50))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_0_1px_var\\(--cc-red-a40\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 0 1px var(--tw-shadow-color, var(--color-amber-glow)), 0 0 10px -2px var(--tw-shadow-color, var(--color-amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_0_1px_var\\(--color-amber-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 0 1px var(--tw-shadow-color, var(--cyan)), 0 0 18px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_0_1px_var\\(--cyan\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 0 1px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_0_1px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 0 1px var(--tw-shadow-color, var(--violet-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_0_1px_var\\(--violet-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 0 3px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_0_3px_var\\(--color-cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, currentColor)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_currentColor\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--amber-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--color-amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--color-amber\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--color-blue))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--color-blue\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--color-cyan))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--color-cyan\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--color-green-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--color-green-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 4px var(--tw-shadow-color, var(--green-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_4px_var\\(--green-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px -2px var(--tw-shadow-color, var(--color-cyan-glow-strong))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_-2px_var\\(--color-cyan-glow-strong\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, currentColor)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_currentColor\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, rgba(0,229,255,0.15))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_rgba\\(0\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, rgba(…))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_rgba\\(…\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--accent-cyan))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--accent-cyan\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--amber\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--amber-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--blue))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--blue\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--blue-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--blue-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-amber\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-amber-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-blue-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-blue-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-cyan-glow-strong))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-cyan-glow-strong\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-green-glow)), 0 0 2px var(--tw-shadow-color, var(--color-green))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-green-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-green-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-green-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-red-glow)), 0 0 2px var(--tw-shadow-color, var(--color-red))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-red-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-red-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-red-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--color-violet-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--color-violet-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--cyan))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--cyan\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--cyan-glow-strong))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--cyan-glow-strong\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--green))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--green\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--green-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--green-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 6px var(--tw-shadow-color, var(--red-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_6px_var\\(--red-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 7px var(--tw-shadow-color, var(--amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_7px_var\\(--amber\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--amber\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--amber-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--cc-cyan-a10))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--cc-cyan-a10\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-amber-glow)), 0 0 3px var(--tw-shadow-color, var(--color-amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-amber-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-amber-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-cyan-glow)), inset 0 0 6px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-cyan-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-green-glow)), 0 0 3px var(--tw-shadow-color, var(--color-green))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-green-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-green-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-green-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--color-red-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--color-red-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--cyan-glow-strong))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--cyan-glow-strong\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 8px var(--tw-shadow-color, var(--rainbow-glow)), 0 0 20px var(--tw-shadow-color, var(--rainbow-glow-blue))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_8px_var\\(--rainbow-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 10px var(--tw-shadow-color, var(--amber-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_10px_var\\(--amber-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 10px var(--tw-shadow-color, var(--aq-accent))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_10px_var\\(--aq-accent\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 12px -4px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_12px_-4px_var\\(--color-cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 12px var(--tw-shadow-color, var(--aq-accent-glow-strong))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_12px_var\\(--aq-accent-glow-strong\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 12px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_12px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 12px var(--tw-shadow-color, var(--cyan-glow-strong))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_12px_var\\(--cyan-glow-strong\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 16px -4px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_16px_-4px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 20px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_0_20px_var\\(--cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 1px 0 var(--tw-shadow-color, var(--cc-shadow-soft))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_1px_0_var\\(--cc-shadow-soft\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 2px 10px var(--tw-shadow-color, var(--cc-black-a35))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_2px_10px_var\\(--cc-black-a35\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 8px 24px var(--tw-shadow-color, var(--cc-black-a50)), 0 0 18px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_8px_24px_var\\(--cc-black-a50\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 8px 32px var(--tw-shadow-color, var(--cc-black-a45)), 0 0 1px var(--tw-shadow-color, var(--cc-cyan-a08))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_8px_32px_var\\(--cc-black-a45\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 8px 32px var(--tw-shadow-color, var(--cc-shadow-soft)), 0 2px 8px var(--tw-shadow-color, var(--cc-black-a20))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_8px_32px_var\\(--cc-shadow-soft\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 12px 32px var(--tw-shadow-color, rgba(0,0,0,0.35))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_12px_32px_rgba\\(0\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 18px 48px var(--tw-shadow-color, var(--cc-black-a50)), 0 0 0 1px var(--tw-shadow-color, var(--cc-cyan-a04))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[0_18px_48px_var\\(--cc-black-a50\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "inset 0 0 0 1px var(--tw-shadow-color, var(--cyan)), 0 0 14px var(--tw-shadow-color, var(--cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[inset_0_0_0_1px_var\\(--cyan\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "inset 0 0 14px -6px var(--tw-shadow-color, var(--color-cyan-glow))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[inset_0_0_14px_-6px_var\\(--color-cyan-glow\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "inset 2px 0 0 var(--tw-shadow-color, var(--color-amber))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[inset_2px_0_0_var\\(--color-amber\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "inset 2px 0 0 var(--tw-shadow-color, var(--cyan))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[inset_2px_0_0_var\\(--cyan\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "inset 3px 0 8px -4px var(--tw-shadow-color, var(--cyan-glow)), 0 0 16px -4px var(--tw-shadow-color, var(--cc-cyan-a12))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[inset_3px_0_8px_-4px_var\\(--cyan-glow\\)\\"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "var(--cc-shadow-popover)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[var\\(--cc-shadow-popover\\)\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "…var(--cc-…)…",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[…var\\(--cc-…\\)…\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "…var(--…)…",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-\\[…var\\(--…\\)…\\]"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 12px 32px var(--tw-shadow-color, rgba(0, 0, 0, 0.35))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-dropdown"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 10px 15px -3px var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 4px 6px -4px var(--tw-shadow-color, rgb(0 0 0 / 0.1))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-lg"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 12px 32px var(--tw-shadow-color, rgba(0, 0, 0, 0.35))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-menu"
+    },
+    {
+      "name": "--tw-shadow",
+      "value": "0 0 #0000",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".shadow-none"
+    },
+    {
+      "name": "--tw-ring-shadow",
+      "value": "var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor)",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".ring"
+    },
+    {
+      "name": "--tw-ring-color",
+      "value": "var(--color-cyan-glow)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".ring-cyan-glow"
+    },
+    {
+      "name": "--tw-blur",
+      "value": "blur(8px)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".blur"
+    },
+    {
+      "name": "--tw-drop-shadow-size",
+      "value": "drop-shadow(0 1px 2px var(--tw-drop-shadow-color, rgb(0 0 0 / 0.1))) drop-shadow(0 1px 1px var(--tw-drop-shadow-color, rgb(0 0 0 / 0.06)))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".drop-shadow"
+    },
+    {
+      "name": "--tw-drop-shadow",
+      "value": "drop-shadow(0 1px 2px rgb(0 0 0 / 0.1)) drop-shadow( 0 1px 1px rgb(0 0 0 / 0.06))",
+      "kind": "shadow",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".drop-shadow"
+    },
+    {
+      "name": "--tw-invert",
+      "value": "invert(100%)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".invert"
+    },
+    {
+      "name": "--tw-backdrop-blur",
+      "value": "blur(8px)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".backdrop-blur-\\[8px\\]"
+    },
+    {
+      "name": "--tw-backdrop-blur",
+      "value": "blur(20px)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".backdrop-blur-\\[20px\\]"
+    },
+    {
+      "name": "--tw-backdrop-saturate",
+      "value": "saturate(150%)",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".backdrop-saturate-150"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "100ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-100"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "150ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-150"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "200ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-200"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "300ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-300"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "100ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-\\[100ms\\]"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "120ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-\\[120ms\\]"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "140ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-\\[140ms\\]"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "250ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-\\[250ms\\]"
+    },
+    {
+      "name": "--tw-duration",
+      "value": "400ms",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".duration-\\[400ms\\]"
+    },
+    {
+      "name": "--tw-ease",
+      "value": "ease",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".ease-\\[ease\\]"
+    },
+    {
+      "name": "--tw-ease",
+      "value": "var(--ease-out)",
+      "kind": "color",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".ease-out"
+    },
+    {
+      "name": "--tw-outline-style",
+      "value": "none",
+      "kind": "other",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".outline-none"
+    },
+    {
+      "name": "--plc-rail-w",
+      "value": "308px",
+      "kind": "spacing",
+      "definedIn": "_ds_bundle.css",
+      "scope": ".\\[--plc-rail-w\\:308px\\]"
+    }
+  ],
+  "themes": [],
+  "fonts": [
+    {
+      "family": "Anybody",
+      "weight": "400",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Anybody-400.woff2"]
+    },
+    {
+      "family": "Anybody",
+      "weight": "600",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Anybody-600.woff2"]
+    },
+    {
+      "family": "Anybody",
+      "weight": "800",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Anybody-800.woff2"]
+    },
+    {
+      "family": "Manrope",
+      "weight": "300",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Manrope-300.woff2"]
+    },
+    {
+      "family": "Manrope",
+      "weight": "400",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Manrope-400.woff2"]
+    },
+    {
+      "family": "Manrope",
+      "weight": "500",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Manrope-500.woff2"]
+    },
+    {
+      "family": "Manrope",
+      "weight": "600",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Manrope-600.woff2"]
+    },
+    {
+      "family": "Manrope",
+      "weight": "700",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Manrope-700.woff2"]
+    },
+    {
+      "family": "Manrope",
+      "weight": "800",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/Manrope-800.woff2"]
+    },
+    {
+      "family": "Geist Mono",
+      "weight": "300",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/GeistMono-300.woff2"]
+    },
+    {
+      "family": "Geist Mono",
+      "weight": "400",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/GeistMono-400.woff2"]
+    },
+    {
+      "family": "Geist Mono",
+      "weight": "500",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/GeistMono-500.woff2"]
+    },
+    {
+      "family": "Geist Mono",
+      "weight": "600",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/GeistMono-600.woff2"]
+    },
+    {
+      "family": "Geist Mono",
+      "weight": "700",
+      "style": "normal",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "cssPath": "fonts/fonts.css",
+      "files": ["fonts/GeistMono-700.woff2"]
+    }
+  ],
+  "brandFonts": [
+    {
+      "family": "Anybody",
+      "status": "unreferenced",
+      "tokens": [],
+      "path": "fonts/fonts.css"
+    },
+    {
+      "family": "Manrope",
+      "status": "unreferenced",
+      "tokens": [],
+      "path": "fonts/fonts.css"
+    },
+    {
+      "family": "Geist Mono",
+      "status": "unreferenced",
+      "tokens": [],
+      "path": "fonts/fonts.css"
+    }
+  ],
+  "source": "design-sync-cli"
+}

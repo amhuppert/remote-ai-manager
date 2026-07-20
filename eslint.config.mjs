@@ -172,6 +172,16 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/MultilineInput.tsx",
   "src/components/MultilineInput.stories.tsx",
   "src/components/rich-prompt/**/*.{ts,tsx}",
+  // Native-SDD surfaces (Spec Studio + the shared reference controls): new
+  // features authored utility-first against the design system. Mirrors the
+  // .prettierrc class-sort override and the tailwind-utility-collisions
+  // UTILITY_FIRST_PATHS allowlist.
+  "src/components/references/**/*.{ts,tsx}",
+  "src/features/spec-studio/**/*.{ts,tsx}",
+  // Topbar nav switchers: utility-first component directory. Mirrors the
+  // .prettierrc class-sort override and the tailwind-utility-collisions
+  // UTILITY_FIRST_PATHS allowlist.
+  "src/components/topbar/**/*.{ts,tsx}",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`
@@ -231,6 +241,8 @@ const eslintConfig = defineConfig([
     ".worktrees/**",
     "memory-bank/**",
     "redesign-session-page-handoff/**",
+    // Generated Claude Design bundles (design-sync exports, not product code).
+    "claude-design/**",
     "next-env.d.ts",
   ]),
   ...storybook.configs["flat/recommended"],

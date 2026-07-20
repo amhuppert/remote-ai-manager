@@ -13,8 +13,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
   ArgumentHint,
+  AssumptionMentionNode,
   CodeFormatting,
-  ConversationMention,
   ConversationMentionNode,
   deserializePromptDoc,
   FileMention,
@@ -22,13 +22,22 @@ import {
   ImageMarker,
   ImagePasteHandler,
   MessageMentionNode,
+  DecisionMentionNode,
+  QuestionMentionNode,
   RefPasteHandler,
+  RequirementMentionNode,
   serializePromptDoc,
   SlashCommand,
   SlashCommandMarker,
   TerminalHotkeys,
-  TicketMention,
+  TicketShortcut,
   TicketMentionNode,
+  SpecMentionNode,
+  TaskMentionNode,
+  UnifiedMention,
+  getUnifiedMentionGroups,
+  type ReferencePickerContext,
+  type ReferencePickerItem,
   type SerializedPromptDoc,
   type SlashCommandTrigger,
 } from "@/lib/prompt-editor";
@@ -46,15 +55,14 @@ import {
   type FileMentionSelection,
 } from "@/components/session/prompt/PromptEditorFileMentionPopup";
 import {
-  PromptEditorConversationMentionPopup,
-  type ConversationMentionPopupHandle,
-  type ConversationMentionSelection,
-} from "@/components/session/prompt/PromptEditorConversationMentionPopup";
-import {
   PromptEditorTicketMentionPopup,
   type TicketMentionPopupHandle,
   type TicketMentionSelection,
 } from "@/components/session/prompt/PromptEditorTicketMentionPopup";
+import {
+  UnifiedMentionPopup,
+  type UnifiedMentionPopupHandle,
+} from "@/components/session/prompt/UnifiedMentionPopup";
 
 export interface PromptEditorHandle {
   /** Serialize the current document to `{ prompt, images }`. */
@@ -119,9 +127,9 @@ interface FileSuggestionState {
   command: (item: FileMentionSelection) => void;
 }
 
-interface ConversationSuggestionState {
+interface UnifiedMentionSuggestionState {
   query: string;
-  command: (item: ConversationMentionSelection) => void;
+  command: (item: ReferencePickerItem) => void;
 }
 
 interface TicketSuggestionState {
@@ -302,6 +310,19 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     // slash-command triggers can read the live value without recreating it.
     const backendRef = useRef(backend);
     backendRef.current = backend;
+    const pickerContextRef = useRef<ReferencePickerContext>({
+      currentProjectName: projectName ?? null,
+      currentConversationId: conversationId ?? null,
+      conversations: [],
+      tickets: [],
+      specs: [],
+      selectedSpec: null,
+    });
+    pickerContextRef.current = {
+      ...pickerContextRef.current,
+      currentProjectName: projectName ?? null,
+      currentConversationId: conversationId ?? null,
+    };
 
     const [slashState, setSlashState] = useState<SlashSuggestionState | null>(
       null,
@@ -309,13 +330,13 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     const [fileState, setFileState] = useState<FileSuggestionState | null>(
       null,
     );
-    const [conversationState, setConversationState] =
-      useState<ConversationSuggestionState | null>(null);
+    const [unifiedMentionState, setUnifiedMentionState] =
+      useState<UnifiedMentionSuggestionState | null>(null);
     const [ticketState, setTicketState] =
       useState<TicketSuggestionState | null>(null);
     const slashPopupRef = useRef<SlashCommandPopupHandle>(null);
     const filePopupRef = useRef<FileMentionPopupHandle>(null);
-    const conversationPopupRef = useRef<ConversationMentionPopupHandle>(null);
+    const unifiedMentionPopupRef = useRef<UnifiedMentionPopupHandle>(null);
     const ticketPopupRef = useRef<TicketMentionPopupHandle>(null);
 
     const editor = useEditor({
@@ -345,6 +366,12 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         ConversationMentionNode,
         MessageMentionNode,
         TicketMentionNode,
+        SpecMentionNode,
+        RequirementMentionNode,
+        DecisionMentionNode,
+        TaskMentionNode,
+        QuestionMentionNode,
+        AssumptionMentionNode,
         RefPasteHandler,
         ArgumentHint,
         ImagePasteHandler.configure({
@@ -389,33 +416,30 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
               filePopupRef.current?.handleKeyDown(event) ?? false,
           }),
         }),
-        ConversationMention.configure({
-          items: () => [],
+        UnifiedMention.configure({
+          items: ({ query }) =>
+            getUnifiedMentionGroups(query, pickerContextRef.current),
           render: () => ({
             onStart: (props) => {
-              setConversationState({
+              setUnifiedMentionState({
                 query: props.query,
-                command: props.command as (
-                  item: ConversationMentionSelection,
-                ) => void,
+                command: props.command,
               });
             },
             onUpdate: (props) => {
-              setConversationState({
+              setUnifiedMentionState({
                 query: props.query,
-                command: props.command as (
-                  item: ConversationMentionSelection,
-                ) => void,
+                command: props.command,
               });
             },
             onExit: () => {
-              setConversationState(null);
+              setUnifiedMentionState(null);
             },
             onKeyDown: ({ event }) =>
-              conversationPopupRef.current?.handleKeyDown(event) ?? false,
+              unifiedMentionPopupRef.current?.handleKeyDown(event) ?? false,
           }),
         }),
-        TicketMention.configure({
+        TicketShortcut.configure({
           items: () => [],
           render: () => ({
             onStart: (props) => {
@@ -551,14 +575,17 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             onClose={() => setFileState(null)}
           />
         ) : null}
-        {conversationState && projectName ? (
-          <PromptEditorConversationMentionPopup
-            ref={conversationPopupRef}
-            query={conversationState.query}
+        {unifiedMentionState && projectName ? (
+          <UnifiedMentionPopup
+            ref={unifiedMentionPopupRef}
+            query={unifiedMentionState.query}
             currentProjectName={projectName}
             currentConversationId={conversationId ?? null}
-            onSelect={(selection) => conversationState.command(selection)}
-            onClose={() => setConversationState(null)}
+            onSelect={(selection) => unifiedMentionState.command(selection)}
+            onClose={() => setUnifiedMentionState(null)}
+            onPickerContextChange={(context) => {
+              pickerContextRef.current = context;
+            }}
           />
         ) : null}
         {ticketState && projectName ? (

@@ -17,6 +17,7 @@ import { showBrowserNotification } from "@/lib/notifications/browser-notificatio
 import { registerNotificationSseReactions } from "@/lib/notifications/sse-reactions";
 import { registerMcpSseReactions } from "@/lib/mcp/sse-reactions";
 import { registerSessionAlignmentSseReactions } from "@/lib/session-alignment/sse-reactions";
+import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import { registerTicketSseReactions } from "@/lib/tickets/sse-reactions";
 import { registerWorkflowSseReactions } from "@/lib/workflows/sse-reactions";
 import {
@@ -87,6 +88,7 @@ export default function NotificationListener(): null {
     registerMcpSseReactions(es, { queryClient });
     registerAgentCapabilitySseReactions(es, { queryClient });
     registerSessionAlignmentSseReactions(es, { queryClient });
+    registerSpecSseReactions(es, { queryClient });
     registerTicketSseReactions(es, { queryClient });
     registerContextArtifactSseReactions(es, { queryClient });
     registerJobsReconnectReconciliation(es, {

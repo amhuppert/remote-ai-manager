@@ -14,6 +14,7 @@ import type {
 } from "@/lib/active-conversations/schemas";
 import type { Notification } from "@/lib/notifications/schemas";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
+import type { SpecExecutionState, SpecGate } from "@/lib/specs/schemas";
 import type { ActiveWorkItem, AttentionItem } from "./active-work";
 
 function sessionHref(projectName: string, sessionName: string): string {
@@ -121,11 +122,63 @@ export function adaptCollaborations(
   }));
 }
 
+export interface ActiveSpecExecution {
+  executionId: string;
+  state: SpecExecutionState;
+  specSlug: string;
+  specName: string;
+  projectName: string;
+  sessionName: string;
+  createdAt: string;
+}
+
+function specHref(projectName: string, specSlug: string): string {
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(specSlug)}`;
+}
+
+function specGateLabel(gate: SpecGate): string {
+  return humanizePhase(gate);
+}
+
+export function adaptSpecExecutions(
+  executions: ActiveSpecExecution[],
+): ActiveWorkItem[] {
+  const items: ActiveWorkItem[] = [];
+  for (const execution of executions) {
+    if (
+      execution.state !== "definition_review" &&
+      execution.state !== "running"
+    ) {
+      continue;
+    }
+    items.push({
+      id: `spec-execution:${execution.executionId}`,
+      kind: "spec",
+      title: execution.specName,
+      projectName: execution.projectName,
+      sessionName: execution.sessionName,
+      phase:
+        execution.state === "definition_review"
+          ? "Definition review"
+          : "Running",
+      href: specHref(execution.projectName, execution.specSlug),
+      startedAt: execution.createdAt,
+    });
+  }
+  return items;
+}
+
+// Pending gate requests intentionally have no adapter: there is no
+// pending-attention read model — the durable registry of open requests is the
+// spec notification rows, and deriveNotificationOutcomes below renders the
+// identical Needs You item from them.
+
 type JobNotification = Extract<Notification, { source: "job" }>;
 type ProjectConversationNotification = Extract<
   Notification,
   { source: "project-conversation" }
 >;
+type SpecNotification = Extract<Notification, { source: "spec" }>;
 
 // merge and resolve-conflicts act on the same branch-landing saga; commit is
 // independent.
@@ -137,6 +190,7 @@ function latestBy<T>(
   rows: T[],
   keyOf: (row: T) => string,
   createdAtOf: (row: T) => string,
+  tieBreakPriorityOf: (row: T) => number = () => 0,
 ): T[] {
   const latest = new Map<string, T>();
   for (const row of rows) {
@@ -144,7 +198,9 @@ function latestBy<T>(
     const current = latest.get(key);
     if (
       current === undefined ||
-      Date.parse(createdAtOf(row)) > Date.parse(createdAtOf(current))
+      Date.parse(createdAtOf(row)) > Date.parse(createdAtOf(current)) ||
+      (Date.parse(createdAtOf(row)) === Date.parse(createdAtOf(current)) &&
+        tieBreakPriorityOf(row) > tieBreakPriorityOf(current))
     ) {
       latest.set(key, row);
     }
@@ -257,5 +313,58 @@ export function deriveNotificationOutcomes(
     });
   }
 
+  const specRows = notifications.filter(
+    (notification): notification is SpecNotification =>
+      notification.source === "spec",
+  );
+  // Keyed by (spec, gate, subject) rather than gateRequestId so a re-request
+  // for the same decision collapses to one item and any newer resolving row
+  // (grant, attention-resolved, policy admission) hides every duplicate.
+  const latestSpecRows = latestBy(
+    specRows,
+    (row) => `${row.specId}\0${row.gate}\0${row.deepLinkId}`,
+    (row) => row.createdAt,
+    (row) => (isOpenSpecRequest(row) ? 0 : 1),
+  );
+
+  for (const row of latestSpecRows) {
+    if (row.type === "spec-approval-requested") {
+      needsAction.push({
+        id: `notification:${row.id}`,
+        kind: "spec",
+        title: row.specName,
+        projectName: row.projectName,
+        sessionName: row.sessionName ?? "main",
+        phase: `${specGateLabel(row.gate)} approval required`,
+        href: `${specHref(row.projectName, row.specSlug)}?el=${encodeURIComponent(row.deepLinkId)}`,
+        startedAt: row.createdAt,
+        needsAction: {
+          primary: { label: "Review", kind: "review" },
+        },
+      });
+    } else if (row.type === "spec-waiver-requested") {
+      needsAction.push({
+        id: `notification:${row.id}`,
+        kind: "spec",
+        title: row.specName,
+        projectName: row.projectName,
+        sessionName: row.sessionName ?? "main",
+        phase: "Waiver decision required",
+        href: `${specHref(row.projectName, row.specSlug)}?el=${encodeURIComponent(row.deepLinkId)}`,
+        startedAt: row.createdAt,
+        needsAction: {
+          primary: { label: "Review", kind: "review" },
+        },
+      });
+    }
+  }
+
   return { needsAction, attention };
+}
+
+function isOpenSpecRequest(row: SpecNotification): boolean {
+  return (
+    row.type === "spec-approval-requested" ||
+    row.type === "spec-waiver-requested"
+  );
 }

@@ -1,8 +1,11 @@
 import path from "node:path";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { resolveConfigDirFrom } from "@/lib/config/config-dir";
+import { createLogger } from "@/lib/logging";
 import { booleanFlagNames, renderTopUsage } from "./help-registry";
 import { getErrorMessage } from "@/lib/shared/errors";
+
+const logger = createLogger("cli.shared");
 
 export interface CliResult {
   exitCode: number;
@@ -54,6 +57,8 @@ export interface CliHost {
    * null when it does not exist / is unreadable.
    */
   readFileBytes(filePath: string): Promise<Uint8Array<ArrayBuffer> | null>;
+  /** Write a UTF-8 output file for commands with an explicit output target. */
+  writeTextFile?(filePath: string, content: string): Promise<void>;
   /**
    * Pause for `ms` milliseconds. Injected so polling commands (e.g. `dev
    * ensure`, which blocks until liveness) stay pure — tests supply an instant
@@ -240,6 +245,8 @@ export interface JsonEnvelope {
   issues?: RequestIssue[];
   /** Machine-readable error code, when the server supplies one. */
   code?: string;
+  /** Structured operational-refusal context selected by the error code. */
+  details?: CliErrorDetails;
   [key: string]: unknown;
 }
 
@@ -291,18 +298,23 @@ export interface FailureInput {
   detail?: string;
   hint?: string;
   reminders?: string[];
+  /** Load-bearing server-authored next step for an operational refusal. */
+  instruction?: string;
   /**
    * Structured validation issues + machine-readable code. JSON-envelope only —
    * text mode still renders the human `detail`, so callers pass BOTH (doc 04 §5.1).
    */
   issues?: RequestIssue[];
   code?: string;
+  details?: CliErrorDetails;
   json: boolean;
 }
 
 export function failure(input: FailureInput): CliResult {
   const stderrLines = [input.message];
   if (input.detail) stderrLines.push(input.detail);
+  if (!input.json && input.instruction)
+    stderrLines.push(`instruction: ${input.instruction}`);
   // Text tier order (doc 04 §5.1): message -> detail/issues -> reminders -> hint.
   if (!input.json && input.reminders) {
     for (const reminder of input.reminders)
@@ -312,9 +324,11 @@ export function failure(input: FailureInput): CliResult {
   const envelope: JsonEnvelope = { ok: false, error: input.message };
   if (input.issues && input.issues.length > 0) envelope.issues = input.issues;
   if (input.code) envelope.code = input.code;
+  if (input.details) envelope.details = input.details;
   if (input.reminders && input.reminders.length > 0)
     envelope.reminders = input.reminders;
-  if (input.hint) envelope.hint = input.hint;
+  if (input.instruction) envelope.instruction = input.instruction;
+  if (input.hint && !input.instruction) envelope.hint = input.hint;
   return {
     exitCode: input.exitCode,
     stdout: input.json ? `${JSON.stringify(envelope)}\n` : "",
@@ -612,6 +626,25 @@ export interface RequestIssue {
   message: string;
 }
 
+export interface LintBlockedCliErrorDetails {
+  findings: unknown[];
+}
+
+export interface StaleElementCliErrorDetails {
+  currentContent: unknown;
+  currentVersion: number;
+}
+
+/**
+ * Shared structured failure context. `code` on the containing result/envelope
+ * discriminates the two V1 SDD shapes; other command families retain their
+ * additive record-shaped details without a family-specific adapter.
+ */
+export type CliErrorDetails =
+  | LintBlockedCliErrorDetails
+  | StaleElementCliErrorDetails
+  | Record<string, unknown>;
+
 export type CliRequestResult =
   | { kind: "ok"; status: number; body: unknown }
   | { kind: "connection"; detail: string }
@@ -625,6 +658,10 @@ export type CliRequestResult =
       code?: string;
       /** Tier-2 invariants the server attaches to an error (e.g. lane halt 409s). */
       reminders?: string[];
+      /** Tier-3 server-authored next step for a refused operation. */
+      instruction?: string;
+      /** Code-discriminated structured context for the refusal. */
+      details?: CliErrorDetails;
     };
 
 export interface CliRequestParams {
@@ -660,6 +697,59 @@ function coerceIssues(value: unknown): RequestIssue[] | undefined {
   return issues.length > 0 ? issues : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function coerceUnmetConditions(value: unknown): RequestIssue[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const issues = value.flatMap((condition, index) =>
+    typeof condition === "string"
+      ? [{ path: `unmetConditions[${index}]`, message: condition }]
+      : [],
+  );
+  return issues.length > 0 ? issues : undefined;
+}
+
+function coerceInstruction(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function coerceErrorDetails(
+  body: Record<string, unknown>,
+  code: string | undefined,
+): CliErrorDetails | undefined {
+  const rawDetails = isRecord(body.details) ? body.details : undefined;
+
+  if (code === "lint_blocked") {
+    const findings = Array.isArray(body.findings)
+      ? body.findings
+      : rawDetails && Array.isArray(rawDetails.findings)
+        ? rawDetails.findings
+        : undefined;
+    if (findings) return { findings };
+  }
+
+  if (code === "stale_element") {
+    const current = isRecord(body.current)
+      ? body.current
+      : rawDetails && isRecord(rawDetails.current)
+        ? rawDetails.current
+        : undefined;
+    const currentContent =
+      rawDetails?.currentContent ?? current?.currentContent ?? current?.payload;
+    const currentVersion =
+      rawDetails?.currentVersion ??
+      current?.currentVersion ??
+      current?.elementVersion;
+    if (currentContent !== undefined && typeof currentVersion === "number") {
+      return { currentContent, currentVersion };
+    }
+  }
+
+  return rawDetails;
+}
+
 function coerceReminders(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const reminders = value.filter(
@@ -693,20 +783,31 @@ function classifyErrorBody(
     typeof (body as { error?: unknown }).error === "string"
       ? (body as { error: string }).error
       : `server responded with HTTP ${status}`;
-  const issues =
-    body && typeof body === "object"
-      ? coerceIssues((body as { issues?: unknown }).issues)
-      : undefined;
+  const bodyRecord = isRecord(body) ? body : undefined;
+  const issues = bodyRecord
+    ? (coerceIssues(bodyRecord.issues) ??
+      coerceUnmetConditions(bodyRecord.unmetConditions))
+    : undefined;
   const code =
     body &&
     typeof body === "object" &&
     typeof (body as { code?: unknown }).code === "string"
       ? (body as { code: string }).code
       : undefined;
-  const reminders =
-    body && typeof body === "object"
-      ? coerceReminders((body as { reminders?: unknown }).reminders)
-      : undefined;
+  const reminders = bodyRecord
+    ? coerceReminders(bodyRecord.reminders)
+    : undefined;
+  const instruction = bodyRecord
+    ? coerceInstruction(bodyRecord.instruction)
+    : undefined;
+  const details = bodyRecord ? coerceErrorDetails(bodyRecord, code) : undefined;
+  logger.debug("cli.error_classified", {
+    status,
+    code: code ?? null,
+    issueCount: issues?.length ?? 0,
+    hasInstruction: instruction !== undefined,
+    hasDetails: details !== undefined,
+  });
   return {
     kind: "error",
     status,
@@ -714,6 +815,8 @@ function classifyErrorBody(
     ...(issues ? { issues } : {}),
     ...(code ? { code } : {}),
     ...(reminders ? { reminders } : {}),
+    ...(instruction ? { instruction } : {}),
+    ...(details ? { details } : {}),
   };
 }
 
@@ -814,12 +917,57 @@ export async function cliRequestText(
  */
 export function structuredErrorFields(
   result: Extract<CliRequestResult, { kind: "error" }>,
-): Pick<FailureInput, "issues" | "code" | "reminders"> {
+): Pick<
+  FailureInput,
+  "issues" | "code" | "reminders" | "instruction" | "details"
+> {
   return {
     ...(result.issues ? { issues: result.issues } : {}),
     ...(result.code ? { code: result.code } : {}),
     ...(result.reminders ? { reminders: result.reminders } : {}),
+    ...(result.instruction ? { instruction: result.instruction } : {}),
+    ...(result.details ? { details: result.details } : {}),
   };
+}
+
+function refusalDetailLines(
+  result: Extract<CliRequestResult, { kind: "error" }>,
+): string[] {
+  if (result.code === "lint_blocked" && result.details !== undefined) {
+    const findings = (result.details as { findings?: unknown }).findings;
+    if (!Array.isArray(findings)) return [];
+    return findings.map((finding, index) => {
+      if (!isRecord(finding)) {
+        return `  findings[${index}]: ${JSON.stringify(finding)}`;
+      }
+      const handle =
+        typeof finding.elementHandle === "string"
+          ? finding.elementHandle
+          : `finding ${index + 1}`;
+      const rule =
+        typeof finding.ruleId === "string" ? finding.ruleId : "unknown_rule";
+      const severity =
+        typeof finding.severity === "string"
+          ? finding.severity
+          : "unknown_severity";
+      const message =
+        typeof finding.message === "string"
+          ? finding.message
+          : JSON.stringify(finding);
+      return `  findings[${index}]: ${handle} [${rule}/${severity}] ${message}`;
+    });
+  }
+
+  if (result.code === "stale_element" && result.details !== undefined) {
+    const details = result.details as Partial<StaleElementCliErrorDetails>;
+    if (typeof details.currentVersion !== "number") return [];
+    return [
+      `  details.currentVersion: ${details.currentVersion}`,
+      `  details.currentContent: ${JSON.stringify(details.currentContent)}`,
+    ];
+  }
+
+  return [];
 }
 
 /**
@@ -851,11 +999,13 @@ export function failureFromRequest(
       json,
     });
   }
+  const detailLines = [
+    ...(result.issues?.map((issue) => `  ${issue.path}: ${issue.message}`) ??
+      []),
+    ...refusalDetailLines(result),
+  ];
+  const detail = detailLines.length > 0 ? detailLines.join("\n") : undefined;
   if (result.status === 400 || result.status === 422) {
-    const detail =
-      result.issues && result.issues.length > 0
-        ? result.issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")
-        : undefined;
     return failure({
       exitCode: EXIT_USAGE,
       message: result.error,
@@ -867,6 +1017,7 @@ export function failureFromRequest(
   return failure({
     exitCode: EXIT_OPERATION_FAILED,
     message: result.error,
+    ...(result.instruction && detail ? { detail } : {}),
     ...structuredErrorFields(result),
     json,
   });

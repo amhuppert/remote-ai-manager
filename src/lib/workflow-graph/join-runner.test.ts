@@ -122,6 +122,8 @@ function completed(mergeHash = "abc123"): MergeOutput {
     expectedTargetSha: null,
     parkedRef: null,
     refreshWarning: null,
+    candidateValidation: null,
+    haltReason: null,
     phase: null,
   };
 }
@@ -138,7 +140,27 @@ function failed(error: string, conflictFiles: string[] = []): MergeOutput {
     expectedTargetSha: null,
     parkedRef: null,
     refreshWarning: null,
+    candidateValidation: null,
+    haltReason: null,
     phase: null,
+  };
+}
+
+function deliveryGateFailed(): MergeOutput {
+  return {
+    ...failed("Delivery gate refused merge"),
+    haltReason: {
+      type: "delivery_gate_failed",
+      unmet: [
+        {
+          criterionId: "criterion-1",
+          criterionHandle: "native-sdd/R18.4",
+          outcome: "unmet",
+          reason: "candidate proof is stale",
+        },
+      ],
+      instruction: "Re-dispatch the merge to validate the candidate again.",
+    },
   };
 }
 
@@ -155,6 +177,117 @@ function setupExecutionWithJoin(
 }
 
 describe("join-runner", () => {
+  it("gates every final-publish source without marking delivery at the session boundary", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-final",
+        kind: "final_publish",
+        targetLaneId: "lane-session",
+        sourceLaneIds: ["lane-session", "lane-feature-a", "lane-feature-b"],
+      }),
+      {
+        "lane-session": makeLane({
+          laneId: "lane-session",
+          branchName: "csm/session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-feature-a": makeLane({
+          laneId: "lane-feature-a",
+          branchName: "csm/feature-a",
+          worktreePath: "/tmp/feature-a",
+        }),
+        "lane-feature-b": makeLane({
+          laneId: "lane-feature-b",
+          branchName: "csm/feature-b",
+          worktreePath: "/tmp/feature-b",
+        }),
+      },
+    );
+    const observed: GraphMergeRunnerInput[] = [];
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([
+          ["csm/feature-a", completed("intermediate-sha")],
+          ["csm/feature-b", completed("published-sha")],
+        ]),
+        observed,
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      createJobId: () => "job-final",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-final",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(observed).toHaveLength(2);
+    expect(
+      observed.map(({ executionId, finalPublish }) => ({
+        executionId,
+        finalPublish,
+      })),
+    ).toEqual([
+      { executionId: execution.id, finalPublish: false },
+      { executionId: execution.id, finalPublish: false },
+    ]);
+  });
+
+  it("returns the machine-readable halt reason from a refused delivery gate", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+      },
+    );
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([["csm/lane-b", deliveryGateFailed()]]),
+        [],
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.haltReason).toEqual(deliveryGateFailed().haltReason);
+    }
+  });
+
   it("passes an assembled resolutionContext describing both lanes to the merge runner", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({

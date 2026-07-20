@@ -80,7 +80,7 @@ function createTestMachine(overrides: ActorOverrides = {}) {
         overrides.commitChanges ??
         mockCommitChanges(async () => ({ hash: "abc123" })),
       runValidation:
-        overrides.runValidation ?? mockRunValidation(async () => undefined),
+        overrides.runValidation ?? mockRunValidation(async () => null),
       fixValidation:
         overrides.fixValidation ??
         mockFixValidation(async () => ({ status: "fixed" })),
@@ -162,6 +162,7 @@ describe("commitMachine", () => {
           if (validationCallCount === 1) {
             throw new Error("typecheck failed: TS2345");
           }
+          return null;
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "fixed",
@@ -234,6 +235,7 @@ describe("commitMachine", () => {
             throw new Error(`Validation error #${validationCallCount}`);
           }
           // Third call (second revalidation) succeeds
+          return null;
         }),
         fixValidation: mockFixValidation(async () => {
           fixCallCount++;
@@ -364,6 +366,7 @@ describe("commitMachine", () => {
           if (validationCallCount === 1) {
             throw new Error("lint errors");
           }
+          return null;
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "fixed",
@@ -394,6 +397,7 @@ describe("commitMachine", () => {
           if (validationCallCount <= 2) {
             throw new Error(`error ${validationCallCount}`);
           }
+          return null;
         }),
         fixValidation: mockFixValidation(async (input) => {
           fixInputs.push({ ...input });
@@ -463,6 +467,7 @@ describe("commitMachine", () => {
           if (validationCallCount === 1) {
             throw new Error("errors");
           }
+          return null;
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "fixed",
@@ -527,7 +532,7 @@ describe("commitMachine", () => {
       const machine = createTestMachine({
         runValidation: mockRunValidation(async (input) => {
           received = input;
-          return undefined;
+          return null;
         }),
       });
       const actor = createActor(machine, {

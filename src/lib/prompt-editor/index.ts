@@ -23,6 +23,27 @@ export {
   ticketRefAttrsToMentionAttrs,
 } from "./ticket-mention-node";
 export type { TicketMentionAttrs } from "./ticket-mention-node";
+export {
+  AssumptionMentionNode,
+  DecisionMentionNode,
+  QuestionMentionNode,
+  RequirementMentionNode,
+  SpecMentionNode,
+  TaskMentionNode,
+  buildSpecReadCommand,
+  buildSpecReferenceXml,
+  specElementRefAttrsSchema,
+  specElementRefAttrsToMentionAttrs,
+  specRefAttrsSchema,
+  specRefAttrsToMentionAttrs,
+} from "./spec-mention-nodes";
+export type {
+  SpecElementMentionAttrs,
+  SpecElementRefAttrs,
+  SpecMentionAttrs,
+  SpecRefAttrs,
+  SpecReferenceType,
+} from "./spec-mention-nodes";
 export { RefPasteHandler } from "./ref-paste-extension";
 export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
@@ -32,15 +53,36 @@ export { ImagePasteHandler } from "./paste-handler-extension";
 export { SlashCommand } from "./slash-command-extension";
 export type { SlashCommandTrigger } from "./slash-command-extension";
 export { FileMention } from "./file-mention-extension";
-export { ConversationMention } from "./conversation-mention-extension";
+export {
+  UnifiedMention,
+  getUnifiedMentionGroups,
+  parseSpecDrillInQuery,
+} from "./unified-mention-extension";
 export type {
-  ConversationMentionExtensionOptions,
-  ConversationMentionItem,
-} from "./conversation-mention-extension";
-export { TicketMention } from "./ticket-mention-extension";
+  UnifiedMentionExtensionOptions,
+  UnifiedMentionGroup,
+} from "./unified-mention-extension";
+export { TicketShortcut } from "./ticket-shortcut-extension";
 export type {
-  TicketMentionExtensionOptions,
-  TicketMentionItem,
-} from "./ticket-mention-extension";
+  TicketShortcutExtensionOptions,
+  TicketShortcutItem,
+} from "./ticket-shortcut-extension";
 export { TerminalHotkeys } from "./terminal-hotkeys-extension";
+export {
+  REFERENCE_REGISTRY,
+  getReferenceByNodeName,
+  getReferenceByType,
+  getReferenceByXmlTag,
+} from "./reference-registry";
+export type {
+  ReferenceNodeName,
+  ReferencePickerContext,
+  ReferencePickerItem,
+  ReferencePickerSource,
+  ReferenceRegistryEntry,
+  SpecPickerElement,
+  SpecPickerSpec,
+  ReferenceType,
+  ReferenceXmlTag,
+} from "./reference-registry";
 export { CodeFormatting } from "./code-formatting-extension";

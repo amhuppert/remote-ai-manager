@@ -393,6 +393,10 @@ const smartMergeMetadata: MachineMetadata = {
     },
     publishing: {
       description:
+        "Runs the delivery gate against the prepared candidate. Pass → publishingCandidate. Refusal → deliveryGateFailed with the parked candidate ref preserved.",
+    },
+    publishingCandidate: {
+      description:
         "Discovers the target worktree (no lock), then acquires the project lock and atomically advances the target ref via update-ref CAS. Dirty target → readyToLand; CAS lost + retries → preparing; CAS lost + exhausted → failed.",
     },
     discarding: {
@@ -405,6 +409,11 @@ const smartMergeMetadata: MachineMetadata = {
     failed: {
       status: "failure",
       description: "Pipeline failed. Error message captured in context.error.",
+    },
+    deliveryGateFailed: {
+      status: "failure",
+      description:
+        "Terminal refusal from the delivery gate. haltReason captures the unmet delivery criteria and instruction.",
     },
     conflicts: {
       status: "warning",
@@ -438,6 +447,8 @@ const smartMergeMetadata: MachineMetadata = {
       "Agent-driven validation fix. Reuses the previous fix session (continuity across retries).",
     prepare:
       "Reads featureSha and targetSha, then invokes prepareSquashMerge (plumbing or fallback). Returns { prepared, expectedTargetSha, parkedRef } or { conflicts }.",
+    deliveryGate:
+      "Evaluates the prepared candidate against the delivery gate using the workflow execution id, prepared SHA, expected target SHA, project path, and any persisted candidate validation fact. Returns pass-through or a machine-readable refusal.",
     publish:
       "Discovers the target worktree (no lock). On dirty, returns ready-to-land. Otherwise acquires the project lock, performs CAS via publishPreparedMerge, optionally refreshes a clean target worktree, deletes the parked ref, and (when finalizeSession) runs setSessionFinished / retargetOrphanedChildren / stopAllForSession.",
     discardParkedRef:
@@ -463,6 +474,8 @@ const smartMergeMetadata: MachineMetadata = {
       "entryMode === 'discard' (drops the parked ref without advancing the target).",
     prepareProducedConflicts:
       'prepare actor returned status: "conflicts" — the merge-tree plumbing found conflicts that block a clean squash.',
+    deliveryGatePassed:
+      'deliveryGate actor returned status: "allowed" — the prepared candidate satisfied the delivery criteria and may proceed to publish.',
     publishCompleted:
       'publish actor returned status: "completed" — CAS landed the prepared commit on the target ref.',
     publishReadyToLand:

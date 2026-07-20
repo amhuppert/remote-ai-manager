@@ -358,6 +358,51 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     expect((await response.json()).code).toBe("frozen");
   });
 
+  it("returns a machine-readable 409 with amend-at-source guidance for a locked region", async () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    await seedExecution({
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        lockedRegions: [
+          {
+            paths: ["/executionContexts/context-implement/acceptanceCriteria"],
+            sourceUri: "contract://criteria/R17.4",
+            reason: "Acceptance criteria are contract-derived",
+          },
+        ],
+      },
+    });
+
+    const response = await handlers.POST(
+      makeRequest(
+        "POST",
+        updateContext({
+          operations: [
+            {
+              type: "update-context",
+              contextId: "context-implement",
+              acceptanceCriteria: "Weakened criteria",
+            },
+          ],
+        }),
+      ),
+      routeParams,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "region_locked",
+      instruction:
+        "Amend at source contract://criteria/R17.4 and recompile the workflow definition.",
+    });
+    expect(
+      (await reload())?.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-implement",
+      )?.acceptanceCriteria,
+    ).toBe("Feature implemented");
+  });
+
   it("returns 400 invalid_edit for an unknown context", async () => {
     await seedExecution(createWorkflowExecution({ status: "paused" }));
 

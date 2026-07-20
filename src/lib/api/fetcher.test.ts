@@ -60,4 +60,45 @@ describe("mutationFetch", () => {
       expect(error.issues).toBeUndefined();
     }
   });
+
+  it("surfaces refusal conditions and the server instruction when no generic error is present", async () => {
+    stubFetchResponse(
+      {
+        code: "gate_blocked",
+        unmetConditions: [
+          "Execution plan needs a valid approval for revision-1.",
+        ],
+        instruction: "Resolve the sign-off preconditions and sign off again.",
+      },
+      409,
+    );
+
+    const error = await mutationFetch(
+      "/api/specs/demo/actions/sign-off",
+      "sign-off",
+      {
+        method: "POST",
+      },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiCallError);
+    if (error instanceof ApiCallError) {
+      expect(error.code).toBe("gate_blocked");
+      expect(error.message).toBe(
+        "Execution plan needs a valid approval for revision-1. Resolve the sign-off preconditions and sign off again.",
+      );
+      expect(error.issues).toEqual([
+        {
+          path: "unmetConditions[0]",
+          message: "Execution plan needs a valid approval for revision-1.",
+        },
+      ]);
+      expect(error.details).toEqual({
+        unmetConditions: [
+          "Execution plan needs a valid approval for revision-1.",
+        ],
+        instruction: "Resolve the sign-off preconditions and sign off again.",
+      });
+    }
+  });
 });

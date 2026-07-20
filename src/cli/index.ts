@@ -1,6 +1,6 @@
 // cctl bundle entrypoint. All logic lives in the pure core (core.ts); this
 // file only adapts process argv/env/stdio and must stay this thin.
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { sleep } from "@/lib/shared/sleep";
 import { runCli } from "./core";
@@ -38,6 +38,9 @@ const result = await runCli(process.argv.slice(2), process.env, {
     } catch {
       return null;
     }
+  },
+  async writeTextFile(filePath, content) {
+    await writeFile(filePath, content, "utf-8");
   },
   sleep,
   platform: os.platform(),

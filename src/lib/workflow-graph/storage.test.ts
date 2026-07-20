@@ -11,6 +11,7 @@ import {
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
+  createWorkflowExecution,
 } from "./test-fixtures";
 import { createWorkflowStorageService, type WorkflowScope } from "./storage";
 import { createWorkflowCharterService } from "./charter/service";
@@ -70,6 +71,120 @@ afterEach(() => {
 });
 
 describe("workflow-graph storage", () => {
+  it("refuses replacing locked content while an execution seeds from the definition", async () => {
+    let seededDefinitionId: string | null = null;
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => TEST_DIR,
+      async listActiveExecutions() {
+        if (seededDefinitionId === null) return new Map();
+        return new Map([
+          [
+            "/repo\0session-1",
+            createWorkflowExecution({
+              seedDefinitionId: seededDefinitionId,
+              status: "running",
+            }),
+          ],
+        ]);
+      },
+    });
+    const definition = createWorkflowDefinition({
+      lockedRegions: [
+        {
+          paths: ["/tasks/task-plan-1/instructions"],
+          sourceUri: "contract://plans/revision-7",
+          reason: "Task instructions are contract-derived",
+        },
+      ],
+    });
+    const created = await storage.create(REPO_SCOPE, {
+      name: "Locked workflow",
+      description: null,
+      definition,
+      layout: createWorkflowDefinitionRecord().layout,
+    });
+    seededDefinitionId = created.id;
+    const replacement = structuredClone(definition);
+    replacement.tasks[0]!.instructions = "Weakened downstream instructions";
+
+    await expect(
+      storage.update(REPO_SCOPE, created.id, {
+        name: created.name,
+        description: created.description,
+        definition: replacement,
+        layout: created.layout,
+      }),
+    ).rejects.toMatchObject({
+      code: "region_locked",
+      lockedPath: "/tasks/task-plan-1/instructions",
+      sourceUri: "contract://plans/revision-7",
+      instruction:
+        "Amend at source contract://plans/revision-7 and recompile the workflow definition.",
+    });
+
+    expect((await storage.get(REPO_SCOPE, created.id))?.revision).toBe(1);
+    expect(
+      (await storage.get(REPO_SCOPE, created.id))?.definition.tasks[0]
+        ?.instructions,
+    ).toBe("Read the relevant files.");
+  });
+
+  it("refuses replacing content selected by a wildcard locked path", async () => {
+    let seededDefinitionId: string | null = null;
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => TEST_DIR,
+      async listActiveExecutions() {
+        if (seededDefinitionId === null) return new Map();
+        return new Map([
+          [
+            "/repo\0session-1",
+            createWorkflowExecution({
+              seedDefinitionId: seededDefinitionId,
+              status: "running",
+            }),
+          ],
+        ]);
+      },
+    });
+    const definition = createWorkflowDefinition({
+      lockedRegions: [
+        {
+          paths: ["/tasks/*/instructions"],
+          sourceUri: "contract://plans/revision-7",
+          reason: "All task instructions are contract-derived",
+        },
+      ],
+    });
+    const created = await storage.create(REPO_SCOPE, {
+      name: "Wildcard-locked workflow",
+      description: null,
+      definition,
+      layout: createWorkflowDefinitionRecord().layout,
+    });
+    seededDefinitionId = created.id;
+    const replacement = structuredClone(definition);
+    replacement.tasks[0]!.instructions = "Weakened downstream instructions";
+
+    await expect(
+      storage.update(REPO_SCOPE, created.id, {
+        name: created.name,
+        description: created.description,
+        definition: replacement,
+        layout: created.layout,
+      }),
+    ).rejects.toMatchObject({
+      code: "region_locked",
+      lockedPath: "/tasks/*/instructions",
+      sourceUri: "contract://plans/revision-7",
+    });
+
+    expect((await storage.get(REPO_SCOPE, created.id))?.revision).toBe(1);
+    expect(
+      (await storage.get(REPO_SCOPE, created.id))?.definition.tasks[0]
+        ?.instructions,
+    ).toBe("Read the relevant files.");
+  });
+
   it("creates, lists, gets, updates, and deletes workflow definitions", async () => {
     const { storage } = createServices();
 

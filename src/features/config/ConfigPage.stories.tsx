@@ -56,6 +56,9 @@ const fullyConfiguredRaw: RawGlobalConfig = {
       workflowCompleted: true,
       workflowHalted: true,
       conversationIdle: false,
+      specApprovalRequested: true,
+      specApprovalGranted: true,
+      specPolicyAdmitted: true,
     },
   },
   codex: {
@@ -90,6 +93,9 @@ const fullyConfiguredConfig: GlobalConfig = {
       workflowCompleted: true,
       workflowHalted: true,
       conversationIdle: false,
+      specApprovalRequested: true,
+      specApprovalGranted: true,
+      specPolicyAdmitted: true,
     },
   },
   codex: {

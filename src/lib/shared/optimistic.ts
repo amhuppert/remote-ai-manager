@@ -105,7 +105,7 @@ export async function executeOptimisticWorkflow(
     await deps.sleep(500);
 
     // Dispatch smart merge with auto-resolve
-    deps.dispatchMergeJob({
+    const merge = deps.dispatchMergeJob({
       projectPath,
       projectName,
       sessionName: session.sessionName,
@@ -116,6 +116,29 @@ export async function executeOptimisticWorkflow(
       targetBranch: session.targetBranch,
       targetWorktreePath,
     });
+
+    if (!merge.ok) {
+      const reason =
+        typeof merge.error === "string"
+          ? merge.error
+          : `${merge.error.reason} ${merge.error.instruction}`;
+      logger.warn("optimistic.merge_dispatch_refused", {
+        projectName,
+        sessionName: session.sessionName,
+        reason,
+      });
+      deps.createNotification({
+        type: "merge-failed",
+        title: "Optimistic merge not dispatched",
+        message: `Optimistic task "${instructions}" finished but its merge was not dispatched: ${reason}`,
+        projectName,
+        sessionName: session.sessionName,
+        branchName: session.branchName,
+        jobId: "optimistic-" + session.sessionName,
+        jobType: "merge",
+      });
+      return;
+    }
 
     logger.info("optimistic.merge_dispatched", {
       projectName,

@@ -2038,6 +2038,31 @@ describe("conversation command interception", () => {
     );
   });
 
+  it("starts /spec in a conversation and carries the native command to the SDK turn", async () => {
+    const dispatchConversationCommand = vi.fn();
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+
+    const result = await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/spec durable audit log",
+      vi.fn(),
+    );
+
+    expect(result.conversationId).toBe("conv-123");
+    expect(deps.createConversation).toHaveBeenCalledTimes(1);
+    expect(dispatchConversationCommand).not.toHaveBeenCalled();
+    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "conv-123",
+        turn: expect.objectContaining({
+          promptText: "/spec durable audit log",
+        }),
+      }),
+    );
+  });
+
   it("leaves /collab on the collaboration dispatcher, not the command service", async () => {
     const dispatchConversationCommand = vi.fn();
     const dispatchCollabStart = vi

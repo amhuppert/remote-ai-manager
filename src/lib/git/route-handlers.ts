@@ -22,6 +22,8 @@ import {
   dispatchMergeJob as defaultDispatchMergeJob,
   dispatchResolveConflictsJob as defaultDispatchResolveConflictsJob,
   getJob as defaultGetJob,
+  type MergeDispatchError,
+  type MergeDispatchResult,
 } from "@/lib/jobs/queue";
 import { defaultGitClient, type GitClient } from "./client";
 import {
@@ -89,7 +91,10 @@ export interface GitRouteDeps {
     expectedTargetSha?: string;
     parkedRef?: string;
     resolutionContext?: string;
-  }): JobDispatchResult<{ jobId: string }>;
+    executionId?: string;
+    finalPublish?: boolean;
+    candidateValidation?: BackgroundJob["candidateValidation"];
+  }): MergeDispatchResult;
   dispatchResolveConflictsJob(params: {
     projectPath: string;
     projectName: string;
@@ -101,7 +106,10 @@ export interface GitRouteDeps {
     targetBranch?: string;
     targetWorktreePath?: string;
     resolutionContext?: string;
-  }): JobDispatchResult<{ jobId: string }>;
+    executionId?: string;
+    finalPublish?: boolean;
+    candidateValidation?: BackgroundJob["candidateValidation"];
+  }): MergeDispatchResult;
   getJob(projectPath: string, sessionName: string): BackgroundJob | undefined;
   gitClient: GitClient;
 }
@@ -132,6 +140,24 @@ function jobDispatchConflict(code: string): Response {
           : "A job is already running for this session",
       code,
     } satisfies ApiError,
+    { status: 409 },
+  );
+}
+
+/**
+ * Merge dispatch errors: lock/registry conflicts stay the plain 409, while an
+ * association refusal renders the specs refusal envelope (unmetConditions +
+ * instruction) the client already knows how to surface.
+ */
+function mergeDispatchErrorResponse(error: MergeDispatchError): Response {
+  if (typeof error === "string") return jobDispatchConflict(error);
+  return NextResponse.json(
+    {
+      error: error.reason,
+      code: error.code,
+      unmetConditions: [error.reason],
+      instruction: error.instruction,
+    },
     { status: 409 },
   );
 }
@@ -413,7 +439,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       targetWorktreePath: targetWorktreePath ?? undefined,
     });
 
-    if (!result.ok) return jobDispatchConflict(result.error);
+    if (!result.ok) return mergeDispatchErrorResponse(result.error);
     return jobAccepted(result.value.jobId, "merge", session.branchName);
   }
 
@@ -440,7 +466,9 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
 
     // The conflicts-terminal merge job (still in the registry) carries the
-    // intent notes generated at /merge time; reuse them for the retry.
+    // intent notes generated at /merge time plus the merge's execution
+    // provenance and validation fact; the retry must keep all of them or the
+    // delivery gate silently loses its linkage.
     const priorJob = deps.getJob(projectPath, sessionName);
 
     const result = deps.dispatchResolveConflictsJob({
@@ -454,9 +482,12 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       targetBranch,
       targetWorktreePath: targetWorktreePath ?? undefined,
       resolutionContext: priorJob?.resolutionContext,
+      executionId: priorJob?.executionId,
+      finalPublish: priorJob?.finalPublish,
+      candidateValidation: priorJob?.candidateValidation,
     });
 
-    if (!result.ok) return jobDispatchConflict(result.error);
+    if (!result.ok) return mergeDispatchErrorResponse(result.error);
     return jobAccepted(
       result.value.jobId,
       "resolve-conflicts",
@@ -520,9 +551,12 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       expectedTargetSha,
       parkedRef,
       resolutionContext: job.resolutionContext,
+      executionId: job.executionId,
+      finalPublish: job.finalPublish,
+      candidateValidation: job.candidateValidation,
     });
 
-    if (!result.ok) return jobDispatchConflict(result.error);
+    if (!result.ok) return mergeDispatchErrorResponse(result.error);
     return jobAccepted(result.value.jobId, "merge", session.branchName);
   }
 
@@ -556,7 +590,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       parkedRef,
     });
 
-    if (!result.ok) return jobDispatchConflict(result.error);
+    if (!result.ok) return mergeDispatchErrorResponse(result.error);
     return jobAccepted(result.value.jobId, "merge", session.branchName);
   }
 

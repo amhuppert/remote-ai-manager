@@ -13,6 +13,10 @@ import {
   listActiveGraphWorkflowExecutions as defaultListActiveGraphWorkflowExecutions,
 } from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
+import {
+  listActiveSpecExecutionsForFeed as defaultListActiveSpecExecutions,
+  type ActiveSpecExecutionFeedItem,
+} from "@/lib/specs/active-executions";
 import { truncate } from "@/lib/shared/truncate";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/prompt/transcript";
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
@@ -63,6 +67,8 @@ export interface ActiveConversationsRouteDeps {
   listActiveGraphWorkflowExecutions(): Promise<
     Map<string, GraphWorkflowExecution>
   >;
+  /** Every spec execution in definition_review or running, across all specs. */
+  listActiveSpecExecutions(): Promise<ActiveSpecExecutionFeedItem[]>;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
@@ -71,6 +77,7 @@ const defaultDeps: ActiveConversationsRouteDeps = {
   readLastAssistantContent: defaultReadLastAssistantContent,
   listProjectConversations: defaultListAllProjectConversations,
   listActiveGraphWorkflowExecutions: defaultListActiveGraphWorkflowExecutions,
+  listActiveSpecExecutions: defaultListActiveSpecExecutions,
 };
 
 /** Map key for {@link ActiveConversationsRouteDeps.listActiveGraphWorkflowExecutions}. */
@@ -446,12 +453,15 @@ export function createActiveConversationsRouteHandlers(
 ) {
   async function GET(): Promise<Response> {
     try {
-      const [state, projectConversations, activeExecutions] = await Promise.all(
-        [
+      const [state, projectConversations, activeExecutions, allSpecExecutions] =
+        await Promise.all([
           deps.readState(),
           deps.listProjectConversations(),
           deps.listActiveGraphWorkflowExecutions(),
-        ],
+          deps.listActiveSpecExecutions(),
+        ]);
+      const specExecutions = allSpecExecutions.filter(
+        (execution) => !state.archivedProjects.includes(execution.projectPath),
       );
       const conversations: ActiveConversation[] = [];
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
@@ -781,6 +791,7 @@ export function createActiveConversationsRouteHandlers(
         conversations,
         graphWorkflowExecutions,
         activeCollaborationExecutions,
+        specExecutions,
       });
     } catch (err) {
       const message =

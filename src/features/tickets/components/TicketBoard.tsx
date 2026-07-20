@@ -26,7 +26,7 @@ import {
 import type { TicketListItem, TicketStatus } from "@/lib/tickets/schemas";
 import { cn } from "@/lib/ui/cn";
 import { pushToast } from "@/stores/toast.store";
-import { copyTicketReference } from "../copy-ticket-reference";
+import { copyTicketReference } from "@/components/references/copy-ticket-reference";
 import { ticketIdentifier } from "../ticket-reference";
 import { TICKET_STATUS_ORDER, TICKET_STATUS_VISUALS } from "../ticket-visuals";
 import {

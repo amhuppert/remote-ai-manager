@@ -127,6 +127,25 @@ describe("createWriteQueue", () => {
     await Promise.all([a, b]);
     expect(order).toEqual(["B", "A"]);
   });
+
+  it("lets best-effort callers detect contention without waiting", async () => {
+    const queue = createWriteQueue();
+    let release!: () => void;
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = queue.withWriteQueue("holding", async () => blocker);
+
+    await expect(
+      queue.tryWithWriteQueue("best-effort", async () => "not-run"),
+    ).resolves.toEqual({ acquired: false });
+
+    release();
+    await holding;
+    await expect(
+      queue.tryWithWriteQueue("best-effort", async () => "ingested"),
+    ).resolves.toEqual({ acquired: true, value: "ingested" });
+  });
 });
 
 describe("module-level withWriteQueue", () => {

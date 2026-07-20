@@ -153,6 +153,7 @@ async function listRows(
     listActiveGraphWorkflowExecutions: vi
       .fn()
       .mockResolvedValue(activeExecutionsMap(graphWorkflowExecution)),
+    listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
   };
   const handlers = createActiveConversationsRouteHandlers(deps);
   const response = await handlers.GET();
@@ -160,6 +161,49 @@ async function listRows(
   const body = activeConversationsResponseSchema.parse(await response.json());
   return body.conversations;
 }
+
+describe("GET — active spec executions", () => {
+  it("serves feed items and drops executions in archived projects", async () => {
+    const liveItem = {
+      executionId: "spec-execution-live",
+      state: "definition_review" as const,
+      specSlug: "native-sdd",
+      specName: "Native SDD",
+      projectPath: "/repo/project",
+      projectName: "project",
+      sessionName: "session-a",
+      createdAt: "2026-07-19T09:00:00.000Z",
+    };
+    const archivedItem = {
+      ...liveItem,
+      executionId: "spec-execution-archived",
+      projectPath: "/repo/archived",
+      projectName: "archived",
+    };
+    const deps: ActiveConversationsRouteDeps = {
+      readState: vi.fn().mockResolvedValue({
+        ...makeState([]),
+        archivedProjects: ["/repo/archived"],
+      }),
+      getProjectDisplayName: vi.fn().mockReturnValue("project"),
+      readLastAssistantContent: vi.fn().mockResolvedValue(null),
+      listProjectConversations: vi.fn().mockResolvedValue([]),
+      listActiveGraphWorkflowExecutions: vi
+        .fn()
+        .mockResolvedValue(activeExecutionsMap(null)),
+      listActiveSpecExecutions: vi
+        .fn()
+        .mockResolvedValue([liveItem, archivedItem]),
+    };
+
+    const handlers = createActiveConversationsRouteHandlers(deps);
+    const response = await handlers.GET();
+    expect(response.status).toBe(200);
+    const body = activeConversationsResponseSchema.parse(await response.json());
+
+    expect(body.specExecutions).toEqual([liveItem]);
+  });
+});
 
 describe("GET — top-level read concurrency", () => {
   it("does not serialize the project-conversation and workflow reads behind readState", async () => {
@@ -177,6 +221,7 @@ describe("GET — top-level read concurrency", () => {
       readLastAssistantContent: vi.fn().mockResolvedValue(null),
       listProjectConversations,
       listActiveGraphWorkflowExecutions,
+      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
     };
     const handlers = createActiveConversationsRouteHandlers(deps);
 
@@ -551,6 +596,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
       listActiveGraphWorkflowExecutions: vi
         .fn()
         .mockResolvedValue(activeExecutionsMap(null)),
+      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
     };
     const handlers = createActiveConversationsRouteHandlers(deps);
     const response = await handlers.GET();

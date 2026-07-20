@@ -48,6 +48,18 @@ afterEach(async () => {
 function buildMaximalDefinition(): WorkflowSemanticDefinition {
   return {
     schemaVersion: 2,
+    approvalRequired: true,
+    origin: {
+      sourceUri: "workflow-source:maximal/revision/2",
+      label: "Maximal workflow source",
+    },
+    lockedRegions: [
+      {
+        paths: ["/tasks/task-1/instructions"],
+        sourceUri: "workflow-source:maximal/revision/2",
+        reason: "Task instructions come from the source workflow",
+      },
+    ],
     workflowConfig: {
       implementer: {
         backend: "claude",
@@ -123,6 +135,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         title: "Implement the thing",
         description: "Detailed description of the context",
         acceptanceCriteria: "All tests pass and the build is green",
+        origin: {
+          sourceUri: "workflow-source:maximal/context/ctx-1",
+          label: "Maximal context source",
+        },
         implementer: {
           backend: "claude",
           model: "opus",

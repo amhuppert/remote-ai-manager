@@ -35,6 +35,8 @@ import type {
   PrepareActorOutput,
   PublishActorInput,
   PublishActorOutput,
+  DeliveryGateActorInput,
+  DeliveryGateActorOutput,
   DiscardParkedRefInput,
   DiscardParkedRefOutput,
 } from "./actors";
@@ -45,6 +47,7 @@ import {
   analyzeConflictsActor,
   prepareActor,
   publishActor,
+  deliveryGateActor,
   discardParkedRefActor,
 } from "./actors";
 import type {
@@ -68,6 +71,15 @@ import { errorAssign } from "../utils";
 
 const SCHEMA_VERSION = 1;
 
+function formatDeliveryGateRefusal(
+  output: Extract<DeliveryGateActorOutput, { status: "refused" }>,
+): string {
+  const criteria = output.unmet
+    .map((criterion) => criterion.criterionHandle)
+    .join(", ");
+  return `Delivery gate refused merge; unmet criteria: ${criteria}. ${output.instruction}`;
+}
+
 /**
  * Shared validate → fix → check → commit-fix → revalidate fragment.
  * Success routes to `preparing`; a validation-script timeout short-circuits
@@ -82,7 +94,14 @@ const validationFixStates = createValidationFixStates<MergeContext>({
     targetBranch: context.targetBranch,
     timeoutMs: context.validationTimeoutMs,
   }),
-  onValidated: { target: "preparing" },
+  onValidated: {
+    target: "preparing",
+    actions: [
+      assign({
+        candidateValidation: ({ event }) => event.output ?? null,
+      }),
+    ],
+  },
   onTimeout: { target: "failed" },
   shouldAttemptFix: (context) => context.autoResolve,
 });
@@ -127,6 +146,9 @@ export const mergeMachine = setup({
     >,
     publish: publishActor as ReturnType<
       typeof fromPromise<PublishActorOutput, PublishActorInput>
+    >,
+    deliveryGate: deliveryGateActor as ReturnType<
+      typeof fromPromise<DeliveryGateActorOutput, DeliveryGateActorInput>
     >,
     discardParkedRef: discardParkedRefActor as ReturnType<
       typeof fromPromise<DiscardParkedRefOutput, DiscardParkedRefInput>
@@ -179,6 +201,10 @@ export const mergeMachine = setup({
       const e = event as unknown as { output: PublishActorOutput };
       return e.output.status === "failed";
     },
+    deliveryGatePassed: ({ event }) => {
+      const e = event as unknown as { output: DeliveryGateActorOutput };
+      return e.output.status === "pass";
+    },
     casRetriesRemaining: ({ context }) =>
       context.entryMode === "merge" &&
       context.casAttempt < context.maxCasAttempts,
@@ -222,6 +248,9 @@ export const mergeMachine = setup({
     casAttempt: 1,
     maxCasAttempts: input.maxCasAttempts ?? 3,
     finalizeSessionOnPublish: input.finalizeSessionOnPublish ?? true,
+    executionId: input.executionId ?? null,
+    candidateValidation: input.candidateValidation ?? null,
+    haltReason: null,
   }),
   initial: "entryRouting",
   states: {
@@ -465,6 +494,49 @@ export const mergeMachine = setup({
     publishing: {
       entry: assign({ phase: "publishing" as const }),
       invoke: {
+        src: "deliveryGate",
+        input: ({ context }) => ({
+          workflowExecutionId: context.executionId ?? undefined,
+          preparedSha: context.preparedSha ?? "",
+          expectedTargetSha: context.expectedTargetSha ?? "",
+          projectPath: context.projectPath,
+          ...(context.candidateValidation && {
+            candidateValidation: context.candidateValidation,
+          }),
+        }),
+        onDone: [
+          {
+            guard: "deliveryGatePassed",
+            target: "publishingCandidate",
+          },
+          {
+            target: "deliveryGateFailed",
+            actions: assign({
+              error: ({ event }) => {
+                const output = event.output;
+                return output.status === "refused"
+                  ? formatDeliveryGateRefusal(output)
+                  : "Delivery gate refused merge";
+              },
+              haltReason: ({ event }) => {
+                const output = event.output;
+                if (output.status !== "refused") return null;
+                return {
+                  type: "delivery_gate_failed" as const,
+                  unmet: output.unmet,
+                  instruction: output.instruction,
+                };
+              },
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+        ],
+        onError: { target: "failed", actions: errorAssign() },
+      },
+    },
+
+    publishingCandidate: {
+      invoke: {
         src: "publish",
         input: ({ context }) => ({
           projectPath: context.projectPath,
@@ -596,6 +668,15 @@ export const mergeMachine = setup({
       }),
     },
 
+    deliveryGateFailed: {
+      type: "final",
+      entry: assign({
+        finalStatus: "failed" as const,
+        phase: null,
+        completedAt: () => new Date().toISOString(),
+      }),
+    },
+
     conflicts: {
       type: "final",
       entry: assign({
@@ -634,6 +715,8 @@ export const mergeMachine = setup({
     expectedTargetSha: context.expectedTargetSha,
     parkedRef: context.parkedRef,
     refreshWarning: context.refreshWarning,
+    candidateValidation: context.candidateValidation,
+    haltReason: context.haltReason,
     phase: context.phase,
   }),
 });

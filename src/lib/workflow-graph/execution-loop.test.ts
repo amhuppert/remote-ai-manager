@@ -108,6 +108,7 @@ function createRunningExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    definitionApproval: null,
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),
@@ -659,6 +660,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
   const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] =
     input.laneCommitter ?? {
       commit: async () => ({ status: "skipped" }),
+      resolveHead: async () => null,
     };
 
   const getSession = input.getSession ?? (async () => makeStubSession());
@@ -988,6 +990,60 @@ describe("execution loop", () => {
 
     expect(wasActiveDuringIteration).toBe(true);
     expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
+  });
+
+  it("shares active loop state with a separately loaded module instance", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+    });
+    let releaseIteration!: () => void;
+    const iterationGate = new Promise<void>((resolve) => {
+      releaseIteration = resolve;
+    });
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          await iterationGate;
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    _resetActiveLoopsForTesting();
+    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+    await vi.waitFor(() => {
+      expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
+    });
+
+    try {
+      vi.resetModules();
+      const freshInstance = await import("./execution-loop");
+
+      expect(freshInstance.isExecutionLoopActive("/repo", "session-1")).toBe(
+        true,
+      );
+    } finally {
+      releaseIteration();
+      await runPromise;
+    }
   });
 
   it("retries once when the iteration fails with a stream-closed error", async () => {
@@ -2125,6 +2181,8 @@ describe("execution loop", () => {
         expectedTargetSha: null,
         parkedRef: null,
         refreshWarning: null,
+        candidateValidation: null,
+        haltReason: null,
         phase: null,
       })),
     };
@@ -2301,6 +2359,7 @@ describe("execution loop", () => {
           committedAt: "2026-03-27T12:04:00.000Z",
         },
       })),
+      resolveHead: async () => null,
     };
 
     const harness = buildHarness({
@@ -2341,6 +2400,7 @@ describe("execution loop", () => {
       contextId: "ctx-1",
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: null,
     });
     expect(mergeRunner.run).not.toHaveBeenCalled();
 
@@ -2355,6 +2415,386 @@ describe("execution loop", () => {
     ]);
     expect(lane!.lastCommittingContextId).toBe("ctx-1");
     expect(lane!.includedContextIds).toContain("ctx-1");
+    expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
+    expect(result.status).toBe("completed");
+  });
+
+  it("captures the lane HEAD before the turn and records an adopted snapshot when the implementer self-committed (worktree clean, HEAD moved)", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          pendingApproval: null,
+          pendingUserInput: null,
+          contextId: "ctx-1",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          isolation: "worktree",
+          batchId: null,
+          laneId: "lane-plan",
+          joinId: null,
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+          lastMergeError: null,
+        },
+      },
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-03-27T11:55:00.000Z",
+          updatedAt: "2026-03-27T11:55:00.000Z",
+        },
+      },
+    });
+
+    const laneTarget: ExecutionTarget = {
+      worktreePath: "/repo/.worktrees/session-1.lane-plan",
+      branchName: "csm/session-1-lane-plan",
+      isolation: "worktree",
+      laneId: "lane-plan",
+    };
+
+    const mergeRunner: GraphMergeRunner = { run: vi.fn() };
+
+    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+      resolveHead: vi.fn(async () => "head-before-turn"),
+      commit: vi.fn(async (commitInput) =>
+        commitInput.preTurnHeadSha === "head-before-turn"
+          ? {
+              status: "adopted" as const,
+              snapshot: {
+                contextId: commitInput.contextId,
+                sha: "head-after-selfcommit",
+                committedAt: "2026-03-27T12:04:00.000Z",
+              },
+            }
+          : { status: "skipped" as const },
+      ),
+    };
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      executionTargetResolver: { resolve: () => laneTarget },
+      mergeRunner,
+      laneCommitter,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    // The pre-turn HEAD is captured against the lane worktree and delivered
+    // into the commit phase; the committer's adopted snapshot lands exactly
+    // like a committed one.
+    expect(laneCommitter.resolveHead).toHaveBeenCalledTimes(1);
+    expect(laneCommitter.resolveHead).toHaveBeenCalledWith(
+      "/repo/.worktrees/session-1.lane-plan",
+    );
+    expect(laneCommitter.commit).toHaveBeenCalledTimes(1);
+    expect(laneCommitter.commit).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "ctx-1",
+      laneId: "lane-plan",
+      laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: "head-before-turn",
+    });
+    expect(mergeRunner.run).not.toHaveBeenCalled();
+
+    const lane = result.executionLanes["lane-plan"];
+    expect(lane).toBeDefined();
+    expect(lane!.commitSnapshots).toEqual([
+      {
+        contextId: "ctx-1",
+        sha: "head-after-selfcommit",
+        committedAt: "2026-03-27T12:04:00.000Z",
+      },
+    ]);
+    expect(lane!.lastCommittingContextId).toBe("ctx-1");
+    expect(lane!.includedContextIds).toContain("ctx-1");
+    expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
+    expect(result.contextStates["ctx-1"]?.lastMergeError).toBeNull();
+    expect(result.status).toBe("completed");
+  });
+
+  it("records the solo commit as a session-lane snapshot so single-context session runs carry commit evidence", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+
+    const soloContextCommitter = {
+      commit: vi.fn(async () => ({
+        status: "committed" as const,
+        hash: "solo-commit-sha",
+      })),
+    };
+    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+      commit: vi.fn(async () => ({ status: "skipped" as const })),
+      resolveHead: vi.fn(async () => "session-head-0"),
+    };
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      soloContextCommitter,
+      laneCommitter,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("completed");
+    const sessionLane = result.executionLanes["__session__"];
+    expect(sessionLane?.kind).toBe("session");
+    expect(sessionLane?.commitSnapshots).toEqual([
+      expect.objectContaining({ contextId: "ctx-1", sha: "solo-commit-sha" }),
+    ]);
+    expect(sessionLane?.includedContextIds).toContain("ctx-1");
+  });
+
+  it("adopts the moved session HEAD when the solo implementer self-committed", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+
+    const soloContextCommitter = {
+      commit: vi.fn(async () => ({ status: "skipped" as const })),
+    };
+    const resolveHead = vi
+      .fn<(worktreePath: string) => Promise<string | null>>()
+      .mockResolvedValueOnce("session-head-0")
+      .mockResolvedValue("session-head-after-selfcommit");
+    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+      commit: vi.fn(async () => ({ status: "skipped" as const })),
+      resolveHead,
+    };
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      soloContextCommitter,
+      laneCommitter,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("completed");
+    // Baseline captured against the session worktree before the turn.
+    expect(resolveHead).toHaveBeenCalledWith("/repo/.worktrees/session-1");
+    const sessionLane = result.executionLanes["__session__"];
+    expect(sessionLane?.commitSnapshots).toEqual([
+      expect.objectContaining({
+        contextId: "ctx-1",
+        sha: "session-head-after-selfcommit",
+      }),
+    ]);
+  });
+
+  it("records no session-lane snapshot when the solo commit skips with an unmoved HEAD", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+
+    const soloContextCommitter = {
+      commit: vi.fn(async () => ({ status: "skipped" as const })),
+    };
+    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+      commit: vi.fn(async () => ({ status: "skipped" as const })),
+      resolveHead: vi.fn(async () => "session-head-0"),
+    };
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      soloContextCommitter,
+      laneCommitter,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("completed");
+    const sessionLane = result.executionLanes["__session__"];
+    expect(sessionLane?.commitSnapshots ?? []).toEqual([]);
+  });
+
+  it("tolerates a failing pre-turn HEAD capture: the commit phase runs with a null baseline and the context still completes", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          pendingApproval: null,
+          pendingUserInput: null,
+          contextId: "ctx-1",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          isolation: "worktree",
+          batchId: null,
+          laneId: "lane-plan",
+          joinId: null,
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+          lastMergeError: null,
+        },
+      },
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-03-27T11:55:00.000Z",
+          updatedAt: "2026-03-27T11:55:00.000Z",
+        },
+      },
+    });
+
+    const laneTarget: ExecutionTarget = {
+      worktreePath: "/repo/.worktrees/session-1.lane-plan",
+      branchName: "csm/session-1-lane-plan",
+      isolation: "worktree",
+      laneId: "lane-plan",
+    };
+
+    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+      resolveHead: vi.fn(async () => {
+        throw new Error("rev-parse failed");
+      }),
+      commit: vi.fn(async () => ({ status: "skipped" as const })),
+    };
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      executionTargetResolver: { resolve: () => laneTarget },
+      laneCommitter,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(laneCommitter.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ preTurnHeadSha: null }),
+    );
     expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
     expect(result.status).toBe("completed");
   });
@@ -2414,6 +2854,7 @@ describe("execution loop", () => {
 
     const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
+      resolveHead: async () => null,
     };
 
     const harness = buildHarness({
@@ -2512,6 +2953,7 @@ describe("execution loop", () => {
         status: "failed" as const,
         errorMessage: "git commit failed on lane",
       })),
+      resolveHead: async () => null,
     };
 
     const harness = buildHarness({
@@ -3230,6 +3672,7 @@ describe("execution loop", () => {
           message: "merge conflict in ticket-detail.ts",
           conflictFiles: ["ticket-detail.ts"],
           failedSourceLaneId: "lane-b",
+          haltReason: null,
         };
       },
     );
@@ -3813,7 +4256,7 @@ describe("execution loop", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("halts with join_failure when the final publish join fails, preserving conflict files", async () => {
+  it("preserves a delivery-gate halt reason when the final publish join is refused", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {
       contextStates: {
@@ -3870,9 +4313,22 @@ describe("execution loop", () => {
         );
         return {
           status: "failed",
-          message: "merge conflict in shared.ts",
-          conflictFiles: ["shared.ts"],
+          message: "Delivery gate refused merge",
+          conflictFiles: [],
           failedSourceLaneId: "lane-plan",
+          haltReason: {
+            type: "delivery_gate_failed",
+            unmet: [
+              {
+                criterionId: "criterion-1",
+                criterionHandle: "native-sdd/R18.4",
+                outcome: "unmet",
+                reason: "candidate proof is stale",
+              },
+            ],
+            instruction:
+              "Re-dispatch the merge to validate the candidate again.",
+          },
         };
       },
     );
@@ -3897,13 +4353,17 @@ describe("execution loop", () => {
 
     expect(joinRunSpy).toHaveBeenCalledTimes(1);
     expect(result.status).toBe("halted");
-    expect(result.haltReason).toMatchObject({
-      type: "join_failure",
-      joinKind: "final_publish",
-      sourceLaneIds: ["lane-plan"],
-      targetLaneId: "__session__",
-      message: "merge conflict in shared.ts",
-      conflictFiles: ["shared.ts"],
+    expect(result.haltReason).toEqual({
+      type: "delivery_gate_failed",
+      unmet: [
+        {
+          criterionId: "criterion-1",
+          criterionHandle: "native-sdd/R18.4",
+          outcome: "unmet",
+          reason: "candidate proof is stale",
+        },
+      ],
+      instruction: "Re-dispatch the merge to validate the candidate again.",
     });
   });
 

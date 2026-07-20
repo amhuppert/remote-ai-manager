@@ -3,6 +3,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { abortInProgressMerge as defaultAbortInProgressMerge } from "@/lib/git/worktree";
 import type { ConflictEntry } from "@/lib/jobs/schemas";
+import type { DeliveryGateHaltReason } from "@/lib/jobs/schemas";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
 import type { SessionGitLock } from "@/lib/shared/lock-retry";
@@ -36,6 +37,7 @@ type JoinRunResult =
       message: string;
       conflictFiles: string[];
       failedSourceLaneId: string;
+      haltReason: DeliveryGateHaltReason | null;
     };
 
 export interface JoinRunner {
@@ -80,6 +82,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           message,
           conflictFiles: [],
           failedSourceLaneId: "",
+          haltReason: null,
         };
       }
 
@@ -102,6 +105,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           message,
           conflictFiles: [],
           failedSourceLaneId: "",
+          haltReason: null,
         };
       }
 
@@ -147,6 +151,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             message,
             conflictFiles: [],
             failedSourceLaneId: sourceLaneId,
+            haltReason: null,
           };
         }
 
@@ -159,6 +164,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         let mergeError: string | null = null;
         let mergeConflictFiles: string[] = [];
         let mergeConflictAnalysis: ConflictEntry[] | null = null;
+        let mergeHaltReason: DeliveryGateHaltReason | null = null;
 
         const sourceWorktreePath = sourceLane.worktreePath;
         const resolutionContext =
@@ -188,6 +194,18 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             conversationId,
             decisions: currentJoin.conflictGuidance ?? undefined,
             resolutionContext,
+            // Final-publish joins land lanes on the session branch — still
+            // inside the execution's own workspace. The join carries the
+            // execution's provenance so the delivery gate enforces the proof
+            // floor here, but delivery itself (finalPublish → Delivered)
+            // belongs solely to the gated merge that lands on the project's
+            // delivery target.
+            ...(currentJoin.kind === "final_publish"
+              ? {
+                  executionId: execution.id,
+                  finalPublish: false,
+                }
+              : {}),
           });
 
         try {
@@ -233,10 +251,12 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           mergeError = output.error;
           mergeConflictFiles = output.conflictFiles;
           mergeConflictAnalysis = output.conflictAnalysis;
+          mergeHaltReason = output.haltReason;
         } catch (err) {
           mergeStatus = "failed";
           mergeError = getErrorMessage(err);
           mergeConflictFiles = [];
+          mergeHaltReason = null;
         }
 
         if (mergeStatus === "completed") {
@@ -255,6 +275,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
               message,
               conflictFiles: [],
               failedSourceLaneId: sourceLaneId,
+              haltReason: null,
             };
           }
           join = refreshed;
@@ -297,12 +318,14 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           mergeStatus: failureStatus,
           conflictFiles: mergeConflictFiles.length,
           executionId: execution.id,
+          haltReasonType: mergeHaltReason?.type ?? null,
         });
         return {
           status: "failed",
           message,
           conflictFiles: mergeConflictFiles,
           failedSourceLaneId: sourceLaneId,
+          haltReason: mergeHaltReason,
         };
       }
     },

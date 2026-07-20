@@ -133,6 +133,102 @@ describe("state-db schema initialization", () => {
       second.close();
     }
   });
+
+  it("rebuilds the previous notification schema for spec notifications without losing rows", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE notifications (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL DEFAULT 'job',
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        read INTEGER NOT NULL DEFAULT 0,
+        project_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        session_name TEXT,
+        branch_name TEXT,
+        job_id TEXT,
+        job_type TEXT,
+        merge_hash TEXT,
+        commit_hash TEXT,
+        conflict_count INTEGER,
+        conflict_files TEXT,
+        target_branch TEXT,
+        conversation_id TEXT,
+        conversation_name TEXT,
+        conversation_status TEXT,
+        dedupe_key TEXT,
+        error_message TEXT
+      )
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO notifications (
+           id, source, type, title, message, project_name, session_name,
+           branch_name, job_id, job_type
+         ) VALUES (?, 'job', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "legacy-notification",
+        "merge-completed",
+        "Merge complete",
+        "Done",
+        "cc",
+        "session",
+        "branch",
+        "job-1",
+        "merge",
+      );
+    legacy.close();
+
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      const columns = reopened.pragma("table_info(notifications)") as {
+        name: string;
+      }[];
+      expect(columns.map((column) => column.name)).toEqual(
+        expect.arrayContaining([
+          "spec_id",
+          "spec_gate_request_id",
+          "spec_deep_link_id",
+        ]),
+      );
+      expect(
+        reopened
+          .prepare("SELECT id FROM notifications WHERE id = ?")
+          .get("legacy-notification"),
+      ).toEqual({ id: "legacy-notification" });
+      expect(() =>
+        reopened
+          .prepare(
+            `INSERT INTO notifications (
+               id, source, type, title, message, project_name, spec_id,
+               spec_slug, spec_name, spec_gate, spec_gate_request_id,
+               spec_deep_link_id
+             ) VALUES (?, 'spec', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            "spec-notification",
+            "spec-approval-requested",
+            "Review needed",
+            "Approve design",
+            "cc",
+            "spec-1",
+            "native-sdd",
+            "Native SDD",
+            "design",
+            "request-1",
+            "D2",
+          ),
+      ).not.toThrow();
+    } finally {
+      reopened.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("state-db additive column migrations", () => {
@@ -200,6 +296,51 @@ describe("state-db additive column migrations", () => {
       const second = _createTestDbAtPath(dbPath);
       second.close();
     }).not.toThrow();
+  });
+
+  it("adds final_publish to a pre-existing job_records table", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE job_records (
+        job_id TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        session_name TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        merge_hash TEXT,
+        commit_hash TEXT,
+        conflict_count INTEGER,
+        conflict_files TEXT,
+        error_message TEXT,
+        owner_pid INTEGER,
+        execution_id TEXT,
+        candidate_validation TEXT
+      )
+    `);
+    legacy.close();
+
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      const columns = reopened.pragma("table_info(job_records)") as {
+        name: string;
+        notnull: number;
+        dflt_value: string | null;
+      }[];
+      expect(columns).toContainEqual(
+        expect.objectContaining({
+          name: "final_publish",
+          notnull: 1,
+          dflt_value: "0",
+        }),
+      );
+    } finally {
+      reopened.close();
+    }
   });
 });
 

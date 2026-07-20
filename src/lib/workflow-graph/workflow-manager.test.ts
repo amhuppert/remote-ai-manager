@@ -37,6 +37,7 @@ import type {
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import {
   createGraphWorkflowManager,
+  WorkflowDefinitionApprovalRequiredError,
   WorkflowDefinitionNotFoundError,
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
@@ -141,6 +142,10 @@ function createRepository(
         seedDefinitionRevision: seed.definitionRevision,
         boundInputs: seed.inputs,
         launchedTier: seed.launchedTier,
+        definitionApproval:
+          seed.definition.approvalRequired === true
+            ? { requestedAt: seed.startedAt, approvedAt: null }
+            : null,
         workingDefinition:
           seed.definition as unknown as ResolvedWorkflowSemanticDefinition,
         startedAt: seed.startedAt,
@@ -198,6 +203,72 @@ function createRepository(
 }
 
 describe("graph workflow manager", () => {
+  it("refuses an approval-required definition until the first atomic approval starts its pending execution", async () => {
+    const definition = createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition({ approvalRequired: true }),
+    });
+    const repository = createRepository();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return definition;
+      },
+      now() {
+        return "2026-07-18T10:00:00.000Z";
+      },
+      createExecutionId() {
+        return "execution-awaiting-definition-approval";
+      },
+    });
+
+    await expect(
+      manager.start({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        definitionId: definition.id,
+      }),
+    ).rejects.toMatchObject({
+      code: "definition_approval_required",
+      executionId: "execution-awaiting-definition-approval",
+    } satisfies Partial<WorkflowDefinitionApprovalRequiredError>);
+
+    expect(repository.read()).toMatchObject({
+      id: "execution-awaiting-definition-approval",
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:00:00.000Z",
+        approvedAt: null,
+      },
+      machineSnapshot: null,
+    });
+
+    const [first, second] = await Promise.all([
+      manager.recordDefinitionApproval({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      }),
+      manager.recordDefinitionApproval({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      }),
+    ]);
+
+    expect([first, second].filter((result) => result.ok)).toHaveLength(1);
+    expect([first, second].filter((result) => !result.ok)).toEqual([
+      { ok: false, reason: "already_decided" },
+    ]);
+    expect(repository.read()).toMatchObject({
+      status: "running",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:00:00.000Z",
+        approvedAt: "2026-07-18T10:00:00.000Z",
+      },
+      machineSnapshot: {
+        lifecycleStatus: "running",
+      },
+    });
+  });
+
   it("starts a run from a saved workflow definition and persists lifecycle metadata", async () => {
     const definition = createWorkflowDefinitionRecord({
       revision: 3,
@@ -227,6 +298,7 @@ describe("graph workflow manager", () => {
     expect(execution.status).toBe("running");
     expect(execution.seedDefinitionId).toBe(definition.id);
     expect(execution.seedDefinitionRevision).toBe(3);
+    expect(execution.definitionApproval).toBeNull();
     expect(execution.workingDefinition).toEqual(definition.definition);
     expect(execution.machineSnapshot).toEqual({
       schemaVersion: 1,
@@ -4038,6 +4110,18 @@ describe("graph workflow manager", () => {
       expect(verifyState?.branchName).toBe("csm/feature-abc-context-verify");
       expect(verifyState?.batchId).toBe(result.scheduled.batchId);
 
+      // Every provisioned worktree is a lane — terminal contexts included —
+      // so their work publishes through the gated final_publish join instead
+      // of the legacy laneId-null fan-in that bypasses the delivery gate.
+      expect(implState?.laneId).toBe("context-implement");
+      expect(verifyState?.laneId).toBe("context-verify");
+      expect(result.execution.executionLanes["context-implement"]?.kind).toBe(
+        "worktree",
+      );
+      expect(result.execution.executionLanes["context-verify"]?.kind).toBe(
+        "worktree",
+      );
+
       expect(
         parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
       ).toEqual(["context-implement", "context-verify"]);
@@ -4710,14 +4794,16 @@ describe("graph workflow manager", () => {
       const implState = result.execution.contextStates["context-implement"];
       expect(implState?.status).toBe("running");
       expect(implState?.isolation).toBe("worktree");
-      expect(implState?.laneId).toBeNull();
+      // The forked worktree is a lane like every provisioned worktree, so its
+      // output publishes through the gated final_publish join.
+      expect(implState?.laneId).toBe("context-implement");
       expect(implState?.worktreePath).toBe(
         "/repo/.worktrees/feature-abc.context-implement",
       );
 
-      expect(
-        result.execution.executionLanes["context-implement"],
-      ).toBeUndefined();
+      expect(result.execution.executionLanes["context-implement"]?.kind).toBe(
+        "worktree",
+      );
 
       expect(parallelWorktrees.provisionCalls.map((c) => c.contextId)).toEqual([
         "context-implement",

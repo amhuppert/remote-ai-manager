@@ -1,6 +1,7 @@
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { assertNever } from "@/lib/shared/assert-never";
+import { deepEqualJson } from "@/lib/shared/deep-equal";
 import { publishEvent } from "@/lib/events/publication";
 import {
   createExecutionIndex,
@@ -15,6 +16,7 @@ import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecutionEvent,
   GraphWorkflowJoinStatusEvent,
+  GraphWorkflowLaneCommitEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowMergeStatusEvent,
@@ -239,6 +241,12 @@ function haltReasonsEqual(
   }
 
   switch (previous.type) {
+    case "delivery_gate_failed":
+      return (
+        next.type === "delivery_gate_failed" &&
+        deepEqualJson(previous.unmet, next.unmet) &&
+        previous.instruction === next.instruction
+      );
     case "circuit_breaker":
       return (
         next.type === "circuit_breaker" &&
@@ -732,20 +740,42 @@ export function createGraphWorkflowExecutionEventPublisher(
       nextExecution.executionLanes,
     )) {
       const previousLane = previousExecution?.executionLanes[laneId];
-      if (!laneFieldsChanged(previousLane, nextLane)) continue;
-      events.push({
-        type: "graph-workflow-lane-status",
-        projectName,
-        sessionName: input.sessionName,
-        executionId: nextExecution.id,
-        laneId: nextLane.laneId,
-        kind: nextLane.kind,
-        status: nextLane.status,
-        branchName: nextLane.branchName,
-        worktreePath: nextLane.worktreePath,
-        includedContextIds: [...nextLane.includedContextIds],
-        lastCommittingContextId: nextLane.lastCommittingContextId,
-      } satisfies GraphWorkflowLaneStatusEvent);
+      if (laneFieldsChanged(previousLane, nextLane)) {
+        events.push({
+          type: "graph-workflow-lane-status",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          laneId: nextLane.laneId,
+          kind: nextLane.kind,
+          status: nextLane.status,
+          branchName: nextLane.branchName,
+          worktreePath: nextLane.worktreePath,
+          includedContextIds: [...nextLane.includedContextIds],
+          lastCommittingContextId: nextLane.lastCommittingContextId,
+        } satisfies GraphWorkflowLaneStatusEvent);
+      }
+
+      const previousSnapshots = new Set(
+        (previousLane?.commitSnapshots ?? []).map(
+          (snapshot) =>
+            `${snapshot.contextId}\0${snapshot.sha}\0${snapshot.committedAt}`,
+        ),
+      );
+      for (const snapshot of nextLane.commitSnapshots) {
+        const snapshotKey = `${snapshot.contextId}\0${snapshot.sha}\0${snapshot.committedAt}`;
+        if (previousSnapshots.has(snapshotKey)) continue;
+        events.push({
+          type: "graph-workflow-lane-commit",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          contextId: snapshot.contextId,
+          laneId: nextLane.laneId,
+          sha: snapshot.sha,
+          committedAt: snapshot.committedAt,
+        } satisfies GraphWorkflowLaneCommitEvent);
+      }
     }
 
     for (const [joinId, nextJoin] of Object.entries(

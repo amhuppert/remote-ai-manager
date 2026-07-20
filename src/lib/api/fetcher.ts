@@ -68,14 +68,43 @@ export async function mutationFetch<T>(
       output?: string;
       details?: Record<string, unknown>;
       issues?: RequestIssue[];
+      unmetConditions?: unknown;
+      instruction?: unknown;
     };
+    const unmetConditions = Array.isArray(apiBody.unmetConditions)
+      ? apiBody.unmetConditions.filter(
+          (condition): condition is string => typeof condition === "string",
+        )
+      : [];
+    const instruction =
+      typeof apiBody.instruction === "string" ? apiBody.instruction : null;
+    const refusalParts = [
+      ...unmetConditions,
+      ...(instruction === null ? [] : [instruction]),
+    ];
+    const issues =
+      apiBody.issues ??
+      (unmetConditions.length === 0
+        ? undefined
+        : unmetConditions.map((message, index) => ({
+            path: `unmetConditions[${index}]`,
+            message,
+          })));
+    const details =
+      apiBody.details ??
+      (refusalParts.length === 0
+        ? undefined
+        : {
+            unmetConditions,
+            ...(instruction === null ? {} : { instruction }),
+          });
     throw new ApiCallError(
-      apiBody.error ?? `API error ${res.status}`,
+      apiBody.error ?? (refusalParts.join(" ") || `API error ${res.status}`),
       apiBody.code,
       apiBody.output,
-      apiBody.details,
+      details,
       res.status,
-      apiBody.issues,
+      issues,
     );
   }
   const data: unknown = await res.json();

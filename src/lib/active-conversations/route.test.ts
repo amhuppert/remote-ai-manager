@@ -134,6 +134,7 @@ function createTestDeps(): ActiveConversationsRouteDeps {
       }
       return map;
     }),
+    listActiveSpecExecutions: vi.fn(async () => []),
   };
 }
 

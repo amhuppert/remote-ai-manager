@@ -98,6 +98,12 @@ export function observePhaseTransitions<TContext, TPhase>(
 export interface JobSubscriptionConfig<TContext, TOutput> {
   /** Read the broadcastable phase off the machine context. */
   phaseOf(context: TContext): string | undefined;
+  /**
+   * Project durable progress from an active machine snapshot onto the job.
+   * Return true only when the durable record must be updated before the
+   * machine continues to its next externally-observable operation.
+   */
+  projectActiveSnapshot?(job: BackgroundJob, context: TContext): boolean;
   /** Project the machine's terminal output onto the job record. */
   mapOutput(job: BackgroundJob, output: TOutput, context: TContext): void;
 }
@@ -106,8 +112,16 @@ export interface JobSubscriptionConfig<TContext, TOutput> {
 export interface JobSubscriptionHost {
   /** Broadcast the job's current state (and persist on terminal statuses). */
   publishStatus(job: BackgroundJob): void;
+  /** Persist active-machine progress that later operations must resolve. */
+  persistProgress(job: BackgroundJob): void;
   /** Release the session lock. Called exactly once, on terminal state. */
   release(): void;
+}
+
+export interface JobActorCallbacks<TContext, TOutput> {
+  onPhaseChange?(phase: string | undefined, context: TContext): void;
+  onComplete?(output: TOutput, context: TContext): void;
+  onError?(error: unknown): void;
 }
 
 /**
@@ -122,14 +136,22 @@ export function createJobActorSubscription<TContext, TOutput>(
   job: BackgroundJob,
   host: JobSubscriptionHost,
   config: JobSubscriptionConfig<TContext, TOutput>,
+  callbacks: JobActorCallbacks<TContext, TOutput> = {},
 ): void {
   const onPhaseSnapshot = createPhaseDiffHandler(config.phaseOf, (phase) => {
     job.phase = phase;
     host.publishStatus(job);
+    callbacks.onPhaseChange?.(phase, actor.getSnapshot().context);
   });
 
   actor.subscribe({
-    next: onPhaseSnapshot,
+    next(snapshot) {
+      if (snapshot.status !== "active") return;
+      const mustPersist =
+        config.projectActiveSnapshot?.(job, snapshot.context) ?? false;
+      if (mustPersist) host.persistProgress(job);
+      onPhaseSnapshot(snapshot);
+    },
     complete() {
       const snapshot = actor.getSnapshot();
       if (snapshot.output === undefined) {
@@ -146,6 +168,9 @@ export function createJobActorSubscription<TContext, TOutput>(
       job.completedAt = new Date().toISOString();
       host.publishStatus(job);
       host.release();
+      if (snapshot.output !== undefined) {
+        callbacks.onComplete?.(snapshot.output, snapshot.context);
+      }
     },
     error(err) {
       logger.error("job.machine_actor_error", {
@@ -159,6 +184,7 @@ export function createJobActorSubscription<TContext, TOutput>(
       job.completedAt = new Date().toISOString();
       host.publishStatus(job);
       host.release();
+      callbacks.onError?.(err);
     },
   });
 }
@@ -183,10 +209,15 @@ export interface JobDispatchHost {
    * job, and broadcast "running".
    */
   prepare(
-    params: JobDispatchSession & { jobType: BackgroundJob["jobType"] },
+    params: JobDispatchSession & {
+      jobType: BackgroundJob["jobType"];
+      decorateJob?(job: BackgroundJob): void;
+    },
   ): JobDispatchResult<{ job: BackgroundJob; release(): void }>;
   /** Broadcast the job's current state (and persist on terminal statuses). */
   publishStatus(job: BackgroundJob): void;
+  /** Persist active-machine progress before downstream operations consume it. */
+  persistProgress(job: BackgroundJob): void;
 }
 
 export interface DispatchMachineJobParams<TContext, TOutput> {
@@ -195,11 +226,12 @@ export interface DispatchMachineJobParams<TContext, TOutput> {
   host: JobDispatchHost;
   /** Build the started-not-yet-running actor for the registered job id. */
   createJobActor(jobId: string): JobMachineActor<TContext, TOutput>;
-  /** Stamp job-type-specific fields onto the registered job record. */
+  /** Stamp job-type-specific fields before the job is registered and persisted. */
   decorateJob?(job: BackgroundJob): void;
   /** Emit the job type's start log line. */
   logStart(job: BackgroundJob): void;
   subscription: JobSubscriptionConfig<TContext, TOutput>;
+  callbacks?: JobActorCallbacks<TContext, TOutput>;
 }
 
 /**
@@ -224,7 +256,11 @@ function dispatchMachineJobImpl<TContext, TOutput>(
 ): JobDispatchResult<{ jobId: string }> {
   const { jobType, session, host } = params;
 
-  const prepared = host.prepare({ ...session, jobType });
+  const prepared = host.prepare({
+    ...session,
+    jobType,
+    decorateJob: params.decorateJob,
+  });
   if (!prepared.ok) {
     logger.info("job.dispatch_rejected", {
       jobType,
@@ -235,15 +271,19 @@ function dispatchMachineJobImpl<TContext, TOutput>(
   }
 
   const { job, release } = prepared.value;
-  params.decorateJob?.(job);
   params.logStart(job);
 
   const actor = params.createJobActor(job.jobId);
   createJobActorSubscription(
     actor,
     job,
-    { publishStatus: (j) => host.publishStatus(j), release },
+    {
+      publishStatus: (j) => host.publishStatus(j),
+      persistProgress: (j) => host.persistProgress(j),
+      release,
+    },
     params.subscription,
+    params.callbacks,
   );
   actor.start();
 

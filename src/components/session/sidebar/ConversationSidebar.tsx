@@ -81,6 +81,7 @@ import type {
 import {
   adaptCollaborations,
   adaptGraphWorkflows,
+  adaptSpecExecutions,
   adaptStoreJobs,
   deriveNotificationOutcomes,
 } from "@/components/session/sidebar/active-work-adapters";
@@ -273,6 +274,10 @@ function ConversationSidebar({
       clientStateReady ? (activeData?.activeCollaborationExecutions ?? []) : [],
     [activeData, clientStateReady],
   );
+  const activeSpecExecutions = useMemo(
+    () => (clientStateReady ? (activeData?.specExecutions ?? []) : []),
+    [activeData, clientStateReady],
+  );
 
   // --- Active work (jobs + workflows + collabs + durable actionables) ---
   const storeJobsMap = useNotificationJobs();
@@ -291,12 +296,14 @@ function ConversationSidebar({
       ...adaptStoreJobs(storeJobs),
       ...adaptGraphWorkflows(activeGraphWorkflows),
       ...adaptCollaborations(activeCollaborations),
+      ...adaptSpecExecutions(activeSpecExecutions),
       ...notificationOutcomes.needsAction,
     ],
     [
       storeJobs,
       activeGraphWorkflows,
       activeCollaborations,
+      activeSpecExecutions,
       notificationOutcomes,
     ],
   );

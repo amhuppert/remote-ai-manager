@@ -14,6 +14,7 @@ function makeDeps(
   return {
     hasUncommittedChanges: async () => true,
     commitChanges: async () => ({ hash: "deadbeef" }),
+    resolveHeadSha: async () => null,
     now: () => "2026-04-02T10:00:00.000Z",
     ...overrides,
   };
@@ -47,7 +48,7 @@ function withLane(
 }
 
 describe("createLaneCommitter.commit", () => {
-  it("returns skipped when the lane worktree has no uncommitted changes", async () => {
+  it("returns skipped when the lane worktree has no uncommitted changes and the pre-turn head is unknown", async () => {
     const committer = createLaneCommitter(
       makeDeps({ hasUncommittedChanges: async () => false }),
     );
@@ -58,9 +59,137 @@ describe("createLaneCommitter.commit", () => {
       contextId: "context-plan",
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: null,
     });
 
     expect(result).toEqual({ status: "skipped" });
+  });
+
+  it("adopts the lane HEAD as the context's commit snapshot when the worktree is clean but HEAD moved during the turn", async () => {
+    let commitCalled = false;
+    const committer = createLaneCommitter(
+      makeDeps({
+        hasUncommittedChanges: async () => false,
+        resolveHeadSha: async () => "head-after-selfcommit",
+        commitChanges: async () => {
+          commitCalled = true;
+          return { hash: "never" };
+        },
+        now: () => "2026-04-02T10:45:00.000Z",
+      }),
+    );
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      laneId: "lane-plan",
+      laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: "head-before-turn",
+    });
+
+    expect(result).toEqual({
+      status: "adopted",
+      snapshot: {
+        contextId: "context-plan",
+        sha: "head-after-selfcommit",
+        committedAt: "2026-04-02T10:45:00.000Z",
+      },
+    });
+    expect(commitCalled).toBe(false);
+  });
+
+  it("returns skipped when the worktree is clean and HEAD equals the pre-turn head", async () => {
+    const committer = createLaneCommitter(
+      makeDeps({
+        hasUncommittedChanges: async () => false,
+        resolveHeadSha: async () => "head-unmoved",
+      }),
+    );
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      laneId: "lane-plan",
+      laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: "head-unmoved",
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+  });
+
+  it("returns skipped when the worktree is clean and the current HEAD cannot be resolved (never fabricates evidence)", async () => {
+    const committer = createLaneCommitter(
+      makeDeps({
+        hasUncommittedChanges: async () => false,
+        resolveHeadSha: async () => null,
+      }),
+    );
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      laneId: "lane-plan",
+      laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: "head-before-turn",
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+  });
+
+  it("returns skipped when the worktree is clean and resolving HEAD throws (conservative, never halts)", async () => {
+    const committer = createLaneCommitter(
+      makeDeps({
+        hasUncommittedChanges: async () => false,
+        resolveHeadSha: async () => {
+          throw new Error("git rev-parse exploded");
+        },
+      }),
+    );
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      laneId: "lane-plan",
+      laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: "head-before-turn",
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+  });
+
+  it("commits (does not adopt) when the worktree has uncommitted changes even if HEAD moved during the turn", async () => {
+    const committer = createLaneCommitter(
+      makeDeps({
+        hasUncommittedChanges: async () => true,
+        resolveHeadSha: async () => "head-after-selfcommit",
+        commitChanges: async () => ({ hash: "residual-commit" }),
+        now: () => "2026-04-02T10:50:00.000Z",
+      }),
+    );
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      laneId: "lane-plan",
+      laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: "head-before-turn",
+    });
+
+    // Exactly one snapshot for the context — the committer's own commit is
+    // authoritative; adoption only fills the clean-worktree gap.
+    expect(result).toEqual({
+      status: "committed",
+      snapshot: {
+        contextId: "context-plan",
+        sha: "residual-commit",
+        committedAt: "2026-04-02T10:50:00.000Z",
+      },
+    });
   });
 
   it("commits and returns a snapshot containing contextId, sha, and committedAt", async () => {
@@ -85,6 +214,7 @@ describe("createLaneCommitter.commit", () => {
       contextId: "context-plan",
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: null,
     });
 
     expect(result).toEqual({
@@ -119,12 +249,39 @@ describe("createLaneCommitter.commit", () => {
       contextId: "context-plan",
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+      preTurnHeadSha: null,
     });
 
     expect(result).toEqual({
       status: "failed",
       errorMessage: "git commit failed: nothing to commit",
     });
+  });
+});
+
+describe("createLaneCommitter.resolveHead", () => {
+  it("returns the resolved HEAD sha for a worktree", async () => {
+    const committer = createLaneCommitter(
+      makeDeps({ resolveHeadSha: async () => "head-at-capture" }),
+    );
+
+    await expect(
+      committer.resolveHead("/repo/.worktrees/session-1.lane-plan"),
+    ).resolves.toBe("head-at-capture");
+  });
+
+  it("returns null when HEAD resolution throws (best-effort capture)", async () => {
+    const committer = createLaneCommitter(
+      makeDeps({
+        resolveHeadSha: async () => {
+          throw new Error("not a git repository");
+        },
+      }),
+    );
+
+    await expect(
+      committer.resolveHead("/repo/.worktrees/session-1.lane-plan"),
+    ).resolves.toBeNull();
   });
 });
 

@@ -26,6 +26,7 @@ import { getDb } from "./state-db";
 import { createStateAggregate, type StateAggregate } from "./state-aggregate";
 import type { AllRepos, Db, StateStoreCore, StateStoreDeps } from "./schemas";
 import {
+  tryWithWriteQueue as sharedTryWithWriteQueue,
   withWriteQueue as sharedWithWriteQueue,
   type WriteQueue,
 } from "./write-queue";
@@ -124,6 +125,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     deps.writeQueue ??
     ({
       withWriteQueue: sharedWithWriteQueue,
+      tryWithWriteQueue: sharedTryWithWriteQueue,
       _resetForTesting: () => {},
     } satisfies WriteQueue);
 

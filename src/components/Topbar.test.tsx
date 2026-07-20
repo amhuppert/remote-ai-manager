@@ -33,6 +33,7 @@ function makeActiveConversationsResponse(
     conversations,
     graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
+    specExecutions: [],
   };
 }
 
@@ -202,6 +203,13 @@ describe("Topbar", () => {
     const link = screen.getByTitle("Tickets");
     expect(link.getAttribute("href")).toBe("/tickets");
     expect(link).toHaveTextContent("Tickets");
+  });
+
+  it("renders Specs as a global navigation peer", () => {
+    renderWithQuery(<Topbar breadcrumbs={[]} page="specs" />);
+    const link = screen.getByTitle("Specs");
+    expect(link.getAttribute("href")).toBe("/specs");
+    expect(link).toHaveTextContent("Specs");
   });
 
   it("keeps every global destination reachable without overflowing a 320px topbar", async () => {

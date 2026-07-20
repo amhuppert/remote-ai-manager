@@ -13,6 +13,9 @@ const PUSH_TRIGGERS = [
   "workflowCompleted",
   "workflowHalted",
   "conversationIdle",
+  "specApprovalRequested",
+  "specApprovalGranted",
+  "specPolicyAdmitted",
 ] as const;
 
 export function NotificationsSection({

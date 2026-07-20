@@ -170,6 +170,7 @@ const activeResponse: ActiveConversationsResponse = {
   ],
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 describe("optimistic lifecycle updates", () => {

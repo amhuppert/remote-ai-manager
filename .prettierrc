@@ -101,7 +101,10 @@
         "src/components/SessionTicketIndicator.tsx",
         "src/components/MultilineInput.tsx",
         "src/components/MultilineInput.stories.tsx",
-        "src/components/rich-prompt/**/*.{ts,tsx}"
+        "src/components/rich-prompt/**/*.{ts,tsx}",
+        "src/components/references/**/*.{ts,tsx}",
+        "src/features/spec-studio/**/*.{ts,tsx}",
+        "src/components/topbar/**/*.{ts,tsx}"
       ],
       "options": {
         "plugins": ["prettier-plugin-tailwindcss"],

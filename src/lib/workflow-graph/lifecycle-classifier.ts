@@ -35,6 +35,7 @@ export type ExecutionEditability =
  * non-resumable today.
  */
 const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
+  delivery_gate_failed: true,
   circuit_breaker: true,
   max_iterations: true,
   merge_failure: true,

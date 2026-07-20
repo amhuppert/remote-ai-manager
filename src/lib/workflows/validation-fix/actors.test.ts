@@ -51,7 +51,10 @@ interface DepsHarness {
 
 function createDepsHarness(overrides: {
   result?: RepoValidationCommandResult;
-  repoConfig?: { preMergeTimeoutMs?: number } | null;
+  repoConfig?: {
+    preMergeTimeoutMs?: number;
+    preMergeCommand?: string | null;
+  } | null;
   repoConfigError?: Error;
   globalConfig?: { preMergeTimeoutMs?: number };
   globalConfigError?: Error;
@@ -78,6 +81,12 @@ function createDepsHarness(overrides: {
     async commitChanges(worktreePath, message, opts) {
       commitCalls.push({ worktreePath, message, opts: opts ?? {} });
       return { hash: "autofix123" };
+    },
+    async resolveGitObject(_worktreePath, ref) {
+      return ref === "HEAD" ? "validated-sha" : "validated-tree";
+    },
+    createValidationRef() {
+      return "validation-ref-1";
     },
   };
   return { deps, validationCalls, commitCalls };
@@ -125,6 +134,22 @@ describe("mergeValidationGateFromResult", () => {
 });
 
 describe("performMergeValidation", () => {
+  it("returns a candidate-validation fact for the committed tree that passed", async () => {
+    const harness = createDepsHarness({
+      repoConfig: { preMergeCommand: "./scripts/pre-merge.sh" },
+    });
+
+    const fact = await performMergeValidation(BASE_INPUT, harness.deps);
+
+    expect(fact).toEqual({
+      validationRef: "validation-ref-1",
+      validatedSha: "validated-sha",
+      validatedTreeHash: "validated-tree",
+      commandIdentity: "./scripts/pre-merge.sh",
+      outcome: "pass",
+    });
+  });
+
   it("resolves without committing when validation is not configured", async () => {
     const harness = createDepsHarness({
       result: commandResult({ executed: false }),

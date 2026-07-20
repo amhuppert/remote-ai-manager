@@ -68,6 +68,81 @@ function apply(
 }
 
 describe("applyLiveExecutionEdits — task + context ops", () => {
+  it("refuses a locked-path mutation before changing the execution", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      workingDefinition: {
+        ...base.workingDefinition,
+        lockedRegions: [
+          {
+            paths: ["/executionContexts/context-implement/acceptanceCriteria"],
+            sourceUri: "contract://criteria/R17.4",
+            reason: "Acceptance criteria are contract-derived",
+          },
+        ],
+      },
+    });
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        acceptanceCriteria: "Weakened downstream criteria",
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("region_locked");
+    expect(result.issues[0]).toMatchObject({
+      code: "region_locked",
+      operationIndex: 0,
+      field: "/executionContexts/context-implement/acceptanceCriteria",
+    });
+    expect(result.issues[0]?.message).toContain(
+      "amend at source contract://criteria/R17.4",
+    );
+    expect(execution).toEqual(before);
+  });
+
+  it("allows an unlocked execution-only config edit beside a locked contract path", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      workingDefinition: {
+        ...base.workingDefinition,
+        lockedRegions: [
+          {
+            paths: ["/executionContexts/context-implement/acceptanceCriteria"],
+            sourceUri: "contract://criteria/R17.4",
+            reason: "Acceptance criteria are contract-derived",
+          },
+        ],
+      },
+    });
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        iterationPolicy: {
+          maxIterations: 9,
+          continuity: { enabled: true },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    expect(context?.iterationPolicy.maxIterations).toBe(9);
+    expect(context?.acceptanceCriteria).toBe("Feature implemented");
+  });
+
   it("updates a context's prose and concrete config on an unstarted context", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(execution, [

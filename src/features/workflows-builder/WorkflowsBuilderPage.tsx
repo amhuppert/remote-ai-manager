@@ -9,6 +9,7 @@ import ConnectedWorkflowBuilderPage from "./components/ConnectedWorkflowBuilderP
 
 interface WorkflowsBuilderPageProps {
   params: Promise<{ name: string }>;
+  searchParams?: Promise<{ definition?: string }>;
 }
 
 export function buildDefaultImplementerConfig(
@@ -34,14 +35,17 @@ export function buildDefaultImplementerConfig(
 
 export default async function WorkflowsBuilderPage({
   params,
+  searchParams,
 }: WorkflowsBuilderPageProps): Promise<React.JSX.Element> {
   const { name } = await params;
+  const { definition } = (await searchParams) ?? {};
   const config = await readConfig();
   return (
     <ConnectedWorkflowBuilderPage
       scope={{ kind: "project", projectName: name }}
       defaultImplementerConfig={buildDefaultImplementerConfig(config)}
       codexConfig={config.codex}
+      initialWorkflowId={definition ?? null}
     />
   );
 }

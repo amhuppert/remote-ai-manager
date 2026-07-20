@@ -156,6 +156,34 @@ export class WorkflowStartInputError extends Error {
   }
 }
 
+export class WorkflowDefinitionApprovalRequiredError extends Error {
+  readonly code = "definition_approval_required" as const;
+  readonly instruction =
+    "Record approval for the pending workflow definition before starting execution.";
+
+  constructor(readonly executionId: string) {
+    super(
+      "Workflow definition approval is required before execution can start",
+    );
+    this.name = "WorkflowDefinitionApprovalRequiredError";
+  }
+}
+
+export type RecordDefinitionApprovalResult =
+  | { ok: true; execution: GraphWorkflowExecution }
+  | {
+      ok: false;
+      reason:
+        | "no_active_execution"
+        | "not_awaiting_approval"
+        | "already_decided";
+    };
+
+export interface RecordDefinitionApprovalInput {
+  projectPath: string;
+  sessionName: string;
+}
+
 /**
  * Raised by the shared start path when the requested template does not exist in
  * the indicated tier (R3.4). Carries the `definitionId` + `tier` so a surface
@@ -598,6 +626,30 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
   }
 
+  function recordExecutionStarted(
+    execution: GraphWorkflowExecution,
+    projectPath: string,
+    sessionName: string,
+  ): void {
+    const execLogger = createExecutionLogger(execution.id);
+    registerExecutionLogger(execLogger);
+    execLogger.writeManifest(execution);
+    execLogger.lifecycle("execution.started", {
+      definitionId: execution.seedDefinitionId,
+      definitionRevision: execution.seedDefinitionRevision,
+      projectPath,
+      sessionName,
+      contextCount: execution.workingDefinition.executionContexts.length,
+      taskCount: execution.workingDefinition.tasks.length,
+    });
+    logger.info("graph-workflow.execution.started", {
+      executionId: execution.id,
+      definitionId: execution.seedDefinitionId,
+      definitionRevision: execution.seedDefinitionRevision,
+      tier: execution.launchedTier,
+    });
+  }
+
   async function start(
     input: GraphWorkflowStartInput,
   ): Promise<GraphWorkflowExecution> {
@@ -718,7 +770,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
     const boundInputs = validation.boundInputs;
 
-    await deps.executionRepository.create(
+    const pendingExecution = await deps.executionRepository.create(
       input.projectPath,
       input.sessionName,
       {
@@ -731,6 +783,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         launchedTier: tier,
       },
     );
+
+    if (
+      pendingExecution.definitionApproval !== null &&
+      pendingExecution.definitionApproval.approvedAt === null
+    ) {
+      logger.info("graph-workflow.definition_approval.pending", {
+        executionId: pendingExecution.id,
+        definitionId: pendingExecution.seedDefinitionId,
+        definitionRevision: pendingExecution.seedDefinitionRevision,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        requestedAt: pendingExecution.definitionApproval.requestedAt,
+      });
+      throw new WorkflowDefinitionApprovalRequiredError(pendingExecution.id);
+    }
 
     const nextExecution = await deps.executionRepository.mutateActive(
       input.projectPath,
@@ -746,26 +813,75 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
-    // Initialize per-execution structured logger
-    const execLogger = createExecutionLogger(nextExecution.id);
-    registerExecutionLogger(execLogger);
-    execLogger.writeManifest(nextExecution);
-    execLogger.lifecycle("execution.started", {
-      definitionId: definition.id,
-      definitionRevision: definition.revision,
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      contextCount: definition.definition.executionContexts.length,
-      taskCount: definition.definition.tasks.length,
-    });
-    logger.info("graph-workflow.execution.started", {
-      executionId: nextExecution.id,
-      definitionId: definition.id,
-      definitionRevision: definition.revision,
-      tier,
-    });
+    recordExecutionStarted(nextExecution, input.projectPath, input.sessionName);
 
     return nextExecution;
+  }
+
+  async function recordDefinitionApproval(
+    input: RecordDefinitionApprovalInput,
+  ): Promise<RecordDefinitionApprovalResult> {
+    const active = await deps.executionRepository.getActive(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (!active) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "no_active_execution",
+      });
+      return { ok: false, reason: "no_active_execution" };
+    }
+
+    let guardFailure: "not_awaiting_approval" | "already_decided" | null = null;
+    const nextExecution = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (execution) => {
+        const approval = execution.definitionApproval;
+        if (approval === null) {
+          guardFailure = "not_awaiting_approval";
+          return execution;
+        }
+        if (approval.approvedAt !== null) {
+          guardFailure = "already_decided";
+          return execution;
+        }
+        if (execution.status !== "pending") {
+          guardFailure = "not_awaiting_approval";
+          return execution;
+        }
+
+        approval.approvedAt = getNow(deps);
+        execution.status = "running";
+        execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+          lifecycleStatus: "running",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        });
+        return execution;
+      },
+    );
+
+    if (guardFailure !== null) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: nextExecution.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: guardFailure,
+      });
+      return { ok: false, reason: guardFailure };
+    }
+
+    logger.info("graph-workflow.definition_approval.recorded", {
+      executionId: nextExecution.id,
+      definitionId: nextExecution.seedDefinitionId,
+      definitionRevision: nextExecution.seedDefinitionRevision,
+      approvedAt: nextExecution.definitionApproval?.approvedAt ?? null,
+    });
+    recordExecutionStarted(nextExecution, input.projectPath, input.sessionName);
+    return { ok: true, execution: nextExecution };
   }
 
   async function send(
@@ -1695,36 +1811,36 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
           const prov = provisioned.find((p) => p.entry.contextId === contextId);
           if (prov) {
-            // Mint a worktree lane for this context when its lane plan has a
-            // continuation. The lane id matches the contextId so downstream
-            // consumers can identify the upstream's lane via the existing
-            // classifier path. The minted lane starts empty — commitments are
-            // recorded later by `runLaneCommit`.
-            if (planHasContinuation(contextId)) {
-              const newLaneId = contextId;
-              running.executionLanes[newLaneId] = {
-                laneId: newLaneId,
-                kind: "worktree",
-                status: "active",
-                worktreePath: prov.result.worktreePath,
-                branchName: prov.result.branchName,
-                includedContextIds: [],
-                lastCommittingContextId: null,
-                commitSnapshots: [],
-                createdAt: provisionTimestamp,
-                updatedAt: provisionTimestamp,
-              };
-              contextState.laneId = newLaneId;
-              laneCreatedDecisions.push({
-                laneId: newLaneId,
-                contextId,
-                branchName: prov.result.branchName,
-                worktreePath: prov.result.worktreePath,
-                kind: "worktree",
-              });
-            } else {
-              contextState.laneId = null;
-            }
+            // Every provisioned worktree is a lane — terminal contexts
+            // included. Lane work publishes only through join-runner (context
+            // joins + the quiescence final_publish join), which carries the
+            // execution's provenance to the delivery gate; the laneId-null
+            // fan-in path bypasses the gate and remains only for resumed
+            // legacy executions. The lane id matches the contextId so
+            // downstream consumers can identify the upstream's lane via the
+            // existing classifier path. The minted lane starts empty —
+            // commitments are recorded later by `runLaneCommit`.
+            const newLaneId = contextId;
+            running.executionLanes[newLaneId] = {
+              laneId: newLaneId,
+              kind: "worktree",
+              status: "active",
+              worktreePath: prov.result.worktreePath,
+              branchName: prov.result.branchName,
+              includedContextIds: [],
+              lastCommittingContextId: null,
+              commitSnapshots: [],
+              createdAt: provisionTimestamp,
+              updatedAt: provisionTimestamp,
+            };
+            contextState.laneId = newLaneId;
+            laneCreatedDecisions.push({
+              laneId: newLaneId,
+              contextId,
+              branchName: prov.result.branchName,
+              worktreePath: prov.result.worktreePath,
+              kind: "worktree",
+            });
             contextState.worktreePath = prov.result.worktreePath;
             contextState.branchName = prov.result.branchName;
             contextState.isolation = "worktree";
@@ -2137,6 +2253,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
   return {
     start,
+    recordDefinitionApproval,
     send,
     resume,
     normalizeAfterRestart,

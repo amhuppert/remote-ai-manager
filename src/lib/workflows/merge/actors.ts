@@ -19,6 +19,11 @@ import type {
   PublishResult,
   TargetCheckoutState,
 } from "@/lib/git/worktree";
+import type {
+  DeliveryGateEvaluateInput,
+  DeliveryGateEvaluation,
+  DeliveryGateEvaluator,
+} from "./types";
 import { resolveSessionConversationId } from "../validation-fix/actors";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -135,9 +140,73 @@ export type PublishActorOutput =
       error: string;
     };
 
+export type DeliveryGateActorInput = Omit<
+  DeliveryGateEvaluateInput,
+  "workflowExecutionId"
+> & {
+  workflowExecutionId?: string;
+};
+
+export type DeliveryGateActorOutput = DeliveryGateEvaluation;
+
 // ============================================================
 // Actor Definitions
 // ============================================================
+
+export function createDeliveryGateActor(evaluator: DeliveryGateEvaluator) {
+  return fromPromise<DeliveryGateActorOutput, DeliveryGateActorInput>(
+    async ({ input }) => {
+      if (!input.workflowExecutionId) {
+        logger.debug("delivery_gate.skipped", {
+          preparedSha: input.preparedSha,
+          projectPath: input.projectPath,
+        });
+        return { status: "pass", satisfied: [], deferred: [] };
+      }
+
+      logger.info("delivery_gate.evaluate_started", {
+        workflowExecutionId: input.workflowExecutionId,
+        preparedSha: input.preparedSha,
+        expectedTargetSha: input.expectedTargetSha,
+        projectPath: input.projectPath,
+      });
+      const result = await evaluator.evaluate({
+        workflowExecutionId: input.workflowExecutionId,
+        preparedSha: input.preparedSha,
+        expectedTargetSha: input.expectedTargetSha,
+        projectPath: input.projectPath,
+        ...(input.candidateValidation && {
+          candidateValidation: input.candidateValidation,
+        }),
+      });
+
+      if (result.status === "refused") {
+        logger.warn("delivery_gate.refused", {
+          workflowExecutionId: input.workflowExecutionId,
+          preparedSha: input.preparedSha,
+          unmetCount: result.unmet.length,
+        });
+        return result;
+      }
+
+      logger.info("delivery_gate.passed", {
+        workflowExecutionId: input.workflowExecutionId,
+        preparedSha: input.preparedSha,
+        satisfiedCount: result.satisfied.length,
+        deferredCount: result.deferred.length,
+      });
+      return result;
+    },
+  );
+}
+
+export const deliveryGateActor = createDeliveryGateActor({
+  async evaluate() {
+    throw new Error(
+      "Delivery gate evaluator is required for a linked workflow execution",
+    );
+  },
+});
 
 /** Read the worktree's currently checked-out branch (null = detached HEAD). */
 export const getCurrentBranchActor = fromPromise<

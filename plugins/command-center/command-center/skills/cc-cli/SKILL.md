@@ -387,6 +387,69 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl ticket attachment remove` — remove an attachment
   - `cctl ticket attachment remove <number | project#number> <attachmentId>`
 
+- `cctl spec` — author, review, execute, and verify durable specs
+  - `cctl spec list`
+  - `cctl spec measures`
+  - `cctl spec show <slug>`
+  - `cctl spec status <slug>`
+  - `cctl spec get <slug>/<handle>`
+  - `cctl spec search <slug> <query>`
+  - `cctl spec export <slug> [--out <bundle.json>]`
+  - `cctl spec verify <slug> [--against <bundle.json>]`
+  - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>`
+  - `cctl spec draft <slug> --file <element.json> --base-version <number|new>`
+  - `cctl spec propose <slug>`
+  - `cctl spec question <slug> --text <text> [--element <handle>]`
+  - `cctl spec answer <slug>/Q2 --answer <text>`
+  - `cctl spec assume <slug> --text <text> [--element <handle>]`
+  - `cctl spec task complete <slug>/T7 --execution <id> --evidence <id>`
+  - `cctl spec start <slug> --file <scope.json>`
+  - `cctl spec capture <slug> --execution <id> --file <task.json>`
+- `cctl spec list` — list native specs in the current project
+  - `cctl spec list`
+- `cctl spec measures` — compute native SDD pilot measures
+  - `cctl spec measures`
+- `cctl spec show` — read a spec's full or summary view
+  - `cctl spec show <slug> [--summary]`
+- `cctl spec status` — inspect a spec's phase and gate readiness
+  - `cctl spec status <slug>`
+- `cctl spec get` — read one spec element with approval and evidence state
+  - `cctl spec get <slug>/<handle>`
+  - `cctl spec get <slug> <handle>`
+- `cctl spec search` — search requirement and decision text
+  - `cctl spec search <slug> <query>`
+- `cctl spec export` — produce a canonical portable spec bundle
+  - `cctl spec export <slug> [--out <bundle.json>]`
+- `cctl spec verify` — recompute spec integrity
+  - `cctl spec verify <slug> [--against <bundle.json>]`
+- `cctl spec create` — create a durable spec from its first draft save
+  - `cctl spec create --slug <slug> --name <name> --preset <contract-bearing|exploratory|fast-path> --file <element.json>`
+- `cctl spec draft` — save a base-versioned draft element
+  - `cctl spec draft <slug> --file <element.json> --base-version <number|new>`
+- `cctl spec propose` — propose the current draft for review
+  - `cctl spec propose <slug>`
+- `cctl spec question` — open a visible spec question for human answer
+  - `cctl spec question <slug> --text <text> [--element <handle>]`
+- `cctl spec answer` — answer an open spec question
+  - `cctl spec answer <slug>/Q2 --answer <text>`
+- `cctl spec assume` — propose a visible authoring assumption
+  - `cctl spec assume <slug> --text <text> [--element <handle>]`
+- `cctl spec task` — act on an approved spec task
+  - `cctl spec task complete <slug>/T7 --execution <id> --evidence <id>`
+- `cctl spec request-approval` — route a spec gate to the user
+  - `cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]`
+- `cctl spec start` — start execution from an approved revision and scope
+  - `cctl spec start <slug> --file <scope.json>`
+- `cctl spec capture` — capture discovered work as a proposed scope amendment
+  - `cctl spec capture <slug> --execution <id> --file <task.json> [--blocking-reason <reason>]`
+- `cctl spec rename` — rename a spec's slug, keeping the old slug as an alias
+  - `cctl spec rename <slug> --to <new-slug> [--name <name>]`
+- `cctl spec abandon` — abandon a spec or one of its executions
+  - `cctl spec abandon <slug> --reason <reason>`
+  - `cctl spec abandon <slug> --execution <id> --reason <reason>`
+- `cctl spec task complete` — claim task completion with evidence
+  - `cctl spec task complete <slug>/T7 --execution <id> --evidence <evidence-id> [--evidence <evidence-id> ...]`
+
 - `cctl doctor` — check connectivity, auth, and build parity with the CC server
   - `cctl doctor`
 

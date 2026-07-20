@@ -23,14 +23,34 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
       notes: "first line\nsecond line",
     },
     launchedTier: "global",
+    definitionApproval: {
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      approvedAt: "2026-01-01T00:00:05.000Z",
+    },
     workingDefinition: {
       schemaVersion: 2,
+      approvalRequired: true,
+      origin: {
+        sourceUri: "workflow-source:maximal/revision/3",
+        label: "Maximal workflow source",
+      },
+      lockedRegions: [
+        {
+          paths: ["/tasks/task-1/instructions"],
+          sourceUri: "workflow-source:maximal/revision/3",
+          reason: "Task instructions come from the source workflow",
+        },
+      ],
       executionContexts: [
         {
           id: "ctx-1",
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          origin: {
+            sourceUri: "workflow-source:maximal/context/ctx-1",
+            label: "Maximal context source",
+          },
           implementer: {
             backend: "claude",
             model: "opus",

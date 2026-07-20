@@ -1,13 +1,18 @@
 /**
  * Detect and parse the inline self-closing reference tags emitted by the
- * prompt-editor serializer (`<conversation-ref ... />`, `<message-ref ... />`,
- * `<ticket-ref ... />`).
+ * prompt-editor serializer for every type in the reference registry.
  *
  * Refs inside triple-backtick or triple-tilde fenced code blocks are skipped
  * — those represent literal code shown to the reader, not link targets.
  */
 
 import { decodeXmlEntities } from "@/lib/shared/xml";
+import {
+  REFERENCE_REGISTRY,
+  getReferenceByType,
+  type ReferenceType,
+  type ReferenceXmlTag,
+} from "@/lib/prompt-editor/reference-registry";
 
 export interface FoundRef {
   start: number;
@@ -16,18 +21,49 @@ export interface FoundRef {
   attrs: Record<string, string>;
 }
 
+export interface FoundRegisteredRef extends FoundRef {
+  type: ReferenceType;
+  xmlTag: ReferenceXmlTag;
+}
+
 const ATTR_REGEX = /([a-z][a-z-]*)="([^"]*)"/g;
 
 export function findConversationRefs(text: string): FoundRef[] {
-  return findRefTags(text, "conversation-ref");
+  return findRefTags(text, getReferenceByType("conversation").xmlTag);
 }
 
 export function findMessageRefs(text: string): FoundRef[] {
-  return findRefTags(text, "message-ref");
+  return findRefTags(text, getReferenceByType("message").xmlTag);
 }
 
 export function findTicketRefs(text: string): FoundRef[] {
-  return findRefTags(text, "ticket-ref");
+  return findRefTags(text, getReferenceByType("ticket").xmlTag);
+}
+
+export function findSpecRefs(text: string): FoundRef[] {
+  return findRefTags(text, getReferenceByType("spec").xmlTag);
+}
+
+export function findRequirementRefs(text: string): FoundRef[] {
+  return findRefTags(text, getReferenceByType("requirement").xmlTag);
+}
+
+export function findDecisionRefs(text: string): FoundRef[] {
+  return findRefTags(text, getReferenceByType("decision").xmlTag);
+}
+
+export function findTaskRefs(text: string): FoundRef[] {
+  return findRefTags(text, getReferenceByType("task").xmlTag);
+}
+
+export function findRegisteredRefs(text: string): FoundRegisteredRef[] {
+  return REFERENCE_REGISTRY.flatMap((entry) =>
+    findRefTags(text, entry.xmlTag).map((ref) => ({
+      ...ref,
+      type: entry.type,
+      xmlTag: entry.xmlTag,
+    })),
+  ).sort((a, b) => a.start - b.start);
 }
 
 export function findRefTags(text: string, tagName: string): FoundRef[] {

@@ -33,6 +33,8 @@ describe("pushNotificationConfigSchema", () => {
       expect(result.data.serverUrl).toBe("https://ntfy.sh");
       expect(result.data.topic).toBe("");
       expect(result.data.triggers.jobCompleted).toBe(true);
+      expect(result.data.triggers.specApprovalRequested).toBe(true);
+      expect(result.data.triggers.specApprovalGranted).toBe(true);
     }
   });
 
@@ -61,5 +63,19 @@ describe("shouldSendPush with config from schema defaults", () => {
       topic: "test",
     });
     expect(shouldSendPush(config, "job-completed")).toBe(true);
+  });
+
+  it("gates spec approval pushes independently", () => {
+    const config = pushNotificationConfigSchema.parse({
+      enabled: true,
+      topic: "test",
+      triggers: {
+        specApprovalRequested: false,
+        specApprovalGranted: true,
+      },
+    });
+
+    expect(shouldSendPush(config, "spec-approval-requested")).toBe(false);
+    expect(shouldSendPush(config, "spec-approval-granted")).toBe(true);
   });
 });

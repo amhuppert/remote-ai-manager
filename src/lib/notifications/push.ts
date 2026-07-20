@@ -12,7 +12,10 @@ export type PushTriggerType =
   | "waiting-for-input"
   | "workflow-completed"
   | "workflow-halted"
-  | "conversation-idle";
+  | "conversation-idle"
+  | "spec-approval-requested"
+  | "spec-approval-granted"
+  | "spec-policy-admitted";
 
 export interface PushEvent {
   trigger: PushTriggerType;
@@ -42,6 +45,9 @@ const triggerToConfigKey: Record<
   "workflow-completed": "workflowCompleted",
   "workflow-halted": "workflowHalted",
   "conversation-idle": "conversationIdle",
+  "spec-approval-requested": "specApprovalRequested",
+  "spec-approval-granted": "specApprovalGranted",
+  "spec-policy-admitted": "specPolicyAdmitted",
 };
 
 const triggerToTag: Record<PushTriggerType, string> = {
@@ -50,6 +56,9 @@ const triggerToTag: Record<PushTriggerType, string> = {
   "workflow-completed": "tada",
   "workflow-halted": "warning",
   "conversation-idle": "zzz",
+  "spec-approval-requested": "bell",
+  "spec-approval-granted": "white_check_mark",
+  "spec-policy-admitted": "eyes",
 };
 
 // ============================================================

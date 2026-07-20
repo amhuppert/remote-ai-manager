@@ -326,6 +326,40 @@ describe("queueMessage in_turn", () => {
     );
   });
 
+  it("expands an in-turn /spec command only for the backend and preserves the raw transcript", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+    const rawPrompt = "/spec Add an operator status endpoint";
+
+    await queueMessage({
+      ...baseParams,
+      text: rawPrompt,
+      backend: "claude",
+      deps,
+    });
+
+    expect(enqueueMock).toHaveBeenCalledWith({
+      ...baseParams,
+      content: [{ type: "text", text: rawPrompt }],
+    });
+    expect(queueUserInputMock).toHaveBeenCalledWith({
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining("Author a native Command Center spec"),
+        },
+      ],
+    });
+    expect(appendTranscriptEntryMock).toHaveBeenCalledWith(
+      "conv-123",
+      expect.objectContaining({
+        content: [{ type: "text", text: rawPrompt }],
+      }),
+      undefined,
+      { projectName: "my-project", sessionName: "my-session" },
+    );
+  });
+
   it("delivers a feedback message as backend-safe prose (no document_feedback block) and records the card in the transcript", async () => {
     const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });

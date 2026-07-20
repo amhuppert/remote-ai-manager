@@ -194,6 +194,10 @@ async function createExecutionFromSeed(
     seedDefinitionRevision: seed.definitionRevision,
     boundInputs: seed.inputs,
     launchedTier: seed.launchedTier,
+    definitionApproval:
+      concrete.approvalRequired === true
+        ? { requestedAt: seed.startedAt, approvedAt: null }
+        : null,
     workingDefinition,
     charter: concrete.charter,
     status: "pending",

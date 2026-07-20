@@ -26,6 +26,7 @@ import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowContextStatusEvent,
   GraphWorkflowJoinStatusEvent,
+  GraphWorkflowLaneCommitEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowMergeStatusEvent,
@@ -95,6 +96,96 @@ export const scopedStatusEventSchema = z.object({
 });
 export type ScopedStatusEvent = z.infer<typeof scopedStatusEventSchema>;
 
+const specEventIdentityShape = {
+  projectPath: z.string().min(1),
+  specId: z.string().min(1),
+  specSlug: z.string().min(1),
+  occurredAt: z.string().min(1),
+  kind: z.string().min(1),
+};
+
+export const specChangedEventSchema = z
+  .object({
+    type: z.literal("spec-changed"),
+    ...specEventIdentityShape,
+    revisionId: z.string().min(1).optional(),
+    elementIds: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type SpecChangedEvent = z.infer<typeof specChangedEventSchema>;
+
+export const specRevisionChangedEventSchema = z
+  .object({
+    type: z.literal("spec-revision-changed"),
+    ...specEventIdentityShape,
+    revisionId: z.string().min(1),
+    elementIds: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type SpecRevisionChangedEvent = z.infer<
+  typeof specRevisionChangedEventSchema
+>;
+
+export const specApprovalChangedEventSchema = z
+  .object({
+    type: z.literal("spec-approval-changed"),
+    ...specEventIdentityShape,
+    revisionId: z.string().min(1).optional(),
+    subjectId: z.string().min(1).optional(),
+  })
+  .strict();
+export type SpecApprovalChangedEvent = z.infer<
+  typeof specApprovalChangedEventSchema
+>;
+
+export const specExecutionChangedEventSchema = z
+  .object({
+    type: z.literal("spec-execution-changed"),
+    ...specEventIdentityShape,
+    revisionId: z.string().min(1),
+    executionId: z.string().min(1),
+  })
+  .strict();
+export type SpecExecutionChangedEvent = z.infer<
+  typeof specExecutionChangedEventSchema
+>;
+
+export const specEvidenceChangedEventSchema = z
+  .object({
+    type: z.literal("spec-evidence-changed"),
+    ...specEventIdentityShape,
+    revisionId: z.string().min(1),
+    criterionId: z.string().min(1).optional(),
+    taskId: z.string().min(1).optional(),
+    executionId: z.string().min(1).optional(),
+  })
+  .strict();
+export type SpecEvidenceChangedEvent = z.infer<
+  typeof specEvidenceChangedEventSchema
+>;
+
+export const specAttentionChangedEventSchema = z
+  .object({
+    type: z.literal("spec-attention-changed"),
+    ...specEventIdentityShape,
+    attentionId: z.string().min(1),
+    active: z.boolean(),
+  })
+  .strict();
+export type SpecAttentionChangedEvent = z.infer<
+  typeof specAttentionChangedEventSchema
+>;
+
+export const specSseEventSchema = z.discriminatedUnion("type", [
+  specChangedEventSchema,
+  specRevisionChangedEventSchema,
+  specApprovalChangedEventSchema,
+  specExecutionChangedEventSchema,
+  specEvidenceChangedEventSchema,
+  specAttentionChangedEventSchema,
+]);
+export type SpecSseEvent = z.infer<typeof specSseEventSchema>;
+
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
@@ -121,6 +212,7 @@ export type SSEEvent =
   | GraphWorkflowMergeStatusEvent
   | GraphWorkflowBatchScheduledEvent
   | GraphWorkflowLaneStatusEvent
+  | GraphWorkflowLaneCommitEvent
   | GraphWorkflowJoinStatusEvent
   | GraphWorkflowApprovalPendingEvent
   | GraphWorkflowApprovalResolvedEvent
@@ -140,4 +232,5 @@ export type SSEEvent =
   | SpawnResultEvent
   | SessionAlignmentUpdatedEvent
   | ContextArtifactStatusEvent
-  | TicketChangedEvent;
+  | TicketChangedEvent
+  | SpecSseEvent;

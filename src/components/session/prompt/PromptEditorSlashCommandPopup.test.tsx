@@ -127,13 +127,54 @@ beforeEach(() => {
 });
 
 describe("PromptEditorSlashCommandPopup", () => {
-  it("renders fetched commands plus the /collab built-in", async () => {
+  it("renders fetched commands plus the native built-ins", async () => {
     await act(async () => {
       renderPopup();
     });
     expect(screen.getByText("/collab")).toBeInTheDocument();
+    expect(screen.getByText("/spec")).toBeInTheDocument();
     expect(screen.getByText("/commit")).toBeInTheDocument();
     expect(screen.getByText("/review")).toBeInTheDocument();
+  });
+
+  it("keeps native /spec authoritative when discovery returns a project command with the same name", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: {
+        items: [
+          ...mockCommands,
+          {
+            name: "/spec",
+            description: "Project-local spec command",
+            type: "command",
+            source: "project",
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const onSelect = vi.fn();
+    const ref = createRef<SlashCommandPopupHandle>();
+
+    await act(async () => {
+      renderPopup({ query: "spec", onSelect }, ref);
+    });
+    act(() => {
+      ref.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    });
+
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "/spec",
+        source: "built-in",
+        description: "Author a durable native Command Center spec.",
+        argumentHint: "<what-to-specify>",
+      }),
+    );
+    expect(screen.queryByText("Project-local spec command")).toBeNull();
   });
 
   it("filters by query", async () => {
@@ -443,6 +484,7 @@ describe("PromptEditorSlashCommandPopup", () => {
     });
     expect(screen.queryByText("/ticket")).toBeNull();
     expect(screen.getByText("/commit")).toBeInTheDocument();
+    expect(screen.getByText("/spec")).toBeInTheDocument();
   });
 
   it("returns false from handleKeyDown for unrelated keys", async () => {
@@ -490,6 +532,7 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
     await act(async () => {
       renderPopup({ sessionName: undefined });
     });
+    expect(screen.getByText("/spec")).toBeInTheDocument();
     expect(screen.queryByText("/collab")).toBeNull();
     expect(screen.queryByText("/commit")).toBeNull();
     expect(screen.queryByText("/ticket")).toBeNull();

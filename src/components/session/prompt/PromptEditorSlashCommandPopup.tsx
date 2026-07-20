@@ -31,6 +31,13 @@ import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
   {
+    name: "/spec",
+    description: "Author a durable native Command Center spec.",
+    argumentHint: "<what-to-specify>",
+    type: "command",
+    source: "built-in",
+  },
+  {
     name: "/collab",
     description: "Run two agents in parallel and converge to a merged result.",
     type: "command",
@@ -201,7 +208,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
 
   const items = useMemo<CommandItem[]>(() => {
     const availableBuiltIns = projectScoped
-      ? []
+      ? BUILT_IN_CLAUDE_COMMANDS.filter((item) => item.name === "/spec")
       : isWorkflowManagedConversation
         ? BUILT_IN_CLAUDE_COMMANDS.filter((i) => i.name !== "/ticket")
         : BUILT_IN_CLAUDE_COMMANDS;
@@ -217,9 +224,12 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     if (backend === "codex") {
       return [...availableBuiltIns];
     }
-    const fetchedNames = new Set(filtered.map((i) => i.name));
+    const fetchedSlashCommands = filtered.filter(
+      (item) => item.name.startsWith("/") && item.name !== "/spec",
+    );
+    const fetchedNames = new Set(fetchedSlashCommands.map((i) => i.name));
     const builtIns = availableBuiltIns.filter((i) => !fetchedNames.has(i.name));
-    return [...builtIns, ...filtered.filter((i) => i.name.startsWith("/"))];
+    return [...builtIns, ...fetchedSlashCommands];
   }, [
     commandsQuery.data?.items,
     pluginsView.data,

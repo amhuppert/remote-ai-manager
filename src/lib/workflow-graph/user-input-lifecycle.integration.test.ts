@@ -304,7 +304,10 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       sessionGitLock: { withSessionGitLock: async (_k, fn) => fn() },
       mergeRunner: { run: vi.fn() },
       soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
-      laneCommitter: { commit: async () => ({ status: "skipped" }) },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
+      },
       joinRunner: { run: vi.fn() },
       executionTargetResolver: { resolve: () => sessionTarget },
       getSession: fixture.store.getSession,

@@ -24,7 +24,7 @@ import { useDeleteTicketMutation } from "@/lib/tickets/mutations";
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import { pushToast } from "@/stores/toast.store";
 import { cn } from "@/lib/ui/cn";
-import { copyTicketReference } from "../copy-ticket-reference";
+import { copyTicketReference } from "@/components/references/copy-ticket-reference";
 import { formatRelativeTime } from "../format-relative-time";
 import { ticketIdentifier } from "../ticket-reference";
 import {

@@ -25,6 +25,7 @@ import {
   createNotificationsRepo,
   type CreateNotificationInput,
   type CreateProjectConversationNotificationInput,
+  type CreateSpecNotificationInput,
   type GetNotificationsOptions,
   type MarkAsReadResult,
   type NotificationsRepo,
@@ -34,6 +35,7 @@ import type {
   JobNotification,
   Notification,
   ProjectConversationNotification,
+  SpecNotification,
 } from "./schemas";
 
 const logger = createLogger("notifications.service");
@@ -53,6 +55,7 @@ export interface NotificationsService {
   createProjectConversationNotification(
     input: CreateProjectConversationNotificationInput,
   ): ProjectConversationNotification;
+  createSpecNotification(input: CreateSpecNotificationInput): SpecNotification;
   getNotifications(options?: GetNotificationsOptions): PaginatedNotifications;
   markAsRead(id: string): MarkAsReadResult;
   /** Returns the number of rows transitioned unread → read. */
@@ -86,6 +89,19 @@ export function createNotificationsService(
 
     createProjectConversationNotification(input) {
       const result = deps.repo().createProjectConversationNotification(input);
+      if (result.created) {
+        emitCreated(result.notification);
+      } else {
+        logger.debug("notification.deduped", {
+          notificationId: result.notification.id,
+          dedupeKey: input.dedupeKey,
+        });
+      }
+      return result.notification;
+    },
+
+    createSpecNotification(input) {
+      const result = deps.repo().createSpecNotification(input);
       if (result.created) {
         emitCreated(result.notification);
       } else {

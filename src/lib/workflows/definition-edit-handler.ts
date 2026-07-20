@@ -77,6 +77,9 @@ export async function runDefinitionEditRequest(
 
   const applied = applyDefinitionEdits(record, parsed.data.operations);
   if (!applied.ok) {
+    const regionLocked = applied.issues.find(
+      (issue) => issue.code === "region_locked",
+    );
     logger.warn("workflow-graph.definition-edit.rejected", {
       workflowId: record.id,
       operationCount: parsed.data.operations.length,
@@ -89,10 +92,13 @@ export async function runDefinitionEditRequest(
         // engine refused — unknown ids, cycles) from a malformed-shape 400 (no
         // code). The CLI maps the former to exit 1 ("server said no") and the
         // latter to exit 2 ("fix your file"), per docs/design/cc-cli/05.
-        code: "invalid_edit",
+        code: regionLocked ? "region_locked" : "invalid_edit",
+        ...(regionLocked?.instruction
+          ? { instruction: regionLocked.instruction }
+          : {}),
         issues: applied.issues.map(formatDefinitionEditIssue),
       },
-      { status: 400 },
+      { status: regionLocked ? 409 : 400 },
     );
   }
 

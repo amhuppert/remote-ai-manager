@@ -25,6 +25,9 @@ function makeConfig(
       workflowCompleted: true,
       workflowHalted: true,
       conversationIdle: true,
+      specApprovalRequested: true,
+      specApprovalGranted: true,
+      specPolicyAdmitted: true,
     },
     ...overrides,
   };
@@ -58,6 +61,9 @@ describe("shouldSendPush", () => {
         workflowCompleted: true,
         workflowHalted: true,
         conversationIdle: false,
+        specApprovalRequested: true,
+        specApprovalGranted: true,
+        specPolicyAdmitted: true,
       },
     });
     expect(shouldSendPush(config, "conversation-idle")).toBe(false);
@@ -71,6 +77,9 @@ describe("shouldSendPush", () => {
         workflowCompleted: true,
         workflowHalted: true,
         conversationIdle: true,
+        specApprovalRequested: true,
+        specApprovalGranted: true,
+        specPolicyAdmitted: true,
       },
     });
     expect(shouldSendPush(config, "job-completed")).toBe(false);

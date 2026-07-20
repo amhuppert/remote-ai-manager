@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { jobTypeSchema } from "@/lib/jobs/schemas";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
+import { specGateSchema } from "@/lib/specs/schemas";
 
 // ============================================================
 // Push Notification Config
@@ -12,6 +13,9 @@ const pushTriggerSchema = z.object({
   workflowCompleted: z.boolean().default(true),
   workflowHalted: z.boolean().default(true),
   conversationIdle: z.boolean().default(true),
+  specApprovalRequested: z.boolean().default(true),
+  specApprovalGranted: z.boolean().default(true),
+  specPolicyAdmitted: z.boolean().default(true),
 });
 
 export const pushNotificationConfigSchema = z.object({
@@ -25,6 +29,9 @@ export const pushNotificationConfigSchema = z.object({
     workflowCompleted: true,
     workflowHalted: true,
     conversationIdle: true,
+    specApprovalRequested: true,
+    specApprovalGranted: true,
+    specPolicyAdmitted: true,
   }),
 });
 export type PushNotificationConfig = z.infer<
@@ -37,6 +44,9 @@ const rawPushTriggerSchema = z.object({
   workflowCompleted: z.boolean().optional(),
   workflowHalted: z.boolean().optional(),
   conversationIdle: z.boolean().optional(),
+  specApprovalRequested: z.boolean().optional(),
+  specApprovalGranted: z.boolean().optional(),
+  specPolicyAdmitted: z.boolean().optional(),
 });
 
 export const rawPushNotificationConfigSchema = z.object({
@@ -75,9 +85,23 @@ export type ProjectConversationNotificationType = z.infer<
   typeof projectConversationNotificationTypeSchema
 >;
 
+export const specNotificationTypeSchema = z.enum([
+  "spec-approval-requested",
+  "spec-approval-granted",
+  "spec-policy-admitted",
+  // A routed waiver request opens a Needs You item (R14.3); push maps onto
+  // the existing specApprovalRequested trigger.
+  "spec-waiver-requested",
+  // Closes any open requested row: waiver granted, or requests cleared when
+  // an execution/spec is abandoned; push maps onto specApprovalGranted.
+  "spec-attention-resolved",
+]);
+export type SpecNotificationType = z.infer<typeof specNotificationTypeSchema>;
+
 export type NotificationType =
   | JobNotificationType
-  | ProjectConversationNotificationType;
+  | ProjectConversationNotificationType
+  | SpecNotificationType;
 
 const notificationBaseSchema = z.object({
   id: z.string(),
@@ -113,10 +137,24 @@ export const projectConversationNotificationSchema =
     errorMessage: z.string().optional(),
   });
 
+export const specNotificationSchema = notificationBaseSchema.extend({
+  source: z.literal("spec"),
+  type: specNotificationTypeSchema,
+  sessionName: z.string().nullable(),
+  specId: z.string().min(1),
+  specSlug: z.string().min(1),
+  specName: z.string(),
+  gate: specGateSchema,
+  gateRequestId: z.string().min(1),
+  deepLinkId: z.string().min(1),
+  approvalId: z.string().min(1).optional(),
+});
+
 export const notificationSchema = registerTrustedSchema(
   z.discriminatedUnion("source", [
     jobNotificationSchema,
     projectConversationNotificationSchema,
+    specNotificationSchema,
   ]),
   "notificationSchema",
 );
@@ -125,6 +163,7 @@ export type JobNotification = z.infer<typeof jobNotificationSchema>;
 export type ProjectConversationNotification = z.infer<
   typeof projectConversationNotificationSchema
 >;
+export type SpecNotification = z.infer<typeof specNotificationSchema>;
 
 // ============================================================
 // SSE Events

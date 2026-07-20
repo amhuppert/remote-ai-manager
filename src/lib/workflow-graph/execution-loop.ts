@@ -32,6 +32,7 @@ import type {
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { type SessionGitLock } from "@/lib/shared/lock-retry";
 import { sleep } from "@/lib/shared/sleep";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
@@ -268,13 +269,16 @@ export interface GraphWorkflowExecutionLoopDeps {
 
 // -- Active loop registry -----------------------------------------------------
 
-// Keyed by session, valued by the OWNING loop instance's token. Two loop
-// instances can briefly overlap on one session (a stale generation still
-// draining while its successor registers); the newest registrant owns the
-// entry, and an exiting loop only deletes it if it still owns it — otherwise
-// a stale loop's exit would make the session look loop-free while the live
-// loop is still running.
-const activeLoops = new Map<string, string>();
+// Next.js evaluates route handlers in separate module graphs, so process-local
+// ownership must live on globalThis for status reads to observe loops started
+// by start/resume routes. Keyed by session, valued by the owning loop token.
+// Two loop instances can briefly overlap; an exiting loop only deletes the
+// entry when it still owns it so a stale generation cannot hide its successor.
+const ACTIVE_LOOPS_KEY = "__cc_graph_workflow_active_loops" as const;
+
+function getActiveLoops(): Map<string, string> {
+  return getGlobalSingleton(ACTIVE_LOOPS_KEY, () => new Map<string, string>());
+}
 
 function loopKey(projectPath: string, sessionName: string): string {
   return `${projectPath}::${sessionName}`;
@@ -285,12 +289,12 @@ export function isExecutionLoopActive(
   projectPath: string,
   sessionName: string,
 ): boolean {
-  return activeLoops.has(loopKey(projectPath, sessionName));
+  return getActiveLoops().has(loopKey(projectPath, sessionName));
 }
 
 /** Reset the active loop registry (for testing only). */
 export function _resetActiveLoopsForTesting(): void {
-  activeLoops.clear();
+  getActiveLoops().clear();
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -503,7 +507,7 @@ export function createGraphWorkflowExecutionLoop(
   ): Promise<GraphWorkflowExecution> {
     const key = loopKey(input.projectPath, input.sessionName);
     const loopInstanceToken = randomUUID();
-    activeLoops.set(key, loopInstanceToken);
+    getActiveLoops().set(key, loopInstanceToken);
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
     // Answers consumed on the awaiting-user-input resume path, keyed by context.
@@ -1259,6 +1263,13 @@ export function createGraphWorkflowExecutionLoop(
       let featureWorktreePath: string | null = null;
       let featureBranchName: string | null = null;
       let featureLaneId: string | null = null;
+      // Lane HEAD captured before the context's first turn. Implementer
+      // agents often commit their own work mid-turn, leaving the commit
+      // phase a clean worktree; this baseline lets the committer adopt the
+      // moved HEAD as the context's snapshot so commit evidence still exists.
+      // Best-effort: a failed capture only disables adoption, never halts.
+      let preTurnLaneHeadSha: string | null = null;
+      let laneHeadCaptured = false;
 
       async function runCommitPhase(): Promise<void> {
         if (
@@ -1272,6 +1283,7 @@ export function createGraphWorkflowExecutionLoop(
               featureLaneId,
               featureWorktreePath,
               featureBranchName,
+              preTurnLaneHeadSha,
             );
           } else {
             await runFanInMerge(
@@ -1281,7 +1293,7 @@ export function createGraphWorkflowExecutionLoop(
             );
           }
         } else if (isolation === "session") {
-          await runSoloCommit(contextId);
+          await runSoloCommit(contextId, preTurnLaneHeadSha);
         }
       }
 
@@ -1311,6 +1323,28 @@ export function createGraphWorkflowExecutionLoop(
           if (target.isolation === "worktree") {
             featureWorktreePath = target.worktreePath;
             featureBranchName = target.branchName;
+            if (target.laneId !== null && !laneHeadCaptured) {
+              laneHeadCaptured = true;
+              try {
+                preTurnLaneHeadSha = await deps.laneCommitter.resolveHead(
+                  target.worktreePath,
+                );
+              } catch {
+                preTurnLaneHeadSha = null;
+              }
+            }
+          } else if (!laneHeadCaptured) {
+            // Session isolation: the same self-commit adoption baseline,
+            // captured against the session worktree, so solo runs also carry
+            // commit evidence when the implementer commits its own work.
+            laneHeadCaptured = true;
+            try {
+              preTurnLaneHeadSha = await deps.laneCommitter.resolveHead(
+                target.worktreePath,
+              );
+            } catch {
+              preTurnLaneHeadSha = null;
+            }
           }
 
           // A context parked at the approval gate — whether it parked during
@@ -1666,6 +1700,7 @@ export function createGraphWorkflowExecutionLoop(
       laneId: string,
       laneWorktreePath: string,
       laneBranchName: string,
+      preTurnHeadSha: string | null,
     ): Promise<void> {
       await deps.mergeMutex.withMergeMutex(
         {
@@ -1697,6 +1732,7 @@ export function createGraphWorkflowExecutionLoop(
                 contextId,
                 laneId,
                 laneWorktreePath,
+                preTurnHeadSha,
               }),
           );
 
@@ -1735,7 +1771,12 @@ export function createGraphWorkflowExecutionLoop(
             return;
           }
 
-          if (result.status === "committed") {
+          // An adopted result (implementer self-committed; the committer
+          // adopted the moved lane HEAD) records a snapshot exactly like a
+          // committed one — the snapshot diff is what derives the
+          // graph-workflow-lane-commit event feeding commit evidence.
+          if (result.status === "committed" || result.status === "adopted") {
+            const adopted = result.status === "adopted";
             const snapshot = result.snapshot;
             await deps.workflowManager.mutateActive(
               input.projectPath,
@@ -1748,24 +1789,37 @@ export function createGraphWorkflowExecutionLoop(
                     next,
                     contextId,
                     "merged-success",
-                    { reason: "lane_commit.completed" },
+                    {
+                      reason: adopted
+                        ? "lane_commit.adopted"
+                        : "lane_commit.completed",
+                    },
                   );
                   cs.lastMergeError = null;
                 }
                 return applyLaneCommitSnapshot(next, laneId, snapshot);
               },
             );
-            execLogger?.iteration(contextId, "lane_commit.completed", {
-              laneId,
-              sha: snapshot.sha,
-              committedAt: snapshot.committedAt,
-            });
-            logger.info("graph-workflow.lane_commit.completed", {
-              executionId: execution.id,
+            execLogger?.iteration(
               contextId,
-              laneId,
-              sha: snapshot.sha,
-            });
+              adopted ? "lane_commit.adopted" : "lane_commit.completed",
+              {
+                laneId,
+                sha: snapshot.sha,
+                committedAt: snapshot.committedAt,
+              },
+            );
+            logger.info(
+              adopted
+                ? "graph-workflow.lane_commit.adopted"
+                : "graph-workflow.lane_commit.completed",
+              {
+                executionId: execution.id,
+                contextId,
+                laneId,
+                sha: snapshot.sha,
+              },
+            );
             return;
           }
 
@@ -1811,7 +1865,10 @@ export function createGraphWorkflowExecutionLoop(
       );
     }
 
-    async function runSoloCommit(contextId: string): Promise<void> {
+    async function runSoloCommit(
+      contextId: string,
+      preTurnHeadSha: string | null,
+    ): Promise<void> {
       await deps.mergeMutex.withMergeMutex(
         {
           projectPath: input.projectPath,
@@ -1887,6 +1944,81 @@ export function createGraphWorkflowExecutionLoop(
             contextId,
             status: result.status,
           });
+
+          // Record the context's commit on the session lane so the snapshot →
+          // lane-commit event → evidence-ingest chain carries changedCode for
+          // solo runs too. A skipped commit with a moved HEAD means the
+          // implementer committed its own work — adopt that HEAD, mirroring
+          // the lane-worktree adoption path.
+          let snapshotSha: string | null = null;
+          let adopted = false;
+          if (result.status === "committed") {
+            snapshotSha = result.hash;
+          } else {
+            let currentHead: string | null = null;
+            try {
+              currentHead = await deps.laneCommitter.resolveHead(
+                session.worktreePath,
+              );
+            } catch {
+              currentHead = null;
+            }
+            if (
+              currentHead !== null &&
+              preTurnHeadSha !== null &&
+              currentHead !== preTurnHeadSha
+            ) {
+              snapshotSha = currentHead;
+              adopted = true;
+            }
+          }
+          if (snapshotSha !== null) {
+            const snapshot = {
+              contextId,
+              sha: snapshotSha,
+              committedAt: new Date().toISOString(),
+            };
+            await deps.workflowManager.mutateActive(
+              input.projectPath,
+              input.sessionName,
+              (e) => {
+                const assignedLaneId =
+                  e.contextStates[contextId]?.laneId ?? null;
+                const assigned =
+                  assignedLaneId === null
+                    ? undefined
+                    : e.executionLanes[assignedLaneId];
+                const laneIdForSnapshot =
+                  assigned?.kind === "session"
+                    ? assigned.laneId
+                    : SESSION_LANE_ID;
+                const withLane =
+                  laneIdForSnapshot === SESSION_LANE_ID
+                    ? materializeSessionLane(e, {
+                        sessionLaneId: SESSION_LANE_ID,
+                        branchName: session.branchName,
+                        worktreePath: session.worktreePath,
+                        now: () => new Date().toISOString(),
+                      })
+                    : e;
+                return applyLaneCommitSnapshot(
+                  withLane,
+                  laneIdForSnapshot,
+                  snapshot,
+                );
+              },
+            );
+            if (adopted) {
+              execLogger?.iteration(contextId, "solo_commit.adopted_head", {
+                sha: snapshotSha,
+              });
+              logger.info("graph-workflow.solo_commit.adopted_head", {
+                executionId: execution.id,
+                contextId,
+                sha: snapshotSha,
+              });
+            }
+          }
 
           await deps.workflowManager.mutateActive(
             input.projectPath,
@@ -2217,7 +2349,7 @@ export function createGraphWorkflowExecutionLoop(
       const haltResult = await deps.workflowManager.recordPendingHaltReason({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        reason: {
+        reason: result.haltReason ?? {
           type: "join_failure",
           joinId: claimedJoin.joinId,
           joinKind: claimedJoin.kind,
@@ -2234,6 +2366,7 @@ export function createGraphWorkflowExecutionLoop(
         kind: claimedJoin.kind,
         failedSourceLaneId: result.failedSourceLaneId,
         conflictFiles: result.conflictFiles,
+        haltReasonType: result.haltReason?.type ?? null,
       });
       logger.error("graph-workflow.join.failed", {
         executionId: execution.id,
@@ -2241,6 +2374,7 @@ export function createGraphWorkflowExecutionLoop(
         kind: claimedJoin.kind,
         message: result.message,
         conflictFiles: result.conflictFiles.length,
+        haltReasonType: result.haltReason?.type ?? null,
       });
       return "halted";
     }
@@ -2727,6 +2861,7 @@ export function createGraphWorkflowExecutionLoop(
       });
       return haltedExecution;
     } finally {
+      const activeLoops = getActiveLoops();
       if (activeLoops.get(key) === loopInstanceToken) {
         activeLoops.delete(key);
       }

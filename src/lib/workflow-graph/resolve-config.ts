@@ -174,6 +174,7 @@ export function resolveContext(
       ? { description: context.description }
       : {}),
     acceptanceCriteria: context.acceptanceCriteria,
+    ...(context.origin !== undefined ? { origin: context.origin } : {}),
     implementer,
     contextValidator,
     scriptValidator,
@@ -208,6 +209,13 @@ export function resolveWorkflowDefinition(
 
   return {
     schemaVersion: definition.schemaVersion,
+    ...(definition.approvalRequired !== undefined
+      ? { approvalRequired: definition.approvalRequired }
+      : {}),
+    ...(definition.origin !== undefined ? { origin: definition.origin } : {}),
+    ...(definition.lockedRegions !== undefined
+      ? { lockedRegions: definition.lockedRegions }
+      : {}),
     // The charter is workflow-global semantic content, attached identically to
     // every resolved context by passthrough — never routed through the
     // operational config cascade and with no per-context override (1.5, 4.5).

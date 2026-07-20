@@ -19,6 +19,38 @@ export const jobStatusSchema = z.enum([
 ]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
+export const candidateValidationFactSchema = registerTrustedSchema(
+  z
+    .object({
+      validationRef: z.string().min(1),
+      validatedSha: z.string().min(1),
+      validatedTreeHash: z.string().min(1),
+      commandIdentity: z.string().min(1),
+      outcome: z.enum(["pass", "fail"]),
+    })
+    .strict(),
+  "candidateValidationFactSchema",
+);
+export type CandidateValidationFact = z.infer<
+  typeof candidateValidationFactSchema
+>;
+
+export const deliveryGateCriterionOutcomeSchema = z.object({
+  criterionId: z.string().min(1),
+  criterionHandle: z.string().min(1),
+  outcome: z.string().min(1),
+  reason: z.string().optional(),
+});
+
+export const deliveryGateHaltReasonSchema = z.object({
+  type: z.literal("delivery_gate_failed"),
+  unmet: z.array(deliveryGateCriterionOutcomeSchema),
+  instruction: z.string().min(1),
+});
+export type DeliveryGateHaltReason = z.infer<
+  typeof deliveryGateHaltReasonSchema
+>;
+
 // Documented phase strings (held as z.string() for forward compatibility):
 //   "committing-uncommitted" | "merging-main" | "analyzing-conflicts" |
 //   "resolving-conflicts" | "validating" | "fixing-validation" |
@@ -47,6 +79,10 @@ export const backgroundJobSchema = registerTrustedSchema(
     preparedSha: z.string().optional(),
     expectedTargetSha: z.string().optional(),
     refreshWarning: z.string().optional(),
+    executionId: z.string().optional(),
+    finalPublish: z.boolean().optional(),
+    candidateValidation: candidateValidationFactSchema.optional(),
+    haltReason: deliveryGateHaltReasonSchema.optional(),
     // Agent-written intent notes for the conflict resolver. Kept on the
     // in-memory job (like parkedRef) so a resolve-conflicts retry after a
     // conflicts terminal can reuse it; not part of the persisted JobRecord.
@@ -72,6 +108,9 @@ export const jobRecordSchema = registerTrustedSchema(
       conflictCount: true,
       conflictFiles: true,
       errorMessage: true,
+      executionId: true,
+      finalPublish: true,
+      candidateValidation: true,
     })
     .strict(),
   "jobRecordSchema",
@@ -98,6 +137,7 @@ export const jobStatusEventSchema = z.object({
   preparedSha: z.string().optional(),
   expectedTargetSha: z.string().optional(),
   refreshWarning: z.string().optional(),
+  haltReason: deliveryGateHaltReasonSchema.optional(),
 });
 export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
 

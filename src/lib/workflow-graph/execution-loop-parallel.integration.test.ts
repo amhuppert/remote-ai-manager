@@ -11,7 +11,10 @@ import type {
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
-import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
+import {
+  createJoinRunner,
+  type JoinRunner,
+} from "@/lib/workflow-graph/join-runner";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
@@ -322,6 +325,7 @@ function createInitialExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    definitionApproval: null,
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),
@@ -358,6 +362,8 @@ function buildSuccessMergeOutput(): MergeOutput {
     expectedTargetSha: null,
     parkedRef: null,
     refreshWarning: null,
+    candidateValidation: null,
+    haltReason: null,
     phase: null,
   };
 }
@@ -374,6 +380,8 @@ function buildFailedMergeOutput(message: string): MergeOutput {
     expectedTargetSha: null,
     parkedRef: null,
     refreshWarning: null,
+    candidateValidation: null,
+    haltReason: null,
     phase: null,
   };
 }
@@ -444,25 +452,30 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
+    // Sibling lanes publish through the quiescence final_publish join (never
+    // per-completion fan-in), so the observable merges are the lane branches
+    // landing on the session in deterministic sorted order.
     const mergeOrder: string[] = [];
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
-        mergeOrder.push(input.contextId);
+        mergeOrder.push(input.branchName);
         return buildSuccessMergeOutput();
       },
     };
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
 
     const soloCommitCalls: string[] = [];
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
       parallelWorktrees,
-      mergeMutex: createPerSessionMergeMutex(),
-      sessionGitLock: createSessionGitLock({
-        acquireSessionLock: () => () => {},
-      }),
+      mergeMutex,
+      sessionGitLock,
       mergeRunner,
-      joinRunner: createNoopJoinRunner(),
+      joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async (input) => {
           soloCommitCalls.push(input.contextId);
@@ -471,6 +484,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -489,18 +503,26 @@ describe("execution loop — parallel integration", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(mergeOrder).toEqual(["ctx-a", "ctx-b"]);
+    expect(mergeOrder).toEqual(["csm/session-1-ctx-a", "csm/session-1-ctx-b"]);
     expect(soloCommitCalls).toEqual([]);
     expect(
       parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
     ).toEqual(["ctx-a", "ctx-b"]);
+    // Published lanes are cleaned through the lane-cleanup path on completion.
     expect(
-      parallelWorktrees.disposeCalls.map((c) => c.branchName).sort(),
+      parallelWorktrees.cleanupLaneCalls.map((c) => c.branchName).sort(),
     ).toEqual(["csm/session-1-ctx-a", "csm/session-1-ctx-b"]);
+    const finalJoin = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish",
+    );
+    expect(finalJoin?.status).toBe("succeeded");
+    expect([...(finalJoin?.mergedSourceLaneIds ?? [])].sort()).toEqual([
+      "ctx-a",
+      "ctx-b",
+    ]);
     for (const ctxId of ["ctx-a", "ctx-b"]) {
       const cs = result.contextStates[ctxId];
       expect(cs?.mergeStatus).toBe("merged-success");
-      expect(cs?.cleanupStatus).toBe("removed");
       expect(cs?.lastMergeError).toBeNull();
     }
   });
@@ -598,6 +620,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -671,35 +694,35 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
+    // Lanes publish only at quiescence, so completion order (B before A)
+    // cannot influence the publish order: the final_publish join merges the
+    // lane branches in deterministic sorted order either way.
     const mergeOrder: string[] = [];
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
-        mergeOrder.push(input.contextId);
-        // ctx-a becomes mergeable only once ctx-b's merge has begun, so the
-        // B-before-A ordering is causal rather than a wall-clock race (a 5ms
-        // timer starves under load and flips the observed order).
-        if (input.contextId === "ctx-b") {
-          completionGates.get("ctx-a")!.resolve();
-        }
+        mergeOrder.push(input.branchName);
         return buildSuccessMergeOutput();
       },
     };
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
 
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
       parallelWorktrees,
-      mergeMutex: createPerSessionMergeMutex(),
-      sessionGitLock: createSessionGitLock({
-        acquireSessionLock: () => () => {},
-      }),
+      mergeMutex,
+      sessionGitLock,
       mergeRunner,
-      joinRunner: createNoopJoinRunner(),
+      joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -708,6 +731,7 @@ describe("execution loop — parallel integration", () => {
     });
 
     completionGates.get("ctx-b")!.resolve();
+    setTimeout(() => completionGates.get("ctx-a")!.resolve(), 5);
 
     const result = await loop.run({
       projectPath: "/repo",
@@ -717,11 +741,13 @@ describe("execution loop — parallel integration", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(mergeOrder).toEqual(["ctx-b", "ctx-a"]);
+    expect(mergeOrder).toEqual(["csm/session-1-ctx-a", "csm/session-1-ctx-b"]);
     for (const ctxId of ["ctx-a", "ctx-b"]) {
       expect(result.contextStates[ctxId]?.mergeStatus).toBe("merged-success");
-      expect(result.contextStates[ctxId]?.cleanupStatus).toBe("removed");
     }
+    expect(
+      parallelWorktrees.cleanupLaneCalls.map((c) => c.branchName).sort(),
+    ).toEqual(["csm/session-1-ctx-a", "csm/session-1-ctx-b"]);
   });
 
   it("scenario 3: B's merge auto-resolves trivial conflicts; both succeed", async () => {
@@ -793,6 +819,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -861,30 +888,35 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
+    // B's lane branch fails to publish; A's lane publishes first (sorted
+    // order), so the final_publish join fails partway with A already merged.
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
-        if (input.contextId === "ctx-b") {
+        if (input.branchName === "csm/session-1-ctx-b") {
           return buildFailedMergeOutput("auto-resolution exhausted");
         }
         return buildSuccessMergeOutput();
       },
     };
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
 
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
       parallelWorktrees,
-      mergeMutex: createPerSessionMergeMutex(),
-      sessionGitLock: createSessionGitLock({
-        acquireSessionLock: () => () => {},
-      }),
+      mergeMutex,
+      sessionGitLock,
       mergeRunner,
-      joinRunner: createNoopJoinRunner(),
+      joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -903,22 +935,24 @@ describe("execution loop — parallel integration", () => {
     });
 
     expect(result.status).toBe("halted");
-    expect(result.haltReason?.type).toBe("merge_failure");
-    if (result.haltReason?.type === "merge_failure") {
-      expect(result.haltReason.contextId).toBe("ctx-b");
+    expect(result.haltReason?.type).toBe("join_failure");
+    if (result.haltReason?.type === "join_failure") {
+      expect(result.haltReason.joinKind).toBe("final_publish");
       expect(result.haltReason.message).toBe("auto-resolution exhausted");
     }
-    expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
-    expect(result.contextStates["ctx-a"]?.cleanupStatus).toBe("removed");
-    expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-failed");
-    expect(result.contextStates["ctx-b"]?.lastMergeError).toBe(
-      "auto-resolution exhausted",
+    const finalJoin = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish",
     );
+    expect(finalJoin?.status).toBe("failed");
+    expect(finalJoin?.mergedSourceLaneIds).toEqual(["ctx-a"]);
+    expect(finalJoin?.errorMessage).toBe("auto-resolution exhausted");
 
+    // Both lanes are retained for forensics/resume: cleanup only runs on
+    // completion, never on a halt.
     const disposeBranches = parallelWorktrees.disposeCalls.map(
       (c) => c.branchName,
     );
-    expect(disposeBranches).toContain("csm/session-1-ctx-a");
+    expect(disposeBranches).not.toContain("csm/session-1-ctx-a");
     expect(disposeBranches).not.toContain("csm/session-1-ctx-b");
     expect(parallelWorktrees.cleanupLaneCalls).toEqual([]);
   });
@@ -1011,6 +1045,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1132,6 +1167,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1251,6 +1287,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1273,13 +1310,15 @@ describe("execution loop — parallel integration", () => {
       type: "circuit_breaker",
       contextId: "ctx-a",
     });
-    expect(mergeOrder).toEqual(["ctx-b"]);
+    // The pending halt drains before the quiescence publish runs, so no lane
+    // is published while halted; B's completed work stays committed on its
+    // lane, retained for resume.
+    expect(mergeOrder).toEqual([]);
     expect(result.contextStates["ctx-a"]?.status).toBe("halted");
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("not-applicable");
     expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-success");
-    expect(
-      parallelWorktrees.disposeCalls.map((call) => call.branchName),
-    ).toEqual(["csm/session-1-ctx-b"]);
+    expect(parallelWorktrees.disposeCalls).toEqual([]);
+    expect(parallelWorktrees.cleanupLaneCalls).toEqual([]);
   });
 
   it("scenario 6: process crash mid-drain — restart resumes to halted with original reason via normalizeAfterRestart", async () => {
@@ -1416,6 +1455,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1443,7 +1483,7 @@ describe("execution loop — parallel integration", () => {
     expect(cs?.mergeStatus).toBe("not-applicable");
   });
 
-  it("scenario 8: user merge job overlaps fan-in — graph fan-in waits on session git lock", async () => {
+  it("scenario 8: user merge job overlaps the final publish — the publish join waits on the session git lock", async () => {
     _resetActiveLoopsForTesting();
 
     const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
@@ -1492,10 +1532,10 @@ describe("execution loop — parallel integration", () => {
       userJobReleasedAt = Date.now();
     }, 30);
 
-    const fanInTimes: Array<{ contextId: string; ts: number }> = [];
+    const publishTimes: Array<{ branchName: string; ts: number }> = [];
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
-        fanInTimes.push({ contextId: input.contextId, ts: Date.now() });
+        publishTimes.push({ branchName: input.branchName, ts: Date.now() });
         return buildSuccessMergeOutput();
       },
     };
@@ -1510,20 +1550,22 @@ describe("execution loop — parallel integration", () => {
       retryMs: 5,
       maxWaitMs: 5000,
     });
+    const mergeMutex = createPerSessionMergeMutex();
 
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
       parallelWorktrees,
-      mergeMutex: createPerSessionMergeMutex(),
+      mergeMutex,
       sessionGitLock,
       mergeRunner,
-      joinRunner: createNoopJoinRunner(),
+      joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1540,17 +1582,17 @@ describe("execution loop — parallel integration", () => {
 
     expect(result.status).toBe("completed");
     expect(lockHeld).toBe(false);
-    expect(fanInTimes).toHaveLength(2);
-    // Both fan-in merges ran AFTER the user job released the lock.
-    for (const entry of fanInTimes) {
+    expect(publishTimes).toHaveLength(2);
+    // Both lane publishes ran AFTER the user job released the lock.
+    for (const entry of publishTimes) {
       expect(entry.ts).toBeGreaterThanOrEqual(userJobReleasedAt);
     }
-    // Both fan-ins succeeded.
+    // Both publishes succeeded.
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-success");
   });
 
-  it("scenario 9: A's fan-in merge completes; B's publish returns ready-to-land (dirty target) and B's worktree is retained for later Land/Discard", async () => {
+  it("scenario 9: A's lane publishes; B's publish returns ready-to-land (dirty target), the publish join halts, and both worktrees are retained for later Land/Discard", async () => {
     _resetActiveLoopsForTesting();
 
     const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
@@ -1600,7 +1642,7 @@ describe("execution loop — parallel integration", () => {
 
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
-        if (input.contextId === "ctx-b") {
+        if (input.branchName === "csm/session-1-ctx-b") {
           return {
             status: "ready-to-land",
             mergeHash: null,
@@ -1612,28 +1654,33 @@ describe("execution loop — parallel integration", () => {
             expectedTargetSha: "expected-target-sha",
             parkedRef: `refs/cc-merges/${input.jobId}`,
             refreshWarning: null,
+            candidateValidation: null,
+            haltReason: null,
             phase: "awaiting-land",
           };
         }
         return buildSuccessMergeOutput();
       },
     };
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
 
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
       parallelWorktrees,
-      mergeMutex: createPerSessionMergeMutex(),
-      sessionGitLock: createSessionGitLock({
-        acquireSessionLock: () => () => {},
-      }),
+      mergeMutex,
+      sessionGitLock,
       mergeRunner,
-      joinRunner: createNoopJoinRunner(),
+      joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1651,16 +1698,24 @@ describe("execution loop — parallel integration", () => {
       execution: initial,
     });
 
-    expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
-    expect(result.contextStates["ctx-a"]?.cleanupStatus).toBe("removed");
+    // A parked ready-to-land candidate needs a human Land/Discard, so the
+    // publish join halts rather than completing around it.
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("join_failure");
+    const finalJoin = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish",
+    );
+    expect(finalJoin?.status).toBe("failed");
+    expect(finalJoin?.mergedSourceLaneIds).toEqual(["ctx-a"]);
 
-    // ctx-b returned ready-to-land — its worktree must be retained (not
-    // disposed) so the user can run Land/Discard against the parked ref.
+    // Both worktrees are retained: ctx-b's parked ref needs Land/Discard and
+    // halts never clean lanes.
     const disposeBranches = parallelWorktrees.disposeCalls.map(
       (c) => c.branchName,
     );
-    expect(disposeBranches).toContain("csm/session-1-ctx-a");
+    expect(disposeBranches).not.toContain("csm/session-1-ctx-a");
     expect(disposeBranches).not.toContain("csm/session-1-ctx-b");
+    expect(parallelWorktrees.cleanupLaneCalls).toEqual([]);
   });
 
   it("scenario 10: P1 Foundation, P2, and P3 start; once P1 Foundation lands, P1 Data Layer is scheduled in worktree isolation while P2 and P3 are still in flight (guarded event-driven scheduling)", async () => {
@@ -1778,6 +1833,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1800,11 +1856,14 @@ describe("execution loop — parallel integration", () => {
 
     const dataLayerStateAtSchedule = snapshot.contextStates["p1-data-layer"];
     expect(dataLayerStateAtSchedule?.isolation).toBe("worktree");
+    // Sequential lane reuse: the downstream inherits its upstream's lane
+    // rather than provisioning a fresh worktree.
+    expect(dataLayerStateAtSchedule?.laneId).toBe("p1-foundation");
     expect(dataLayerStateAtSchedule?.worktreePath).toBe(
-      "/repo/.worktrees/session-1.p1-data-layer",
+      "/repo/.worktrees/session-1.p1-foundation",
     );
     expect(dataLayerStateAtSchedule?.branchName).toBe(
-      "csm/session-1-p1-data-layer",
+      "csm/session-1-p1-foundation",
     );
     expect(dataLayerStateAtSchedule?.status).toBe("running");
     expect(snapshot.contextStates["p2"]?.status).toBe("running");
@@ -1817,14 +1876,21 @@ describe("execution loop — parallel integration", () => {
     const provisionedContextIds = parallelWorktrees.provisionCalls.map(
       (c) => c.contextId,
     );
-    expect(provisionedContextIds).toContain("p1-data-layer");
+    expect(provisionedContextIds).not.toContain("p1-data-layer");
 
     for (const ctxId of contextIds) {
       const cs = result.contextStates[ctxId];
       expect(cs?.isolation).toBe("worktree");
       expect(cs?.mergeStatus).toBe("merged-success");
-      expect(cs?.cleanupStatus).toBe("removed");
     }
+    // All three lanes published through the final join and were cleaned up.
+    expect(
+      parallelWorktrees.cleanupLaneCalls.map((c) => c.branchName).sort(),
+    ).toEqual([
+      "csm/session-1-p1-foundation",
+      "csm/session-1-p2",
+      "csm/session-1-p3",
+    ]);
   });
 
   it("scenario 11: pendingHaltReason from one sibling's merge failure prevents scheduling any newly eligible downstream context, and the remaining in-flight siblings drain before the loop halts", async () => {
@@ -1917,11 +1983,11 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
+    // The mid-run failure is a lane-commit failure: under the lane model no
+    // session merges run mid-wave, so a failing lane commit is what records
+    // the pending merge_failure halt while siblings are still in flight.
     const mergeRunner: GraphMergeRunner = {
-      async run(input) {
-        if (input.contextId === "p2") {
-          return buildFailedMergeOutput("simulated p2 fan-in failure");
-        }
+      async run() {
         return buildSuccessMergeOutput();
       },
     };
@@ -1940,7 +2006,14 @@ describe("execution loop — parallel integration", () => {
         commit: async () => ({ status: "skipped" }),
       },
       laneCommitter: {
-        commit: async () => ({ status: "skipped" }),
+        commit: async (input) =>
+          input.contextId === "p2"
+            ? {
+                status: "failed",
+                errorMessage: "simulated p2 lane-commit failure",
+              }
+            : { status: "skipped" },
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1984,6 +2057,9 @@ describe("execution loop — parallel integration", () => {
     expect(result.contextStates["p1"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["p3"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["p2"]?.mergeStatus).toBe("merged-failed");
+    expect(result.contextStates["p2"]?.lastMergeError).toBe(
+      "simulated p2 lane-commit failure",
+    );
   });
 
   it("scenario 12: a gated context parks in the wait while an independent sibling completes and merges, its dependent never starts, the loop stays in-flight, and abort exits the wait unresolved", async () => {
@@ -2079,6 +2155,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -2107,7 +2184,9 @@ describe("execution loop — parallel integration", () => {
     expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
     expect(runIterationCalls).toContain("ctx-b");
     expect(runIterationCalls).not.toContain("ctx-c");
-    expect(mergeOrder).toEqual(["ctx-b"]);
+    // ctx-b's work is lane-committed; its publish waits for quiescence, which
+    // the parked gate prevents — so no session merge runs.
+    expect(mergeOrder).toEqual([]);
 
     const raceOutcome = await Promise.race([
       runPromise.then(() => "settled" as const),
@@ -2127,10 +2206,9 @@ describe("execution loop — parallel integration", () => {
     );
     expect(result.contextStates["ctx-c"]?.status).toBe("pending");
     expect(runIterationCalls).not.toContain("ctx-c");
-    expect(mergeOrder).toEqual(["ctx-b"]);
-    expect(parallelWorktrees.disposeCalls.map((c) => c.branchName)).toEqual([
-      "csm/session-1-ctx-b",
-    ]);
+    expect(mergeOrder).toEqual([]);
+    // The abort retains ctx-b's unpublished lane for forensics/resume.
+    expect(parallelWorktrees.disposeCalls).toEqual([]);
   });
 
   it("scenario 13: approving a parked gated context applies the decision under the conversation lock, merges while holding it, records approval-resolved, and unblocks the dependent", async () => {
@@ -2208,6 +2286,13 @@ describe("execution loop — parallel integration", () => {
         return buildSuccessMergeOutput();
       },
     };
+    const orderedLaneCommitter = {
+      commit: async (input: { contextId: string }) => {
+        ordered.push(`lane-commit:${input.contextId}`);
+        return { status: "skipped" as const };
+      },
+      resolveHead: async () => null,
+    };
 
     const waitForApprovalProgress = vi.fn(async () => {
       await manager.mutateActive("/repo", "session-1", (e) => {
@@ -2238,9 +2323,7 @@ describe("execution loop — parallel integration", () => {
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
-      laneCommitter: {
-        commit: async () => ({ status: "skipped" }),
-      },
+      laneCommitter: orderedLaneCommitter,
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
         return createSession();
@@ -2274,13 +2357,15 @@ describe("execution loop — parallel integration", () => {
     expect(runIterationCalls).toContain("ctx-c");
     expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
 
-    // ctx-a's fan-in merge runs inside the held conversation lock window.
+    // ctx-a's commit phase (its lane commit) runs inside the held
+    // conversation lock window; the session publish itself waits for
+    // quiescence.
     const lockAcquiredAt = ordered.indexOf("lock-acquired:conv-ctx-a");
-    const mergeAt = ordered.indexOf("merge:ctx-a");
+    const laneCommitAt = ordered.indexOf("lane-commit:ctx-a");
     const lockReleasedAt = ordered.indexOf("lock-released");
     expect(lockAcquiredAt).toBeGreaterThanOrEqual(0);
-    expect(mergeAt).toBeGreaterThan(lockAcquiredAt);
-    expect(lockReleasedAt).toBeGreaterThan(mergeAt);
+    expect(laneCommitAt).toBeGreaterThan(lockAcquiredAt);
+    expect(lockReleasedAt).toBeGreaterThan(laneCommitAt);
 
     const resolvedEvents = broadcast.mock.calls
       .map(([event]) => event)
@@ -2410,6 +2495,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -2447,6 +2533,9 @@ describe("execution loop — parallel integration", () => {
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["ctx-c"]?.status).toBe("completed");
 
+    // The persisted parked context predates lanes (worktree with no laneId),
+    // so resume takes the legacy fan-in path — retained for exactly this
+    // migration case — and its merge runs inside the held lock window.
     const lockAcquiredAt = ordered.indexOf("lock-acquired:conv-ctx-a");
     const mergeAt = ordered.indexOf("merge:ctx-a");
     const lockReleasedAt = ordered.indexOf("lock-released");
@@ -2536,6 +2625,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -2653,6 +2743,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -2770,6 +2861,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -2895,6 +2987,7 @@ describe("execution loop — parallel integration", () => {
       },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {

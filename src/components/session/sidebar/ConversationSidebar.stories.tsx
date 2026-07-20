@@ -303,36 +303,42 @@ const emptyResponse: ActiveConversationsResponse = {
   conversations: [],
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 const mixedResponse: ActiveConversationsResponse = {
   conversations: mixedActive,
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 const needsYouResponse: ActiveConversationsResponse = {
   conversations: needsYouActive,
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 const projectRowsOnlyResponse: ActiveConversationsResponse = {
   conversations: projectRowsOnly,
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 const needsYouQuestionsResponse: ActiveConversationsResponse = {
   conversations: needsYouQuestionsOnly,
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 const needsYouFinishedResponse: ActiveConversationsResponse = {
   conversations: needsYouFinishedOnly,
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 };
 
 const archivedAfterActionResponse = {
@@ -359,6 +365,7 @@ const archivedAfterActionResponse = {
   ],
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
+  specExecutions: [],
 } as ActiveConversationsResponse;
 
 // ---------------------------------------------------------------------------

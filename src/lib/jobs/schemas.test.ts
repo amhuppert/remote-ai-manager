@@ -97,6 +97,7 @@ describe("jobRecordSchema", () => {
       conflictCount: 2,
       conflictFiles: ["a.ts", "b.ts"],
       errorMessage: "terminal details",
+      finalPublish: true,
     });
 
     expect(parsed).toEqual({
@@ -107,6 +108,7 @@ describe("jobRecordSchema", () => {
       conflictCount: 2,
       conflictFiles: ["a.ts", "b.ts"],
       errorMessage: "terminal details",
+      finalPublish: true,
     });
   });
 
@@ -166,6 +168,28 @@ describe("jobStatusEventSchema", () => {
     expect(parsed.refreshWarning).toBe("worktree refresh failed");
   });
 
+  it("round-trips a typed delivery-gate halt reason", () => {
+    const haltReason = {
+      type: "delivery_gate_failed" as const,
+      unmet: [
+        {
+          criterionId: "criterion-1",
+          criterionHandle: "native-sdd/R18.4",
+          outcome: "unmet",
+          reason: "candidate proof is stale",
+        },
+      ],
+      instruction: "Re-dispatch the merge to validate the candidate again.",
+    };
+    const parsed = jobStatusEventSchema.parse({
+      ...base,
+      status: "failed",
+      haltReason,
+    });
+
+    expect(parsed.haltReason).toEqual(haltReason);
+  });
+
   it.each([
     "preparing",
     "publishing",
@@ -183,5 +207,6 @@ describe("jobStatusEventSchema", () => {
     expect(parsed.parkedRef).toBeUndefined();
     expect(parsed.preparedSha).toBeUndefined();
     expect(parsed.refreshWarning).toBeUndefined();
+    expect(parsed.haltReason).toBeUndefined();
   });
 });

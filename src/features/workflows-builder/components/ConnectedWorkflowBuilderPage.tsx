@@ -40,6 +40,8 @@ interface ConnectedWorkflowBuilderPageProps {
   scope: WorkflowDefinitionScope;
   defaultImplementerConfig: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
+  /** Deep-link target (`?definition=<id>`): pre-selects this definition. */
+  initialWorkflowId?: string | null;
 }
 
 // A new builder draft starts charter-less from the user's point of view; the
@@ -92,6 +94,7 @@ export default function ConnectedWorkflowBuilderPage({
   scope,
   defaultImplementerConfig,
   codexConfig,
+  initialWorkflowId = null,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
   const isGlobal = scope.kind === "global";
   const projectName = scope.kind === "project" ? scope.projectName : null;
@@ -100,7 +103,7 @@ export default function ConnectedWorkflowBuilderPage({
   const definitionsQuery = useScopedWorkflowDefinitionsQuery(scope);
   const { workflowDefaults } = useGlobalDefaults();
   const [requestedWorkflowId, setRequestedWorkflowId] = useState<string | null>(
-    null,
+    initialWorkflowId,
   );
   const [saveError, setSaveError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<InspectorTab>("workflow");

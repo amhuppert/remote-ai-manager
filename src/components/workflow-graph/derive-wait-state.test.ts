@@ -103,6 +103,7 @@ function makeExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    definitionApproval: null,
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),

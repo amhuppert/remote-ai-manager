@@ -368,6 +368,24 @@ function normalizeEvent(
       };
     }
 
+    case "graph-workflow-lane-commit": {
+      const contextTitle =
+        contextLookup.get(event.contextId) ?? event.contextId;
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot: "neutral",
+        title: `Lane commit · ${contextTitle}`,
+        detail: (
+          <span>
+            {event.laneId} · {event.sha}
+          </span>
+        ),
+        expandable: null,
+      };
+    }
+
     case "graph-workflow-join-status": {
       const sourceSummary = event.sourceLaneIds.join(", ");
       const progress =
@@ -481,6 +499,8 @@ function eventStreamKey(event: GraphWorkflowSSEEvent): string | null {
       return `merge-status:${event.contextId}`;
     case "graph-workflow-lane-status":
       return `lane-status:${event.laneId}`;
+    case "graph-workflow-lane-commit":
+      return null;
     case "graph-workflow-join-status":
       return `join-status:${event.joinId}`;
     default:

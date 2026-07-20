@@ -75,6 +75,7 @@ function makeGraphWorkflowExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    definitionApproval: null,
     workingDefinition: {
       schemaVersion: 1,
       executionContexts: [

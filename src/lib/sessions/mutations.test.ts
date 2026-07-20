@@ -57,6 +57,7 @@ function activeResponse(
     conversations,
     graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
+    specExecutions: [],
   };
 }
 

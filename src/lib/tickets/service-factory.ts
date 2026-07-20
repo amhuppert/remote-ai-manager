@@ -35,6 +35,7 @@ import {
 } from "@/lib/state-store/projects-repo";
 import {
   _resetForTesting,
+  tryWithWriteQueue,
   withWriteQueue,
 } from "@/lib/state-store/write-queue";
 import {
@@ -89,7 +90,11 @@ import {
  */
 export function getTicketsRepo(): TicketsRepo {
   return getGlobalSingleton("__cc_tickets_repo", () =>
-    createTicketsRepo(getStateDb(), { withWriteQueue, _resetForTesting }),
+    createTicketsRepo(getStateDb(), {
+      withWriteQueue,
+      tryWithWriteQueue,
+      _resetForTesting,
+    }),
   );
 }
 

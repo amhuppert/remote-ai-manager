@@ -9,7 +9,13 @@ describe("createStartupRegistrar", () => {
       loadConversationRehydration: async () => ({
         rehydrateConversationActors: async () => 0,
       }),
-      runStateMigrations: async () => [],
+      runStateMigrations: async () => {
+        calls.push("migrations");
+        return [];
+      },
+      registerSpecWorkflowComposition: () => {
+        calls.push("spec-composition");
+      },
       initNotificationDb: () => {},
       setConfigReader: () => {},
       readConfig: async () => ({}) as never,
@@ -39,6 +45,10 @@ describe("createStartupRegistrar", () => {
     expect(calls.filter((c) => c === "verify-url")).toHaveLength(1);
     expect(calls.indexOf("record-url")).toBeLessThan(
       calls.indexOf("verify-url"),
+    );
+    expect(calls).toContain("spec-composition");
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("spec-composition"),
     );
   });
 

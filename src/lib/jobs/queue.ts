@@ -42,10 +42,14 @@ import {
   mergeMachine,
   type MergeMachineType,
 } from "../workflows/merge/machine";
+import { provideRegisteredDeliveryGate } from "../workflows/merge/delivery-gate-port";
+import { resolveRegisteredMergeAssociation } from "../workflows/merge/association-port";
+import { notifyRegisteredMergeDelivered } from "../workflows/merge/delivery-lifecycle-port";
 import type {
   MergeInput,
   MergeContext,
   MergeOutput,
+  MergePhase,
 } from "../workflows/merge/types";
 import {
   commitMachine,
@@ -176,6 +180,7 @@ function broadcastJobStatus(
     ...(job.preparedSha && { preparedSha: job.preparedSha }),
     ...(job.expectedTargetSha && { expectedTargetSha: job.expectedTargetSha }),
     ...(job.refreshWarning && { refreshWarning: job.refreshWarning }),
+    ...(job.haltReason && { haltReason: job.haltReason }),
   };
   broadcast(event);
 
@@ -207,6 +212,25 @@ function persistJobRecord(job: BackgroundJob): void {
   }
 }
 
+/** Persist candidate proof as soon as validation finishes, before gate I/O. */
+function persistJobProgress(job: BackgroundJob): void {
+  const candidateValidation = job.candidateValidation;
+  if (candidateValidation === undefined) return;
+  try {
+    createJobsRepo(getStateDb()).persistCandidateValidation(
+      job.jobId,
+      candidateValidation,
+    );
+  } catch (err) {
+    logger.error("background-jobs.persist_job_progress_failed", {
+      jobId: job.jobId,
+      executionId: job.executionId,
+      validationRef: candidateValidation.validationRef,
+      error: getErrorMessage(err),
+    });
+  }
+}
+
 /** Persist terminal state to DB and create a notification. Non-throwing. */
 function persistTerminalState(job: BackgroundJob): void {
   try {
@@ -217,7 +241,23 @@ function persistTerminalState(job: BackgroundJob): void {
       conflictCount: job.conflictCount,
       conflictFiles: job.conflictFiles,
       errorMessage: job.errorMessage,
+      executionId: job.executionId,
+      candidateValidation: job.candidateValidation,
     });
+
+    // A completed gate-passed final-publish merge IS the delivery: mark the
+    // linked execution Delivered promptly rather than waiting for a status
+    // read to reconcile. The gate ran before publish, so completed + mergeHash
+    // + finalPublish implies gate-passed.
+    if (
+      (job.jobType === "merge" || job.jobType === "resolve-conflicts") &&
+      job.status === "completed" &&
+      job.mergeHash !== undefined &&
+      job.executionId !== undefined &&
+      job.finalPublish === true
+    ) {
+      notifyRegisteredMergeDelivered(job.executionId, job.mergeHash);
+    }
 
     const notifType = deriveNotificationType(job.jobType, job.status);
     const title = deriveNotificationTitle(notifType);
@@ -321,8 +361,10 @@ function prepareDispatch(params: {
   branchName: string;
   jobType: BackgroundJob["jobType"];
   targetBranch?: string;
+  decorateJob?(job: BackgroundJob): void;
   broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
+  jobId?: string;
 }): JobDispatchResult<{ job: BackgroundJob; release: () => void }> {
   const {
     projectPath,
@@ -331,8 +373,10 @@ function prepareDispatch(params: {
     branchName,
     jobType,
     targetBranch,
+    decorateJob,
     broadcast = defaultJobBroadcast,
     acquireSessionLock = defaultAcquireSessionLock,
+    jobId,
   } = params;
   const key = sessionKey(projectPath, sessionName);
   const registry = getJobRegistry();
@@ -356,7 +400,7 @@ function prepareDispatch(params: {
 
   // Register the job
   const job: BackgroundJob = {
-    jobId: randomUUID(),
+    jobId: jobId ?? randomUUID(),
     jobType,
     status: "running",
     projectName,
@@ -365,6 +409,7 @@ function prepareDispatch(params: {
     ...(targetBranch && { targetBranch }),
     startedAt: new Date().toISOString(),
   };
+  decorateJob?.(job);
 
   registry.set(key, job);
   broadcastJobStatus(job, broadcast);
@@ -381,13 +426,22 @@ function prepareDispatch(params: {
 function createDispatchHost(
   broadcast: PublishFn,
   acquireSessionLock?: AcquireSessionLockFn,
+  jobId?: string,
 ): JobDispatchHost {
   return {
     prepare(params) {
-      return prepareDispatch({ ...params, broadcast, acquireSessionLock });
+      return prepareDispatch({
+        ...params,
+        broadcast,
+        acquireSessionLock,
+        ...(jobId !== undefined ? { jobId } : {}),
+      });
     },
     publishStatus(job) {
       broadcastJobStatus(job, broadcast);
+    },
+    persistProgress(job) {
+      persistJobProgress(job);
     },
   };
 }
@@ -396,6 +450,18 @@ function createDispatchHost(
 const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
   phaseOf(context) {
     return context.phase ?? undefined;
+  },
+  projectActiveSnapshot(job, context) {
+    const candidateValidation = context.candidateValidation ?? undefined;
+    if (candidateValidation === undefined) return false;
+    if (
+      job.candidateValidation?.validationRef ===
+      candidateValidation.validationRef
+    ) {
+      return false;
+    }
+    job.candidateValidation = candidateValidation;
+    return true;
   },
   mapOutput(job, output, context) {
     job.status = output.status;
@@ -407,6 +473,9 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
     job.expectedTargetSha = output.expectedTargetSha ?? undefined;
     job.parkedRef = output.parkedRef ?? undefined;
     job.refreshWarning = output.refreshWarning ?? undefined;
+    job.executionId = context.executionId ?? undefined;
+    job.candidateValidation = output.candidateValidation ?? undefined;
+    job.haltReason = output.haltReason ?? undefined;
 
     if (output.conflictFiles.length > 0) {
       job.conflictFiles = output.conflictFiles;
@@ -506,11 +575,165 @@ export interface DispatchMergeParams {
   parkedRef?: string;
   /** Agent-written intent notes for a conflict-resolution turn. */
   resolutionContext?: string;
+  executionId?: string;
+  finalPublish?: boolean;
+  candidateValidation?: BackgroundJob["candidateValidation"];
+}
+
+/**
+ * A merge refused at dispatch by the registered association resolver: the
+ * session hosts spec-execution state the delivery gate could never evaluate
+ * from this merge (not started, or ambiguous). No job is created.
+ */
+export interface MergeAssociationRefusedError {
+  code: "MERGE_ASSOCIATION_REFUSED";
+  reason: string;
+  instruction: string;
+}
+
+export type MergeDispatchError =
+  | JobDispatchError
+  | MergeAssociationRefusedError;
+
+export type MergeDispatchResult =
+  | { ok: true; value: { jobId: string } }
+  | { ok: false; error: MergeDispatchError };
+
+/**
+ * Resolve merge association once, at dispatch. Explicit caller provenance is
+ * authoritative; otherwise the registered resolver decides, and its refusal
+ * aborts dispatch before any job or lock exists.
+ */
+function resolveDispatchProvenance(input: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  targetBranch?: string;
+  executionId?: string;
+  finalPublish?: boolean;
+}):
+  | { ok: true; executionId?: string; finalPublish?: boolean }
+  | { ok: false; error: MergeAssociationRefusedError } {
+  if (input.executionId !== undefined) {
+    return {
+      ok: true,
+      executionId: input.executionId,
+      finalPublish: input.finalPublish,
+    };
+  }
+  const association = resolveRegisteredMergeAssociation({
+    projectPath: input.projectPath,
+    projectName: input.projectName,
+    sessionName: input.sessionName,
+    ...(input.targetBranch !== undefined && {
+      targetBranch: input.targetBranch,
+    }),
+  });
+  if (association.kind === "refused") {
+    logger.warn("merge.association_refused", {
+      sessionName: input.sessionName,
+      reason: association.reason,
+    });
+    return {
+      ok: false,
+      error: {
+        code: "MERGE_ASSOCIATION_REFUSED",
+        reason: association.reason,
+        instruction: association.instruction,
+      },
+    };
+  }
+  if (association.kind === "linked") {
+    return {
+      ok: true,
+      executionId: association.executionId,
+      finalPublish: association.finalPublish,
+    };
+  }
+  return { ok: true, finalPublish: input.finalPublish };
+}
+
+export interface RegisteredMergeJobInput {
+  machine: MergeMachineType;
+  input: MergeInput;
+  broadcast?: PublishFn;
+  onPhase?(phase: MergePhase): void;
+}
+
+/**
+ * Run a graph-owned merge through the canonical background-job host while the
+ * graph join retains ownership of the outer git locks. The registered job is
+ * what lets a ready-to-land candidate re-enter later through the session merge
+ * surface with its execution linkage and validation fact intact.
+ */
+export function runRegisteredMergeJob(
+  params: RegisteredMergeJobInput,
+): Promise<MergeOutput> {
+  return new Promise<MergeOutput>((resolve, reject) => {
+    const { input } = params;
+    const result = dispatchMachineJob<MergeContext, MergeOutput>({
+      jobType: "merge",
+      session: {
+        projectPath: input.projectPath,
+        projectName: input.projectName,
+        sessionName: input.sessionName,
+        branchName: input.branchName,
+        targetBranch: input.targetBranch,
+      },
+      host: createDispatchHost(
+        params.broadcast ?? defaultJobBroadcast,
+        () => () => {},
+        input.jobId,
+      ),
+      decorateJob(job) {
+        if (input.resolutionContext) {
+          job.resolutionContext = input.resolutionContext;
+        }
+        if (input.executionId) job.executionId = input.executionId;
+        if (input.finalPublish === true) job.finalPublish = true;
+        if (input.candidateValidation) {
+          job.candidateValidation = input.candidateValidation;
+        }
+      },
+      logStart(job) {
+        logger.info("graph-merge.start", {
+          jobId: job.jobId,
+          sessionName: input.sessionName,
+          branchName: input.branchName,
+          targetBranch: input.targetBranch,
+          executionId: input.executionId,
+          finalPublish: input.finalPublish === true,
+        });
+      },
+      createJobActor() {
+        return createActor(params.machine, { input });
+      },
+      subscription: mergeSubscription,
+      callbacks: {
+        onPhaseChange(_phase, context) {
+          if (context.phase !== null) params.onPhase?.(context.phase);
+        },
+        onComplete(output) {
+          resolve(output);
+        },
+        onError(error) {
+          reject(error);
+        },
+      },
+    });
+    if (!result.ok) {
+      reject(
+        new Error(
+          `Graph merge job ${input.jobId} could not start: ${result.error}`,
+        ),
+      );
+    }
+  });
 }
 
 export function dispatchMergeJob(
   params: DispatchMergeParams,
-): JobDispatchResult<{ jobId: string }> {
+): MergeDispatchResult {
   const {
     projectPath,
     projectName,
@@ -523,13 +746,30 @@ export function dispatchMergeJob(
     targetWorktreePath,
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
-    machine = mergeMachine,
+    machine: injectedMachine,
     entryMode,
     preparedSha,
     expectedTargetSha,
     parkedRef,
     resolutionContext,
+    executionId,
+    finalPublish,
+    candidateValidation,
   } = params;
+  const machine =
+    injectedMachine ?? provideRegisteredDeliveryGate(mergeMachine);
+
+  const provenance = resolveDispatchProvenance({
+    projectPath,
+    projectName,
+    sessionName,
+    ...(targetBranch !== undefined && { targetBranch }),
+    ...(executionId !== undefined && { executionId }),
+    ...(finalPublish !== undefined && { finalPublish }),
+  });
+  if (!provenance.ok) return { ok: false, error: provenance.error };
+  const resolvedExecutionId = provenance.executionId;
+  const resolvedFinalPublish = provenance.finalPublish;
 
   return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "merge",
@@ -543,6 +783,9 @@ export function dispatchMergeJob(
     host: createDispatchHost(broadcast, acquireSessionLock),
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
+      if (resolvedExecutionId) job.executionId = resolvedExecutionId;
+      if (resolvedFinalPublish === true) job.finalPublish = true;
+      if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
       logger.info("merge.start", {
@@ -552,6 +795,8 @@ export function dispatchMergeJob(
         branchName,
         autoResolve,
         entryMode: entryMode ?? "merge",
+        executionId: resolvedExecutionId,
+        finalPublish: resolvedFinalPublish === true,
       });
     },
     createJobActor(jobId) {
@@ -572,6 +817,11 @@ export function dispatchMergeJob(
         ...(expectedTargetSha && { expectedTargetSha }),
         ...(parkedRef && { parkedRef }),
         ...(resolutionContext && { resolutionContext }),
+        ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
+        ...(resolvedFinalPublish !== undefined && {
+          finalPublish: resolvedFinalPublish,
+        }),
+        ...(candidateValidation && { candidateValidation }),
       };
       return createActor(machine, { input });
     },
@@ -655,7 +905,10 @@ export function dispatchResolveConflictsJob(params: {
   broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
-}): JobDispatchResult<{ jobId: string }> {
+  executionId?: string;
+  finalPublish?: boolean;
+  candidateValidation?: BackgroundJob["candidateValidation"];
+}): MergeDispatchResult {
   const {
     projectPath,
     projectName,
@@ -669,8 +922,25 @@ export function dispatchResolveConflictsJob(params: {
     resolutionContext,
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
-    machine = mergeMachine,
+    machine: injectedMachine,
+    executionId,
+    finalPublish,
+    candidateValidation,
   } = params;
+  const machine =
+    injectedMachine ?? provideRegisteredDeliveryGate(mergeMachine);
+
+  const provenance = resolveDispatchProvenance({
+    projectPath,
+    projectName,
+    sessionName,
+    ...(targetBranch !== undefined && { targetBranch }),
+    ...(executionId !== undefined && { executionId }),
+    ...(finalPublish !== undefined && { finalPublish }),
+  });
+  if (!provenance.ok) return { ok: false, error: provenance.error };
+  const resolvedExecutionId = provenance.executionId;
+  const resolvedFinalPublish = provenance.finalPublish;
 
   return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "resolve-conflicts",
@@ -684,12 +954,17 @@ export function dispatchResolveConflictsJob(params: {
     host: createDispatchHost(broadcast, acquireSessionLock),
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
+      if (resolvedExecutionId) job.executionId = resolvedExecutionId;
+      if (resolvedFinalPublish === true) job.finalPublish = true;
+      if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
       logger.info("resolve-conflicts.start", {
         jobId: job.jobId,
         sessionName,
         resolutionContextLength: resolutionContext?.length ?? 0,
+        executionId: resolvedExecutionId,
+        finalPublish: resolvedFinalPublish === true,
       });
     },
     createJobActor(jobId) {
@@ -707,6 +982,11 @@ export function dispatchResolveConflictsJob(params: {
         targetBranch,
         targetWorktreePath,
         ...(resolutionContext && { resolutionContext }),
+        ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
+        ...(resolvedFinalPublish !== undefined && {
+          finalPublish: resolvedFinalPublish,
+        }),
+        ...(candidateValidation && { candidateValidation }),
       };
       return createActor(machine, { input });
     },

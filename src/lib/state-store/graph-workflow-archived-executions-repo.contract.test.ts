@@ -221,14 +221,34 @@ function buildMaximalExecution(): unknown {
       notes: "first line\nsecond line",
     },
     launchedTier: "global",
+    definitionApproval: {
+      requestedAt: "2026-01-01T00:00:05Z",
+      approvedAt: "2026-01-01T00:00:10Z",
+    },
     workingDefinition: {
       schemaVersion: 2,
+      approvalRequired: true,
+      origin: {
+        sourceUri: "spec://native-sdd/workflow-definitions/wf-maximal",
+        label: "Native SDD spec",
+      },
+      lockedRegions: [
+        {
+          paths: ["/tasks/*/instructions"],
+          sourceUri: "spec://native-sdd/workflow-definitions/wf-maximal",
+          reason: "Task instructions must be amended at the source spec",
+        },
+      ],
       executionContexts: [
         {
           id: "ctx-1",
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          origin: {
+            sourceUri: "spec://native-sdd/contexts/ctx-1",
+            label: "Implementation context",
+          },
           implementer: {
             backend: "claude",
             model: "opus",

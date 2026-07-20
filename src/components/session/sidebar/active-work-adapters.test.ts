@@ -8,6 +8,7 @@ import type { Notification } from "@/lib/notifications/schemas";
 import {
   adaptCollaborations,
   adaptGraphWorkflows,
+  adaptSpecExecutions,
   adaptStoreJobs,
   deriveNotificationOutcomes,
 } from "./active-work-adapters";
@@ -82,6 +83,29 @@ function makeJobNotification(
     jobId: "job-old",
     jobType: "merge",
     createdAt: "2026-07-11T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeSpecNotification(
+  overrides: Partial<Extract<Notification, { source: "spec" }>> = {},
+): Notification {
+  return {
+    id: "spec-notif-1",
+    source: "spec",
+    type: "spec-approval-requested",
+    title: "Spec approval required",
+    message: "Native SDD needs design approval for D2.",
+    read: false,
+    projectName: "command-center",
+    sessionName: "native-sdd",
+    specId: "spec-1",
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    gate: "design",
+    gateRequestId: "request-1",
+    deepLinkId: "D2",
+    createdAt: "2026-07-18T12:00:00.000Z",
     ...overrides,
   };
 }
@@ -177,7 +201,189 @@ describe("adaptCollaborations", () => {
   });
 });
 
+describe("adaptSpecExecutions", () => {
+  it("surfaces only definition-review and running executions in Active Work", () => {
+    const items = adaptSpecExecutions([
+      {
+        executionId: "execution-review",
+        state: "definition_review",
+        specSlug: "native-sdd",
+        specName: "Native SDD",
+        projectName: "command-center",
+        sessionName: "native-sdd",
+        createdAt: "2026-07-18T10:00:00.000Z",
+      },
+      {
+        executionId: "execution-running",
+        state: "running",
+        specSlug: "native-sdd",
+        specName: "Native SDD",
+        projectName: "command-center",
+        sessionName: "native-sdd",
+        createdAt: "2026-07-18T11:00:00.000Z",
+      },
+      {
+        executionId: "execution-delivered",
+        state: "delivered",
+        specSlug: "native-sdd",
+        specName: "Native SDD",
+        projectName: "command-center",
+        sessionName: "native-sdd",
+        createdAt: "2026-07-18T09:00:00.000Z",
+      },
+    ]);
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        id: "spec-execution:execution-review",
+        kind: "spec",
+        title: "Native SDD",
+        phase: "Definition review",
+        href: "/specs/command-center/native-sdd",
+      }),
+      expect.objectContaining({
+        id: "spec-execution:execution-running",
+        kind: "spec",
+        phase: "Running",
+      }),
+    ]);
+  });
+});
+
 describe("deriveNotificationOutcomes", () => {
+  it("surfaces a spec approval request until a grant row supersedes it", () => {
+    const pending = deriveNotificationOutcomes([makeSpecNotification()], []);
+    expect(pending.needsAction).toEqual([
+      expect.objectContaining({
+        kind: "spec",
+        href: "/specs/command-center/native-sdd?el=D2",
+        needsAction: {
+          primary: { label: "Review", kind: "review" },
+        },
+      }),
+    ]);
+
+    const granted = deriveNotificationOutcomes(
+      [
+        makeSpecNotification(),
+        makeSpecNotification({
+          id: "spec-notif-2",
+          type: "spec-approval-granted",
+          approvalId: "approval-1",
+          createdAt: "2026-07-18T12:01:00.000Z",
+        }),
+      ],
+      [],
+    );
+    expect(granted.needsAction).toEqual([]);
+  });
+
+  it("lets an approval grant supersede its request when both share a timestamp", () => {
+    const { needsAction } = deriveNotificationOutcomes(
+      [
+        makeSpecNotification(),
+        makeSpecNotification({
+          id: "spec-notif-2",
+          type: "spec-approval-granted",
+          approvalId: "approval-1",
+        }),
+      ],
+      [],
+    );
+
+    expect(needsAction).toEqual([]);
+  });
+
+  it("surfaces a waiver request as an actionable item until an attention-resolved row clears it", () => {
+    const request = makeSpecNotification({
+      type: "spec-waiver-requested",
+      gate: "delivery",
+      gateRequestId: "attention-1",
+      deepLinkId: "criterion-9",
+    });
+    const pending = deriveNotificationOutcomes([request], []);
+    expect(pending.needsAction).toEqual([
+      expect.objectContaining({
+        kind: "spec",
+        phase: "Waiver decision required",
+        href: "/specs/command-center/native-sdd?el=criterion-9",
+        needsAction: { primary: { label: "Review", kind: "review" } },
+      }),
+    ]);
+
+    const resolved = deriveNotificationOutcomes(
+      [
+        request,
+        makeSpecNotification({
+          id: "spec-notif-2",
+          type: "spec-attention-resolved",
+          gate: "delivery",
+          gateRequestId: "attention-1",
+          deepLinkId: "criterion-9",
+          createdAt: "2026-07-18T12:01:00.000Z",
+        }),
+      ],
+      [],
+    );
+    expect(resolved.needsAction).toEqual([]);
+    expect(resolved.attention).toEqual([]);
+  });
+
+  it("collapses duplicate requests for the same gate and subject, and one resolving row clears them all", () => {
+    const duplicates = [
+      makeSpecNotification({ id: "n1", gateRequestId: "request-1" }),
+      makeSpecNotification({
+        id: "n2",
+        gateRequestId: "request-2",
+        createdAt: "2026-07-18T12:02:00.000Z",
+      }),
+    ];
+    const open = deriveNotificationOutcomes(duplicates, []);
+    expect(open.needsAction).toHaveLength(1);
+    expect(open.needsAction[0]).toMatchObject({ id: "notification:n2" });
+
+    const cleared = deriveNotificationOutcomes(
+      [
+        ...duplicates,
+        makeSpecNotification({
+          id: "n3",
+          type: "spec-attention-resolved",
+          gateRequestId: "request-2",
+          createdAt: "2026-07-18T12:03:00.000Z",
+        }),
+      ],
+      [],
+    );
+    expect(cleared.needsAction).toEqual([]);
+  });
+
+  it("keeps requests for different subjects independent", () => {
+    const { needsAction } = deriveNotificationOutcomes(
+      [
+        makeSpecNotification({ id: "n1", deepLinkId: "D2" }),
+        makeSpecNotification({
+          id: "n2",
+          gateRequestId: "request-2",
+          deepLinkId: "D3",
+        }),
+        makeSpecNotification({
+          id: "n3",
+          type: "spec-approval-granted",
+          approvalId: "approval-1",
+          deepLinkId: "D3",
+          gateRequestId: "request-2",
+          createdAt: "2026-07-18T12:01:00.000Z",
+        }),
+      ],
+      [],
+    );
+
+    expect(needsAction).toHaveLength(1);
+    expect(needsAction[0]).toMatchObject({
+      href: "/specs/command-center/native-sdd?el=D2",
+    });
+  });
+
   it("turns the latest merge-conflicts row into a Resolve needs-action item", () => {
     const { needsAction, attention } = deriveNotificationOutcomes(
       [makeJobNotification({ conflictCount: 3 })],

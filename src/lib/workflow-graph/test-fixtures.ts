@@ -199,6 +199,7 @@ export function createWorkflowExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    definitionApproval: null,
     workingDefinition: definition,
     charter: makeTestCharter(),
     status: "pending",

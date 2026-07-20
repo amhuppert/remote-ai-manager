@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowDefinition,
+  createWorkflowDefinitionRecord,
+} from "@/lib/workflow-graph/test-fixtures";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { runDefinitionEditRequest } from "./definition-edit-handler";
@@ -93,6 +96,46 @@ describe("runDefinitionEditRequest", () => {
     };
     expect(body.issues[0]?.path).toBe("operations[0]");
     expect(body.issues[0]?.message).toContain("unknown-task-id");
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("returns a machine-readable 409 with amend-at-source guidance for a locked region", async () => {
+    const record = createWorkflowDefinitionRecord({
+      revision: 3,
+      definition: createWorkflowDefinition({
+        lockedRegions: [
+          {
+            paths: ["/tasks/task-plan-1/instructions"],
+            sourceUri: "contract://plans/revision-7",
+            reason: "Task instructions are contract-derived",
+          },
+        ],
+      }),
+    });
+    const { persist } = persistSpy(record);
+
+    const response = await runDefinitionEditRequest({
+      rawBody: {
+        baseRevision: 3,
+        operations: [
+          {
+            type: "update-task",
+            taskId: "task-plan-1",
+            instructions: "Weaken the contract downstream",
+          },
+        ],
+      },
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      persist,
+    });
+
+    expect(response.status).toBe(409);
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      code: "region_locked",
+      instruction:
+        "Amend at source contract://plans/revision-7 and recompile the workflow definition.",
+    });
     expect(persist).not.toHaveBeenCalled();
   });
 

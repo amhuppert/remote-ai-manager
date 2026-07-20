@@ -3,17 +3,13 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { segmentTextByRefs } from "@/lib/conversations/ref-segments";
-import { conversationRefAttrsToMentionAttrs } from "./conversation-mention-node";
-import { messageRefAttrsToMentionAttrs } from "./message-mention-node";
-import { ticketRefAttrsToMentionAttrs } from "./ticket-mention-node";
+import { REFERENCE_REGISTRY, getReferenceByXmlTag } from "./reference-registry";
 
 /**
  * Tiptap extension that intercepts pasted plain text containing
- * `<conversation-ref ... />`, `<message-ref ... />`, or `<ticket-ref ... />`
- * tags (copied from a conversation reference, a message's Copy-reference
- * action, or a ticket's Copy-reference control) and inserts them as mention
- * chips, keeping the surrounding text. Pastes without a schema-valid ref fall
- * through to default handling.
+ * registered reference tags and inserts them as mention chips, keeping the
+ * surrounding text. Pastes without a schema-valid ref fall through to default
+ * handling.
  */
 export const RefPasteHandler = Extension.create({
   name: "refPasteHandler",
@@ -27,17 +23,14 @@ export const RefPasteHandler = Extension.create({
             const text = event.clipboardData?.getData("text/plain");
             if (
               !text ||
-              (!text.includes("<conversation-ref") &&
-                !text.includes("<message-ref") &&
-                !text.includes("<ticket-ref"))
+              !REFERENCE_REGISTRY.some((entry) =>
+                text.includes(`<${entry.xmlTag}`),
+              )
             ) {
               return false;
             }
 
             const schema = view.state.schema;
-            const conversationType = schema.nodes["conversationMention"];
-            const messageType = schema.nodes["messageMention"];
-            const ticketType = schema.nodes["ticketMention"];
             const hardBreakType = schema.nodes["hardBreak"];
 
             const nodes: ProseMirrorNode[] = [];
@@ -62,34 +55,14 @@ export const RefPasteHandler = Extension.create({
             };
 
             for (const segment of segmentTextByRefs(text)) {
-              if (segment.type === "conversation-ref") {
+              if (segment.type !== "text") {
+                const reference = getReferenceByXmlTag(segment.type);
+                const nodeType = reference
+                  ? schema.nodes[reference.nodeName]
+                  : undefined;
                 pushMention(
-                  conversationType
-                    ? conversationType.create(
-                        conversationRefAttrsToMentionAttrs(segment.attrs),
-                      )
-                    : null,
-                  segment.raw,
-                );
-                continue;
-              }
-              if (segment.type === "message-ref") {
-                pushMention(
-                  messageType
-                    ? messageType.create(
-                        messageRefAttrsToMentionAttrs(segment.attrs),
-                      )
-                    : null,
-                  segment.raw,
-                );
-                continue;
-              }
-              if (segment.type === "ticket-ref") {
-                pushMention(
-                  ticketType
-                    ? ticketType.create(
-                        ticketRefAttrsToMentionAttrs(segment.attrs),
-                      )
+                  reference && nodeType
+                    ? nodeType.create(reference.parseAttrs(segment.attrs))
                     : null,
                   segment.raw,
                 );

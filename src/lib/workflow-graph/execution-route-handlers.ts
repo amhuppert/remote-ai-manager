@@ -46,6 +46,10 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
+import {
+  createAgentAuth,
+  type OptionalTokenValidation,
+} from "@/lib/agent-gateway/token";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { loadRotationHandoffNote } from "./rotation-handoff";
 import { readConversationTelemetry } from "./conversation-telemetry";
@@ -71,15 +75,23 @@ import {
 } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
   createGraphWorkflowManager,
+  WorkflowDefinitionApprovalRequiredError,
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
   WorkflowStartInputError,
   type RecordPendingHaltReasonInput,
   type RecordPendingHaltReasonResult,
+  type RecordDefinitionApprovalResult,
   type DrainAndHaltInput,
   type GraphWorkflowResumeOptions,
 } from "@/lib/workflow-graph/workflow-manager";
 import { conflictDecisionInputSchema } from "@/lib/jobs/schemas";
+import { runRegisteredMergeJob } from "@/lib/jobs/queue";
+import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
+import {
+  createRegisteredGraphExecutionLifecycleCallbacks,
+  type DefinitionApprovalGateDecision,
+} from "@/lib/workflow-graph/execution-lifecycle-port";
 import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflight-prerequisite-service";
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
@@ -372,7 +384,12 @@ const mergeMutex = createPerSessionMergeMutex();
 // The global single-flight lock so graph git operations share state with
 // user commit/merge jobs on the same session.
 const sessionGitLock = createSessionGitLock({ acquireSessionLock });
-const mergeRunner = createGraphWorkflowMergeRunner();
+const mergeRunner = createGraphWorkflowMergeRunner({
+  deliveryGate: createRegisteredDeliveryGateEvaluator(),
+  markDelivered:
+    createRegisteredGraphExecutionLifecycleCallbacks().markDelivered,
+  runMachine: runRegisteredMergeJob,
+});
 const soloContextCommitter = createSoloContextCommitter();
 const laneCommitter = createLaneCommitter();
 const joinRunner = createJoinRunner({
@@ -458,6 +475,29 @@ export interface GraphWorkflowExecutionRouteDeps {
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
   }): Promise<GraphWorkflowExecution>;
+  markRunning?(
+    workflowExecutionId: string,
+    definitionId?: string,
+  ): Promise<void>;
+  /**
+   * Reports an execution that started but parked awaiting definition
+   * approval, so the registered lifecycle consumer can open its own review
+   * request for the pending definition. Defaults to the registered port.
+   */
+  awaitingDefinitionApproval?(
+    workflowExecutionId: string,
+    definitionId: string,
+  ): Promise<void>;
+  /**
+   * Consulted before a pending definition approval is recorded so the
+   * registered lifecycle consumer can record its own execution-scoped
+   * admission for definitions it prepared, or refuse with a machine-readable
+   * reason. Defaults to the registered port (admit when nobody claims it).
+   */
+  admitDefinitionApproval?(
+    workflowExecutionId: string,
+    definitionId: string,
+  ): Promise<DefinitionApprovalGateDecision>;
   pauseExecution(
     projectPath: string,
     sessionName: string,
@@ -494,6 +534,23 @@ export interface GraphWorkflowExecutionRouteDeps {
   recordApprovalDecision(
     input: RecordDecisionInput,
   ): Promise<RecordDecisionResult>;
+  /**
+   * Approve the pending workflow definition on the session's active execution
+   * (the definition-review gate for approval-required definitions). Defaults
+   * to the workflow manager's atomic first-approval-wins recording.
+   */
+  recordDefinitionApproval?(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<RecordDefinitionApprovalResult>;
+  /**
+   * Transport identity for the definition-approval gate. Definition approval
+   * is a human review act: requests bearing a valid agent token are refused
+   * with `human_act_required`. Defaults to the shared agent-gateway auth.
+   */
+  auth?: {
+    validateOptionalToken(request: Request): Promise<OptionalTokenValidation>;
+  };
   /**
    * List the session's archived (terminal, moved-out) graph-workflow
    * executions. Defaults to the real archived-executions repo via the store.
@@ -532,6 +589,14 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   normalizeExecutionAfterRestart: (projectPath, sessionName) =>
     workflowManager.normalizeAfterRestart(projectPath, sessionName),
   startExecution: (input) => workflowManager.start(input),
+  markRunning: createRegisteredGraphExecutionLifecycleCallbacks().markRunning,
+  awaitingDefinitionApproval:
+    createRegisteredGraphExecutionLifecycleCallbacks()
+      .awaitingDefinitionApproval,
+  admitDefinitionApproval:
+    createRegisteredGraphExecutionLifecycleCallbacks().admitDefinitionApproval,
+  recordDefinitionApproval: (input) =>
+    workflowManager.recordDefinitionApproval(input),
   pauseExecution: (projectPath, sessionName) =>
     workflowManager.send(projectPath, sessionName, { type: "pause" }),
   resumeExecution: (projectPath, sessionName, options) =>
@@ -551,6 +616,7 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.recordPendingHaltReason(input),
   drainAndHalt: (input) => workflowManager.drainAndHalt(input),
   recordApprovalDecision: (input) => approvalGateService.recordDecision(input),
+  auth: createAgentAuth(),
   listArchivedExecutions: (projectPath, sessionName) =>
     listArchivedGraphWorkflowExecutions(projectPath, sessionName),
   getEventsTail: (executionId, limit) =>
@@ -793,6 +859,42 @@ function respondToManagerError(error: unknown): Response {
 export function createGraphWorkflowExecutionRouteHandlers(
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ) {
+  async function markExecutionRunning(
+    execution: GraphWorkflowExecution,
+  ): Promise<void> {
+    if (deps.markRunning === undefined) return;
+    try {
+      await deps.markRunning(execution.id, execution.seedDefinitionId);
+    } catch (error) {
+      logger.warn("graph-workflow.execution_mark_running_failed", {
+        workflowExecutionId: execution.id,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * Reports a start that parked awaiting definition approval through the
+   * lifecycle port so the registered consumer can open its review request.
+   * Reporting is best-effort: a consumer failure must not mask the
+   * machine-readable `definition_approval_required` response.
+   */
+  async function reportAwaitingDefinitionApproval(
+    workflowExecutionId: string,
+    definitionId: string,
+  ): Promise<void> {
+    if (deps.awaitingDefinitionApproval === undefined) return;
+    try {
+      await deps.awaitingDefinitionApproval(workflowExecutionId, definitionId);
+    } catch (error) {
+      logger.warn("graph-workflow.execution_awaiting_approval_report_failed", {
+        workflowExecutionId,
+        definitionId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   async function reportExecutionLoopFailure(input: {
     projectPath: string;
     sessionName: string;
@@ -897,6 +999,21 @@ export function createGraphWorkflowExecutionRouteHandlers(
           : {}),
       });
     } catch (error) {
+      if (error instanceof WorkflowDefinitionApprovalRequiredError) {
+        await reportAwaitingDefinitionApproval(
+          error.executionId,
+          parsed.data.definitionId,
+        );
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            executionId: error.executionId,
+            instruction: error.instruction,
+          },
+          { status: 409 },
+        );
+      }
       if (error instanceof WorkflowStartGuardError) {
         if (error.guard === "uncommitted_changes") {
           const dirtyPaths = error.dirtyPaths ?? [];
@@ -943,6 +1060,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     try {
+      await markExecutionRunning(execution);
       void Promise.resolve(
         deps.kickOffExecutionLoop({
           projectPath,
@@ -996,15 +1114,28 @@ export function createGraphWorkflowExecutionRouteHandlers(
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
   }): Promise<GraphWorkflowExecution> {
-    const execution = await deps.startExecution({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      definitionId: input.definitionId,
-      ...(input.tier !== undefined ? { tier: input.tier } : {}),
-      ...(input.parameters !== undefined
-        ? { parameters: input.parameters }
-        : {}),
-    });
+    let execution: GraphWorkflowExecution;
+    try {
+      execution = await deps.startExecution({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        definitionId: input.definitionId,
+        ...(input.tier !== undefined ? { tier: input.tier } : {}),
+        ...(input.parameters !== undefined
+          ? { parameters: input.parameters }
+          : {}),
+      });
+    } catch (error) {
+      if (error instanceof WorkflowDefinitionApprovalRequiredError) {
+        await reportAwaitingDefinitionApproval(
+          error.executionId,
+          input.definitionId,
+        );
+      }
+      throw error;
+    }
+
+    await markExecutionRunning(execution);
 
     void Promise.resolve(
       deps.kickOffExecutionLoop({
@@ -1365,6 +1496,189 @@ export function createGraphWorkflowExecutionRouteHandlers(
     });
   }
 
+  function executionAwaitsDefinitionApproval(
+    execution: GraphWorkflowExecution | null,
+  ): execution is GraphWorkflowExecution {
+    return (
+      execution !== null &&
+      !isTerminalStatus(execution.status) &&
+      execution.definitionApproval !== null &&
+      execution.definitionApproval.approvedAt === null
+    );
+  }
+
+  /**
+   * Whether the session's active execution is parked awaiting definition
+   * approval — the only state a definition approval can unblock. Callers that
+   * record their own admission before approving (e.g. the spec-side
+   * execution-start grant) probe this first so a grant never lands with
+   * nothing waiting.
+   */
+  async function hasPendingDefinitionApproval(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<boolean> {
+    const active = await deps.getActiveExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    return executionAwaitsDefinitionApproval(active);
+  }
+
+  /**
+   * Non-HTTP definition-approval seam: records the approval on the session's
+   * active execution and, on success, reports the started run through the
+   * lifecycle port and engages the loop exactly like a gate-free START. The
+   * HTTP handler and human-only server-side callers (e.g. the spec-side
+   * execution-start grant) share this path so approval always starts the run
+   * the same way. Before recording, the registered lifecycle consumer is
+   * consulted so a definition it prepared gets its own execution-scoped
+   * admission recorded (or the approval is refused machine-readably).
+   */
+  async function approveDefinition(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+  }): Promise<
+    | RecordDefinitionApprovalResult
+    | { ok: false; reason: "unavailable" }
+    | {
+        ok: false;
+        reason: "gate_refused";
+        refusal: Exclude<DefinitionApprovalGateDecision, { ok: true }>;
+      }
+  > {
+    if (deps.recordDefinitionApproval === undefined) {
+      return { ok: false, reason: "unavailable" };
+    }
+    if (deps.admitDefinitionApproval !== undefined) {
+      const active = await deps.getActiveExecution(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (executionAwaitsDefinitionApproval(active)) {
+        const admitted = await deps.admitDefinitionApproval(
+          active.id,
+          active.seedDefinitionId,
+        );
+        if (!admitted.ok) {
+          return { ok: false, reason: "gate_refused", refusal: admitted };
+        }
+      }
+    }
+    const result = await deps.recordDefinitionApproval({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+    });
+    if (!result.ok) return result;
+
+    await markExecutionRunning(result.execution);
+    void Promise.resolve(
+      deps.kickOffExecutionLoop({
+        projectPath: input.projectPath,
+        projectName: input.projectName,
+        sessionName: input.sessionName,
+        execution: result.execution,
+      }),
+    ).catch(async (error) => {
+      await reportExecutionLoopFailure({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        error,
+        phase: "start",
+      });
+    });
+    return result;
+  }
+
+  async function APPROVE_DEFINITION(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    // Definition approval is a human review act (the execution-start gate for
+    // approval-required definitions). Agent transport is refused with the
+    // machine-readable human_act_required code rather than silently admitted.
+    const transport = await (
+      deps.auth ?? createAgentAuth()
+    ).validateOptionalToken(request);
+    if (transport.kind === "invalid") {
+      return NextResponse.json(
+        { error: "Invalid Command Center API token" } satisfies ApiError,
+        { status: 401 },
+      );
+    }
+    if (transport.kind === "valid") {
+      return NextResponse.json(
+        {
+          error: "Workflow definition approval is a human-only act",
+          code: "human_act_required",
+          instruction:
+            "Approve the definition from the Command Center UI (Spec Studio or the session workflow page), not from an agent.",
+        } satisfies ApiError & { code: string; instruction: string },
+        { status: 403 },
+      );
+    }
+
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    let result: Awaited<ReturnType<typeof approveDefinition>>;
+    try {
+      result = await approveDefinition({
+        projectPath: resolved.projectPath,
+        projectName: resolved.projectName,
+        sessionName: resolved.sessionName,
+      });
+    } catch (error) {
+      return respondToManagerError(error);
+    }
+
+    if (!result.ok) {
+      if (result.reason === "unavailable") {
+        return NextResponse.json(
+          { error: "Definition approval is not available" } satisfies ApiError,
+          { status: 501 },
+        );
+      }
+      if (result.reason === "no_active_execution") {
+        return notFound(
+          "Session does not have an active graph workflow execution",
+        );
+      }
+      if (result.reason === "gate_refused") {
+        return NextResponse.json(
+          {
+            error: result.refusal.unmetConditions.join(" "),
+            code: result.refusal.code,
+            unmetConditions: result.refusal.unmetConditions,
+            instruction: result.refusal.instruction,
+          } satisfies ApiError & {
+            code: string;
+            unmetConditions: string[];
+            instruction: string;
+          },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json(
+        {
+          error:
+            result.reason === "already_decided"
+              ? "The pending workflow definition is already approved (already_decided)"
+              : "The active execution is not awaiting definition approval (not_awaiting_approval)",
+          code: result.reason,
+        } satisfies ApiError & { code: string },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({
+      execution: summarizeExecution(result.execution, false),
+    });
+  }
+
   async function CLEAR(
     _request: Request,
     context: RouteContext,
@@ -1410,6 +1724,9 @@ export function createGraphWorkflowExecutionRouteHandlers(
     ABORT,
     RESET_CONTEXT,
     RESOLVE_APPROVAL,
+    APPROVE_DEFINITION,
+    approveDefinition,
+    hasPendingDefinitionApproval,
     CLEAR,
   };
 }
@@ -1437,6 +1754,47 @@ export async function launchGraphWorkflowExecution(
 
 const defaultGraphWorkflowExecutionHandlers =
   createGraphWorkflowExecutionRouteHandlers();
+
+/**
+ * Approve the session's pending workflow definition and start the run through
+ * the production seam (workflow manager + execution loop singletons) without
+ * HTTP transport. Human-only server-side flows — e.g. the spec-side
+ * execution-start gate grant, which records the human approval before calling
+ * this — use it so definition approval always engages the same lifecycle-port
+ * report and loop kickoff as the HTTP handler. Callers own the human-act
+ * enforcement.
+ */
+export async function approveGraphWorkflowDefinitionForSession(input: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+}): Promise<
+  | RecordDefinitionApprovalResult
+  | { ok: false; reason: "unavailable" }
+  | {
+      ok: false;
+      reason: "gate_refused";
+      refusal: Exclude<DefinitionApprovalGateDecision, { ok: true }>;
+    }
+> {
+  return defaultGraphWorkflowExecutionHandlers.approveDefinition(input);
+}
+
+/**
+ * Whether the session's active graph workflow execution is parked awaiting
+ * definition approval, through the production singletons. Server-side callers
+ * that record their own admission before approving (the spec-side
+ * execution-start grant) probe this so a grant never lands with nothing
+ * waiting to unblock.
+ */
+export async function sessionHasPendingWorkflowDefinitionApproval(input: {
+  projectPath: string;
+  sessionName: string;
+}): Promise<boolean> {
+  return defaultGraphWorkflowExecutionHandlers.hasPendingDefinitionApproval(
+    input,
+  );
+}
 
 export const startGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.START,
@@ -1467,6 +1825,9 @@ export const resetGraphWorkflowExecutionContext = withTracing(
 );
 export const resolveGraphWorkflowApproval = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESOLVE_APPROVAL,
+);
+export const approveGraphWorkflowDefinition = withTracing(
+  defaultGraphWorkflowExecutionHandlers.APPROVE_DEFINITION,
 );
 export const clearGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.CLEAR,

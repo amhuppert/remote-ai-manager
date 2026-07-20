@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fromPromise } from "xstate";
 import {
   dispatchMergeJob,
@@ -8,9 +8,18 @@ import {
   getJob,
   getActiveJobs,
   getConflictAnalysis,
+  runRegisteredMergeJob,
   _resetForTesting,
 } from "./queue";
 import { mergeMachine } from "../workflows/merge/machine";
+import {
+  registerMergeAssociationResolver,
+  _resetMergeAssociationResolverForTesting,
+} from "../workflows/merge/association-port";
+import {
+  registerMergeDeliveryLifecycle,
+  _resetMergeDeliveryLifecycleForTesting,
+} from "../workflows/merge/delivery-lifecycle-port";
 import { commitMachine } from "../workflows/commit/machine";
 import { rebaseMachine } from "../workflows/rebase/machine";
 import type {
@@ -39,6 +48,8 @@ import type {
   PrepareActorOutput,
   PublishActorInput,
   PublishActorOutput,
+  DeliveryGateActorInput,
+  DeliveryGateActorOutput,
   DiscardParkedRefInput,
   DiscardParkedRefOutput,
 } from "../workflows/merge/actors";
@@ -53,8 +64,9 @@ import type {
   FixValidationOutput,
 } from "../workflows/validation-fix/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
-import type { JobStatusEvent } from "@/lib/jobs/schemas";
+import type { JobRecord, JobStatusEvent } from "@/lib/jobs/schemas";
 import type { PublishFn } from "@/lib/events/publication";
+import { createJobsRepo } from "./repo";
 
 import {
   createMergeIntentsRepo,
@@ -94,6 +106,7 @@ const mockRunValidation = vi.fn();
 const mockFixValidation = vi.fn();
 const mockPrepareActor = vi.fn();
 const mockPublishActor = vi.fn();
+const mockDeliveryGateActor = vi.fn();
 const mockDiscardParkedRefActor = vi.fn();
 
 /** Test machine: real merge machine with mock actors */
@@ -121,8 +134,8 @@ const testMachine = mergeMachine.provide({
       AnalyzeConflictsOutput,
       AnalyzeConflictsInput
     >(async ({ input }) => mockAnalyzeConflictsActor(input)),
-    runValidation: fromPromise<void, RunValidationInput>(async ({ input }) =>
-      mockRunValidation(input),
+    runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
+      async ({ input }) => mockRunValidation(input),
     ),
     fixValidation: fromPromise<FixValidationOutput, FixValidationInput>(
       async ({ input }) => mockFixValidation(input),
@@ -132,6 +145,9 @@ const testMachine = mergeMachine.provide({
     ),
     publish: fromPromise<PublishActorOutput, PublishActorInput>(
       async ({ input }) => mockPublishActor(input),
+    ),
+    deliveryGate: fromPromise<DeliveryGateActorOutput, DeliveryGateActorInput>(
+      async ({ input }) => mockDeliveryGateActor(input),
     ),
     discardParkedRef: fromPromise<
       DiscardParkedRefOutput,
@@ -341,7 +357,13 @@ describe("background-jobs", () => {
       conflicts: [],
     });
     // Default: pre-merge validation passes
-    mockRunValidation.mockResolvedValue(undefined);
+    mockRunValidation.mockResolvedValue(null);
+    // Default: linked delivery gate passes
+    mockDeliveryGateActor.mockResolvedValue({
+      status: "pass" as const,
+      satisfied: [],
+      deferred: [],
+    });
     // Default: fix validation succeeds
     mockFixValidation.mockResolvedValue({ status: "fixed" as const });
     // Default: prepare actor succeeds with a parked SHA
@@ -458,7 +480,6 @@ describe("background-jobs", () => {
         );
       }
     });
-
     it("returns error when job already running", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
@@ -1255,9 +1276,261 @@ describe("background-jobs", () => {
   });
 
   // ----------------------------------------------------------
+  // merge association at dispatch (MA1/MA2/MA5)
+  // ----------------------------------------------------------
+  describe("merge association at dispatch", () => {
+    afterEach(() => {
+      _resetMergeAssociationResolverForTesting();
+      _resetMergeDeliveryLifecycleForTesting();
+    });
+
+    function completeCleanMerge(): void {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "assoc-merge-hash",
+      });
+    }
+
+    it("stamps resolved provenance durably on the job and gates the merge", async () => {
+      completeCleanMerge();
+      registerMergeAssociationResolver({
+        resolve(input) {
+          return input.sessionName === "my-session"
+            ? {
+                kind: "linked",
+                executionId: "wf-exec-assoc",
+                finalPublish: true,
+              }
+            : { kind: "none" };
+        },
+      });
+
+      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      if (!result.ok) throw new Error("dispatch failed");
+      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
+      expect(record?.executionId).toBe("wf-exec-assoc");
+      expect(record?.finalPublish).toBe(true);
+      expect(mockDeliveryGateActor).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowExecutionId: "wf-exec-assoc" }),
+      );
+    });
+
+    it("refuses dispatch with the resolver's refusal and creates no job", () => {
+      registerMergeAssociationResolver({
+        resolve() {
+          return {
+            kind: "refused",
+            reason: "Session hosts 2 active spec executions",
+            instruction: "Abandon one execution, then retry the merge.",
+          };
+        },
+      });
+
+      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected refusal");
+      expect(result.error).toEqual({
+        code: "MERGE_ASSOCIATION_REFUSED",
+        reason: "Session hosts 2 active spec executions",
+        instruction: "Abandon one execution, then retry the merge.",
+      });
+      expect(getActiveJobs()).toHaveLength(0);
+      expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+    });
+
+    it("does not consult the resolver when explicit provenance is supplied", async () => {
+      completeCleanMerge();
+      const resolve = vi.fn();
+      registerMergeAssociationResolver({ resolve });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        executionId: "wf-exec-explicit",
+        finalPublish: false,
+      });
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      expect(resolve).not.toHaveBeenCalled();
+      expect(mockDeliveryGateActor).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowExecutionId: "wf-exec-explicit" }),
+      );
+    });
+
+    it("passes through unlinked when no resolver is registered", async () => {
+      completeCleanMerge();
+
+      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      if (!result.ok) throw new Error("dispatch failed");
+      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
+      expect(record?.executionId).toBeUndefined();
+      const gateInput = mockDeliveryGateActor.mock.calls[0]?.[0] as
+        | { workflowExecutionId?: string }
+        | undefined;
+      expect(gateInput?.workflowExecutionId).toBeUndefined();
+    });
+
+    it("resolve-conflicts dispatch persists explicit provenance", async () => {
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChangesActor.mockResolvedValue({ hash: "resolve_hash" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "squash_hash",
+      });
+
+      const result = dispatchResolveConflictsJob({
+        ...BASE_RESOLVE_PARAMS,
+        executionId: "wf-exec-retry",
+        finalPublish: true,
+      });
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      if (!result.ok) throw new Error("dispatch failed");
+      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
+      expect(record?.executionId).toBe("wf-exec-retry");
+      expect(record?.finalPublish).toBe(true);
+      expect(mockDeliveryGateActor).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowExecutionId: "wf-exec-retry" }),
+      );
+    });
+
+    it("notifies the registered delivery lifecycle when a gated final-publish merge completes", async () => {
+      completeCleanMerge();
+      const markDelivered = vi.fn().mockResolvedValue(undefined);
+      registerMergeDeliveryLifecycle({ markDelivered });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        executionId: "wf-exec-deliver",
+        finalPublish: true,
+      });
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      expect(markDelivered).toHaveBeenCalledWith(
+        "wf-exec-deliver",
+        "assoc-merge-hash",
+      );
+    });
+
+    it("does not notify delivery for a linked merge that is not the final publish", async () => {
+      completeCleanMerge();
+      const markDelivered = vi.fn().mockResolvedValue(undefined);
+      registerMergeDeliveryLifecycle({ markDelivered });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        executionId: "wf-exec-not-final",
+      });
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      expect(markDelivered).not.toHaveBeenCalled();
+    });
+
+    it("resolve-conflicts dispatch falls back to the registered resolver", async () => {
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChangesActor.mockResolvedValue({ hash: "resolve_hash" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "squash_hash",
+      });
+      registerMergeAssociationResolver({
+        resolve() {
+          return {
+            kind: "linked",
+            executionId: "wf-exec-retry-resolved",
+            finalPublish: false,
+          };
+        },
+      });
+
+      const result = dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      if (!result.ok) throw new Error("dispatch failed");
+      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
+      expect(record?.executionId).toBe("wf-exec-retry-resolved");
+      expect(record?.finalPublish).toBeUndefined();
+    });
+  });
+
+  // ----------------------------------------------------------
   // getJob / getConflictAnalysis
   // ----------------------------------------------------------
   describe("getJob and getConflictAnalysis", () => {
+    it("keeps a graph merge's parked candidate registered for later land re-entry", async () => {
+      const candidateValidation = {
+        validationRef: "validation-parked-graph",
+        validatedSha: "validated-graph-sha",
+        validatedTreeHash: "validated-graph-tree",
+        commandIdentity: "./validate.sh",
+        outcome: "pass" as const,
+      };
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockRunValidation.mockResolvedValue(candidateValidation);
+      mockPublishActor.mockResolvedValue({
+        status: "ready-to-land" as const,
+        parkedRef: "refs/cc-merges/graph-job",
+        preparedSha: "prepared-sha",
+        targetWorktreePath: "/projects/foo",
+      });
+
+      const output = await runRegisteredMergeJob({
+        machine: testMachine,
+        broadcast: mockBroadcast,
+        input: {
+          jobId: "graph-job",
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          projectName: BASE_MERGE_PARAMS.projectName,
+          sessionName: BASE_MERGE_PARAMS.sessionName,
+          worktreePath: BASE_MERGE_PARAMS.worktreePath,
+          branchName: BASE_MERGE_PARAMS.branchName,
+          message: BASE_MERGE_PARAMS.message,
+          autoResolve: true,
+          targetBranch: "main",
+          targetWorktreePath: "/projects/foo",
+          finalizeSessionOnPublish: false,
+          executionId: "workflow-execution-parked",
+          finalPublish: true,
+        },
+      });
+
+      expect(output.status).toBe("ready-to-land");
+      expect(
+        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+      ).toMatchObject({
+        jobId: "graph-job",
+        status: "ready-to-land",
+        preparedSha: "prepared-sha",
+        expectedTargetSha: "expected-target-sha",
+        parkedRef: "refs/cc-merges/test",
+        executionId: "workflow-execution-parked",
+        finalPublish: true,
+        candidateValidation,
+      });
+      expect(createJobsRepo(testDb).getJobRecord("graph-job")).toMatchObject({
+        executionId: "workflow-execution-parked",
+        finalPublish: true,
+        candidateValidation,
+      });
+    });
+
     it("getJob returns undefined for unknown session", () => {
       const job = getJob("/unknown", "unknown-session");
       expect(job).toBeUndefined();
@@ -1291,6 +1564,139 @@ describe("background-jobs", () => {
   // targetBranch threading
   // ----------------------------------------------------------
   describe("targetBranch threading", () => {
+    it("persists a fresh candidate-validation fact before delivery-gate evaluation", async () => {
+      const candidateValidation = {
+        validationRef: "validation-before-gate",
+        validatedSha: "validated-before-gate-sha",
+        validatedTreeHash: "validated-before-gate-tree",
+        commandIdentity: "./validate.sh",
+        outcome: "pass" as const,
+      };
+      const dispatchState: { jobId?: string } = {};
+      let durableRecordAtGate: JobRecord | null | undefined;
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockRunValidation.mockResolvedValue(candidateValidation);
+      mockDeliveryGateActor.mockImplementation(async () => {
+        if (dispatchState.jobId === undefined) {
+          throw new Error(
+            "Delivery gate ran before dispatch returned the job id",
+          );
+        }
+        durableRecordAtGate = createJobsRepo(testDb).getJobRecord(
+          dispatchState.jobId,
+        );
+        return {
+          status: "pass" as const,
+          satisfied: [],
+          deferred: [],
+        };
+      });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "landed-sha",
+      });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        executionId: "workflow-execution-before-gate",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      dispatchState.jobId = result.value.jobId;
+
+      await waitForJobCompletions();
+
+      expect(mockDeliveryGateActor).toHaveBeenCalledTimes(1);
+      expect(mockPublishActor).toHaveBeenCalledTimes(1);
+      expect(durableRecordAtGate).toMatchObject({
+        executionId: "workflow-execution-before-gate",
+        candidateValidation,
+      });
+    });
+
+    it("publishes the typed halt reason when the delivery gate refuses a merge", async () => {
+      const haltReason = {
+        type: "delivery_gate_failed" as const,
+        unmet: [
+          {
+            criterionId: "criterion-1",
+            criterionHandle: "native-sdd/R18.4",
+            outcome: "unmet",
+            reason: "candidate proof is stale",
+          },
+        ],
+        instruction: "Re-dispatch the merge to validate the candidate again.",
+      };
+      mockDeliveryGateActor.mockResolvedValue({
+        status: "refused" as const,
+        unmet: haltReason.unmet,
+        instruction: haltReason.instruction,
+      });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        entryMode: "land",
+        preparedSha: "prepared-land-sha",
+        expectedTargetSha: "target-land-sha",
+        parkedRef: "refs/cc-merges/land",
+        executionId: "workflow-execution-land",
+      });
+      expect(result.ok).toBe(true);
+
+      await waitForJobCompletions();
+
+      expect(lastBroadcast()).toMatchObject({
+        type: "job-status",
+        status: "failed",
+        parkedRef: "refs/cc-merges/land",
+        haltReason,
+      });
+      expect(mockPublishActor).not.toHaveBeenCalled();
+    });
+
+    it("carries persisted delivery-gate fields from a land dispatch into MergeInput", async () => {
+      const candidateValidation = {
+        validationRef: "validation-land",
+        validatedSha: "validated-land-sha",
+        validatedTreeHash: "validated-land-tree",
+        commandIdentity: "./validate.sh",
+        outcome: "pass" as const,
+      };
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "landed-sha",
+      });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        entryMode: "land",
+        preparedSha: "prepared-land-sha",
+        expectedTargetSha: "target-land-sha",
+        parkedRef: "refs/cc-merges/land",
+        executionId: "workflow-execution-land",
+        candidateValidation,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(
+        createJobsRepo(testDb).getJobRecord(result.value.jobId),
+      ).toMatchObject({
+        executionId: "workflow-execution-land",
+        candidateValidation,
+      });
+
+      await waitForJobCompletions();
+
+      expect(mockDeliveryGateActor).toHaveBeenCalledWith({
+        workflowExecutionId: "workflow-execution-land",
+        preparedSha: "prepared-land-sha",
+        expectedTargetSha: "target-land-sha",
+        projectPath: BASE_MERGE_PARAMS.projectPath,
+        candidateValidation,
+      });
+    });
+
     it("dispatchMergeJob passes targetBranch and targetWorktreePath to MergeInput", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({

@@ -168,6 +168,145 @@ describe("getJobRecord", () => {
   });
 });
 
+describe("findLatestPublishedMergeByExecutionId", () => {
+  it("ignores completed linked merges that do not close a final publish join", () => {
+    repo.createJobRecord({
+      jobId: "merge-intermediate",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+      executionId: "workflow-execution-1",
+    });
+    repo.updateJobRecord("merge-intermediate", {
+      status: "completed",
+      mergeHash: "sha-intermediate",
+    });
+
+    expect(
+      repo.findLatestPublishedMergeByExecutionId("workflow-execution-1"),
+    ).toBeNull();
+  });
+
+  it("returns only the latest completed merge for the linked workflow execution", () => {
+    for (const [jobId, mergeHash] of [
+      ["merge-1", "sha-1"],
+      ["merge-2", "sha-2"],
+    ] as const) {
+      repo.createJobRecord({
+        jobId,
+        jobType: "merge",
+        status: "running",
+        projectName: "my-project",
+        sessionName: "feature",
+        branchName: "csm/feature",
+        startedAt: "2026-06-09 12:00:00",
+        executionId: "workflow-execution-1",
+        finalPublish: true,
+      });
+      repo.updateJobRecord(jobId, {
+        status: "completed",
+        mergeHash,
+      });
+    }
+    getSharedStateDb()
+      .prepare("UPDATE job_records SET completed_at = ? WHERE job_id = ?")
+      .run("2026-06-09 12:01:00", "merge-1");
+    getSharedStateDb()
+      .prepare("UPDATE job_records SET completed_at = ? WHERE job_id = ?")
+      .run("2026-06-09 12:02:00", "merge-2");
+
+    expect(
+      repo.findLatestPublishedMergeByExecutionId("workflow-execution-1"),
+    ).toEqual({ mergeHash: "sha-2", deliveryGatePassed: true });
+    expect(
+      repo.findLatestPublishedMergeByExecutionId("unlinked-execution"),
+    ).toBeNull();
+  });
+
+  it("counts a completed final-publish conflict-resolution retry as the published merge", () => {
+    repo.createJobRecord({
+      jobId: "retry-final",
+      jobType: "resolve-conflicts",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+      executionId: "workflow-execution-1",
+      finalPublish: true,
+    });
+    repo.updateJobRecord("retry-final", {
+      status: "completed",
+      mergeHash: "sha-retry",
+    });
+
+    expect(
+      repo.findLatestPublishedMergeByExecutionId("workflow-execution-1"),
+    ).toEqual({ mergeHash: "sha-retry", deliveryGatePassed: true });
+  });
+
+  it("ignores failed and ready-to-land jobs", () => {
+    repo.createJobRecord({
+      jobId: "parked",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+      executionId: "workflow-execution-1",
+      finalPublish: true,
+    });
+    repo.updateJobRecord("parked", {
+      status: "ready-to-land",
+      mergeHash: "not-published",
+    });
+
+    expect(
+      repo.findLatestPublishedMergeByExecutionId("workflow-execution-1"),
+    ).toBeNull();
+  });
+});
+
+describe("findMergeValidationByExecutionIdAndRef", () => {
+  it("resolves the durable candidate validation fact produced by the linked job", () => {
+    const validation = {
+      validationRef: "validation-1",
+      validatedSha: "candidate-a",
+      validatedTreeHash: "tree-a",
+      commandIdentity: "bun:test",
+      outcome: "pass" as const,
+    };
+    repo.createJobRecord({
+      jobId: "merge-validation-job",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+      executionId: "workflow-execution-1",
+      candidateValidation: validation,
+    });
+
+    expect(
+      repo.findMergeValidationByExecutionIdAndRef(
+        "workflow-execution-1",
+        "validation-1",
+      ),
+    ).toEqual({ mergeJobId: "merge-validation-job", validation });
+    expect(
+      repo.findMergeValidationByExecutionIdAndRef(
+        "workflow-execution-1",
+        "validation-other",
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("recoverStaleJobs", () => {
   /**
    * A real pid whose process has already exited: spawn a trivial child
@@ -218,7 +357,12 @@ describe("recoverStaleJobs", () => {
     const result =
       createNotificationsRepo(getSharedStateDb()).getNotifications();
     expect(result.notifications).toHaveLength(2);
-    expect(result.notifications.every((n) => n.errorMessage)).toBe(true);
+    expect(
+      result.notifications.every(
+        (notification) =>
+          notification.source === "job" && notification.errorMessage,
+      ),
+    ).toBe(true);
   });
 
   it("spares another live worker's running job while sweeping dead-owner and legacy rows", () => {

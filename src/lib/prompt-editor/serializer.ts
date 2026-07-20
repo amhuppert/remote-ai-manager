@@ -1,9 +1,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { ImagePayload, ImageMediaType } from "@/lib/images/schemas";
-import { escapeXmlAttr } from "@/lib/shared/xml";
-import { buildMessageRefXml } from "@/lib/conversations/message-ref";
-import { buildTicketRefXml } from "@/lib/tickets/references";
+import { getReferenceByNodeName } from "./reference-registry";
 export interface SerializePromptDocArgs {
   doc: ProseMirrorNode;
   attachments: ImageAttachment[];
@@ -102,16 +100,9 @@ function serializeInline(
       if (typeof path === "string" && path.length > 0) out += `@${path}`;
       return;
     }
-    if (child.type.name === "conversationMention") {
-      out += renderConversationRefXml(child.attrs);
-      return;
-    }
-    if (child.type.name === "messageMention") {
-      out += renderMessageRefXml(child.attrs);
-      return;
-    }
-    if (child.type.name === "ticketMention") {
-      out += renderTicketRefXml(child.attrs);
+    const reference = getReferenceByNodeName(child.type.name);
+    if (reference) {
+      out += reference.buildXml(child.attrs);
       return;
     }
     out += serializeInline(child, markerByAttachmentId);
@@ -123,131 +114,4 @@ function serializeCodeBlock(node: ProseMirrorNode): string {
   const rawLang = node.attrs["language"];
   const language = typeof rawLang === "string" ? rawLang : "";
   return `\`\`\`${language}\n${node.textContent}\n\`\`\``;
-}
-
-const CONVERSATION_REF_ATTR_ORDER: ReadonlyArray<[string, string]> = [
-  ["projectName", "project-name"],
-  ["projectPath", "project-path"],
-  ["sessionName", "session-name"],
-  ["worktreePath", "worktree-path"],
-  ["conversationId", "conversation-id"],
-  ["conversationName", "conversation-name"],
-  ["backend", "backend"],
-  ["backendRef", "backend-ref"],
-  ["debugLogPath", "debug-log-path"],
-  ["status", "status"],
-  ["lastActivityAt", "last-activity-at"],
-  ["compactArtifactId", "compact-artifact-id"],
-  ["compactStatus", "compact-status"],
-  ["compactCoveredSeq", "compact-covered-seq"],
-  ["compactCreatedAt", "compact-created-at"],
-];
-
-// Emitted only when a completed conversation compaction exists; refs without
-// one carry compact-status="none" alone to keep the XML lean (design §12.4).
-const COMPACTION_DETAIL_ATTRS = new Set([
-  "compactArtifactId",
-  "compactCoveredSeq",
-  "compactCreatedAt",
-]);
-
-function renderConversationRefXml(attrs: Record<string, unknown>): string {
-  const rawStatus = attrs["compactStatus"];
-  const compactStatus =
-    rawStatus === "fresh" || rawStatus === "stale" ? rawStatus : "none";
-  const parts: string[] = ["<conversation-ref"];
-  for (const [camel, kebab] of CONVERSATION_REF_ATTR_ORDER) {
-    if (camel === "compactStatus") {
-      parts.push(`${kebab}="${compactStatus}"`);
-      continue;
-    }
-    if (COMPACTION_DETAIL_ATTRS.has(camel) && compactStatus === "none") {
-      continue;
-    }
-    const raw = attrs[camel];
-    const value = typeof raw === "string" ? raw : "";
-    parts.push(`${kebab}="${escapeXmlAttr(value)}"`);
-  }
-  const conversationId =
-    typeof attrs["conversationId"] === "string" ? attrs["conversationId"] : "";
-  for (const [kebab, command] of conversationReadCommands(
-    conversationId,
-    compactStatus,
-  )) {
-    parts.push(`${kebab}="${escapeXmlAttr(command)}"`);
-  }
-  return `${parts.join(" ")} />`;
-}
-
-/**
- * Convert a `messageMention` node's string attributes into the shared
- * `<message-ref />` builder input. Empty strings mean "absent" — the node
- * stores every attribute as a string so it round-trips through the DOM.
- */
-function renderMessageRefXml(attrs: Record<string, unknown>): string {
-  const str = (key: string): string => {
-    const raw = attrs[key];
-    return typeof raw === "string" ? raw : "";
-  };
-  const parsedIndex = Number.parseInt(str("messageIndex"), 10);
-  const rawRole = str("role");
-  return buildMessageRefXml({
-    projectName: str("projectName"),
-    sessionName: str("sessionName") || null,
-    conversationId: str("conversationId"),
-    conversationName: str("conversationName") || null,
-    messageIndex: Number.isNaN(parsedIndex) ? 0 : parsedIndex,
-    role: rawRole === "user" || rawRole === "notice" ? rawRole : "assistant",
-    timestamp: str("timestamp") || null,
-    model: str("model") || null,
-    compaction:
-      str("compacted") === "true"
-        ? {
-            artifactId: str("compactArtifactId"),
-            createdAt: str("compactCreatedAt"),
-          }
-        : null,
-  });
-}
-
-/**
- * Convert a `ticketMention` node's string attributes back into the canonical
- * `<ticket-ref />` tag. Identifier and read command are re-derived from
- * project name and number, so the emitted XML stays canonical regardless of
- * what was pasted.
- */
-function renderTicketRefXml(attrs: Record<string, unknown>): string {
-  const str = (key: string): string => {
-    const raw = attrs[key];
-    return typeof raw === "string" ? raw : "";
-  };
-  const parsedNumber = Number.parseInt(str("ticketNumber"), 10);
-  return buildTicketRefXml({
-    projectName: str("projectName"),
-    ticketNumber: Number.isNaN(parsedNumber) ? 0 : parsedNumber,
-    title: str("title"),
-  });
-}
-
-/**
- * Ready-to-run `cctl` commands a reading agent can copy verbatim. cctl resolves
- * the owning project/session from the id, so these need no flags. Compaction
- * first (the dense structured summary) when one exists, then the windowed read.
- */
-function conversationReadCommands(
-  conversationId: string,
-  compactStatus: "none" | "fresh" | "stale",
-): Array<[string, string]> {
-  const commands: Array<[string, string]> = [];
-  if (compactStatus !== "none") {
-    commands.push([
-      "compaction-command",
-      `cctl conversation compaction get ${conversationId} --json`,
-    ]);
-  }
-  commands.push([
-    "read-command",
-    `cctl conversation read ${conversationId} --outline`,
-  ]);
-  return commands;
 }

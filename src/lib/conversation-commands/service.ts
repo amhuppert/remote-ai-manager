@@ -56,6 +56,24 @@ export type DispatchResult =
   | { ok: true; value: { jobId: string } }
   | { ok: false; error: JobDispatchError };
 
+/**
+ * Merge dispatch can additionally refuse with a structured merge-association
+ * refusal (reason + instruction) when the session hosts spec-execution state
+ * the delivery gate could not evaluate from this merge.
+ */
+export type MergeCommandDispatchResult =
+  | { ok: true; value: { jobId: string } }
+  | {
+      ok: false;
+      error:
+        | JobDispatchError
+        | {
+            code: "MERGE_ASSOCIATION_REFUSED";
+            reason: string;
+            instruction: string;
+          };
+    };
+
 export interface DispatchCommitParams {
   projectPath: string;
   projectName: string;
@@ -109,7 +127,7 @@ export interface ConversationCommandDeps {
     input: ExecuteWorkflowTaskRunInput,
   ): Promise<TaskRunResult>;
   dispatchCommitJob(params: DispatchCommitParams): DispatchResult;
-  dispatchMergeJob(params: DispatchMergeParams): DispatchResult;
+  dispatchMergeJob(params: DispatchMergeParams): MergeCommandDispatchResult;
   dispatchRebaseJob(params: DispatchRebaseParams): DispatchResult;
   appendNotice(input: AppendNoticeInput): Promise<void>;
   /**
@@ -448,13 +466,17 @@ export function createConversationCommandService(
         sessionName: session.sessionName,
         conversationId: input.conversationId,
       });
+      const dispatchErrorText =
+        typeof dispatched.error === "string"
+          ? `${
+              dispatched.error === "SESSION_BUSY"
+                ? "the session is busy"
+                : "a background job is already running for this session"
+            }.`
+          : `${dispatched.error.reason} ${dispatched.error.instruction}`;
       await deps.appendNotice({
         conversationId: input.conversationId,
-        text: `Cannot run /${parsed.command}: ${
-          dispatched.error === "SESSION_BUSY"
-            ? "the session is busy"
-            : "a background job is already running for this session"
-        }.`,
+        text: `Cannot run /${parsed.command}: ${dispatchErrorText}`,
         projectName: input.projectName,
         sessionName: session.sessionName,
       });

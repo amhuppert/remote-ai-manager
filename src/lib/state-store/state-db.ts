@@ -151,6 +151,13 @@ const NOTIFICATIONS_TABLE_DDL = `
     conversation_status   TEXT,
     dedupe_key            TEXT,
     error_message         TEXT,
+    spec_id               TEXT,
+    spec_slug             TEXT,
+    spec_name             TEXT,
+    spec_gate             TEXT,
+    spec_gate_request_id  TEXT,
+    spec_deep_link_id     TEXT,
+    spec_approval_id      TEXT,
     CHECK (
       (source = 'job'
         AND session_name IS NOT NULL
@@ -163,6 +170,18 @@ const NOTIFICATIONS_TABLE_DDL = `
         AND conversation_id IS NOT NULL
         AND conversation_status IS NOT NULL
         AND session_name IS NULL
+        AND branch_name IS NULL
+        AND job_id IS NULL
+        AND job_type IS NULL)
+      OR
+      (source = 'spec'
+        AND spec_id IS NOT NULL
+        AND spec_slug IS NOT NULL
+        AND spec_name IS NOT NULL
+        AND spec_gate IS NOT NULL
+        AND spec_gate_request_id IS NOT NULL
+        AND spec_deep_link_id IS NOT NULL
+        AND conversation_id IS NULL
         AND branch_name IS NULL
         AND job_id IS NULL
         AND job_type IS NULL)
@@ -181,7 +200,777 @@ const NOTIFICATIONS_INDEX_DDL = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe
     ON notifications(dedupe_key)
     WHERE dedupe_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_notifications_spec_request
+    ON notifications(spec_id, spec_gate_request_id, created_at DESC)
+    WHERE source = 'spec';
 `;
+
+const SPEC_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS specs (
+    id                TEXT PRIMARY KEY,
+    project_path      TEXT NOT NULL,
+    slug              TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    gate_policy_json  TEXT NOT NULL,
+    abandoned_at      TEXT,
+    abandoned_reason  TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_path, slug),
+    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_specs_project_updated
+    ON specs (project_path, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_aliases (
+    project_path  TEXT NOT NULL,
+    slug          TEXT NOT NULL,
+    spec_id       TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_path, slug),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_aliases_spec
+    ON spec_aliases (spec_id);
+
+  CREATE TABLE IF NOT EXISTS spec_counters (
+    spec_id      TEXT NOT NULL,
+    scope_key    TEXT NOT NULL CHECK (
+      scope_key IN ('R', 'D', 'T', 'Q', 'A') OR scope_key GLOB 'C:?*'
+    ),
+    last_number  INTEGER NOT NULL CHECK (last_number >= 0),
+    PRIMARY KEY (spec_id, scope_key),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS spec_elements (
+    id                 TEXT PRIMARY KEY,
+    spec_id            TEXT NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN (
+      'section', 'requirement', 'criterion', 'decision', 'task'
+    )),
+    number             INTEGER CHECK (number > 0),
+    parent_element_id  TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_element_id) REFERENCES spec_elements(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_elements_spec_kind_number
+    ON spec_elements (spec_id, kind, number);
+  CREATE INDEX IF NOT EXISTS idx_spec_elements_parent
+    ON spec_elements (parent_element_id);
+
+  CREATE TABLE IF NOT EXISTS spec_revisions (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    number                INTEGER NOT NULL CHECK (number > 0),
+    state                 TEXT NOT NULL CHECK (state IN (
+      'draft', 'proposed', 'approved', 'withdrawn'
+    )),
+    based_on_revision_id  TEXT,
+    content_hash          TEXT,
+    proposed_at           TEXT,
+    approved_at           TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (spec_id, number),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (based_on_revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_revisions_spec_state
+    ON spec_revisions (spec_id, state, number DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_element_versions (
+    revision_id     TEXT NOT NULL,
+    element_id      TEXT NOT NULL,
+    position        INTEGER NOT NULL CHECK (position >= 0),
+    payload_json    TEXT NOT NULL,
+    payload_hash    TEXT NOT NULL,
+    element_version INTEGER NOT NULL CHECK (element_version > 0),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (revision_id, element_id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_element_versions_element
+    ON spec_element_versions (element_id, revision_id);
+  CREATE INDEX IF NOT EXISTS idx_spec_element_versions_order
+    ON spec_element_versions (revision_id, position);
+
+  CREATE TABLE IF NOT EXISTS spec_executions (
+    id                     TEXT PRIMARY KEY,
+    spec_id                TEXT NOT NULL,
+    revision_id            TEXT NOT NULL,
+    scope_json             TEXT NOT NULL,
+    state                  TEXT NOT NULL CHECK (state IN (
+      'definition_review', 'running', 'delivered', 'abandoned'
+    )),
+    workflow_definition_id TEXT NOT NULL,
+    workflow_execution_id  TEXT,
+    session_name           TEXT,
+    delivered_at           TEXT,
+    abandoned_reason       TEXT,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_executions_spec_state
+    ON spec_executions (spec_id, state, created_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
+    ON spec_executions (workflow_execution_id)
+    WHERE workflow_execution_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS spec_approvals (
+    id            TEXT PRIMARY KEY,
+    spec_id       TEXT NOT NULL,
+    subject_kind  TEXT NOT NULL CHECK (subject_kind IN (
+      'requirement', 'decision', 'revision', 'plan'
+    )),
+    element_id    TEXT,
+    revision_id   TEXT NOT NULL,
+    approver      TEXT NOT NULL,
+    granted_at    TEXT NOT NULL,
+    validity      TEXT NOT NULL CHECK (validity IN ('valid', 'stale', 'closed')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_approvals_revision_validity
+    ON spec_approvals (spec_id, revision_id, validity);
+  CREATE INDEX IF NOT EXISTS idx_spec_approvals_subject
+    ON spec_approvals (spec_id, subject_kind, element_id);
+
+  CREATE TABLE IF NOT EXISTS spec_gate_admissions (
+    id            TEXT PRIMARY KEY,
+    spec_id       TEXT NOT NULL,
+    gate          TEXT NOT NULL CHECK (gate IN (
+      'requirements', 'design', 'plan', 'execution_start', 'delivery'
+    )),
+    basis         TEXT NOT NULL CHECK (basis IN (
+      'human_approval', 'notify_policy', 'off_policy'
+    )),
+    approval_id   TEXT,
+    revision_id   TEXT,
+    execution_id  TEXT,
+    actor_json    TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (approval_id) REFERENCES spec_approvals(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_gate_admissions_spec_gate
+    ON spec_gate_admissions (spec_id, gate, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_questions (
+    id               TEXT PRIMARY KEY,
+    spec_id          TEXT NOT NULL,
+    number           INTEGER NOT NULL CHECK (number > 0),
+    element_id       TEXT,
+    text             TEXT NOT NULL,
+    provenance_json  TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK (status IN ('open', 'answered')),
+    answer           TEXT,
+    answered_at      TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (spec_id, number),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_questions_spec_status
+    ON spec_questions (spec_id, status, number);
+
+  CREATE TABLE IF NOT EXISTS spec_assumptions (
+    id                TEXT PRIMARY KEY,
+    spec_id           TEXT NOT NULL,
+    number            INTEGER NOT NULL CHECK (number > 0),
+    element_id        TEXT,
+    text              TEXT NOT NULL,
+    proposed_by_json  TEXT NOT NULL,
+    disposition       TEXT NOT NULL CHECK (disposition IN (
+      'proposed', 'confirmed', 'rejected', 'deferred'
+    )),
+    disposed_at       TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (spec_id, number),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_assumptions_spec_disposition
+    ON spec_assumptions (spec_id, disposition, number);
+
+  CREATE TABLE IF NOT EXISTS spec_comments (
+    id                 TEXT PRIMARY KEY,
+    spec_id            TEXT NOT NULL,
+    thread_id          TEXT NOT NULL,
+    parent_comment_id  TEXT,
+    element_id         TEXT NOT NULL,
+    anchor_json        TEXT NOT NULL,
+    revision_id        TEXT NOT NULL,
+    body               TEXT NOT NULL,
+    author_json        TEXT NOT NULL,
+    blocking           INTEGER NOT NULL CHECK (blocking IN (0, 1)),
+    resolution         TEXT NOT NULL CHECK (resolution IN (
+      'open', 'resolved', 'dismissed'
+    )),
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_comment_id) REFERENCES spec_comments(id),
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_comments_element_resolution
+    ON spec_comments (spec_id, element_id, resolution);
+  CREATE INDEX IF NOT EXISTS idx_spec_comments_thread
+    ON spec_comments (thread_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS spec_evidence (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    criterion_element_id  TEXT NOT NULL,
+    revision_id           TEXT NOT NULL,
+    kind                  TEXT NOT NULL CHECK (kind IN (
+      'diff', 'commit', 'test_run', 'validator_verdict', 'screenshot',
+      'human_signoff'
+    )),
+    ref_json              TEXT NOT NULL,
+    evaluated_state_json  TEXT NOT NULL,
+    producer_json         TEXT NOT NULL,
+    execution_id          TEXT,
+    source_event_id       INTEGER,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_evidence_criterion_revision
+    ON spec_evidence (criterion_element_id, revision_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_evidence_execution
+    ON spec_evidence (execution_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_evidence_source_event
+    ON spec_evidence (source_event_id)
+    WHERE source_event_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS spec_proof_verdicts (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    criterion_element_id  TEXT NOT NULL,
+    revision_id           TEXT NOT NULL,
+    execution_id          TEXT,
+    verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN (
+      'deterministic_validator', 'agent_validator', 'human'
+    )),
+    evidence_ids_json     TEXT NOT NULL,
+    verdict_at            TEXT NOT NULL,
+    stale_at              TEXT,
+    stale_reason          TEXT,
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_criterion_revision
+    ON spec_proof_verdicts (criterion_element_id, revision_id, verdict_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_execution
+    ON spec_proof_verdicts (execution_id, verdict_at);
+
+  CREATE TABLE IF NOT EXISTS spec_waivers (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    criterion_element_id  TEXT NOT NULL,
+    revision_id           TEXT NOT NULL,
+    reason                TEXT NOT NULL CHECK (length(reason) > 0),
+    waived_at             TEXT NOT NULL,
+    stale                 INTEGER NOT NULL CHECK (stale IN (0, 1)),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_waivers_criterion_revision
+    ON spec_waivers (criterion_element_id, revision_id);
+
+  CREATE TABLE IF NOT EXISTS spec_criterion_dispositions (
+    execution_id               TEXT NOT NULL,
+    criterion_element_id       TEXT NOT NULL,
+    disposition                TEXT NOT NULL CHECK (disposition IN (
+      'in_scope', 'deferred', 'waived', 'delivered_elsewhere'
+    )),
+    waiver_id                  TEXT,
+    delivered_by_execution_id  TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (execution_id, criterion_element_id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (waiver_id) REFERENCES spec_waivers(id),
+    FOREIGN KEY (delivered_by_execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_criterion_dispositions_criterion
+    ON spec_criterion_dispositions (criterion_element_id, disposition);
+
+  CREATE TABLE IF NOT EXISTS spec_task_claims (
+    id                 TEXT PRIMARY KEY,
+    spec_id            TEXT NOT NULL,
+    task_element_id    TEXT NOT NULL,
+    execution_id       TEXT,
+    actor_json         TEXT NOT NULL,
+    evidence_ids_json  TEXT NOT NULL,
+    claimed_at         TEXT NOT NULL,
+    status             TEXT NOT NULL CHECK (status IN ('accepted', 'reopened')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_task_claims_task_execution
+    ON spec_task_claims (task_element_id, execution_id, claimed_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_links (
+    id                TEXT PRIMARY KEY,
+    spec_id           TEXT NOT NULL,
+    object_kind       TEXT NOT NULL CHECK (object_kind IN (
+      'ticket', 'conversation', 'session', 'workflow_execution', 'merge_job'
+    )),
+    object_ref_json   TEXT NOT NULL,
+    direction         TEXT NOT NULL,
+    category          TEXT NOT NULL CHECK (category IN (
+      'graduated_from', 'materialized_from', 'reference', 'source'
+    )),
+    snapshot_json     TEXT,
+    element_ids_json  TEXT,
+    actor_json        TEXT NOT NULL,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_links_spec_category
+    ON spec_links (spec_id, category, created_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_links_object
+    ON spec_links (object_kind, object_ref_json);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_links_entry_identity
+    ON spec_links (object_kind, object_ref_json, category)
+    WHERE (object_kind = 'conversation' AND category = 'source')
+       OR (object_kind = 'ticket' AND category = 'graduated_from');
+
+  CREATE TABLE IF NOT EXISTS spec_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    spec_id       TEXT NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    actor_json    TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_events_spec_order
+    ON spec_events (spec_id, id);
+  CREATE INDEX IF NOT EXISTS idx_spec_events_type_order
+    ON spec_events (event_type, id);
+`;
+
+const SPEC_SCHEMA_DDL_DUPLICATE = `
+  CREATE TABLE IF NOT EXISTS specs (
+    id                TEXT PRIMARY KEY,
+    project_path      TEXT NOT NULL,
+    slug              TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    gate_policy_json  TEXT NOT NULL,
+    abandoned_at      TEXT,
+    abandoned_reason  TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_path, slug),
+    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_specs_project_updated
+    ON specs (project_path, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_aliases (
+    project_path  TEXT NOT NULL,
+    slug          TEXT NOT NULL,
+    spec_id       TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_path, slug),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_aliases_spec
+    ON spec_aliases (spec_id);
+
+  CREATE TABLE IF NOT EXISTS spec_counters (
+    spec_id      TEXT NOT NULL,
+    scope_key    TEXT NOT NULL CHECK (
+      scope_key IN ('R', 'D', 'T', 'Q', 'A') OR scope_key GLOB 'C:?*'
+    ),
+    last_number  INTEGER NOT NULL CHECK (last_number >= 0),
+    PRIMARY KEY (spec_id, scope_key),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS spec_elements (
+    id                 TEXT PRIMARY KEY,
+    spec_id            TEXT NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN (
+      'section', 'requirement', 'criterion', 'decision', 'task'
+    )),
+    number             INTEGER CHECK (number > 0),
+    parent_element_id  TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_element_id) REFERENCES spec_elements(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_elements_spec_kind_number
+    ON spec_elements (spec_id, kind, number);
+  CREATE INDEX IF NOT EXISTS idx_spec_elements_parent
+    ON spec_elements (parent_element_id);
+
+  CREATE TABLE IF NOT EXISTS spec_revisions (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    number                INTEGER NOT NULL CHECK (number > 0),
+    state                 TEXT NOT NULL CHECK (state IN (
+      'draft', 'proposed', 'approved', 'withdrawn'
+    )),
+    based_on_revision_id  TEXT,
+    content_hash          TEXT,
+    proposed_at           TEXT,
+    approved_at           TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (spec_id, number),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (based_on_revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_revisions_spec_state
+    ON spec_revisions (spec_id, state, number DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_element_versions (
+    revision_id     TEXT NOT NULL,
+    element_id      TEXT NOT NULL,
+    position        INTEGER NOT NULL CHECK (position >= 0),
+    payload_json    TEXT NOT NULL,
+    payload_hash    TEXT NOT NULL,
+    element_version INTEGER NOT NULL CHECK (element_version > 0),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (revision_id, element_id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_element_versions_element
+    ON spec_element_versions (element_id, revision_id);
+  CREATE INDEX IF NOT EXISTS idx_spec_element_versions_order
+    ON spec_element_versions (revision_id, position);
+
+  CREATE TABLE IF NOT EXISTS spec_executions (
+    id                     TEXT PRIMARY KEY,
+    spec_id                TEXT NOT NULL,
+    revision_id            TEXT NOT NULL,
+    scope_json             TEXT NOT NULL,
+    state                  TEXT NOT NULL CHECK (state IN (
+      'definition_review', 'running', 'delivered', 'abandoned'
+    )),
+    workflow_definition_id TEXT NOT NULL,
+    workflow_execution_id  TEXT,
+    session_name           TEXT,
+    delivered_at           TEXT,
+    abandoned_reason       TEXT,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_executions_spec_state
+    ON spec_executions (spec_id, state, created_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
+    ON spec_executions (workflow_execution_id)
+    WHERE workflow_execution_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS spec_approvals (
+    id            TEXT PRIMARY KEY,
+    spec_id       TEXT NOT NULL,
+    subject_kind  TEXT NOT NULL CHECK (subject_kind IN (
+      'requirement', 'decision', 'revision', 'plan'
+    )),
+    element_id    TEXT,
+    revision_id   TEXT NOT NULL,
+    approver      TEXT NOT NULL,
+    granted_at    TEXT NOT NULL,
+    validity      TEXT NOT NULL CHECK (validity IN ('valid', 'stale', 'closed')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_approvals_revision_validity
+    ON spec_approvals (spec_id, revision_id, validity);
+  CREATE INDEX IF NOT EXISTS idx_spec_approvals_subject
+    ON spec_approvals (spec_id, subject_kind, element_id);
+
+  CREATE TABLE IF NOT EXISTS spec_gate_admissions (
+    id            TEXT PRIMARY KEY,
+    spec_id       TEXT NOT NULL,
+    gate          TEXT NOT NULL CHECK (gate IN (
+      'requirements', 'design', 'plan', 'execution_start', 'delivery'
+    )),
+    basis         TEXT NOT NULL CHECK (basis IN (
+      'human_approval', 'notify_policy', 'off_policy'
+    )),
+    approval_id   TEXT,
+    revision_id   TEXT,
+    execution_id  TEXT,
+    actor_json    TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (approval_id) REFERENCES spec_approvals(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_gate_admissions_spec_gate
+    ON spec_gate_admissions (spec_id, gate, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_questions (
+    id               TEXT PRIMARY KEY,
+    spec_id          TEXT NOT NULL,
+    number           INTEGER NOT NULL CHECK (number > 0),
+    element_id       TEXT,
+    text             TEXT NOT NULL,
+    provenance_json  TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK (status IN ('open', 'answered')),
+    answer           TEXT,
+    answered_at      TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (spec_id, number),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_questions_spec_status
+    ON spec_questions (spec_id, status, number);
+
+  CREATE TABLE IF NOT EXISTS spec_assumptions (
+    id                TEXT PRIMARY KEY,
+    spec_id           TEXT NOT NULL,
+    number            INTEGER NOT NULL CHECK (number > 0),
+    element_id        TEXT,
+    text              TEXT NOT NULL,
+    proposed_by_json  TEXT NOT NULL,
+    disposition       TEXT NOT NULL CHECK (disposition IN (
+      'proposed', 'confirmed', 'rejected', 'deferred'
+    )),
+    disposed_at       TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (spec_id, number),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_assumptions_spec_disposition
+    ON spec_assumptions (spec_id, disposition, number);
+
+  CREATE TABLE IF NOT EXISTS spec_comments (
+    id                 TEXT PRIMARY KEY,
+    spec_id            TEXT NOT NULL,
+    thread_id          TEXT NOT NULL,
+    parent_comment_id  TEXT,
+    element_id         TEXT NOT NULL,
+    anchor_json        TEXT NOT NULL,
+    revision_id        TEXT NOT NULL,
+    body               TEXT NOT NULL,
+    author_json        TEXT NOT NULL,
+    blocking           INTEGER NOT NULL CHECK (blocking IN (0, 1)),
+    resolution         TEXT NOT NULL CHECK (resolution IN (
+      'open', 'resolved', 'dismissed'
+    )),
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_comment_id) REFERENCES spec_comments(id),
+    FOREIGN KEY (element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_comments_element_resolution
+    ON spec_comments (spec_id, element_id, resolution);
+  CREATE INDEX IF NOT EXISTS idx_spec_comments_thread
+    ON spec_comments (thread_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS spec_evidence (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    criterion_element_id  TEXT NOT NULL,
+    revision_id           TEXT NOT NULL,
+    kind                  TEXT NOT NULL CHECK (kind IN (
+      'diff', 'commit', 'test_run', 'validator_verdict', 'screenshot',
+      'human_signoff'
+    )),
+    ref_json              TEXT NOT NULL,
+    evaluated_state_json  TEXT NOT NULL,
+    producer_json         TEXT NOT NULL,
+    execution_id          TEXT,
+    source_event_id       INTEGER,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_evidence_criterion_revision
+    ON spec_evidence (criterion_element_id, revision_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_evidence_execution
+    ON spec_evidence (execution_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_evidence_source_event
+    ON spec_evidence (source_event_id)
+    WHERE source_event_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS spec_proof_verdicts (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    criterion_element_id  TEXT NOT NULL,
+    revision_id           TEXT NOT NULL,
+    execution_id          TEXT,
+    verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN (
+      'deterministic_validator', 'agent_validator', 'human'
+    )),
+    evidence_ids_json     TEXT NOT NULL,
+    verdict_at            TEXT NOT NULL,
+    stale_at              TEXT,
+    stale_reason          TEXT,
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_criterion_revision
+    ON spec_proof_verdicts (criterion_element_id, revision_id, verdict_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_execution
+    ON spec_proof_verdicts (execution_id, verdict_at);
+
+  CREATE TABLE IF NOT EXISTS spec_waivers (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    criterion_element_id  TEXT NOT NULL,
+    revision_id           TEXT NOT NULL,
+    reason                TEXT NOT NULL CHECK (length(reason) > 0),
+    waived_at             TEXT NOT NULL,
+    stale                 INTEGER NOT NULL CHECK (stale IN (0, 1)),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_waivers_criterion_revision
+    ON spec_waivers (criterion_element_id, revision_id);
+
+  CREATE TABLE IF NOT EXISTS spec_criterion_dispositions (
+    execution_id               TEXT NOT NULL,
+    criterion_element_id       TEXT NOT NULL,
+    disposition                TEXT NOT NULL CHECK (disposition IN (
+      'in_scope', 'deferred', 'waived', 'delivered_elsewhere'
+    )),
+    waiver_id                  TEXT,
+    delivered_by_execution_id  TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (execution_id, criterion_element_id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id) ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (waiver_id) REFERENCES spec_waivers(id),
+    FOREIGN KEY (delivered_by_execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_criterion_dispositions_criterion
+    ON spec_criterion_dispositions (criterion_element_id, disposition);
+
+  CREATE TABLE IF NOT EXISTS spec_task_claims (
+    id                 TEXT PRIMARY KEY,
+    spec_id            TEXT NOT NULL,
+    task_element_id    TEXT NOT NULL,
+    execution_id       TEXT,
+    actor_json         TEXT NOT NULL,
+    evidence_ids_json  TEXT NOT NULL,
+    claimed_at         TEXT NOT NULL,
+    status             TEXT NOT NULL CHECK (status IN ('accepted', 'reopened')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_element_id) REFERENCES spec_elements(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_task_claims_task_execution
+    ON spec_task_claims (task_element_id, execution_id, claimed_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_links (
+    id                TEXT PRIMARY KEY,
+    spec_id           TEXT NOT NULL,
+    object_kind       TEXT NOT NULL CHECK (object_kind IN (
+      'ticket', 'conversation', 'session', 'workflow_execution', 'merge_job'
+    )),
+    object_ref_json   TEXT NOT NULL,
+    direction         TEXT NOT NULL,
+    category          TEXT NOT NULL CHECK (category IN (
+      'graduated_from', 'materialized_from', 'reference', 'source'
+    )),
+    snapshot_json     TEXT,
+    element_ids_json  TEXT,
+    actor_json        TEXT NOT NULL,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_links_spec_category
+    ON spec_links (spec_id, category, created_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_links_object
+    ON spec_links (object_kind, object_ref_json);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_links_entry_identity
+    ON spec_links (object_kind, object_ref_json, category)
+    WHERE (object_kind = 'conversation' AND category = 'source')
+       OR (object_kind = 'ticket' AND category = 'graduated_from');
+
+  CREATE TABLE IF NOT EXISTS spec_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    spec_id       TEXT NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    actor_json    TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_events_spec_order
+    ON spec_events (spec_id, id);
+  CREATE INDEX IF NOT EXISTS idx_spec_events_type_order
+    ON spec_events (event_type, id);
+`;
+void SPEC_SCHEMA_DDL_DUPLICATE;
 
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -409,7 +1198,10 @@ const SCHEMA_DDL = `
     conflict_count INTEGER,
     conflict_files TEXT,
     error_message  TEXT,
-    owner_pid      INTEGER
+    owner_pid      INTEGER,
+    execution_id   TEXT,
+    final_publish  INTEGER NOT NULL DEFAULT 0,
+    candidate_validation TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
@@ -664,6 +1456,8 @@ const SCHEMA_DDL = `
     ON ticket_sessions (ticket_id, linked_at);
   CREATE INDEX IF NOT EXISTS idx_ticket_sessions_project_session
     ON ticket_sessions (project_path, session_name);
+
+  ${SPEC_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {
@@ -738,6 +1532,13 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   },
   { table: "conversations", column: "pending_agent_notices", type: "TEXT" },
   { table: "job_records", column: "owner_pid", type: "INTEGER" },
+  { table: "job_records", column: "execution_id", type: "TEXT" },
+  {
+    table: "job_records",
+    column: "final_publish",
+    type: "INTEGER NOT NULL DEFAULT 0",
+  },
+  { table: "job_records", column: "candidate_validation", type: "TEXT" },
   { table: "project_conversations", column: "pending_queue", type: "TEXT" },
   {
     table: "project_conversations",
@@ -826,6 +1627,13 @@ function migrateNotificationsTable(db: Db): void {
     "conversation_name",
     "conversation_status",
     "dedupe_key",
+    "spec_id",
+    "spec_slug",
+    "spec_name",
+    "spec_gate",
+    "spec_gate_request_id",
+    "spec_deep_link_id",
+    "spec_approval_id",
   ];
   const missingRequiredColumns = requiredColumns.some(
     (column) => !columnNames.has(column),
@@ -845,6 +1653,7 @@ function migrateNotificationsTable(db: Db): void {
     DROP INDEX IF EXISTS idx_notifications_project_session;
     DROP INDEX IF EXISTS idx_notifications_project_conversation;
     DROP INDEX IF EXISTS idx_notifications_dedupe;
+    DROP INDEX IF EXISTS idx_notifications_spec_request;
     ALTER TABLE notifications RENAME TO notifications_legacy_migration;
   `);
   db.exec(NOTIFICATIONS_TABLE_DDL);
@@ -875,7 +1684,14 @@ function migrateNotificationsTable(db: Db): void {
       conversation_name,
       conversation_status,
       dedupe_key,
-      error_message
+      error_message,
+      spec_id,
+      spec_slug,
+      spec_name,
+      spec_gate,
+      spec_gate_request_id,
+      spec_deep_link_id,
+      spec_approval_id
     )
     SELECT
       id,
@@ -930,6 +1746,25 @@ function migrateNotificationsTable(db: Db): void {
       ${notificationColumnExpression(
         legacyColumnNames,
         "error_message",
+        "NULL",
+      )},
+      ${notificationColumnExpression(legacyColumnNames, "spec_id", "NULL")},
+      ${notificationColumnExpression(legacyColumnNames, "spec_slug", "NULL")},
+      ${notificationColumnExpression(legacyColumnNames, "spec_name", "NULL")},
+      ${notificationColumnExpression(legacyColumnNames, "spec_gate", "NULL")},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "spec_gate_request_id",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "spec_deep_link_id",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "spec_approval_id",
         "NULL",
       )}
     FROM notifications_legacy_migration;

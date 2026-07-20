@@ -16,6 +16,9 @@ const enabledConfig: PushNotificationConfig = {
     workflowCompleted: true,
     workflowHalted: true,
     conversationIdle: true,
+    specApprovalRequested: true,
+    specApprovalGranted: true,
+    specPolicyAdmitted: true,
   },
 };
 

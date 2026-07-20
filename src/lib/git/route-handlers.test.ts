@@ -34,6 +34,15 @@ function makeJob(overrides: Partial<BackgroundJob> = {}): BackgroundJob {
     preparedSha: "prepared-sha",
     expectedTargetSha: "target-sha",
     resolutionContext: "intent notes",
+    executionId: "workflow-execution-1",
+    finalPublish: true,
+    candidateValidation: {
+      validationRef: "validation-1",
+      validatedSha: "validated-sha",
+      validatedTreeHash: "validated-tree",
+      commandIdentity: "./validate.sh",
+      outcome: "pass",
+    },
     ...overrides,
   };
 }
@@ -362,6 +371,32 @@ describe("mergeSession", () => {
       code: "JOB_ALREADY_RUNNING",
     });
   });
+
+  it("renders a merge-association refusal with the structured refusal envelope", async () => {
+    const reason =
+      "Session hosts spec execution spec-exec-1 in definition review; the delivery gate cannot evaluate it.";
+    const instruction =
+      "Start the execution or abandon it in Spec Studio, then retry the merge.";
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob: vi.fn().mockReturnValue({
+          ok: false,
+          error: { code: "MERGE_ASSOCIATION_REFUSED", reason, instruction },
+        }),
+      }),
+    );
+    const res = await handlers.mergeSession(
+      postRequest({ autoResolve: false }),
+      routeContext(sessionParams),
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: reason,
+      code: "MERGE_ASSOCIATION_REFUSED",
+      unmetConditions: [reason],
+      instruction,
+    });
+  });
 });
 
 describe("resolveSessionConflicts", () => {
@@ -375,7 +410,7 @@ describe("resolveSessionConflicts", () => {
     expect(await res.json()).toEqual({ error: "Invalid request body" });
   });
 
-  it("dispatches with decisions and the prior job's resolution context", async () => {
+  it("dispatches with decisions and the prior job's resolution context and provenance", async () => {
     const dispatchResolveConflictsJob = vi
       .fn()
       .mockReturnValue({ ok: true, value: { jobId: "job-3" } });
@@ -406,6 +441,15 @@ describe("resolveSessionConflicts", () => {
       targetBranch: "main",
       targetWorktreePath: undefined,
       resolutionContext: "intent notes",
+      executionId: "workflow-execution-1",
+      finalPublish: true,
+      candidateValidation: {
+        validationRef: "validation-1",
+        validatedSha: "validated-sha",
+        validatedTreeHash: "validated-tree",
+        commandIdentity: "./validate.sh",
+        outcome: "pass",
+      },
     });
   });
 });
@@ -521,6 +565,15 @@ describe("landSession", () => {
         expectedTargetSha: "target-sha",
         parkedRef: "refs/cc-merges/job-1",
         resolutionContext: "intent notes",
+        executionId: "workflow-execution-1",
+        finalPublish: true,
+        candidateValidation: {
+          validationRef: "validation-1",
+          validatedSha: "validated-sha",
+          validatedTreeHash: "validated-tree",
+          commandIdentity: "./validate.sh",
+          outcome: "pass",
+        },
       }),
     );
   });

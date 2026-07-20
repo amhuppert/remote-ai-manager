@@ -13,6 +13,12 @@ import type {
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import { validateAuthoredDefinition } from "./validation";
 import { generateWorkflowLayout } from "./layout";
+import {
+  findLockedRegionTouch,
+  regionLockedInstruction,
+  regionLockedMessage,
+  type DefinitionPath,
+} from "./locked-regions";
 
 /**
  * Apply an ordered batch of targeted edits to a saved workflow definition
@@ -36,7 +42,11 @@ import { generateWorkflowLayout } from "./layout";
  */
 export type ApplyDefinitionEditsResult =
   | { ok: true; record: WorkflowDefinitionRecord }
-  | { ok: false; issues: WorkflowGraphValidationError[] };
+  | { ok: false; issues: DefinitionEditIssue[] };
+
+export type DefinitionEditIssue = WorkflowGraphValidationError & {
+  instruction?: string;
+};
 
 export function applyDefinitionEdits(
   record: WorkflowDefinitionRecord,
@@ -101,22 +111,191 @@ export function formatDefinitionEditIssue(
 // Operation application
 // ============================================================
 
+function presentFieldPaths(
+  prefix: DefinitionPath,
+  value: Record<string, unknown>,
+  fields: readonly string[],
+): DefinitionPath[] {
+  return fields
+    .filter((field) => value[field] !== undefined)
+    .map((field) => [...prefix, field]);
+}
+
+function contextTaskOrderPaths(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+): DefinitionPath[] {
+  return definition.tasks
+    .filter((task) => task.contextId === contextId)
+    .map((task) => ["tasks", task.id, "order"]);
+}
+
+function definitionEditTouchedPaths(
+  record: WorkflowDefinitionRecord,
+  operation: DefinitionEditOperation,
+): DefinitionPath[] {
+  const definition = record.definition;
+  const value = operation as unknown as Record<string, unknown>;
+
+  switch (operation.type) {
+    case "update-workflow":
+      return presentFieldPaths([], value, ["name", "description"]);
+    case "update-charter":
+      return presentFieldPaths(["charter"], value, [
+        "mission",
+        "conventions",
+        "nonGoals",
+        "vocabulary",
+        "testStrategy",
+        "knownAmbiguities",
+        "sourcesOfTruth",
+      ]);
+    case "update-workflow-config":
+      return presentFieldPaths(["workflowConfig"], value, [
+        "implementer",
+        "contextValidator",
+        "scriptValidator",
+        "iterationPolicy",
+        "circuitBreaker",
+        "mutability",
+        "collaboration",
+        "humanApprovalGate",
+        "askUserQuestions",
+      ]);
+    case "add-context":
+      return [["executionContexts", operation.id]];
+    case "update-context":
+      return presentFieldPaths(
+        ["executionContexts", operation.contextId],
+        value,
+        [
+          "title",
+          "description",
+          "acceptanceCriteria",
+          "implementer",
+          "contextValidator",
+          "scriptValidator",
+          "mutability",
+          "circuitBreaker",
+          "iterationPolicy",
+          "collaboration",
+          "humanApprovalGate",
+          "askUserQuestions",
+        ],
+      );
+    case "remove-context": {
+      const paths: DefinitionPath[] = [
+        ["executionContexts", operation.contextId],
+      ];
+      for (const task of definition.tasks) {
+        if (task.contextId === operation.contextId) {
+          paths.push(["tasks", task.id]);
+        }
+      }
+      for (const edge of definition.edges) {
+        if (
+          edge.sourceContextId === operation.contextId ||
+          edge.targetContextId === operation.contextId
+        ) {
+          paths.push(["edges", edge.id]);
+        }
+      }
+      return paths;
+    }
+    case "add-task":
+      return [
+        ["tasks", operation.id],
+        ...contextTaskOrderPaths(definition, operation.contextId),
+      ];
+    case "update-task":
+      return presentFieldPaths(["tasks", operation.taskId], value, [
+        "title",
+        "instructions",
+        "metadata",
+      ]);
+    case "remove-task": {
+      const task = definition.tasks.find(
+        (entry) => entry.id === operation.taskId,
+      );
+      return [
+        ["tasks", operation.taskId],
+        ...(task ? contextTaskOrderPaths(definition, task.contextId) : []),
+      ];
+    }
+    case "move-task": {
+      const task = definition.tasks.find(
+        (entry) => entry.id === operation.taskId,
+      );
+      const targetContextId = operation.contextId ?? task?.contextId;
+      return [
+        ["tasks", operation.taskId, "contextId"],
+        ["tasks", operation.taskId, "order"],
+        ...(task ? contextTaskOrderPaths(definition, task.contextId) : []),
+        ...(targetContextId
+          ? contextTaskOrderPaths(definition, targetContextId)
+          : []),
+      ];
+    }
+    case "reorder-tasks":
+      return contextTaskOrderPaths(definition, operation.contextId);
+    case "add-edge":
+      return [
+        [
+          "edges",
+          mintEdgeId(
+            definition,
+            operation.sourceContextId,
+            operation.targetContextId,
+          ),
+        ],
+      ];
+    case "remove-edge": {
+      const edge = definition.edges.find(
+        (entry) =>
+          entry.sourceContextId === operation.sourceContextId &&
+          entry.targetContextId === operation.targetContextId,
+      );
+      return [["edges", edge?.id ?? "unknown"]];
+    }
+    case "add-parameter":
+      return [["parameters", operation.declaration.name]];
+    case "update-parameter":
+      return [["parameters", operation.name]];
+    case "remove-parameter":
+      return [["parameters", operation.name]];
+    case "add-prerequisite":
+    case "remove-prerequisite":
+      return [["prerequisites"]];
+  }
+}
+
 function applyOperation(
   record: WorkflowDefinitionRecord,
   operation: DefinitionEditOperation,
   index: number,
-): WorkflowGraphValidationError | null {
+): DefinitionEditIssue | null {
   const definition = record.definition;
   const fail = (
     code: string,
     message: string,
-    extra: Partial<WorkflowGraphValidationError> = {},
-  ): WorkflowGraphValidationError => ({
+    extra: Partial<DefinitionEditIssue> = {},
+  ): DefinitionEditIssue => ({
     code,
     message,
     operationIndex: index,
     ...extra,
   });
+
+  const locked = findLockedRegionTouch(
+    definition,
+    definitionEditTouchedPaths(record, operation),
+  );
+  if (locked) {
+    return fail("region_locked", regionLockedMessage(locked), {
+      field: locked.lockedPath,
+      instruction: regionLockedInstruction(locked.sourceUri),
+    });
+  }
 
   switch (operation.type) {
     case "update-workflow": {

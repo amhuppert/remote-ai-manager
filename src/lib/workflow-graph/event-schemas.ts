@@ -354,6 +354,20 @@ export type GraphWorkflowLaneStatusEvent = z.infer<
   typeof graphWorkflowLaneStatusEventSchema
 >;
 
+export const graphWorkflowLaneCommitEventSchema = z.object({
+  type: z.literal("graph-workflow-lane-commit"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  sha: z.string().trim().min(1),
+  committedAt: z.string(),
+});
+export type GraphWorkflowLaneCommitEvent = z.infer<
+  typeof graphWorkflowLaneCommitEventSchema
+>;
+
 export const graphWorkflowJoinStatusEventSchema = z.object({
   type: z.literal("graph-workflow-join-status"),
   projectName: z.string(),
@@ -492,6 +506,7 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowBatchScheduledEventSchema,
   graphWorkflowLaneStatusEventSchema,
+  graphWorkflowLaneCommitEventSchema,
   graphWorkflowJoinStatusEventSchema,
   graphWorkflowApprovalPendingEventSchema,
   graphWorkflowApprovalResolvedEventSchema,

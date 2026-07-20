@@ -34,6 +34,12 @@ import {
 } from "./execution-state";
 import { computeLanePlan, recomputeLanePlanForSubgraph } from "./lane-plan";
 import type { DefinitionEditTaskPosition } from "@/lib/workflows/edit-schemas";
+import {
+  findLockedRegionTouch,
+  regionLockedInstruction,
+  regionLockedMessage,
+  type DefinitionPath,
+} from "./locked-regions";
 
 const logger = createLogger("graph-workflow-runtime-edits");
 
@@ -296,6 +302,7 @@ export interface LiveEditDeps {
 export type LiveEditRejectionCode =
   | "frozen"
   | "requires_pause"
+  | "region_locked"
   | "invalid_edit";
 
 export type ApplyLiveExecutionEditsResult =
@@ -308,6 +315,7 @@ export type ApplyLiveExecutionEditsResult =
       ok: false;
       code: LiveEditRejectionCode;
       issues: WorkflowGraphValidationError[];
+      instruction?: string;
     };
 
 /**
@@ -357,6 +365,127 @@ interface LiveEditOpContext {
   laneAgentContextId: string | undefined;
 }
 
+function presentLiveFieldPaths(
+  prefix: DefinitionPath,
+  value: Record<string, unknown>,
+  fields: readonly string[],
+): DefinitionPath[] {
+  return fields
+    .filter((field) => value[field] !== undefined)
+    .map((field) => [...prefix, field]);
+}
+
+function liveContextTaskOrderPaths(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): DefinitionPath[] {
+  return execution.workingDefinition.tasks
+    .filter((task) => task.contextId === contextId)
+    .map((task) => ["tasks", task.id, "order"]);
+}
+
+function liveEditTouchedPaths(
+  execution: GraphWorkflowExecution,
+  operation: WorkflowLiveEditOperation,
+): DefinitionPath[] {
+  const value = operation as unknown as Record<string, unknown>;
+
+  switch (operation.type) {
+    case "update-context":
+      return presentLiveFieldPaths(
+        ["executionContexts", operation.contextId],
+        value,
+        [
+          "title",
+          "description",
+          "acceptanceCriteria",
+          "implementer",
+          "contextValidator",
+          "scriptValidator",
+          "humanApprovalGate",
+          "askUserQuestions",
+          "iterationPolicy",
+          "circuitBreaker",
+          "mutability",
+          "collaboration",
+        ],
+      );
+    case "add-context":
+      return [["executionContexts", operation.id]];
+    case "remove-context": {
+      const paths: DefinitionPath[] = [
+        ["executionContexts", operation.contextId],
+      ];
+      for (const task of execution.workingDefinition.tasks) {
+        if (task.contextId === operation.contextId) {
+          paths.push(["tasks", task.id]);
+        }
+      }
+      for (const edge of execution.workingDefinition.edges) {
+        if (
+          edge.sourceContextId === operation.contextId ||
+          edge.targetContextId === operation.contextId
+        ) {
+          paths.push(["edges", edge.id]);
+        }
+      }
+      return paths;
+    }
+    case "add-task":
+      return [
+        ["tasks", operation.id ?? "new"],
+        ...liveContextTaskOrderPaths(execution, operation.contextId),
+      ];
+    case "update-task":
+      return presentLiveFieldPaths(["tasks", operation.taskId], value, [
+        "title",
+        "instructions",
+        "metadata",
+      ]);
+    case "remove-task": {
+      const task = execution.workingDefinition.tasks.find(
+        (entry) => entry.id === operation.taskId,
+      );
+      return [
+        ["tasks", operation.taskId],
+        ...(task ? liveContextTaskOrderPaths(execution, task.contextId) : []),
+      ];
+    }
+    case "move-task": {
+      const task = execution.workingDefinition.tasks.find(
+        (entry) => entry.id === operation.taskId,
+      );
+      return [
+        ["tasks", operation.taskId, "contextId"],
+        ["tasks", operation.taskId, "order"],
+        ...(task ? liveContextTaskOrderPaths(execution, task.contextId) : []),
+        ...liveContextTaskOrderPaths(execution, operation.targetContextId),
+      ];
+    }
+    case "reorder-tasks":
+      return liveContextTaskOrderPaths(execution, operation.contextId);
+    case "add-edge":
+      return [
+        [
+          "edges",
+          mintLiveEdgeId(
+            execution.workingDefinition.edges,
+            operation.sourceContextId,
+            operation.targetContextId,
+          ),
+        ],
+      ];
+    case "remove-edge": {
+      const edge = execution.workingDefinition.edges.find(
+        (entry) =>
+          entry.sourceContextId === operation.sourceContextId &&
+          entry.targetContextId === operation.targetContextId,
+      );
+      return [["edges", edge?.id ?? "unknown"]];
+    }
+  }
+}
+
 type LiveContextConfigOp =
   | Extract<WorkflowLiveEditOperation, { type: "update-context" }>
   | Extract<WorkflowLiveEditOperation, { type: "add-context" }>;
@@ -393,6 +522,22 @@ export function applyLiveExecutionEdits(
 
   for (let index = 0; index < request.operations.length; index += 1) {
     const operation = request.operations[index]!;
+    const locked = findLockedRegionTouch(
+      next.workingDefinition,
+      liveEditTouchedPaths(next, operation),
+    );
+    if (locked) {
+      return {
+        ok: false,
+        code: "region_locked",
+        issues: [
+          liveEditIssue("region_locked", regionLockedMessage(locked), index, {
+            field: locked.lockedPath,
+          }),
+        ],
+        instruction: regionLockedInstruction(locked.sourceUri),
+      };
+    }
     const rejection = applyLiveEditOperation(next, operation, index, opContext);
     if (rejection) {
       return { ok: false, code: rejection.code, issues: rejection.issues };

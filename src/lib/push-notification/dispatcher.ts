@@ -149,8 +149,36 @@ function pushEventFromNotification(notification: Notification): PushEvent {
           notification.conversationName?.trim() ||
           `Conversation ${notification.conversationId}`,
       };
+    case "spec":
+      return {
+        trigger: specPushTrigger(notification.type),
+        title: notification.title,
+        message: notification.message,
+        projectName: notification.projectName,
+        sessionName: notification.sessionName ?? undefined,
+        contextName: `${notification.specName} · ${notification.deepLinkId}`,
+      };
     default:
       assertNever(notification);
+  }
+}
+
+// Waiver-request and attention-resolution rows reuse the existing
+// user-configurable spec approval triggers rather than adding config keys.
+function specPushTrigger(
+  type: Extract<Notification, { source: "spec" }>["type"],
+): PushEvent["trigger"] {
+  switch (type) {
+    case "spec-approval-requested":
+    case "spec-waiver-requested":
+      return "spec-approval-requested";
+    case "spec-approval-granted":
+    case "spec-attention-resolved":
+      return "spec-approval-granted";
+    case "spec-policy-admitted":
+      return "spec-policy-admitted";
+    default:
+      assertNever(type);
   }
 }
 

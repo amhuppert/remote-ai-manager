@@ -207,6 +207,7 @@ describe("booleanFlagNames() over the real registry", () => {
       "outline",
       "params",
       "skip-warm",
+      "summary",
       "wait",
     ]);
   });

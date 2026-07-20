@@ -49,6 +49,21 @@ export function formatGraphWorkflowHaltReason(
   options: FormatHaltReasonOptions = {},
 ): FormattedHaltReason {
   switch (reason.type) {
+    case "delivery_gate_failed":
+      return {
+        headline: `Delivery gate refused publish — ${reason.unmet.length} unmet criterion/criteria`,
+        detail: (
+          <ul className={haltPathsClass}>
+            {reason.unmet.map((criterion) => (
+              <li key={criterion.criterionId}>
+                <code>{criterion.criterionHandle}</code>{" "}
+                {criterion.reason ?? criterion.outcome}
+              </li>
+            ))}
+          </ul>
+        ),
+        action: reason.instruction,
+      };
     case "merge_precondition_failed":
       return {
         headline: `Cannot merge into ${reason.targetBranch} — ${reason.totalDirtyCount} uncommitted change(s)`,

@@ -3149,6 +3149,45 @@ describe("executePromptForMachine", () => {
     expect(typeof facadeDeps.resolveConversationRuntime).toBe("function");
   });
 
+  it("expands the native /spec command for the agent without rewriting the user transcript", async () => {
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+    const appendSpy = vi.fn<
+      ActorImplementationDeps["safeAppendTranscriptEntry"]
+    >(async () => {});
+    setActorDeps(
+      createMockDeps({
+        executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+          typeof vi.fn
+        >,
+        safeAppendTranscriptEntry: appendSpy,
+      } as unknown as Partial<ActorImplementationDeps>),
+    );
+
+    const rawPrompt = "/spec Add a project health endpoint";
+    const input = makeExecutePromptInput({ promptText: rawPrompt });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    const agentPrompt = (request as { prompt: string }).prompt;
+    expect(agentPrompt).toContain("cctl spec create");
+    expect(agentPrompt).toContain("Add a project health endpoint");
+    expect(agentPrompt).not.toMatch(/^\s*\/spec(?:\s|$)/);
+
+    const userEntry = appendSpy.mock.calls
+      .map((call) => call[1] as { type: string; content: unknown })
+      .find((entry) => entry.type === "user");
+    expect(userEntry?.content).toEqual([{ type: "text", text: rawPrompt }]);
+  });
+
   // ---------------------------------------------------------------
   // Document feedback threading (Task 7.1). With a documentFeedback payload
   // the user turn records a document_feedback block (card-only, no duplicate

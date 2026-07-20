@@ -53,6 +53,21 @@ const projectConversationInput = {
   dedupeKey: "my-project:conversation-1:ready:turn-1",
 };
 
+const specInput = {
+  type: "spec-approval-requested" as const,
+  title: "Spec approval required",
+  message: "Native SDD needs design approval for D2.",
+  projectName: "my-project",
+  sessionName: "native-sdd",
+  specId: "spec-1",
+  specSlug: "native-sdd",
+  specName: "Native SDD",
+  gate: "design" as const,
+  gateRequestId: "request-1",
+  deepLinkId: "D2",
+  dedupeKey: "spec:spec-1:request-1:requested",
+};
+
 beforeEach(() => {
   const db = _createTestDb({ inMemory: true });
   _installTestDb(db);
@@ -114,6 +129,34 @@ describe("createProjectConversationNotification", () => {
       ...projectConversationInput,
       title: "Still ready",
       message: "Duplicate transition",
+    });
+
+    expect(duplicate).toEqual(first);
+    expect(repo.getNotifications().total).toBe(1);
+    expect(published).toEqual([]);
+    expect(pushed).toEqual([]);
+  });
+});
+
+describe("createSpecNotification", () => {
+  it("persists a row, publishes it, and delegates push gating to the configured trigger", () => {
+    const service = createService();
+    const notification = service.createSpecNotification(specInput);
+
+    expect(repo.getNotifications().notifications).toEqual([notification]);
+    expect(published).toEqual([{ type: "notification-created", notification }]);
+    expect(pushed).toEqual([notification]);
+  });
+
+  it("dedupes a repeated spec transition without publishing or pushing twice", () => {
+    const service = createService();
+    const first = service.createSpecNotification(specInput);
+    published.length = 0;
+    pushed.length = 0;
+
+    const duplicate = service.createSpecNotification({
+      ...specInput,
+      message: "Duplicate request event",
     });
 
     expect(duplicate).toEqual(first);

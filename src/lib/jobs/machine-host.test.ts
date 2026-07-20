@@ -150,6 +150,7 @@ describe("createJobActorSubscription", () => {
         publishStatus(j) {
           published.push(`${j.status}:${j.phase ?? "-"}`);
         },
+        persistProgress() {},
         release,
       },
       {
@@ -206,6 +207,7 @@ describe("createJobActorSubscription", () => {
         publishStatus(j) {
           published.push(j.status);
         },
+        persistProgress() {},
         release,
       },
       {
@@ -245,11 +247,13 @@ function buildDispatchHost(overrides?: {
         ...(params.targetBranch && { targetBranch: params.targetBranch }),
         startedAt: new Date().toISOString(),
       };
+      params.decorateJob?.(job);
       return { ok: true, value: { job, release } };
     },
     publishStatus(job) {
       published.push({ ...job });
     },
+    persistProgress() {},
   };
   if (overrides?.prepare) host.prepare = overrides.prepare;
   return { host, published, release };

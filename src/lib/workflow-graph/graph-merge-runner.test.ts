@@ -21,7 +21,9 @@ import type {
   CommitChangesInput,
   CommitChangesOutput,
   RunValidationInput,
+  RunValidationOutput,
 } from "@/lib/workflows/validation-fix/actors";
+import type { DeliveryGateEvaluator } from "@/lib/workflows/merge/types";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
 
 /** Real merge machine with stubbed actors; captures the resolver's input. */
@@ -60,8 +62,8 @@ function buildCapturingMachine(
         AnalyzeConflictsOutput,
         AnalyzeConflictsInput
       >(async () => ({ status: "analyzed", conflicts: [] })),
-      runValidation: fromPromise<void, RunValidationInput>(
-        async () => undefined,
+      runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
+        async () => null,
       ),
       prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(async () => ({
         status: "prepared",
@@ -77,6 +79,98 @@ function buildCapturingMachine(
 }
 
 describe("graph-merge-runner", () => {
+  it("gates a linked final publish while preserving non-spec pass-through", async () => {
+    const evaluated: string[] = [];
+    const deliveryGate: DeliveryGateEvaluator = {
+      async evaluate(input) {
+        evaluated.push(input.workflowExecutionId);
+        return {
+          status: "refused",
+          unmet: [
+            {
+              criterionId: "criterion-1",
+              criterionHandle: "native-sdd/R18.1",
+              outcome: "proof_required",
+            },
+          ],
+          instruction: "Re-dispatch validation for the prepared candidate.",
+        };
+      },
+    };
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () => buildCapturingMachine([]),
+      deliveryGate,
+      recordMergeIntent: () => {},
+    });
+    const baseInput = {
+      jobId: "job-gated",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "join-final",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/session",
+      targetWorktreePath: "/tmp/session",
+      message: "final publish",
+      finalPublish: true,
+    } as const;
+
+    const linked = await runner.run({
+      ...baseInput,
+      executionId: "workflow-execution-linked",
+    });
+    const unlinked = await runner.run({
+      ...baseInput,
+      jobId: "job-unlinked",
+    });
+
+    expect(linked).toMatchObject({
+      status: "failed",
+      haltReason: { type: "delivery_gate_failed" },
+    });
+    expect(unlinked.status).toBe("completed");
+    expect(evaluated).toEqual(["workflow-execution-linked"]);
+  });
+
+  it("marks a linked execution delivered only after final publish succeeds", async () => {
+    const delivered: Array<{ executionId: string; mergeHash: string }> = [];
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () => buildCapturingMachine([]),
+      deliveryGate: {
+        async evaluate() {
+          return { status: "pass", satisfied: [], deferred: [] };
+        },
+      },
+      async markDelivered(executionId, mergeHash) {
+        delivered.push({ executionId, mergeHash });
+      },
+      recordMergeIntent: () => {},
+    });
+
+    await runner.run({
+      jobId: "job-delivered",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "join-final",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/session",
+      targetWorktreePath: "/tmp/session",
+      message: "final publish",
+      executionId: "workflow-execution-linked",
+      finalPublish: true,
+    });
+
+    expect(delivered).toEqual([
+      {
+        executionId: "workflow-execution-linked",
+        mergeHash: "merge-hash",
+      },
+    ]);
+  });
+
   it("threads resolutionContext into the machine so the conflict resolver receives it", async () => {
     const captured: ResolveConflictsInput[] = [];
     const runner = createGraphWorkflowMergeRunner({

@@ -290,6 +290,17 @@ describe("isResumableHalt", () => {
     GraphWorkflowHaltReason["type"],
     GraphWorkflowHaltReason
   > = {
+    delivery_gate_failed: {
+      type: "delivery_gate_failed",
+      unmet: [
+        {
+          criterionId: "criterion-1",
+          criterionHandle: "native-sdd/R18.4",
+          outcome: "unmet",
+        },
+      ],
+      instruction: "Re-dispatch the merge.",
+    },
     circuit_breaker: {
       type: "circuit_breaker",
       contextId: "ctx-1",

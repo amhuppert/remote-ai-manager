@@ -1,11 +1,11 @@
 // Presentation-only view model for the sidebar's Active Work section.
 // Source schemas (BackgroundJob, ActiveGraphWorkflowExecution,
-// ActiveCollaborationExecution) stay authoritative; adapters map them into
-// this shape for display. See docs/design/activity-panel-rework.md.
+// ActiveCollaborationExecution, SpecExecution) stay authoritative; adapters
+// map them into this shape for display. See docs/design/activity-panel-rework.md.
 
-export type ActiveWorkKind = "job" | "workflow" | "collab";
+export type ActiveWorkKind = "job" | "workflow" | "collab" | "spec";
 
-export type ActiveWorkActionKind = "land" | "resolve" | "discard";
+export type ActiveWorkActionKind = "land" | "resolve" | "discard" | "review";
 
 export interface ActiveWorkAction {
   label: string;

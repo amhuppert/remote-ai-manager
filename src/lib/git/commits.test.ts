@@ -110,6 +110,35 @@ describe("getCurrentBranch", () => {
   });
 });
 
+describe("getHeadCommit", () => {
+  it("returns the trimmed sha from git rev-parse HEAD", async () => {
+    mockGitSuccess("abc123def456abc123def456abc123def456abcd\n");
+    const result = await ops.getHeadCommit("/worktree");
+    expect(result).toBe("abc123def456abc123def456abc123def456abcd");
+    expect(gitMock).toHaveBeenCalledWith(
+      ["rev-parse", "HEAD"],
+      "/worktree",
+      expect.anything(),
+    );
+  });
+
+  it("returns null when rev-parse fails (unborn branch or not a repo)", async () => {
+    mockGitFailure(
+      Object.assign(new Error("fatal: ambiguous argument 'HEAD'"), {
+        stderr: "fatal: ambiguous argument 'HEAD'\n",
+      }),
+    );
+    const result = await ops.getHeadCommit("/worktree");
+    expect(result).toBeNull();
+  });
+
+  it("returns null for empty output", async () => {
+    mockGitSuccess("  \n");
+    const result = await ops.getHeadCommit("/worktree");
+    expect(result).toBeNull();
+  });
+});
+
 describe("commitChanges", () => {
   it("stages all and commits, returning the hash", async () => {
     mockGitSequence([

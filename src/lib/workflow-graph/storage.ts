@@ -18,11 +18,33 @@ import {
   assertDefinitionRecordSupported,
   assertNoLegacyWorkflowFields,
 } from "./schema-cutover-guard";
+import type { GraphWorkflowExecution } from "./schemas";
+import {
+  findChangedLockedRegion,
+  regionLockedInstruction,
+  regionLockedMessage,
+} from "./locked-regions";
 
 const logger = createLogger("workflow-storage");
 
 export interface WorkflowStorageDeps {
   resolveConfigDir?: () => string;
+  listActiveExecutions?(): Promise<ReadonlyMap<string, GraphWorkflowExecution>>;
+}
+
+export class WorkflowRegionLockedError extends Error {
+  readonly code = "region_locked" as const;
+  readonly instruction: string;
+
+  constructor(
+    readonly lockedPath: string,
+    readonly sourceUri: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkflowRegionLockedError";
+    this.instruction = regionLockedInstruction(sourceUri);
+  }
 }
 
 /**
@@ -89,6 +111,52 @@ function assertValidDefinition(definition: WorkflowSemanticDefinition): void {
 
 export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   const resolveConfigDir = deps.resolveConfigDir ?? getConfigDirPath;
+
+  async function listActiveExecutions(): Promise<
+    ReadonlyMap<string, GraphWorkflowExecution>
+  > {
+    if (deps.listActiveExecutions) {
+      return deps.listActiveExecutions();
+    }
+    const stateStore = await import("@/lib/state-store");
+    return stateStore.listActiveGraphWorkflowExecutions();
+  }
+
+  async function assertLockedReplaceAllowed(
+    scope: WorkflowScope,
+    existing: WorkflowDefinitionRecord,
+    next: WorkflowSemanticDefinition,
+  ): Promise<void> {
+    const locked = findChangedLockedRegion(existing.definition, next);
+    if (!locked) return;
+
+    const activeExecutions = await listActiveExecutions();
+    const hasSeededExecution = Array.from(activeExecutions.entries()).some(
+      ([sessionKey, execution]) => {
+        if (execution.seedDefinitionId !== existing.id) return false;
+        if (scope.kind === "global") return true;
+        const separatorIndex = sessionKey.indexOf("\0");
+        const executionProjectPath =
+          separatorIndex === -1
+            ? sessionKey
+            : sessionKey.slice(0, separatorIndex);
+        return executionProjectPath === scope.projectPath;
+      },
+    );
+    if (!hasSeededExecution) return;
+
+    logger.warn("workflow-storage.region_locked", {
+      workflowId: existing.id,
+      lockedPath: locked.lockedPath,
+      sourceUri: locked.sourceUri,
+      scope: scope.kind,
+    });
+    throw new WorkflowRegionLockedError(
+      locked.lockedPath,
+      locked.sourceUri,
+      regionLockedMessage(locked),
+    );
+  }
 
   async function list(
     scope: WorkflowScope,
@@ -210,6 +278,8 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
         if (!existing) {
           throw new Error(`Workflow "${workflowId}" not found`);
         }
+
+        await assertLockedReplaceAllowed(scope, existing, draft.definition);
 
         const record: WorkflowDefinitionRecord = {
           ...existing,

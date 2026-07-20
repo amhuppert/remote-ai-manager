@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   conflictDecisionInputSchema,
   conflictEntrySchema,
+  deliveryGateHaltReasonSchema,
 } from "@/lib/jobs/schemas";
 import {
   askQuestionAnswerSchema,
@@ -34,6 +35,7 @@ import {
 // ============================================================
 
 export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
+  deliveryGateHaltReasonSchema,
   z.object({
     type: z.literal("circuit_breaker"),
     contextId: z.string().trim().min(1),
@@ -287,6 +289,14 @@ export type GraphWorkflowPendingApproval = z.infer<
   typeof graphWorkflowPendingApprovalSchema
 >;
 
+export const graphWorkflowDefinitionApprovalSchema = z.object({
+  requestedAt: z.string().trim().min(1),
+  approvedAt: z.string().trim().min(1).nullable().default(null),
+});
+export type GraphWorkflowDefinitionApproval = z.infer<
+  typeof graphWorkflowDefinitionApprovalSchema
+>;
+
 // Answers recorded for a parked user-input question batch. The answer
 // primitives are reused from the conversation domain (never duplicated).
 export const graphWorkflowUserInputAnswersSchema = z.object({
@@ -529,6 +539,9 @@ export const graphWorkflowExecutionSchema = z.object({
   // from. `.default("project")` lets legacy execution rows that predate the
   // global tier parse back as project-tier launches (R3.3, R9.3).
   launchedTier: z.enum(["project", "global"]).default("project"),
+  definitionApproval: graphWorkflowDefinitionApprovalSchema
+    .nullable()
+    .default(null),
   workingDefinition: resolvedWorkflowSemanticDefinitionSchema,
   charter: workflowCharterSchema,
   status: graphWorkflowStatusSchema,

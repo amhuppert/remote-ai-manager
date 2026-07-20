@@ -54,6 +54,7 @@ function activeData(
     conversations,
     graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
+    specExecutions: [],
   };
 }
 

@@ -22,6 +22,7 @@ import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
 import { createAgentRunsRepo } from "./lib/agent-runs/repo";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";
+import { registerProductionSpecWorkflowComposition } from "./lib/specs/production-workflow-composition";
 
 const logger = createLogger("startup");
 
@@ -30,6 +31,7 @@ export interface StartupDeps {
     rehydrateConversationActors(): Promise<number>;
   }>;
   runStateMigrations(): Promise<string[]>;
+  registerSpecWorkflowComposition?(): void;
   initNotificationDb: typeof initializeNotifications;
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
@@ -49,6 +51,7 @@ const defaultStartupDeps: StartupDeps = {
     import("./lib/workflows/conversation/rehydration"),
   runStateMigrations: () =>
     runMigrations({ db: getDb(), configDir: getConfigDirPath() }),
+  registerSpecWorkflowComposition: registerProductionSpecWorkflowComposition,
   initNotificationDb: initializeNotifications,
   setConfigReader,
   readConfig,
@@ -101,6 +104,8 @@ export function createStartupRegistrar(
       });
       throw err;
     }
+
+    deps.registerSpecWorkflowComposition?.();
 
     // A compaction run lives only in the compaction service's in-memory
     // single-flight map, so rows still `pending` now were interrupted by the
