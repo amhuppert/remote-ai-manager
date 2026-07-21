@@ -255,6 +255,47 @@ describe("Topbar", () => {
     expect(link).toHaveTextContent("Specs");
   });
 
+  it("points the Specs button at the active project when a project breadcrumb is present", () => {
+    renderWithQuery(
+      <Topbar
+        breadcrumbs={[
+          { label: "projects", href: "/projects" },
+          {
+            label: "command-center",
+            href: "/projects/command-center",
+            isProject: true,
+          },
+        ]}
+        page="sessions"
+      />,
+    );
+    const link = screen.getByTitle("Specs");
+    expect(link.getAttribute("href")).toBe("/specs?project=command-center");
+  });
+
+  it("points the mobile Specs menu item at the active project", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <Topbar
+        breadcrumbs={[
+          { label: "projects", href: "/projects" },
+          {
+            label: "command-center",
+            href: "/projects/command-center",
+            isProject: true,
+          },
+        ]}
+        page="sessions"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "More destinations" }));
+    expect(screen.getByRole("menuitem", { name: "Specs" })).toHaveAttribute(
+      "href",
+      "/specs?project=command-center",
+    );
+  });
+
   it("keeps every global destination reachable without overflowing a 320px topbar", async () => {
     renderWithQuery(
       <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,

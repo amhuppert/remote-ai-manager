@@ -95,7 +95,10 @@ function SpecDetailPageInner(): React.JSX.Element {
       <Topbar
         page="specs"
         breadcrumbs={[
-          { label: "specs", href: "/specs" },
+          {
+            label: "specs",
+            href: `/specs?project=${encodeURIComponent(projectName)}`,
+          },
           { label: detail?.spec.slug ?? requestedSlug },
         ]}
       />

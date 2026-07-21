@@ -102,6 +102,12 @@ export default function Topbar({
     firstPinned !== null ? activeConversationHref(firstPinned) : null;
   const ticketsActive = pathname?.startsWith("/tickets") ?? false;
   const specsActive = pathname?.startsWith("/specs") ?? false;
+  // Carry the active project into Specs so the studio opens scoped to the
+  // project the user is looking at rather than the alphabetical default.
+  const specsHref =
+    activeProjectName !== null
+      ? `/specs?project=${encodeURIComponent(activeProjectName)}`
+      : "/specs";
   const workflowsActive = pathname?.startsWith("/workflows") ?? false;
   const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
@@ -211,7 +217,7 @@ export default function Topbar({
         )}
         <QuickTicketButton pathname={pathname} />
         <Link
-          href="/specs"
+          href={specsHref}
           className={cn(
             "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
             specsActive
@@ -406,7 +412,7 @@ export default function Topbar({
           <DropdownMenuContent align="end">
             <QuickTicketButton pathname={pathname} presentation="menu-item" />
             <DropdownMenuItem asChild>
-              <Link href="/specs">Specs</Link>
+              <Link href={specsHref}>Specs</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/workflows">Workflow Atlas</Link>
