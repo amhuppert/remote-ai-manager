@@ -18,6 +18,7 @@ import type {
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
+import { resolveConversationPersistenceAdapter } from "./persistence-adapter";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
@@ -409,6 +410,30 @@ export type ActorImplementationDeps = TurnExecutionDeps &
   CapabilityDeps &
   QueueDeliveryDeps &
   DebugDeps;
+
+/**
+ * The subset of {@link ActorImplementationDeps} that performs durable
+ * state-store writes. The persistence facet gates exactly these for an
+ * ephemeral runtime (see {@link ConversationPersistenceAdapter.gateActorDurableWrites}):
+ * the direct writes (`mutateConversation`, `createReferenceDocument`, the
+ * `markQueued*` delivery-state writes) and the apply services that persist
+ * indirectly — `applyMcpAtTurnStart` through `stateManager.mutateConversation`,
+ * `applyCapabilityAtTurnStart` / `applyCapabilityWhenIdle` through
+ * `writeRuntimeState`. Every other dep (reads, transcript/image I/O, backend
+ * call, lock/slot registries) is not a state-store write and passes through
+ * untouched. Derived with `Pick` so the signatures have one source of truth.
+ */
+export type ActorDurableWriteSeams = Pick<
+  ActorImplementationDeps,
+  | "mutateConversation"
+  | "createReferenceDocument"
+  | "markQueuedDelivered"
+  | "markQueuedPending"
+  | "markQueuedFailed"
+  | "applyMcpAtTurnStart"
+  | "applyCapabilityAtTurnStart"
+  | "applyCapabilityWhenIdle"
+>;
 
 let _deps: ActorImplementationDeps | null = null;
 let _depsPromise: Promise<ActorImplementationDeps> | null = null;
@@ -838,7 +863,11 @@ async function dispatchTurnViaAgentCall(
 export async function prepareTurnForMachine(
   input: PrepareTurnInput,
 ): Promise<PrepareTurnOutput> {
-  const deps = await getDeps();
+  // Route the actor's deps through the persistence facet: durable passes them
+  // through; ephemeral gates every durable write seam to a no-op (Design 4).
+  const deps = resolveConversationPersistenceAdapter(
+    input.persistence,
+  ).gateActorDurableWrites(await getDeps());
 
   const key = conversationRuntimeKey(
     input.projectPath,
@@ -888,7 +917,11 @@ export async function prepareTurnForMachine(
 export async function executePromptForMachine(
   input: ExecutePromptInput,
 ): Promise<PromptActorResult> {
-  const deps = await getDeps();
+  // Route the actor's deps through the persistence facet: durable passes them
+  // through; ephemeral gates every durable write seam to a no-op (Design 4).
+  const deps = resolveConversationPersistenceAdapter(
+    input.persistence,
+  ).gateActorDurableWrites(await getDeps());
   const transcriptProjection = getConversationTranscriptProjection(
     input.agentBackend,
   );
@@ -1930,7 +1963,11 @@ export async function executePromptForMachine(
 export async function runTaskRunTurnForMachine(
   input: RunTaskRunInput,
 ): Promise<PromptActorResult> {
-  const deps = await getDeps();
+  // Route the actor's deps through the persistence facet: durable passes them
+  // through; ephemeral gates every durable write seam to a no-op (Design 4).
+  const deps = resolveConversationPersistenceAdapter(
+    input.persistence,
+  ).gateActorDurableWrites(await getDeps());
   const transcriptProjection = getTaskTranscriptProjection(input.agentBackend);
 
   const projectName =

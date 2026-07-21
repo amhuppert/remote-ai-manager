@@ -488,10 +488,10 @@ export function createCompactionService(
         projectName: input.projectName,
         sessionWorktreePath: input.projectPath,
         // No ConversationState record exists for this synthetic lane, so the
-        // conversation-manager teardown must skip snapshot persistence and
-        // queue draining (else every run logs `snapshot_save_failed` +
-        // `queue.drain_failed` at error level).
-        transient: true,
+        // ephemeral persistence adapter makes every durable side effect inert:
+        // derived-field sync, snapshot persistence, and read/unread transitions
+        // all no-op instead of failing `Conversation not found in session`.
+        persistence: "ephemeral",
         conversation: {
           createdAt: deps.now(),
           forkedFrom: null,

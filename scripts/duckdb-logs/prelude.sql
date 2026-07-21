@@ -38,14 +38,26 @@ CREATE OR REPLACE TEMP MACRO route(p) AS
       '/(projects|sessions|conversations)/[^/]+', '/\1/:name', 'g'),
     '/[0-9a-f]{16,}', '/:id', 'g');
 
+-- jget(j, p): extract a string field from a JSON value — the canonical way to
+-- reach un-projected fields (`jget(raw, '$.someField')`). Do NOT use the `->>`
+-- operator with more than one extract per expression: DuckDB v1.5.4 parses the
+-- arrow operators at the wrong precedence, so
+--   raw->>'$.a'='x' AND raw->>'$.b'='y'
+-- swallows the rest of the predicate as the path argument and fails with a
+-- conversion error on arbitrary rows. Parenthesizing `(raw->>'$.a')` also
+-- works, but jget() cannot be misparsed. The selftest pins this.
+CREATE OR REPLACE TEMP MACRO jget(j, p) AS json_extract_string(j, p);
+
 -- The typed view. Hot fields are projected to columns; the full line stays in
 -- `raw` (a JSON value) so any rarely-used field is reachable ad hoc via
---   raw ->> '$.someField'
+--   jget(raw, '$.someField')
 -- without changing this file. read_json_objects tolerates the log's
 -- union-of-many-event-shapes schema: absent keys are simply NULL.
 CREATE OR REPLACE TEMP VIEW logs AS
 SELECT
-    CAST(json ->> '$.timestamp' AS TIMESTAMP)         AS ts,
+    -- TRY_CAST: a valid-JSON line whose `timestamp` is not a timestamp must
+    -- yield a NULL ts, not abort every whole-history query over the glob.
+    TRY_CAST(json ->> '$.timestamp' AS TIMESTAMP)     AS ts,
     json ->> '$.level'                                AS level,
     json ->> '$.module'                               AS module,
     json ->> '$.message'                              AS message,

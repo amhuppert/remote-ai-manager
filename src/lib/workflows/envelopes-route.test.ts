@@ -3,6 +3,10 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config/loader";
 import { createStateStore as createStateManager } from "@/lib/state-store";
+import { getStateDb } from "@/lib/state-store/store";
+import type { ManagerState } from "@/lib/projects/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import {
   _createTestDb,
   _installTestDb,
@@ -40,12 +44,11 @@ async function buildManager() {
   });
 }
 
-async function seedSession() {
-  const manager = await buildManager();
-  await manager.updateSession(PROJECT_PATH, {
-    sessionName: SESSION_NAME,
-    worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-    branchName: `csm/${SESSION_NAME}`,
+function buildSessionState(sessionName: string): SessionState {
+  return {
+    sessionName,
+    worktreePath: `${PROJECT_PATH}/.worktrees/${sessionName}`,
+    branchName: `csm/${sessionName}`,
     createdAt: "2026-04-28T09:00:00.000Z",
     lastActivityAt: "2026-04-28T09:00:00.000Z",
     archived: false,
@@ -58,7 +61,24 @@ async function seedSession() {
     parentSessionName: null,
     graphWorkflowExecution: null,
     referenceDocuments: [],
-  });
+  };
+}
+
+function seedStateWithSessions(...sessionNames: string[]): ManagerState {
+  const sessions: Record<string, SessionState> = {};
+  for (const sessionName of sessionNames) {
+    sessions[sessionName] = buildSessionState(sessionName);
+  }
+  return {
+    projects: {
+      [PROJECT_PATH]: {
+        rootPath: PROJECT_PATH,
+        sessions,
+      },
+    },
+    archivedProjects: [],
+    pinnedProjects: [],
+  };
 }
 
 beforeEach(async () => {
@@ -68,7 +88,7 @@ beforeEach(async () => {
   );
   await mkdir(TEST_DIR, { recursive: true });
   _installTestDb(_createTestDb({ inMemory: true }));
-  await seedSession();
+  seedWholeState(getStateDb(), seedStateWithSessions(SESSION_NAME));
 });
 
 afterEach(async () => {
@@ -181,24 +201,8 @@ describe("GET /api/projects/[name]/sessions/[session]/workflow-envelopes", () =>
 
   it("decodes URL-encoded session names before repository lookup", async () => {
     const encodedSessionName = "session with spaces";
+    seedWholeState(getStateDb(), seedStateWithSessions(encodedSessionName));
     const seedManager = await buildManager();
-    await seedManager.updateSession(PROJECT_PATH, {
-      sessionName: encodedSessionName,
-      worktreePath: `${PROJECT_PATH}/.worktrees/${encodedSessionName}`,
-      branchName: `csm/${encodedSessionName}`,
-      createdAt: "2026-04-28T09:00:00.000Z",
-      lastActivityAt: "2026-04-28T09:00:00.000Z",
-      archived: false,
-      finished: false,
-      conversations: [],
-      source: "cc",
-      creationMode: "normal",
-      tddEnabled: true,
-      targetBranch: "main",
-      parentSessionName: null,
-      graphWorkflowExecution: null,
-      referenceDocuments: [],
-    });
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: encodedSessionName,

@@ -9,7 +9,7 @@ import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-regi
 import type { ArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowEventDelivery } from "@/lib/workflow-graph/execution-events";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("graph-workflow-charter-service");
@@ -40,7 +40,7 @@ export interface WorkflowCharterServiceDeps {
   ensureDir(absolutePath: string): Promise<void>;
   publishCharterRegistered(
     input: PublishCharterRegisteredInput,
-  ): GraphWorkflowExecutionEvent[];
+  ): GraphWorkflowEventDelivery;
 }
 
 export interface SeedCharterInput {
@@ -54,7 +54,12 @@ export interface SeedCharterInput {
 export interface SeedCharterResult {
   nextExecution: GraphWorkflowExecution;
   charterHash: string;
-  events: GraphWorkflowExecutionEvent[];
+  /**
+   * The charter-registered event plus its `deliver` thunk. Delivery is owned by
+   * the mutation seam that persists this event alongside the initial execution
+   * (Design 3.2); `seedCharter` never broadcasts directly.
+   */
+  delivery: GraphWorkflowEventDelivery;
 }
 
 export interface WorkflowCharterService {
@@ -198,7 +203,7 @@ export function createWorkflowCharterService(
       charterHash,
     });
 
-    const events = deps.publishCharterRegistered({
+    const delivery = deps.publishCharterRegistered({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
       execution: nextExecution,
@@ -207,7 +212,7 @@ export function createWorkflowCharterService(
       charterHash,
     });
 
-    return { nextExecution, charterHash, events };
+    return { nextExecution, charterHash, delivery };
   }
 
   return { seedCharter };

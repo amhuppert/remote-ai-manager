@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { createLogger } from "@/lib/logging";
 import { assertNever } from "@/lib/shared/assert-never";
-import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
   createExecutionIndex,
   type ExecutionIndex,
@@ -41,12 +39,28 @@ import {
   type DefinitionPath,
 } from "./locked-regions";
 
-const logger = createLogger("graph-workflow-runtime-edits");
-
 export interface AgentAddedTask {
   slug?: string;
   title: string;
   instructions: string;
+}
+
+/**
+ * The result of a lane-agent task add. `applyAgentTaskAdd` runs inside a
+ * `mutateActive` reducer (the write-queue critical section), so it is PURE — it
+ * returns the observability payload as inert DATA instead of logging
+ * (`no-slow-work-in-critical-section`). The caller emits `task.added_by_agent`
+ * AFTER the mutation commits.
+ */
+export interface AgentTaskAddResult {
+  execution: GraphWorkflowExecution;
+  added: {
+    executionId: string;
+    contextId: string;
+    taskId: string;
+    title: string;
+    instructionsLength: number;
+  };
 }
 
 export class GraphWorkflowRuntimeEditValidationError extends GraphWorkflowValidationError {
@@ -168,7 +182,7 @@ export function createGraphWorkflowRuntimeEditService(
     execution: GraphWorkflowExecution,
     contextId: string,
     task: AgentAddedTask,
-  ): GraphWorkflowExecution {
+  ): AgentTaskAddResult {
     if (execution.status !== "running") {
       throw new Error(
         "Agent task creation is allowed only while execution is running",
@@ -238,20 +252,19 @@ export function createGraphWorkflowRuntimeEditService(
       liveRevision: result.execution.liveRevision + 1,
     };
 
-    const execLogger = getExecutionLogger(execution.id);
-    execLogger?.task(contextId, "task.added_by_agent", {
-      taskId,
-      title: task.title,
-      instructionsLength: task.instructions.length,
-    });
-    logger.info("graph-workflow.task.added_by_agent", {
-      executionId: execution.id,
-      contextId,
-      taskId,
-      title: task.title,
-    });
-
-    return nextExecution;
+    // Pure: return the observability payload as DATA. The caller emits
+    // `task.added_by_agent` (global + execution logs) AFTER the mutation
+    // commits, so no logging I/O runs inside the write-queue critical section.
+    return {
+      execution: nextExecution,
+      added: {
+        executionId: execution.id,
+        contextId,
+        taskId,
+        title: task.title,
+        instructionsLength: task.instructions.length,
+      },
+    };
   }
 
   return {

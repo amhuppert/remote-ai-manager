@@ -11,7 +11,30 @@ import {
 } from "./service";
 import type { DevServerConfig } from "@/lib/dev-server/schemas";
 import type { PortSelectionResult } from "./port-selection";
+import type { Logger } from "@/lib/logging";
 type ConfiguredServer = DevServerConfig;
+
+interface CapturedLog {
+  level: "debug" | "info" | "warn" | "error";
+  event: string;
+  fields: Record<string, unknown>;
+}
+
+function captureLogger(): { logger: Logger; logs: CapturedLog[] } {
+  const logs: CapturedLog[] = [];
+  const make =
+    (level: CapturedLog["level"]) =>
+    (event: string, fields?: Record<string, unknown>) => {
+      logs.push({ level, event, fields: fields ?? {} });
+    };
+  const logger: Logger = {
+    debug: make("debug"),
+    info: make("info"),
+    warn: make("warn"),
+    error: make("error"),
+  };
+  return { logger, logs };
+}
 
 function makeEntry(overrides: Partial<DevServerEntry>): DevServerEntry {
   return {
@@ -333,6 +356,89 @@ describe("dev-server-service", () => {
       expect(result.status).toBe("running");
       expect(result.port).toBe(3001);
       expect(result.localUrl).toBe("http://localhost:3001");
+    });
+
+    it("emits a timed() span with durationMs for each synchronous ensure phase", async () => {
+      const { logger: capturing, logs } = captureLogger();
+      const h = makeHarness();
+      h.deps.logger = capturing;
+      h.deps.reconcileTailscaleServeOrphans = vi.fn(async () => undefined);
+      h.startServer.mockImplementation(
+        async (input: { serverName: string }) => {
+          h.registry.set(
+            input.serverName,
+            makeEntry({ serverName: input.serverName, status: "starting" }),
+          );
+        },
+      );
+
+      const service = createDevServerService(h.deps);
+      await service.ensure({
+        projectPath: "/projects/test",
+        sessionName: "s1",
+        wait: false,
+      });
+
+      // Each synchronous pre-response phase of ensure must be attributable via
+      // its own timed() span, so the acceptance-boundary decision is grounded
+      // in per-phase evidence rather than a single opaque request total.
+      const phaseEvents = [
+        "dev-server.ensure.reconcile_session.complete",
+        "dev-server.ensure.reconcile_tailscale.complete",
+        "dev-server.ensure.resolve_start_mode.complete",
+        "dev-server.ensure.start_server.complete",
+      ];
+      for (const event of phaseEvents) {
+        const span = logs.find((l) => l.event === event);
+        expect(span, `expected a timed() span for ${event}`).toBeDefined();
+        expect(typeof span!.fields["durationMs"]).toBe("number");
+      }
+    });
+
+    it("splits the acceptance boundary: ensure returns at spawn-initiated, awaitReady observes readiness later", async () => {
+      const h = makeHarness();
+      const sleepSpy = vi.fn(async () => undefined);
+      h.deps.sleep = sleepSpy;
+      // Readiness is slow: startServer records intent + initiates the spawn
+      // (status "starting"); the server does NOT reach "running" during ensure.
+      h.startServer.mockImplementation(
+        async (input: { serverName: string }) => {
+          h.registry.set(
+            input.serverName,
+            makeEntry({ serverName: input.serverName, status: "starting" }),
+          );
+        },
+      );
+      const service = createDevServerService(h.deps);
+
+      // Accept path (wait:false): the durable-acceptance boundary. Returns
+      // promptly with the current status item at spawn-initiated, WITHOUT
+      // awaiting readiness — proven by the returned status still being
+      // "starting" while the poll loop never ran.
+      const accepted = await service.ensure({
+        projectPath: "/projects/test",
+        sessionName: "s1",
+        wait: false,
+      });
+      expect(accepted.status).toBe("starting");
+      expect(sleepSpy).not.toHaveBeenCalled();
+
+      // Readiness reached post-boundary, exactly as the registry's readiness
+      // probe / dev-server-status SSE reaction would drive it.
+      const entry = h.registry.get("nextjs")!;
+      entry.status = "running";
+      entry.port = 3001;
+      entry.ownedByThisSession = true;
+
+      // awaitReady is the separate post-boundary readiness observation.
+      const ready = await service.awaitReady({
+        projectPath: "/projects/test",
+        sessionName: "s1",
+        serverName: "nextjs",
+      });
+      expect(ready.status).toBe("running");
+      expect(ready.port).toBe(3001);
+      expect(ready.localUrl).toBe("http://localhost:3001");
     });
 
     it("returns the current starting status when wait is false", async () => {

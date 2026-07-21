@@ -1,4 +1,5 @@
 import { analyzeClientTiming } from "./analyses/client-timing";
+import { analyzeConventions } from "./analyses/conventions";
 import { analyzeDuplicateWork } from "./analyses/duplicate-work";
 import { analyzeErrorCorrelation } from "./analyses/errors";
 import { analyzeExternalCommands } from "./analyses/external-commands";
@@ -9,6 +10,12 @@ import { analyzeStateStore } from "./analyses/state-store";
 import { analyzeTrace } from "./analyses/trace";
 import { applyServerLogFilters } from "./filters";
 import { capFindings, sortFindings } from "./findings";
+import {
+  DEFAULT_BUDGET_CONFIG,
+  evaluateBudgets,
+  extractRowSizeEvents,
+  type BudgetConfig,
+} from "./budgets";
 import type { AgentLogAnalysisReport } from "./schemas";
 import type {
   LogAnalysisFilters,
@@ -42,6 +49,8 @@ export interface BuildLogAnalysisReportInput {
   parseStats: ReportParseStats;
   filters: LogAnalysisFilters;
   thresholds: LogAnalysisThresholds;
+  /** Budget ceilings for advisory evaluation; defaults to the baked-in config. */
+  budgetConfig?: BudgetConfig;
   input: Record<string, unknown>;
   generatedAt: string;
   clientLogRaw: string | null;
@@ -101,6 +110,7 @@ export function buildLogAnalysisReport(
     filteredRecords,
     input.thresholds,
   );
+  const conventions = analyzeConventions(filteredRecords, input.thresholds);
   const instrumentationGaps = instrumentationFindingsForSlowTraces({
     records: filteredRecords,
     traceIds: traceIdsFromSlowRequests(slowRequests.findings).slice(
@@ -109,6 +119,27 @@ export function buildLogAnalysisReport(
     ),
     thresholds: input.thresholds,
   });
+
+  // Budgets are evaluated on every report (advisory); `--assert-budgets` in the
+  // CLI turns a non-empty violation list into a non-zero exit. Bounded to `top`
+  // so the report contract stays size-bounded.
+  const budgetConfig = input.budgetConfig ?? DEFAULT_BUDGET_CONFIG;
+  const budgetViolations = evaluateBudgets({
+    config: budgetConfig,
+    routeP95s: slowRequests.groups.map((group) => ({
+      key: group.key,
+      p95Ms: group.p95Ms,
+    })),
+    writeQueueHolds: stateStore.writeQueue.map((queue) => ({
+      label: queue.label,
+      maxHoldMs: queue.maxHoldMs,
+    })),
+    stateReadP95s: stateStore.slowAccessors.map((accessor) => ({
+      accessor: accessor.accessor,
+      p95Ms: accessor.p95Ms,
+    })),
+    rowSizes: extractRowSizeEvents(filteredRecords),
+  }).sort((a, b) => b.observed / b.ceiling - a.observed / a.ceiling);
 
   const findings = capFindings(
     sortFindings([
@@ -120,6 +151,7 @@ export function buildLogAnalysisReport(
       ...sse.findings,
       ...clientTiming.findings,
       ...errorCorrelation.findings,
+      ...conventions.findings,
       ...instrumentationGaps,
     ]),
     input.thresholds.top,
@@ -157,6 +189,7 @@ export function buildLogAnalysisReport(
       slowAccessors: stateStore.slowAccessors,
       repoOperations: stateStore.repoOperations,
       writeQueue: stateStore.writeQueue,
+      holdBudgetExceeded: stateStore.holdBudgetExceeded,
       facadeRepoGaps: stateStore.facadeRepoGaps,
     },
     externalCommands: asUnknownRecords(externalCommands.commands),
@@ -166,6 +199,13 @@ export function buildLogAnalysisReport(
       slowTraceCorrelations: errorCorrelation.slowTraceCorrelations,
     },
     instrumentationGaps,
+    budgets: {
+      config: budgetConfig,
+      violationCount: budgetViolations.length,
+      violations: asUnknownRecords(
+        budgetViolations.slice(0, input.thresholds.top),
+      ),
+    },
     artifacts: [],
   };
 }

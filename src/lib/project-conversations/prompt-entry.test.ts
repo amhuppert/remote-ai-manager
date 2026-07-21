@@ -42,7 +42,6 @@ function makeConv(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: null,
     unread: false,

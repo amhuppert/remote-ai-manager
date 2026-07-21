@@ -8,6 +8,7 @@ import {
   validateRestoredSnapshot,
   clearConversationSnapshot,
   setPersistenceDeps,
+  type ConversationPersistenceDeps,
   _resetForTesting,
 } from "./persistence";
 import { conversationMachine } from "./machine";
@@ -55,7 +56,6 @@ function makeConversation(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude" as const,
     backendRef: null,
     unread: false,
@@ -102,17 +102,24 @@ function collectRefOccurrences(node: unknown, path = "$"): RefOccurrence[] {
 describe("conversation persistence", () => {
   let fixture: PersistenceFixture;
 
-  /** Reload the seeded conversation through the real serialization boundary. */
-  async function reloadConversation(): Promise<ConversationState> {
-    const conversation = await fixture.deps.getConversation(
-      PROJECT_PATH,
-      SESSION_NAME,
-      CONVERSATION_ID,
+  /** The production sidecar seam the persistence layer now writes through. */
+  function sidecarDeps(): ConversationPersistenceDeps {
+    return {
+      getConversationMachineSnapshot:
+        fixture.store.getConversationMachineSnapshot,
+      upsertConversationMachineSnapshot:
+        fixture.store.upsertConversationMachineSnapshot,
+      deleteConversationMachineSnapshot:
+        fixture.store.deleteConversationMachineSnapshot,
+    };
+  }
+
+  /** Read the session conversation's persisted resume token from the sidecar. */
+  function reloadSnapshot(conversationId = CONVERSATION_ID): unknown {
+    return fixture.store.getConversationMachineSnapshot(
+      "session",
+      conversationId,
     );
-    if (!conversation) {
-      throw new Error("seeded conversation missing after reload");
-    }
-    return conversation;
   }
 
   beforeEach(async () => {
@@ -125,7 +132,7 @@ describe("conversation persistence", () => {
       SESSION_NAME,
       makeConversation(),
     );
-    setPersistenceDeps(fixture.deps);
+    setPersistenceDeps(sidecarDeps());
   });
 
   afterEach(() => {
@@ -134,7 +141,7 @@ describe("conversation persistence", () => {
   });
 
   describe("persistConversationSnapshot", () => {
-    it("persists the snapshot to the conversation record", async () => {
+    it("persists the projected snapshot to the sidecar", async () => {
       const snapshot = { value: "idle" } as never;
 
       persistConversationSnapshot(
@@ -145,10 +152,78 @@ describe("conversation persistence", () => {
         { debounceMs: 0 },
       );
 
-      await vi.waitFor(async () => {
-        const reloaded = await reloadConversation();
-        expect(reloaded.machineSnapshot).toEqual({ value: "idle" });
+      await vi.waitFor(() => {
+        expect(reloadSnapshot()).toEqual({ value: "idle" });
       });
+    });
+
+    // The persisted snapshot is a resume token, not an archive: the projection
+    // codec drops `lastResult.contentBlocks` (a duplicate of the transcript) and
+    // the XState `children` subtree, while keeping the machine value and every
+    // context scalar the rehydrator resumes from.
+    it("drops lastResult.contentBlocks and the children subtree on the persist path", async () => {
+      const snapshot = {
+        status: "active",
+        value: { executing: "conversationTurn" },
+        context: {
+          _schemaVersion: 1,
+          conversationId: CONVERSATION_ID,
+          backendRef: { backend: "claude", ref: "sess-live" },
+          totals: { totalCostUsd: 1.5, totalTurns: 2 },
+          lastResult: {
+            costUsd: 1.5,
+            error: null,
+            aborted: false,
+            contentBlocks: [
+              { type: "text", text: "x".repeat(5000) },
+              { type: "text", text: "y".repeat(5000) },
+            ],
+          },
+        },
+        children: {
+          "0.executing.conversationTurn": {
+            snapshot: { status: "active", input: { big: "z".repeat(5000) } },
+            src: "executePrompt",
+          },
+        },
+      } as never;
+
+      persistConversationSnapshot(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        snapshot,
+        { debounceMs: 0 },
+      );
+
+      await vi.waitFor(() => {
+        expect(reloadSnapshot()).not.toBeNull();
+      });
+
+      const persisted = reloadSnapshot() as {
+        value: unknown;
+        children?: unknown;
+        context: {
+          totals: unknown;
+          backendRef: unknown;
+          lastResult: { costUsd: number; contentBlocks?: unknown };
+        };
+      };
+      // Retained: machine value, context identity/backendRef/totals, lastResult
+      // scalars.
+      expect(persisted.value).toEqual({ executing: "conversationTurn" });
+      expect(persisted.context.backendRef).toEqual({
+        backend: "claude",
+        ref: "sess-live",
+      });
+      expect(persisted.context.totals).toEqual({
+        totalCostUsd: 1.5,
+        totalTurns: 2,
+      });
+      expect(persisted.context.lastResult.costUsd).toBe(1.5);
+      // Dropped: the two large content carriers.
+      expect(persisted.context.lastResult.contentBlocks).toBeUndefined();
+      expect(persisted.children).toBeUndefined();
     });
 
     it("persists context refs as canonical bytes without mutating the live snapshot", async () => {
@@ -174,19 +249,18 @@ describe("conversation persistence", () => {
         { debounceMs: 0 },
       );
 
-      await vi.waitFor(async () => {
-        const reloaded = await reloadConversation();
-        const persisted = reloaded.machineSnapshot as {
+      await vi.waitFor(() => {
+        const persisted = reloadSnapshot() as {
           context: {
             backendRef: unknown;
             forkedFrom: { sourceBackendRef: unknown };
           };
-        };
-        expect(persisted.context.backendRef).toEqual({
+        } | null;
+        expect(persisted?.context.backendRef).toEqual({
           backend: "claude",
           ref: "sess-live",
         });
-        expect(persisted.context.forkedFrom.sourceBackendRef).toEqual({
+        expect(persisted?.context.forkedFrom.sourceBackendRef).toEqual({
           backend: "codex",
           ref: "thr-src",
         });
@@ -194,10 +268,7 @@ describe("conversation persistence", () => {
 
       // No persisted ref carries a mirrored legacy key: the on-disk shape is
       // canonical, identical to the live shape.
-      const reloaded = await reloadConversation();
-      for (const { path, value } of collectRefOccurrences(
-        reloaded.machineSnapshot,
-      )) {
+      for (const { path, value } of collectRefOccurrences(reloadSnapshot())) {
         expect(value, `persisted ref not canonical at ${path}`).toEqual({
           backend: value.backend,
           ref: value.ref,
@@ -222,27 +293,25 @@ describe("conversation persistence", () => {
 
     // A transient lane (compaction's synthetic `compaction-<artifactId>`
     // conversation) has no ConversationState record, so the write path used
-    // to fail with `snapshot_save_failed` on every machine transition. The
-    // guard must skip the state-store write entirely.
-    it("skips the state-store write for snapshots whose context is transient", async () => {
-      const mutatedConversationIds: string[] = [];
-      const mutateConversation: typeof fixture.deps.mutateConversation = (
-        projectPath,
-        sessionName,
-        conversationId,
-        label,
-        mutate,
-      ) => {
-        mutatedConversationIds.push(conversationId);
-        return fixture.deps.mutateConversation(
-          projectPath,
-          sessionName,
+    // to fail on every machine transition. The guard must skip the sidecar
+    // write entirely.
+    it("skips the sidecar write for snapshots whose context is transient", async () => {
+      const upsertedIds: string[] = [];
+      setPersistenceDeps({
+        ...sidecarDeps(),
+        upsertConversationMachineSnapshot: (
+          owner,
           conversationId,
-          label,
-          mutate,
-        );
-      };
-      setPersistenceDeps({ ...fixture.deps, mutateConversation });
+          snapshot,
+        ) => {
+          upsertedIds.push(conversationId);
+          return fixture.store.upsertConversationMachineSnapshot(
+            owner,
+            conversationId,
+            snapshot,
+          );
+        },
+      });
 
       persistConversationSnapshot(
         PROJECT_PATH,
@@ -253,7 +322,7 @@ describe("conversation persistence", () => {
       );
 
       await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(mutatedConversationIds).toEqual([]);
+      expect(upsertedIds).toEqual([]);
     });
 
     it("still persists snapshots whose context is not transient", async () => {
@@ -265,20 +334,19 @@ describe("conversation persistence", () => {
         { debounceMs: 0 },
       );
 
-      await vi.waitFor(async () => {
-        const reloaded = await reloadConversation();
-        expect(reloaded.machineSnapshot).toEqual({
+      await vi.waitFor(() => {
+        expect(reloadSnapshot()).toEqual({
           value: "idle",
           context: { transient: false },
         });
       });
     });
 
-    // Raw-bytes contract for the canonical cutover: every ref reaching
-    // `machine_snapshot` is canonical `{backend, ref}` with no mirrored legacy
-    // key, on the root context AND inside active XState child snapshots
-    // (`children.*.snapshot.input.backendRef`), so the walk must be recursive.
-    it("persists every ref occurrence as canonical bytes, including inside active child snapshots", async () => {
+    // Raw-bytes contract for the canonical cutover: every ref reaching the
+    // sidecar is canonical `{backend, ref}` with no mirrored legacy key. The
+    // projection drops the XState `children` subtree, so a mid-turn snapshot's
+    // persisted form carries the root context ref and no children at all.
+    it("persists canonical root refs and drops the active child snapshot subtree", async () => {
       const machine = conversationMachine.provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
@@ -311,6 +379,7 @@ describe("conversation persistence", () => {
         agentBackend: "claude",
         backendRef: { backend: "claude", ref: "sess-mid-turn" },
         promptCount: 1,
+        persistence: "durable",
       };
       const actor = createActor(machine, { input });
       actor.start();
@@ -326,6 +395,11 @@ describe("conversation persistence", () => {
       });
 
       const liveSnapshot = actor.getPersistedSnapshot();
+      // Guard: the live snapshot really carries a `children` subtree, so the
+      // "dropped" assertion below is not vacuous.
+      expect(
+        (liveSnapshot as unknown as { children?: unknown }).children,
+      ).toBeDefined();
       try {
         persistConversationSnapshot(
           PROJECT_PATH,
@@ -335,23 +409,22 @@ describe("conversation persistence", () => {
           { debounceMs: 0 },
         );
 
-        await vi.waitFor(async () => {
-          const reloaded = await reloadConversation();
-          expect(reloaded.machineSnapshot).not.toBeNull();
+        await vi.waitFor(() => {
+          expect(reloadSnapshot()).not.toBeNull();
         });
 
-        const reloaded = await reloadConversation();
-        const persistedOccurrences = collectRefOccurrences(
-          reloaded.machineSnapshot,
-        );
-        // The corpus must contain the root context ref AND at least one ref
-        // inside a child snapshot — otherwise the contract passes vacuously.
+        const persisted = reloadSnapshot();
+        // The children subtree is gone from the resume token.
+        expect((persisted as { children?: unknown }).children).toBeUndefined();
+        const persistedOccurrences = collectRefOccurrences(persisted);
+        // The root context ref survives and no persisted ref lives under a
+        // `.children.` path.
         expect(
           persistedOccurrences.some((o) => o.path === "$.context.backendRef"),
         ).toBe(true);
         expect(
           persistedOccurrences.some((o) => o.path.includes(".children.")),
-        ).toBe(true);
+        ).toBe(false);
         for (const { path, value } of persistedOccurrences) {
           expect(value, `persisted ref not canonical at ${path}`).toEqual({
             backend: value.backend,
@@ -385,15 +458,13 @@ describe("conversation persistence", () => {
         );
 
         // Nothing persisted before the debounce window elapses.
-        const beforeDebounce = await reloadConversation();
-        expect(beforeDebounce.machineSnapshot).toBeNull();
+        expect(reloadSnapshot()).toBeNull();
 
         // Advance past the debounce; this fires the timer and flushes the
         // async write through the real write queue.
         await vi.advanceTimersByTimeAsync(600);
 
-        const afterDebounce = await reloadConversation();
-        expect(afterDebounce.machineSnapshot).toEqual({ value: "idle" });
+        expect(reloadSnapshot()).toEqual({ value: "idle" });
       } finally {
         vi.useRealTimers();
       }
@@ -435,15 +506,11 @@ describe("conversation persistence", () => {
       try {
         actor.send({ type: "GO" });
 
-        await vi.waitFor(async () => {
-          const reloaded = await reloadConversation();
-          expect(reloaded.machineSnapshot).not.toBeNull();
+        await vi.waitFor(() => {
+          expect(reloadSnapshot()).not.toBeNull();
         });
 
-        const reloaded = await reloadConversation();
-        expect((reloaded.machineSnapshot as { value: unknown }).value).toBe(
-          "running",
-        );
+        expect((reloadSnapshot() as { value: unknown }).value).toBe("running");
       } finally {
         actor.stop();
       }
@@ -452,14 +519,10 @@ describe("conversation persistence", () => {
 
   describe("restoreConversationSnapshot", () => {
     async function seedSnapshot(snapshot: unknown): Promise<void> {
-      await fixture.deps.mutateConversation(
-        PROJECT_PATH,
-        SESSION_NAME,
+      await fixture.store.upsertConversationMachineSnapshot(
+        "session",
         CONVERSATION_ID,
-        "test.seed-snapshot",
-        (conversation) => {
-          conversation.machineSnapshot = snapshot;
-        },
+        snapshot,
       );
     }
 
@@ -496,7 +559,7 @@ describe("conversation persistence", () => {
     });
 
     it("returns null when no snapshot exists", async () => {
-      // The seeded conversation already has a null machineSnapshot.
+      // The seeded conversation has no sidecar row.
       const result = await restoreConversationSnapshot(
         PROJECT_PATH,
         SESSION_NAME,
@@ -506,7 +569,7 @@ describe("conversation persistence", () => {
       expect(result).toBeNull();
     });
 
-    it("returns null when conversation not found", async () => {
+    it("returns null when conversation has no sidecar row", async () => {
       const result = await restoreConversationSnapshot(
         PROJECT_PATH,
         SESSION_NAME,
@@ -813,18 +876,13 @@ describe("conversation persistence", () => {
   });
 
   describe("clearConversationSnapshot", () => {
-    it("clears a persisted machineSnapshot back to null", async () => {
-      await fixture.deps.mutateConversation(
-        PROJECT_PATH,
-        SESSION_NAME,
+    it("clears a persisted sidecar snapshot back to absent", async () => {
+      await fixture.store.upsertConversationMachineSnapshot(
+        "session",
         CONVERSATION_ID,
-        "test.seed-snapshot",
-        (conversation) => {
-          conversation.machineSnapshot = { value: "idle" };
-        },
+        { value: "idle" },
       );
-      const seeded = await reloadConversation();
-      expect(seeded.machineSnapshot).toEqual({ value: "idle" });
+      expect(reloadSnapshot()).toEqual({ value: "idle" });
 
       await clearConversationSnapshot(
         PROJECT_PATH,
@@ -832,8 +890,7 @@ describe("conversation persistence", () => {
         CONVERSATION_ID,
       );
 
-      const reloaded = await reloadConversation();
-      expect(reloaded.machineSnapshot).toBeNull();
+      expect(reloadSnapshot()).toBeNull();
     });
   });
 });

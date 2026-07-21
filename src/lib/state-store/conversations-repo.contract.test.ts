@@ -129,7 +129,6 @@ function makeFullConversation(
       phase: "analyzing_evidence",
       cleanupVerificationAttempt: 2,
     },
-    machineSnapshot: { state: "idle", context: { foo: 42 } },
     agentBackend: "codex",
     backendRef: { backend: "codex", ref: "thr-1" },
     mcpOverrides: {
@@ -166,7 +165,6 @@ describe("conversations-repo round-trip contract", () => {
     expect(out.forkedFrom).toBeNull();
     expect(out.role).toBeNull();
     expect(out.debugMode).toBeNull();
-    expect(out.machineSnapshot).toBeNull();
     expect(out.backendRef).toBeNull();
     expect(out.mcpOverrides).toBeUndefined();
     expect(out.mcpRuntime).toBeUndefined();
@@ -1420,10 +1418,6 @@ function buildMaximalConversation(): ConversationState {
       phase: "awaiting_verification",
       lastTurnFailed: true,
       cleanupVerificationAttempt: 2,
-    },
-    machineSnapshot: {
-      value: "awaiting",
-      context: { iteration: 3, lastError: null },
     },
     agentBackend: "codex",
     backendRef: { backend: "codex", ref: "thread-maximal" },

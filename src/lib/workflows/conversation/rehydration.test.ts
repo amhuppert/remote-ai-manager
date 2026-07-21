@@ -28,6 +28,8 @@ import type {
   PromptActorResult,
 } from "./types";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import {
   conversationStateSchema,
   type ConversationState,
@@ -132,35 +134,36 @@ describe("rehydrateConversationActors (project conversations)", () => {
   function makeDeps(
     projectConvs: { projectPath: string; conversation: ConversationState }[],
     validate: RehydrateConversationActorsDeps["validateRestoredSnapshot"],
+    snapshots: Record<string, unknown> = {},
   ): RehydrateConversationActorsDeps {
     return {
-      readState: async () => emptyState(),
+      readAllForStartup: () => emptyState(),
       listAllProjectConversations: async () => projectConvs,
       getProjectDisplayName: () => "demo",
+      getConversationMachineSnapshot: (owner, conversationId) => {
+        // Project conversations own their sidecar rows under the `project`
+        // discriminator; assert the rehydrator routes them there.
+        expect(owner).toBe("project");
+        return snapshots[conversationId] ?? null;
+      },
       validateRestoredSnapshot: validate,
     };
   }
 
-  it("walks a project conversation's snapshot via the injected validator", async () => {
-    const projConv = conv({
-      id: "p1",
-      scope: "project",
-      machineSnapshot: { marker: "p1-snapshot" },
-    });
+  it("walks a project conversation's sidecar snapshot via the injected validator", async () => {
+    const projConv = conv({ id: "p1", scope: "project" });
     const validate = vi.fn(() => null); // treat as invalid → no actor
     const count = await rehydrateConversationActors(
-      makeDeps([{ projectPath: "/repo", conversation: projConv }], validate),
+      makeDeps([{ projectPath: "/repo", conversation: projConv }], validate, {
+        p1: { marker: "p1-snapshot" },
+      }),
     );
     expect(count).toBe(0);
     expect(validate).toHaveBeenCalledWith({ marker: "p1-snapshot" }, "p1", 1);
   });
 
   it("skips a non-resumable project snapshot (active without a pending question)", async () => {
-    const projConv = conv({
-      id: "p1",
-      scope: "project",
-      machineSnapshot: { x: 1 },
-    });
+    const projConv = conv({ id: "p1", scope: "project" });
     const nonResumable = fakeSnapshot({
       status: "active",
       value: "running",
@@ -170,15 +173,17 @@ describe("rehydrateConversationActors (project conversations)", () => {
       makeDeps(
         [{ projectPath: "/repo", conversation: projConv }],
         () => nonResumable,
+        { p1: { x: 1 } },
       ),
     );
     expect(count).toBe(0);
   });
 
-  it("does not validate a project conversation with no persisted snapshot", async () => {
-    const projConv = conv({ id: "p1", scope: "project" }); // machineSnapshot null
+  it("does not validate a project conversation with no persisted sidecar snapshot", async () => {
+    const projConv = conv({ id: "p1", scope: "project" });
     const validate = vi.fn(() => null);
     const count = await rehydrateConversationActors(
+      // No sidecar snapshot registered for p1.
       makeDeps([{ projectPath: "/repo", conversation: projConv }], validate),
     );
     expect(count).toBe(0);
@@ -251,6 +256,7 @@ describe("waitingForInput rehydration contract", () => {
     agentBackend: "claude",
     backendRef: null,
     promptCount: 0,
+    persistence: "durable",
   };
 
   const claimNextTurnBatch = vi.fn(async () => null);
@@ -319,12 +325,15 @@ describe("waitingForInput rehydration contract", () => {
     const conversation = conv({
       id: "c-wfi",
       status: "waiting_for_input",
-      machineSnapshot: persisted as ConversationState["machineSnapshot"],
     });
     const deps: RehydrateConversationActorsDeps = {
-      readState: async () => stateWith([conversation]),
+      readAllForStartup: () => stateWith([conversation]),
       listAllProjectConversations: async () => [],
       getProjectDisplayName: () => "demo",
+      getConversationMachineSnapshot: (owner, conversationId) => {
+        expect(owner).toBe("session");
+        return conversationId === "c-wfi" ? persisted : null;
+      },
       validateRestoredSnapshot: (raw) => raw as Snapshot<unknown>,
     };
 
@@ -369,12 +378,13 @@ describe("waitingForInput rehydration contract", () => {
     const conversation = conv({
       id: "c-wfi",
       status: "waiting_for_input",
-      machineSnapshot: persisted as ConversationState["machineSnapshot"],
     });
     const deps: RehydrateConversationActorsDeps = {
-      readState: async () => stateWith([conversation]),
+      readAllForStartup: () => stateWith([conversation]),
       listAllProjectConversations: async () => [],
       getProjectDisplayName: () => "demo",
+      getConversationMachineSnapshot: (_owner, conversationId) =>
+        conversationId === "c-wfi" ? persisted : null,
       validateRestoredSnapshot,
     };
 
@@ -387,6 +397,49 @@ describe("waitingForInput rehydration contract", () => {
       backend: "claude",
       ref: "sess-legacy-snap",
     });
+  });
+
+  it("restores a runtime through the real startup reader + sidecar (persistence fixture)", async () => {
+    // End-to-end over a real SQLite database: seed a session conversation and
+    // its resume-token snapshot in the sidecar table, then rehydrate through the
+    // production `readAllForStartup` (which enumerates the seeded tree without
+    // loading the snapshot column) and the production sidecar read. Proves the
+    // startup reader + on-demand sidecar path restores runtimes correctly.
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject("/repo");
+      fixture.seedSession("/repo", "feat");
+      await fixture.seedConversation(
+        "/repo",
+        "feat",
+        conv({ id: "c-db", status: "waiting_for_input" }),
+      );
+      const persisted = await captureWaitingForInputSnapshot();
+      await fixture.store.upsertConversationMachineSnapshot(
+        "session",
+        "c-db",
+        persisted,
+      );
+
+      setMachineFactory(stubbedMachine);
+      setConversationQueueDeps(noopQueueDeps);
+
+      const count = await rehydrateConversationActors({
+        readAllForStartup: () => readAllForStartupFromDb(fixture.db),
+        listAllProjectConversations: fixture.store.listAllProjectConversations,
+        getProjectDisplayName: () => "demo",
+        getConversationMachineSnapshot:
+          fixture.store.getConversationMachineSnapshot,
+        validateRestoredSnapshot: (raw) => raw as Snapshot<unknown>,
+      });
+
+      expect(count).toBe(1);
+      const actor = getConversationActor("/repo", "feat", "c-db");
+      expect(actor).toBeDefined();
+      expect(actor!.getSnapshot().value).toBe("waitingForInput");
+    } finally {
+      fixture.close();
+    }
   });
 });
 
@@ -546,6 +599,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
       agentBackend: "claude",
       backendRef: null,
       promptCount: 1,
+      persistence: "durable",
     };
     const actor = createActor(createTestMachine(), { input });
     actor.start();

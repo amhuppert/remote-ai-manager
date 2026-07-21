@@ -324,6 +324,10 @@ function buildMaximalExecution(): unknown {
         branchName: "csm/ctx-1",
         isolation: "worktree",
         batchId: "batch-1",
+        // Owner-discriminated scheduler reservation (Design 3.1): a persisted key
+        // path, so the maximal fixture carries a non-null value to prove it
+        // survives the archived-execution round-trip.
+        reservedByBatchId: "batch-1",
         laneId: "lane-1",
         joinId: "join-1",
         mergeStatus: "in-progress",

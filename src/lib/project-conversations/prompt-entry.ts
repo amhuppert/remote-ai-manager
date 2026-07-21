@@ -173,6 +173,8 @@ export function createProjectPromptExecutor(
       conversationScope: "project",
       projectName: deps.getProjectDisplayName(projectPath),
       sessionWorktreePath: projectPath,
+      // A real project ConversationState record backs this lane.
+      persistence: "durable",
       conversation: {
         createdAt: conversation.createdAt,
         forkedFrom: conversation.forkedFrom ?? null,

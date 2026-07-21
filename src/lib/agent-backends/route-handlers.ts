@@ -5,7 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import { listBackends } from "./registry";
 import {
   backendCatalogResponseSchema,
@@ -15,7 +15,9 @@ import {
 
 const log = createLogger("agent-backends:catalog-route");
 
-export async function GET(): Promise<NextResponse<BackendCatalogResponse>> {
+async function getBackendCatalog(): Promise<
+  NextResponse<BackendCatalogResponse>
+> {
   const backends = listBackends().map(catalogEntryFromDescriptor);
   log.debug("catalog.served", {
     backendCount: backends.length,
@@ -23,3 +25,5 @@ export async function GET(): Promise<NextResponse<BackendCatalogResponse>> {
   });
   return NextResponse.json(backendCatalogResponseSchema.parse({ backends }));
 }
+
+export const GET = withTracing(getBackendCatalog);

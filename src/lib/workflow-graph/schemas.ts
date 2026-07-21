@@ -338,6 +338,16 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
   branchName: z.string().nullable().default(null),
   isolation: z.enum(["session", "worktree"]).default("session"),
   batchId: z.string().nullable().default(null),
+  /**
+   * Owner-discriminated scheduling reservation (Design 3.1). A scheduler's short
+   * sync RESERVE mutation stamps the batch id it is provisioning under here,
+   * BEFORE it provisions worktrees out of the lock; `getEligibleContextIds`
+   * treats a stamped context as ineligible, so a concurrent same-epoch scheduler
+   * cannot re-classify and double-provision it. The owning pass clears it at its
+   * fenced finalize (or on compensation); a superseding loop epoch clears any
+   * leftover. Optional/absent means unreserved.
+   */
+  reservedByBatchId: z.string().nullable().optional(),
   laneId: graphWorkflowExecutionLaneIdSchema.nullable().default(null),
   joinId: graphWorkflowExecutionJoinIdSchema.nullable().default(null),
   mergeStatus: z

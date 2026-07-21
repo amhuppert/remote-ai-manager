@@ -414,7 +414,7 @@ export const conversationMachine = setup({
     backendRef: input.backendRef,
     forkedFrom: input.forkedFrom,
     role: input.role,
-    transient: input.transient === true,
+    transient: input.persistence === "ephemeral",
     activeTurn: null,
     pendingQuestion: null,
     debugMode:
@@ -538,6 +538,7 @@ export const conversationMachine = setup({
       invoke: {
         src: "prepareTurn",
         input: ({ context }): PrepareTurnInput => ({
+          persistence: context.transient ? "ephemeral" : "durable",
           projectPath: context.projectPath,
           sessionName: context.sessionName,
           conversationId: context.conversationId,
@@ -688,6 +689,7 @@ export const conversationMachine = setup({
                 );
 
               return {
+                persistence: context.transient ? "ephemeral" : "durable",
                 conversationScope: context.conversationScope,
                 projectPath: context.projectPath,
                 projectName: context.projectName,
@@ -748,6 +750,7 @@ export const conversationMachine = setup({
                 throw new Error("runTaskRun requires an active task_run");
               }
               return {
+                persistence: context.transient ? "ephemeral" : "durable",
                 projectPath: context.projectPath,
                 projectName: context.projectName,
                 sessionName: context.sessionName,

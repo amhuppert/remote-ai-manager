@@ -54,6 +54,7 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore } from "@/lib/state-store/store";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 
 describe("resolveCollaborationBackendModelConfig", () => {
   const config = {
@@ -694,27 +695,34 @@ describe("createCollaborationManager.start", () => {
       ReturnType<typeof buildCollaborationUserTranscriptEntry> & { id: string }
     > = [];
     try {
-      await store.getOrCreateProject(projectPath);
-      await store.mutateState("seed", (state) => {
-        state.projects[projectPath]!.sessions[sessionName] =
-          sessionStateSchema.parse({
-            sessionName,
-            worktreePath: "/tmp/sess-1",
-            branchName: "cc/sess-1",
-            createdAt: "2026-07-13T12:00:00.000Z",
-            lastActivityAt: "2026-07-13T12:00:00.000Z",
-            conversations: [
-              {
-                id: conversationId,
-                transcriptPath: null,
-                status: "new",
-                promptCount: 0,
+      seedWholeState(db, {
+        projects: {
+          [projectPath]: {
+            rootPath: projectPath,
+            sessions: {
+              [sessionName]: sessionStateSchema.parse({
+                sessionName,
+                worktreePath: "/tmp/sess-1",
+                branchName: "cc/sess-1",
                 createdAt: "2026-07-13T12:00:00.000Z",
                 lastActivityAt: "2026-07-13T12:00:00.000Z",
-                agentBackend: "claude",
-              },
-            ],
-          });
+                conversations: [
+                  {
+                    id: conversationId,
+                    transcriptPath: null,
+                    status: "new",
+                    promptCount: 0,
+                    createdAt: "2026-07-13T12:00:00.000Z",
+                    lastActivityAt: "2026-07-13T12:00:00.000Z",
+                    agentBackend: "claude",
+                  },
+                ],
+              }),
+            },
+          },
+        },
+        archivedProjects: [],
+        pinnedProjects: [],
       });
 
       const { deps, runSliceCalls } = buildScriptedDeps();

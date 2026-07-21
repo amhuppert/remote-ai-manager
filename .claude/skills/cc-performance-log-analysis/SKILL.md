@@ -92,6 +92,45 @@ Create a human-readable handoff:
 bun run logs:analyze -- report --format json --markdown-out /tmp/cc-log-analysis.md
 ```
 
+Assert performance budgets (CI gating):
+
+```bash
+# Advisory by default — the report always includes a `budgets` section, exit 0.
+bun run logs:analyze -- report --format json
+# With --assert-budgets, any exceeded ceiling makes the command exit non-zero
+# (the report is still emitted so CI can see what violated).
+bun run logs:analyze -- report --assert-budgets
+```
+
+## Performance budgets (`--assert-budgets`)
+
+`logs:analyze report` evaluates the log against a checked-in budget config and
+reports any breach in the report's `budgets` field (and a `## Budgets` markdown
+section). This is **advisory by default** — a breach does not fail the command.
+Pass `--assert-budgets` to make any breach exit non-zero, which is what wires the
+budgets into a CI or perf-sensitive-change gate. Point at a different config with
+`--budgets <path>`.
+
+The config lives at **`scripts/log-budgets.json`** (beside the CLI entry). Its
+schema (all values required; numbers are calibration starting points, tune as
+telemetry accrues):
+
+| Field | Meaning | Default |
+|---|---|---|
+| `routeClassP95Ms` | per-route-class (method+path) p95 ceiling, ms | `1000` |
+| `writeQueueHoldMs` | write-queue hold ceiling, ms (matches the runtime hold budget) | `500` |
+| `stateReadMs` | `state.read` accessor p95 ceiling, ms | `100` |
+| `rowSizeBytes` | serialized row-size ceiling, bytes (from `state-store.row_size.exceeded`) | `262144` |
+
+Two convention/violation **finding rules** also surface in every report's
+`findings` (independent of `--assert-budgets`):
+
+- `state-store.write_queue.hold_budget_exceeded` events → ranked `state-store`
+  findings, keyed by the mutation **label** that held the queue (the culprit).
+- `request.complete` with **status 202 and `durationMs > 1000`** → a
+  `convention-violation` finding: a 202 must accept work, not perform it (Design
+  5) — work over ~1s belongs behind a job with SSE progress.
+
 ## Ad-hoc SQL with DuckDB (`logs:duckdb`)
 
 When the answer isn't one of the report's findings, query the NDJSON directly with
@@ -116,7 +155,9 @@ bun run logs:duckdb list                            # every question
 
 Ad-hoc — query the typed `logs` view directly (filter on the `since_ok`/`until_ok`
 macros, normalize routes with `route(path)`, reach un-projected fields via
-`raw ->> '$.field'`):
+`jget(raw, '$.field')` — never the `->>` operator with more than one extract per
+expression: DuckDB v1.5.4 misparses arrow-operator precedence and the query dies
+with a conversion error naming an arbitrary log record):
 
 ```bash
 bun run logs:duckdb sql "SELECT route(path) AS route,

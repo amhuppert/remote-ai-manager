@@ -12,10 +12,25 @@ import {
 import { PersistenceError, getErrorMessage } from "../shared/errors";
 import { createVersionedRowCache } from "@/lib/shared/versioned-row-cache";
 import { jsonOrNull, stableStringify } from "./serialization";
+import { checkRowColumnSize, checkRowColumnSizes } from "./row-size-telemetry";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.sessions");
+
+/**
+ * The serialized-JSON columns of a `sessions` row that can grow large enough to
+ * matter. Row-size telemetry sweeps them on write; a ballooning column surfaces
+ * as a `state-store.row_size.exceeded` finding. (`graph_workflow_execution` is
+ * not here — the active execution was split into its own table and this column
+ * is no longer written.)
+ */
+const SESSION_JSON_COLUMNS = [
+  "workflow_lanes",
+  "workflow_envelopes",
+  "mcp_overrides",
+  "agent_capability_overrides",
+] as const;
 
 interface SessionListItemRow {
   session_name: string;
@@ -65,6 +80,10 @@ export interface SessionsRepo {
   findByKey(projectPath: string, sessionName: string): SessionState | null;
   findByProject(projectPath: string): SessionState[];
   findListItemsByProject(projectPath: string): SessionListItemProjection[];
+  findAllListItems(): Array<{
+    projectPath: string;
+    session: SessionListItemProjection;
+  }>;
   findAll(): { projectPath: string; session: SessionState }[];
   upsert(projectPath: string, session: SessionState): void;
   delete(projectPath: string, sessionName: string): void;
@@ -123,6 +142,27 @@ export interface SessionsRepo {
     envelopes: Record<string, unknown> | undefined,
     lastActivityAt: string,
   ): boolean;
+  /**
+   * Point every direct child of any parent in `parentSessionNames` at `main`
+   * and clear its parent link, in one statement (Pattern 2: a focused write
+   * that reads no aggregate). Non-cascading — only direct children are
+   * affected, never grandchildren. `target_branch`/`parent_session_name` are
+   * plain scalar columns, so the direct UPDATE serializes them identically to
+   * the per-column setter (`main` / NULL). An empty parent list writes nothing.
+   * Bumps the findAll cache version when any row changed. Does NOT restamp
+   * `last_activity_at` (a retarget must not bump session ordering).
+   */
+  retargetChildrenOfParents(
+    projectPath: string,
+    parentSessionNames: readonly string[],
+  ): void;
+  /**
+   * Invalidate the parsed-row cache after session rows were removed out-of-band
+   * — an FK `ON DELETE CASCADE` from a project delete drops the rows at the SQL
+   * layer without routing through this repo's own `delete`. Bumps the version
+   * so `findAll` re-reads from SQLite instead of serving evicted rows.
+   */
+  invalidateCache(): void;
 }
 
 /**
@@ -719,6 +759,24 @@ export function createSessionsRepo(db: Db): SessionsRepo {
      WHERE project_path = ?
      ORDER BY last_activity_at DESC`,
   );
+  const findAllListItemsStmt = db.prepare(
+    `SELECT
+       project_path,
+       session_name, worktree_path, branch_name, target_branch,
+       parent_session_name, created_at, last_activity_at,
+       archived, finished, source, creation_mode, tdd_enabled,
+       COALESCE((
+         SELECT CASE WHEN e.status
+                  NOT IN ('completed', 'failed', 'cancelled')
+                THEN 1 ELSE 0 END
+           FROM graph_workflow_executions e
+          WHERE e.project_path = sessions.project_path
+            AND e.session_name = sessions.session_name
+       ), 0) AS has_active_graph_workflow,
+       workflow_envelopes, spawned_from
+     FROM sessions
+     ORDER BY project_path ASC, last_activity_at DESC`,
+  );
   const findAllStmt = db.prepare(
     `SELECT * FROM sessions
      ORDER BY project_path ASC, created_at ASC, session_name ASC`,
@@ -828,6 +886,17 @@ export function createSessionsRepo(db: Db): SessionsRepo {
         return rows.map((row) => sessionListRowToProjection(projectPath, row));
       });
     },
+    findAllListItems() {
+      return timed("findAllListItems", undefined, undefined, () => {
+        const rows = findAllListItemsStmt.all() as Array<
+          SessionListItemRow & { project_path: string }
+        >;
+        return rows.map((row) => ({
+          projectPath: row.project_path,
+          session: sessionListRowToProjection(row.project_path, row),
+        }));
+      });
+    },
     findAll() {
       return timed("findAll", undefined, undefined, () =>
         cache.readAll(
@@ -838,6 +907,13 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     upsert(projectPath, session) {
       timed("upsert", projectPath, session.sessionName, () => {
         const bind = domainToSessionRow(projectPath, session);
+        checkRowColumnSizes({
+          logger,
+          table: "sessions",
+          id: session.sessionName,
+          bind: { ...bind },
+          columns: SESSION_JSON_COLUMNS,
+        });
         upsertStmt.run(bind);
         cache.bump();
       });
@@ -860,6 +936,13 @@ export function createSessionsRepo(db: Db): SessionsRepo {
         for (const col of sortedColumns) {
           bind[col] = changedColumns[col]!;
         }
+        checkRowColumnSizes({
+          logger,
+          table: "sessions",
+          id: sessionName,
+          bind,
+          columns: SESSION_JSON_COLUMNS,
+        });
         const info = stmt.run(bind);
         if (info.changes > 0) cache.bump();
         return info.changes > 0;
@@ -878,8 +961,16 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     },
     setSessionWorkflowLanes(projectPath, sessionName, lanes, lastActivityAt) {
       return timed("setSessionWorkflowLanes", projectPath, sessionName, () => {
+        const value = jsonOrNull(lanes);
+        checkRowColumnSize({
+          logger,
+          table: "sessions",
+          column: "workflow_lanes",
+          id: sessionName,
+          value,
+        });
         const info = setSessionWorkflowLanesStmt.run(
-          jsonOrNull(lanes),
+          value,
           lastActivityAt,
           projectPath,
           sessionName,
@@ -899,8 +990,16 @@ export function createSessionsRepo(db: Db): SessionsRepo {
         projectPath,
         sessionName,
         () => {
+          const value = jsonOrNull(envelopes);
+          checkRowColumnSize({
+            logger,
+            table: "sessions",
+            column: "workflow_envelopes",
+            id: sessionName,
+            value,
+          });
           const info = setSessionWorkflowEnvelopesStmt.run(
-            jsonOrNull(envelopes),
+            value,
             lastActivityAt,
             projectPath,
             sessionName,
@@ -909,6 +1008,23 @@ export function createSessionsRepo(db: Db): SessionsRepo {
           return info.changes > 0;
         },
       );
+    },
+    retargetChildrenOfParents(projectPath, parentSessionNames) {
+      timed("retargetChildrenOfParents", projectPath, undefined, () => {
+        if (parentSessionNames.length === 0) return;
+        const placeholders = parentSessionNames.map(() => "?").join(", ");
+        const stmt = db.prepare(
+          `UPDATE sessions
+              SET target_branch = 'main', parent_session_name = NULL
+            WHERE project_path = ?
+              AND parent_session_name IN (${placeholders})`,
+        );
+        const info = stmt.run(projectPath, ...parentSessionNames);
+        if (info.changes > 0) cache.bump();
+      });
+    },
+    invalidateCache() {
+      cache.bump();
     },
   };
 }

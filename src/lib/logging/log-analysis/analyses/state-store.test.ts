@@ -76,6 +76,44 @@ describe("analyzeStateStore", () => {
     });
   });
 
+  it("surfaces write_queue.hold_budget_exceeded events as ranked findings with label evidence", () => {
+    const analysis = analyzeStateStore(
+      [
+        record({
+          level: "error",
+          module: "state-store.write-queue",
+          message: "state-store.write_queue.hold_budget_exceeded",
+          durationMs: undefined,
+          raw: { label: "createSession", holdMs: 14200, budgetMs: 500 },
+        }),
+        record({
+          level: "error",
+          module: "state-store.write-queue",
+          message: "state-store.write_queue.hold_budget_exceeded",
+          durationMs: undefined,
+          raw: { label: "createSession", holdMs: 9000, budgetMs: 500 },
+        }),
+      ],
+      { slowMs: 500, hotspotMs: 1000, top: 10 },
+    );
+
+    const finding = analysis.findings.find((f) => f.id.includes("hold-budget"));
+    expect(finding).toBeDefined();
+    expect(finding).toMatchObject({
+      category: "state-store",
+      severity: "high",
+    });
+    // Label + worst hold + budget + count are all evidence.
+    expect(finding?.evidence).toEqual(
+      expect.arrayContaining([
+        { label: "queueLabel", value: "createSession" },
+        { label: "maxHoldMs", value: 14200, unit: "ms" },
+        { label: "budgetMs", value: 500, unit: "ms" },
+        { label: "count", value: 2, unit: "count" },
+      ]),
+    );
+  });
+
   it("computes facade-vs-repo gaps within traces", () => {
     const analysis = analyzeStateStore(
       [

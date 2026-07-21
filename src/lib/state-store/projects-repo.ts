@@ -22,10 +22,27 @@ export interface ProjectInput {
 
 export interface ProjectsRepo {
   findByRootPath(rootPath: string): ProjectRow | null;
+  listRootPaths(): string[];
   listAll(): ProjectRow[];
   listArchived(): ProjectRow[];
   listPinned(): ProjectRow[];
   upsert(project: ProjectInput): void;
+  /**
+   * Focused single-column write of `mcp_overrides` (JSON, or NULL to clear).
+   * Preserves every sibling column (`agent_capability_overrides`,
+   * `archived`/`pinned`/`pin_order`) — the row is UPDATEd in place, never
+   * re-upserted from a full domain object, so an override edit never disturbs
+   * unrelated project state.
+   */
+  setMcpOverrides(rootPath: string, value: McpOverrides | undefined): void;
+  /**
+   * Focused single-column write of `agent_capability_overrides` (JSON, or NULL
+   * to clear). Preserves every sibling column, mirroring `setMcpOverrides`.
+   */
+  setAgentCapabilityOverrides(
+    rootPath: string,
+    value: AgentCapabilityOverrides | undefined,
+  ): void;
   setArchived(rootPath: string, value: boolean): void;
   setPinned(rootPath: string, value: boolean): void;
   reorderPinned(orderedRootPaths: string[]): void;
@@ -258,6 +275,9 @@ export function createProjectsRepo(db: Db): ProjectsRepo {
     "SELECT * FROM projects WHERE root_path = ? LIMIT 1",
   );
   const listAllStmt = db.prepare("SELECT * FROM projects ORDER BY created_at");
+  const listRootPathsStmt = db.prepare(
+    "SELECT root_path FROM projects ORDER BY created_at",
+  );
   const listArchivedStmt = db.prepare(
     "SELECT * FROM projects WHERE archived = 1 ORDER BY created_at",
   );
@@ -273,6 +293,16 @@ export function createProjectsRepo(db: Db): ProjectsRepo {
        mcp_overrides              = excluded.mcp_overrides,
        agent_capability_overrides = excluded.agent_capability_overrides,
        updated_at                 = datetime('now')`,
+  );
+  const setMcpOverridesStmt = db.prepare(
+    `UPDATE projects
+     SET mcp_overrides = ?, updated_at = datetime('now')
+     WHERE root_path = ?`,
+  );
+  const setAgentCapabilityOverridesStmt = db.prepare(
+    `UPDATE projects
+     SET agent_capability_overrides = ?, updated_at = datetime('now')
+     WHERE root_path = ?`,
   );
   const setArchivedStmt = db.prepare(
     `UPDATE projects
@@ -303,6 +333,12 @@ export function createProjectsRepo(db: Db): ProjectsRepo {
         const row: unknown = findStmt.get(rootPath);
         if (row === undefined) return null;
         return rowToDomain(row);
+      });
+    },
+    listRootPaths() {
+      return timed("listRootPaths", undefined, () => {
+        const rows = listRootPathsStmt.all() as Array<{ root_path: string }>;
+        return rows.map((row) => row.root_path);
       });
     },
     listAll() {
@@ -342,6 +378,24 @@ export function createProjectsRepo(db: Db): ProjectsRepo {
           mcp_overrides: mcpJson,
           agent_capability_overrides: capJson,
         });
+      });
+    },
+    setMcpOverrides(rootPath, value) {
+      timed("setMcpOverrides", rootPath, () => {
+        const json =
+          value === undefined
+            ? null
+            : stableStringify(mcpOverridesSchema.parse(value));
+        setMcpOverridesStmt.run(json, rootPath);
+      });
+    },
+    setAgentCapabilityOverrides(rootPath, value) {
+      timed("setAgentCapabilityOverrides", rootPath, () => {
+        const json =
+          value === undefined
+            ? null
+            : stableStringify(agentCapabilityOverridesSchema.parse(value));
+        setAgentCapabilityOverridesStmt.run(json, rootPath);
       });
     },
     setArchived(rootPath, value) {

@@ -1,15 +1,17 @@
 import { Immer } from "immer";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import { managerStateSchema } from "@/lib/projects/schemas";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createAccessors } from "./accessors";
 import { diffChangedConversationColumns } from "./conversation-row-codec";
+import {
+  createConversationMachineSnapshotsRepo,
+  type ConversationSnapshotOwner,
+} from "./conversation-machine-snapshots-repo";
 import { createConversationsRepo } from "./conversations-repo";
 import { createDocumentCommentsRepo } from "./document-comments-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
@@ -20,14 +22,13 @@ import { createProjectsRepo } from "./projects-repo";
 import { createReferenceDocumentsRepo } from "./reference-documents-repo";
 import { createSessionMarkdownDocumentsRepo } from "./session-markdown-documents-repo";
 import { createSetters } from "./setters";
-import { revalidateTrusted } from "../shared/parse-trusted";
 import { createSessionsRepo, diffChangedSessionColumns } from "./sessions-repo";
 import { getDb } from "./state-db";
-import { createStateAggregate, type StateAggregate } from "./state-aggregate";
 import type { AllRepos, Db, StateStoreCore, StateStoreDeps } from "./schemas";
 import {
   tryWithWriteQueue as sharedTryWithWriteQueue,
   withWriteQueue as sharedWithWriteQueue,
+  withWriteQueueSync as sharedWithWriteQueueSync,
   type WriteQueue,
 } from "./write-queue";
 
@@ -125,6 +126,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     deps.writeQueue ??
     ({
       withWriteQueue: sharedWithWriteQueue,
+      withWriteQueueSync: sharedWithWriteQueueSync,
       tryWithWriteQueue: sharedTryWithWriteQueue,
       _resetForTesting: () => {},
     } satisfies WriteQueue);
@@ -135,6 +137,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     conversations: deps.repos?.conversations ?? createConversationsRepo(db),
     projectConversations:
       deps.repos?.projectConversations ?? createProjectConversationsRepo(db),
+    conversationMachineSnapshots:
+      deps.repos?.conversationMachineSnapshots ??
+      createConversationMachineSnapshotsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
     sessionMarkdownDocuments:
@@ -152,54 +157,15 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       createGraphWorkflowExecutionsRepo(db),
   };
 
-  const aggregate: StateAggregate =
-    deps.aggregate ?? createStateAggregate({ db, ...repos });
+  const core: StateStoreCore = { db, writeQueue, repos };
 
-  const core: StateStoreCore = { db, writeQueue, repos, aggregate };
-
-  let deprecatedExportWarned = false;
-  function warnDeprecatedExport(name: string): void {
-    if (deprecatedExportWarned) return;
-    deprecatedExportWarned = true;
-    logger.warn("state.deprecated_export.used", { name });
-  }
-
-  function cloneAndValidate(snapshot: ManagerState): ManagerState {
-    return revalidateTrusted(managerStateSchema, structuredClone(snapshot));
-  }
-
-  /**
-   * @deprecated Use `mutateState` instead — direct `writeState` calls bypass the
-   * write queue and can cause lost updates. Routed through `diffAndCommit`.
-   */
-  async function writeState(
-    state: ManagerState,
-    label?: string,
-  ): Promise<void> {
-    warnDeprecatedExport("writeState");
-    return writeQueue.withWriteQueue(
-      label ?? "writeState.deprecated",
-      async () => {
-        const snapshot = aggregate.readAll();
-        aggregate.diffAndCommit(snapshot, managerStateSchema.parse(state));
-      },
-    );
-  }
-
-  async function mutateState<T = void>(
-    label: string,
-    mutate: (state: ManagerState) => T | Promise<T>,
-  ): Promise<T> {
-    return writeQueue.withWriteQueue(label, async () =>
-      timed(logger, "state.mutate", { label }, async () => {
-        const snapshot = aggregate.readAll();
-        const mutated = cloneAndValidate(snapshot);
-        const result = await mutate(mutated);
-        aggregate.diffAndCommit(snapshot, mutated);
-        return result;
-      }),
-    );
-  }
+  // Timing logger for every focused `timed()` mutation wrapper (the generic
+  // `mutateSession`/`mutateConversation`/`mutateProjectConversation`/
+  // `createSessionConversation` paths and the snapshot-sidecar seams). Injectable
+  // so the critical-section ordering test can assert the `state.mutate`
+  // completion log is emitted only after the write-queue callback releases;
+  // defaults to the module logger in production.
+  const storeLogger: Logger = deps.logger ?? logger;
 
   /**
    * Focused single-session mutation. Loads only the target session and its two
@@ -221,8 +187,13 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     label: string,
     mutate: (session: SessionState) => T | Promise<T>,
   ): Promise<T> {
-    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
-      timed(logger, "state.mutate", { label, sessionName }, async () => {
+    // `timed` wraps the queue CALL, not the callback: its completion/error log is
+    // a synchronous `appendFileSync` in the production logger, so nesting it
+    // inside the callback would emit that log with the write lock still held
+    // (no-slow-work-in-critical-section). Awaiting the queue here defers the
+    // timing emit until after the callback's critical section releases.
+    return timed(storeLogger, "state.mutate", { label, sessionName }, () =>
+      writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () => {
         const baseSession = repos.sessions.findByKey(projectPath, sessionName);
         if (!baseSession) {
           throw new Error(
@@ -340,12 +311,15 @@ export function createStateStore(deps: StateStoreDeps = {}) {
         mutate,
       );
     }
-    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
-      timed(
-        logger,
-        "state.mutate",
-        { label, projectPath, sessionName, conversationId },
-        async () => {
+    // `timed` wraps the queue CALL, not the callback (see `mutateSession`): the
+    // completion log is synchronous `appendFileSync`, so it must fire after the
+    // critical section releases, never inside it.
+    return timed(
+      storeLogger,
+      "state.mutate",
+      { label, projectPath, sessionName, conversationId },
+      () =>
+        writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () => {
           const base = repos.conversations.findByKey(
             projectPath,
             sessionName,
@@ -375,8 +349,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
             now,
           );
           return result;
-        },
-      ),
+        }),
     );
   }
 
@@ -411,13 +384,15 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     label: string,
     mutate: (conversation: ConversationState) => T | Promise<T>,
   ): Promise<T> {
-    return writeQueue.withWriteQueue(
-      `${label}[project::${conversationId}]`,
+    // `timed` wraps the queue CALL, not the callback (see `mutateSession`): the
+    // completion log is synchronous `appendFileSync` and must fire after release.
+    return timed(
+      storeLogger,
+      "state.mutate",
+      { label, projectPath, conversationId },
       () =>
-        timed(
-          logger,
-          "state.mutate",
-          { label, projectPath, conversationId },
+        writeQueue.withWriteQueue(
+          `${label}[project::${conversationId}]`,
           async () => {
             const conversation = repos.projectConversations.findByKey(
               projectPath,
@@ -451,13 +426,15 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     sessionName: string,
     build: (sequenceNumber: number) => ConversationState,
   ): Promise<ConversationState> {
-    return writeQueue.withWriteQueue(
-      `createConversation[${sessionName}]`,
-      async () =>
-        timed(
-          logger,
-          "state.mutate",
-          { label: "createConversation", projectPath, sessionName },
+    // `timed` wraps the queue CALL, not the callback (see `mutateSession`): the
+    // completion log is synchronous `appendFileSync` and must fire after release.
+    return timed(
+      storeLogger,
+      "state.mutate",
+      { label: "createConversation", projectPath, sessionName },
+      () =>
+        writeQueue.withWriteQueue(
+          `createConversation[${sessionName}]`,
           async () => {
             const session = repos.sessions.findByKey(projectPath, sessionName);
             if (!session) {
@@ -480,63 +457,101 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
-  async function getOrCreateProject(
-    projectPath: string,
-  ): Promise<ProjectState> {
-    return mutateState("getOrCreateProject", (state) => {
-      const existing = state.projects[projectPath];
-      if (existing) return existing;
-      const project: ProjectState = {
-        rootPath: projectPath,
-        sessions: {},
-      };
-      state.projects[projectPath] = project;
-      return project;
-    });
+  /**
+   * Read one conversation's persisted resume-token snapshot from the
+   * owner-discriminated sidecar. A point read keyed by the composite
+   * `(owner, conversation_id)` primary key — it never enters the write queue, so
+   * it never contends with writers (queue callbacks stay reads-free per Design 3).
+   */
+  function getConversationMachineSnapshot(
+    owner: ConversationSnapshotOwner,
+    conversationId: string,
+  ): unknown | null {
+    const record = repos.conversationMachineSnapshots.get(
+      owner,
+      conversationId,
+    );
+    return record === null ? null : record.snapshot;
   }
 
   /**
-   * @deprecated Use `mutateSession` instead — this function replaces the entire
-   * session object, which can overwrite concurrent changes.
+   * Upsert one conversation's resume-token snapshot into the sidecar. A short
+   * focused write: the queue callback holds only the single-row upsert — no I/O,
+   * no external await, no O(total-state) work — so the write-queue hold stays
+   * within budget.
+   *
+   * `timed` wraps the queue CALL, not the queue callback: its completion/error
+   * log is a synchronous `appendFileSync` in the production logger, so nesting it
+   * inside the callback would emit that log with the write lock still held,
+   * violating `no-slow-work-in-critical-section`. Because the write queue calls
+   * `release()` in its `finally` before `withWriteQueueSync` resolves, awaiting it
+   * here defers the timing emit until after the lock is released.
    */
-  async function updateSession(
-    projectPath: string,
-    session: SessionState,
+  async function upsertConversationMachineSnapshot(
+    owner: ConversationSnapshotOwner,
+    conversationId: string,
+    snapshot: unknown,
   ): Promise<void> {
-    warnDeprecatedExport("updateSession");
-    return mutateState("updateSession.deprecated", (state) => {
-      if (!state.projects[projectPath]) {
-        state.projects[projectPath] = {
-          rootPath: projectPath,
-          sessions: {},
-        };
-      }
-      state.projects[projectPath]!.sessions[session.sessionName] = session;
-    });
+    await timed(
+      storeLogger,
+      "state.mutate",
+      { label: "conversationSnapshot.upsert", conversationId },
+      () =>
+        writeQueue.withWriteQueueSync(
+          `conversationSnapshot.upsert[${owner}::${conversationId}]`,
+          () => {
+            repos.conversationMachineSnapshots.upsert(
+              owner,
+              conversationId,
+              snapshot,
+              new Date().toISOString(),
+            );
+          },
+        ),
+    );
   }
 
-  async function removeSession(
-    projectPath: string,
-    sessionName: string,
+  /**
+   * Delete one conversation's sidecar snapshot row. Parent-row deletes already
+   * cascade their sidecar row in the same transaction; this serves the explicit
+   * `clearConversationSnapshot` path.
+   *
+   * Timing is wrapped OUTSIDE the queue call for the same reason as the upsert
+   * above: the completion log must not perform filesystem I/O while the write
+   * lock is held.
+   */
+  async function deleteConversationMachineSnapshot(
+    owner: ConversationSnapshotOwner,
+    conversationId: string,
   ): Promise<void> {
-    return mutateState("removeSession", (state) => {
-      const project = state.projects[projectPath];
-      if (!project) return;
-      delete project.sessions[sessionName];
-    });
+    await timed(
+      storeLogger,
+      "state.mutate",
+      { label: "conversationSnapshot.delete", conversationId },
+      () =>
+        writeQueue.withWriteQueueSync(
+          `conversationSnapshot.delete[${owner}::${conversationId}]`,
+          () => {
+            repos.conversationMachineSnapshots.deleteByConversation(
+              owner,
+              conversationId,
+            );
+          },
+        ),
+    );
   }
 
   const accessors = createAccessors(core);
-  const setters = createSetters(core, { mutateSession });
+  const setters = createSetters(core, { mutateSession }, storeLogger);
 
   return {
-    readState: accessors.readState,
-    writeState,
-    mutateState,
     mutateSession,
     mutateConversation,
     mutateProjectConversation,
     createSessionConversation,
+    getConversationMachineSnapshot,
+    upsertConversationMachineSnapshot,
+    deleteConversationMachineSnapshot,
     getProjectSessions: accessors.getProjectSessions,
     getProjectSessionListItems: accessors.getProjectSessionListItems,
     getSession: accessors.getSession,
@@ -546,6 +561,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getProjectConversation: accessors.getProjectConversation,
     getProjectConversations: accessors.getProjectConversations,
     listAllProjectConversations: accessors.listAllProjectConversations,
+    listConversationIdentities: accessors.listConversationIdentities,
+    listSessionConversationListItems:
+      accessors.listSessionConversationListItems,
     getSpawnedSessionStatuses: accessors.getSpawnedSessionStatuses,
     getReferenceDocuments: accessors.getReferenceDocuments,
     getSessionMarkdownDocuments: accessors.getSessionMarkdownDocuments,
@@ -555,6 +573,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getSessionDocumentComments: accessors.getSessionDocumentComments,
     getDocumentCommentInScope: accessors.getDocumentCommentInScope,
     getProjectMcpOverrides: accessors.getProjectMcpOverrides,
+    getProjectAgentCapabilityOverrides:
+      accessors.getProjectAgentCapabilityOverrides,
+    listProjectPaths: accessors.listProjectPaths,
     getArchivedProjects: accessors.getArchivedProjects,
     getPinnedProjects: accessors.getPinnedProjects,
     getGraphWorkflowEventsTail: accessors.getGraphWorkflowEventsTail,
@@ -565,9 +586,22 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       accessors.listActiveGraphWorkflowExecutions,
     listArchivedGraphWorkflowExecutions:
       accessors.listArchivedGraphWorkflowExecutions,
-    getOrCreateProject,
-    updateSession,
-    removeSession,
+    createSessionRow: setters.createSessionRow,
+    deleteSessionRow: setters.deleteSessionRow,
+    retargetChildrenToMain: setters.retargetChildrenToMain,
+    applyFusedSessionDelete: setters.applyFusedSessionDelete,
+    deleteProjectRow: setters.deleteProjectRow,
+    mutateProjectMcpOverrides: setters.mutateProjectMcpOverrides,
+    mutateProjectAgentCapabilityOverrides:
+      setters.mutateProjectAgentCapabilityOverrides,
+    mutateSessionMcpOverrides: setters.mutateSessionMcpOverrides,
+    mutateConversationMcpOverrides: setters.mutateConversationMcpOverrides,
+    mutateSessionAgentCapabilityOverrides:
+      setters.mutateSessionAgentCapabilityOverrides,
+    mutateConversationAgentCapabilityOverrides:
+      setters.mutateConversationAgentCapabilityOverrides,
+    mutateProjectConversationAgentCapabilityOverrides:
+      setters.mutateProjectConversationAgentCapabilityOverrides,
     setSessionArchived: setters.setSessionArchived,
     setSessionTddEnabled: setters.setSessionTddEnabled,
     setSessionFinished: setters.setSessionFinished,

@@ -20,6 +20,7 @@ const logAnalysisFindingSchema = z.object({
     "client-timing",
     "error-correlation",
     "instrumentation-gap",
+    "convention-violation",
     "regression",
   ]),
   title: z.string(),
@@ -57,6 +58,11 @@ export const agentLogAnalysisReportSchema = z.object({
   clientTiming: unknownObjectSchema,
   errorCorrelation: unknownObjectSchema,
   instrumentationGaps: z.array(logAnalysisFindingSchema),
+  budgets: z.object({
+    config: unknownObjectSchema,
+    violationCount: z.number().int().nonnegative(),
+    violations: z.array(unknownObjectSchema),
+  }),
   artifacts: z.array(unknownObjectSchema),
 });
 

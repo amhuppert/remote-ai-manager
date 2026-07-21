@@ -250,6 +250,7 @@ const userInputGateService = createUserInputGateService({
   mutateActive: executionRepository.mutateActive,
   publishUserInputPending: eventPublisher.publishUserInputPending,
   publishUserInputResolved: eventPublisher.publishUserInputResolved,
+  deliver: eventPublisher.deliver,
   sendConversationEvent,
   now: () => new Date().toISOString(),
 });

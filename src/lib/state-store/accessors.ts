@@ -9,10 +9,15 @@ import {
 import { sessionListItemSchema } from "@/lib/sessions/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type {
+  ConversationIdentity,
+  ConversationListItemProjection,
+} from "./conversations-repo";
+import type { SessionListItemProjection } from "./sessions-repo";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
 import type { SessionMarkdownDocument } from "@/lib/documents/schemas";
+import type { AgentCapabilityOverrides } from "@/lib/agent-capabilities/schemas";
 import type { McpOverrides } from "@/lib/mcp/schemas";
-import type { ManagerState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionListItem, SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
@@ -22,6 +27,19 @@ import type { StateStoreCore } from "./schemas";
 const logger = createLogger("state-store");
 
 const STATE_READ_TIMING_LOG_THRESHOLD_MS = 5;
+
+/**
+ * List-item-tier projection of one session together with its conversations,
+ * both narrowed to the fields list surfaces render. Serves the cross-project
+ * list surfaces (autocomplete list, active-conversations feed) and startup
+ * envelope recovery, none of which needs any conversation's full state or the
+ * session's heavy blob columns.
+ */
+export interface SessionConversationListItem {
+  projectPath: string;
+  session: SessionListItemProjection;
+  conversations: ConversationListItemProjection[];
+}
 
 interface ReadTimingPayload {
   accessor: string;
@@ -41,11 +59,7 @@ function emitReadTiming(
 }
 
 export function createAccessors(core: StateStoreCore) {
-  const { repos, aggregate } = core;
-
-  async function readState(): Promise<ManagerState> {
-    return aggregate.readAll();
-  }
+  const { repos } = core;
 
   async function getSession(
     projectPath: string,
@@ -271,6 +285,58 @@ export function createAccessors(core: StateStoreCore) {
     }
   }
 
+  /**
+   * Identity-tier listing of every session-scoped conversation: key columns
+   * plus `status`, no blobs and no heavy parse. Backs callers that need
+   * conversation identity tuples across the store (e.g. MCP runtime-target
+   * listing) without paying the whole-state read cost.
+   */
+  async function listConversationIdentities(): Promise<ConversationIdentity[]> {
+    const start = performance.now();
+    try {
+      return repos.conversations.findAllIdentities();
+    } finally {
+      emitReadTiming(start, { accessor: "listConversationIdentities" });
+    }
+  }
+
+  /**
+   * List-item-tier read of every session-scoped session with its conversations,
+   * across the whole store, each projected to the fields list surfaces render.
+   * Two focused list-item repo reads (sessions, then conversations) joined in
+   * memory — never `readState()`. Backs the cross-project conversation lists
+   * (autocomplete list, active-conversations feed) and startup envelope
+   * recovery. Sessions with no conversations appear with an empty array.
+   */
+  async function listSessionConversationListItems(): Promise<
+    SessionConversationListItem[]
+  > {
+    const start = performance.now();
+    try {
+      const sessionRows = repos.sessions.findAllListItems();
+      const convRows = repos.conversations.findAllListItems();
+      const convsBySession = new Map<
+        string,
+        ConversationListItemProjection[]
+      >();
+      for (const conv of convRows) {
+        const key = `${conv.projectPath}\u0000${conv.sessionName}`;
+        const arr = convsBySession.get(key);
+        if (arr) arr.push(conv);
+        else convsBySession.set(key, [conv]);
+      }
+      return sessionRows.map(({ projectPath, session }) => ({
+        projectPath,
+        session,
+        conversations:
+          convsBySession.get(`${projectPath}\u0000${session.sessionName}`) ??
+          [],
+      }));
+    } finally {
+      emitReadTiming(start, { accessor: "listSessionConversationListItems" });
+    }
+  }
+
   async function listAllProjectConversations(): Promise<
     { projectPath: string; conversation: ConversationState }[]
   > {
@@ -456,6 +522,40 @@ export function createAccessors(core: StateStoreCore) {
     }
   }
 
+  /**
+   * Detail-tier read of one project's agent-capability overrides. Sibling of
+   * `getProjectMcpOverrides`; backs the agent-capabilities resolution chain,
+   * which needs a single project's overrides rather than the whole state.
+   */
+  async function getProjectAgentCapabilityOverrides(
+    projectPath: string,
+  ): Promise<AgentCapabilityOverrides | undefined> {
+    const start = performance.now();
+    try {
+      const project = repos.projects.findByRootPath(projectPath);
+      return project?.agentCapabilityOverrides;
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getProjectAgentCapabilityOverrides",
+        projectPath,
+      });
+    }
+  }
+
+  /**
+   * Identity-tier listing of every project's root path (key column only, no
+   * override blobs). Backs cross-project fanouts that need to enumerate projects
+   * without paying the whole-state read.
+   */
+  async function listProjectPaths(): Promise<readonly string[]> {
+    const start = performance.now();
+    try {
+      return repos.projects.listRootPaths();
+    } finally {
+      emitReadTiming(start, { accessor: "listProjectPaths" });
+    }
+  }
+
   async function getArchivedProjects(): Promise<Set<string>> {
     const start = performance.now();
     try {
@@ -566,7 +666,6 @@ export function createAccessors(core: StateStoreCore) {
   }
 
   return {
-    readState,
     getSession,
     getProjectSessions,
     getProjectSessionListItems,
@@ -576,6 +675,8 @@ export function createAccessors(core: StateStoreCore) {
     getProjectConversation,
     getProjectConversations,
     listAllProjectConversations,
+    listConversationIdentities,
+    listSessionConversationListItems,
     getSpawnedSessionStatuses,
     getReferenceDocuments,
     getSessionMarkdownDocuments,
@@ -584,6 +685,8 @@ export function createAccessors(core: StateStoreCore) {
     getSessionDocumentComments,
     getDocumentCommentInScope,
     getProjectMcpOverrides,
+    getProjectAgentCapabilityOverrides,
+    listProjectPaths,
     getArchivedProjects,
     getPinnedProjects,
     getGraphWorkflowEventsTail,

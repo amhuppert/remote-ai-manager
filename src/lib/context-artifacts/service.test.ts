@@ -339,10 +339,10 @@ describe("createCompactionService — full run", () => {
     const call = captured[0];
     expect(call?.conversationId).not.toBe("convo-1");
     expect(call?.actorInput).toBeDefined();
-    // Marked transient so conversation-manager teardown never drains a queue
-    // or persists a snapshot for the synthetic lane (no ConversationState
+    // Constructed ephemeral so the injected persistence adapter makes every
+    // durable side effect inert for the synthetic lane (no ConversationState
     // record exists for it).
-    expect(call?.actorInput?.transient).toBe(true);
+    expect(call?.actorInput?.persistence).toBe("ephemeral");
     expect(call?.actorInput?.conversation.agentBackend).toBe("claude");
     expect(call?.actorInput?.conversation.transcriptPath).toBeNull();
     expect(call?.outputFormat?.type).toBe("json_schema");

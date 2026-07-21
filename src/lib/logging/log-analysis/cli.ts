@@ -16,6 +16,11 @@ import {
 } from "./markdown";
 import { parseServerLogLines } from "./parser";
 import { buildLogAnalysisReport, type ReportParseStats } from "./report";
+import {
+  DEFAULT_BUDGET_CONFIG,
+  parseBudgetConfig,
+  type BudgetConfig,
+} from "./budgets";
 import type {
   AgentLogAnalysisReport,
   AgentLogComparisonReport,
@@ -57,9 +62,14 @@ interface ParsedCliOptions {
   markdownOutPath?: string;
   speedscopeOutPath?: string;
   pretty: boolean;
+  assertBudgets: boolean;
+  budgetsPath: string;
   filters: LogAnalysisFilters;
   thresholds: LogAnalysisThresholds;
 }
+
+/** Default location of the checked-in budget config (beside the CLI entry). */
+const DEFAULT_BUDGETS_PATH = "scripts/log-budgets.json";
 
 const HELP_TEXT = `Usage: bun run logs:analyze -- <command> [options]
 
@@ -89,6 +99,9 @@ Options:
   --hotspot-ms <n>
   --include-self
   --pretty
+  --budgets <path>        Budget config (default: scripts/log-budgets.json)
+  --assert-budgets        Exit non-zero if any budget ceiling is exceeded
+                          (report mode stays advisory without this flag)
 `;
 
 function writeStderr(runtime: LogAnalysisCliRuntime, message: string): void {
@@ -138,6 +151,8 @@ function parseCliOptions(args: readonly string[]): ParsedCliOptions | "help" {
       "hotspot-ms": { type: "string" },
       "include-self": { type: "boolean", default: false },
       pretty: { type: "boolean", default: false },
+      "assert-budgets": { type: "boolean", default: false },
+      budgets: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -178,6 +193,8 @@ function parseCliOptions(args: readonly string[]): ParsedCliOptions | "help" {
       ? { speedscopeOutPath: parsed.values["speedscope-out"] }
       : {}),
     pretty: parsed.values.pretty === true,
+    assertBudgets: parsed.values["assert-budgets"] === true,
+    budgetsPath: parsed.values.budgets ?? DEFAULT_BUDGETS_PATH,
     filters: {
       ...(dateOptionMs("--since", parsed.values.since) !== undefined
         ? { sinceMs: dateOptionMs("--since", parsed.values.since) }
@@ -226,6 +243,30 @@ async function writeText(
     return;
   }
   await writeFile(filePath, content);
+}
+
+/**
+ * Load the checked-in budget config, falling back to the baked-in default so
+ * the analyzer always has budgets even when the file is absent or unreadable
+ * (advisory reporting must never crash on a missing config). A malformed file
+ * is announced on stderr and treated as "use defaults".
+ */
+async function loadBudgetConfig(
+  runtime: LogAnalysisCliRuntime,
+  budgetsPath: string,
+): Promise<BudgetConfig> {
+  try {
+    const raw = await readText(runtime, budgetsPath);
+    return parseBudgetConfig(JSON.parse(raw));
+  } catch (err) {
+    writeStderr(
+      runtime,
+      `[logs:analyze] budget config unavailable at ${budgetsPath} (${getErrorMessage(
+        err,
+      )}); using defaults`,
+    );
+    return DEFAULT_BUDGET_CONFIG;
+  }
 }
 
 async function resolveInputPath(
@@ -396,17 +437,29 @@ async function runReport(
     return 3;
   }
 
+  const budgetConfig = await loadBudgetConfig(runtime, options.budgetsPath);
   const report = buildLogAnalysisReport({
     records: parsed.records,
     parseStats: parsed.parseStats,
     filters: options.filters,
     thresholds: options.thresholds,
+    budgetConfig,
     input: { serverLogPath: resolved.path },
     generatedAt: runtime.now?.() ?? new Date().toISOString(),
     clientLogRaw,
   });
   await emitOutput(runtime, options, report, renderLogAnalysisMarkdown(report));
   await maybeWriteSpeedscope({ runtime, options, rawLog });
+
+  // Advisory by default: the report always reports violations, but only
+  // `--assert-budgets` turns them into a non-zero exit for CI gating.
+  if (options.assertBudgets && report.budgets.violationCount > 0) {
+    writeStderr(
+      runtime,
+      `[logs:analyze] budget assertion failed: ${report.budgets.violationCount} violation(s) — see budgets.violations`,
+    );
+    return 1;
+  }
   return 0;
 }
 

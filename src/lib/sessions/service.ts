@@ -17,7 +17,16 @@ import { fastRemoveWorktree as defaultFastRemoveWorktree } from "../git/worktree
 import { buildConversation } from "@/lib/conversations/build-conversation";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode, SessionState } from "@/lib/sessions/schemas";
-import { readState, mutateState } from "../state-store";
+import {
+  getSession,
+  getProjectSessionListItems,
+  listProjectPaths,
+  createSessionRow,
+  deleteSessionRow,
+  retargetChildrenToMain,
+  applyFusedSessionDelete,
+  deleteProjectRow,
+} from "../state-store";
 import { createLogger, timed } from "../logging";
 import type { BulkSessionResult } from "@/lib/sessions/schemas";
 import { readRepoConfig } from "../projects/repo-config";
@@ -107,8 +116,22 @@ export interface SessionDeps {
    */
   ensureCcArtifactsExcluded(worktreePath: string): Promise<void>;
   fastRemoveWorktree: typeof defaultFastRemoveWorktree;
-  readState: typeof readState;
-  mutateState: typeof mutateState;
+  /** Detail-tier read of one session (existence check + full slice). */
+  getSession: typeof getSession;
+  /** List-item-tier read of a project's sessions (name-set + iteration). */
+  getProjectSessionListItems: typeof getProjectSessionListItems;
+  /** Identity-tier list of project root paths (project existence check). */
+  listProjectPaths: typeof listProjectPaths;
+  /** Focused session insert (+ initial conversations/refs). */
+  createSessionRow: typeof createSessionRow;
+  /** Focused single-session delete (provisioning rollback). */
+  deleteSessionRow: typeof deleteSessionRow;
+  /** Focused retarget of a parent's direct children onto main. */
+  retargetChildrenToMain: typeof retargetChildrenToMain;
+  /** Focused fused delete (retarget children + delete named sessions). */
+  applyFusedSessionDelete: typeof applyFusedSessionDelete;
+  /** Focused project-row delete (FK cascade removes sessions/conversations). */
+  deleteProjectRow: typeof deleteProjectRow;
   readConfig: typeof readConfig;
   readRepoConfig: typeof readRepoConfig;
   stopAllForSession: typeof stopAllForSession;
@@ -207,8 +230,14 @@ const defaultSessionDeps: SessionDeps = {
   ensureCcArtifactsExcluded: (worktreePath) =>
     defaultEnsureCcArtifactsExcluded(worktreePath),
   fastRemoveWorktree: defaultFastRemoveWorktree,
-  readState,
-  mutateState,
+  getSession,
+  getProjectSessionListItems,
+  listProjectPaths,
+  createSessionRow,
+  deleteSessionRow,
+  retargetChildrenToMain,
+  applyFusedSessionDelete,
+  deleteProjectRow,
   readConfig,
   readRepoConfig,
   stopAllForSession,
@@ -301,8 +330,14 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     gitClient,
     ensureCcArtifactsExcluded,
     fastRemoveWorktree,
-    readState,
-    mutateState,
+    getSession,
+    getProjectSessionListItems,
+    listProjectPaths,
+    createSessionRow,
+    deleteSessionRow,
+    retargetChildrenToMain,
+    applyFusedSessionDelete,
+    deleteProjectRow,
     readConfig,
     readRepoConfig,
     stopAllForSession,
@@ -421,8 +456,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     sessionName: string,
     opts: ProvisionSessionOptions,
   ): Promise<SessionState> {
-    const stateAtEntry = await readState();
-    if (stateAtEntry.projects[projectPath]?.sessions[sessionName]) {
+    if (await getSession(projectPath, sessionName)) {
       throw new Error(
         `Session "${sessionName}" already exists in this project`,
       );
@@ -475,16 +509,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     };
 
     // Persist to state first — reconciliation will see this session and skip
-    // the worktree directory when it appears on disk moments later.
-    await mutateState("createSession", (state) => {
-      if (!state.projects[projectPath]) {
-        state.projects[projectPath] = {
-          rootPath: projectPath,
-          sessions: {},
-        };
-      }
-      state.projects[projectPath]!.sessions[sessionName] = session;
-    });
+    // the worktree directory when it appears on disk moments later. Focused
+    // insert: the write-queue hold is O(1) in total-state, and the slow
+    // provisioning below (git worktree add, init script) runs OUTSIDE any queue
+    // callback (no-slow-work-in-critical-section).
+    await createSessionRow(projectPath, session);
 
     try {
       logger.info("session.create", {
@@ -535,9 +564,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         // files from the parent into the new worktree. Falls back to the
         // project root when branched from the main branch (no parent session).
         const parentWorktreePath = opts.parentSessionName
-          ? ((await readState()).projects[projectPath]?.sessions[
-              opts.parentSessionName
-            ]?.worktreePath ?? projectPath)
+          ? ((await getSession(projectPath, opts.parentSessionName))
+              ?.worktreePath ?? projectPath)
           : projectPath;
 
         await timed(
@@ -569,12 +597,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
       // Rollback: remove the session from state since creation failed
       try {
-        await mutateState("rollbackSession", (state) => {
-          const project = state.projects[projectPath];
-          if (project) {
-            delete project.sessions[sessionName];
-          }
-        });
+        await deleteSessionRow(projectPath, sessionName, "rollbackSession");
       } catch {
         // ignore rollback errors
       }
@@ -664,10 +687,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       sessionName,
       async () => {
         // Ensure uniqueness within project
-        const state = await readState();
-        const project = state.projects[projectPath];
-        const existingNames = new Set(Object.keys(project?.sessions ?? {}));
-        if (existingNames.has(sessionName)) {
+        if (await getSession(projectPath, sessionName)) {
           throw new Error(
             `Session "${sessionName}" already exists in this project`,
           );
@@ -698,14 +718,13 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       parentSessionName?: string;
     },
   ): Promise<SessionState> {
-    const [baseName, state] = await Promise.all([
+    const [baseName, existingSessions] = await Promise.all([
       generateSessionName(instructions, projectPath),
-      readState(),
+      getProjectSessionListItems(projectPath),
     ]);
 
     // Ensure uniqueness within project
-    const project = state.projects[projectPath];
-    const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+    const existingNames = new Set(existingSessions.map((s) => s.sessionName));
     const sessionName = ensureUniqueName(baseName, existingNames);
 
     const session = await provisionSession(projectPath, sessionName, {
@@ -720,7 +739,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     let targetWorktreePath: string | undefined;
     const targetBranch = session.targetBranch ?? "main";
     if (targetBranch !== "main" && session.parentSessionName) {
-      const parentSession = project?.sessions[session.parentSessionName];
+      const parentSession = await getSession(
+        projectPath,
+        session.parentSessionName,
+      );
       targetWorktreePath = parentSession?.worktreePath;
     }
 
@@ -767,10 +789,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       input.name,
       async () => {
         // Ensure uniqueness within project
-        const state = await readState();
-        const project = state.projects[projectPath];
-        const existingNames = new Set(Object.keys(project?.sessions ?? {}));
-        if (existingNames.has(input.name)) {
+        if (await getSession(projectPath, input.name)) {
           throw new Error(
             `Session "${input.name}" already exists in this project`,
           );
@@ -803,9 +822,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       projectPath,
       PLANNER_SESSION_NAME,
       async () => {
-        const state = await readState();
-        const existing =
-          state.projects[projectPath]?.sessions[PLANNER_SESSION_NAME];
+        const existing = await getSession(projectPath, PLANNER_SESSION_NAME);
         if (existing) {
           return existing;
         }
@@ -826,17 +843,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     projectPath: string,
     parentSessionName: string,
   ): Promise<void> {
-    await mutateState("retargetOrphanedChildren", (state) => {
-      const project = state.projects[projectPath];
-      if (!project) return;
-
-      for (const session of Object.values(project.sessions)) {
-        if (session.parentSessionName === parentSessionName) {
-          session.targetBranch = "main";
-          session.parentSessionName = null;
-        }
-      }
-    });
+    await retargetChildrenToMain(projectPath, parentSessionName);
   }
 
   /**
@@ -844,7 +851,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    * backend runtimes, stop dev servers, remove the worktree directory (with
    * a manual-rm fallback if `git worktree remove` errors), purge transcripts,
    * and delete notification/job-record rows. Does NOT touch the JSON state
-   * tree — callers are responsible for the subsequent mutateState.
+   * tree — callers are responsible for the subsequent focused delete.
    */
   async function performSessionDeletionSideEffects(
     projectPath: string,
@@ -955,34 +962,16 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   }
 
   /**
-   * Apply a single whole-state mutation that retargets orphaned children of
-   * any deleted parent in `deletedSessionNames` and removes those sessions
-   * from the project. Idempotent and safe to call with sessions that no
-   * longer exist.
+   * Retarget the orphaned children of every deleted parent in
+   * `deletedSessionNames` and remove those sessions in one focused delete.
+   * Idempotent and safe to call with sessions that no longer exist.
    */
   async function applyFusedDeleteMutation(
     label: string,
     projectPath: string,
     deletedSessionNames: Iterable<string>,
   ): Promise<void> {
-    const deletedSet = new Set(deletedSessionNames);
-    if (deletedSet.size === 0) return;
-    await mutateState(label, (state) => {
-      const proj = state.projects[projectPath];
-      if (!proj) return;
-      for (const child of Object.values(proj.sessions)) {
-        if (
-          child.parentSessionName &&
-          deletedSet.has(child.parentSessionName)
-        ) {
-          child.targetBranch = "main";
-          child.parentSessionName = null;
-        }
-      }
-      for (const name of deletedSet) {
-        delete proj.sessions[name];
-      }
-    });
+    await applyFusedSessionDelete(projectPath, deletedSessionNames, label);
   }
 
   async function reconcileDeletedTicketSession(
@@ -1017,21 +1006,20 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     sessionName: string,
     expected?: ExpectedSessionIncarnation,
   ): Promise<DeleteSessionIfCurrentResult> {
-    const state = await readState();
-    const project = state.projects[projectPath];
-    if (!project) {
-      if (expected !== undefined) {
-        return { deleted: false, reason: "missing" };
-      }
-      throw new Error(`Project not found: ${projectPath}`);
-    }
-
-    const session = project.sessions[sessionName];
+    const session = await getSession(projectPath, sessionName);
     if (!session) {
       if (expected !== undefined) {
         return { deleted: false, reason: "missing" };
       }
-      throw new Error(`Session "${sessionName}" not found in project`);
+      // Preserve the original error's project-vs-session distinction: a missing
+      // session in an existing project is a session error; a missing project is
+      // a project error.
+      const projectExists = (await listProjectPaths()).includes(projectPath);
+      throw new Error(
+        projectExists
+          ? `Session "${sessionName}" not found in project`
+          : `Project not found: ${projectPath}`,
+      );
     }
     if (
       expected !== undefined &&
@@ -1107,9 +1095,9 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    *   notification/job cleanup) run sequentially: concurrent
    *   `git worktree remove` against the same parent repository races on
    *   `.git/config.lock` and fails.
-   * - All successful deletions are applied to JSON state via a single
-   *   `mutateState` at the end (see PERFORMANCE.md — bulk routes pay the
-   *   whole-state diff cost once per batch, not once per item).
+   * - All successful deletions are applied to state via a single focused
+   *   `applyFusedSessionDelete` at the end (see PERFORMANCE.md — bulk routes
+   *   pay one short write-queue hold per batch).
    * - A session that was not found is reported as a failure result and
    *   does not abort the rest of the batch.
    */
@@ -1117,9 +1105,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     projectPath: string,
     sessionNames: string[],
   ): Promise<BulkSessionResult[]> {
-    const state = await readState();
-    const project = state.projects[projectPath];
-    if (!project) {
+    if (!(await listProjectPaths()).includes(projectPath)) {
       throw new Error(`Project not found: ${projectPath}`);
     }
 
@@ -1127,7 +1113,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const succeeded: string[] = [];
 
     for (const sessionName of sessionNames) {
-      const session = project.sessions[sessionName];
+      const session = await getSession(projectPath, sessionName);
       if (!session) {
         results.push({
           sessionName,
@@ -1187,9 +1173,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   async function deleteProjectGated(
     projectPath: string,
   ): Promise<DeleteProjectResult> {
-    const state = await readState();
-    const project = state.projects[projectPath];
-    if (!project) {
+    if (!(await listProjectPaths()).includes(projectPath)) {
       throw new Error(`Project not found: ${projectPath}`);
     }
 
@@ -1209,7 +1193,9 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       });
     }
 
-    const sessionNames = Object.keys(project.sessions);
+    const sessionNames = (await getProjectSessionListItems(projectPath)).map(
+      (s) => s.sessionName,
+    );
     let sessionsRemoved = 0;
     for (const sessionName of sessionNames) {
       try {
@@ -1237,15 +1223,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     // removed here at project-delete granularity.
     const contextArtifactsRemoved = deleteContextArtifactsForScope(projectPath);
 
-    await mutateState("deleteProject", (state) => {
-      delete state.projects[projectPath];
-      state.archivedProjects = state.archivedProjects.filter(
-        (p) => p !== projectPath,
-      );
-      state.pinnedProjects = state.pinnedProjects.filter(
-        (p) => p !== projectPath,
-      );
-    });
+    // Focused project-row delete: the FK cascade removes the project's sessions
+    // (and their conversations/reference documents); archived/pinned membership
+    // is derived from the project row, so it drops with the row.
+    await deleteProjectRow(projectPath);
 
     // Ticket snapshot blobs live outside the DB, so the committed row cascade
     // cannot reach them. The ids were captured while the ticket rows existed;

@@ -96,6 +96,17 @@ export function renderLogAnalysisMarkdown(
   lines.push(`- Slow accessors: ${stateStore.slowAccessors?.length ?? 0}`);
   lines.push(`- Write queue groups: ${stateStore.writeQueue?.length ?? 0}`);
 
+  lines.push("", "## Budgets");
+  lines.push(`- Violations: ${report.budgets.violationCount}`);
+  for (const violation of report.budgets.violations.slice(0, 10)) {
+    lines.push(
+      `- ${value(violation["kind"])}: ${value(violation["subject"])} observed=${value(violation["observed"])} ${value(violation["unit"])} > ceiling=${value(violation["ceiling"])} ${value(violation["unit"])}`,
+    );
+  }
+  if (report.budgets.violationCount === 0) {
+    lines.push("- All observed metrics are within budget.");
+  }
+
   lines.push("", "## External Commands");
   for (const command of report.externalCommands.slice(0, 10)) {
     lines.push(

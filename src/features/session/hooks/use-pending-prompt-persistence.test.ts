@@ -12,6 +12,7 @@ import type { PromptEditorHandle } from "@/components/session/prompt/PromptEdito
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore } from "@/lib/state-store/store";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { createPendingPromptRouteHandlers } from "@/lib/prompt/route-handlers";
 
@@ -186,26 +187,34 @@ describe("usePendingPromptPersistence", () => {
     const db = _createTestDb({ inMemory: true });
     const store = createStateStore({ db, writeQueue: createWriteQueue() });
     const projectPath = "/projects/p";
-    await store.getOrCreateProject(projectPath);
-    await store.mutateState("seed", (state) => {
-      state.projects[projectPath]!.sessions.s = sessionStateSchema.parse({
-        sessionName: "s",
-        worktreePath: "/tmp/s",
-        branchName: "cc/s",
-        createdAt: "2026-07-13T12:00:00.000Z",
-        lastActivityAt: "2026-07-13T12:00:00.000Z",
-        conversations: [
-          {
-            id: "c",
-            transcriptPath: null,
-            status: "new",
-            promptCount: 0,
-            createdAt: "2026-07-13T12:00:00.000Z",
-            lastActivityAt: "2026-07-13T12:00:00.000Z",
-            pendingPromptText: "submitted draft",
+    seedWholeState(db, {
+      projects: {
+        [projectPath]: {
+          rootPath: projectPath,
+          sessions: {
+            s: sessionStateSchema.parse({
+              sessionName: "s",
+              worktreePath: "/tmp/s",
+              branchName: "cc/s",
+              createdAt: "2026-07-13T12:00:00.000Z",
+              lastActivityAt: "2026-07-13T12:00:00.000Z",
+              conversations: [
+                {
+                  id: "c",
+                  transcriptPath: null,
+                  status: "new",
+                  promptCount: 0,
+                  createdAt: "2026-07-13T12:00:00.000Z",
+                  lastActivityAt: "2026-07-13T12:00:00.000Z",
+                  pendingPromptText: "submitted draft",
+                },
+              ],
+            }),
           },
-        ],
-      });
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
     });
     const pendingHandlers = createPendingPromptRouteHandlers({
       resolveProjectPath: async () => projectPath,

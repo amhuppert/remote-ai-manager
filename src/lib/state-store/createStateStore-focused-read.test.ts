@@ -17,7 +17,6 @@ import { createConversationsRepo } from "./conversations-repo";
 import { createReferenceDocumentsRepo } from "./reference-documents-repo";
 import { createStateStore } from "./store";
 import { createWriteQueue } from "./write-queue";
-import type { StateAggregate } from "./state-aggregate";
 import { createConversationService } from "../conversations/service";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
@@ -97,28 +96,13 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.readAll must NOT be called from getConversation focused-read path",
-        );
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.diffAndCommit must NOT be called from getConversation focused-read path",
-        );
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const found = await store.getConversation("/proj-a", "alpha", "conv-1");
 
     expect(found).not.toBeNull();
     expect(found?.id).toBe("conv-1");
     expect(found?.summary).toBe("hello");
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("getSessionConversations also bypasses the aggregate", async () => {
@@ -150,21 +134,10 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error("readAll must not be called");
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error("diffAndCommit must not be called");
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const list = await store.getSessionConversations("/proj-a", "alpha");
     expect(list).toHaveLength(1);
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("createSessionConversation inserts via the conversations repo without invoking aggregate.readAll/diffAndCommit, numbers by existing count, and touches the session", async () => {
@@ -197,20 +170,7 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error(
-          "readAll must NOT be called from createSessionConversation",
-        );
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error(
-          "diffAndCommit must NOT be called from createSessionConversation",
-        );
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const created = await store.createSessionConversation(
       "/proj-a",
@@ -229,8 +189,6 @@ describe("createStateStore — focused read DI guard", () => {
 
     // Numbered by existing count (1) + 1, never touching the aggregate.
     expect(created.name).toBe("alpha 2");
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
 
     // Persisted through the real repo and visible on reload.
     const reloaded = createConversationsRepo(db).findByKey(
@@ -248,15 +206,7 @@ describe("createStateStore — focused read DI guard", () => {
   it("createSessionConversation throws when the session does not exist", async () => {
     createProjectsRepo(db).upsert({ rootPath: "/proj-a" });
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error("readAll must not be called");
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error("diffAndCommit must not be called");
-      }),
-    };
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     await expect(
       store.createSessionConversation("/proj-a", "missing", (n) =>
@@ -303,16 +253,7 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error("aggregate.readAll must not be reached");
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error("aggregate.diffAndCommit must not be reached");
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const conversationService = createConversationService({
       mutateSession: store.mutateSession,
@@ -331,16 +272,12 @@ describe("createStateStore — focused read DI guard", () => {
 
     expect(found?.id).toBe("conv-1");
     expect(found?.summary).toBe("from-conv-service");
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
 
     const list = await conversationService.getSessionConversations(
       "/proj-a",
       "alpha",
     );
     expect(list).toHaveLength(1);
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("getProjectMcpOverrides bypasses aggregate.readAll/diffAndCommit and returns the project's mcpOverrides", async () => {
@@ -379,20 +316,7 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.readAll must NOT be called from getProjectMcpOverrides focused-read path",
-        );
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.diffAndCommit must NOT be called from getProjectMcpOverrides focused-read path",
-        );
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const overrides = await store.getProjectMcpOverrides("/proj-a");
     expect(overrides).toEqual({
@@ -400,8 +324,6 @@ describe("createStateStore — focused read DI guard", () => {
         "my-server": { enabled: false },
       },
     });
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("spawn tag/back-link setters + getSpawnedSessionStatuses bypass the aggregate", async () => {
@@ -433,20 +355,7 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error(
-          "aggregate.readAll must not be reached on the spawn path",
-        );
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error(
-          "aggregate.diffAndCommit must not be reached on the spawn path",
-        );
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     // createProjectConversation + the two focused spawn setters are cold-path
     // single-row writes (Pattern 2) — never the whole-state mutate*.
@@ -474,9 +383,223 @@ describe("createStateStore — focused read DI guard", () => {
     expect(statuses.map((s) => s.sessionName)).toEqual(["alpha"]);
     expect(statuses[0]?.derivedStatus).toBe("running");
     expect(statuses[0]?.spawnedFrom?.source).toBe("chat");
+  });
 
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  it("listConversationIdentities returns key/status columns for every session conversation without invoking the aggregate", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    projects.upsert({ rootPath: "/proj-b" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    sessions.upsert(
+      "/proj-b",
+      sessionStateSchema.parse({
+        sessionName: "beta",
+        worktreePath: "/wt/beta",
+        branchName: "csm/beta",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "running",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        machineSnapshot: { huge: "x".repeat(5000) },
+      }),
+    );
+    conversations.upsert(
+      "/proj-b",
+      "beta",
+      conversationStateSchema.parse({
+        id: "conv-2",
+        transcriptPath: null,
+        status: "awaiting",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const store = createStateStore({ db });
+
+    const identities = await store.listConversationIdentities();
+    expect(identities).toEqual([
+      {
+        id: "conv-1",
+        projectPath: "/proj-a",
+        sessionName: "alpha",
+        status: "running",
+      },
+      {
+        id: "conv-2",
+        projectPath: "/proj-b",
+        sessionName: "beta",
+        status: "awaiting",
+      },
+    ]);
+  });
+
+  it("listSessionConversationListItems projects sessions + conversation list-items store-wide (no blobs) without invoking the aggregate", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    projects.upsert({ rootPath: "/proj-b" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        workflowEnvelopes: {
+          "wf-1": { workflowId: "wf-1", workflowType: "collaboration" },
+        },
+      }),
+    );
+    // A session with no conversations must still appear, with an empty array.
+    sessions.upsert(
+      "/proj-b",
+      sessionStateSchema.parse({
+        sessionName: "beta",
+        worktreePath: "/wt/beta",
+        branchName: "csm/beta",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        name: "first",
+        summary: "hello",
+        transcriptPath: "/t/1.jsonl",
+        status: "running",
+        promptCount: 2,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-02T00:00:00Z",
+        role: "iteration",
+        unread: true,
+        agentBackend: "claude",
+        backendRef: { backend: "claude", ref: "sess-xyz" },
+        debugMode: {
+          active: true,
+          recording: true,
+          logFilePath: "/tmp/d.log",
+          enteredAt: "2026-01-01T00:00:00Z",
+        },
+        pendingQuestionId: "q1",
+        pendingQuestions: [
+          { question: "Proceed?", options: [{ label: "Yes" }] },
+        ],
+        forkedFrom: { sourceConversationId: "conv-0", messageIndex: 3 },
+        // Heavy blobs that a list-item projection must never pull or expose.
+        machineSnapshot: { huge: "x".repeat(5000) },
+      }),
+    );
+
+    const store = createStateStore({ db });
+
+    const items = await store.listSessionConversationListItems();
+    expect(
+      items.map((i) => `${i.projectPath}/${i.session.sessionName}`),
+    ).toEqual(["/proj-a/alpha", "/proj-b/beta"]);
+
+    const alpha = items[0]!;
+    expect(alpha.session.workflowEnvelopes).not.toBeNull();
+    expect(alpha.conversations).toHaveLength(1);
+    const c = alpha.conversations[0]!;
+    expect(c).toMatchObject({
+      id: "conv-1",
+      projectPath: "/proj-a",
+      sessionName: "alpha",
+      status: "running",
+      name: "first",
+      summary: "hello",
+      role: "iteration",
+      unread: true,
+      transcriptPath: "/t/1.jsonl",
+      lastActivityAt: "2026-01-02T00:00:00Z",
+    });
+    expect(c.debugMode?.active).toBe(true);
+    expect(c.debugMode?.logFilePath).toBe("/tmp/d.log");
+    expect(c.pendingQuestionId).toBe("q1");
+    expect(c.pendingQuestions?.[0]?.question).toBe("Proceed?");
+    expect(c.forkedFrom?.sourceConversationId).toBe("conv-0");
+    expect(c.backendRef).toEqual({ backend: "claude", ref: "sess-xyz" });
+    // The list-item projection carries no heavy blob columns.
+    expect(c).not.toHaveProperty("machineSnapshot");
+    expect(c).not.toHaveProperty("pendingQueue");
+
+    // A session with no conversations still appears with an empty array.
+    expect(items[1]!.conversations).toEqual([]);
+  });
+
+  it("getProjectAgentCapabilityOverrides bypasses the aggregate and returns the project's agentCapabilityOverrides", async () => {
+    const projects = createProjectsRepo(db);
+    createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({
+      rootPath: "/proj-a",
+      agentCapabilityOverrides: {
+        cascades: {
+          "claude-skills": {
+            items: { "my-skill": { enabled: false } },
+          },
+        },
+      },
+    });
+
+    const store = createStateStore({ db });
+
+    const overrides = await store.getProjectAgentCapabilityOverrides("/proj-a");
+    expect(overrides).toEqual({
+      cascades: {
+        "claude-skills": {
+          items: { "my-skill": { enabled: false } },
+        },
+      },
+    });
+    expect(
+      await store.getProjectAgentCapabilityOverrides("/missing"),
+    ).toBeUndefined();
+  });
+
+  it("listProjectPaths returns every project's root path without invoking the aggregate", async () => {
+    const projects = createProjectsRepo(db);
+    createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    projects.upsert({ rootPath: "/proj-b" });
+
+    const store = createStateStore({ db });
+
+    const paths = await store.listProjectPaths();
+    expect([...paths].sort()).toEqual(["/proj-a", "/proj-b"]);
   });
 
   it("getProjectMcpOverrides returns undefined for missing project", async () => {
@@ -484,18 +607,49 @@ describe("createStateStore — focused read DI guard", () => {
     createSessionsRepo(db);
     createConversationsRepo(db);
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error("readAll must not be called");
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error("diffAndCommit must not be called");
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const overrides = await store.getProjectMcpOverrides("/missing-project");
+    expect(overrides).toBeUndefined();
+  });
+
+  it("getProjectAgentCapabilityOverrides bypasses aggregate.readAll/diffAndCommit and returns the project's agentCapabilityOverrides", async () => {
+    const projects = createProjectsRepo(db);
+    createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({
+      rootPath: "/proj-a",
+      agentCapabilityOverrides: {
+        cascades: {
+          "claude-skills": {
+            items: { "skill:project:debug-logs": { enabled: false } },
+          },
+        },
+      },
+    });
+
+    const store = createStateStore({ db });
+
+    const overrides = await store.getProjectAgentCapabilityOverrides("/proj-a");
+    expect(overrides).toEqual({
+      cascades: {
+        "claude-skills": {
+          items: { "skill:project:debug-logs": { enabled: false } },
+        },
+      },
+    });
+  });
+
+  it("getProjectAgentCapabilityOverrides returns undefined for missing project", async () => {
+    createProjectsRepo(db);
+    createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    const store = createStateStore({ db });
+
+    const overrides =
+      await store.getProjectAgentCapabilityOverrides("/missing-project");
     expect(overrides).toBeUndefined();
   });
 
@@ -553,20 +707,7 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.readAll must NOT be called from getConversationById focused-read path",
-        );
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.diffAndCommit must NOT be called from getConversationById focused-read path",
-        );
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     const found = await store.getConversationById("conv-2");
     expect(found).toMatchObject({
@@ -578,8 +719,6 @@ describe("createStateStore — focused read DI guard", () => {
     expect(found?.conversation.archived).toBe(true);
 
     expect(await store.getConversationById("missing")).toBeNull();
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("getConversationById does not resolve project-scoped conversations", async () => {
@@ -589,16 +728,7 @@ describe("createStateStore — focused read DI guard", () => {
 
     projects.upsert({ rootPath: "/proj-a" });
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error("readAll must not be called");
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error("diffAndCommit must not be called");
-      }),
-    };
-
-    const store = createStateStore({ db, aggregate: spyAggregate });
+    const store = createStateStore({ db });
 
     await store.createProjectConversation(
       "/proj-a",
@@ -647,22 +777,8 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.readAll must NOT be called from mutateConversation focused path",
-        );
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error(
-          "spyAggregate.diffAndCommit must NOT be called from mutateConversation focused path",
-        );
-      }),
-    };
-
     const store = createStateStore({
       db,
-      aggregate: spyAggregate,
       writeQueue: createWriteQueue(),
     });
 
@@ -678,8 +794,6 @@ describe("createStateStore — focused read DI guard", () => {
 
     const found = await store.getConversation("/proj-a", "alpha", "conv-1");
     expect(found?.summary).toBe("after");
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("mutateConversation writes only the changed column and never re-serializes co-located blobs", async () => {
@@ -702,17 +816,13 @@ describe("createStateStore — focused read DI guard", () => {
       }),
     );
 
-    // A large machine_snapshot whose persisted bytes must survive a scalar
-    // mutate untouched (and never be re-serialized into the UPDATE).
-    const bigSnapshot = {
-      state: "running",
-      context: {
-        history: Array.from({ length: 500 }, (_, i) => ({
-          index: i,
-          note: `event-${i}-`.repeat(8),
-        })),
-      },
-    };
+    // A large co-located blob (pending_agent_notices) whose persisted bytes must
+    // survive a scalar mutate untouched (and never be re-serialized into the
+    // UPDATE). The machine snapshot moved to its own sidecar table, so the
+    // remaining large blob on the conversation row stands in for it here.
+    const bigNotices = Array.from({ length: 500 }, (_, i) =>
+      `event-${i}-`.repeat(8),
+    );
     conversations.upsert(
       "/proj-a",
       "alpha",
@@ -723,27 +833,19 @@ describe("createStateStore — focused read DI guard", () => {
         promptCount: 0,
         createdAt: "2026-01-01T00:00:00Z",
         lastActivityAt: "2026-01-01T00:00:00Z",
-        machineSnapshot: bigSnapshot,
+        pendingAgentNotices: bigNotices,
       }),
     );
 
     const beforeBytes = (
       db
-        .prepare("SELECT machine_snapshot FROM conversations WHERE id = ?")
-        .get("conv-1") as { machine_snapshot: string }
-    ).machine_snapshot;
+        .prepare("SELECT pending_agent_notices FROM conversations WHERE id = ?")
+        .get("conv-1") as { pending_agent_notices: string }
+    ).pending_agent_notices;
     expect(beforeBytes.length).toBeGreaterThan(1000);
 
     const store = createStateStore({
       db,
-      aggregate: {
-        readAll: vi.fn(() => {
-          throw new Error("readAll must not be called");
-        }),
-        diffAndCommit: vi.fn(() => {
-          throw new Error("diffAndCommit must not be called");
-        }),
-      },
       writeQueue: createWriteQueue(),
     });
 
@@ -765,21 +867,21 @@ describe("createStateStore — focused read DI guard", () => {
     const updateSql = updateRecord!.sql;
     expect(updateSql).toMatch(/\bstatus\b/);
     expect(updateSql).toMatch(/\blast_activity_at\b/);
-    expect(updateSql).not.toMatch(/machine_snapshot/);
+    expect(updateSql).not.toMatch(/pending_agent_notices/);
     expect(updateSql).not.toMatch(/pending_queue/);
     expect(updateSql).not.toMatch(/mcp_runtime/);
     expect(updateSql).not.toMatch(/agent_capabilities_runtime/);
 
     const afterBytes = (
       db
-        .prepare("SELECT machine_snapshot FROM conversations WHERE id = ?")
-        .get("conv-1") as { machine_snapshot: string }
-    ).machine_snapshot;
+        .prepare("SELECT pending_agent_notices FROM conversations WHERE id = ?")
+        .get("conv-1") as { pending_agent_notices: string }
+    ).pending_agent_notices;
     expect(afterBytes).toBe(beforeBytes);
 
     const reloaded = await store.getConversation("/proj-a", "alpha", "conv-1");
     expect(reloaded?.status).toBe("running");
-    expect(reloaded?.machineSnapshot).toEqual(bigSnapshot);
+    expect(reloaded?.pendingAgentNotices).toEqual(bigNotices);
   });
 
   it("mutateConversation returns a non-frozen value the caller can mutate", async () => {
@@ -888,18 +990,8 @@ describe("createStateStore — focused read DI guard", () => {
     ).workflow_lanes;
     expect(beforeBytes.length).toBeGreaterThan(1000);
 
-    const spyAggregate: StateAggregate = {
-      readAll: vi.fn(() => {
-        throw new Error("readAll must not be called");
-      }),
-      diffAndCommit: vi.fn(() => {
-        throw new Error("diffAndCommit must not be called");
-      }),
-    };
-
     const store = createStateStore({
       db,
-      aggregate: spyAggregate,
       writeQueue: createWriteQueue(),
     });
 
@@ -939,8 +1031,6 @@ describe("createStateStore — focused read DI guard", () => {
     const reloaded = await store.getSession("/proj-a", "alpha");
     expect(reloaded?.targetBranch).toBe("after");
     expect(reloaded?.workflowLanes).toEqual(bigLanes);
-    expect(spyAggregate.readAll).not.toHaveBeenCalled();
-    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
   it("mutateSession edits a child conversation through the mutator and persists it without rewriting the session blob columns", async () => {
@@ -1249,6 +1339,17 @@ describe("createStateStore — focused read DI guard", () => {
     expect(reloaded?.conversations.find((c) => c.id === "conv-1")?.name).toBe(
       "original-name",
     );
+  });
+});
+
+describe("createStateStore — no whole-state surface on the store shape", () => {
+  it("does not expose readAllForStartup as a store method", () => {
+    // The whole-state startup enumeration is owned by the startup/rehydration
+    // path (`readAllForStartupFromDb` in startup-reader.ts), NOT reachable
+    // through the barrel-exported store. A method here would let any module
+    // holding `getStateStore()` run a whole-tree read (Design 2.3 loophole).
+    const store = createStateStore({ db });
+    expect("readAllForStartup" in store).toBe(false);
   });
 });
 

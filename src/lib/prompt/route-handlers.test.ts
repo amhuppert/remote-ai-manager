@@ -116,7 +116,6 @@ const testConversation = {
   contextTokens: null,
   contextWindowMax: null,
   debugMode: null,
-  machineSnapshot: null,
   archived: false,
   agentBackend: "claude" as const,
 };

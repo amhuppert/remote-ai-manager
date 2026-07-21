@@ -72,6 +72,64 @@ describe("findUnboundedCollections", () => {
       "rows[].cells",
     ]);
   });
+
+  it("flags an opaque unknown field", () => {
+    const schema = z.object({ blob: z.unknown(), name: z.string() });
+    expect(findUnboundedCollections(schema)).toEqual([
+      { path: "blob", kind: "opaque" },
+    ]);
+  });
+
+  it("flags an opaque any field", () => {
+    const schema = z.object({ blob: z.any() });
+    expect(findUnboundedCollections(schema)).toEqual([
+      { path: "blob", kind: "opaque" },
+    ]);
+  });
+
+  it("flags the opaque value of an open record of unknowns (map and value)", () => {
+    const schema = z.object({ byId: z.record(z.string(), z.unknown()) });
+    expect(paths(findUnboundedCollections(schema))).toEqual(["byId", "byId.*"]);
+    const kinds = findUnboundedCollections(schema)
+      .map((c) => c.kind)
+      .sort();
+    expect(kinds).toEqual(["opaque", "record"]);
+  });
+
+  it("does not flag a transform output as opaque (opaque only in the output projection)", () => {
+    // A `.transform()` arm renders as `{}` in the OUTPUT projection (Zod cannot
+    // statically type a transform's result) but as its typed input in the INPUT
+    // projection — this is the `conversationStatusSchema` legacy-normalizer
+    // shape. A genuine opaque node is `{}` in both directions, so the detector
+    // must not flag this.
+    const schema = z.object({
+      status: z
+        .enum(["a", "b"])
+        .or(z.enum(["c", "d"]).transform(() => "a" as const)),
+    });
+    expect(findUnboundedCollections(schema)).toEqual([]);
+  });
+
+  it("does not flag a lenient decoder tolerant of extra keys (opaque only in the input projection)", () => {
+    // A union of transform arms that tolerate a superset of keys renders an
+    // opaque map value in the INPUT projection but a typed/`{}` transform in the
+    // OUTPUT projection at a different path — the `persistedAgentSessionRefSchema`
+    // shape. Opacity in only one direction is a projection artifact, not a
+    // genuinely opaque persisted value.
+    const superset = z
+      .looseObject({ backend: z.string(), ref: z.string() })
+      .transform((v) => ({ backend: v.backend, ref: v.ref }));
+    const canonical = z.object({ backend: z.string(), ref: z.string() });
+    const schema = z.object({ sourceRef: z.union([canonical, superset]) });
+    expect(
+      findUnboundedCollections(schema).filter((c) => c.kind === "opaque"),
+    ).toEqual([]);
+  });
+
+  it("does not flag the root object or typed fields", () => {
+    const schema = z.object({ a: z.string(), b: z.number() });
+    expect(findUnboundedCollections(schema)).toEqual([]);
+  });
 });
 
 describe("reconcileDischarges", () => {
@@ -136,5 +194,64 @@ describe("reconcileDischarges", () => {
       "workingDefinition.**": "no nodes under here",
     });
     expect(result.staleDischargeKeys).toEqual(["workingDefinition.**"]);
+  });
+
+  describe("opaque findings require an opaque-appropriate discharge", () => {
+    const opaque: UnboundedCollection[] = [
+      { path: "machineSnapshot", kind: "opaque" },
+    ];
+
+    it("clears an opaque node discharged with `tracked:`", () => {
+      const result = reconcileDischarges(opaque, {
+        machineSnapshot:
+          "tracked: opaque XState snapshot, addressed separately",
+      });
+      expect(result.undischarged).toEqual([]);
+      expect(result.staleDischargeKeys).toEqual([]);
+    });
+
+    it("does NOT clear an opaque node with a `bounded:` discharge", () => {
+      // You cannot honestly claim you inspected an opaque value and found it
+      // bounded — `bounded:`/`pruned:` are for collections whose shape is
+      // visible. An opaque node must be `tracked:` (or shown not to live in the
+      // blob at all).
+      const result = reconcileDischarges(opaque, {
+        machineSnapshot: "bounded: it's fine trust me",
+      });
+      expect(paths(result.undischarged)).toEqual(["machineSnapshot"]);
+    });
+
+    it("does NOT clear an opaque node with a `pruned:` discharge", () => {
+      const result = reconcileDischarges(opaque, {
+        machineSnapshot: "pruned: somewhere",
+      });
+      expect(paths(result.undischarged)).toEqual(["machineSnapshot"]);
+    });
+
+    it("clears an opaque node whose subtree is `normalized:` (not in the blob)", () => {
+      const nested: UnboundedCollection[] = [
+        { path: "conversations[].payload", kind: "opaque" },
+      ];
+      const result = reconcileDischarges(nested, {
+        "conversations.**":
+          "normalized: conversations table; never on this row",
+      });
+      expect(result.undischarged).toEqual([]);
+    });
+
+    it("clears an opaque node whose subtree is `not-persisted:`", () => {
+      const nested: UnboundedCollection[] = [
+        { path: "graphWorkflowExecution.machineSnapshot", kind: "opaque" },
+      ];
+      const result = reconcileDischarges(nested, {
+        "graphWorkflowExecution.**": "not-persisted: null on this row",
+      });
+      expect(result.undischarged).toEqual([]);
+    });
+
+    it("reports an undischarged opaque node with no covering key", () => {
+      const result = reconcileDischarges(opaque, {});
+      expect(paths(result.undischarged)).toEqual(["machineSnapshot"]);
+    });
   });
 });

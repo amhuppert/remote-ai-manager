@@ -30,6 +30,7 @@ No other code in `src/app/` (two grandfathered exceptions below). CSS imports in
 - Nested API addressing composes `RouteResolution<T>` from `src/lib/shared/route-resolution.ts`. A resolution step returns either the resolved value or one already-formed HTTP error response.
 - Shared project lookup lives in the shared resolver; each domain owns a small route adapter for its addressing shape (conversation, project conversation, ticket, or a future domain).
 - Route handlers compose those adapters and return early on failure. Use the shared `jsonError`/`notFound` response helpers; do not rebuild project/session/entity 404 ladders or define another result union.
+- A `202` response must not await the work it accepts: it returns once intent is recorded and the work is initiated, never after the work completes. Work expected to exceed ~1s runs as a job that reports progress over SSE, so the handler stays off the request's critical path. The dev-server start route is the reference — it returns at the durable-acceptance boundary (intent recorded + spawn initiated) while readiness propagates later through `dev-server-status` events.
 
 ### Grandfathered exceptions
 

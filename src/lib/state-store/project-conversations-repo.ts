@@ -11,10 +11,29 @@ import {
   throwConversationValidationError,
 } from "./conversation-row-codec";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { AgentCapabilityOverrides } from "@/lib/agent-capabilities/schemas";
+import { checkRowColumnSizes } from "./row-size-telemetry";
 
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.project-conversations");
+
+/**
+ * The serialized-JSON columns of a `project_conversations` row that can grow
+ * large enough to matter — the same conversation-shaped blobs as the
+ * `conversations` table. Swept on write so a ballooning column surfaces as a
+ * `state-store.row_size.exceeded` finding.
+ */
+const PROJECT_CONVERSATION_JSON_COLUMNS = [
+  "pending_queue",
+  "mcp_runtime",
+  "agent_capabilities_runtime",
+  "mcp_overrides",
+  "agent_capability_overrides",
+  "debug_mode",
+  "pending_questions",
+  "pending_agent_notices",
+] as const;
 
 /**
  * Persistence for session-less project conversations. Keyed `(project_path,
@@ -38,6 +57,17 @@ export interface ProjectConversationsRepo {
   setArchived(projectPath: string, id: string, archived: boolean): boolean;
   setOpen(projectPath: string, id: string, open: boolean): boolean;
   /**
+   * Focused single-column write of `agent_capability_overrides` (JSON, or NULL
+   * when the overrides are cleared). Never restamps `last_activity_at` — a
+   * capability-override edit is configuration, not conversation activity, and
+   * must not reorder the PLC. Returns whether a row matched.
+   */
+  setAgentCapabilityOverrides(
+    projectPath: string,
+    id: string,
+    overrides: AgentCapabilityOverrides | undefined,
+  ): boolean;
+  /**
    * Append session names to the PLC's `spawnedSessionIds` back-link, de-duped
    * and order-preserving. Focused single-row read-modify-write (Pattern 2: no
    * whole-state read). Returns whether the row exists / was updated.
@@ -47,6 +77,14 @@ export interface ProjectConversationsRepo {
     id: string,
     sessionNames: string[],
   ): boolean;
+  /**
+   * Invalidate the parsed-row cache after project-conversation rows were removed
+   * out-of-band — an FK `ON DELETE CASCADE` from a project delete drops the rows
+   * at the SQL layer without routing through this repo's own `delete`. Bumps the
+   * version so `findAll`/`findByProject` re-read from SQLite instead of serving
+   * evicted rows.
+   */
+  invalidateCache(): void;
 }
 
 /**
@@ -77,7 +115,6 @@ const projectConversationsTableRowSchema = z.object({
   context_tokens: z.number().int().nullable(),
   context_window_max: z.number().int().nullable(),
   debug_mode: z.string().nullable(),
-  machine_snapshot: z.string().nullable(),
   agent_backend: z.string(),
   backend_ref: z.string().nullable(),
   mcp_overrides: z.string().nullable(),
@@ -120,7 +157,6 @@ interface ProjectSqlBindRow {
   context_tokens: number | null;
   context_window_max: number | null;
   debug_mode: string | null;
-  machine_snapshot: string | null;
   agent_backend: string;
   backend_ref: string | null;
   mcp_overrides: string | null;
@@ -175,7 +211,6 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "context_tokens",
   "context_window_max",
   "debug_mode",
-  "machine_snapshot",
   "agent_backend",
   "backend_ref",
   "mcp_overrides",
@@ -188,6 +223,15 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "last_seen_alignment_version",
   "pending_agent_notices",
 ];
+
+/**
+ * Explicit projection for every read statement. `machine_snapshot` still exists
+ * on the row (nulled by migration 0007, kept for forward-compat) but the snapshot
+ * lives in the `conversation_machine_snapshots` sidecar, so no read may drag its
+ * bytes: every read selects this explicit column list, never `*`.
+ */
+const PROJECT_CONVERSATION_SELECT_COLUMNS =
+  PROJECT_CONVERSATION_COLUMN_KEYS.join(", ");
 
 function rawRowsEqual(
   a: Record<string, unknown>,
@@ -276,15 +320,15 @@ export function createProjectConversationsRepo(
   });
 
   const findByIdStmt = db.prepare(
-    `SELECT * FROM project_conversations WHERE id = ? LIMIT 1`,
+    `SELECT ${PROJECT_CONVERSATION_SELECT_COLUMNS} FROM project_conversations WHERE id = ? LIMIT 1`,
   );
   const findByKeyStmt = db.prepare(
-    `SELECT * FROM project_conversations
+    `SELECT ${PROJECT_CONVERSATION_SELECT_COLUMNS} FROM project_conversations
      WHERE project_path = ? AND id = ?
      LIMIT 1`,
   );
   const findAllStmt = db.prepare(
-    `SELECT * FROM project_conversations
+    `SELECT ${PROJECT_CONVERSATION_SELECT_COLUMNS} FROM project_conversations
      ORDER BY project_path ASC, created_at ASC, id ASC`,
   );
   const upsertStmt = db.prepare(
@@ -293,7 +337,7 @@ export function createProjectConversationsRepo(
        prompt_count, created_at, last_activity_at, source, summary, archived, open,
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
-       debug_mode, machine_snapshot, agent_backend, backend_ref,
+       debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices
      ) VALUES (
@@ -301,7 +345,7 @@ export function createProjectConversationsRepo(
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived, @open,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
-       @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
+       @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
        @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices
      )
@@ -328,7 +372,6 @@ export function createProjectConversationsRepo(
        context_tokens             = excluded.context_tokens,
        context_window_max         = excluded.context_window_max,
        debug_mode                 = excluded.debug_mode,
-       machine_snapshot           = excluded.machine_snapshot,
        agent_backend              = excluded.agent_backend,
        backend_ref                = excluded.backend_ref,
        mcp_overrides              = excluded.mcp_overrides,
@@ -341,6 +384,12 @@ export function createProjectConversationsRepo(
        last_seen_alignment_version = excluded.last_seen_alignment_version,
        pending_agent_notices      = excluded.pending_agent_notices`,
   );
+  // The machine snapshot lives in the owner-discriminated sidecar table, not on
+  // the project-conversation row. Its cleanup is DB-enforced by the AFTER DELETE
+  // trigger on `project_conversations` (see SCHEMA_DDL): it fires inside this
+  // DELETE's transaction and also covers the FK CASCADE path (deleting a
+  // project) that never calls this method — so a single canonical owner cleans
+  // the sidecar for every delete path.
   const deleteStmt = db.prepare(
     `DELETE FROM project_conversations WHERE id = ?`,
   );
@@ -357,6 +406,11 @@ export function createProjectConversationsRepo(
   const setOpenStmt = db.prepare(
     `UPDATE project_conversations
      SET open = ?
+     WHERE project_path = ? AND id = ?`,
+  );
+  const setAgentCapabilityOverridesStmt = db.prepare(
+    `UPDATE project_conversations
+     SET agent_capability_overrides = ?
      WHERE project_path = ? AND id = ?`,
   );
   const selectSpawnedSessionIdsStmt = db.prepare(
@@ -402,6 +456,13 @@ export function createProjectConversationsRepo(
     upsert(projectPath, conversation) {
       timed("upsert", { id: conversation.id, projectPath }, () => {
         const bind = conversationToProjectSqlBind(projectPath, conversation);
+        checkRowColumnSizes({
+          logger,
+          table: "project_conversations",
+          id: conversation.id,
+          bind: { ...bind },
+          columns: PROJECT_CONVERSATION_JSON_COLUMNS,
+        });
         upsertStmt.run(bind);
         cache.bump();
       });
@@ -437,6 +498,18 @@ export function createProjectConversationsRepo(
         return changed;
       });
     },
+    setAgentCapabilityOverrides(projectPath, id, overrides) {
+      return timed("setAgentCapabilityOverrides", { id, projectPath }, () => {
+        const info = setAgentCapabilityOverridesStmt.run(
+          jsonOrNull(overrides),
+          projectPath,
+          id,
+        );
+        const changed = info.changes > 0;
+        if (changed) cache.bump();
+        return changed;
+      });
+    },
     appendSpawnedSessionIds(projectPath, id, sessionNames) {
       return timed("appendSpawnedSessionIds", { id, projectPath }, () => {
         const row = selectSpawnedSessionIdsStmt.get(projectPath, id) as
@@ -466,6 +539,9 @@ export function createProjectConversationsRepo(
         if (changed) cache.bump();
         return changed;
       });
+    },
+    invalidateCache() {
+      cache.bump();
     },
   };
 }

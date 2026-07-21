@@ -35,11 +35,20 @@ since_ok(ts)   -- (getenv('SINCE')='' OR ts >= SINCE)  — unset bound = no filt
 until_ok(ts)   -- upper bound, same idea
 row_limit()    -- $LIMIT, default 30
 route(path)    -- normalize /sessions/<x>/… → /sessions/:name/…  for grouping
+jget(j, p)     -- json_extract_string(j, p): reach un-projected fields safely
 ```
 
 A query is then just `SELECT … FROM logs WHERE since_ok(ts) AND until_ok(ts) …`.
 This is the pattern to copy when you write a new one: filter on the macros, rank
-on `op_ms` (the canonical duration), reach rare fields with `raw ->> '$.field'`.
+on `op_ms` (the canonical duration), reach rare fields with `jget(raw, '$.field')`.
+
+Do NOT use the `->>` operator when the expression contains more than one extract:
+DuckDB v1.5.4 parses the arrow operators at the wrong precedence, so
+`raw->>'$.a'='x' AND raw->>'$.b'='y'` swallows the rest of the predicate as the
+path argument and fails with a conversion error naming an arbitrary log record
+(the error's "value" is just whichever row was in flight — it is not a bad log
+line). Parenthesized `(raw->>'$.a')` also parses correctly, but `jget()` cannot
+be misparsed; `run.sh selftest` pins the `jget` pattern.
 
 ## Commands
 

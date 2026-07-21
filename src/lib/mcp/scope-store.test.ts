@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createConfigReader } from "@/lib/config/loader";
 import type { ManagerState } from "@/lib/projects/schemas";
+import {
+  readWholeStateForTest,
+  seedWholeState,
+} from "@/lib/shared/testing/whole-state-fixture";
 import { createStateStore } from "@/lib/state-store";
+import { _createTestDb } from "@/lib/state-store/state-db";
 import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
 
 import { createScopeOverrideStore } from "./scope-store";
@@ -17,11 +22,13 @@ const TEST_DIR = path.join("/tmp", "cc-mcp-scope-test-" + Date.now());
 
 function createTestHarness() {
   const configReader = createConfigReader(TEST_DIR);
+  const db = _createTestDb({ inMemory: true });
   const state = createStateStore({
+    db,
     readConfig: () => configReader.readConfig(),
   });
   const store = createScopeOverrideStore({ stateManager: state });
-  return { state, store };
+  return { db, store };
 }
 
 function stateWithAllScopes(): ManagerState {
@@ -63,7 +70,6 @@ function stateWithAllScopes(): ManagerState {
                 contextTokens: null,
                 contextWindowMax: null,
                 debugMode: null,
-                machineSnapshot: null,
                 agentBackend: "claude",
                 backendRef: null,
                 unread: false,
@@ -103,8 +109,8 @@ afterEach(async () => {
 
 describe("scope-store / project", () => {
   it("patches project mcpOverrides and returns changed server keys", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     const result = await store.patchProject(PROJECT_PATH, [
       { type: "set-server-enabled", serverKey: "kagi", enabled: false },
@@ -113,21 +119,21 @@ describe("scope-store / project", () => {
     expect(result.changedServerKeys).toEqual(["kagi"]);
     expect(result.overrides.servers.kagi?.enabled).toBe(false);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     expect(
       persisted.projects[PROJECT_PATH]?.mcpOverrides?.servers.kagi?.enabled,
     ).toBe(false);
   });
 
   it("stores only diffs; omits servers without overrides", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, [
       { type: "set-server-enabled", serverKey: "a", enabled: false },
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const keys = Object.keys(
       persisted.projects[PROJECT_PATH]?.mcpOverrides?.servers ?? {},
     );
@@ -135,8 +141,8 @@ describe("scope-store / project", () => {
   });
 
   it("removes the server record after reset-server (pruning empty records)", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, [
       { type: "set-server-enabled", serverKey: "a", enabled: false },
@@ -146,15 +152,15 @@ describe("scope-store / project", () => {
     ]);
     expect(result.changedServerKeys).toEqual(["a"]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     expect(
       persisted.projects[PROJECT_PATH]?.mcpOverrides?.servers.a,
     ).toBeUndefined();
   });
 
   it("removes the mcpOverrides field entirely once the servers record is empty", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, [
       { type: "set-server-enabled", serverKey: "a", enabled: false },
@@ -163,13 +169,13 @@ describe("scope-store / project", () => {
       { type: "reset-server", serverKey: "a" },
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     expect(persisted.projects[PROJECT_PATH]?.mcpOverrides).toBeUndefined();
   });
 
   it("throws when the project does not exist", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState({
+    const { db, store } = createTestHarness();
+    seedWholeState(db, {
       projects: {},
       archivedProjects: [],
       pinnedProjects: [],
@@ -183,8 +189,8 @@ describe("scope-store / project", () => {
   });
 
   it("returns empty changed keys when the patch is a no-op", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, [
       { type: "set-server-enabled", serverKey: "a", enabled: false },
@@ -202,8 +208,8 @@ describe("scope-store / project", () => {
 
 describe("scope-store / session", () => {
   it("patches session mcpOverrides and returns changed keys", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     const result = await store.patchSession(PROJECT_PATH, SESSION_NAME, [
       {
@@ -215,7 +221,7 @@ describe("scope-store / session", () => {
     ]);
     expect(result.changedServerKeys).toEqual(["playwright"]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
     expect(
       session?.mcpOverrides?.servers.playwright?.tools?.navigate?.enabled,
@@ -223,14 +229,14 @@ describe("scope-store / session", () => {
   });
 
   it("does not touch project or conversation overrides", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchSession(PROJECT_PATH, SESSION_NAME, [
       { type: "set-server-enabled", serverKey: "s", enabled: false },
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const project = persisted.projects[PROJECT_PATH];
     expect(project?.mcpOverrides).toBeUndefined();
     const conversation = project?.sessions[SESSION_NAME]?.conversations[0];
@@ -238,8 +244,8 @@ describe("scope-store / session", () => {
   });
 
   it("removes mcpOverrides when it becomes empty after reset-server", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchSession(PROJECT_PATH, SESSION_NAME, [
       { type: "set-server-enabled", serverKey: "s", enabled: false },
@@ -248,14 +254,14 @@ describe("scope-store / session", () => {
       { type: "reset-server", serverKey: "s" },
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
     expect(session?.mcpOverrides).toBeUndefined();
   });
 
   it("throws when the session does not exist", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
     await expect(
       store.patchSession(PROJECT_PATH, "missing", [
         { type: "set-server-enabled", serverKey: "a", enabled: true },
@@ -270,8 +276,8 @@ describe("scope-store / session", () => {
 
 describe("scope-store / conversation", () => {
   it("patches conversation mcpOverrides and returns changed keys", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     const result = await store.patchConversation(
       PROJECT_PATH,
@@ -289,7 +295,7 @@ describe("scope-store / conversation", () => {
     );
     expect(result.changedServerKeys).toEqual(["ctx"]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const conversation =
       persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME]
         ?.conversations[0];
@@ -300,8 +306,8 @@ describe("scope-store / conversation", () => {
   });
 
   it("removes the mcpOverrides field once empty", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, [
       { type: "set-server-enabled", serverKey: "z", enabled: false },
@@ -310,7 +316,7 @@ describe("scope-store / conversation", () => {
       { type: "reset-server", serverKey: "z" },
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const conversation =
       persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME]
         ?.conversations[0];
@@ -318,8 +324,8 @@ describe("scope-store / conversation", () => {
   });
 
   it("throws when the conversation does not exist", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
     await expect(
       store.patchConversation(PROJECT_PATH, SESSION_NAME, "missing", [
         { type: "set-server-enabled", serverKey: "a", enabled: true },
@@ -334,8 +340,8 @@ describe("scope-store / conversation", () => {
 
 describe("scope-store / serialization", () => {
   it("serializes concurrent patches through the state mutex (no lost updates)", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await Promise.all([
       store.patchProject(PROJECT_PATH, [
@@ -349,7 +355,7 @@ describe("scope-store / serialization", () => {
       ]),
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const servers = persisted.projects[PROJECT_PATH]?.mcpOverrides?.servers;
     expect(servers?.a?.enabled).toBe(true);
     expect(servers?.b?.enabled).toBe(false);

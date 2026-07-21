@@ -88,7 +88,9 @@ export const POST_TRANSCRIBE = withTracing(async (request) => {
 });
 
 /** GET /api/voice/health — proxy health check to Voice2Text server */
-export async function GET_HEALTH(): Promise<Response> {
+async function getVoiceHealth(): Promise<Response> {
   const available = await checkVoiceHealth();
   return NextResponse.json({ available });
 }
+
+export const GET_HEALTH = withTracing(getVoiceHealth);

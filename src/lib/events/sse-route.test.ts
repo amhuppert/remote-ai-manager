@@ -18,6 +18,14 @@ function makeRequest(headers: Record<string, string> = {}): Request {
   });
 }
 
+// GET is now withTracing-wrapped, so it is async and takes a route context
+// (the events route has no params). Resolve the Response before use.
+async function getEvents(
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return GET(makeRequest(headers), { params: Promise.resolve({}) });
+}
+
 async function readFramesUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   predicate: (combined: string) => boolean,
@@ -49,7 +57,7 @@ afterEach(() => {
 
 describe("GET /api/events", () => {
   it("sends `connected` frame when no Last-Event-ID header is present", async () => {
-    const response = GET(makeRequest());
+    const response = await getEvents();
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
 
     const reader = response.body!.getReader();
@@ -63,7 +71,7 @@ describe("GET /api/events", () => {
     broadcast(TEST_EVENT); // seq 2
     broadcast(TEST_EVENT); // seq 3
 
-    const response = GET(makeRequest({ "Last-Event-ID": "0" }));
+    const response = await getEvents({ "Last-Event-ID": "0" });
     const reader = response.body!.getReader();
     const out = await readFramesUntil(reader, (s) => s.includes("connected"));
 
@@ -84,7 +92,7 @@ describe("GET /api/events", () => {
     broadcast(TEST_EVENT); // seq 2
     broadcast(TEST_EVENT); // seq 3
 
-    const response = GET(makeRequest({ "Last-Event-ID": "2" }));
+    const response = await getEvents({ "Last-Event-ID": "2" });
     const reader = response.body!.getReader();
     const out = await readFramesUntil(reader, (s) => s.includes("connected"));
 
@@ -98,7 +106,7 @@ describe("GET /api/events", () => {
   it("ignores malformed Last-Event-ID header", async () => {
     broadcast(TEST_EVENT);
 
-    const response = GET(makeRequest({ "Last-Event-ID": "not-a-number" }));
+    const response = await getEvents({ "Last-Event-ID": "not-a-number" });
     const reader = response.body!.getReader();
     const out = await readFramesUntil(reader, (s) => s.includes("connected"));
 
@@ -111,7 +119,7 @@ describe("GET /api/events", () => {
   it("enqueues heartbeat frames every 15s", async () => {
     vi.useFakeTimers();
     try {
-      const response = GET(makeRequest());
+      const response = await getEvents();
       const reader = response.body!.getReader();
 
       const decoder = new TextDecoder();
@@ -135,7 +143,7 @@ describe("GET /api/events", () => {
   it("cancel() stops the heartbeat timer (no more frames after cancel)", async () => {
     vi.useFakeTimers();
     try {
-      const response = GET(makeRequest());
+      const response = await getEvents();
       const reader = response.body!.getReader();
 
       const decoder = new TextDecoder();

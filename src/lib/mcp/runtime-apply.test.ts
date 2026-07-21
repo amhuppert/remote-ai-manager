@@ -11,13 +11,23 @@ import type {
 import type { McpApplyResult } from "@/lib/agent-backends/portable-mcp";
 import { createConfigReader } from "@/lib/config/loader";
 import type { ManagerState } from "@/lib/projects/schemas";
-import { createStateStore as createStateManager } from "@/lib/state-store";
+import {
+  createStateStore as createStateManager,
+  getStateDb,
+} from "@/lib/state-store";
+import {
+  seedWholeState,
+  readWholeStateForTest,
+} from "@/lib/shared/testing/whole-state-fixture";
 import {
   _createTestDb,
   _installTestDb,
   _resetForTesting as _resetStateDb,
 } from "@/lib/state-store/state-db";
-import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
+import {
+  _resetForTesting as resetMutex,
+  withWriteQueue,
+} from "@/lib/state-store/write-queue";
 
 import {
   computeEffectiveConfigHash,
@@ -276,7 +286,8 @@ describe("computeEffectiveConfigHash", () => {
 describe("applyAfterOverrideChange — no active runtime", () => {
   it("records pending state but never writes lastAppliedConfigHash", async () => {
     const { stateManager } = createTestHarness();
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: {
           lastAppliedConfigHash: "previous-applied-hash",
@@ -302,7 +313,7 @@ describe("applyAfterOverrideChange — no active runtime", () => {
 
     expect(result.disposition).toBe("no_active_runtime");
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -320,7 +331,8 @@ describe("applyAfterOverrideChange — no active runtime", () => {
 describe("applyAfterOverrideChange — Claude idle", () => {
   it("applies now via runtime but still does NOT write lastAppliedConfigHash (turn-start path is the only writer)", async () => {
     const { stateManager } = createTestHarness();
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: { lastAppliedConfigHash: "previous-applied-hash" },
       }),
@@ -350,7 +362,7 @@ describe("applyAfterOverrideChange — Claude idle", () => {
     expect(runtime.applyCalls).toHaveLength(1);
     expect(runtime.applyCalls[0]!.servers[0]!.id).toBe("s1");
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -367,7 +379,7 @@ describe("applyAfterOverrideChange — Claude idle", () => {
 describe("applyAfterOverrideChange — Claude turn running", () => {
   it("records pending state without invoking the runtime (never interrupts)", async () => {
     const { stateManager } = createTestHarness();
-    await stateManager.writeState(stateWith());
+    seedWholeState(getStateDb(), stateWith());
 
     const runtime = makeFakeRuntime({
       backend: "claude",
@@ -392,7 +404,7 @@ describe("applyAfterOverrideChange — Claude turn running", () => {
     expect(result.disposition).toBe("deferred_to_next_turn");
     expect(runtime.applyCalls).toHaveLength(0);
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -406,7 +418,7 @@ describe("applyAfterOverrideChange — Claude turn running", () => {
 describe("applyAfterOverrideChange — Codex (always stage)", () => {
   it("stages for next turn regardless of idle state", async () => {
     const { stateManager } = createTestHarness();
-    await stateManager.writeState(stateWith({ agentBackend: "codex" }));
+    seedWholeState(getStateDb(), stateWith({ agentBackend: "codex" }));
 
     const runtime = makeFakeRuntime({
       backend: "codex",
@@ -433,7 +445,7 @@ describe("applyAfterOverrideChange — Codex (always stage)", () => {
     // runtime holds the latest portable for its next turn reconstruction.
     expect(runtime.applyCalls).toHaveLength(1);
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -442,10 +454,181 @@ describe("applyAfterOverrideChange — Codex (always stage)", () => {
   });
 });
 
-describe("applyAfterOverrideChange — hash computed inside the critical section", () => {
-  it("computes the hash while holding the state lock so the resolve + persist are atomic", async () => {
+describe("applyAfterOverrideChange — ordering fence for concurrent overrides", () => {
+  it("rejects a missing conversation before invoking the resolver", async () => {
     const { stateManager } = createTestHarness();
-    await stateManager.writeState(stateWith());
+    seedWholeState(getStateDb(), stateWith());
+
+    let resolverCalls = 0;
+    const deps: McpRuntimeApplyDeps = {
+      stateManager,
+      getRuntime: () => undefined,
+      resolvePortableForConversation: async () => {
+        resolverCalls += 1;
+        return {
+          portable: portableWith([{ id: "s1" }]),
+          effectiveConfigHash: "ignored",
+        };
+      },
+      now: () => new Date("2026-04-21T00:00:00.000Z"),
+    };
+    const service = createMcpRuntimeApplyService(deps);
+
+    await expect(
+      service.applyAfterOverrideChange({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: "conv-does-not-exist",
+        backend: "claude",
+        changedServerKeys: ["s1"],
+      }),
+    ).rejects.toThrow(/not found/);
+
+    // The focused existence pre-read runs BEFORE any resolver I/O (mirroring
+    // applyAtTurnStart), so a missing conversation never touches the resolver.
+    expect(resolverCalls).toBe(0);
+  });
+
+  it("serializes concurrent applies for one conversation: no stale resolve overlaps a newer one and the last-submitted wins", async () => {
+    const { stateManager } = createTestHarness();
+    seedWholeState(getStateDb(), stateWith());
+
+    const portableA = portableWith([{ id: "sA" }]);
+    const portableB = portableWith([{ id: "sB" }]);
+    const hashB = computeEffectiveConfigHash(portableB);
+
+    let releaseA: (() => void) | undefined;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    let call = 0;
+    const runtime = makeFakeRuntime({ backend: "claude", isTurnActive: false });
+    const deps: McpRuntimeApplyDeps = {
+      stateManager,
+      getRuntime: () => runtime,
+      resolvePortableForConversation: async () => {
+        call += 1;
+        if (call === 1) {
+          // Request A — submitted first — resolves slowly (held on the gate).
+          await gateA;
+          return { portable: portableA, effectiveConfigHash: "ignored" };
+        }
+        // Request B — submitted second — would resolve immediately, but the
+        // per-conversation serializer holds it behind A.
+        return { portable: portableB, effectiveConfigHash: "ignored" };
+      },
+      now: () => new Date("2026-04-21T00:00:00.000Z"),
+    };
+    // A and B share ONE service instance so they share its per-conversation chain.
+    const service = createMcpRuntimeApplyService(deps);
+
+    const aPromise = service.applyAfterOverrideChange({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+      changedServerKeys: ["sA"],
+    });
+    const bPromise = service.applyAfterOverrideChange({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+      changedServerKeys: ["sB"],
+    });
+
+    // While A is gated mid-resolve, B must not have STARTED resolving and the
+    // runtime must not have been touched — the serializer prevents any overlap
+    // in which a stale resolve could race a newer one.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(call).toBe(1);
+    expect(runtime.applyCalls).toHaveLength(0);
+
+    // Release A: it applies fully, THEN B applies. Strict submission order.
+    releaseA?.();
+    await aPromise;
+    await bPromise;
+
+    expect(runtime.applyCalls.map((c) => c.servers[0]!.id)).toEqual([
+      "sA",
+      "sB",
+    ]);
+
+    const persisted = readWholeStateForTest(getStateDb());
+    const conv = persisted.projects[PROJECT_PATH]!.sessions[
+      SESSION_NAME
+    ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
+    // The last-submitted apply (B) wins the durable pending state.
+    expect(conv.mcpRuntime?.pendingConfigHash).toBe(hashB);
+    expect(conv.mcpRuntime?.pendingServerKeys).toEqual(["sB"]);
+  });
+
+  it("serializes applyAtTurnStart behind an in-flight applyAfterOverrideChange for the same conversation", async () => {
+    const { stateManager } = createTestHarness();
+    seedWholeState(getStateDb(), stateWith());
+
+    let releaseOverride: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      releaseOverride = r;
+    });
+    let call = 0;
+    const order: string[] = [];
+    const runtime = makeFakeRuntime({ backend: "claude", isTurnActive: false });
+    const deps: McpRuntimeApplyDeps = {
+      stateManager,
+      getRuntime: () => runtime,
+      resolvePortableForConversation: async () => {
+        call += 1;
+        if (call === 1) {
+          order.push("override:resolve");
+          await gate;
+          return {
+            portable: portableWith([{ id: "sA" }]),
+            effectiveConfigHash: "ignored",
+          };
+        }
+        order.push("turnstart:resolve");
+        return {
+          portable: portableWith([{ id: "sB" }]),
+          effectiveConfigHash: "ignored",
+        };
+      },
+      now: () => new Date("2026-04-21T00:00:00.000Z"),
+    };
+    const service = createMcpRuntimeApplyService(deps);
+
+    const overridePromise = service.applyAfterOverrideChange({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+      changedServerKeys: ["sA"],
+    });
+    const turnStartPromise = service.applyAtTurnStart({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+    });
+
+    // Turn start shares the same per-conversation chain, so its resolve must NOT
+    // run until the in-flight override apply finishes (the validator's
+    // "applyAtTurnStart bypasses the fence" regression).
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["override:resolve"]);
+
+    releaseOverride?.();
+    await overridePromise;
+    await turnStartPromise;
+
+    expect(order).toEqual(["override:resolve", "turnstart:resolve"]);
+  });
+});
+
+describe("applyAfterOverrideChange — resolves before entering the write queue", () => {
+  it("resolves configuration outside the state lock so the pending-field write is a short section", async () => {
+    const { stateManager } = createTestHarness();
+    seedWholeState(getStateDb(), stateWith());
 
     const observations: Array<"start" | "resolve" | "write" | "end"> = [];
     const resolved: ResolvedPortableForConversation = {
@@ -457,7 +640,8 @@ describe("applyAfterOverrideChange — hash computed inside the critical section
       getRuntime: () => undefined,
       async resolvePortableForConversation() {
         observations.push("resolve");
-        // Simulate async work — must complete before the mutator returns
+        // Simulate async file I/O — this must complete BEFORE the mutator opens
+        // its critical section (no-slow-work-in-critical-section).
         await new Promise((r) => setTimeout(r, 5));
         return resolved;
       },
@@ -483,7 +667,57 @@ describe("applyAfterOverrideChange — hash computed inside the critical section
       changedServerKeys: ["s1"],
     });
 
-    expect(observations).toEqual(["start", "resolve", "end"]);
+    // Resolution completes entirely before the pending-field write opens its
+    // critical section — the mutator no longer wraps the file I/O.
+    expect(observations).toEqual(["resolve", "start", "end"]);
+  });
+
+  it("does not hold the write queue while configuration resolution runs", async () => {
+    const { stateManager } = createTestHarness();
+    seedWholeState(getStateDb(), stateWith());
+
+    const order: string[] = [];
+    let releaseResolve: (() => void) | undefined;
+    const resolveGate = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const runtime = makeFakeRuntime({ backend: "claude" });
+    const portable = portableWith([{ id: "s1" }]);
+    const deps: McpRuntimeApplyDeps = {
+      stateManager,
+      getRuntime: () => runtime,
+      resolvePortableForConversation: async () => {
+        order.push("resolve:start");
+        await resolveGate;
+        order.push("resolve:end");
+        return { portable, effectiveConfigHash: "ignored" };
+      },
+      now: () => new Date("2026-04-21T00:00:00.000Z"),
+    };
+    const service = createMcpRuntimeApplyService(deps);
+
+    const applyPromise = service.applyAfterOverrideChange({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+      changedServerKeys: ["s1"],
+    });
+
+    // Resolution is in flight and gated. An unrelated write must be able to
+    // acquire and release the SAME queue right now — proof the resolve runs
+    // entirely outside the write queue.
+    await withWriteQueue("unrelated", async () => {
+      order.push("unrelated:commit");
+    });
+    releaseResolve?.();
+    await applyPromise;
+
+    expect(order.indexOf("unrelated:commit")).toBeLessThan(
+      order.indexOf("resolve:end"),
+    );
+    // Sanity: it still applied once resolution completed.
+    expect(runtime.applyCalls).toHaveLength(1);
   });
 });
 
@@ -491,13 +725,63 @@ describe("applyAfterOverrideChange — hash computed inside the critical section
 // Task 10.2 — applyAtTurnStart
 // ===========================================================================
 
+describe("applyAtTurnStart — resolves before entering the write queue", () => {
+  it("does not hold the write queue while configuration resolution runs (Design 3.4, criterion 5)", async () => {
+    const { stateManager } = createTestHarness();
+    seedWholeState(getStateDb(), stateWith());
+
+    const order: string[] = [];
+    let releaseResolve: (() => void) | undefined;
+    const resolveGate = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const runtime = makeFakeRuntime({ backend: "claude" });
+    const portable = portableWith([{ id: "s1" }]);
+    const deps: McpRuntimeApplyDeps = {
+      stateManager,
+      getRuntime: () => runtime,
+      resolvePortableForConversation: async () => {
+        order.push("resolve:start");
+        await resolveGate;
+        order.push("resolve:end");
+        return { portable, effectiveConfigHash: "ignored" };
+      },
+      now: () => new Date("2026-04-21T00:00:00.000Z"),
+    };
+    const service = createMcpRuntimeApplyService(deps);
+
+    const applyPromise = service.applyAtTurnStart({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+    });
+
+    // Resolution is in flight and gated. An unrelated write must be able to
+    // acquire and release the SAME queue right now — proof the resolve runs
+    // entirely outside the write queue.
+    await withWriteQueue("unrelated", async () => {
+      order.push("unrelated:commit");
+    });
+    releaseResolve?.();
+    await applyPromise;
+
+    expect(order.indexOf("unrelated:commit")).toBeLessThan(
+      order.indexOf("resolve:end"),
+    );
+    // Sanity: it still applied once resolution completed.
+    expect(runtime.applyCalls).toHaveLength(1);
+  });
+});
+
 describe("applyAtTurnStart — no-op when hash already applied", () => {
   it("does not call the runtime when the computed hash equals lastAppliedConfigHash", async () => {
     const { stateManager } = createTestHarness();
 
     const portable = portableWith([{ id: "s1" }]);
     const hash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: {
           lastAppliedConfigHash: hash,
@@ -530,7 +814,8 @@ describe("applyAtTurnStart — no-op when hash already applied", () => {
 
     const portable = portableWith([{ id: "s1" }]);
     const hash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: {
           lastAppliedConfigHash: hash,
@@ -556,7 +841,7 @@ describe("applyAtTurnStart — no-op when hash already applied", () => {
       backend: "claude",
     });
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -573,7 +858,8 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
     const { stateManager } = createTestHarness();
     const portable = portableWith([{ id: "s1" }]);
     const hash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: {
           lastAppliedConfigHash: "old-applied",
@@ -611,7 +897,7 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
     expect(result.effectiveConfigHash).toBe(hash);
     expect(runtime.applyCalls).toHaveLength(1);
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -628,7 +914,8 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
     const { stateManager } = createTestHarness();
     const portable = portableWith([{ id: "s1" }]);
     const hash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: {
           pendingConfigHash: "newer-pending-hash",
@@ -653,7 +940,7 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
       backend: "claude",
     });
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -675,7 +962,8 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
     const { stateManager } = createTestHarness();
     const portable = portableWith([{ id: "s1" }]);
     const newHash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: {
           lastAppliedConfigHash: "previous-applied-hash",
@@ -707,7 +995,7 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
     expect(result.error).not.toContain("shhh");
     expect(result.error).not.toContain("TOKEN=");
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -723,7 +1011,8 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
   it("treats a 'rejected' disposition from the runtime the same as a throw", async () => {
     const { stateManager } = createTestHarness();
     const portable = portableWith([{ id: "s1" }]);
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: { lastAppliedConfigHash: "previous-applied-hash" },
       }),
@@ -754,7 +1043,7 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
 
     expect(result.disposition).toBe("rejected");
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
@@ -769,7 +1058,8 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
 describe("applyAfterOverrideChange — apply failure preserves lastAppliedConfigHash", () => {
   it("runtime throw in the after-override-change path preserves lastAppliedConfigHash and surfaces a sanitized error", async () => {
     const { stateManager } = createTestHarness();
-    await stateManager.writeState(
+    seedWholeState(
+      getStateDb(),
       stateWith({
         mcpRuntime: { lastAppliedConfigHash: "previous-applied-hash" },
       }),
@@ -800,7 +1090,7 @@ describe("applyAfterOverrideChange — apply failure preserves lastAppliedConfig
     expect(result.error).not.toContain("abc123");
     expect(result.error).not.toContain("Bearer");
 
-    const persisted = await stateManager.readState();
+    const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
     ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;

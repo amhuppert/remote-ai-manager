@@ -29,6 +29,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import type { MutateActiveResult } from "./execution-repository";
 import {
   createGraphWorkflowExecutionLoop,
   _resetActiveLoopsForTesting,
@@ -62,13 +63,7 @@ interface InMemoryExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | GraphWorkflowExecution
-      | { execution: GraphWorkflowExecution; events: unknown[] }
-      | Promise<
-          | GraphWorkflowExecution
-          | { execution: GraphWorkflowExecution; events: unknown[] }
-        >,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   markContextEventsPreReset(
     projectPath: string,
@@ -80,9 +75,57 @@ interface InMemoryExecutionRepository {
 
 function createRepository(
   initial: GraphWorkflowExecution | null,
+  // Optional publisher the fake repository delivers through post-commit, exactly
+  // as the real `createGraphWorkflowExecutionRepository` does: the reducer returns
+  // inert `{ events, pushes }` DATA (never a callable), and delivery happens only
+  // after the (fake) commit. Scenarios that assert on the broadcast spy inject
+  // the same publisher they hand the loop so the derived events reach the spy.
+  eventPublisher?: ReturnType<
+    typeof createGraphWorkflowExecutionEventPublisher
+  >,
 ): InMemoryExecutionRepository & { read(): GraphWorkflowExecution | null } {
   let active = initial;
   let chain: Promise<unknown> = Promise.resolve();
+
+  // Serialized read-modify-write backing the sync `mutateActive` — the reducer
+  // is synchronous and returns inert delivery data, applied exactly as the
+  // production seam does.
+  const mutateActiveImpl = async (
+    _p: string,
+    _s: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => MutateActiveResult | GraphWorkflowExecution,
+  ): Promise<GraphWorkflowExecution> => {
+    const previous = chain;
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    chain = next;
+    try {
+      await previous;
+      if (!active) {
+        throw new Error("No active execution");
+      }
+      const result = fn(structuredClone(active));
+      if ("execution" in result && "events" in result) {
+        active = result.execution;
+        // Mirror the production repository: broadcast the derived events only
+        // AFTER the (fake) commit, through the injected publisher — never from a
+        // callable the reducer returned (`post-commit-delivery`).
+        eventPublisher?.deliver({
+          events: result.events,
+          pushes: result.pushes ?? [],
+        });
+      } else {
+        active = result;
+      }
+      return active;
+    } finally {
+      release();
+    }
+  };
 
   return {
     async getActive() {
@@ -94,28 +137,7 @@ function createRepository(
     async archiveActive() {
       throw new Error("archiveActive not used in integration tests");
     },
-    async mutateActive(_p, _s, fn) {
-      const previous = chain;
-      let release!: () => void;
-      const next = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      chain = next;
-      try {
-        await previous;
-        if (!active) {
-          throw new Error("No active execution");
-        }
-        const result = await fn(structuredClone(active));
-        active =
-          "execution" in result && "events" in result
-            ? result.execution
-            : result;
-        return active;
-      } finally {
-        release();
-      }
-    },
+    mutateActive: mutateActiveImpl,
     async markContextEventsPreReset() {
       return 0;
     },
@@ -2227,7 +2249,15 @@ describe("execution loop — parallel integration", () => {
     ];
 
     const initial = createInitialExecution(definition);
-    const repository = createRepository(initial);
+    // One publisher shared by the fake repository (which delivers post-commit)
+    // and the loop (which derives the events): the broadcast spy sees exactly
+    // what the production seam would broadcast after the transaction commits.
+    const broadcast = vi.fn();
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-27T12:03:00.000Z",
+    });
+    const repository = createRepository(initial, eventPublisher);
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
@@ -2308,8 +2338,6 @@ describe("execution loop — parallel integration", () => {
       });
     });
 
-    const broadcast = vi.fn();
-
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
@@ -2336,10 +2364,7 @@ describe("execution loop — parallel integration", () => {
           ordered.push("lock-released");
         };
       },
-      eventPublisher: createGraphWorkflowExecutionEventPublisher({
-        broadcast,
-        now: () => "2026-03-27T12:03:00.000Z",
-      }),
+      eventPublisher,
     });
 
     const result = await loop.run({
@@ -2424,7 +2449,15 @@ describe("execution loop — parallel integration", () => {
     };
     initial.taskStates["task-ctx-a"]!.status = "completed";
 
-    const repository = createRepository(initial);
+    // One publisher shared by the fake repository (post-commit delivery) and the
+    // loop (event derivation) so the broadcast spy sees exactly what the seam
+    // would broadcast after the transaction commits.
+    const broadcast = vi.fn();
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-27T12:03:00.000Z",
+    });
+    const repository = createRepository(initial, eventPublisher);
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
@@ -2475,7 +2508,6 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const broadcast = vi.fn();
     const waitForApprovalProgress = vi.fn(async () => {
       await new Promise((resolve) => setTimeout(resolve, 2));
     });
@@ -2509,10 +2541,7 @@ describe("execution loop — parallel integration", () => {
           ordered.push("lock-released");
         };
       },
-      eventPublisher: createGraphWorkflowExecutionEventPublisher({
-        broadcast,
-        now: () => "2026-03-27T12:03:00.000Z",
-      }),
+      eventPublisher,
     });
 
     const result = await loop.run({

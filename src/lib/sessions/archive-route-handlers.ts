@@ -14,7 +14,7 @@ import {
   setProjectArchived as defaultSetProjectArchived,
 } from "@/lib/state-store";
 import { stopAllForSession as defaultStopAllForSession } from "@/lib/dev-server/registry";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 
 const logger = createLogger("project-archive-route");
@@ -126,4 +126,4 @@ export function createArchiveRouteHandlers(
 // ---------------------------------------------------------------------------
 
 const _defaultArchiveHandlers = createArchiveRouteHandlers();
-export const archiveProject = _defaultArchiveHandlers.POST;
+export const archiveProject = withTracing(_defaultArchiveHandlers.POST);

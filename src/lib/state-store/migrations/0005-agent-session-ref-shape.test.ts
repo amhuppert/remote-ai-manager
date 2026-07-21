@@ -129,7 +129,7 @@ function readSchemaMigrationVersions(db: Db): number[] {
 }
 
 describe("0005-agent-session-ref-shape (production registry)", () => {
-  it("rewrites legacy and superset refs in all three columns of both tables to canonical", async () => {
+  it("rewrites legacy and superset refs in the backend_ref and forked_from columns of both tables to canonical", async () => {
     const db = freshDb();
     seedConversation(db, "c-legacy", {
       backendRef: JSON.stringify({ backend: "claude", sessionId: "sess-1" }),
@@ -145,23 +145,6 @@ describe("0005-agent-session-ref-shape (production registry)", () => {
         },
         forkLocator: "msg-3",
         forkMode: "synthetic",
-      }),
-      machineSnapshot: JSON.stringify({
-        status: "active",
-        context: {
-          backendRef: { backend: "claude", sessionId: "sess-snap" },
-          forkedFrom: {
-            sourceConversationId: "parent",
-            sourceBackendRef: { backend: "codex", threadId: "thr-snap" },
-          },
-          children: [
-            {
-              nested: {
-                backendRef: { backend: "codex", threadId: "thr-deep" },
-              },
-            },
-          ],
-        },
       }),
     });
     seedProjectConversation(db, "pc-legacy", {
@@ -186,6 +169,46 @@ describe("0005-agent-session-ref-shape (production registry)", () => {
     });
     expect(forkedFrom.messageIndex).toBe(3);
 
+    const plcRow = readRefColumns(db, "project_conversations", "pc-legacy");
+    expect(JSON.parse(plcRow.backend_ref!)).toEqual({
+      backend: "codex",
+      ref: "thr-plc",
+    });
+  });
+
+  // The machine_snapshot column is canonicalized by 0005 and then moved into the
+  // conversation_machine_snapshots sidecar (with `children` projected away) by
+  // 0007, so the full-chain end state no longer carries a machine_snapshot
+  // column. This isolates 0005's snapshot ref canonicalization — including refs
+  // inside `children` — by running only its `up` against the seeded column.
+  it("canonicalizes legacy/superset refs inside the machine_snapshot column (root context and children)", async () => {
+    const db = freshDb();
+    seedConversation(db, "c-snap", {
+      machineSnapshot: JSON.stringify({
+        status: "active",
+        context: {
+          backendRef: { backend: "claude", sessionId: "sess-snap" },
+          forkedFrom: {
+            sourceConversationId: "parent",
+            sourceBackendRef: { backend: "codex", threadId: "thr-snap" },
+          },
+          children: [
+            {
+              nested: {
+                backendRef: { backend: "codex", threadId: "thr-deep" },
+              },
+            },
+          ],
+        },
+      }),
+    });
+
+    await agentSessionRefShape.up({
+      name: agentSessionRefShape.name,
+      context: { db, configDir: null },
+    });
+
+    const row = readRefColumns(db, "conversations", "c-snap");
     const snapshot = JSON.parse(row.machine_snapshot!) as {
       context: {
         backendRef: unknown;
@@ -204,12 +227,6 @@ describe("0005-agent-session-ref-shape (production registry)", () => {
     expect(snapshot.context.children[0]?.nested.backendRef).toEqual({
       backend: "codex",
       ref: "thr-deep",
-    });
-
-    const plcRow = readRefColumns(db, "project_conversations", "pc-legacy");
-    expect(JSON.parse(plcRow.backend_ref!)).toEqual({
-      backend: "codex",
-      ref: "thr-plc",
     });
   });
 

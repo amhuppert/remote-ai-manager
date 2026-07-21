@@ -92,6 +92,7 @@ domain code → publication.publishEvent(event) → broadcaster adapter → all 
 
 - `publishEvent` and the `PublishFn` interface in `src/lib/events/publication.ts` are canonical. A mutation that has already committed uses `publishEventBestEffort`; primitive-owned lifecycle status uses `publishScopedStatus`. Only the publication module and SSE transport may import `src/lib/events/broadcaster.ts`.
 - Every route that mutates state and would otherwise require the client to poll publishes one event before returning.
+- A `202 Accepted` response must not await the work it accepts. It returns once intent is recorded and the work is initiated, then the client observes completion through SSE — never by the route blocking until the work is done. Work expected to exceed ~1s runs as a job that reports progress over SSE; the accepting route responds promptly with the current status and readiness propagates through the existing event reactions (e.g. dev-server start returns `202` at its acceptance boundary while `dev-server-status` events carry the later readiness transition).
 
 ---
 

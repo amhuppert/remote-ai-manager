@@ -11,11 +11,12 @@ import {
   removeClient,
   replayFramesSince,
 } from "@/lib/events/broadcaster";
+import { withTracing } from "@/lib/logging";
 
 const encoder = new TextEncoder();
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
-export function subscribeToEvents(request: Request): Response {
+function subscribeToEventsHandler(request: Request): Response {
   let savedController: ReadableStreamDefaultController;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -70,3 +71,12 @@ export function subscribeToEvents(request: Request): Response {
     },
   });
 }
+
+// Wrapped so /api/events joins the tracing net like every other route. The
+// stream is returned synchronously; `withTracing` recognises the
+// `text/event-stream` response and records it as streaming (durationMs: null,
+// no Server-Timing) — connection lifetime is never a request metric here.
+export const subscribeToEvents = withTracing(
+  async (request: Request): Promise<Response> =>
+    subscribeToEventsHandler(request),
+);

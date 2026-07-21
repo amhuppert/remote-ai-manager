@@ -104,6 +104,7 @@ const DEFAULT_INPUT = {
   agentBackend: "claude" as const,
   backendRef: null,
   promptCount: 0,
+  persistence: "durable" as const,
 };
 
 describe("conversation manager", () => {
@@ -161,11 +162,11 @@ describe("conversation manager", () => {
       expect(actor2.getSnapshot().context.status).toBe("awaiting");
     });
 
-    it("stamps transient from input into the machine context", () => {
+    it("derives transient from the persistence choice", () => {
       const actor = startConversationActor({
         ...DEFAULT_INPUT,
         conversationId: "conv-transient",
-        transient: true,
+        persistence: "ephemeral",
       });
       expect(actor.getSnapshot().context.transient).toBe(true);
 
@@ -175,7 +176,7 @@ describe("conversation manager", () => {
   });
 
   describe("ensureConversationActor with explicit actorInput", () => {
-    it("threads actorInput.transient into the actor context", async () => {
+    it("threads an ephemeral actorInput into transient context", async () => {
       const actor = await ensureConversationActor(
         "/test/project",
         "test-session",
@@ -184,7 +185,7 @@ describe("conversation manager", () => {
           actorInput: {
             projectName: "test-project",
             sessionWorktreePath: "/test/project",
-            transient: true,
+            persistence: "ephemeral",
             conversation: {
               createdAt: "2026-01-01T00:00:00.000Z",
               forkedFrom: null,
@@ -201,15 +202,16 @@ describe("conversation manager", () => {
       expect(actor.getSnapshot().context.transient).toBe(true);
     });
 
-    it("leaves actors non-transient when actorInput does not set the flag (validator lanes)", async () => {
+    it("keeps a durable actorInput non-transient", async () => {
       const actor = await ensureConversationActor(
         "/test/project",
         "test-session",
-        "validator-lane-1",
+        "durable-lane-1",
         {
           actorInput: {
             projectName: "test-project",
             sessionWorktreePath: "/test/project",
+            persistence: "durable",
             conversation: {
               createdAt: "2026-01-01T00:00:00.000Z",
               forkedFrom: null,
@@ -667,6 +669,7 @@ describe("conversation manager", () => {
       return {
         projectName: "test-project",
         sessionWorktreePath: "/test/project/.worktrees/test-session",
+        persistence: "durable",
         conversation: {
           createdAt: "2026-01-01T00:00:00.000Z",
           forkedFrom: null,
@@ -963,6 +966,7 @@ describe("conversation manager", () => {
           ({
             projectName: DEFAULT_INPUT.projectName,
             sessionWorktreePath: DEFAULT_INPUT.worktreePath,
+            persistence: "durable",
             conversation: {
               createdAt: DEFAULT_INPUT.createdAt,
               forkedFrom: null,

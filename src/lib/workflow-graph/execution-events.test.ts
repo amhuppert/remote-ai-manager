@@ -1,13 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import { TESTFAKE_BACKEND_ID } from "@/lib/agent-backends/testing/testfake-backend";
 import {
+  type GraphWorkflowExecutionEvent,
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowExecutionEventSchema,
   graphWorkflowLiveEditAppliedEventSchema,
 } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import {
+  createGraphWorkflowExecutionEventPublisher,
+  type GraphWorkflowEventDelivery,
+} from "./execution-events";
+
+/**
+ * Derive events and run delivery immediately — the pre-split behavior most of
+ * these isolated publisher tests assert (broadcast/push + the returned rows
+ * together). Delivery now runs through the publisher's post-commit `deliver`
+ * (the delivery record itself is inert data). Returns the append-only rows so
+ * existing return-value assertions keep working. New split-behavior tests call
+ * `publisher.deliver(delivery)` directly and assert on `.events` explicitly.
+ */
+function deriveDelivering(
+  publisher: ReturnType<typeof createGraphWorkflowExecutionEventPublisher>,
+  delivery: GraphWorkflowEventDelivery,
+): GraphWorkflowExecutionEvent[] {
+  publisher.deliver(delivery);
+  return delivery.events;
+}
 
 describe("graph workflow execution event publisher", () => {
   it("publishes diff-based execution events and appends them to execution history", () => {
@@ -163,12 +183,15 @@ describe("graph workflow execution event publisher", () => {
       ],
     });
 
-    const publishedExecution = publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    const publishedExecution = deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     expect(broadcast.mock.calls.map(([event]) => event.type)).toEqual([
       "graph-workflow-status",
@@ -201,23 +224,27 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedExecution = publisher.publishValidationResult({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      validatorType: "context",
-      pass: false,
-      summary: "Validation failed because the fix task was incomplete.",
-      issues: [
-        {
-          taskId: "task-plan-1",
-          title: "Fix task incomplete",
-          description: "The remediation task did not update the plan document.",
-        },
-      ],
-      reopenTaskIds: ["task-plan-1"],
-    });
+    const updatedExecution = deriveDelivering(
+      publisher,
+      publisher.publishValidationResult({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        validatorType: "context",
+        pass: false,
+        summary: "Validation failed because the fix task was incomplete.",
+        issues: [
+          {
+            taskId: "task-plan-1",
+            title: "Fix task incomplete",
+            description:
+              "The remediation task did not update the plan document.",
+          },
+        ],
+        reopenTaskIds: ["task-plan-1"],
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -264,22 +291,25 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    const updatedExecution = publisher.publishValidationResult({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      validatorType: "context",
-      pass: true,
-      summary: "Validation passed.",
-      sessionRef: {
-        backend: TESTFAKE_BACKEND_ID,
-        ref: "workflow-conversation-1",
-        lane: "context_validator",
-        refKind: "conversation",
-        workflowConversationId: "workflow-conversation-1",
-      },
-    });
+    const updatedExecution = deriveDelivering(
+      publisher,
+      publisher.publishValidationResult({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        validatorType: "context",
+        pass: true,
+        summary: "Validation passed.",
+        sessionRef: {
+          backend: TESTFAKE_BACKEND_ID,
+          ref: "workflow-conversation-1",
+          lane: "context_validator",
+          refKind: "conversation",
+          workflowConversationId: "workflow-conversation-1",
+        },
+      }),
+    );
 
     expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-validation-result",
@@ -365,12 +395,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -395,12 +428,15 @@ describe("graph workflow execution event publisher", () => {
     const prev = createWorkflowExecution({ status: "running" });
     const next = createWorkflowExecution({ ...prev, status: "completed" });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "sess-1",
-      previousExecution: prev,
-      nextExecution: next,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "sess-1",
+        previousExecution: prev,
+        nextExecution: next,
+      }),
+    );
 
     expect(dispatchPush).toHaveBeenCalledWith({
       kind: "workflow-completed",
@@ -421,12 +457,15 @@ describe("graph workflow execution event publisher", () => {
     const prev = createWorkflowExecution({ status: "running" });
     const next = createWorkflowExecution({ ...prev, status: "halted" });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "sess-1",
-      previousExecution: prev,
-      nextExecution: next,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "sess-1",
+        previousExecution: prev,
+        nextExecution: next,
+      }),
+    );
 
     expect(dispatchPush).toHaveBeenCalledWith({
       kind: "workflow-halted",
@@ -457,12 +496,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "sess-1",
-      previousExecution: prev,
-      nextExecution: next,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "sess-1",
+        previousExecution: prev,
+        nextExecution: next,
+      }),
+    );
 
     const pushKinds = dispatchPush.mock.calls.map(
       (args: unknown[]) => (args[0] as { kind: string }).kind,
@@ -556,12 +598,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "sess-1",
-      previousExecution: prev,
-      nextExecution: next,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "sess-1",
+        previousExecution: prev,
+        nextExecution: next,
+      }),
+    );
 
     expect(dispatchPush).toHaveBeenCalledWith({
       kind: "context-completed",
@@ -617,12 +662,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const eventTypes = broadcast.mock.calls.map(([event]) => event.type);
     expect(eventTypes).toContain("graph-workflow-status");
@@ -707,12 +755,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const batchEvent = broadcast.mock.calls.find(
       ([event]) => event.type === "graph-workflow-batch-scheduled",
@@ -754,12 +805,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const pendingEvent = broadcast.mock.calls.find(
       ([event]) => event.type === "graph-workflow-pending-halt-reason",
@@ -785,12 +839,15 @@ describe("graph workflow execution event publisher", () => {
 
     // Should not throw even without dispatchPush
     expect(() => {
-      publisher.publishExecutionUpdate({
-        projectPath: "/projects/repo",
-        sessionName: "sess-1",
-        previousExecution: prev,
-        nextExecution: next,
-      });
+      deriveDelivering(
+        publisher,
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "sess-1",
+          previousExecution: prev,
+          nextExecution: next,
+        }),
+      );
     }).not.toThrow();
   });
 
@@ -823,12 +880,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    const published = publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    const published = deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const laneEvent = broadcast.mock.calls
       .map(([event]) => event)
@@ -887,12 +947,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const laneEvents = broadcast.mock.calls
       .map(([event]) => event)
@@ -936,12 +999,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const laneEvents = broadcast.mock.calls
       .map(([event]) => event)
@@ -987,12 +1053,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    const rows = publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    const rows = deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     expect(rows.map((row) => row.event)).toContainEqual({
       type: "graph-workflow-lane-commit",
@@ -1038,12 +1107,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    const published = publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    const published = deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const joinEvent = broadcast.mock.calls
       .map(([event]) => event)
@@ -1106,12 +1178,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const joinEvents = broadcast.mock.calls
       .map(([event]) => event)
@@ -1168,12 +1243,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const joinEvents = broadcast.mock.calls
       .map(([event]) => event)
@@ -1219,12 +1297,15 @@ describe("graph workflow execution event publisher", () => {
       joins: { "join-1": { ...join, updatedAt: "2026-04-02T08:00:00.000Z" } },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const joinEvents = broadcast.mock.calls
       .map(([event]) => event)
@@ -1246,14 +1327,17 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedExecution = publisher.publishApprovalPending({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      conversationId: "conversation-9",
-      requestedAt: "2026-06-10T08:59:00.000Z",
-    });
+    const updatedExecution = deriveDelivering(
+      publisher,
+      publisher.publishApprovalPending({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        conversationId: "conversation-9",
+        requestedAt: "2026-06-10T08:59:00.000Z",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith({
       type: "graph-workflow-approval-pending",
@@ -1294,16 +1378,19 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedExecution = publisher.publishApprovalResolved({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      conversationId: "conversation-9",
-      decision: "approved",
-      message: null,
-      decidedAt: "2026-06-10T09:29:00.000Z",
-    });
+    const updatedExecution = deriveDelivering(
+      publisher,
+      publisher.publishApprovalResolved({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        conversationId: "conversation-9",
+        decision: "approved",
+        message: null,
+        decidedAt: "2026-06-10T09:29:00.000Z",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith({
       type: "graph-workflow-approval-resolved",
@@ -1339,16 +1426,19 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedExecution = publisher.publishApprovalResolved({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      conversationId: "conversation-9",
-      decision: "rejected",
-      message: "The plan misses the migration step.",
-      decidedAt: "2026-06-10T09:44:00.000Z",
-    });
+    const updatedExecution = deriveDelivering(
+      publisher,
+      publisher.publishApprovalResolved({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        conversationId: "conversation-9",
+        decision: "rejected",
+        message: "The plan misses the migration step.",
+        decidedAt: "2026-06-10T09:44:00.000Z",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -1379,15 +1469,18 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const eventLog = publisher.publishUserInputPending({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      conversationId: "conversation-9",
-      questionBatchId: "batch-42",
-      requestedAt: "2026-06-11T08:59:00.000Z",
-    });
+    const eventLog = deriveDelivering(
+      publisher,
+      publisher.publishUserInputPending({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        conversationId: "conversation-9",
+        questionBatchId: "batch-42",
+        requestedAt: "2026-06-11T08:59:00.000Z",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith({
       type: "graph-workflow-user-input-pending",
@@ -1432,16 +1525,19 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const eventLog = publisher.publishUserInputResolved({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      conversationId: "conversation-9",
-      questionBatchId: "batch-42",
-      resolution: "answered",
-      resolvedAt: "2026-06-11T09:29:00.000Z",
-    });
+    const eventLog = deriveDelivering(
+      publisher,
+      publisher.publishUserInputResolved({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        conversationId: "conversation-9",
+        questionBatchId: "batch-42",
+        resolution: "answered",
+        resolvedAt: "2026-06-11T09:29:00.000Z",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith({
       type: "graph-workflow-user-input-resolved",
@@ -1481,16 +1577,19 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const eventLog = publisher.publishUserInputResolved({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      contextId: "context-plan",
-      conversationId: "conversation-9",
-      questionBatchId: "batch-42",
-      resolution: "withdrawn",
-      resolvedAt: "2026-06-11T09:44:00.000Z",
-    });
+    const eventLog = deriveDelivering(
+      publisher,
+      publisher.publishUserInputResolved({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        contextId: "context-plan",
+        conversationId: "conversation-9",
+        questionBatchId: "batch-42",
+        resolution: "withdrawn",
+        resolvedAt: "2026-06-11T09:44:00.000Z",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -1570,12 +1669,15 @@ describe("graph workflow execution event publisher", () => {
       },
     });
 
-    publisher.publishExecutionUpdate({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      previousExecution,
-      nextExecution,
-    });
+    deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
 
     const statusEvent = broadcast.mock.calls
       .map(([event]) => event)
@@ -1598,14 +1700,17 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedExecution = publisher.publishCharterRegistered({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      definitionId: "workflow-1",
-      definitionRevision: 3,
-      charterHash: "sha256:abc123",
-    });
+    const updatedExecution = deriveDelivering(
+      publisher,
+      publisher.publishCharterRegistered({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        definitionId: "workflow-1",
+        definitionRevision: 3,
+        charterHash: "sha256:abc123",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith({
       type: "graph-workflow-charter-registered",
@@ -1650,14 +1755,17 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedEvents = publisher.publishCharterUpdated({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      execution,
-      definitionId: "workflow-1",
-      definitionRevision: 4,
-      charterHash: "sha256:def456",
-    });
+    const updatedEvents = deriveDelivering(
+      publisher,
+      publisher.publishCharterUpdated({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution,
+        definitionId: "workflow-1",
+        definitionRevision: 4,
+        charterHash: "sha256:def456",
+      }),
+    );
 
     expect(broadcast).toHaveBeenCalledExactlyOnceWith({
       type: "graph-workflow-charter-updated",
@@ -1682,13 +1790,16 @@ describe("graph workflow execution event publisher", () => {
       now: () => "2026-06-14T12:00:00.000Z",
     });
 
-    const updatedEvents = publisher.publishCharterUpdated({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      definitionId: "workflow-1",
-      definitionRevision: 5,
-      charterHash: "sha256:ghi789",
-    });
+    const updatedEvents = deriveDelivering(
+      publisher,
+      publisher.publishCharterUpdated({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        definitionId: "workflow-1",
+        definitionRevision: 5,
+        charterHash: "sha256:ghi789",
+      }),
+    );
 
     const [broadcastEvent] = broadcast.mock.calls[0] ?? [];
     expect(
@@ -1713,15 +1824,18 @@ describe("graph workflow execution event publisher", () => {
       now: () => "2026-04-02T09:00:00.000Z",
     });
 
-    const rows = publisher.publishLiveEditApplied({
-      projectPath: "/projects/repo",
-      sessionName: "session-1",
-      executionId: "execution-7",
-      liveRevision: 5,
-      operationCount: 3,
-      affectedContextIds: ["verify", "docs"],
-      source: "cli",
-    });
+    const rows = deriveDelivering(
+      publisher,
+      publisher.publishLiveEditApplied({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        executionId: "execution-7",
+        liveRevision: 5,
+        operationCount: 3,
+        affectedContextIds: ["verify", "docs"],
+        source: "cli",
+      }),
+    );
 
     const [broadcastEvent] = broadcast.mock.calls[0] ?? [];
     expect(
@@ -1741,5 +1855,83 @@ describe("graph workflow execution event publisher", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.occurredAt).toBe("2026-04-02T09:00:00.000Z");
     expect(rows[0]?.event.type).toBe("graph-workflow-live-edit-applied");
+  });
+});
+
+describe("event derivation is pure — delivery is deferred to deliver()", () => {
+  it("publishExecutionUpdate derives rows but broadcasts and dispatches push only on deliver()", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-07-20T00:00:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({ status: "running" });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      status: "completed",
+    });
+
+    const delivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    // Derivation produced the rows without any external side effect: no client
+    // has been told the mutation happened, because the transaction has not yet
+    // committed (Design 3.2, post-commit-delivery).
+    expect(delivery.events.length).toBeGreaterThan(0);
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(dispatchPush).not.toHaveBeenCalled();
+
+    publisher.deliver(delivery);
+
+    // deliver() is the ONLY thing that broadcasts + dispatches, and it emits
+    // exactly the derived events once.
+    expect(broadcast.mock.calls.map(([event]) => event.type)).toEqual(
+      delivery.events.map((row) => row.event.type),
+    );
+    expect(dispatchPush).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "workflow-completed" }),
+    );
+  });
+
+  it("publishApprovalPending defers both its broadcast and its push to deliver()", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-07-20T00:00:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const delivery = publisher.publishApprovalPending({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-1",
+      requestedAt: "2026-07-20T00:00:00.000Z",
+    });
+
+    expect(delivery.events).toHaveLength(1);
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(dispatchPush).not.toHaveBeenCalled();
+
+    publisher.deliver(delivery);
+
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(dispatchPush).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "approval-pending" }),
+    );
   });
 });

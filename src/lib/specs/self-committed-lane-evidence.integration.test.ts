@@ -109,7 +109,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       previousExecution: previous,
       nextExecution: next,
     });
-    const laneCommitEvents = derived.filter(
+    const laneCommitEvents = derived.events.filter(
       (record) => record.event.type === "graph-workflow-lane-commit",
     );
     expect(laneCommitEvents).toHaveLength(1);
@@ -125,7 +125,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       WORKFLOW_EXECUTION_ID,
       AT,
       [
-        ...derived,
+        ...derived.events,
         graphWorkflowExecutionEventSchema.parse({
           occurredAt: AT,
           event: {

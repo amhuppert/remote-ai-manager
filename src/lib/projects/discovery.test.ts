@@ -2,9 +2,37 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { ManagerState } from "@/lib/projects/schemas";
+import type { SessionListItem, SessionState } from "@/lib/sessions/schemas";
+import { deriveSessionStatus } from "@/lib/sessions/derived";
 import { createConfigReader } from "@/lib/config/loader";
 import { createDiscoveryService } from "./discovery";
 import type { DiscoveryDeps } from "./discovery";
+
+/**
+ * Project the test's session-shaped fixtures into the list-item projections the
+ * discovery service now consumes. `derivedStatus` is computed by the real
+ * `deriveSessionStatus` so the fake stays faithful to the production accessor;
+ * the fields discovery reads (`archived`, `derivedStatus`) are preserved from
+ * the fixture. Mirrors `listProjectPaths()` + `getProjectSessionListItems()`.
+ */
+function stateToDiscoveryDeps(
+  state: ManagerState,
+): Pick<DiscoveryDeps, "listProjectPaths" | "getProjectSessionListItems"> {
+  return {
+    listProjectPaths: async () => Object.keys(state.projects),
+    getProjectSessionListItems: async (projectPath: string) => {
+      const project = state.projects[projectPath];
+      if (!project) return [];
+      return Object.values(project.sessions).map((session) => {
+        const s = session as SessionState;
+        return {
+          ...s,
+          derivedStatus: deriveSessionStatus(s),
+        } as unknown as SessionListItem;
+      });
+    },
+  };
+}
 
 const TEST_DIR = path.join("/tmp", "cc-discovery-test-" + Date.now());
 const CONFIG_DIR = path.join(TEST_DIR, "config");
@@ -36,7 +64,7 @@ function createTestService(
       const config = await configReader.readConfig();
       return { ...config, baseDir: BASE_DIR, ...configOverrides };
     },
-    readState: async () => state,
+    ...stateToDiscoveryDeps(state),
   };
   return createDiscoveryService(deps);
 }
@@ -68,7 +96,7 @@ describe("discoverProjects — read concurrency", () => {
     const configGate = new Promise<void>((resolve) => {
       releaseConfig = resolve;
     });
-    let stateRead = false;
+    let projectPathsRead = false;
     const configReader = createConfigReader(CONFIG_DIR);
     const deps: DiscoveryDeps = {
       readConfig: async () => {
@@ -76,10 +104,11 @@ describe("discoverProjects — read concurrency", () => {
         const config = await configReader.readConfig();
         return { ...config, baseDir: BASE_DIR };
       },
-      readState: async () => {
-        stateRead = true;
-        return EMPTY_STATE;
+      listProjectPaths: async () => {
+        projectPathsRead = true;
+        return [];
       },
+      getProjectSessionListItems: async () => [],
     };
     const service = createDiscoveryService(deps);
 
@@ -88,7 +117,7 @@ describe("discoverProjects — read concurrency", () => {
     await Promise.resolve();
     // The state read is independent of the config read and must not queue
     // behind it (readdir legitimately waits for config's baseDir).
-    expect(stateRead).toBe(true);
+    expect(projectPathsRead).toBe(true);
 
     releaseConfig();
     const projects = await pending;
@@ -158,7 +187,7 @@ describe("discoverProjects — scanning and filtering", () => {
           baseDir: "/tmp/cc-nonexistent-" + Date.now(),
         };
       },
-      readState: async () => EMPTY_STATE,
+      ...stateToDiscoveryDeps(EMPTY_STATE),
     });
     const projects = await service.discoverProjects();
 

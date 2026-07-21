@@ -20,6 +20,7 @@ beforeEach(() => {
 });
 
 import type { GitClient } from "../git/client";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type {
   AgentTaskResult,
   AgentTaskRunner,
@@ -69,17 +70,119 @@ function createTestDeps() {
     ensureCcArtifactsExcluded: ensureCcArtifactsExcludedMock,
     fastRemoveWorktree:
       fastRemoveWorktreeMock as unknown as SessionDeps["fastRemoveWorktree"],
-    readState: readStateMock,
-    mutateState: vi
+    // Focused-read fakes derive their answer from the shared fake state the
+    // per-test `readStateMock.mockResolvedValue(...)` fixtures still drive, so
+    // the existing fixtures need no change: `getSession` is one session slice,
+    // `getProjectSessionListItems` the project's session names, and
+    // `listProjectPaths` the set of known project paths.
+    getSession: vi.fn(async (projectPath: string, sessionName: string) => {
+      const state = await readStateMock();
+      return state.projects[projectPath]?.sessions[sessionName] ?? null;
+    }) as unknown as SessionDeps["getSession"],
+    getProjectSessionListItems: vi.fn(async (projectPath: string) => {
+      const state = await readStateMock();
+      const project = state.projects[projectPath];
+      if (!project) return [];
+      return Object.values(
+        project.sessions as Record<string, { sessionName: string }>,
+      ).map((s) => ({ sessionName: s.sessionName }));
+    }) as unknown as SessionDeps["getProjectSessionListItems"],
+    listProjectPaths: vi.fn(async () => {
+      const state = await readStateMock();
+      return Object.keys(state.projects);
+    }) as unknown as SessionDeps["listProjectPaths"],
+    // Focused mutation fakes: each applies the real state-transition semantics
+    // to the shared fake state and records via writeStateMock(state, label), so
+    // the orchestration/state-outcome assertions (savedState + label) exercise
+    // the service's control flow without a real store. Genuine durability is
+    // proven separately against a real store in
+    // state-store/focused-session-lifecycle.durability.test.ts.
+    createSessionRow: vi
       .fn()
       .mockImplementation(
-        async (_label: string, mutate: (state: unknown) => unknown) => {
+        async (projectPath: string, session: { sessionName: string }) => {
           const state = await readStateMock();
-          const result = mutate(state);
-          writeStateMock(state, _label);
-          return result;
+          state.projects[projectPath] ??= {
+            rootPath: projectPath,
+            sessions: {},
+          };
+          state.projects[projectPath].sessions[session.sessionName] = session;
+          writeStateMock(state, "createSession");
         },
       ),
+    deleteSessionRow: vi
+      .fn()
+      .mockImplementation(
+        async (projectPath: string, sessionName: string, label: string) => {
+          const state = await readStateMock();
+          const project = state.projects[projectPath];
+          if (project) delete project.sessions[sessionName];
+          writeStateMock(state, label);
+        },
+      ),
+    retargetChildrenToMain: vi
+      .fn()
+      .mockImplementation(
+        async (projectPath: string, parentSessionName: string) => {
+          const state = await readStateMock();
+          const project = state.projects[projectPath];
+          if (project) {
+            for (const child of Object.values(project.sessions) as Array<{
+              parentSessionName: string | null;
+              targetBranch: string;
+            }>) {
+              if (child.parentSessionName === parentSessionName) {
+                child.targetBranch = "main";
+                child.parentSessionName = null;
+              }
+            }
+          }
+          writeStateMock(state, "retargetOrphanedChildren");
+        },
+      ),
+    applyFusedSessionDelete: vi
+      .fn()
+      .mockImplementation(
+        async (
+          projectPath: string,
+          deletedSessionNames: Iterable<string>,
+          label: string,
+        ) => {
+          const deletedSet = new Set(deletedSessionNames);
+          if (deletedSet.size === 0) return;
+          const state = await readStateMock();
+          const project = state.projects[projectPath];
+          if (project) {
+            for (const child of Object.values(project.sessions) as Array<{
+              parentSessionName: string | null;
+              targetBranch: string;
+            }>) {
+              if (
+                child.parentSessionName &&
+                deletedSet.has(child.parentSessionName)
+              ) {
+                child.targetBranch = "main";
+                child.parentSessionName = null;
+              }
+            }
+            for (const name of deletedSet) delete project.sessions[name];
+          }
+          writeStateMock(state, label);
+        },
+      ),
+    deleteProjectRow: vi
+      .fn()
+      .mockImplementation(async (projectPath: string) => {
+        const state = await readStateMock();
+        delete state.projects[projectPath];
+        state.archivedProjects = state.archivedProjects.filter(
+          (p: string) => p !== projectPath,
+        );
+        state.pinnedProjects = state.pinnedProjects.filter(
+          (p: string) => p !== projectPath,
+        );
+        writeStateMock(state, "deleteProject");
+      }),
     readConfig: vi.fn().mockResolvedValue({}),
     readRepoConfig: vi.fn().mockResolvedValue(null),
     stopAllForSession: vi.fn().mockResolvedValue(undefined),
@@ -208,6 +311,20 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+/** Poll a synchronous predicate until it holds, yielding to the event loop. */
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("waitForCondition timed out");
+    }
+    await new Promise((r) => setTimeout(r, 1));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +1017,109 @@ describe("createSessionNormal", () => {
 });
 
 // ===========================================================================
+// createSession — focused write + provisioning concurrency (real store)
+// ===========================================================================
+
+// These run against a real `:memory:` store (its own write queue + repos), so
+// the focused insert is a genuine SQLite commit and the write queue is the real
+// one. The focused insert holds the queue for O(1) in total-state, and the slow
+// provisioning (git worktree add) runs entirely OUTSIDE any queue callback
+// (no-slow-work-in-critical-section). Durability is asserted by repo reload.
+describe("createSession — focused persistence + provisioning concurrency", () => {
+  it("commits the session via the focused createSessionRow (durable) and never touches a whole-state mutateState", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      const base = createTestDeps().deps;
+      // A `mutateState` stand-in that throws if ever reached, proving
+      // createSession persists through the focused `createSessionRow` and never
+      // routes a write through the aggregate mutation.
+      const throwingMutateState = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "whole-state mutateState must not be used by createSession",
+          ),
+        );
+      const svc = createSessionService({
+        ...base,
+        getSession: fixture.store.getSession,
+        getProjectSessionListItems: fixture.store.getProjectSessionListItems,
+        listProjectPaths: fixture.store.listProjectPaths,
+        createSessionRow: fixture.store.createSessionRow,
+        deleteSessionRow: fixture.store.deleteSessionRow,
+        // Present only so an accidental aggregate write fails loudly;
+        // createSession must never call it.
+        ...({ mutateState: throwingMutateState } as Record<string, unknown>),
+      });
+
+      const created = await svc.createSessionNormal("/repo", "focused one");
+
+      expect(throwingMutateState).not.toHaveBeenCalled();
+      const reloaded = await fixture.store.getSession(
+        "/repo",
+        created.sessionName,
+      );
+      expect(reloaded).not.toBeNull();
+      expect(reloaded!.conversations.length).toBeGreaterThan(0);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("holds no write-queue lock across slow provisioning — an unrelated queued write completes while git worktree add is in flight", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      const base = createTestDeps().deps;
+      const gitGate = deferred();
+      let worktreeAddStarted = false;
+      const gatedGit = vi.fn().mockImplementation((args: string[]) => {
+        if (args[0] === "worktree" && args[1] === "add") {
+          worktreeAddStarted = true;
+          return gitGate.promise.then(() => ({ stdout: "", stderr: "" }));
+        }
+        return Promise.resolve({ stdout: "", stderr: "" });
+      });
+
+      const svc = createSessionService({
+        ...base,
+        getSession: fixture.store.getSession,
+        getProjectSessionListItems: fixture.store.getProjectSessionListItems,
+        listProjectPaths: fixture.store.listProjectPaths,
+        createSessionRow: fixture.store.createSessionRow,
+        deleteSessionRow: fixture.store.deleteSessionRow,
+        gitClient: { git: gatedGit } as unknown as GitClient,
+      });
+
+      const createPromise = svc.createSessionNormal(
+        "/repo",
+        "provisioning one",
+      );
+
+      // Wait until provisioning has entered the (gated) git step — the focused
+      // insert has committed by now, and the write queue is released.
+      await waitForCondition(() => worktreeAddStarted);
+      const insertedName = (
+        await fixture.store.getProjectSessions("/repo")
+      ).find((s) => s.sessionName.startsWith("provisioning"));
+      expect(
+        insertedName,
+        "focused insert committed before git resolves",
+      ).toBeDefined();
+
+      // An unrelated write on the SAME store's write queue completes while git
+      // is still gated — proof the queue is not held across provisioning.
+      await fixture.store.setProjectPinned("/unrelated", true);
+      expect(await fixture.store.getPinnedProjects()).toContain("/unrelated");
+
+      gitGate.resolve();
+      await createPromise;
+    } finally {
+      fixture.close();
+    }
+  });
+});
+
+// ===========================================================================
 // 1.5b – Random suffix in branch/worktree paths
 // ===========================================================================
 
@@ -1513,7 +1733,7 @@ describe("deleteProject", () => {
       "/projects/repo",
     );
 
-    // Final mutateState call removes the project entry
+    // Final focused deleteProjectRow removes the project entry
     const lastWriteState =
       writeStateMock.mock.calls[writeStateMock.mock.calls.length - 1]![0];
     expect(lastWriteState.projects["/projects/repo"]).toBeUndefined();
@@ -1652,7 +1872,7 @@ describe("deleteProject", () => {
     (deps.captureTicketContentForProject as Mock).mockResolvedValue([
       "ticket-a",
     ]);
-    (deps.mutateState as Mock).mockRejectedValueOnce(
+    (deps.deleteProjectRow as Mock).mockRejectedValueOnce(
       new Error("project cascade failed"),
     );
 
@@ -1695,7 +1915,7 @@ describe("deleteProject", () => {
       "ticket lookup failed",
     );
     expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
-    expect(deps.mutateState).not.toHaveBeenCalled();
+    expect(deps.deleteProjectRow).not.toHaveBeenCalled();
   });
 
   it("does not fail deletion when ticket-content cleanup throws and logs a stable orphan path key", async () => {
@@ -2246,13 +2466,13 @@ describe("retargetOrphanedChildren", () => {
 
     await service.retargetOrphanedChildren("/projects/repo", "Parent");
 
-    // mutateState still called but no sessions changed
-    expect(deps.mutateState).toHaveBeenCalled();
+    // Focused retarget still runs (a scoped UPDATE) even with no children.
+    expect(deps.retargetChildrenToMain).toHaveBeenCalled();
   });
 });
 
 // ===========================================================================
-// deleteSession – fused retarget + remove (single mutateState)
+// deleteSession – fused retarget + remove (single focused delete)
 // ===========================================================================
 
 describe("deleteSession — orphan retargeting", () => {
@@ -2300,17 +2520,17 @@ describe("deleteSession — orphan retargeting", () => {
     };
   }
 
-  it("performs retarget + remove in a single mutateState labeled deleteSession", async () => {
+  it("performs retarget + remove in a single fused delete labeled deleteSession", async () => {
     readStateMock.mockResolvedValue(stateWithParentAndChild());
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
     await service.deleteSession("/projects/repo", "Parent");
 
-    const mutateLabels = (deps.mutateState as Mock).mock.calls.map(
-      (call: unknown[]) => call[0],
+    const fusedLabels = (deps.applyFusedSessionDelete as Mock).mock.calls.map(
+      (call: unknown[]) => call[2],
     );
-    expect(mutateLabels).toEqual(["deleteSession"]);
+    expect(fusedLabels).toEqual(["deleteSession"]);
   });
 
   it("the single deleteSession mutator retargets children and removes the parent in one pass", async () => {
@@ -2334,7 +2554,7 @@ describe("deleteSession — orphan retargeting", () => {
 });
 
 // ===========================================================================
-// bulkDeleteSessions – one mutateState for N sessions
+// bulkDeleteSessions – one focused fused delete for N sessions
 // ===========================================================================
 
 describe("bulkDeleteSessions", () => {
@@ -2412,17 +2632,17 @@ describe("bulkDeleteSessions", () => {
     };
   }
 
-  it("performs the entire batch's state change in a single mutateState labeled bulkDeleteSessions", async () => {
+  it("performs the entire batch's state change in a single fused delete labeled bulkDeleteSessions", async () => {
     readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
     await service.bulkDeleteSessions("/projects/repo", ["A", "B", "C"]);
 
-    const mutateLabels = (deps.mutateState as Mock).mock.calls.map(
-      (call: unknown[]) => call[0],
+    const fusedLabels = (deps.applyFusedSessionDelete as Mock).mock.calls.map(
+      (call: unknown[]) => call[2],
     );
-    expect(mutateLabels).toEqual(["bulkDeleteSessions"]);
+    expect(fusedLabels).toEqual(["bulkDeleteSessions"]);
   });
 
   it("removes all sessions and retargets orphaned children in one pass", async () => {

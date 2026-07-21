@@ -153,7 +153,7 @@ const _defaultProjectsHandlers = createProjectsRouteHandlers();
 export const listProjects = withTracing(_defaultProjectsHandlers.GET);
 
 const _defaultProjectHandlers = createProjectRouteHandlers();
-export const deleteProject = _defaultProjectHandlers.DELETE;
+export const deleteProject = withTracing(_defaultProjectHandlers.DELETE);
 
 const _defaultProjectPreferencesHandlers =
   createProjectPreferencesRouteHandlers();

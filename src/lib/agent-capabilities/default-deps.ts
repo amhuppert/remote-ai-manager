@@ -28,7 +28,6 @@ import { getStateStore } from "@/lib/state-store";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ManagerState } from "@/lib/projects/schemas";
 import {
   decodeCascadeKind,
   type AgentCapabilityCascadeKind,
@@ -128,7 +127,16 @@ export interface CascadeDiscoveryProvider {
 
 export interface ConversationStartCapabilityComposerDeps {
   readGlobalOverrides(): Promise<AgentCapabilityOverrides | undefined>;
-  readState(): Promise<ManagerState>;
+  getProjectAgentCapabilityOverrides(
+    projectPath: string,
+  ): Promise<AgentCapabilityOverrides | undefined>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{
+    agentCapabilityOverrides?: AgentCapabilityOverrides;
+    conversations: readonly ConversationState[];
+  } | null>;
   getProjectConversation(
     projectPath: string,
     conversationId: string,
@@ -169,44 +177,42 @@ async function readOverrideChain(
       layer: "global",
       overrides: await deps.readGlobalOverrides(),
     },
+    {
+      layer: "project",
+      overrides: await deps.getProjectAgentCapabilityOverrides(
+        scope.projectPath,
+      ),
+    },
   ];
 
-  const state = await deps.readState();
-  const project = state.projects[scope.projectPath];
-  if (project) {
-    chain.push({
-      layer: "project",
-      overrides: project.agentCapabilityOverrides,
-    });
-    if (isProjectConversationComposeInput(scope)) {
-      const conversation = await deps.getProjectConversation(
-        scope.projectPath,
-        scope.conversationId,
-      );
-      if (conversation) {
-        chain.push({
-          layer: "conversation",
-          overrides: conversation.agentCapabilityOverrides,
-        });
-      }
-      return chain;
-    }
-
-    const session = project.sessions[scope.sessionName];
-    if (session) {
+  if (isProjectConversationComposeInput(scope)) {
+    const conversation = await deps.getProjectConversation(
+      scope.projectPath,
+      scope.conversationId,
+    );
+    if (conversation) {
       chain.push({
-        layer: "session",
-        overrides: session.agentCapabilityOverrides,
+        layer: "conversation",
+        overrides: conversation.agentCapabilityOverrides,
       });
-      const conv = session.conversations.find(
-        (c) => c.id === scope.conversationId,
-      );
-      if (conv) {
-        chain.push({
-          layer: "conversation",
-          overrides: conv.agentCapabilityOverrides,
-        });
-      }
+    }
+    return chain;
+  }
+
+  const session = await deps.getSession(scope.projectPath, scope.sessionName);
+  if (session) {
+    chain.push({
+      layer: "session",
+      overrides: session.agentCapabilityOverrides,
+    });
+    const conv = session.conversations.find(
+      (c) => c.id === scope.conversationId,
+    );
+    if (conv) {
+      chain.push({
+        layer: "conversation",
+        overrides: conv.agentCapabilityOverrides,
+      });
     }
   }
 
@@ -369,7 +375,10 @@ function logDiscoveryFailure(
 const defaultComposeForConversation = createConversationStartCapabilityComposer(
   {
     readGlobalOverrides: () => defaultGlobalCapabilityOverrideStore.read(),
-    readState: () => stateManager.readState(),
+    getProjectAgentCapabilityOverrides: (projectPath) =>
+      stateManager.getProjectAgentCapabilityOverrides(projectPath),
+    getSession: (projectPath, sessionName) =>
+      stateManager.getSession(projectPath, sessionName),
     getProjectConversation: (projectPath, conversationId) =>
       stateManager.getProjectConversation(projectPath, conversationId),
     getDiscoveryProvider: (cascadeKind) =>
@@ -395,7 +404,18 @@ interface RuntimeSnapshot {
 }
 
 export interface AffectedConversationListerDeps {
-  readState(): Promise<ManagerState>;
+  listProjectPaths(): Promise<readonly string[]>;
+  getProjectSessions(projectPath: string): Promise<
+    readonly {
+      sessionName: string;
+      worktreePath: string;
+      agentCapabilityOverrides?: AgentCapabilityOverrides;
+      conversations: readonly ConversationState[];
+    }[]
+  >;
+  getProjectAgentCapabilityOverrides(
+    projectPath: string,
+  ): Promise<AgentCapabilityOverrides | undefined>;
   readGlobalOverrides(): Promise<AgentCapabilityOverrides | undefined>;
   listAllProjectConversations(): Promise<
     readonly { projectPath: string; conversation: ConversationState }[]
@@ -412,18 +432,44 @@ export function createAffectedConversationLister(
   changedItemIds: readonly string[];
 }) => Promise<readonly AffectedConversation[]> {
   return async function listAffectedConversations(input) {
-    const [state, globalOverrides] = await Promise.all([
-      deps.readState(),
-      deps.readGlobalOverrides(),
-    ]);
+    // Memoize each affected project's overrides so the session fanout and the PLC
+    // fanout share one focused read per project. Scoped to this invocation, not
+    // the factory: a memo that outlived one fanout would mask a later fanout with
+    // stale project rules after an intervening override mutation.
+    const projectOverridesCache = new Map<
+      string,
+      AgentCapabilityOverrides | undefined
+    >();
+    async function projectOverridesFor(
+      projectPath: string,
+    ): Promise<AgentCapabilityOverrides | undefined> {
+      if (!projectOverridesCache.has(projectPath)) {
+        projectOverridesCache.set(
+          projectPath,
+          await deps.getProjectAgentCapabilityOverrides(projectPath),
+        );
+      }
+      return projectOverridesCache.get(projectPath);
+    }
+
+    const globalOverrides = await deps.readGlobalOverrides();
     const affected: AffectedConversation[] = [];
 
-    for (const [projectPath, project] of Object.entries(state.projects)) {
-      if (!scopeCanAffectProject(input.scope, projectPath)) continue;
+    // The session fanout reaches every project for a global change, otherwise
+    // only the scoped project; a project-conversation change skips it entirely.
+    if (!isProjectConversationMutationScope(input.scope)) {
+      const sessionFanoutProjectPaths =
+        input.scope.level === "global"
+          ? await deps.listProjectPaths()
+          : [input.scope.projectPath];
 
-      const projectName = deps.getProjectDisplayName(projectPath);
-      if (!isProjectConversationMutationScope(input.scope)) {
-        for (const session of Object.values(project.sessions)) {
+      for (const projectPath of sessionFanoutProjectPaths) {
+        if (!scopeCanAffectProject(input.scope, projectPath)) continue;
+
+        const projectName = deps.getProjectDisplayName(projectPath);
+        const projectOverrides = await projectOverridesFor(projectPath);
+        const sessions = await deps.getProjectSessions(projectPath);
+        for (const session of sessions) {
           if (!scopeCanAffectSessionConversation(input.scope, session)) {
             continue;
           }
@@ -442,7 +488,7 @@ export function createAffectedConversationLister(
                 changedItemIds: input.changedItemIds,
                 overrideChain: {
                   global: globalOverrides,
-                  project: project.agentCapabilityOverrides,
+                  project: projectOverrides,
                   session: session.agentCapabilityOverrides,
                   conversation: conv.agentCapabilityOverrides,
                 },
@@ -503,7 +549,7 @@ export function createAffectedConversationLister(
 
       const runtime = deps.getRuntime(conversation.id);
       if (!isLiveRuntimeForCascade(runtime, input.cascadeKind)) continue;
-      const project = state.projects[projectPath];
+      const projectOverrides = await projectOverridesFor(projectPath);
       if (
         !mutationAffectsConversationRuntime({
           scope: input.scope,
@@ -511,7 +557,7 @@ export function createAffectedConversationLister(
           changedItemIds: input.changedItemIds,
           overrideChain: {
             global: globalOverrides,
-            project: project?.agentCapabilityOverrides,
+            project: projectOverrides,
             conversation: conversation.agentCapabilityOverrides,
           },
         })
@@ -600,7 +646,11 @@ function isLiveRuntimeForCascade(
 }
 
 const defaultListAffectedConversations = createAffectedConversationLister({
-  readState: () => stateManager.readState(),
+  listProjectPaths: () => stateManager.listProjectPaths(),
+  getProjectSessions: (projectPath) =>
+    stateManager.getProjectSessions(projectPath),
+  getProjectAgentCapabilityOverrides: (projectPath) =>
+    stateManager.getProjectAgentCapabilityOverrides(projectPath),
   readGlobalOverrides: () => defaultGlobalCapabilityOverrideStore.read(),
   listAllProjectConversations: () => stateManager.listAllProjectConversations(),
   getRuntime,

@@ -40,10 +40,11 @@ export function resetExecutionContext(
     );
   }
 
-  // The transition owner holds the legality decision (completed is terminal)
-  // and emits the structured old -> pending transition event. Its rejection is
-  // translated back into the reset API's error contract: workflow-manager and
-  // respondToManagerError key off ResetExecutionContextError and this message.
+  // The transition owner holds the legality decision (completed is terminal).
+  // It is pure (runs inside a write-queue reducer, so it does no logging); its
+  // rejection is translated back into the reset API's error contract:
+  // workflow-manager and respondToManagerError key off ResetExecutionContextError
+  // and this message.
   let nextContextStates: Record<string, GraphWorkflowExecutionContextState>;
   try {
     nextContextStates = resetContextStateToInitial(execution, contextId, {

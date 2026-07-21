@@ -96,6 +96,10 @@ describe("DeliveryGateAdapter", () => {
           queueLabels.push(label);
           return writeQueue.withWriteQueue(label, fn);
         },
+        withWriteQueueSync(label, fn, ...reject) {
+          queueLabels.push(label);
+          return writeQueue.withWriteQueueSync(label, fn, ...reject);
+        },
         tryWithWriteQueue: writeQueue.tryWithWriteQueue,
         _resetForTesting: writeQueue._resetForTesting,
       },

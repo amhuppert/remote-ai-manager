@@ -10,6 +10,35 @@ import {
 } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
+import type { SessionConversationListItem } from "@/lib/state-store";
+
+/**
+ * Project the fixture `ManagerState` into the two focused accessors the handler
+ * consumes. The full session/conversation objects carry every field the feed
+ * reads, so a controlled cast to the list-item projection keeps the fixture
+ * faithful without re-declaring the projection shapes.
+ */
+function stateToActiveDeps(
+  state: ManagerState,
+): Pick<
+  ActiveConversationsRouteDeps,
+  "listSessionConversationListItems" | "getArchivedProjects"
+> {
+  return {
+    getArchivedProjects: async () => new Set(state.archivedProjects),
+    listSessionConversationListItems: async () =>
+      Object.entries(state.projects).flatMap(([projectPath, project]) =>
+        Object.values(project.sessions).map(
+          (session) =>
+            ({
+              projectPath,
+              session,
+              conversations: session.conversations,
+            }) as unknown as SessionConversationListItem,
+        ),
+      ),
+  };
+}
 
 const ts = "2025-01-01T00:00:00.000Z";
 
@@ -63,7 +92,7 @@ function makeDeps(
   projectConvs: { projectPath: string; conversation: ConversationState }[],
 ): ActiveConversationsRouteDeps {
   return {
-    readState: async () => stateWithSession(),
+    ...stateToActiveDeps(stateWithSession()),
     getProjectDisplayName: () => "demo",
     readLastAssistantContent: async () => null,
     listProjectConversations: async () => projectConvs,

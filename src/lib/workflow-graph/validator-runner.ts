@@ -434,9 +434,7 @@ interface ValidatorContinuityRepository {
   mutateActive(
     projectPath: string,
     sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -605,6 +603,11 @@ function buildValidatorActorInput(
   return {
     projectName,
     sessionWorktreePath: invocation.workingDirectory,
+    // A synthetic validator lane has no persisted ConversationState record, so
+    // it runs the ephemeral persistence adapter — every durable side effect is
+    // inert (previously these turns logged `Conversation not found in session`
+    // on every syncDerived / mark-read / mark-unread transition).
+    persistence: "ephemeral",
     conversation: {
       createdAt: new Date().toISOString(),
       forkedFrom: null,
@@ -807,9 +810,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   async function applyLaneStateUpdate(
     projectPath: string,
     sessionName: string,
-    transform: (
-      latest: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    transform: (latest: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution | null> {
     if (!deps.executionRepository) {
       return null;

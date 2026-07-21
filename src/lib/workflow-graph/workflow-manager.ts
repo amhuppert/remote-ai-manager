@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
 import path from "node:path";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { StaleLoopFenceError } from "@/lib/workflow-graph/loop-fence";
 import {
   classifyContextSchedulability,
   type ContextSchedulability,
@@ -86,10 +87,7 @@ interface GraphWorkflowExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   markContextEventsPreReset(
     projectPath: string,
@@ -1074,6 +1072,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
         const retryIds: string[] = [];
         for (const contextState of Object.values(execution.contextStates)) {
+          // Starting a new loop generation invalidates any scheduling
+          // reservation from the old one: a superseded pass may have stamped a
+          // context and then had its finalize fenced out, which would otherwise
+          // leave the context permanently ineligible. Clear every stamp so the
+          // fresh generation re-schedules from a clean slate (Design 3.1).
+          contextState.reservedByBatchId = null;
           // in-progress: the merge's success write was fenced out (resume
           // landed mid-git-operation) or the server died mid-merge. The
           // context is completed so it is never rescheduled and downstream
@@ -1407,11 +1411,40 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const laneCreatedDecisions: LaneCreatedDecision[] = [];
     const laneForkedDecisions: LaneForkedDecision[] = [];
     const laneReusedDecisions: LaneReusedDecision[] = [];
+    type SchedulableEntry = {
+      contextId: string;
+      classification: Extract<ContextSchedulability, { kind: "schedulable" }>;
+      // When set, this entry is a fan-out fork: the candidate lost the
+      // continuation contest for `sourceLaneId` and must provision a fresh
+      // worktree lane from the parent lane's committed head (parentBranch).
+      // Forked lane id equals the candidate's contextId.
+      forkFromLane: {
+        sourceLaneId: string;
+        parentBranchName: string;
+        parentContextId: string;
+      } | null;
+    };
+    // Routing plan captured by the sync `reserve` mutation below and consumed by
+    // the out-of-lock provisioning + the sync `finalize` mutation. `null` means
+    // reserve resolved a terminal outcome (none / solo-session) with no worktree
+    // work to stage. Boxed like `outcome` so a value assigned inside the reducer
+    // callback keeps its declared type after the call (closure-assignment CFA).
+    type ProvisionPlan = {
+      schedulableEntries: SchedulableEntry[];
+      provisionEntries: SchedulableEntry[];
+      batchId: string;
+    };
+    const provisionPlan: { value: ProvisionPlan | null } = { value: null };
 
-    const nextExecution = await deps.executionRepository.mutateActive(
+    // Staged protocol (Design 3.1): worktree provisioning (`getSession`,
+    // `provisionLane`) — the ~20.8s hold — runs OUTSIDE the write queue between
+    // a short synchronous `reserve` mutation (classify + record `ready` intent,
+    // fenced) and a short synchronous `finalize` mutation (apply the lane state,
+    // fence + halt re-checked, else compensate by disposing the worktrees).
+    let nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-      async (execution) => {
+      (execution) => {
         const running = requireRunningExecution(execution);
 
         // Enforce no-new-scheduling-after-pending-halt at the transaction
@@ -1465,22 +1498,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // session lane is unsafe (either disabled by caller or another
         // worktree lane has unpublished work) so the scheduler must mint a
         // fresh worktree lane instead.
-        type SchedulableEntry = {
-          contextId: string;
-          classification: Extract<
-            ContextSchedulability,
-            { kind: "schedulable" }
-          >;
-          // When set, this entry is a fan-out fork: the candidate lost the
-          // continuation contest for `sourceLaneId` and must provision a fresh
-          // worktree lane from the parent lane's committed head (parentBranch).
-          // Forked lane id equals the candidate's contextId.
-          forkFromLane: {
-            sourceLaneId: string;
-            parentBranchName: string;
-            parentContextId: string;
-          } | null;
-        };
         const schedulableEntries: SchedulableEntry[] = [];
         let remainingCapacity = initialCapacity;
         // Reservations made within this scheduling pass. Two fan-out contexts
@@ -1676,209 +1693,401 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           validateContextId(entry.contextId);
         }
 
-        const session = await deps.getSession(projectPath, sessionName);
-        if (!session) {
-          throw new Error(
-            `Session "${sessionName}" was not found for parallel scheduling`,
-          );
-        }
-        const sessionDir = path.basename(session.worktreePath);
-        const sessionBranch = session.branchName;
+        // Reserve records the routing intent AND persists an owner-discriminated
+        // reservation: each context this pass claims is stamped with the batch
+        // id it will provision under (Design 3.1). Eligible contexts are already
+        // marked `ready` above (surfaced in the UI), but `getEligibleContextIds`
+        // now excludes a stamped context — so a concurrent same-epoch scheduler
+        // running between this reserve's commit and the fenced finalize cannot
+        // re-classify and double-provision these contexts. The running/lane
+        // transition and the stamp's clearing happen at finalize, out of the
+        // lock.
         const batchId = deps.createBatchId?.() ?? randomUUID();
-
-        const provisioned: Array<{
-          entry: SchedulableEntry;
-          result: ProvisionResult;
-        }> = [];
-        try {
-          for (const entry of schedulableEntries) {
-            if (!needsProvisioning(entry)) continue;
-            const baseBranch =
-              entry.forkFromLane?.parentBranchName ?? sessionBranch;
-            const result = await deps.parallelWorktrees.provisionLane({
-              projectPath,
-              sessionName,
-              sessionDir,
-              sessionBranch: baseBranch,
-              laneId: entry.contextId,
-            });
-            provisioned.push({ entry, result });
-          }
-        } catch (err) {
-          for (const { result } of provisioned) {
-            await deps.parallelWorktrees.disposeLane({
-              projectPath,
-              worktreePath: result.worktreePath,
-              branchName: result.branchName,
-            });
-          }
-          throw err;
-        }
-
-        const provisionTimestamp = getNow(deps);
         for (const entry of schedulableEntries) {
-          const { classification, contextId, forkFromLane } = entry;
-          const contextState = running.contextStates[contextId]!;
-          transitionContextStatus(running, contextId, "running", {
-            reason: "manager.schedule_eligible_contexts.batch",
-          });
-          contextState.batchId = batchId;
-
-          if (forkFromLane !== null) {
-            // Fan-out fork: provision a new worktree lane forked from the
-            // parent lane's committed head. The new lane's id matches the
-            // contextId. Inherit `includedContextIds` from the parent so
-            // upstream visibility checks still recognize the parent's
-            // contribution through the forked branch.
-            const prov = provisioned.find(
-              (p) => p.entry.contextId === contextId,
-            );
-            if (!prov) {
-              throw new Error(
-                `Fork provisioning for context "${contextId}" missing from provisioned results`,
-              );
-            }
-            const parentLane =
-              running.executionLanes[forkFromLane.sourceLaneId];
-            const inheritedIncluded = parentLane?.includedContextIds ?? [];
-            const newLaneId = contextId;
-            running.executionLanes[newLaneId] = {
-              laneId: newLaneId,
-              kind: "worktree",
-              status: "active",
-              worktreePath: prov.result.worktreePath,
-              branchName: prov.result.branchName,
-              includedContextIds: [...inheritedIncluded],
-              lastCommittingContextId: forkFromLane.parentContextId,
-              commitSnapshots: [],
-              createdAt: provisionTimestamp,
-              updatedAt: provisionTimestamp,
-            };
-            contextState.laneId = newLaneId;
-            contextState.worktreePath = prov.result.worktreePath;
-            contextState.branchName = prov.result.branchName;
-            contextState.isolation = "worktree";
-            laneForkedDecisions.push({
-              newLaneId,
-              contextId,
-              parentLaneId: forkFromLane.sourceLaneId,
-              parentContextId: forkFromLane.parentContextId,
-              parentBranchName: forkFromLane.parentBranchName,
-              branchName: prov.result.branchName,
-              worktreePath: prov.result.worktreePath,
-            });
-            continue;
+          const contextState = running.contextStates[entry.contextId];
+          if (contextState) {
+            contextState.reservedByBatchId = batchId;
           }
-
-          if (classification.targetLaneId !== null) {
-            const lane = running.executionLanes[classification.targetLaneId];
-            if (!lane) {
-              throw new Error(
-                `Target lane "${classification.targetLaneId}" referenced by context "${contextId}" was not found in executionLanes`,
-              );
-            }
-            contextState.laneId = classification.targetLaneId;
-            if (lane.kind === "session") {
-              contextState.worktreePath = null;
-              contextState.branchName = null;
-              contextState.isolation = "session";
-              laneReusedDecisions.push({
-                laneId: lane.laneId,
-                contextId,
-                branchName: null,
-                worktreePath: null,
-                kind: "session",
-              });
-            } else {
-              if (lane.worktreePath === null) {
-                throw new Error(
-                  `Target lane "${classification.targetLaneId}" referenced by context "${contextId}" is worktree-kind but has null worktreePath`,
-                );
-              }
-              contextState.worktreePath = lane.worktreePath;
-              contextState.branchName = lane.branchName;
-              contextState.isolation = "worktree";
-              laneReusedDecisions.push({
-                laneId: lane.laneId,
-                contextId,
-                branchName: lane.branchName,
-                worktreePath: lane.worktreePath,
-                kind: "worktree",
-              });
-            }
-            continue;
-          }
-
-          const prov = provisioned.find((p) => p.entry.contextId === contextId);
-          if (prov) {
-            // Every provisioned worktree is a lane — terminal contexts
-            // included. Lane work publishes only through join-runner (context
-            // joins + the quiescence final_publish join), which carries the
-            // execution's provenance to the delivery gate; the laneId-null
-            // fan-in path bypasses the gate and remains only for resumed
-            // legacy executions. The lane id matches the contextId so
-            // downstream consumers can identify the upstream's lane via the
-            // existing classifier path. The minted lane starts empty —
-            // commitments are recorded later by `runLaneCommit`.
-            const newLaneId = contextId;
-            running.executionLanes[newLaneId] = {
-              laneId: newLaneId,
-              kind: "worktree",
-              status: "active",
-              worktreePath: prov.result.worktreePath,
-              branchName: prov.result.branchName,
-              includedContextIds: [],
-              lastCommittingContextId: null,
-              commitSnapshots: [],
-              createdAt: provisionTimestamp,
-              updatedAt: provisionTimestamp,
-            };
-            contextState.laneId = newLaneId;
-            laneCreatedDecisions.push({
-              laneId: newLaneId,
-              contextId,
-              branchName: prov.result.branchName,
-              worktreePath: prov.result.worktreePath,
-              kind: "worktree",
-            });
-            contextState.worktreePath = prov.result.worktreePath;
-            contextState.branchName = prov.result.branchName;
-            contextState.isolation = "worktree";
-            continue;
-          }
-
-          contextState.laneId = null;
-          contextState.worktreePath = null;
-          contextState.branchName = null;
-          contextState.isolation = "session";
-          contextState.batchId = null;
         }
-
-        const activeIdSet = new Set(running.activeContextIds);
-        for (const entry of schedulableEntries) {
-          activeIdSet.add(entry.contextId);
-        }
-        running.activeContextIds = [...activeIdSet];
-        const clearedLanes = clearLaneStatesFor(
-          running,
-          schedulableEntries.map((e) => e.contextId),
-        );
-        scheduledClearedLanes = clearedLanes;
-
         running.machineSnapshot = buildLifecycleSnapshot(running, {
           lifecycleStatus: "running",
           recoveryMode: "none",
           hasLiveIteration: false,
         });
-
-        outcome.value = {
-          kind: "parallel",
+        provisionPlan.value = {
+          schedulableEntries,
+          provisionEntries: schedulableEntries.filter(needsProvisioning),
           batchId,
-          contextIds: schedulableEntries.map((e) => e.contextId),
         };
         return running;
       },
     );
+
+    // Terminal outcomes (none / solo-session) are fully applied by reserve; only
+    // a routing plan warrants the out-of-lock provisioning + fenced finalize.
+    const plan = provisionPlan.value;
+    if (plan !== null) {
+      const { schedulableEntries, provisionEntries, batchId } = plan;
+
+      // Compensating release of the reserve's owner-discriminated stamps.
+      // DEFINED BEFORE any post-reserve work (session lookup, provisioning) can
+      // throw so EVERY failure path after the reserve commits releases
+      // `reservedByBatchId` — a `getSession` rejection/null (or a missing-dep
+      // throw) must not strand the stamps and leave the contexts permanently
+      // ineligible for a same-epoch retry (Design 3.1). A short sync mutation;
+      // if this generation was already superseded the write is fenced out and
+      // the stamps belong to a dead generation anyway, so a stale-fence refusal
+      // is swallowed. OWNER-CHECKED: only a stamp this batch still owns is
+      // cleared — a concurrent same-epoch batch that re-reserved the context
+      // carries a different `batchId` and its reservation must survive.
+      const releaseReservations = async (): Promise<void> => {
+        try {
+          await deps.executionRepository.mutateActive(
+            projectPath,
+            sessionName,
+            (execution) => {
+              const running = requireRunningExecution(execution);
+              for (const entry of schedulableEntries) {
+                const contextState = running.contextStates[entry.contextId];
+                if (contextState?.reservedByBatchId === batchId) {
+                  contextState.reservedByBatchId = null;
+                }
+              }
+              return running;
+            },
+          );
+        } catch (err) {
+          if (!(err instanceof StaleLoopFenceError)) throw err;
+        }
+      };
+
+      // Resolve the provisioning deps + session OUTSIDE the reserve lock. Reserve
+      // rejects the deps-absent branch, but re-narrow here for the provisioning
+      // calls. Any failure — missing dep, a rejected `getSession`, or a null
+      // session — releases the reservations before aborting, so a lookup failure
+      // after the reserve commits can never strand the batch's stamps.
+      const { parallelWorktrees, sessionDir, sessionBranch } =
+        await (async () => {
+          const parallelWorktreesDep = deps.parallelWorktrees;
+          const getSessionDep = deps.getSession;
+          if (!parallelWorktreesDep || !getSessionDep) {
+            throw new Error(
+              "scheduleEligibleContexts requires `parallelWorktrees` and `getSession` deps when provisioning lanes",
+            );
+          }
+          const session = await getSessionDep(projectPath, sessionName);
+          if (!session) {
+            throw new Error(
+              `Session "${sessionName}" was not found for parallel scheduling`,
+            );
+          }
+          return {
+            parallelWorktrees: parallelWorktreesDep,
+            sessionDir: path.basename(session.worktreePath),
+            sessionBranch: session.branchName,
+          };
+        })().catch(async (err: unknown) => {
+          await releaseReservations();
+          throw err;
+        });
+
+      // Worktrees to dispose if the finalize is refused (superseded fence) or a
+      // halt lands mid-provision — this caller's worktree-side-effect
+      // compensation story.
+      const provisioned: Array<{
+        entry: SchedulableEntry;
+        result: ProvisionResult;
+      }> = [];
+      // Best-effort disposal: a `disposeLane` rejection on one lane must NOT
+      // abort disposal of the remaining lanes nor skip the reservation release
+      // that follows. Failures are collected and returned so the caller can
+      // report them; this never throws.
+      const disposeProvisioned = async (): Promise<
+        Array<{ branchName: string; error: unknown }>
+      > => {
+        const failures: Array<{ branchName: string; error: unknown }> = [];
+        for (const { result } of provisioned) {
+          try {
+            await parallelWorktrees.disposeLane({
+              projectPath,
+              worktreePath: result.worktreePath,
+              branchName: result.branchName,
+            });
+          } catch (error) {
+            failures.push({ branchName: result.branchName, error });
+          }
+        }
+        return failures;
+      };
+
+      // Compensate a failed/superseded schedule: dispose every provisioned lane
+      // best-effort, then GUARANTEE the owner-checked reservation release (it
+      // runs even when a lane disposal failed), then report any disposal
+      // failures. Never throws — the callers preserve the original scheduling
+      // error with their own `throw`. A genuine (non-fence) release failure is
+      // reported rather than masking that original error.
+      const compensateSchedule = async (): Promise<void> => {
+        const disposalFailures = await disposeProvisioned();
+        try {
+          await releaseReservations();
+        } catch (releaseError) {
+          logger.error("graph-workflow.scheduler.reservation_release_failed", {
+            error:
+              releaseError instanceof Error
+                ? releaseError.message
+                : String(releaseError),
+          });
+        }
+        if (disposalFailures.length > 0) {
+          logger.warn("graph-workflow.scheduler.lane_dispose_failed", {
+            failedLaneBranches: disposalFailures.map((f) => f.branchName),
+          });
+        }
+      };
+
+      // Slow worktree provisioning OUTSIDE the write queue. A failure disposes
+      // the lanes already created in this pass, releases the reservations, and
+      // aborts scheduling.
+      try {
+        for (const entry of provisionEntries) {
+          const baseBranch =
+            entry.forkFromLane?.parentBranchName ?? sessionBranch;
+          const result = await parallelWorktrees.provisionLane({
+            projectPath,
+            sessionName,
+            sessionDir,
+            sessionBranch: baseBranch,
+            laneId: entry.contextId,
+          });
+          provisioned.push({ entry, result });
+        }
+      } catch (err) {
+        await compensateSchedule();
+        throw err;
+      }
+
+      // Fenced finalize: a short synchronous mutation that re-checks the loop
+      // fence (inside the repository's `mutateActive`) and the pending-halt
+      // state before committing the running/lane transition. If this generation
+      // was superseded or a halt landed while provisioning was in flight, the
+      // provisioned worktrees are disposed as compensation.
+      let compensate = false;
+      nextExecution = await deps.executionRepository
+        .mutateActive(projectPath, sessionName, (execution) => {
+          const running = requireRunningExecution(execution);
+
+          // A halt recorded during provisioning supersedes this schedule: do
+          // not start the contexts; commit only the halt-aware snapshot and
+          // dispose the provisioned worktrees below. Clear the reservation stamps
+          // so the contexts are re-schedulable once the halt clears — the batch
+          // never formed (Design 3.1).
+          if (running.pendingHaltReason !== null) {
+            for (const entry of schedulableEntries) {
+              const contextState = running.contextStates[entry.contextId];
+              if (contextState) {
+                contextState.reservedByBatchId = null;
+              }
+            }
+            running.machineSnapshot = buildLifecycleSnapshot(running, {
+              lifecycleStatus: "running",
+              recoveryMode: "none",
+              hasLiveIteration: false,
+            });
+            outcome.value = { kind: "none" };
+            compensate = true;
+            return running;
+          }
+
+          const provisionTimestamp = getNow(deps);
+          for (const entry of schedulableEntries) {
+            const { classification, contextId, forkFromLane } = entry;
+            const contextState = running.contextStates[contextId]!;
+            transitionContextStatus(running, contextId, "running", {
+              reason: "manager.schedule_eligible_contexts.batch",
+            });
+            contextState.batchId = batchId;
+            // Reservation realized: the context is now `running`, so drop the
+            // owner-discriminated stamp the reserve set (Design 3.1).
+            contextState.reservedByBatchId = null;
+
+            if (forkFromLane !== null) {
+              // Fan-out fork: provision a new worktree lane forked from the
+              // parent lane's committed head. The new lane's id matches the
+              // contextId. Inherit `includedContextIds` from the parent so
+              // upstream visibility checks still recognize the parent's
+              // contribution through the forked branch.
+              const prov = provisioned.find(
+                (p) => p.entry.contextId === contextId,
+              );
+              if (!prov) {
+                throw new Error(
+                  `Fork provisioning for context "${contextId}" missing from provisioned results`,
+                );
+              }
+              const parentLane =
+                running.executionLanes[forkFromLane.sourceLaneId];
+              const inheritedIncluded = parentLane?.includedContextIds ?? [];
+              const newLaneId = contextId;
+              running.executionLanes[newLaneId] = {
+                laneId: newLaneId,
+                kind: "worktree",
+                status: "active",
+                worktreePath: prov.result.worktreePath,
+                branchName: prov.result.branchName,
+                includedContextIds: [...inheritedIncluded],
+                lastCommittingContextId: forkFromLane.parentContextId,
+                commitSnapshots: [],
+                createdAt: provisionTimestamp,
+                updatedAt: provisionTimestamp,
+              };
+              contextState.laneId = newLaneId;
+              contextState.worktreePath = prov.result.worktreePath;
+              contextState.branchName = prov.result.branchName;
+              contextState.isolation = "worktree";
+              laneForkedDecisions.push({
+                newLaneId,
+                contextId,
+                parentLaneId: forkFromLane.sourceLaneId,
+                parentContextId: forkFromLane.parentContextId,
+                parentBranchName: forkFromLane.parentBranchName,
+                branchName: prov.result.branchName,
+                worktreePath: prov.result.worktreePath,
+              });
+              continue;
+            }
+
+            if (classification.targetLaneId !== null) {
+              const lane = running.executionLanes[classification.targetLaneId];
+              if (!lane) {
+                throw new Error(
+                  `Target lane "${classification.targetLaneId}" referenced by context "${contextId}" was not found in executionLanes`,
+                );
+              }
+              contextState.laneId = classification.targetLaneId;
+              if (lane.kind === "session") {
+                contextState.worktreePath = null;
+                contextState.branchName = null;
+                contextState.isolation = "session";
+                laneReusedDecisions.push({
+                  laneId: lane.laneId,
+                  contextId,
+                  branchName: null,
+                  worktreePath: null,
+                  kind: "session",
+                });
+              } else {
+                if (lane.worktreePath === null) {
+                  throw new Error(
+                    `Target lane "${classification.targetLaneId}" referenced by context "${contextId}" is worktree-kind but has null worktreePath`,
+                  );
+                }
+                contextState.worktreePath = lane.worktreePath;
+                contextState.branchName = lane.branchName;
+                contextState.isolation = "worktree";
+                laneReusedDecisions.push({
+                  laneId: lane.laneId,
+                  contextId,
+                  branchName: lane.branchName,
+                  worktreePath: lane.worktreePath,
+                  kind: "worktree",
+                });
+              }
+              continue;
+            }
+
+            const prov = provisioned.find(
+              (p) => p.entry.contextId === contextId,
+            );
+            if (prov) {
+              // Every provisioned worktree is a lane — terminal contexts
+              // included. Lane work publishes only through join-runner (context
+              // joins + the quiescence final_publish join), which carries the
+              // execution's provenance to the delivery gate; the laneId-null
+              // fan-in path bypasses the gate and remains only for resumed
+              // legacy executions. The lane id matches the contextId so
+              // downstream consumers can identify the upstream's lane via the
+              // existing classifier path. The minted lane starts empty —
+              // commitments are recorded later by `runLaneCommit`.
+              const newLaneId = contextId;
+              running.executionLanes[newLaneId] = {
+                laneId: newLaneId,
+                kind: "worktree",
+                status: "active",
+                worktreePath: prov.result.worktreePath,
+                branchName: prov.result.branchName,
+                includedContextIds: [],
+                lastCommittingContextId: null,
+                commitSnapshots: [],
+                createdAt: provisionTimestamp,
+                updatedAt: provisionTimestamp,
+              };
+              contextState.laneId = newLaneId;
+              laneCreatedDecisions.push({
+                laneId: newLaneId,
+                contextId,
+                branchName: prov.result.branchName,
+                worktreePath: prov.result.worktreePath,
+                kind: "worktree",
+              });
+              contextState.worktreePath = prov.result.worktreePath;
+              contextState.branchName = prov.result.branchName;
+              contextState.isolation = "worktree";
+              continue;
+            }
+
+            contextState.laneId = null;
+            contextState.worktreePath = null;
+            contextState.branchName = null;
+            contextState.isolation = "session";
+            contextState.batchId = null;
+          }
+
+          const activeIdSet = new Set(running.activeContextIds);
+          for (const entry of schedulableEntries) {
+            activeIdSet.add(entry.contextId);
+          }
+          running.activeContextIds = [...activeIdSet];
+          const clearedLanes = clearLaneStatesFor(
+            running,
+            schedulableEntries.map((e) => e.contextId),
+          );
+          scheduledClearedLanes = clearedLanes;
+
+          running.machineSnapshot = buildLifecycleSnapshot(running, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
+
+          outcome.value = {
+            kind: "parallel",
+            batchId,
+            contextIds: schedulableEntries.map((e) => e.contextId),
+          };
+          return running;
+        })
+        .catch(async (err: unknown) => {
+          // A finalize refused for a non-fence reason leaves the reserve's
+          // stamps set; the owner-checked release inside `compensateSchedule`
+          // clears them so the contexts re-schedule. When the refusal IS a
+          // stale fence the stamps live on a superseded generation and the
+          // release fences out harmlessly. Disposal is best-effort and cannot
+          // skip the release.
+          await compensateSchedule();
+          throw err;
+        });
+      if (compensate) {
+        // Halt superseded this batch: the fenced finalize already cleared the
+        // reservation stamps atomically, so only the provisioned worktrees need
+        // best-effort disposal here.
+        const disposalFailures = await disposeProvisioned();
+        if (disposalFailures.length > 0) {
+          logger.warn("graph-workflow.scheduler.lane_dispose_failed", {
+            failedLaneBranches: disposalFailures.map((f) => f.branchName),
+          });
+        }
+      }
+    }
 
     const scheduled = outcome.value;
     const execLogger = getExecutionLogger(nextExecution.id);
@@ -2184,34 +2393,41 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         projectPath,
         contextIds: [contextId],
       });
+      // Reset-intent log emitted BEFORE entering the queue, off the write-queue
+      // critical section (`no-slow-work-in-critical-section`).
+      logger.info("graph-workflow.context.reset_requested", {
+        executionId: active.id,
+        contextId,
+        status: active.status,
+      });
     }
 
-    const nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
-        previousStatus = execution.status;
-        logger.info("graph-workflow.context.reset_requested", {
-          executionId: execution.id,
-          contextId,
-          status: execution.status,
-        });
-
-        try {
+    // The reducer captures the pre-reset status (pure) and returns the reset
+    // execution; a rejected reset (ResetExecutionContextError) is logged in the
+    // catch below, outside the lock.
+    let resetExecutionId: string | null = null;
+    let nextExecution: GraphWorkflowExecution;
+    try {
+      nextExecution = await deps.executionRepository.mutateActive(
+        projectPath,
+        sessionName,
+        (execution) => {
+          previousStatus = execution.status;
+          resetExecutionId = execution.id;
           return resetExecutionContext(execution, contextId);
-        } catch (error) {
-          if (error instanceof ResetExecutionContextError) {
-            logger.warn("graph-workflow.context.reset_rejected", {
-              executionId: execution.id,
-              contextId,
-              status: execution.status,
-              reason: error.message,
-            });
-          }
-          throw error;
-        }
-      },
-    );
+        },
+      );
+    } catch (error) {
+      if (error instanceof ResetExecutionContextError) {
+        logger.warn("graph-workflow.context.reset_rejected", {
+          executionId: resetExecutionId,
+          contextId,
+          status: previousStatus,
+          reason: error.message,
+        });
+      }
+      throw error;
+    }
 
     let execLogger = getExecutionLogger(nextExecution.id);
     if (!execLogger) {
@@ -2236,10 +2452,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution> {
     return deps.executionRepository.mutateActive(projectPath, sessionName, fn);
   }

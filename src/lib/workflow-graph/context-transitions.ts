@@ -1,4 +1,3 @@
-import { createLogger } from "@/lib/logging";
 import { buildInitialContextState } from "@/lib/workflow-graph/execution-state";
 import type {
   GraphWorkflowExecution,
@@ -20,9 +19,16 @@ import type {
  * EXECUTION-level status stays hand-rolled in workflow-manager by design
  * (decision D4: the post-RCA design is already single-owner and carries
  * persistence-layer fencing).
+ *
+ * PURITY (Design 3.1/3.3, `no-slow-work-in-critical-section`): every function
+ * here runs INSIDE a `mutateActive` reducer, i.e. inside the global write-queue
+ * critical section. They must therefore be pure — no logging (logging is
+ * `appendFileSync` I/O). An illegal transition still throws
+ * {@link IllegalContextStatusTransitionError}, which carries the full
+ * `{ contextId, from, to, reason }`; the mutation seam's owner logs it AFTER
+ * the aborted mutation unwinds, outside the lock (see `mutateActive`'s catch in
+ * execution-repository.ts), exactly as it reconstructs the stale-loop-fence warn.
  */
-
-const logger = createLogger("graph-workflow-context-transitions");
 
 export type GraphWorkflowRecoveryMode =
   | "none"
@@ -132,13 +138,8 @@ export function transitionContextStatus(
     return;
   }
   if (!isLegalContextStatusTransition(from, next)) {
-    logger.error("context_transition.illegal", {
-      executionId: draft.id,
-      contextId,
-      from,
-      to: next,
-      reason: meta.reason,
-    });
+    // No logging here — this runs inside the write-queue critical section. The
+    // error carries from/to/contextId/reason; the seam owner logs it post-abort.
     throw new IllegalContextStatusTransitionError(
       contextId,
       from,
@@ -147,13 +148,6 @@ export function transitionContextStatus(
     );
   }
   contextState.status = next;
-  logger.debug("context_transition.applied", {
-    executionId: draft.id,
-    contextId,
-    from,
-    to: next,
-    reason: meta.reason,
-  });
 }
 
 /**
@@ -186,13 +180,8 @@ export function resetContextStateToInitial(
   }
   const from = contextState.status;
   if (from === "completed") {
-    logger.error("context_transition.illegal", {
-      executionId: execution.id,
-      contextId,
-      from,
-      to: "pending",
-      reason: meta.reason,
-    });
+    // Pure critical-section code (see module header): throw with full data, let
+    // the seam owner log the illegal reset outside the lock.
     throw new IllegalContextStatusTransitionError(
       contextId,
       from,
@@ -200,13 +189,6 @@ export function resetContextStateToInitial(
       meta.reason,
     );
   }
-  logger.debug("context_transition.applied", {
-    executionId: execution.id,
-    contextId,
-    from,
-    to: "pending",
-    reason: meta.reason,
-  });
   return {
     ...execution.contextStates,
     [contextId]: buildInitialContextState(
@@ -222,13 +204,16 @@ export type GraphWorkflowContextMergeStatus =
 /**
  * Single owner for context `mergeStatus` writes. No legality table (yet) —
  * merge status is reconciled against git ground truth by the merge runner, so
- * ownership + observability is the contract here, not transition rejection.
+ * ownership is the contract here, not transition rejection. `_meta` (the
+ * writer-site reason) is retained for call-site documentation and API symmetry
+ * with {@link transitionContextStatus}, but is not consumed: this runs inside a
+ * write-queue reducer and so must stay pure (`no-slow-work-in-critical-section`).
  */
 export function transitionContextMergeStatus(
   draft: GraphWorkflowExecution,
   contextId: string,
   next: GraphWorkflowContextMergeStatus,
-  meta: ContextTransitionMeta,
+  _meta: ContextTransitionMeta,
 ): void {
   const contextState = requireContextState(draft, contextId);
   const from = contextState.mergeStatus;
@@ -236,13 +221,6 @@ export function transitionContextMergeStatus(
     return;
   }
   contextState.mergeStatus = next;
-  logger.debug("merge_status_transition.applied", {
-    executionId: draft.id,
-    contextId,
-    from,
-    to: next,
-    reason: meta.reason,
-  });
 }
 
 /**
@@ -381,12 +359,6 @@ export function resetRunningJoinsToPending(
     join.status = "pending";
     join.updatedAt = timestamp;
     resetIds.push(join.joinId);
-  }
-  if (resetIds.length > 0) {
-    logger.debug("join_transition.running_reset_to_pending", {
-      executionId: draft.id,
-      joinIds: resetIds,
-    });
   }
   return resetIds;
 }

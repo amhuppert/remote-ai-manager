@@ -7,7 +7,11 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
-import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
+import {
+  createGraphWorkflowExecutionEventPublisher,
+  type GraphWorkflowEventDelivery,
+  type GraphWorkflowPushInfo,
+} from "@/lib/workflow-graph/execution-events";
 import {
   _resetRegistryForTesting,
   registerExecutionLogger,
@@ -47,6 +51,7 @@ type MutateActiveReturn =
   | {
       execution: GraphWorkflowExecution;
       events: GraphWorkflowExecutionEvent[];
+      pushes?: GraphWorkflowPushInfo[];
     };
 
 interface InMemoryExecutionRepository {
@@ -70,6 +75,7 @@ interface InMemoryExecutionRepository {
 function isResultWithEvents(value: MutateActiveReturn): value is {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
+  pushes?: GraphWorkflowPushInfo[];
 } {
   return (
     "events" in value &&
@@ -83,12 +89,23 @@ function createRepository(
 ): InMemoryExecutionRepository & {
   read(): GraphWorkflowExecution;
   appendedEvents: GraphWorkflowExecutionEvent[];
+  /**
+   * Post-commit delivery hook, mirroring the repository-level mutation seam
+   * that broadcasts a reducer's derived events after the write commits. Tests
+   * that assert broadcasts assign the event publisher's `deliver` here (the
+   * publisher is created after this repository, hence the settable hook).
+   */
+  deliver: (delivery: GraphWorkflowEventDelivery) => void;
 } {
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
   const appendedEvents: GraphWorkflowExecutionEvent[] = [];
 
-  return {
+  const repository: InMemoryExecutionRepository & {
+    read(): GraphWorkflowExecution;
+    appendedEvents: GraphWorkflowExecutionEvent[];
+    deliver: (delivery: GraphWorkflowEventDelivery) => void;
+  } = {
     async getActive() {
       return activeExecution;
     },
@@ -104,6 +121,13 @@ function createRepository(
         if (isResultWithEvents(result)) {
           activeExecution = result.execution;
           appendedEvents.push(...result.events);
+          // Mirror the production seam: commit the rows, then perform delivery
+          // post-commit through the injected publisher so a sibling publisher's
+          // broadcast/push fires here (the reducer returned inert data).
+          repository.deliver({
+            events: result.events,
+            pushes: result.pushes ?? [],
+          });
         } else {
           activeExecution = result;
         }
@@ -130,7 +154,9 @@ function createRepository(
       return activeExecution;
     },
     appendedEvents,
+    deliver: () => {},
   };
+  return repository;
 }
 
 /**
@@ -5519,6 +5545,7 @@ describe("human approval gate at finalization", () => {
       dispatchPush,
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
@@ -5610,6 +5637,7 @@ describe("human approval gate at finalization", () => {
       dispatchPush,
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
@@ -5662,6 +5690,7 @@ describe("human approval gate at finalization", () => {
       dispatchPush,
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
 
     const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
@@ -5748,6 +5777,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       mutateActive: repository.mutateActive,
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
       sendConversationEvent: () => false,
       now: () => NOW,
     });
@@ -5800,6 +5830,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
 
     const questions = [question("q1"), question("q2")];
@@ -5896,6 +5927,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
     const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
 
@@ -5990,6 +6022,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
 
     const questions = [question("q1"), question("q2")];
@@ -6083,6 +6116,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
     const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
 
@@ -6153,6 +6187,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
     const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
 
@@ -6217,6 +6252,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
     const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
 
@@ -6299,6 +6335,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       mutateActive: repository.mutateActive,
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
       sendConversationEvent: () => false,
       now: () => NOW,
     });
@@ -6348,6 +6385,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
     const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
 
@@ -6449,6 +6487,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher({
       now: () => NOW,
     });
+    repository.deliver = eventPublisher.deliver;
     const gate = createGate(repository, eventPublisher);
     const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
 

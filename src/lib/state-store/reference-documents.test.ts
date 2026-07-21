@@ -3,11 +3,16 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "../config/loader";
 import { createStateStore } from ".";
+import { getStateDb } from "./store";
 import {
   _createTestDb,
   _installTestDb,
   _resetForTesting as _resetStateDb,
 } from "./state-db";
+import {
+  seedWholeState,
+  readWholeStateForTest,
+} from "@/lib/shared/testing/whole-state-fixture";
 import type { ManagerState } from "../projects/schemas";
 
 const TEST_DIR = path.join("/tmp", "cc-refdoc-test-" + Date.now());
@@ -69,9 +74,8 @@ afterEach(async () => {
 
 describe("createReferenceDocument", () => {
   it("creates a new reference document", async () => {
-    const { writeState, createReferenceDocument, readState } =
-      createTestStateManager();
-    await writeState(stateWithSession());
+    const { createReferenceDocument } = createTestStateManager();
+    seedWholeState(getStateDb(), stateWithSession());
 
     const doc = await createReferenceDocument(
       PROJECT_PATH,
@@ -85,7 +89,7 @@ describe("createReferenceDocument", () => {
     expect(doc.id).toBeTruthy();
     expect(doc.createdAt).toBeTruthy();
 
-    const state = await readState();
+    const state = readWholeStateForTest(getStateDb());
     const session = state.projects[PROJECT_PATH]!.sessions[SESSION_NAME]!;
     expect(session.referenceDocuments).toHaveLength(1);
     expect(session.referenceDocuments[0]!.filePath).toBe(
@@ -94,9 +98,8 @@ describe("createReferenceDocument", () => {
   });
 
   it("updates description when filePath already exists (idempotent)", async () => {
-    const { writeState, createReferenceDocument, readState } =
-      createTestStateManager();
-    await writeState(stateWithSession());
+    const { createReferenceDocument } = createTestStateManager();
+    seedWholeState(getStateDb(), stateWithSession());
 
     const first = await createReferenceDocument(
       PROJECT_PATH,
@@ -115,14 +118,14 @@ describe("createReferenceDocument", () => {
     expect(second.id).toBe(first.id);
     expect(second.description).toBe("Updated description");
 
-    const state = await readState();
+    const state = readWholeStateForTest(getStateDb());
     const session = state.projects[PROJECT_PATH]!.sessions[SESSION_NAME]!;
     expect(session.referenceDocuments).toHaveLength(1);
   });
 
   it("throws when session does not exist", async () => {
-    const { writeState, createReferenceDocument } = createTestStateManager();
-    await writeState({
+    const { createReferenceDocument } = createTestStateManager();
+    seedWholeState(getStateDb(), {
       projects: {
         [PROJECT_PATH]: {
           rootPath: PROJECT_PATH,
@@ -145,13 +148,9 @@ describe("createReferenceDocument", () => {
 
 describe("deleteReferenceDocument", () => {
   it("removes a document and returns it", async () => {
-    const {
-      writeState,
-      createReferenceDocument,
-      deleteReferenceDocument,
-      readState,
-    } = createTestStateManager();
-    await writeState(stateWithSession());
+    const { createReferenceDocument, deleteReferenceDocument } =
+      createTestStateManager();
+    seedWholeState(getStateDb(), stateWithSession());
 
     const doc = await createReferenceDocument(
       PROJECT_PATH,
@@ -169,14 +168,14 @@ describe("deleteReferenceDocument", () => {
     expect(removed).not.toBeNull();
     expect(removed!.id).toBe(doc.id);
 
-    const state = await readState();
+    const state = readWholeStateForTest(getStateDb());
     const session = state.projects[PROJECT_PATH]!.sessions[SESSION_NAME]!;
     expect(session.referenceDocuments).toHaveLength(0);
   });
 
   it("returns null when document not found", async () => {
-    const { writeState, deleteReferenceDocument } = createTestStateManager();
-    await writeState(stateWithSession());
+    const { deleteReferenceDocument } = createTestStateManager();
+    seedWholeState(getStateDb(), stateWithSession());
 
     const removed = await deleteReferenceDocument(
       PROJECT_PATH,
@@ -194,9 +193,9 @@ describe("deleteReferenceDocument", () => {
 
 describe("getReferenceDocuments", () => {
   it("returns documents for a session", async () => {
-    const { writeState, createReferenceDocument, getReferenceDocuments } =
+    const { createReferenceDocument, getReferenceDocuments } =
       createTestStateManager();
-    await writeState(stateWithSession());
+    seedWholeState(getStateDb(), stateWithSession());
 
     await createReferenceDocument(PROJECT_PATH, SESSION_NAME, "a.md", "Doc A");
     await createReferenceDocument(PROJECT_PATH, SESSION_NAME, "b.md", "Doc B");
@@ -207,8 +206,8 @@ describe("getReferenceDocuments", () => {
   });
 
   it("returns empty array for session with no documents", async () => {
-    const { writeState, getReferenceDocuments } = createTestStateManager();
-    await writeState(stateWithSession());
+    const { getReferenceDocuments } = createTestStateManager();
+    seedWholeState(getStateDb(), stateWithSession());
 
     const docs = await getReferenceDocuments(PROJECT_PATH, SESSION_NAME);
     expect(docs).toEqual([]);

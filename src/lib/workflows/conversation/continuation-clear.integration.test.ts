@@ -110,6 +110,7 @@ const machineInput: ConversationInput = {
   agentBackend: "codex",
   backendRef: STALE_REF,
   promptCount: 1,
+  persistence: "durable",
 };
 
 function waitForState(
@@ -152,7 +153,14 @@ describe("stale Codex resume clears the continuation ref end-to-end", () => {
 
   beforeEach(async () => {
     fixture = createPersistenceFixture();
-    setPersistenceDeps(fixture.deps);
+    setPersistenceDeps({
+      getConversationMachineSnapshot:
+        fixture.store.getConversationMachineSnapshot,
+      upsertConversationMachineSnapshot:
+        fixture.store.upsertConversationMachineSnapshot,
+      deleteConversationMachineSnapshot:
+        fixture.store.deleteConversationMachineSnapshot,
+    });
     syncWrites = [];
 
     fixture.seedProject(PROJECT_PATH);
@@ -261,18 +269,14 @@ describe("stale Codex resume clears the continuation ref end-to-end", () => {
     expect(row?.backendRef).toBeNull();
 
     // Durable machine snapshot — persistSnapshotAfterTransition samples the
-    // actor after the macrostep settles, so the persisted blob must also have
-    // dropped the stale ref (an in-action capture would have persisted the
-    // previous macrostep, which still held it).
-    await vi.waitFor(async () => {
-      const reloaded = await fixture.deps.getConversation(
-        PROJECT_PATH,
-        SESSION_NAME,
+    // actor after the macrostep settles, so the persisted resume token (now in
+    // the sidecar) must also have dropped the stale ref (an in-action capture
+    // would have persisted the previous macrostep, which still held it).
+    await vi.waitFor(() => {
+      const blob = fixture.store.getConversationMachineSnapshot(
+        "session",
         CONVERSATION_ID,
-      );
-      const blob = reloaded?.machineSnapshot as {
-        context?: { backendRef?: unknown };
-      } | null;
+      ) as { context?: { backendRef?: unknown } } | null;
       expect(blob?.context).toBeDefined();
       expect(blob?.context?.backendRef).toBeNull();
     });

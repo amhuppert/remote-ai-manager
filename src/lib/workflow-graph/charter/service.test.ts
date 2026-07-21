@@ -8,6 +8,7 @@ import {
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowEventDelivery } from "@/lib/workflow-graph/execution-events";
 import { createWorkflowCharterService } from "./service";
 
 interface CapturedWrite {
@@ -35,21 +36,24 @@ function setup(
       definitionId: string;
       definitionRevision: number;
       charterHash: string;
-    }): GraphWorkflowExecutionEvent[] => [
-      {
-        occurredAt: "2026-04-01T00:00:00.000Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-charter-registered",
-          projectName: "p",
-          sessionName: "s",
-          executionId: input.execution.id,
-          definitionId: input.definitionId,
-          definitionRevision: input.definitionRevision,
-          charterHash: input.charterHash,
+    }): GraphWorkflowEventDelivery => ({
+      events: [
+        {
+          occurredAt: "2026-04-01T00:00:00.000Z",
+          preReset: false,
+          event: {
+            type: "graph-workflow-charter-registered",
+            projectName: "p",
+            sessionName: "s",
+            executionId: input.execution.id,
+            definitionId: input.definitionId,
+            definitionRevision: input.definitionRevision,
+            charterHash: input.charterHash,
+          },
         },
-      },
-    ],
+      ],
+      pushes: [],
+    }),
   );
 
   const service = createWorkflowCharterService({
@@ -204,10 +208,13 @@ describe("createWorkflowCharterService.seedCharter", () => {
         writes.push({ absolutePath, contents: String(contents) });
       },
       ensureDir: async () => {},
-      publishCharterRegistered: () => taggedEvents,
+      publishCharterRegistered: () => ({
+        events: taggedEvents,
+        pushes: [],
+      }),
     });
 
-    const { events } = await service.seedCharter({
+    const { delivery } = await service.seedCharter({
       charter: makeTestCharter(),
       worktreePath: "/repo/wt",
       execution: createWorkflowExecution(),
@@ -215,7 +222,7 @@ describe("createWorkflowCharterService.seedCharter", () => {
       sessionName: "session-1",
     });
 
-    expect(events).toEqual(taggedEvents);
+    expect(delivery.events).toEqual(taggedEvents);
   });
 
   it("never writes any path other than charter.md, even for an external-readonly source", async () => {

@@ -16,12 +16,31 @@ import type {
   McpServerView,
   McpToolInventoryResult,
 } from "@/lib/mcp/schemas";
-import { createStateStore as createStateManager } from "@/lib/state-store";
-import { withWriteQueue } from "@/lib/state-store/write-queue";
-import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
-import type { SessionState } from "@/lib/sessions/schemas";
-type StateManager = Pick<ReturnType<typeof createStateManager>, "mutateState">;
+import type { StateStore } from "@/lib/state-store";
+
+/**
+ * Signals an expected-hash conflict from inside the global override store's
+ * precondition (which runs in its serialized write lock). Caught by
+ * `patchGlobal` and mapped to `{ ok: false, reason: "conflict" }`; any other
+ * error propagates.
+ */
+class GlobalConfigConflictError extends Error {}
+
+/**
+ * The focused store surface the checked-patch flows use: project/session/
+ * conversation override reads plus the focused single-column override writes.
+ * Configuration resolution (source discovery + global-file I/O) runs BEFORE the
+ * write queue; only a short, synchronous commit runs inside it, through the
+ * focused override mutators (never a whole-state mutate).
+ */
+type StateManager = Pick<
+  StateStore,
+  | "getSession"
+  | "getProjectMcpOverrides"
+  | "mutateProjectMcpOverrides"
+  | "mutateSessionMcpOverrides"
+  | "mutateConversationMcpOverrides"
+>;
 
 type McpConfigMutationResult =
   | {
@@ -101,26 +120,47 @@ export function createMcpConfigMutationService(
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult> {
-    return withWriteQueue("mcp.patchGlobalChecked", async () => {
-      const currentOverrides = await deps.globalStore.read();
-      const current = await resolveGlobalView(currentOverrides);
-      if (
-        input.expectedEffectiveConfigHash !== undefined &&
-        current.view.effectiveConfigHash !== input.expectedEffectiveConfigHash
-      ) {
-        return { ok: false, reason: "conflict" };
-      }
-
-      const result = patchAndPrune(currentOverrides, input.operations);
-      await deps.globalStore.replace(result.overrides);
-
-      const next = await resolveGlobalView(result.overrides);
-      return {
-        ok: true,
-        changedServerKeys: result.changedServerKeys,
-        effectiveConfigHash: next.view.effectiveConfigHash ?? "",
-      };
+    // --- Resolve OUTSIDE any lock: the only I/O is source discovery. patchGlobal
+    // writes the global-overrides FILE (not the state store), so it never touches
+    // the state-store write queue. The scoped-config file store owns its own
+    // serialized write tail, so `globalStore.patch` makes the
+    // read → precondition → apply → write sequence atomic there — the fence lives
+    // inside that lock, exactly like the project/session/conversation scopes fence
+    // inside their focused DB mutator (no-slow-work-in-critical-section). ---
+    const discovery = await deps.discoverAllSources({
+      globalConfigPath: deps.globalConfigPath(),
     });
+
+    const result = await deps.globalStore
+      .patch({
+        operations: input.operations,
+        // Runs inside the file store's write lock, on the FRESH on-disk
+        // overrides, before the write — the atomic conflict fence.
+        precondition: (current) => {
+          if (input.expectedEffectiveConfigHash === undefined) return;
+          const currentHash = assembleGlobalView(current, discovery).view
+            .effectiveConfigHash;
+          if (currentHash !== input.expectedEffectiveConfigHash) {
+            throw new GlobalConfigConflictError();
+          }
+        },
+      })
+      .catch((err: unknown): null => {
+        if (err instanceof GlobalConfigConflictError) return null;
+        throw err;
+      });
+
+    if (result === null) {
+      return { ok: false, reason: "conflict" };
+    }
+
+    const nextHash = assembleGlobalView(result.overrides, discovery).view
+      .effectiveConfigHash;
+    return {
+      ok: true,
+      changedServerKeys: result.changedServerKeys,
+      effectiveConfigHash: nextHash ?? "",
+    };
   }
 
   async function patchProject(input: {
@@ -129,39 +169,53 @@ export function createMcpConfigMutationService(
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult> {
-    return deps.stateManager.mutateState(
-      `mcp.patchProjectChecked[${input.projectPath}]`,
-      async (state) => {
-        const project = state.projects[input.projectPath];
-        if (!project) {
-          throw new Error(`Project "${input.projectPath}" not found`);
-        }
+    // --- Resolve OUTSIDE the write queue: the only I/O is source discovery and
+    // the global-overrides file read (no-slow-work-in-critical-section). ---
+    const [globalOverrides, discovery] = await Promise.all([
+      deps.globalStore.read(),
+      deps.discoverAllSources({
+        globalConfigPath: deps.globalConfigPath(),
+        worktreePath: input.projectPath,
+      }),
+    ]);
 
-        const current = await resolveProjectView(
-          state,
+    // --- Commit INSIDE a short, synchronous critical section. The mutator sees
+    // the FRESH persisted overrides, so the current hash it derives (via the
+    // pure resolver over pre-fetched discovery) reflects any concurrent write —
+    // a mismatch against `expectedEffectiveConfigHash` is the conflict fence. ---
+    return deps.stateManager.mutateProjectMcpOverrides<McpConfigMutationResult>(
+      input.projectPath,
+      "mcp.patchProjectChecked",
+      (current) => {
+        const currentHash = assembleProjectView(
           input.projectName,
-          input.projectPath,
-        );
+          current,
+          globalOverrides,
+          discovery,
+        ).view.effectiveConfigHash;
         if (
           input.expectedEffectiveConfigHash !== undefined &&
-          current.view.effectiveConfigHash !== input.expectedEffectiveConfigHash
+          currentHash !== input.expectedEffectiveConfigHash
         ) {
-          return { ok: false, reason: "conflict" } as const;
+          return { write: false, result: { ok: false, reason: "conflict" } };
         }
-
-        const result = patchAndPrune(project.mcpOverrides, input.operations);
-        writeOrDelete(project, result.overrides);
-
-        const next = await resolveProjectView(
-          state,
+        const result = patchAndPrune(current, input.operations);
+        const nextOverrides = pruneEmptyOverrides(result.overrides);
+        const nextHash = assembleProjectView(
           input.projectName,
-          input.projectPath,
-        );
+          nextOverrides,
+          globalOverrides,
+          discovery,
+        ).view.effectiveConfigHash;
         return {
-          ok: true,
-          changedServerKeys: result.changedServerKeys,
-          effectiveConfigHash: next.view.effectiveConfigHash ?? "",
-        } as const;
+          write: true,
+          overrides: nextOverrides,
+          result: {
+            ok: true,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: nextHash ?? "",
+          },
+        };
       },
     );
   }
@@ -173,44 +227,65 @@ export function createMcpConfigMutationService(
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult> {
-    return deps.stateManager.mutateState(
-      `mcp.patchSessionChecked[${input.projectPath}/${input.sessionName}]`,
-      async (state) => {
-        const project = state.projects[input.projectPath];
-        const session = project?.sessions[input.sessionName];
-        if (!project || !session) {
-          throw new Error(
-            `Session "${input.sessionName}" not found in "${input.projectPath}"`,
-          );
-        }
+    // --- Resolve OUTSIDE the queue. The session read supplies the worktree path
+    // discovery needs and the ancestor (project) override; the session's own
+    // overrides are read FRESH inside the commit as the conflict fence. ---
+    const session = await deps.stateManager.getSession(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (!session) {
+      throw new Error(
+        `Session "${input.sessionName}" not found in "${input.projectPath}"`,
+      );
+    }
+    const [globalOverrides, projectOverrides, discovery] = await Promise.all([
+      deps.globalStore.read(),
+      deps.stateManager.getProjectMcpOverrides(input.projectPath),
+      deps.discoverAllSources({
+        globalConfigPath: deps.globalConfigPath(),
+        worktreePath: session.worktreePath,
+      }),
+    ]);
 
-        const current = await resolveSessionView(
-          state,
+    return deps.stateManager.mutateSessionMcpOverrides<McpConfigMutationResult>(
+      input.projectPath,
+      input.sessionName,
+      "mcp.patchSessionChecked",
+      (current) => {
+        const currentHash = assembleSessionView(
           input.projectName,
-          input.projectPath,
           input.sessionName,
-        );
+          { globalOverrides, projectOverrides, sessionOverrides: current },
+          discovery,
+        ).view.effectiveConfigHash;
         if (
           input.expectedEffectiveConfigHash !== undefined &&
-          current.view.effectiveConfigHash !== input.expectedEffectiveConfigHash
+          currentHash !== input.expectedEffectiveConfigHash
         ) {
-          return { ok: false, reason: "conflict" } as const;
+          return { write: false, result: { ok: false, reason: "conflict" } };
         }
-
-        const result = patchAndPrune(session.mcpOverrides, input.operations);
-        writeOrDelete(session, result.overrides);
-
-        const next = await resolveSessionView(
-          state,
+        const result = patchAndPrune(current, input.operations);
+        const nextOverrides = pruneEmptyOverrides(result.overrides);
+        const nextHash = assembleSessionView(
           input.projectName,
-          input.projectPath,
           input.sessionName,
-        );
+          {
+            globalOverrides,
+            projectOverrides,
+            sessionOverrides: nextOverrides,
+          },
+          discovery,
+        ).view.effectiveConfigHash;
         return {
-          ok: true,
-          changedServerKeys: result.changedServerKeys,
-          effectiveConfigHash: next.view.effectiveConfigHash ?? "",
-        } as const;
+          write: true,
+          overrides: nextOverrides,
+          result: {
+            ok: true,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: nextHash ?? "",
+          },
+        };
       },
     );
   }
@@ -223,62 +298,91 @@ export function createMcpConfigMutationService(
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult> {
-    return deps.stateManager.mutateState(
-      `mcp.patchConversationChecked[${input.projectPath}/${input.sessionName}/${input.conversationId}]`,
-      async (state) => {
-        const project = state.projects[input.projectPath];
-        const session = project?.sessions[input.sessionName];
-        const conversation = session?.conversations.find(
-          (entry) => entry.id === input.conversationId,
-        );
-        if (!project || !session || !conversation) {
-          throw new Error(
-            `Conversation "${input.conversationId}" not found in "${input.projectPath}/${input.sessionName}"`,
-          );
-        }
+    // --- Resolve OUTSIDE the queue. Ancestor (project + session) overrides and
+    // the worktree path come from the session read; the conversation's own
+    // overrides are read FRESH inside the commit as the conflict fence. ---
+    const session = await deps.stateManager.getSession(
+      input.projectPath,
+      input.sessionName,
+    );
+    const conversation = session?.conversations.find(
+      (entry) => entry.id === input.conversationId,
+    );
+    if (!session || !conversation) {
+      throw new Error(
+        `Conversation "${input.conversationId}" not found in "${input.projectPath}/${input.sessionName}"`,
+      );
+    }
+    const [globalOverrides, projectOverrides, discovery] = await Promise.all([
+      deps.globalStore.read(),
+      deps.stateManager.getProjectMcpOverrides(input.projectPath),
+      deps.discoverAllSources({
+        globalConfigPath: deps.globalConfigPath(),
+        worktreePath: session.worktreePath,
+      }),
+    ]);
+    const sessionOverrides = session.mcpOverrides;
 
-        const current = await resolveConversationView(
-          state,
+    return deps.stateManager.mutateConversationMcpOverrides<McpConfigMutationResult>(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "mcp.patchConversationChecked",
+      (current) => {
+        const currentHash = assembleConversationView(
           input.projectName,
-          input.projectPath,
           input.sessionName,
           input.conversationId,
-        );
+          {
+            globalOverrides,
+            projectOverrides,
+            sessionOverrides,
+            conversationOverrides: current,
+          },
+          discovery,
+        ).view.effectiveConfigHash;
         if (
           input.expectedEffectiveConfigHash !== undefined &&
-          current.view.effectiveConfigHash !== input.expectedEffectiveConfigHash
+          currentHash !== input.expectedEffectiveConfigHash
         ) {
-          return { ok: false, reason: "conflict" } as const;
+          return { write: false, result: { ok: false, reason: "conflict" } };
         }
-
-        const result = patchAndPrune(
-          conversation.mcpOverrides,
-          input.operations,
-        );
-        writeOrDelete(conversation, result.overrides);
-
-        const next = await resolveConversationView(
-          state,
+        const result = patchAndPrune(current, input.operations);
+        const nextOverrides = pruneEmptyOverrides(result.overrides);
+        const nextHash = assembleConversationView(
           input.projectName,
-          input.projectPath,
           input.sessionName,
           input.conversationId,
-        );
+          {
+            globalOverrides,
+            projectOverrides,
+            sessionOverrides,
+            conversationOverrides: nextOverrides,
+          },
+          discovery,
+        ).view.effectiveConfigHash;
         return {
-          ok: true,
-          changedServerKeys: result.changedServerKeys,
-          effectiveConfigHash: next.view.effectiveConfigHash ?? "",
-        } as const;
+          write: true,
+          overrides: nextOverrides,
+          result: {
+            ok: true,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: nextHash ?? "",
+          },
+        };
       },
     );
   }
 
-  async function resolveGlobalView(
+  // Pure view assembly over an already-fetched discovery snapshot. No I/O — safe
+  // to call inside the global store's serialized write lock (its precondition),
+  // where it derives the effective-config hash from the FRESH on-disk overrides,
+  // and outside the lock for the post-write next-hash. `globalScopeOnly` narrows
+  // discovery to global-scope servers so the global hash matches the read path.
+  function assembleGlobalView(
     globalOverrides: McpOverrides,
-  ): Promise<ResolvedConfigView> {
-    const discovery = await deps.discoverAllSources({
-      globalConfigPath: deps.globalConfigPath(),
-    });
+    discovery: McpSourceDiscoveryResult,
+  ): ResolvedConfigView {
     const discovered = globalScopeOnly(discovery.servers);
     const view = resolveView({
       level: "global",
@@ -293,19 +397,19 @@ export function createMcpConfigMutationService(
     return withEffectiveHash(view, discovered);
   }
 
-  async function resolveProjectView(
-    state: ManagerState,
+  // Pure view assembly over an already-fetched discovery snapshot and an
+  // explicit override chain. No I/O — safe to run inside the write queue's
+  // synchronous critical section (queue callbacks are repo writes plus pure
+  // computation only), where it derives the effective-config hash from the FRESH
+  // persisted target override plus the ancestor overrides read before the lock.
+  // One discovery snapshot serves both the current-hash and next-hash calls, so
+  // the two are strictly comparable.
+  function assembleProjectView(
     projectName: string,
-    projectPath: string,
-  ): Promise<ResolvedConfigView> {
-    const [globalOverrides, discovery] = await Promise.all([
-      deps.globalStore.read(),
-      deps.discoverAllSources({
-        globalConfigPath: deps.globalConfigPath(),
-        worktreePath: projectPath,
-      }),
-    ]);
-    const projectOverrides = state.projects[projectPath]?.mcpOverrides;
+    projectOverrides: McpOverrides | undefined,
+    globalOverrides: McpOverrides,
+    discovery: McpSourceDiscoveryResult,
+  ): ResolvedConfigView {
     const chain: McpOverrideChain = {
       global: globalOverrides,
       ...(projectOverrides !== undefined ? { project: projectOverrides } : {}),
@@ -327,31 +431,23 @@ export function createMcpConfigMutationService(
     return withEffectiveHash(view, discovery.servers);
   }
 
-  async function resolveSessionView(
-    state: ManagerState,
+  function assembleSessionView(
     projectName: string,
-    projectPath: string,
     sessionName: string,
-  ): Promise<ResolvedConfigView> {
-    const project = state.projects[projectPath];
-    const session = project?.sessions[sessionName];
-    if (!project || !session) {
-      throw new Error(`Session "${sessionName}" not found in "${projectPath}"`);
-    }
-    const [globalOverrides, discovery] = await Promise.all([
-      deps.globalStore.read(),
-      deps.discoverAllSources({
-        globalConfigPath: deps.globalConfigPath(),
-        worktreePath: session.worktreePath,
-      }),
-    ]);
+    overrides: {
+      globalOverrides: McpOverrides;
+      projectOverrides: McpOverrides | undefined;
+      sessionOverrides: McpOverrides | undefined;
+    },
+    discovery: McpSourceDiscoveryResult,
+  ): ResolvedConfigView {
     const chain: McpOverrideChain = {
-      global: globalOverrides,
-      ...(project.mcpOverrides !== undefined
-        ? { project: project.mcpOverrides }
+      global: overrides.globalOverrides,
+      ...(overrides.projectOverrides !== undefined
+        ? { project: overrides.projectOverrides }
         : {}),
-      ...(session.mcpOverrides !== undefined
-        ? { session: session.mcpOverrides }
+      ...(overrides.sessionOverrides !== undefined
+        ? { session: overrides.sessionOverrides }
         : {}),
     };
     const view = resolveView({
@@ -372,40 +468,28 @@ export function createMcpConfigMutationService(
     return withEffectiveHash(view, discovery.servers);
   }
 
-  async function resolveConversationView(
-    state: ManagerState,
+  function assembleConversationView(
     projectName: string,
-    projectPath: string,
     sessionName: string,
     conversationId: string,
-  ): Promise<ResolvedConfigView> {
-    const project = state.projects[projectPath];
-    const session = project?.sessions[sessionName];
-    const conversation = session?.conversations.find(
-      (entry) => entry.id === conversationId,
-    );
-    if (!project || !session || !conversation) {
-      throw new Error(
-        `Conversation "${conversationId}" not found in "${projectPath}/${sessionName}"`,
-      );
-    }
-    const [globalOverrides, discovery] = await Promise.all([
-      deps.globalStore.read(),
-      deps.discoverAllSources({
-        globalConfigPath: deps.globalConfigPath(),
-        worktreePath: session.worktreePath,
-      }),
-    ]);
+    overrides: {
+      globalOverrides: McpOverrides;
+      projectOverrides: McpOverrides | undefined;
+      sessionOverrides: McpOverrides | undefined;
+      conversationOverrides: McpOverrides | undefined;
+    },
+    discovery: McpSourceDiscoveryResult,
+  ): ResolvedConfigView {
     const chain: McpOverrideChain = {
-      global: globalOverrides,
-      ...(project.mcpOverrides !== undefined
-        ? { project: project.mcpOverrides }
+      global: overrides.globalOverrides,
+      ...(overrides.projectOverrides !== undefined
+        ? { project: overrides.projectOverrides }
         : {}),
-      ...(session.mcpOverrides !== undefined
-        ? { session: session.mcpOverrides }
+      ...(overrides.sessionOverrides !== undefined
+        ? { session: overrides.sessionOverrides }
         : {}),
-      ...(conversation.mcpOverrides !== undefined
-        ? { conversation: conversation.mcpOverrides }
+      ...(overrides.conversationOverrides !== undefined
+        ? { conversation: overrides.conversationOverrides }
         : {}),
     };
     const view = resolveView({
@@ -488,6 +572,16 @@ function patchAndPrune(
   return applyOperations(base, operations);
 }
 
+/**
+ * Collapse an empty override set to `undefined` so a focused override-column
+ * write clears the column (NULL) rather than persisting `{ servers: {} }`. Every
+ * scope (project/session/conversation) prunes the same way before handing the
+ * result to its focused mutation.
+ */
+function pruneEmptyOverrides(value: McpOverrides): McpOverrides | undefined {
+  return Object.keys(value.servers).length === 0 ? undefined : value;
+}
+
 function peekToolInventories(
   cache: ToolInventoryCache | undefined,
   servers: readonly McpServerDefinition[],
@@ -501,14 +595,4 @@ function peekToolInventories(
     });
   }
   return inventories;
-}
-
-function writeOrDelete<
-  T extends ProjectState | SessionState | ConversationState,
->(target: T, value: McpOverrides): void {
-  if (Object.keys(value.servers).length === 0) {
-    delete target.mcpOverrides;
-    return;
-  }
-  target.mcpOverrides = value;
 }

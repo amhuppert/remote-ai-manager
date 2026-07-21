@@ -18,9 +18,9 @@
 import { createActor } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
 import type {
-  ConversationContext,
   ConversationInput,
   ConversationEvent,
+  ConversationPersistenceMode,
 } from "./types";
 import {
   conversationRuntimeKey,
@@ -28,32 +28,25 @@ import {
   getConversationRuntime,
   cleanupConversationRuntime,
 } from "./runtime-state";
-import { persistSnapshotAfterTransition } from "./persistence";
+import {
+  type ConversationPersistenceAdapter,
+  resolveConversationPersistenceAdapter,
+} from "./persistence-adapter";
 import {
   getRuntime as getRuntimeFromRegistry,
   unregisterRuntime,
 } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
-import {
-  conversationEventScopeFields,
-  isProjectSentinel,
-} from "@/lib/conversations/project-conversation-scope";
+import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type {
-  ForkedFrom,
-  ConversationRole,
-  ActiveTurnSource,
-} from "@/lib/conversations/schemas";
-import type { ActiveTurn } from "./types";
+import type { ForkedFrom, ConversationRole } from "@/lib/conversations/schemas";
 import {
   drainConversationQueue,
   getConversationQueueDeps,
 } from "@/lib/conversations/message-queue-drain";
-import { notifyProjectConversationStatusFromContext } from "@/lib/project-conversations/status-notifications";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
@@ -61,17 +54,25 @@ import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 
 const logger = createLogger("conversation-manager");
 
+// The derived-field mapping lives with the persistence facet that consumes it;
+// re-exported here for the manager-level tests that assert its pure behavior.
+export {
+  applySyncDerivedFields,
+  deriveActiveTurnSource,
+} from "./persistence-adapter";
+
 export interface EnsureActorInputData {
   conversationScope?: "session" | "project";
   projectName: string;
   sessionWorktreePath: string;
   /**
-   * Marks the actor as a synthetic lane with no persisted ConversationState
-   * record (see `ConversationContext.transient`): snapshot persistence and
-   * queue draining are skipped. Leave unset for lanes whose conversations
-   * exist in the state store.
+   * Required construction-time persistence choice. `ephemeral` marks a
+   * synthetic lane with no persisted `ConversationState` record (compaction,
+   * workflow-graph validator): the injected ephemeral persistence adapter makes
+   * every durable side effect inert and snapshot/queue-drain are skipped. Every
+   * lane whose conversation exists in the state store passes `durable`.
    */
-  transient?: boolean;
+  persistence: ConversationPersistenceMode;
   conversation: {
     createdAt: string;
     forkedFrom: ForkedFrom;
@@ -183,6 +184,8 @@ async function defaultLoadActorInput(
     conversationScope: "session",
     projectName: getProjectDisplayName(projectPath),
     sessionWorktreePath: session.worktreePath,
+    // Loaded from the state store, so a real ConversationState record exists.
+    persistence: "durable",
     conversation: {
       createdAt: conversation.createdAt,
       forkedFrom: conversation.forkedFrom ?? null,
@@ -200,13 +203,17 @@ async function defaultLoadActorInput(
 // Machine Factory Injection
 // ============================================================
 
-type MachineFactory = () => ReturnType<typeof createProvidedMachine>;
+type MachineFactory = (
+  adapter: ConversationPersistenceAdapter,
+) => ReturnType<typeof createProvidedMachine>;
 let _machineFactory: MachineFactory | null = null;
 
 /**
- * Resolve the machine factory (test override or production `.provide()`).
- * Exported for the rehydration module, which must restore actors onto the
- * same machine the manager starts fresh actors with.
+ * Resolve the machine factory (test override or production `.provide()`). The
+ * factory receives the runtime's persistence adapter so the durable-write
+ * actions are wired at construction. Exported for the rehydration module, which
+ * must restore actors onto the same machine the manager starts fresh actors
+ * with (always durable — a persisted snapshot means a real record).
  */
 export function getMachineFactory(): MachineFactory {
   return _machineFactory ?? createProvidedMachine;
@@ -245,87 +252,25 @@ export function getActorRegistry(): Map<string, ConversationActorRef> {
 // ============================================================
 
 /**
- * Classify the active turn as user- or workflow-driven, or null when no turn
- * is active. `task_run` turns are only dispatched by workflow callers, and
- * conversation_turn turns flagged `autonomous` come from graph-workflow's
- * implementer-runner — both should suppress UI affordances meant for the
- * conversation-panel user (e.g. the Stop button).
+ * Build the production-provided machine. The four durable-write actions are
+ * delegated to the injected {@link ConversationPersistenceAdapter}, so this
+ * block no longer imports `mutateConversation` or the state store directly —
+ * the adapter (durable or ephemeral) owns every durable side effect. The
+ * remaining actions publish SSE / push notifications only.
+ *
+ * Exported so contract tests can drive the exact production-provided machine
+ * (with a chosen adapter) against a real persistence fixture, rather than
+ * re-deriving the `.provide()` wiring and risking drift from production.
  */
-export function deriveActiveTurnSource(
-  activeTurn: ActiveTurn | null,
-): ActiveTurnSource {
-  if (!activeTurn) return null;
-  if (activeTurn.kind === "task_run") return "workflow";
-  return activeTurn.autonomous ? "workflow" : "user";
-}
-
-/**
- * Apply machine context fields to a mutable ConversationState.
- * Extracted as a pure function for testability.
- */
-export function applySyncDerivedFields(
-  context: ConversationContext,
-  c: ConversationState,
-): void {
-  c.status = context.status;
-  c.activeTurnSource = deriveActiveTurnSource(context.activeTurn);
-  c.pendingQuestionId = context.pendingQuestion?.questionId ?? null;
-  c.pendingQuestions = context.pendingQuestion?.questions ?? null;
-  c.agentBackend = context.agentBackend;
-  c.backendRef = context.backendRef;
-  c.transcriptPath = context.transcriptPath;
-  c.totalCostUsd = context.totals.totalCostUsd;
-  c.totalDurationMs = context.totals.totalDurationMs;
-  c.totalTurns = context.totals.totalTurns;
-  c.contextTokens = context.totals.contextTokens;
-  c.contextWindowMax = context.totals.contextWindowMax;
-  c.promptCount = context.promptCount;
-  if (context.debugMode) {
-    c.debugMode = {
-      active: context.debugMode.active,
-      recording: context.debugMode.recording,
-      logFilePath: context.debugMode.logFilePath,
-      enteredAt: context.debugMode.enteredAt,
-      hypotheses: context.debugMode.hypotheses,
-      reproductionSteps: context.debugMode.reproductionSteps,
-      fixSummary: context.debugMode.fixSummary,
-      verificationSteps: context.debugMode.verificationSteps,
-      instructionsDelivered: context.debugMode.instructionsDelivered,
-      phase: context.debugMode.phase,
-      lastTurnFailed: context.debugMode.lastTurnFailed,
-      debugSessionId: context.debugMode.debugSessionId,
-      cleanupVerificationAttempt: context.debugMode.cleanupVerificationAttempt,
-    };
-  } else {
-    c.debugMode = null;
-  }
-}
-
-function createProvidedMachine() {
+export function createProvidedMachine(adapter: ConversationPersistenceAdapter) {
   return conversationMachine.provide({
     actions: {
       persistSnapshot: ({ context, self }) => {
-        persistSnapshotAfterTransition(context, self);
+        adapter.persistSnapshot(context, self);
       },
 
       syncDerivedFields: ({ context }) => {
-        void (async () => {
-          const { mutateConversation } = await import("@/lib/state-store");
-          try {
-            await mutateConversation(
-              context.projectPath,
-              context.sessionName,
-              context.conversationId,
-              "conversation-manager.syncDerived",
-              (c) => applySyncDerivedFields(context, c),
-            );
-          } catch (err) {
-            logger.warn("conversation-manager.sync_derived_failed", {
-              conversationId: context.conversationId,
-              error: getErrorMessage(err),
-            });
-          }
-        })();
+        adapter.syncDerivedFields(context);
       },
 
       broadcastConversationStatus: ({ context }) => {
@@ -341,18 +286,10 @@ function createProvidedMachine() {
         const promptError =
           context.lastResult?.error ?? context.lastError ?? undefined;
 
-        if (isProjectSentinel(context.sessionName)) {
-          void notifyProjectConversationStatusFromContext(context).catch(
-            (err) => {
-              logger.warn("conversation-manager.project_notification_failed", {
-                projectPath: context.projectPath,
-                conversationId: context.conversationId,
-                status: context.status,
-                error: getErrorMessage(err),
-              });
-            },
-          );
-        }
+        // Notification persistence is a durable side effect, so it belongs to
+        // the adapter — an ephemeral project-compaction lane must not insert a
+        // notifications row when it settles to `awaiting`.
+        adapter.notifyProjectStatus(context);
 
         void (async () => {
           const { publishEvent } = await import("@/lib/events/publication");
@@ -461,55 +398,11 @@ function createProvidedMachine() {
       },
 
       markUnreadOnFinish: ({ context }) => {
-        void (async () => {
-          try {
-            const { mutateConversation } = await import("@/lib/state-store");
-            const { publishEvent } = await import("@/lib/events/publication");
-            const { markUnreadOnFinish } =
-              await import("@/lib/conversations/mark-unread");
-            await markUnreadOnFinish(
-              {
-                projectPath: context.projectPath,
-                projectName: context.projectName,
-                sessionName: context.sessionName,
-                conversationId: context.conversationId,
-                role: context.role,
-              },
-              { mutateConversation, publishSessionStatus: publishEvent },
-            );
-          } catch (err) {
-            logger.warn("conversation-manager.mark_unread_failed", {
-              conversationId: context.conversationId,
-              error: getErrorMessage(err),
-            });
-          }
-        })();
+        adapter.markUnreadOnFinish(context);
       },
 
       markReadOnUserTurnStart: ({ context }) => {
-        void (async () => {
-          try {
-            const { mutateConversation } = await import("@/lib/state-store");
-            const { publishEvent } = await import("@/lib/events/publication");
-            const { markReadOnUserTurnStart } =
-              await import("@/lib/conversations/mark-unread");
-            await markReadOnUserTurnStart(
-              {
-                projectPath: context.projectPath,
-                projectName: context.projectName,
-                sessionName: context.sessionName,
-                conversationId: context.conversationId,
-                role: context.role,
-              },
-              { mutateConversation, publishSessionStatus: publishEvent },
-            );
-          } catch (err) {
-            logger.warn("conversation-manager.mark_read_failed", {
-              conversationId: context.conversationId,
-              error: getErrorMessage(err),
-            });
-          }
-        })();
+        adapter.markReadOnUserTurnStart(context);
       },
 
       drainPendingQueue: ({ context, self }) => {
@@ -554,7 +447,9 @@ export function startConversationActor(
     abortController: new AbortController(),
   });
 
-  const machine = getMachineFactory()();
+  const machine = getMachineFactory()(
+    resolveConversationPersistenceAdapter(input.persistence),
+  );
   const actor = createActor(machine, { input });
 
   getActorRegistry().set(key, actor);
@@ -751,7 +646,7 @@ export async function ensureConversationActor(
     sessionName,
     worktreePath,
     conversationId,
-    transient: data.transient === true,
+    persistence: data.persistence,
     createdAt: data.conversation.createdAt,
     forkedFrom: data.conversation.forkedFrom,
     role: data.conversation.role,

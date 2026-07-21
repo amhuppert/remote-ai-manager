@@ -4,6 +4,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ManagerState } from "@/lib/projects/schemas";
+import {
+  readWholeStateForTest,
+  seedWholeState,
+} from "@/lib/shared/testing/whole-state-fixture";
 
 /**
  * Pins the one-store-instance invariant for `defaultScopeOverrideStore`.
@@ -80,12 +84,11 @@ describe("mcp scope-store singleton coherence", () => {
 
   it("a session override patch through the default scope store is visible to singleton cached reads", async () => {
     const store = await import("@/lib/state-store");
-    await store.mutateState("stale-read-repro.seed", (state) => {
-      state.projects[PROJECT_PATH] = seedState().projects[PROJECT_PATH]!;
-    });
+    const db = store.getStateDb();
+    seedWholeState(db, seedState());
 
     // Prime the singleton's parsed-row caches with the pre-patch snapshot.
-    const before = await store.readState();
+    const before = readWholeStateForTest(db);
     expect(
       before.projects[PROJECT_PATH]?.sessions[SESSION_NAME]?.mcpOverrides,
     ).toBeUndefined();
@@ -95,7 +98,7 @@ describe("mcp scope-store singleton coherence", () => {
       { type: "set-server-enabled", serverKey: "kagi", enabled: false },
     ]);
 
-    const after = await store.readState();
+    const after = readWholeStateForTest(db);
     expect(
       after.projects[PROJECT_PATH]?.sessions[SESSION_NAME]?.mcpOverrides
         ?.servers.kagi?.enabled,

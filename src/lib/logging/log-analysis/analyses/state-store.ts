@@ -41,6 +41,7 @@ export interface StateStoreAnalysis {
   slowAccessors: StateAccessorSummary[];
   repoOperations: StateRepoOperationSummary[];
   writeQueue: StateWriteQueueSummary[];
+  holdBudgetExceeded: HoldBudgetExceededSummary[];
   facadeRepoGaps: FacadeRepoGap[];
   findings: LogAnalysisFinding[];
 }
@@ -171,6 +172,47 @@ function summarizeWriteQueue(
     .sort((a, b) => (b.p95WaitMs ?? 0) - (a.p95WaitMs ?? 0));
 }
 
+interface HoldBudgetExceededSummary {
+  label: string;
+  count: number;
+  maxHoldMs: number;
+  budgetMs: number | null;
+}
+
+// The write queue emits an error-level `hold_budget_exceeded` per callback that
+// holds past the budget (Design 3.5). Each is already an explicit runtime
+// violation, so we surface them grouped by the mutation label — the culprit —
+// rather than re-deriving a threshold here.
+function summarizeHoldBudgetExceeded(
+  records: readonly ParsedServerLogRecord[],
+): HoldBudgetExceededSummary[] {
+  const exceeded = records.filter(
+    (record) =>
+      record.message === "state-store.write_queue.hold_budget_exceeded",
+  );
+  return [
+    ...groupByString(
+      exceeded,
+      (record) => rawString(record, "label") ?? "unknown",
+    ),
+  ]
+    .map(([label, groupedRecords]) => {
+      const holds = groupedRecords
+        .map((record) => rawNumber(record, "holdMs"))
+        .filter((hold): hold is number => hold !== undefined);
+      const budget = groupedRecords
+        .map((record) => rawNumber(record, "budgetMs"))
+        .find((value): value is number => value !== undefined);
+      return {
+        label,
+        count: groupedRecords.length,
+        maxHoldMs: holds.length > 0 ? Math.max(...holds) : 0,
+        budgetMs: budget ?? null,
+      };
+    })
+    .sort((a, b) => b.maxHoldMs - a.maxHoldMs);
+}
+
 function computeFacadeRepoGaps(
   records: readonly ParsedServerLogRecord[],
 ): FacadeRepoGap[] {
@@ -214,9 +256,32 @@ function computeFacadeRepoGaps(
 function findingsForStateStore(input: {
   accessors: readonly StateAccessorSummary[];
   writeQueue: readonly StateWriteQueueSummary[];
+  holdBudgetExceeded: readonly HoldBudgetExceededSummary[];
   gaps: readonly FacadeRepoGap[];
 }): LogAnalysisFinding[] {
   const findings: LogAnalysisFinding[] = [];
+
+  for (const exceeded of input.holdBudgetExceeded) {
+    findings.push({
+      id: `state-store-write-queue-hold-budget:${exceeded.label}`,
+      severity: "high",
+      confidence: 0.95,
+      category: "state-store",
+      title: `Write queue hold budget exceeded: ${exceeded.label}`,
+      explanation:
+        "A write-queue callback held the global lock past its hold budget (Design 3.5). While held, all other writers — and, via bun:sqlite's synchronous calls, the event loop — stall.",
+      evidence: [
+        { label: "queueLabel", value: exceeded.label },
+        { label: "maxHoldMs", value: exceeded.maxHoldMs, unit: "ms" },
+        { label: "budgetMs", value: exceeded.budgetMs, unit: "ms" },
+        { label: "count", value: exceeded.count, unit: "count" },
+      ],
+      traceIds: [],
+      recommendedNextActions: [
+        "Move slow/async work out of the write-queue callback (reserve → work → fenced finalize); queue callbacks must be short synchronous commits.",
+      ],
+    });
+  }
 
   for (const queue of input.writeQueue) {
     if ((queue.p95WaitMs ?? 0) >= 100) {
@@ -293,16 +358,19 @@ export function analyzeStateStore(
   const slowAccessors = summarizeAccessors(records);
   const repoOperations = summarizeRepoOperations(records);
   const writeQueue = summarizeWriteQueue(records);
+  const holdBudgetExceeded = summarizeHoldBudgetExceeded(records);
   const facadeRepoGaps = computeFacadeRepoGaps(records);
 
   return {
     slowAccessors,
     repoOperations,
     writeQueue,
+    holdBudgetExceeded,
     facadeRepoGaps,
     findings: findingsForStateStore({
       accessors: slowAccessors,
       writeQueue,
+      holdBudgetExceeded,
       gaps: facadeRepoGaps,
     }),
   };

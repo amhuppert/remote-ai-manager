@@ -51,6 +51,7 @@ describe("queued delivery metadata on conversation turn types", () => {
 
   it("carries queuedDelivery on an ExecutePromptInput", () => {
     const input: ExecutePromptInput = {
+      persistence: "durable",
       projectPath: "/p",
       projectName: "p",
       sessionName: "s",
@@ -94,6 +95,7 @@ describe("queued delivery metadata on conversation turn types", () => {
       streamId: "stream-1",
     };
     const input: ExecutePromptInput = {
+      persistence: "durable",
       projectPath: "/p",
       projectName: "p",
       sessionName: "s",

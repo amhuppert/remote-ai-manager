@@ -109,6 +109,16 @@ export interface TaskRunActive {
 
 export type ActiveTurn = ConversationTurnActive | TaskRunActive;
 
+/**
+ * The construction-time persistence choice for a conversation runtime.
+ * `durable` runs the full persistence facet (derived-field sync, snapshot
+ * persistence, read/unread transitions); `ephemeral` is inert — a synthetic
+ * lane with no `ConversationState` record (compaction, workflow-graph
+ * validator) writes nothing to the state store. Required with no default, so a
+ * runtime cannot be constructed without deciding.
+ */
+export type ConversationPersistenceMode = "durable" | "ephemeral";
+
 export interface ConversationContext {
   _schemaVersion: 1;
 
@@ -233,8 +243,13 @@ export interface ConversationInput {
   agentBackend: AgentBackendId;
   backendRef: AgentSessionRef | null;
   promptCount: number;
-  /** See {@link ConversationContext.transient}. */
-  transient?: boolean;
+  /**
+   * Required construction-time persistence choice. `ephemeral` marks a
+   * synthetic lane with no persisted `ConversationState` record and derives
+   * {@link ConversationContext.transient}; `durable` is every real
+   * conversation. No default — every runtime constructor must decide.
+   */
+  persistence: ConversationPersistenceMode;
   /**
    * Persisted debug-mode state to restore when the actor is recreated for
    * an existing conversation (e.g. after a server restart). When `active`
@@ -297,6 +312,14 @@ export interface PromptActorResult {
 
 /** Input for the executePrompt actor. */
 export interface ExecutePromptInput {
+  /**
+   * The runtime's construction-time persistence choice, threaded from
+   * {@link ConversationInput.persistence} into every invoked actor so an actor
+   * running for a synthetic (`ephemeral`) lane cannot perform a durable
+   * state-store write. Required (no default) so a newly added actor input must
+   * decide, exactly like the runtime constructor.
+   */
+  persistence: ConversationPersistenceMode;
   conversationScope?: "session" | "project";
   projectPath: string;
   projectName: string;
@@ -342,6 +365,8 @@ export interface ExecutePromptInput {
 
 /** Input for the prepareTurn actor (resource acquisition). */
 export interface PrepareTurnInput {
+  /** Construction-time persistence choice (see {@link ExecutePromptInput.persistence}). */
+  persistence: ConversationPersistenceMode;
   projectPath: string;
   sessionName: string;
   conversationId: string;
@@ -356,6 +381,8 @@ export interface PrepareTurnInput {
  *  ExecutePromptInput because there is no SDK streaming, no image flow, and
  *  no debug-mode context. */
 export interface RunTaskRunInput {
+  /** Construction-time persistence choice (see {@link ExecutePromptInput.persistence}). */
+  persistence: ConversationPersistenceMode;
   projectPath: string;
   projectName: string;
   sessionName: string;

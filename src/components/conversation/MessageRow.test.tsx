@@ -58,7 +58,6 @@ function makeConversation(
       verificationSteps: [],
       lastTurnFailed: false,
     },
-    machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
     unread: false,

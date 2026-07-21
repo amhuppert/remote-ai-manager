@@ -1,26 +1,42 @@
 /**
  * Conversation machine snapshot persistence.
  *
- * Persists XState snapshots to the `machineSnapshot` field on each
- * ConversationState record. Follows the same debounce pattern as the
- * workflow-level persistence module.
+ * Persists the XState snapshot as a *resume-token projection* (see
+ * `persisted-snapshot-codec`) into the owner-discriminated
+ * `conversation_machine_snapshots` sidecar table — never onto the hot
+ * conversation row. The projection drops `lastResult.contentBlocks` and the
+ * `children` subtree (re-readable from the transcript / re-created lazily), so a
+ * multi-MB XState snapshot becomes a few-KB resume token. Follows the same
+ * debounce pattern as the workflow-level persistence module.
  */
 
 import type { Snapshot } from "xstate";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import {
-  getConversation as defaultGetConversation,
-  mutateConversation as defaultMutateConversation,
+  getConversationMachineSnapshot as defaultGetConversationMachineSnapshot,
+  upsertConversationMachineSnapshot as defaultUpsertConversationMachineSnapshot,
+  deleteConversationMachineSnapshot as defaultDeleteConversationMachineSnapshot,
+  type ConversationSnapshotOwner,
 } from "@/lib/state-store";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
 import {
   canonicalizeSessionRefsForStorageDeep,
   normalizeSessionRefsDeepInPlace,
 } from "@/lib/shared/session-ref-codec";
-import type { ConversationState } from "@/lib/conversations/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
 const logger = createLogger("conversation-persistence");
+
+/**
+ * The sidecar `owner` discriminator for a conversation identified by its session
+ * name: session-less project conversations carry the sentinel session name and
+ * own their sidecar rows as `project`; every other conversation is `session`.
+ */
+function snapshotOwnerFor(sessionName: string): ConversationSnapshotOwner {
+  return isProjectSentinel(sessionName) ? "project" : "session";
+}
 
 // ============================================================
 // AgentSessionRef codec at the snapshot boundary
@@ -141,8 +157,9 @@ function normalizeSnapshotDebugGeneration(
 // ============================================================
 
 export interface ConversationPersistenceDeps {
-  mutateConversation: typeof defaultMutateConversation;
-  getConversation: typeof defaultGetConversation;
+  getConversationMachineSnapshot: typeof defaultGetConversationMachineSnapshot;
+  upsertConversationMachineSnapshot: typeof defaultUpsertConversationMachineSnapshot;
+  deleteConversationMachineSnapshot: typeof defaultDeleteConversationMachineSnapshot;
 }
 
 let _deps: ConversationPersistenceDeps | null = null;
@@ -150,8 +167,11 @@ let _deps: ConversationPersistenceDeps | null = null;
 function getDeps(): ConversationPersistenceDeps {
   if (!_deps) {
     _deps = {
-      mutateConversation: defaultMutateConversation,
-      getConversation: defaultGetConversation,
+      getConversationMachineSnapshot: defaultGetConversationMachineSnapshot,
+      upsertConversationMachineSnapshot:
+        defaultUpsertConversationMachineSnapshot,
+      deleteConversationMachineSnapshot:
+        defaultDeleteConversationMachineSnapshot,
     };
   }
   return _deps;
@@ -221,7 +241,7 @@ export function persistConversationSnapshot(
 
   const doWrite = () => {
     debounceTimers.delete(key);
-    void writeSnapshot(projectPath, sessionName, conversationId, snapshot);
+    void writeSnapshot(sessionName, conversationId, snapshot);
   };
 
   debounceTimers.set(key, setTimeout(doWrite, debounceMs));
@@ -269,23 +289,21 @@ export function persistSnapshotAfterTransition(
 }
 
 async function writeSnapshot(
-  projectPath: string,
   sessionName: string,
   conversationId: string,
   snapshot: Snapshot<unknown>,
 ): Promise<void> {
   try {
-    await getDeps().mutateConversation(
-      projectPath,
-      sessionName,
+    // Canonicalize the root refs first (a no-op unless a legacy ref rode in),
+    // then project to the resume token — the projection drops the `children`
+    // subtree and `lastResult.contentBlocks`, so only the retained root context
+    // (backendRef / forkedFrom) needs canonical bytes.
+    const canonical = withCanonicalRefs(conversationId, snapshot);
+    const projected = toPersistedConversationSnapshot(canonical);
+    await getDeps().upsertConversationMachineSnapshot(
+      snapshotOwnerFor(sessionName),
       conversationId,
-      "conversation-persistence.save",
-      (conversation: ConversationState) => {
-        conversation.machineSnapshot = withCanonicalRefs(
-          conversationId,
-          snapshot,
-        );
-      },
+      projected,
     );
 
     logger.debug("conversation-persistence.snapshot_saved", {
@@ -338,21 +356,20 @@ export function validateRestoredSnapshot(
  * Returns the snapshot if found and schema version matches, null otherwise.
  */
 export async function restoreConversationSnapshot(
-  projectPath: string,
+  _projectPath: string,
   sessionName: string,
   conversationId: string,
   expectedSchemaVersion: number,
 ): Promise<Snapshot<unknown> | null> {
   try {
-    const conversation = await getDeps().getConversation(
-      projectPath,
-      sessionName,
+    const snapshot = getDeps().getConversationMachineSnapshot(
+      snapshotOwnerFor(sessionName),
       conversationId,
     );
-    if (!conversation) return null;
+    if (snapshot == null) return null;
 
     return validateRestoredSnapshot(
-      conversation.machineSnapshot,
+      snapshot,
       conversationId,
       expectedSchemaVersion,
     );
@@ -366,22 +383,17 @@ export async function restoreConversationSnapshot(
 }
 
 /**
- * Clear a conversation's persisted machine snapshot.
+ * Clear a conversation's persisted machine snapshot (deletes the sidecar row).
  */
 export async function clearConversationSnapshot(
-  projectPath: string,
+  _projectPath: string,
   sessionName: string,
   conversationId: string,
 ): Promise<void> {
   try {
-    await getDeps().mutateConversation(
-      projectPath,
-      sessionName,
+    await getDeps().deleteConversationMachineSnapshot(
+      snapshotOwnerFor(sessionName),
       conversationId,
-      "conversation-persistence.clear",
-      (conversation: ConversationState) => {
-        conversation.machineSnapshot = null;
-      },
     );
   } catch (err) {
     logger.error("conversation-persistence.snapshot_clear_failed", {

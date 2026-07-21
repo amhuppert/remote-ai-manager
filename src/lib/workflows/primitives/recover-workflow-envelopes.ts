@@ -1,7 +1,7 @@
 /**
  * Startup recovery for durable workflow envelopes.
  *
- * Walks every (project, session) pair in the manager state, lists active
+ * Walks every (project, session) pair, lists active
  * (`running` or `paused`) envelopes for each session, and reconciles them
  * against the in-memory worker registry supplied by the caller:
  *
@@ -17,7 +17,7 @@
  * Recovery decisions are logged through the project's structured logger so
  * an operator can audit which envelopes were transitioned at startup.
  */
-import type { ManagerState } from "@/lib/projects/schemas";
+import type { SessionConversationListItem } from "@/lib/state-store";
 import { createLogger } from "@/lib/logging";
 import type { GateKind } from "./gate-vocabulary";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
@@ -39,7 +39,7 @@ type RecoveryActionResolver = (input: {
 }) => RecoveryAction;
 
 export interface RecoverActiveWorkflowEnvelopesDeps {
-  readState(): Promise<ManagerState>;
+  listSessionConversationListItems(): Promise<SessionConversationListItem[]>;
   createRepository(input: {
     projectPath: string;
     sessionName: string;
@@ -66,7 +66,7 @@ export interface RecoverActiveWorkflowEnvelopesSummary {
 export async function recoverActiveWorkflowEnvelopes(
   deps: RecoverActiveWorkflowEnvelopesDeps,
 ): Promise<RecoverActiveWorkflowEnvelopesSummary> {
-  const state = await deps.readState();
+  const items = await deps.listSessionConversationListItems();
   const summary: RecoverActiveWorkflowEnvelopesSummary = {
     scanned: 0,
     failed: 0,
@@ -75,86 +75,82 @@ export async function recoverActiveWorkflowEnvelopes(
     movedToPaused: 0,
   };
 
-  for (const [projectPath, project] of Object.entries(state.projects)) {
-    for (const [sessionName, session] of Object.entries(project.sessions)) {
-      if (
-        !session.workflowEnvelopes ||
-        Object.keys(session.workflowEnvelopes).length === 0
-      ) {
-        continue;
-      }
+  for (const { projectPath, session } of items) {
+    const sessionName = session.sessionName;
+    if (
+      !session.workflowEnvelopes ||
+      Object.keys(session.workflowEnvelopes).length === 0
+    ) {
+      continue;
+    }
 
-      const repo = deps.createRepository({ projectPath, sessionName });
-      const active = await repo.listActive();
-      summary.scanned += active.length;
+    const repo = deps.createRepository({ projectPath, sessionName });
+    const active = await repo.listActive();
+    summary.scanned += active.length;
 
-      for (const envelope of active) {
-        if (envelope.status === "paused") {
-          summary.preservedPaused++;
-          logger.info("workflow-envelope.recovery.paused_preserved", {
-            projectPath,
-            sessionName,
-            workflowId: envelope.workflowId,
-            workflowType: envelope.workflowType,
-            phase: envelope.phase,
-            pauseGateKind: envelope.pause?.gateKind,
-            pauseKind: envelope.pause?.pauseKind,
-          });
-          continue;
-        }
-
-        if (deps.isWorkerActive(envelope.workflowId)) {
-          summary.preservedRunning++;
-          logger.info("workflow-envelope.recovery.running_preserved", {
-            projectPath,
-            sessionName,
-            workflowId: envelope.workflowId,
-            workflowType: envelope.workflowType,
-            phase: envelope.phase,
-          });
-          continue;
-        }
-
-        const action: RecoveryAction = deps.resolveInactiveAction
-          ? deps.resolveInactiveAction({
-              envelope,
-              projectPath,
-              sessionName,
-            })
-          : { kind: "fail" };
-
-        if (action.kind === "preserve_paused") {
-          await repo.markPaused(envelope.workflowId, {
-            pauseKind: "post_turn",
-            gateKind: action.pauseGateKind,
-            resumeToken: action.resumeToken,
-            reason: PROCESS_RESTART_ERROR_SUMMARY,
-          });
-          summary.movedToPaused++;
-          logger.info("workflow-envelope.recovery.moved_to_paused", {
-            projectPath,
-            sessionName,
-            workflowId: envelope.workflowId,
-            workflowType: envelope.workflowType,
-            phase: envelope.phase,
-          });
-          continue;
-        }
-
-        await repo.markFailed(
-          envelope.workflowId,
-          PROCESS_RESTART_ERROR_SUMMARY,
-        );
-        summary.failed++;
-        logger.warn("workflow-envelope.recovery.running_failed", {
+    for (const envelope of active) {
+      if (envelope.status === "paused") {
+        summary.preservedPaused++;
+        logger.info("workflow-envelope.recovery.paused_preserved", {
           projectPath,
           sessionName,
           workflowId: envelope.workflowId,
           workflowType: envelope.workflowType,
           phase: envelope.phase,
+          pauseGateKind: envelope.pause?.gateKind,
+          pauseKind: envelope.pause?.pauseKind,
+        });
+        continue;
+      }
+
+      if (deps.isWorkerActive(envelope.workflowId)) {
+        summary.preservedRunning++;
+        logger.info("workflow-envelope.recovery.running_preserved", {
+          projectPath,
+          sessionName,
+          workflowId: envelope.workflowId,
+          workflowType: envelope.workflowType,
+          phase: envelope.phase,
+        });
+        continue;
+      }
+
+      const action: RecoveryAction = deps.resolveInactiveAction
+        ? deps.resolveInactiveAction({
+            envelope,
+            projectPath,
+            sessionName,
+          })
+        : { kind: "fail" };
+
+      if (action.kind === "preserve_paused") {
+        await repo.markPaused(envelope.workflowId, {
+          pauseKind: "post_turn",
+          gateKind: action.pauseGateKind,
+          resumeToken: action.resumeToken,
           reason: PROCESS_RESTART_ERROR_SUMMARY,
         });
+        summary.movedToPaused++;
+        logger.info("workflow-envelope.recovery.moved_to_paused", {
+          projectPath,
+          sessionName,
+          workflowId: envelope.workflowId,
+          workflowType: envelope.workflowType,
+          phase: envelope.phase,
+        });
+        continue;
       }
+
+      await repo.markFailed(envelope.workflowId, PROCESS_RESTART_ERROR_SUMMARY);
+      summary.failed++;
+      logger.warn("workflow-envelope.recovery.running_failed", {
+        projectPath,
+        sessionName,
+        workflowId: envelope.workflowId,
+        workflowType: envelope.workflowType,
+        phase: envelope.phase,
+        reason: PROCESS_RESTART_ERROR_SUMMARY,
+      });
     }
   }
 

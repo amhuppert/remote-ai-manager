@@ -5,7 +5,10 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
-import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import {
+  createGraphWorkflowExecutionEventPublisher,
+  type GraphWorkflowEventDelivery,
+} from "./execution-events";
 import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,
@@ -15,6 +18,11 @@ import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
+import {
+  assertLoopFence,
+  runWithLoopFence,
+  StaleLoopFenceError,
+} from "./loop-fence";
 
 interface FakeStore {
   current: GraphWorkflowExecution;
@@ -33,9 +41,11 @@ function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
   };
 }
 
-function isMutateActiveResult(
-  value: unknown,
-): value is { execution: GraphWorkflowExecution; events: unknown[] } {
+function isMutateActiveResult(value: unknown): value is {
+  execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
+  pushes?: GraphWorkflowEventDelivery["pushes"];
+} {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -45,8 +55,12 @@ function isMutateActiveResult(
   );
 }
 
+// Serializing fake of the sync `mutateActive` seam. It awaits `fn(draft)` so a
+// synchronous reducer (the only shape the interface now allows) is applied and
+// its result handled identically to the production seam.
 function createFakeMutateActive(
   store: FakeStore,
+  deliver: (delivery: GraphWorkflowEventDelivery) => void = () => {},
 ): GraphWorkflowExecutionToolContextDeps["workflowManager"]["mutateActive"] {
   return async function mutateActive(
     _projectPath,
@@ -60,12 +74,14 @@ function createFakeMutateActive(
       const execution = isMutateActiveResult(result)
         ? result.execution
         : result;
-      if (isMutateActiveResult(result)) {
-        store.appliedEvents.push(
-          ...(result.events as GraphWorkflowExecutionEvent[]),
-        );
-      }
       store.current = structuredClone(execution);
+      if (isMutateActiveResult(result)) {
+        const events = result.events as GraphWorkflowExecutionEvent[];
+        store.appliedEvents.push(...events);
+        // Mirror the production seam: the reducer returns inert delivery DATA;
+        // the seam performs delivery post-commit through the event publisher.
+        deliver({ events, pushes: result.pushes ?? [] });
+      }
       return store.current;
     });
     store.serializedQueue = next.catch(() => undefined);
@@ -81,6 +97,7 @@ function createFakeMutateActive(
 function createTestLiveEditPublisher(): {
   broadcast: ReturnType<typeof vi.fn>;
   publishLiveEditApplied: GraphWorkflowExecutionToolContextDeps["publishLiveEditApplied"];
+  deliver: (delivery: GraphWorkflowEventDelivery) => void;
 } {
   const broadcast = vi.fn();
   const publisher = createGraphWorkflowExecutionEventPublisher({
@@ -90,6 +107,7 @@ function createTestLiveEditPublisher(): {
   return {
     broadcast,
     publishLiveEditApplied: publisher.publishLiveEditApplied,
+    deliver: publisher.deliver,
   };
 }
 
@@ -167,10 +185,11 @@ function buildToolContext(
       now: () => "2026-03-27T12:00:00.000Z",
       createDocumentId: () => "doc-1",
     });
-  const { broadcast, publishLiveEditApplied } = createTestLiveEditPublisher();
+  const { broadcast, publishLiveEditApplied, deliver } =
+    createTestLiveEditPublisher();
   const deps: GraphWorkflowExecutionToolContextDeps = {
     workflowManager: {
-      mutateActive: createFakeMutateActive(store),
+      mutateActive: createFakeMutateActive(store, deliver),
     },
     runtimeEditService,
     sharedDocumentRegistry,
@@ -521,6 +540,165 @@ describe("GraphWorkflowExecutionToolContext", () => {
     ).rejects.toThrow();
   });
 
+  it("rejects a shared-document upsert at RESERVE — before any path resolution or capture — when the bound context is not active", async () => {
+    // The reserve mutation runs `ensureBoundContextActive` FIRST, so a stale or
+    // invalid request never resolves a path or touches the central store: the
+    // rejection precedes every side effect.
+    const initial = createWorkflowExecution(); // context-plan is pending, not active
+    const store = createFakeStore(initial);
+    const prepared: string[] = [];
+    const captured: string[] = [];
+    const baseRegistry = createGraphWorkflowSharedDocumentRegistryService({
+      async captureDocumentContent(input) {
+        captured.push(input.relativePath);
+      },
+    });
+    const sharedDocumentRegistry = {
+      ...baseRegistry,
+      prepareUpsert: async (
+        worktreePath: string,
+        input: Parameters<typeof baseRegistry.prepareUpsert>[1],
+      ) => {
+        prepared.push(input.relativePath);
+        return baseRegistry.prepareUpsert(worktreePath, input);
+      },
+    };
+    const factory = createGraphWorkflowExecutionToolContext({
+      workflowManager: {
+        mutateActive: async (_projectPath, _sessionName, fn) => {
+          const result = fn(structuredClone(store.current));
+          const execution = "execution" in result ? result.execution : result;
+          store.current = structuredClone(execution);
+          return store.current;
+        },
+      },
+      runtimeEditService: createGraphWorkflowRuntimeEditService(),
+      sharedDocumentRegistry,
+      publishLiveEditApplied:
+        createTestLiveEditPublisher().publishLiveEditApplied,
+      readLiveOccupancy: () => null,
+    });
+    const toolContext = factory.create({
+      projectPath: "/projects/test",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      conversationId: "conv-bound",
+      executionTarget: sessionTarget,
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
+    });
+
+    await expect(
+      toolContext.upsertSharedDocument({
+        relativePath: ".cc/graph-workflow-docs/plan.md",
+        description: "Planning notes",
+        readWhen: "Read before implementation.",
+      }),
+    ).rejects.toThrow(/no longer in the active set|is not running/);
+
+    // No path resolution, no capture, no registration.
+    expect(prepared).toEqual([]);
+    expect(captured).toEqual([]);
+    expect(store.current.sharedDocuments).toEqual([]);
+  });
+
+  it("refuses the shared-document finalize — and captures nothing — when the loop fence is superseded after reserve", async () => {
+    // Staged protocol (Design 3.1): a short sync RESERVE (fence + context check)
+    // runs FIRST, then the slow canonical-path resolution runs outside the write
+    // queue, then a short sync FINALIZE re-checks the fence and merges the entry.
+    // The only durable side effect — content capture — runs AFTER the finalize
+    // COMMITS, so a generation superseded during the slow work between reserve
+    // and finalize refuses the finalize AND captures nothing: there is no
+    // orphaned central-store write to restore or remove.
+    const initial = withRunningContext(createWorkflowExecution(), [
+      "context-plan",
+    ]);
+    const store = createFakeStore(initial);
+    const startingEpoch = store.current.loopEpoch;
+    const captured: Array<{ relativePath: string }> = [];
+    const baseRegistry = createGraphWorkflowSharedDocumentRegistryService({
+      now: () => "2026-03-27T12:00:00.000Z",
+      createDocumentId: () => "doc-1",
+      async captureDocumentContent(input) {
+        captured.push({ relativePath: input.relativePath });
+      },
+    });
+    const sharedDocumentRegistry = {
+      ...baseRegistry,
+      // Simulate a concurrent generation superseding THIS one WHILE the slow
+      // path resolution (the between-reserve-and-finalize work) is in flight:
+      // the persisted execution advances to a new loop epoch. The reserve above
+      // already succeeded against the matching epoch; only the finalize sees the
+      // mismatch.
+      prepareUpsert: async (
+        worktreePath: string,
+        input: Parameters<typeof baseRegistry.prepareUpsert>[1],
+      ) => {
+        store.current = {
+          ...store.current,
+          loopEpoch: store.current.loopEpoch + 1,
+        };
+        return baseRegistry.prepareUpsert(worktreePath, input);
+      },
+    };
+    const factory = createGraphWorkflowExecutionToolContext({
+      // A fence-honoring seam: it enforces the ambient loop fence with the real
+      // `assertLoopFence` exactly as the production repository's `mutateActive`
+      // does, so a superseded generation's write is rejected before it applies.
+      workflowManager: {
+        mutateActive: async (projectPath, sessionName, fn) => {
+          assertLoopFence(projectPath, sessionName, store.current);
+          const result = fn(structuredClone(store.current));
+          const execution = "execution" in result ? result.execution : result;
+          store.current = structuredClone(execution);
+          return store.current;
+        },
+      },
+      runtimeEditService: createGraphWorkflowRuntimeEditService(),
+      sharedDocumentRegistry,
+      publishLiveEditApplied:
+        createTestLiveEditPublisher().publishLiveEditApplied,
+      readLiveOccupancy: () => null,
+    });
+    const toolContext = factory.create({
+      projectPath: "/projects/test",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      conversationId: "conv-bound",
+      executionTarget: sessionTarget,
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
+    });
+
+    // The ambient fence is pinned to THIS generation's epoch — the reserve
+    // matches it and succeeds; the supersession happens only after.
+    await expect(
+      runWithLoopFence(
+        {
+          projectPath: "/projects/test",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          loopEpoch: startingEpoch,
+        },
+        () =>
+          toolContext.upsertSharedDocument({
+            relativePath: ".cc/graph-workflow-docs/plan.md",
+            description: "Planning notes",
+            readWhen: "Read before implementation.",
+          }),
+      ),
+    ).rejects.toBeInstanceOf(StaleLoopFenceError);
+
+    // The refused finalize committed nothing AND — because capture runs only
+    // after a committed finalize — no content was captured: no orphan to undo.
+    expect(captured).toEqual([]);
+    expect(store.current.sharedDocuments).toEqual([]);
+  });
+
   it("persists concurrent completeTask calls from sibling contexts without losing writes", async () => {
     const initial = withRunningContext(createWorkflowExecution(), [
       "context-plan",
@@ -531,7 +709,9 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const sharedDocumentRegistry =
       createGraphWorkflowSharedDocumentRegistryService();
     const deps: GraphWorkflowExecutionToolContextDeps = {
-      workflowManager: { mutateActive: createFakeMutateActive(store) },
+      workflowManager: {
+        mutateActive: createFakeMutateActive(store),
+      },
       runtimeEditService,
       sharedDocumentRegistry,
       publishLiveEditApplied:
@@ -655,7 +835,9 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const sharedDocumentRegistry =
       createGraphWorkflowSharedDocumentRegistryService();
     const deps: GraphWorkflowExecutionToolContextDeps = {
-      workflowManager: { mutateActive: createFakeMutateActive(store) },
+      workflowManager: {
+        mutateActive: createFakeMutateActive(store),
+      },
       runtimeEditService,
       sharedDocumentRegistry,
       publishLiveEditApplied:

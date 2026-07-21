@@ -207,7 +207,7 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       PROJECT_PATH,
       SESSION_NAME,
       "seed",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 

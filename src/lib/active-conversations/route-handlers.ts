@@ -6,11 +6,13 @@
  */
 
 import { NextResponse } from "next/server";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import {
-  readState as defaultReadState,
+  getArchivedProjects as defaultGetArchivedProjects,
   listAllProjectConversations as defaultListAllProjectConversations,
   listActiveGraphWorkflowExecutions as defaultListActiveGraphWorkflowExecutions,
+  listSessionConversationListItems as defaultListSessionConversationListItems,
+  type SessionConversationListItem,
 } from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
@@ -30,7 +32,6 @@ import type {
   ConversationStatus,
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
-import type { ManagerState } from "@/lib/projects/schemas";
 import type {
   GraphWorkflowCleanupStatusValue,
   GraphWorkflowMergeStatusValue,
@@ -51,7 +52,8 @@ const logger = createLogger("active-conversations.route");
 // ---------------------------------------------------------------------------
 
 export interface ActiveConversationsRouteDeps {
-  readState(): Promise<ManagerState>;
+  listSessionConversationListItems(): Promise<SessionConversationListItem[]>;
+  getArchivedProjects(): Promise<Set<string>>;
   getProjectDisplayName(projectPath: string): string;
   readLastAssistantContent(
     transcriptPath: string | null,
@@ -72,7 +74,8 @@ export interface ActiveConversationsRouteDeps {
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
-  readState: defaultReadState,
+  listSessionConversationListItems: defaultListSessionConversationListItems,
+  getArchivedProjects: defaultGetArchivedProjects,
   getProjectDisplayName: defaultGetProjectDisplayName,
   readLastAssistantContent: defaultReadLastAssistantContent,
   listProjectConversations: defaultListAllProjectConversations,
@@ -156,7 +159,7 @@ interface ExtractedCollaborationEnvelope {
 }
 
 function extractActiveCollaborationEnvelopes(session: {
-  workflowEnvelopes?: Record<string, unknown>;
+  workflowEnvelopes?: Record<string, unknown> | null;
 }): ExtractedCollaborationEnvelope[] {
   if (!session.workflowEnvelopes) return [];
   const out: ExtractedCollaborationEnvelope[] = [];
@@ -453,15 +456,21 @@ export function createActiveConversationsRouteHandlers(
 ) {
   async function GET(): Promise<Response> {
     try {
-      const [state, projectConversations, activeExecutions, allSpecExecutions] =
-        await Promise.all([
-          deps.readState(),
-          deps.listProjectConversations(),
-          deps.listActiveGraphWorkflowExecutions(),
-          deps.listActiveSpecExecutions(),
-        ]);
+      const [
+        sessionItems,
+        archivedProjects,
+        projectConversations,
+        activeExecutions,
+        allSpecExecutions,
+      ] = await Promise.all([
+        deps.listSessionConversationListItems(),
+        deps.getArchivedProjects(),
+        deps.listProjectConversations(),
+        deps.listActiveGraphWorkflowExecutions(),
+        deps.listActiveSpecExecutions(),
+      ]);
       const specExecutions = allSpecExecutions.filter(
-        (execution) => !state.archivedProjects.includes(execution.projectPath),
+        (execution) => !archivedProjects.has(execution.projectPath),
       );
       const conversations: ActiveConversation[] = [];
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
@@ -471,25 +480,27 @@ export function createActiveConversationsRouteHandlers(
         conversationId: string;
         transcriptPath: string | null;
       }> = [];
-      for (const [projectPath, project] of Object.entries(state.projects)) {
-        if (state.archivedProjects.includes(projectPath)) continue;
-        for (const session of Object.values(project.sessions)) {
-          if (session.archived) continue;
-          for (const convo of session.conversations) {
-            if (convo.archived) continue;
-            if (!ACTIVE_STATUSES.has(convo.status)) continue;
-            if (convo.role === "iteration" || convo.role === "validator")
-              continue;
-            if (convo.status !== "running") continue;
-            transcriptTasks.push({
-              conversationId: convo.id,
-              transcriptPath: convo.transcriptPath,
-            });
-          }
+      for (const {
+        projectPath,
+        session,
+        conversations: convos,
+      } of sessionItems) {
+        if (archivedProjects.has(projectPath)) continue;
+        if (session.archived) continue;
+        for (const convo of convos) {
+          if (convo.archived) continue;
+          if (!ACTIVE_STATUSES.has(convo.status)) continue;
+          if (convo.role === "iteration" || convo.role === "validator")
+            continue;
+          if (convo.status !== "running") continue;
+          transcriptTasks.push({
+            conversationId: convo.id,
+            transcriptPath: convo.transcriptPath,
+          });
         }
       }
       for (const { projectPath, conversation } of projectConversations) {
-        if (state.archivedProjects.includes(projectPath)) continue;
+        if (archivedProjects.has(projectPath)) continue;
         if (conversation.archived) continue;
         if (conversation.status !== "running") continue;
         transcriptTasks.push({
@@ -514,12 +525,24 @@ export function createActiveConversationsRouteHandlers(
         }),
       );
 
-      for (const [projectPath, project] of Object.entries(state.projects)) {
-        if (state.archivedProjects.includes(projectPath)) continue;
+      // Regroup the flat session list by project so the display name resolves
+      // once per project, preserving the per-project → per-session structure.
+      const sessionsByProject = new Map<
+        string,
+        SessionConversationListItem[]
+      >();
+      for (const item of sessionItems) {
+        const arr = sessionsByProject.get(item.projectPath);
+        if (arr) arr.push(item);
+        else sessionsByProject.set(item.projectPath, [item]);
+      }
+
+      for (const [projectPath, projectSessions] of sessionsByProject) {
+        if (archivedProjects.has(projectPath)) continue;
 
         const projectName = deps.getProjectDisplayName(projectPath);
 
-        for (const session of Object.values(project.sessions)) {
+        for (const { session, conversations: convos } of projectSessions) {
           if (session.archived) continue;
 
           for (const envelope of extractActiveCollaborationEnvelopes(session)) {
@@ -544,7 +567,7 @@ export function createActiveConversationsRouteHandlers(
           const pendingApprovalStandings =
             buildPendingApprovalStandings(activeExecution);
 
-          for (const convo of session.conversations) {
+          for (const convo of convos) {
             if (convo.archived) continue;
             const pendingApproval =
               pendingApprovalStandings.get(convo.id) ?? null;
@@ -718,7 +741,7 @@ export function createActiveConversationsRouteHandlers(
       let excludedProjectConversationCount = 0;
 
       for (const { projectPath, conversation } of projectConversations) {
-        if (state.archivedProjects.includes(projectPath)) {
+        if (archivedProjects.has(projectPath)) {
           excludedProjectConversationCount += 1;
           continue;
         }
@@ -813,4 +836,6 @@ export function createActiveConversationsRouteHandlers(
 
 const _defaultActiveConversationsHandlers =
   createActiveConversationsRouteHandlers();
-export const listActiveConversations = _defaultActiveConversationsHandlers.GET;
+export const listActiveConversations = withTracing(
+  _defaultActiveConversationsHandlers.GET,
+);

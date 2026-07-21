@@ -397,6 +397,7 @@ describe("POST conversation ask", () => {
       agentBackend: "claude",
       backendRef: null,
       promptCount: 0,
+      persistence: "durable",
     });
     actor.send({ type: "SUBMIT_PROMPT", promptText: "hi", streamId: "s1" });
     await vi.waitFor(() => {

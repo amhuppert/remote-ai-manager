@@ -11,7 +11,7 @@ import {
   listAllConversations as defaultListAllConversations,
   type ListAllConversationsResult,
 } from "./cross-project-list";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -47,5 +47,6 @@ export function createAllConversationsRouteHandlers(
   return { GET };
 }
 
-export const { GET: GET_AllConversations } =
-  createAllConversationsRouteHandlers();
+export const GET_AllConversations = withTracing(
+  createAllConversationsRouteHandlers().GET,
+);

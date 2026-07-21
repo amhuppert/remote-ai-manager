@@ -10,10 +10,12 @@
 
 import path from "node:path";
 import {
-  readState as defaultReadState,
+  getArchivedProjects as defaultGetArchivedProjects,
   getConversationById as defaultGetConversationById,
   listAllProjectConversations as defaultListAllProjectConversations,
+  listSessionConversationListItems as defaultListSessionConversationListItems,
   getStateDb,
+  type SessionConversationListItem,
 } from "@/lib/state-store";
 import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
 import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
@@ -22,9 +24,28 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-sc
 import { createLogger } from "@/lib/logging";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
-import type { ManagerState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationListItem, ConversationState } from "./schemas";
+
+/**
+ * The conversation fields {@link buildConversationListItem} reads. Satisfied by
+ * both a full `ConversationState` (the by-id lookup path) and the store's
+ * list-item projection (the cross-project walk), so the builder serves both
+ * without pulling a conversation's full state.
+ */
+type ConversationListItemSource = Pick<
+  ConversationState,
+  | "id"
+  | "name"
+  | "summary"
+  | "agentBackend"
+  | "backendRef"
+  | "transcriptPath"
+  | "debugMode"
+  | "status"
+  | "lastActivityAt"
+  | "archived"
+>;
 
 const log = createLogger("conversations:cross-project-list");
 
@@ -40,7 +61,8 @@ export interface ListAllConversationsResult {
 }
 
 export interface ListAllConversationsDeps {
-  readState(): Promise<ManagerState>;
+  listSessionConversationListItems(): Promise<SessionConversationListItem[]>;
+  getArchivedProjects(): Promise<Set<string>>;
   listAllProjectConversations(): Promise<
     { projectPath: string; conversation: ConversationState }[]
   >;
@@ -54,7 +76,8 @@ export interface ListAllConversationsDeps {
 }
 
 const defaultDeps: ListAllConversationsDeps = {
-  readState: defaultReadState,
+  listSessionConversationListItems: defaultListSessionConversationListItems,
+  getArchivedProjects: defaultGetArchivedProjects,
   listAllProjectConversations: defaultListAllProjectConversations,
   getFirstPromptSnippet: defaultGetFirstPromptSnippet,
   findArtifactsByConversationIds: (conversationIds) =>
@@ -67,7 +90,7 @@ const defaultDeps: ListAllConversationsDeps = {
 function buildConversationListItem(
   projectPath: string,
   session: Pick<SessionState, "sessionName" | "worktreePath">,
-  convo: ConversationState,
+  convo: ConversationListItemSource,
 ): ConversationListItem {
   return {
     projectName: path.basename(projectPath) || projectPath,
@@ -88,7 +111,12 @@ function buildConversationListItem(
   };
 }
 
-function needsSnippet(convo: ConversationState): boolean {
+function needsSnippet(
+  convo: Pick<
+    ConversationListItemSource,
+    "name" | "summary" | "transcriptPath"
+  >,
+): boolean {
   return (
     convo.name === null &&
     convo.summary === null &&
@@ -100,8 +128,10 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
   return async function listAllConversations(
     options: ListAllConversationsOptions,
   ): Promise<ListAllConversationsResult> {
-    const state = await deps.readState();
-    const archivedProjects = new Set(state.archivedProjects);
+    const [sessionItems, archivedProjects] = await Promise.all([
+      deps.listSessionConversationListItems(),
+      deps.getArchivedProjects(),
+    ]);
 
     interface Pending {
       itemIndex: number;
@@ -110,14 +140,14 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
     const items: ConversationListItem[] = [];
     const pending: Pending[] = [];
 
-    let projectCount = 0;
+    const countedProjects = new Set<string>();
     let conversationCount = 0;
     let projectConversationCount = 0;
 
     const pushItem = (
       projectPath: string,
       session: Pick<SessionState, "sessionName" | "worktreePath">,
-      convo: ConversationState,
+      convo: ConversationListItemSource,
     ) => {
       const itemIndex = items.length;
       items.push(buildConversationListItem(projectPath, session, convo));
@@ -127,21 +157,20 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
       }
     };
 
-    for (const [projectPath, project] of Object.entries(state.projects)) {
+    for (const { projectPath, session, conversations } of sessionItems) {
       if (!options.includeArchived && archivedProjects.has(projectPath))
         continue;
-      projectCount += 1;
+      countedProjects.add(projectPath);
 
-      for (const session of Object.values(project.sessions)) {
-        if (!options.includeArchived && session.archived) continue;
+      if (!options.includeArchived && session.archived) continue;
 
-        for (const convo of session.conversations) {
-          if (!options.includeArchived && convo.archived) continue;
-          conversationCount += 1;
-          pushItem(projectPath, session, convo);
-        }
+      for (const convo of conversations) {
+        if (!options.includeArchived && convo.archived) continue;
+        conversationCount += 1;
+        pushItem(projectPath, session, convo);
       }
     }
+    const projectCount = countedProjects.size;
 
     // Project-scoped conversations live in their own repo (not on any
     // session), execute at the project root, and are addressed through the

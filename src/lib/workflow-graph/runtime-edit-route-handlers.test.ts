@@ -116,7 +116,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "seed-execution",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 

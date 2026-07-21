@@ -5,9 +5,13 @@
  * MCP config to a conversation's live backend runtime, honoring the
  * concurrency & ordering guarantees documented in the spec:
  *
- * - The effective config hash is computed inside the state mutator's critical
- *   section (so it reflects the post-write override chain plus current source
- *   discovery and is strictly ordered against concurrent PATCHes).
+ * - The effective config hash and apply disposition are computed OUTSIDE the
+ *   state-store write queue (configuration resolution is file I/O and must not
+ *   hold the global lock, per no-slow-work-in-critical-section); only a short
+ *   pending-field write enters the queue. Strict ordering against a concurrent
+ *   PATCH or turn start is provided by a per-conversation in-process apply
+ *   serializer that both apply paths run through, so no two apply operations for
+ *   one conversation overlap and the newest submission always wins.
  * - Apply disposition is decided per the backend's capabilities and the
  *   conversation runtime's current turn state. A running turn is never
  *   interrupted — configuration changes are recorded as pending and the
@@ -123,9 +127,10 @@ function normalizeField(key: string, value: unknown): unknown {
  */
 export interface ResolvedPortableForConversation {
   portable: PortableMcpConfig;
-  /** Ignored by the service — the service computes its own hash inside the
-   * mutator's critical section. Kept on the type so the resolver can surface
-   * the hash to callers through the same data shape when useful. */
+  /** Ignored by the service — the service computes its own hash outside the
+   * write queue, before the short pending-field write. Kept on the type so the
+   * resolver can surface the hash to callers through the same data shape when
+   * useful. */
   effectiveConfigHash?: string;
 }
 
@@ -180,63 +185,123 @@ export function createMcpRuntimeApplyService(
 ): McpRuntimeApplyService {
   const { stateManager } = deps;
 
-  async function applyAfterOverrideChange(
+  // Per-conversation apply serializer. `resolvePortableForConversation` is file
+  // I/O that must NOT hold the global state-store write queue
+  // (no-slow-work-in-critical-section), so configuration resolution runs outside
+  // it. That opens a window in which two apply operations for the same
+  // conversation could otherwise interleave and let an older, slower resolve
+  // overwrite — durably or on the LIVE runtime — what a newer operation already
+  // applied. BOTH production apply paths run their ENTIRE body (existence read →
+  // resolve → decide → runtime invoke → short durable write) through this
+  // per-conversation FIFO chain, so for a given conversation no operation ever
+  // overlaps another: the newest submission always applies last and wins, whether
+  // it comes from an override PATCH (`applyAfterOverrideChange`) or a turn start
+  // (`applyAtTurnStart`). This is a per-conversation in-process promise chain, NOT
+  // the global write queue — it never blocks another conversation or the event
+  // loop, and the short durable writes still go through the global queue via
+  // `mutateConversation`. Durable pending state is the cross-restart source of
+  // truth, reconciled fresh at turn start, so the chain can reset on restart.
+  const applyChain = new Map<string, Promise<unknown>>();
+
+  function runSerialized<T>(
+    conversationId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = applyChain.get(conversationId) ?? Promise.resolve();
+    // Run `fn` after the predecessor settles either way — a failed apply must not
+    // poison the chain for the operation queued behind it.
+    const run = previous.then(fn, fn);
+    // The stored tail never rejects, so a rejection can't break the chain.
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    applyChain.set(conversationId, tail);
+    void tail.then(() => {
+      // Drop the entry once this was the last queued op, bounding map growth.
+      if (applyChain.get(conversationId) === tail) {
+        applyChain.delete(conversationId);
+      }
+    });
+    return run;
+  }
+
+  function applyAfterOverrideChange(
     input: AfterOverrideChangeInput,
   ): Promise<ConversationApplyResult> {
-    // --- Phase 1: inside the mutator critical section ---
-    // Resolve, compute hash, capture decision, and persist pending-only fields.
-    // We intentionally do NOT invoke the runtime here — that happens after
-    // the lock is released so slow apply paths cannot stall the mutex.
-    const phase1 = await stateManager.mutateConversation(
+    return runSerialized(input.conversationId, () =>
+      applyAfterOverrideChangeInner(input),
+    );
+  }
+
+  async function applyAfterOverrideChangeInner(
+    input: AfterOverrideChangeInput,
+  ): Promise<ConversationApplyResult> {
+    // --- Phase 1: existence pre-read → resolve + hash + disposition, ENTIRELY
+    // OUTSIDE the write queue. The focused `getConversation` (mirroring
+    // `applyAtTurnStart`) means a missing conversation rejects before any resolver
+    // I/O runs. Configuration resolution (`resolvePortableForConversation`) is
+    // file I/O that performs no write, so it must not hold the queue
+    // (no-slow-work-in-critical-section). Only the short pending-field write below
+    // opens a critical section; the runtime invocation (Phase 2) stays outside the
+    // lock. Ordering against a concurrent PATCH or turn start is guaranteed by the
+    // per-conversation `runSerialized` chain wrapping this whole body — no two
+    // apply ops for one conversation overlap, so a stale resolve can never clobber
+    // a newer one.
+    const existing = await stateManager.getConversation(
       input.projectPath,
       input.sessionName,
       input.conversationId,
-      "mcp.applyAfterOverrideChange",
-      async (conv) => {
-        const resolved = await deps.resolvePortableForConversation({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          backend: input.backend,
-        });
-        const hash = computeEffectiveConfigHash(resolved.portable);
-
-        const runtime = deps.getRuntime(input.conversationId);
-        const decision = decideApplyDisposition({
-          runtime,
-          backend: input.backend,
-        });
-
-        const plannedDisposition: McpApplyDisposition =
-          decision.kind === "apply-live"
-            ? "applied_now"
-            : decision.kind === "stage"
-              ? "deferred_to_next_turn"
-              : decision.kind === "defer-running"
-                ? "deferred_to_next_turn"
-                : "no_active_runtime";
-
-        // After-override-change path writes only pending fields; never
-        // mutates lastAppliedConfigHash.
-        conv.mcpRuntime = {
-          ...(conv.mcpRuntime ?? {}),
-          pendingConfigHash: hash,
-          pendingServerKeys: [...input.changedServerKeys],
-          lastApplyDisposition: plannedDisposition,
-          // Clear any prior error — this is a fresh attempt.
-          ...(conv.mcpRuntime?.lastApplyError !== undefined
-            ? { lastApplyError: undefined }
-            : {}),
-        };
-
-        return {
-          portable: resolved.portable,
-          hash,
-          decision,
-          plannedDisposition,
-        };
-      },
     );
+    if (!existing) {
+      throw new Error(
+        `Conversation "${input.conversationId}" not found in session "${input.sessionName}" during mcp.applyAfterOverrideChange.resolve`,
+      );
+    }
+
+    const resolved = await deps.resolvePortableForConversation({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      backend: input.backend,
+    });
+    const hash = computeEffectiveConfigHash(resolved.portable);
+    const decision = decideApplyDisposition({
+      runtime: deps.getRuntime(input.conversationId),
+      backend: input.backend,
+    });
+    const plannedDisposition: McpApplyDisposition =
+      decision.kind === "apply-live"
+        ? "applied_now"
+        : decision.kind === "stage"
+          ? "deferred_to_next_turn"
+          : decision.kind === "defer-running"
+            ? "deferred_to_next_turn"
+            : "no_active_runtime";
+
+    // After-override-change path writes only pending fields; never mutates
+    // lastAppliedConfigHash. A short synchronous critical section — the resolve
+    // above already ran outside the lock.
+    await writeConversationRuntime(
+      stateManager,
+      input,
+      "mcp.applyAfterOverrideChange",
+      (existing) => ({
+        ...(existing ?? {}),
+        pendingConfigHash: hash,
+        pendingServerKeys: [...input.changedServerKeys],
+        lastApplyDisposition: plannedDisposition,
+        // Clear any prior error — this is a fresh attempt.
+        lastApplyError: undefined,
+      }),
+    );
+
+    const phase1 = {
+      portable: resolved.portable,
+      hash,
+      decision,
+      plannedDisposition,
+    };
 
     // --- Phase 2: invoke the runtime (outside the lock) ---
     const runtime = deps.getRuntime(input.conversationId);
@@ -270,7 +335,8 @@ export function createMcpRuntimeApplyService(
         backend: input.backend,
       });
       // Phase 3 (failure): record rejected disposition + sanitized error,
-      // preserve lastAppliedConfigHash.
+      // preserve lastAppliedConfigHash. No supersession check needed — the
+      // serializer guarantees the next op has not started yet.
       await recordFailureAfterOverride(
         stateManager,
         input,
@@ -328,31 +394,49 @@ export function createMcpRuntimeApplyService(
     };
   }
 
-  async function applyAtTurnStart(
+  function applyAtTurnStart(
     input: AtTurnStartInput,
   ): Promise<ConversationApplyResult> {
-    // Phase 1: resolve + hash + check inside the lock. The check-and-skip is
-    // eager enough that most idle next-turn paths short-circuit without ever
-    // contacting the runtime.
-    const phase1 = await stateManager.mutateConversation(
+    return runSerialized(input.conversationId, () =>
+      applyAtTurnStartInner(input),
+    );
+  }
+
+  async function applyAtTurnStartInner(
+    input: AtTurnStartInput,
+  ): Promise<ConversationApplyResult> {
+    // Phase 1: resolve + hash + read `previous` ENTIRELY OUTSIDE the write
+    // queue. Configuration resolution (`resolvePortableForConversation`) is file
+    // I/O that performs no write, so it must not hold the queue
+    // (no-slow-work-in-critical-section); a focused `getConversation` supplies
+    // the only state it needs (`conv.mcpRuntime`). Reading `previous` before
+    // resolving means a missing conversation throws before any I/O, and keeps
+    // the concurrency model intact: a newer PATCH landing after this resolve is
+    // anticipated below by the pending-hash reconciliation on success.
+    const existing = await stateManager.getConversation(
       input.projectPath,
       input.sessionName,
       input.conversationId,
-      "mcp.applyAtTurnStart.resolve",
-      async (conv) => {
-        const resolved = await deps.resolvePortableForConversation({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          backend: input.backend,
-        });
-        const hash = computeEffectiveConfigHash(resolved.portable);
-        const previous: McpRuntimeApplicationState | undefined = conv.mcpRuntime
-          ? { ...conv.mcpRuntime }
-          : undefined;
-        return { portable: resolved.portable, hash, previous };
-      },
     );
+    if (!existing) {
+      throw new Error(
+        `Conversation "${input.conversationId}" not found in session "${input.sessionName}" during mcp.applyAtTurnStart.resolve`,
+      );
+    }
+    const previous: McpRuntimeApplicationState | undefined = existing.mcpRuntime
+      ? { ...existing.mcpRuntime }
+      : undefined;
+    const resolved = await deps.resolvePortableForConversation({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      backend: input.backend,
+    });
+    const phase1 = {
+      portable: resolved.portable,
+      hash: computeEffectiveConfigHash(resolved.portable),
+      previous,
+    };
 
     const previouslyApplied = phase1.previous?.lastAppliedConfigHash;
     const storedPending = phase1.previous?.pendingConfigHash;

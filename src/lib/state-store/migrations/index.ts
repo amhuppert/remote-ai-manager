@@ -5,6 +5,7 @@ import { splitGraphWorkflowExecution } from "./0003-split-graph-workflow-executi
 import { fastToNormal } from "./0004-fast-to-normal";
 import { agentSessionRefShape } from "./0005-agent-session-ref-shape";
 import { codexRunsToAgentRuns } from "./0006-codex-runs-to-agent-runs";
+import { moveMachineSnapshotsToSidecar } from "./0007-move-machine-snapshots-to-sidecar";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -19,6 +20,7 @@ export const migrations: readonly StateMigration[] = [
   fastToNormal,
   agentSessionRefShape,
   codexRunsToAgentRuns,
+  moveMachineSnapshotsToSidecar,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

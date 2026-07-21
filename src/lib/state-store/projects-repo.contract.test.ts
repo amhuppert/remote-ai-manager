@@ -97,6 +97,103 @@ describe("projects-repo round-trip contract", () => {
   });
 });
 
+describe("projects-repo focused override setters", () => {
+  it("setMcpOverrides writes only mcp_overrides, preserving every sibling column", () => {
+    repo.upsert({
+      rootPath: "/p",
+      agentCapabilityOverrides: {
+        cascades: {
+          "claude-skills": { items: { "skill:a": { enabled: false } } },
+        },
+      },
+    });
+    repo.setArchived("/p", true);
+    repo.setPinned("/p", true);
+    repo.reorderPinned(["/p"]);
+
+    repo.setMcpOverrides("/p", { servers: { kagi: { enabled: false } } });
+
+    const row = repo.findByRootPath("/p");
+    expect(row).not.toBeNull();
+    if (!row) return;
+    expect(row.mcpOverrides).toEqual({ servers: { kagi: { enabled: false } } });
+    // Siblings untouched by the focused setter.
+    expect(row.agentCapabilityOverrides).toEqual({
+      cascades: {
+        "claude-skills": { items: { "skill:a": { enabled: false } } },
+      },
+    });
+    expect(row.archived).toBe(true);
+    expect(row.pinned).toBe(true);
+    expect(row.pinOrder).toBe(0);
+  });
+
+  it("setMcpOverrides(undefined) clears the column without touching siblings", () => {
+    repo.upsert({
+      rootPath: "/p",
+      mcpOverrides: { servers: { kagi: { enabled: false } } },
+      agentCapabilityOverrides: {
+        cascades: {
+          "codex-skills": { items: { "codex:a": { enabled: true } } },
+        },
+      },
+    });
+
+    repo.setMcpOverrides("/p", undefined);
+
+    const row = repo.findByRootPath("/p");
+    expect(row?.mcpOverrides).toBeUndefined();
+    expect(row?.agentCapabilityOverrides).toEqual({
+      cascades: { "codex-skills": { items: { "codex:a": { enabled: true } } } },
+    });
+  });
+
+  it("setAgentCapabilityOverrides writes only its column, preserving mcp_overrides and flags", () => {
+    repo.upsert({
+      rootPath: "/p",
+      mcpOverrides: { servers: { kagi: { enabled: false } } },
+    });
+    repo.setArchived("/p", true);
+
+    repo.setAgentCapabilityOverrides("/p", {
+      cascades: {
+        "claude-agents": { items: { "agent:a": { enabled: false } } },
+      },
+    });
+
+    const row = repo.findByRootPath("/p");
+    expect(row?.agentCapabilityOverrides).toEqual({
+      cascades: {
+        "claude-agents": { items: { "agent:a": { enabled: false } } },
+      },
+    });
+    expect(row?.mcpOverrides).toEqual({
+      servers: { kagi: { enabled: false } },
+    });
+    expect(row?.archived).toBe(true);
+  });
+
+  it("setAgentCapabilityOverrides(undefined) clears the column, preserving mcp_overrides", () => {
+    repo.upsert({
+      rootPath: "/p",
+      mcpOverrides: { servers: { kagi: { enabled: false } } },
+      agentCapabilityOverrides: {
+        cascades: {
+          "claude-skills": { items: { "skill:a": { enabled: false } } },
+        },
+      },
+    });
+
+    repo.setAgentCapabilityOverrides("/p", undefined);
+
+    const row = repo.findByRootPath("/p");
+    expect(row?.agentCapabilityOverrides).toBeUndefined();
+    expect(row?.mcpOverrides).toEqual({
+      servers: { kagi: { enabled: false } },
+    });
+  });
+});
+
 describe("projects-repo cascading-FK invariant", () => {
   it("upsert on an existing project does not delete child sessions", () => {
     repo.upsert({ rootPath: "/parent" });

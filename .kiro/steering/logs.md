@@ -119,7 +119,8 @@ Every timed event records its primary duration under a canonical **`durationMs`*
 | `state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
 | `state-store` | `state.mutate.complete` | `label`, `sessionName`, `durationMs` |
 | `state-store` | `state.read.timing` | `accessor`, `durationMs` (and optionally `projectPath`, `sessionName`, `conversationId`); only emitted when `durationMs >= STATE_READ_TIMING_LOG_THRESHOLD_MS` |
-| `state-store` | `state-store.write_queue.timing` | `label`, `durationMs`, `waitMs`, `holdMs` (`durationMs = waitMs + holdMs`) — feeds the log-analysis `state-store` finding |
+| `state-store` | `state-store.write_queue.timing` | `label`, `durationMs`, `waitMs`, `holdMs` (`durationMs = waitMs + holdMs`); plus `blockedByLabel` / `blockedByTraceId` when the wait was caused by another mutation holding the queue (the waiter's own `traceId` is the ambient auto-stamp) — feeds the log-analysis `state-store` finding |
+| `state-store` | `state-store.write_queue.hold_budget_exceeded` | **error**-level: a callback held the queue past the budget (default 500ms). Fields: `label`, `holdMs`, `budgetMs`, `stack` (captured where the write was enqueued). Telemetry only — the write is never aborted |
 | `file-scanner` | `file-scanner.scan.complete` | `rootPath`, `fileCount`, `truncated`, `durationMs` |
 | `worktree` | `worktree.create.complete` / `worktree.remove.complete` | `laneId`, `worktreePath`, `branchName`, `status`, `durationMs` |
 | `diff` | `diff.compute.complete` | `worktreePath`, `fileCount`, `durationMs` |
@@ -164,7 +165,7 @@ bun run logs:analyze -- trace <traceId> --format markdown
 bun run logs:analyze -- compare --before before.log --after after.log
 ```
 
-`report` runs slow request ranking, operation hotspot aggregation, duplicate-work detection, state-store diagnostics, external command diagnostics, SSE broadcast diagnostics, client timing analysis when `--client-log` is provided, error correlation, and instrumentation-gap detection.
+`report` runs slow request ranking, operation hotspot aggregation, duplicate-work detection, state-store diagnostics (including `write_queue.hold_budget_exceeded` findings keyed by the holding mutation label), external command diagnostics, SSE broadcast diagnostics, client timing analysis when `--client-log` is provided, error correlation, convention checks (a `202` response with `durationMs > 1000` is a violation), instrumentation-gap detection, and performance-budget evaluation against `scripts/log-budgets.json` (advisory by default; `--assert-budgets` exits non-zero on breach). See `.claude/skills/cc-performance-log-analysis/SKILL.md` for the budget schema.
 
 `trace <traceId>` reconstructs timed operation intervals for one trace and reports inclusive time, exclusive time, duplicate work, warnings/errors, and unexplained request time. If unexplained time dominates, add `timed()` coverage before optimizing code.
 
@@ -178,6 +179,7 @@ Options shared across commands:
 --projectName <name> --sessionName <name> --conversationId <id>
 --path <api-path> --action <action> --top <n>
 --slow-ms <n> --hotspot-ms <n> --include-self --pretty
+--budgets <path> --assert-budgets   # report only; budget config + CI gate
 ```
 
 Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped per-session/per-conversation files under `logs/sessions/` are not auto-discovered — pass them explicitly with `--in`. Rotated backups (`global.log.1`, `global.log.2`, …) are likewise not auto-discovered, so default discovery sees only the active file; pass the backups explicitly (or a glob) with `--in` to analyze across rotations.

@@ -186,22 +186,25 @@ export const defaultMcpConfigMutationService: McpConfigMutationService =
     toolInventoryCache: defaultToolInventoryCache,
   });
 
+function runtimeStatusFor(conversationId: string) {
+  const runtime = getRuntime(conversationId);
+  return runtime
+    ? { status: runtime.status, backend: runtime.backend }
+    : undefined;
+}
+
 export async function defaultListGlobalRuntimeTargets(): Promise<
   readonly RuntimeTarget[]
 > {
-  const state = await defaultStateManager.readState();
+  const identities = await defaultStateManager.listConversationIdentities();
   return collectRuntimeTargets({
-    projects: Object.entries(state.projects).map(([projectPath, project]) => ({
-      projectPath,
-      projectName: getProjectDisplayName(projectPath),
-      sessions: Object.values(project.sessions),
+    conversations: identities.map((identity) => ({
+      projectPath: identity.projectPath,
+      sessionName: identity.sessionName,
+      conversationId: identity.id,
     })),
-    getRuntime(conversationId) {
-      const runtime = getRuntime(conversationId);
-      return runtime
-        ? { status: runtime.status, backend: runtime.backend }
-        : undefined;
-    },
+    getProjectName: getProjectDisplayName,
+    getRuntime: runtimeStatusFor,
   });
 }
 
@@ -210,19 +213,15 @@ export async function defaultListProjectRuntimeTargets(
 ): Promise<readonly RuntimeTarget[]> {
   const sessions = await defaultStateManager.getProjectSessions(projectPath);
   return collectRuntimeTargets({
-    projects: [
-      {
+    conversations: sessions.flatMap((session) =>
+      session.conversations.map((conversation) => ({
         projectPath,
-        projectName: getProjectDisplayName(projectPath),
-        sessions,
-      },
-    ],
-    getRuntime(conversationId) {
-      const runtime = getRuntime(conversationId);
-      return runtime
-        ? { status: runtime.status, backend: runtime.backend }
-        : undefined;
-    },
+        sessionName: session.sessionName,
+        conversationId: conversation.id,
+      })),
+    ),
+    getProjectName: getProjectDisplayName,
+    getRuntime: runtimeStatusFor,
   });
 }
 
@@ -236,18 +235,12 @@ export async function defaultListSessionRuntimeTargets(
   );
   if (!session) return [];
   return collectRuntimeTargets({
-    projects: [
-      {
-        projectPath,
-        projectName: getProjectDisplayName(projectPath),
-        sessions: [session],
-      },
-    ],
-    getRuntime(conversationId) {
-      const runtime = getRuntime(conversationId);
-      return runtime
-        ? { status: runtime.status, backend: runtime.backend }
-        : undefined;
-    },
+    conversations: session.conversations.map((conversation) => ({
+      projectPath,
+      sessionName: session.sessionName,
+      conversationId: conversation.id,
+    })),
+    getProjectName: getProjectDisplayName,
+    getRuntime: runtimeStatusFor,
   });
 }

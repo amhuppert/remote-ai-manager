@@ -136,6 +136,9 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
       publishUserInputResolved() {
         throw new Error("not used by resolveLaneAskPermission");
       },
+      deliver() {
+        throw new Error("not used by resolveLaneAskPermission");
+      },
       sendConversationEvent() {
         return true;
       },
@@ -359,6 +362,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       mutateActive: repo.mutateActive,
       publishUserInputPending: publisher.publishUserInputPending,
       publishUserInputResolved: publisher.publishUserInputResolved,
+      deliver: publisher.deliver,
       sendConversationEvent: (_projectPath, _sessionName, conversationId) => {
         cleared.push({ conversationId });
         return true;
@@ -372,7 +376,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 

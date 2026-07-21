@@ -42,6 +42,7 @@ import {
   _resetForTesting,
   tryWithWriteQueue,
   withWriteQueue,
+  withWriteQueueSync,
 } from "@/lib/state-store/write-queue";
 import {
   appendNotice,
@@ -117,6 +118,7 @@ export function getTicketsRepo(): TicketsRepo {
   return getGlobalSingleton("__cc_tickets_repo", () =>
     createTicketsRepo(getStateDb(), {
       withWriteQueue,
+      withWriteQueueSync,
       tryWithWriteQueue,
       _resetForTesting,
     }),

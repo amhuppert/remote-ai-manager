@@ -206,6 +206,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       mutateActive: repository.mutateActive,
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
       sendConversationEvent: (_p, _s, conversationId, event) => {
         if (event.type === "CLEAR_PENDING_QUESTION") {
           clearedConversations.push(conversationId);
@@ -222,7 +223,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 
@@ -356,23 +357,25 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
   async function fixtureRepoMutateComplete(
     contextId: string,
   ): Promise<GraphWorkflowExecution> {
-    return fixture.store.mutateActiveGraphWorkflowExecution(
-      PROJECT_PATH,
-      SESSION_NAME,
-      "test.completeContext",
-      async (current) => {
-        const next = structuredClone(current!);
-        const cs = next.contextStates[contextId]!;
-        cs.iterationCount += 1;
-        cs.completedTaskCount = 1;
-        cs.status = "completed";
-        next.taskStates[`task-${contextId}`]!.status = "completed";
-        next.activeContextIds = next.activeContextIds.filter(
-          (id) => id !== contextId,
-        );
-        return { execution: next, events: [] };
-      },
-    );
+    const { execution } =
+      await fixture.store.mutateActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "test.completeContext",
+        (current) => {
+          const next = structuredClone(current!);
+          const cs = next.contextStates[contextId]!;
+          cs.iterationCount += 1;
+          cs.completedTaskCount = 1;
+          cs.status = "completed";
+          next.taskStates[`task-${contextId}`]!.status = "completed";
+          next.activeContextIds = next.activeContextIds.filter(
+            (id) => id !== contextId,
+          );
+          return { execution: next, events: [] };
+        },
+      );
+    return execution;
   }
 
   it("restores a parked execution from the store, re-enters the wait, and resumes on answer (Req 7.1, 7.2)", async () => {

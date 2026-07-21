@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { mcpGlobalStateSchema } from "@/lib/mcp/schemas";
+import { mcpGlobalStateSchema, type McpOverrides } from "@/lib/mcp/schemas";
 import { createGlobalOverrideStore } from "./global-store";
 
 describe("mcp/global-store", () => {
@@ -292,6 +292,75 @@ describe("mcp/global-store", () => {
       const read = await store.read();
       expect(read.servers.alpha?.enabled).toBe(true);
       expect(read.servers.beta?.enabled).toBe(false);
+    });
+  });
+
+  // The config-mutation service's atomic conflict fence for the global scope
+  // depends on `createGlobalOverrideStore().patch` forwarding its `precondition`
+  // into the scoped file store, which runs it inside the serialized write lock
+  // against the FRESH on-disk overrides. Every config-mutation-service test
+  // stands in an in-memory fake for the store, so only these real-file cases
+  // exercise the production forwarding — remove the `precondition` spread in
+  // `global-store.ts` and both cases fail (the callback never runs and the write
+  // still lands).
+  describe("patch precondition forwarding (production adapter)", () => {
+    it("runs the precondition against the freshly-serialized on-disk overrides", async () => {
+      // Commit seed state through one store instance so it exists only on disk.
+      await createStore().patch({
+        operations: [
+          { type: "set-server-enabled", serverKey: "seeded", enabled: false },
+        ],
+      });
+
+      // A SEPARATE store instance shares no in-memory state, so its precondition
+      // can only observe `seeded` via a fresh on-disk read inside the lock.
+      const store = createStore();
+      let observed: McpOverrides | undefined;
+      await store.patch({
+        operations: [
+          { type: "set-server-enabled", serverKey: "next", enabled: true },
+        ],
+        precondition: (current) => {
+          observed = current;
+        },
+      });
+
+      expect(observed?.servers.seeded).toEqual({ enabled: false });
+      // The apply still committed after the passing precondition.
+      expect((await store.read()).servers.next).toEqual({ enabled: true });
+    });
+
+    it("aborts the write and leaves the file byte-identical when the precondition throws", async () => {
+      await createStore().patch({
+        operations: [
+          { type: "set-server-enabled", serverKey: "seeded", enabled: false },
+        ],
+      });
+      const before = await readFile(globalFilePath, "utf-8");
+
+      class Conflict extends Error {}
+      const store = createStore();
+      let sawFreshState = false;
+      await expect(
+        store.patch({
+          operations: [
+            { type: "set-server-enabled", serverKey: "next", enabled: true },
+          ],
+          precondition: (current) => {
+            // Proves the fence observes the freshly-serialized on-disk state
+            // (the seeded override), not an empty or stale snapshot.
+            sawFreshState = current.servers.seeded?.enabled === false;
+            throw new Conflict();
+          },
+        }),
+      ).rejects.toBeInstanceOf(Conflict);
+
+      expect(sawFreshState).toBe(true);
+      // No partial or full write leaked past the throw.
+      expect(await readFile(globalFilePath, "utf-8")).toEqual(before);
+      const read = await store.read();
+      expect(read.servers.next).toBeUndefined();
+      expect(read.servers.seeded).toEqual({ enabled: false });
     });
   });
 });

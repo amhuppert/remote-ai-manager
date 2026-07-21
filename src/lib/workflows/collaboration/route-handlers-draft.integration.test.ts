@@ -4,6 +4,7 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore, type StateStore } from "@/lib/state-store/store";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import { createCollaborationRouteHandlers } from "./route-handlers";
 import type { CollaborationManager } from "./manager";
 
@@ -20,27 +21,34 @@ let store: StateStore;
 beforeEach(async () => {
   db = _createTestDb({ inMemory: true });
   store = createStateStore({ db, writeQueue: createWriteQueue() });
-  await store.getOrCreateProject(PROJECT_PATH);
-  await store.mutateState("seed", (state) => {
-    state.projects[PROJECT_PATH]!.sessions[SESSION_NAME] =
-      sessionStateSchema.parse({
-        sessionName: SESSION_NAME,
-        worktreePath: "/tmp/sess-1",
-        branchName: "cc/sess-1",
-        createdAt: "2026-07-13T12:00:00.000Z",
-        lastActivityAt: "2026-07-13T12:00:00.000Z",
-        conversations: [
-          {
-            id: CONVERSATION_ID,
-            transcriptPath: null,
-            status: "new",
-            promptCount: 0,
+  seedWholeState(db, {
+    projects: {
+      [PROJECT_PATH]: {
+        rootPath: PROJECT_PATH,
+        sessions: {
+          [SESSION_NAME]: sessionStateSchema.parse({
+            sessionName: SESSION_NAME,
+            worktreePath: "/tmp/sess-1",
+            branchName: "cc/sess-1",
             createdAt: "2026-07-13T12:00:00.000Z",
             lastActivityAt: "2026-07-13T12:00:00.000Z",
-            pendingPromptText: SUBMITTED_DRAFT,
-          },
-        ],
-      });
+            conversations: [
+              {
+                id: CONVERSATION_ID,
+                transcriptPath: null,
+                status: "new",
+                promptCount: 0,
+                createdAt: "2026-07-13T12:00:00.000Z",
+                lastActivityAt: "2026-07-13T12:00:00.000Z",
+                pendingPromptText: SUBMITTED_DRAFT,
+              },
+            ],
+          }),
+        },
+      },
+    },
+    archivedProjects: [],
+    pinnedProjects: [],
   });
 });
 

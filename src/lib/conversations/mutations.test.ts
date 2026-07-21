@@ -140,7 +140,6 @@ function conversation(
     contextTokens: overrides.contextTokens ?? null,
     contextWindowMax: overrides.contextWindowMax ?? null,
     debugMode: overrides.debugMode ?? null,
-    machineSnapshot: overrides.machineSnapshot ?? null,
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,

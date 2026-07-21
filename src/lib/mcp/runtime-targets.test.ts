@@ -1,49 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import type { ConversationState } from "@/lib/conversations/schemas";
-import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { collectRuntimeTargets } from "./runtime-targets";
 
-function mkConversation(id: string): ConversationState {
-  return {
-    id,
-    createdAt: new Date().toISOString(),
-    title: id,
-  } as unknown as ConversationState;
-}
-
-function mkSession(
-  sessionName: string,
-  conversations: ConversationState[],
-): SessionState {
-  return {
-    sessionName,
-    worktreePath: `/projects/proj/.worktrees/${sessionName}`,
-    branch: `cc/${sessionName}`,
-    status: "active",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    conversations,
-    activeConversationId: conversations[0]?.id ?? null,
-  } as unknown as SessionState;
+function projectNameFromPath(projectPath: string): string {
+  return projectPath.slice(projectPath.lastIndexOf("/") + 1);
 }
 
 describe("collectRuntimeTargets", () => {
   it("collects only alive runtimes and preserves project/session identity", () => {
     const targets = collectRuntimeTargets({
-      projects: [
+      conversations: [
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessions: [
-            mkSession("sess-a", [
-              mkConversation("conv-1"),
-              mkConversation("conv-2"),
-            ]),
-          ],
+          sessionName: "sess-a",
+          conversationId: "conv-1",
+        },
+        {
+          projectPath: "/projects/proj",
+          sessionName: "sess-a",
+          conversationId: "conv-2",
         },
       ],
+      getProjectName: projectNameFromPath,
       getRuntime(
         conversationId: string,
       ): { status: "alive" | "dead"; backend: AgentBackendId } | undefined {
@@ -70,18 +49,19 @@ describe("collectRuntimeTargets", () => {
 
   it("flattens multiple projects and sessions in stable traversal order", () => {
     const targets = collectRuntimeTargets({
-      projects: [
+      conversations: [
         {
           projectPath: "/projects/proj-a",
-          projectName: "proj-a",
-          sessions: [mkSession("sess-a", [mkConversation("conv-1")])],
+          sessionName: "sess-a",
+          conversationId: "conv-1",
         },
         {
           projectPath: "/projects/proj-b",
-          projectName: "proj-b",
-          sessions: [mkSession("sess-b", [mkConversation("conv-2")])],
+          sessionName: "sess-b",
+          conversationId: "conv-2",
         },
       ],
+      getProjectName: projectNameFromPath,
       getRuntime(conversationId: string) {
         return {
           status: "alive" as const,
@@ -97,6 +77,10 @@ describe("collectRuntimeTargets", () => {
     expect(targets.map((target) => target.backend)).toEqual([
       "claude",
       "codex",
+    ]);
+    expect(targets.map((target) => target.projectName)).toEqual([
+      "proj-a",
+      "proj-b",
     ]);
   });
 });

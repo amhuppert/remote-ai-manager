@@ -4,17 +4,22 @@ import {
   evaluateContextLimit,
   type ContextLimitMetrics,
 } from "@/lib/workflows/primitives/context-limit-gate";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { buildLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { getExecutionLogger } from "./execution-logger";
 import { graphLaneContextMetrics } from "./graph-lane-store";
-import type { PublishLiveEditAppliedInput } from "./execution-events";
+import type {
+  GraphWorkflowEventDelivery,
+  PublishLiveEditAppliedInput,
+} from "./execution-events";
 import type { MutateActiveResult } from "./execution-repository";
 import type { ExecutionTarget } from "./execution-target-resolver";
-import type { AgentAddedTask } from "./runtime-edits";
-import type { SharedDocumentUpsertInput } from "./shared-documents";
+import type { AgentAddedTask, AgentTaskAddResult } from "./runtime-edits";
+import type {
+  SharedDocumentMergeOutcome,
+  SharedDocumentUpsertInput,
+} from "./shared-documents";
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 
 const logger = createLogger("graph-workflow-execution-tool-context");
@@ -24,15 +29,39 @@ interface GraphWorkflowExecutionToolContextRuntimeEditService {
     execution: GraphWorkflowExecution,
     contextId: string,
     task: AgentAddedTask,
-  ): GraphWorkflowExecution;
+  ): AgentTaskAddResult;
 }
 
 interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
-  upsert(
+  /** Resolve + validate the canonical path (async, no durable I/O). */
+  prepareUpsert(
     worktreePath: string,
-    execution: GraphWorkflowExecution,
     input: SharedDocumentUpsertInput,
-  ): Promise<GraphWorkflowExecution>;
+  ): Promise<{ relativePath: string }>;
+  /** Best-effort slow content capture; never throws. */
+  captureContent(input: {
+    executionId: string;
+    worktreePath: string;
+    relativePath: string;
+  }): Promise<void>;
+  /**
+   * Pure, synchronous merge of the resolved entry into the execution, returning
+   * the next execution and the inert merge outcome (logged post-commit).
+   */
+  applyUpsert(
+    execution: GraphWorkflowExecution,
+    input: {
+      relativePath: string;
+      description: string;
+      readWhen: string;
+      conversationId: string | null;
+    },
+  ): {
+    nextExecution: GraphWorkflowExecution;
+    outcome: SharedDocumentMergeOutcome;
+  };
+  /** Emit the registration log for a completed merge, after finalize commits. */
+  logUpsert(executionId: string, outcome: SharedDocumentMergeOutcome): void;
 }
 
 interface GraphWorkflowExecutionToolContextWorkflowManager {
@@ -41,10 +70,7 @@ interface GraphWorkflowExecutionToolContextWorkflowManager {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -54,7 +80,7 @@ export interface GraphWorkflowExecutionToolContextDeps {
   sharedDocumentRegistry: GraphWorkflowExecutionToolContextSharedDocumentRegistry;
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
-  ): GraphWorkflowExecutionEvent[];
+  ): GraphWorkflowEventDelivery;
   readLiveOccupancy(conversationId: string): LiveOccupancySnapshot | null;
   now?(): string;
 }
@@ -193,7 +219,6 @@ export function createGraphWorkflowExecutionToolContext(
      */
     function evaluateMidTurnContextLimit(
       execution: GraphWorkflowExecution,
-      taskId: string,
       conversationId: string,
     ): CompleteTaskContextLimitStop | null {
       const lane = execution.laneStates[input.contextId]?.["implementer"];
@@ -263,23 +288,10 @@ export function createGraphWorkflowExecutionToolContext(
         source,
       };
 
-      const logPayload = {
-        executionId: execution.id,
-        contextId: input.contextId,
-        taskId,
-        conversationId,
-        contextTokens: stop.contextTokens,
-        contextLimitTokens: stop.contextLimitTokens,
-        compactedThisTurn,
-        source,
-        alreadyScheduled,
-      };
-      logger.info("graph-workflow.context_limit.mid_turn_stop", logPayload);
-      getExecutionLogger(execution.id)?.decision(
-        "rotation.scheduled_mid_turn",
-        logPayload,
-      );
-
+      // Purely computational inside the write-queue critical section: the
+      // rotation decision is recorded on the draft, but its observability log
+      // (a file write) is emitted by `completeTask` AFTER the mutation commits
+      // (`no-slow-work-in-critical-section`).
       return stop;
     }
 
@@ -288,6 +300,11 @@ export function createGraphWorkflowExecutionToolContext(
       summary: string,
     ): Promise<CompleteTaskResult> {
       let contextLimitStop: CompleteTaskContextLimitStop | null = null;
+      // Diagnostics captured (pure) inside the reducer and emitted AFTER the
+      // mutation commits, so the write-queue critical section performs no
+      // logging I/O (`no-slow-work-in-critical-section`).
+      let resolvedConversationId = input.conversationId;
+      let idempotentFirstCompletedAt: string | null = null;
 
       const execution = await deps.workflowManager.mutateActive(
         input.projectPath,
@@ -306,17 +323,12 @@ export function createGraphWorkflowExecutionToolContext(
           }
 
           const conversationId = resolveConversationId(draft, taskId);
+          resolvedConversationId = conversationId;
 
           if (taskState.status === "completed") {
-            logger.info("graph-workflow.task.completion_idempotent", {
-              executionId: draft.id,
-              contextId: input.contextId,
-              taskId,
-              firstCompletedAt: taskState.completedAt,
-            });
+            idempotentFirstCompletedAt = taskState.completedAt;
             contextLimitStop = evaluateMidTurnContextLimit(
               draft,
-              taskId,
               conversationId,
             );
             return draft;
@@ -340,14 +352,39 @@ export function createGraphWorkflowExecutionToolContext(
           draft.machineSnapshot = buildLifecycleSnapshot(draft, {
             hasLiveIteration: true,
           });
-          contextLimitStop = evaluateMidTurnContextLimit(
-            draft,
-            taskId,
-            conversationId,
-          );
+          contextLimitStop = evaluateMidTurnContextLimit(draft, conversationId);
           return draft;
         },
       );
+
+      // Post-commit diagnostics (file writes) — outside the critical section.
+      if (idempotentFirstCompletedAt !== null) {
+        logger.info("graph-workflow.task.completion_idempotent", {
+          executionId: execution.id,
+          contextId: input.contextId,
+          taskId,
+          firstCompletedAt: idempotentFirstCompletedAt,
+        });
+      }
+      if (contextLimitStop !== null) {
+        const stop: CompleteTaskContextLimitStop = contextLimitStop;
+        const logPayload = {
+          executionId: execution.id,
+          contextId: input.contextId,
+          taskId,
+          conversationId: resolvedConversationId,
+          contextTokens: stop.contextTokens,
+          contextLimitTokens: stop.contextLimitTokens,
+          compactedThisTurn: stop.compactedThisTurn,
+          source: stop.source,
+          alreadyScheduled: stop.alreadyScheduled,
+        };
+        logger.info("graph-workflow.context_limit.mid_turn_stop", logPayload);
+        getExecutionLogger(execution.id)?.decision(
+          "rotation.scheduled_mid_turn",
+          logPayload,
+        );
+      }
 
       return { execution, contextLimitStop };
     }
@@ -355,54 +392,128 @@ export function createGraphWorkflowExecutionToolContext(
     async function addTask(
       task: AgentAddedTask,
     ): Promise<GraphWorkflowExecution> {
-      return deps.workflowManager.mutateActive(
+      // Observability captured (pure) inside the reducer and emitted AFTER the
+      // mutation commits, so the write-queue critical section performs no
+      // logging I/O (`no-slow-work-in-critical-section`). Boxed so the reducer's
+      // assignment survives control-flow narrowing after the call.
+      const addedBox: { value: AgentTaskAddResult["added"] | null } = {
+        value: null,
+      };
+      const execution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
-        (execution) => {
-          ensureBoundContextActive(execution);
-          const next = deps.runtimeEditService.applyAgentTaskAdd(
-            execution,
+        (current) => {
+          ensureBoundContextActive(current);
+          const applied = deps.runtimeEditService.applyAgentTaskAdd(
+            current,
             input.contextId,
             task,
           );
+          addedBox.value = applied.added;
           // Lane-agent add_task is an accepted live edit and MUST emit the
           // mandatory graph-workflow-live-edit-applied event (doc 06 D12/D16)
-          // with the server-derived `source`. The publisher broadcasts on the
-          // wire; its returned rows ride this same mutation so the audit row is
-          // persisted atomically (the repository extra-events path never
-          // broadcasts). A single `add-task` affects exactly its target context.
-          const events = deps.publishLiveEditApplied({
+          // with the server-derived `source`. Its rows ride this same mutation
+          // so the audit row is persisted atomically; the mutation seam
+          // broadcasts the wire signal after the append commits. A single
+          // `add-task` affects exactly its target context.
+          const delivery = deps.publishLiveEditApplied({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
-            executionId: next.id,
-            liveRevision: next.liveRevision,
+            executionId: applied.execution.id,
+            liveRevision: applied.execution.liveRevision,
             operationCount: 1,
             affectedContextIds: [input.contextId],
             source: "lane-agent",
           });
-          return { execution: next, events };
+          return { execution: applied.execution, ...delivery };
         },
       );
+
+      // Post-commit observability (file I/O) — outside the critical section.
+      const added = addedBox.value;
+      if (added !== null) {
+        getExecutionLogger(added.executionId)?.task(
+          added.contextId,
+          "task.added_by_agent",
+          {
+            taskId: added.taskId,
+            title: added.title,
+            instructionsLength: added.instructionsLength,
+          },
+        );
+        logger.info("graph-workflow.task.added_by_agent", {
+          executionId: added.executionId,
+          contextId: added.contextId,
+          taskId: added.taskId,
+          title: added.title,
+        });
+      }
+
+      return execution;
     }
 
     async function upsertSharedDocument(
       document: Omit<SharedDocumentUpsertInput, "conversationId">,
     ): Promise<GraphWorkflowExecution> {
-      return deps.workflowManager.mutateActive(
+      // Staged protocol (Design 3.1) with a genuine reserve→work→finalize order
+      // and no side effect a refused finalize would have to compensate for:
+      //
+      //  1. RESERVE — a short sync mutation that pins the loop fence and checks
+      //     the bound context is still active/running. A stale or invalid
+      //     request is rejected HERE, before any path resolution or capture, so
+      //     it can never resolve a path or touch the central store.
+      //  2. Slow canonical-path resolution OUTSIDE the write queue (no durable
+      //     I/O; surfaces an escaping/invalid path before the finalize).
+      //  3. FINALIZE — a short sync mutation that re-pins the fence, re-checks
+      //     the context, and merges the entry. Pure (no logging).
+      //  4. Best-effort content capture runs AFTER the finalize COMMITS. Placing
+      //     the only durable side effect after the commit means a refused
+      //     finalize (superseded fence / deactivated context) captures nothing —
+      //     there is no orphaned central-store write to restore or remove.
+      await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
-        async (execution) => {
+        (execution) => {
           ensureBoundContextActive(execution);
-          return deps.sharedDocumentRegistry.upsert(
-            input.executionTarget.worktreePath,
-            execution,
-            {
-              ...document,
-              conversationId: resolveConversationId(execution),
-            },
-          );
+          return execution;
         },
       );
+
+      const { relativePath } = await deps.sharedDocumentRegistry.prepareUpsert(
+        input.executionTarget.worktreePath,
+        { ...document },
+      );
+
+      let mergeOutcome: SharedDocumentMergeOutcome | null = null;
+      const execution = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (current) => {
+          ensureBoundContextActive(current);
+          const { nextExecution, outcome } =
+            deps.sharedDocumentRegistry.applyUpsert(current, {
+              relativePath,
+              description: document.description,
+              readWhen: document.readWhen,
+              conversationId: resolveConversationId(current),
+            });
+          mergeOutcome = outcome;
+          return nextExecution;
+        },
+      );
+
+      // Post-commit: capture content and emit the registration log — both file
+      // I/O, kept out of the write-queue critical section.
+      await deps.sharedDocumentRegistry.captureContent({
+        executionId: input.executionId,
+        worktreePath: input.executionTarget.worktreePath,
+        relativePath,
+      });
+      if (mergeOutcome !== null) {
+        deps.sharedDocumentRegistry.logUpsert(execution.id, mergeOutcome);
+      }
+
+      return execution;
     }
 
     return {

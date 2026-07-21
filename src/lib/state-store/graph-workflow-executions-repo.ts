@@ -9,6 +9,7 @@ import {
 } from "./graph-workflow-execution-codec";
 import { stableStringify } from "./serialization";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { checkRowColumnSize } from "./row-size-telemetry";
 
 type Db = InstanceType<typeof Database>;
 
@@ -270,6 +271,14 @@ export interface GraphWorkflowExecutionsRepo {
    * `${projectPath}\u0000${sessionName}` (NUL-separated), for the active-conversations feed.
    */
   listActive(): Map<string, GraphWorkflowExecution>;
+  /**
+   * Invalidate the parsed-execution cache after a row was removed out-of-band —
+   * an FK `ON DELETE CASCADE` from a session/project delete drops the row at the
+   * SQL layer without routing through this repo's own `setActive(null)`. Bumps
+   * the version so the next `getActive` re-reads from SQLite instead of serving
+   * a stale parsed execution.
+   */
+  invalidateCache(): void;
   /** Monotonic version bumped on every write, for parsed-row cache invalidation. */
   readonly cacheVersion: number;
 }
@@ -404,6 +413,21 @@ export function createGraphWorkflowExecutionsRepo(
     split: SplitExecution,
     updatedAt: string,
   ): void {
+    const executionId = split.projections.executionId;
+    checkRowColumnSize({
+      logger,
+      table: "graph_workflow_executions",
+      column: "definition_json",
+      id: executionId,
+      value: split.definitionJson,
+    });
+    checkRowColumnSize({
+      logger,
+      table: "graph_workflow_executions",
+      column: "runtime_json",
+      id: executionId,
+      value: split.runtimeJson,
+    });
     upsertStmt.run({
       project_path: projectPath,
       session_name: sessionName,
@@ -463,6 +487,13 @@ export function createGraphWorkflowExecutionsRepo(
         const split = splitExecution(validated);
         const lastHash = definitionHashCache.get(cacheKey);
         if (lastHash === split.definitionJson) {
+          checkRowColumnSize({
+            logger,
+            table: "graph_workflow_executions",
+            column: "runtime_json",
+            id: split.projections.executionId,
+            value: split.runtimeJson,
+          });
           const result = runtimeUpdateStmt.run({
             project_path: projectPath,
             session_name: sessionName,
@@ -540,6 +571,9 @@ export function createGraphWorkflowExecutionsRepo(
         }
         return result;
       });
+    },
+    invalidateCache() {
+      invalidate();
     },
     get cacheVersion() {
       return cacheVersion;

@@ -247,6 +247,10 @@ describe("EvidenceIngest", () => {
   it("best-effort reads return current state immediately when the write queue is contended", async () => {
     const contendedQueue: EvidenceIngestDeps["writeQueue"] = {
       withWriteQueue: vi.fn(async (_label, fn) => fn()),
+      withWriteQueueSync: vi.fn(async (_label, fn, ...reject) => {
+        void reject; // compile-time-only guard tuple; never populated at runtime
+        return fn();
+      }),
       async tryWithWriteQueue<T>(): Promise<
         { acquired: true; value: T } | { acquired: false }
       > {

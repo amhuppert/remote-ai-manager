@@ -3,10 +3,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-import {
-  createArtifactRegistry,
-  type ArtifactRegistry,
-} from "@/lib/workflows/primitives/artifact-registry";
+import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowSharedDocumentEntry } from "@/lib/workflow-graph/definition-schemas";
 const logger = createLogger("graph-workflow-shared-documents");
@@ -39,6 +36,56 @@ export interface GraphWorkflowSharedDocumentRegistryServiceDeps {
 export type SharedDocumentUpsertOptionalOutcome =
   | { status: "registered"; nextExecution: GraphWorkflowExecution }
   | { status: "skipped_warning"; warning: string };
+
+/**
+ * What a pure {@link applyUpsert} merge did, captured as inert data so the
+ * observability log can be emitted OUTSIDE the write-queue critical section the
+ * merge runs in (`no-slow-work-in-critical-section`).
+ */
+export interface SharedDocumentMergeOutcome {
+  action: "created" | "updated";
+  documentId: string;
+  relativePath: string;
+  description: string;
+  readWhen: string;
+  conversationId: string | null;
+}
+
+/**
+ * Emit the shared-document registration log for a completed {@link applyUpsert}.
+ * A file write, so it runs only AFTER the finalize mutation commits.
+ */
+export function logSharedDocumentUpsert(
+  executionId: string,
+  outcome: SharedDocumentMergeOutcome,
+): void {
+  const execLogger = getExecutionLogger(executionId);
+  if (outcome.action === "updated") {
+    execLogger?.lifecycle("shared_document.updated", {
+      documentId: outcome.documentId,
+      relativePath: outcome.relativePath,
+      conversationId: outcome.conversationId,
+    });
+    logger.info("graph-workflow.shared_document.updated", {
+      executionId,
+      documentId: outcome.documentId,
+      relativePath: outcome.relativePath,
+    });
+    return;
+  }
+  execLogger?.lifecycle("shared_document.created", {
+    documentId: outcome.documentId,
+    relativePath: outcome.relativePath,
+    description: outcome.description,
+    readWhen: outcome.readWhen,
+    conversationId: outcome.conversationId,
+  });
+  logger.info("graph-workflow.shared_document.created", {
+    executionId,
+    documentId: outcome.documentId,
+    relativePath: outcome.relativePath,
+  });
+}
 
 const defaultDeps: GraphWorkflowSharedDocumentRegistryServiceDeps = {
   now() {
@@ -73,117 +120,160 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     return execution.sharedDocuments;
   }
 
-  function buildExecutionMutationRegistry(input: {
+  /**
+   * Pure, synchronous merge of one shared-document entry into a cloned
+   * execution — no I/O, no awaits, no logging. This is the only state mutation
+   * the upsert performs, so it is the finalize step a staged caller runs inside
+   * the write queue (Design 3.1, `no-slow-work-in-critical-section`); the slow
+   * content capture and the async path resolution both happen outside the lock,
+   * and the registration log ({@link logSharedDocumentUpsert}) is emitted from
+   * the returned outcome after the finalize commits.
+   */
+  function mergeSharedDocumentEntry(input: {
     nextExecution: GraphWorkflowExecution;
+    relativePath: string;
+    description: string;
+    readWhen: string;
     conversationId: string | null;
     now: string;
-  }): ArtifactRegistry {
-    const { nextExecution, conversationId, now } = input;
-    const execLogger = getExecutionLogger(nextExecution.id);
+  }): SharedDocumentMergeOutcome {
+    const {
+      nextExecution,
+      relativePath,
+      description,
+      readWhen,
+      conversationId,
+    } = input;
+    const existingIndex = nextExecution.sharedDocuments.findIndex(
+      (entry) => entry.relativePath === relativePath,
+    );
 
-    return createArtifactRegistry({
+    if (existingIndex >= 0) {
+      const existingEntry = nextExecution.sharedDocuments[existingIndex]!;
+      nextExecution.sharedDocuments[existingIndex] = {
+        ...existingEntry,
+        relativePath,
+        description,
+        readWhen,
+        updatedAt: input.now,
+        lastUpdatedByConversationId: conversationId,
+      };
+      return {
+        action: "updated",
+        documentId: existingEntry.id,
+        relativePath,
+        description,
+        readWhen,
+        conversationId,
+      };
+    }
+
+    const documentId = resolvedDeps.createDocumentId();
+    nextExecution.sharedDocuments.push({
+      id: documentId,
+      relativePath,
+      description,
+      readWhen,
+      kind: "shared",
+      createdAt: input.now,
+      updatedAt: input.now,
+      lastUpdatedByConversationId: conversationId,
+    });
+    return {
+      action: "created",
+      documentId,
+      relativePath,
+      description,
+      readWhen,
+      conversationId,
+    };
+  }
+
+  /**
+   * Resolve + validate an upsert request into its canonical worktree-relative
+   * path, rejecting an escaping/out-of-directory path or an empty
+   * description/readWhen exactly as {@link upsert} would. Runs the artifact
+   * registry's `register` with a no-op capture registration, so it performs no
+   * durable I/O — but it is async by that contract, so a staged caller runs it
+   * OUTSIDE the write-queue lock, before the synchronous finalize.
+   */
+  async function prepareUpsert(
+    worktreePath: string,
+    input: SharedDocumentUpsertInput,
+  ): Promise<{ relativePath: string }> {
+    let canonicalRelativePath = input.relativePath;
+    const registry = createArtifactRegistry({
       writeFile: async () => {},
       ensureDir: async () => {},
       registration: {
         async registerSharedDocument(reg) {
-          const normalizedRelativePath = reg.relativePath;
-          const existingIndex = nextExecution.sharedDocuments.findIndex(
-            (entry) => entry.relativePath === normalizedRelativePath,
-          );
-
-          if (existingIndex >= 0) {
-            const existingEntry = nextExecution.sharedDocuments[existingIndex]!;
-            nextExecution.sharedDocuments[existingIndex] = {
-              ...existingEntry,
-              relativePath: normalizedRelativePath,
-              description: reg.description,
-              readWhen: reg.readWhen,
-              updatedAt: now,
-              lastUpdatedByConversationId: conversationId,
-            };
-
-            execLogger?.lifecycle("shared_document.updated", {
-              documentId: existingEntry.id,
-              relativePath: normalizedRelativePath,
-              conversationId,
-            });
-            logger.info("graph-workflow.shared_document.updated", {
-              executionId: nextExecution.id,
-              documentId: existingEntry.id,
-              relativePath: normalizedRelativePath,
-            });
-            return;
-          }
-
-          const documentId = resolvedDeps.createDocumentId();
-          nextExecution.sharedDocuments.push({
-            id: documentId,
-            relativePath: normalizedRelativePath,
-            description: reg.description,
-            readWhen: reg.readWhen,
-            kind: "shared",
-            createdAt: now,
-            updatedAt: now,
-            lastUpdatedByConversationId: conversationId,
-          });
-
-          execLogger?.lifecycle("shared_document.created", {
-            documentId,
-            relativePath: normalizedRelativePath,
-            description: reg.description,
-            readWhen: reg.readWhen,
-            conversationId,
-          });
-          logger.info("graph-workflow.shared_document.created", {
-            executionId: nextExecution.id,
-            documentId,
-            relativePath: normalizedRelativePath,
-          });
+          canonicalRelativePath = reg.relativePath;
         },
       },
     });
-  }
-
-  async function performUpsert(
-    worktreePath: string,
-    execution: GraphWorkflowExecution,
-    input: SharedDocumentUpsertInput,
-  ): Promise<GraphWorkflowExecution> {
-    const nextExecution = cloneExecution(execution);
-    const registry = buildExecutionMutationRegistry({
-      nextExecution,
-      conversationId: input.conversationId ?? null,
-      now: resolvedDeps.now(),
-    });
-
-    const record = await registry.register({
+    await registry.register({
       kind: "graph_shared_document",
       worktreePath,
       relativePath: input.relativePath,
       description: input.description,
       readWhen: input.readWhen,
-      source: { workflowId: execution.id },
+      source: {},
     });
+    return { relativePath: canonicalRelativePath };
+  }
 
-    // Best-effort: capture the agent-written file into the central store so it
-    // survives the worktree and reaches other lanes. A missing/unreadable file
-    // (e.g. the agent registered a path it never wrote) degrades to a warning
-    // rather than failing the registration.
+  /**
+   * Best-effort copy of the agent-written file into the central per-execution
+   * store so it survives the worktree and reaches other lanes. A missing or
+   * unreadable file degrades to a warning — it never throws — so a staged caller
+   * can run this slow disk I/O outside the lock and still finalize the
+   * registration afterward.
+   */
+  async function captureContent(input: {
+    executionId: string;
+    worktreePath: string;
+    relativePath: string;
+  }): Promise<void> {
     try {
-      await resolvedDeps.captureDocumentContent({
-        executionId: nextExecution.id,
-        worktreePath,
-        relativePath: record.relativePath,
-      });
+      await resolvedDeps.captureDocumentContent(input);
     } catch (err) {
       logger.warn("graph-workflow.shared_document.capture_failed", {
-        executionId: nextExecution.id,
-        relativePath: record.relativePath,
+        executionId: input.executionId,
+        relativePath: input.relativePath,
         warning: getErrorMessage(err),
       });
     }
+  }
 
-    return nextExecution;
+  /**
+   * Synchronously apply a resolved upsert to `execution`, returning the next
+   * execution with the merged entry plus the inert merge outcome. Pure — no
+   * I/O, no logging — so it is safe to run inside the write queue as a staged
+   * caller's finalize; the caller emits {@link logSharedDocumentUpsert} from the
+   * returned `outcome` after the finalize commits.
+   */
+  function applyUpsert(
+    execution: GraphWorkflowExecution,
+    input: {
+      relativePath: string;
+      description: string;
+      readWhen: string;
+      conversationId: string | null;
+    },
+  ): {
+    nextExecution: GraphWorkflowExecution;
+    outcome: SharedDocumentMergeOutcome;
+  } {
+    const nextExecution = cloneExecution(execution);
+    const outcome = mergeSharedDocumentEntry({
+      nextExecution,
+      relativePath: input.relativePath,
+      description: input.description,
+      readWhen: input.readWhen,
+      conversationId: input.conversationId,
+      now: resolvedDeps.now(),
+    });
+    return { nextExecution, outcome };
   }
 
   async function upsert(
@@ -191,7 +281,20 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     execution: GraphWorkflowExecution,
     input: SharedDocumentUpsertInput,
   ): Promise<GraphWorkflowExecution> {
-    return performUpsert(worktreePath, execution, input);
+    const { relativePath } = await prepareUpsert(worktreePath, input);
+    await captureContent({
+      executionId: execution.id,
+      worktreePath,
+      relativePath,
+    });
+    const { nextExecution, outcome } = applyUpsert(execution, {
+      relativePath,
+      description: input.description,
+      readWhen: input.readWhen,
+      conversationId: input.conversationId ?? null,
+    });
+    logSharedDocumentUpsert(execution.id, outcome);
+    return nextExecution;
   }
 
   async function upsertOptional(
@@ -200,7 +303,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     input: SharedDocumentUpsertInput,
   ): Promise<SharedDocumentUpsertOptionalOutcome> {
     try {
-      const nextExecution = await performUpsert(worktreePath, execution, input);
+      const nextExecution = await upsert(worktreePath, execution, input);
       return { status: "registered", nextExecution };
     } catch (err) {
       const warning = getErrorMessage(err);
@@ -216,6 +319,10 @@ export function createGraphWorkflowSharedDocumentRegistryService(
   return {
     getDirectory,
     list,
+    prepareUpsert,
+    captureContent,
+    applyUpsert,
+    logUpsert: logSharedDocumentUpsert,
     upsert,
     upsertOptional,
   };

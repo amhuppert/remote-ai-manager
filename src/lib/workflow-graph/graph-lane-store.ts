@@ -89,9 +89,7 @@ export interface GraphLaneStoreDeps {
   mutateActiveExecution(
     projectPath: string,
     sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
 }
 

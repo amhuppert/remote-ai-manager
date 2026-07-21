@@ -115,7 +115,6 @@ export function throwConversationValidationError(
 }
 
 const pendingQuestionsArraySchema = z.array(askQuestionItemSchema);
-const machineSnapshotSchema = z.unknown();
 
 /**
  * Loud-log an unparseable ref column (`backend_ref` / `forked_from`) and let
@@ -167,7 +166,6 @@ export interface SharedConversationRawColumns {
   context_tokens: number | null;
   context_window_max: number | null;
   debug_mode: string | null;
-  machine_snapshot: string | null;
   agent_backend: string;
   backend_ref: string | null;
   mcp_overrides: string | null;
@@ -247,17 +245,6 @@ export function decodeSharedConversationColumns(
   );
   if (!debugMode.ok) {
     return throwConversationValidationError(id, debugMode.issues);
-  }
-
-  const machineSnapshot = parseJsonColumn(
-    "machineSnapshot",
-    row.machine_snapshot,
-    machineSnapshotSchema,
-    "default",
-    null,
-  );
-  if (!machineSnapshot.ok) {
-    return throwConversationValidationError(id, machineSnapshot.issues);
   }
 
   let backendRefValue: AgentSessionRef | null | undefined;
@@ -358,7 +345,6 @@ export function decodeSharedConversationColumns(
     contextTokens: row.context_tokens,
     contextWindowMax: row.context_window_max,
     debugMode: debugMode.value ?? null,
-    machineSnapshot: machineSnapshot.value ?? null,
     agentBackend: backendResult.data,
     backendRef: backendRefValue ?? null,
     unread: row.unread === 1,
@@ -379,6 +365,150 @@ export function decodeSharedConversationColumns(
     candidate.agentCapabilitiesRuntime = agentCapsRuntime.value;
   }
   return candidate;
+}
+
+/**
+ * Raw values of the conversation columns a list-item projection reads: the
+ * key/display columns plus the four small structured columns list surfaces
+ * render (`debug_mode`, `pending_questions`, `forked_from`, `backend_ref`).
+ * Deliberately omits every heavy blob (`machine_snapshot`, `pending_queue`,
+ * the mcp/capability runtime columns) so the list-item read never pulls or
+ * parses them.
+ */
+export interface ConversationListItemRawColumns {
+  name: string | null;
+  summary: string | null;
+  status: string;
+  role: string | null;
+  archived: 0 | 1;
+  agent_backend: string;
+  backend_ref: string | null;
+  transcript_path: string | null;
+  last_activity_at: string;
+  debug_mode: string | null;
+  pending_question_id: string | null;
+  pending_questions: string | null;
+  forked_from: string | null;
+  unread: 0 | 1;
+}
+
+/**
+ * Domain projection of one conversation for list surfaces: the identity and
+ * display fields plus the small structured fields (`debugMode`,
+ * `pendingQuestions`, `forkedFrom`, `backendRef`) the cross-project and
+ * active-conversation lists render. A strict subset of `ConversationState`,
+ * carrying none of the heavy blobs.
+ */
+export type ConversationListItemFields = Pick<
+  ConversationState,
+  | "name"
+  | "summary"
+  | "status"
+  | "role"
+  | "archived"
+  | "agentBackend"
+  | "backendRef"
+  | "transcriptPath"
+  | "lastActivityAt"
+  | "debugMode"
+  | "pendingQuestionId"
+  | "pendingQuestions"
+  | "forkedFrom"
+  | "unread"
+>;
+
+/**
+ * Decode the list-item subset of a conversation row. Reuses the same enum and
+ * JSON-column decoders as {@link decodeSharedConversationColumns} so the
+ * list-item read and the full read never drift. Enum failures throw at the
+ * boundary; the tolerant ref columns (`forked_from`, `backend_ref`) quarantine
+ * to null, matching the full decoder's degrade-gracefully contract.
+ */
+export function decodeConversationListItemColumns(
+  id: string,
+  row: ConversationListItemRawColumns,
+): ConversationListItemFields {
+  const statusResult = conversationStatusSchema.safeParse(row.status);
+  if (!statusResult.success) {
+    return throwConversationValidationError(id, statusResult.error.issues);
+  }
+
+  const backendResult = agentBackendSchema.safeParse(row.agent_backend);
+  if (!backendResult.success) {
+    return throwConversationValidationError(id, backendResult.error.issues);
+  }
+
+  const roleResult = conversationRoleSchema.safeParse(row.role);
+  if (!roleResult.success) {
+    return throwConversationValidationError(id, roleResult.error.issues);
+  }
+
+  const pendingQuestions = parseJsonColumn(
+    "pendingQuestions",
+    row.pending_questions,
+    pendingQuestionsArraySchema,
+    "default",
+    null,
+  );
+  if (!pendingQuestions.ok) {
+    return throwConversationValidationError(id, pendingQuestions.issues);
+  }
+
+  let forkedFromValue: ForkedFrom | null = null;
+  const forkedFrom = parseJsonColumn(
+    "forkedFrom",
+    row.forked_from,
+    forkedFromSchema,
+    "default",
+    null,
+  );
+  if (forkedFrom.ok) {
+    forkedFromValue = forkedFrom.value ?? null;
+  } else {
+    logRefColumnQuarantine(id, "forked_from", forkedFrom.issues);
+  }
+
+  const debugMode = parseJsonColumn(
+    "debugMode",
+    row.debug_mode,
+    debugModeStateSchema,
+    "default",
+    null,
+  );
+  if (!debugMode.ok) {
+    return throwConversationValidationError(id, debugMode.issues);
+  }
+
+  let backendRefValue: AgentSessionRef | null = null;
+  const backendRef = parseJsonColumn(
+    "backendRef",
+    row.backend_ref,
+    persistedAgentSessionRefSchema,
+    "default",
+    null,
+  );
+  if (backendRef.ok) {
+    backendRefValue = backendRef.value ?? null;
+  } else {
+    logRefColumnQuarantine(id, "backend_ref", backendRef.issues);
+  }
+
+  return {
+    name: row.name,
+    summary: row.summary,
+    status: statusResult.data,
+    role: roleResult.data,
+    archived: row.archived === 1,
+    agentBackend: backendResult.data,
+    backendRef: backendRefValue,
+    transcriptPath: row.transcript_path,
+    lastActivityAt: row.last_activity_at,
+    debugMode: debugMode.value ?? null,
+    pendingQuestionId: row.pending_question_id,
+    pendingQuestions: pendingQuestions.value ?? null,
+    forkedFrom: forkedFromValue,
+    unread: row.unread === 1,
+  };
 }
 
 /**
@@ -436,7 +566,6 @@ export interface SharedConversationBindColumns {
   context_tokens: number | null;
   context_window_max: number | null;
   debug_mode: string | null;
-  machine_snapshot: string | null;
   agent_backend: string;
   backend_ref: string | null;
   mcp_overrides: string | null;
@@ -473,7 +602,6 @@ export function encodeSharedConversationColumns(
     context_tokens: conversation.contextTokens,
     context_window_max: conversation.contextWindowMax,
     debug_mode: jsonOrNull(conversation.debugMode),
-    machine_snapshot: jsonOrNull(conversation.machineSnapshot),
     agent_backend: conversation.agentBackend,
     backend_ref: encodeBackendRefColumn(conversation.backendRef),
     mcp_overrides: jsonOrNull(conversation.mcpOverrides),
@@ -561,11 +689,6 @@ const CONVERSATION_COLUMN_MAP = [
     "debugMode",
     "debug_mode",
     (c: ConversationState) => jsonOrNull(c.debugMode),
-  ],
-  [
-    "machineSnapshot",
-    "machine_snapshot",
-    (c: ConversationState) => jsonOrNull(c.machineSnapshot),
   ],
   ["agentBackend", "agent_backend", (c: ConversationState) => c.agentBackend],
   [

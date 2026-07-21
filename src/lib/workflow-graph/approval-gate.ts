@@ -27,9 +27,7 @@ export interface ApprovalGateServiceDeps {
   mutateActive(
     projectPath: string,
     sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   now(): string;
 }
@@ -48,6 +46,31 @@ export type RecordDecisionResult =
   | { ok: true; execution: GraphWorkflowExecution }
   | { ok: false; reason: RecordDecisionGuardFailureReason };
 
+/**
+ * The observability payload of an applied approval decision. `applyApprovedDecision`
+ * and `applyRejectedDecision` run INSIDE a `mutateActive` reducer (the write-queue
+ * critical section), so they are pure — they return this inert DATA instead of
+ * logging. The caller emits `gate.applied` AFTER the mutation commits
+ * (`no-slow-work-in-critical-section`).
+ */
+export type AppliedApprovalDecision =
+  | { decisionType: "approved" }
+  | {
+      decisionType: "rejected";
+      remediationTaskId: string;
+      rejectionMessageLength: number;
+    };
+
+/**
+ * The observability payload of parking a context for human approval.
+ * `enterAwaitingApproval` runs inside a `mutateActive` reducer, so it returns
+ * this DATA and the caller emits `gate.pending` post-commit.
+ */
+export interface EnteredAwaitingApproval {
+  conversationId: string;
+  requestedAt: string;
+}
+
 export interface RecordDecisionInput {
   projectPath: string;
   sessionName: string;
@@ -59,13 +82,14 @@ export interface ApprovalGateService {
   /**
    * Draft-level: mutates the execution inside the caller's active
    * `mutateActive` callback so the status flip and pending record land in the
-   * same mutation as the caller's other writes. The caller publishes the
-   * approval-pending event after its mutation commits.
+   * same mutation as the caller's other writes. Pure — returns the observability
+   * payload; the caller publishes the approval-pending event and logs
+   * `gate.pending` after its mutation commits (`no-slow-work-in-critical-section`).
    */
   enterAwaitingApproval(
     execution: GraphWorkflowExecution,
     input: { contextId: string; conversationId: string },
-  ): void;
+  ): EnteredAwaitingApproval;
 
   /**
    * Atomic check-and-set: all guards run inside one `mutateActive` mutation
@@ -77,24 +101,26 @@ export interface ApprovalGateService {
   /**
    * Draft-level: clears the pending record after an approved decision.
    * Completion and merge stay with the loop's finalization path, which sets
-   * the context status in the same mutation.
+   * the context status in the same mutation. Pure: returns the observability
+   * payload; the caller logs `gate.applied` post-commit.
    */
   applyApprovedDecision(
     execution: GraphWorkflowExecution,
     contextId: string,
-  ): void;
+  ): AppliedApprovalDecision;
 
   /**
    * Draft-level: clears the pending record after a rejected decision,
    * appends a remediation task carrying the operator's message, returns the
    * context to `running`, and updates the task counts. Never modifies
    * `consecutiveFailureCount` — human rejections do not count toward the
-   * validation circuit breaker (requirement 5.5).
+   * validation circuit breaker (requirement 5.5). Pure: returns the
+   * observability payload; the caller logs `gate.applied` post-commit.
    */
   applyRejectedDecision(
     execution: GraphWorkflowExecution,
     contextId: string,
-  ): void;
+  ): AppliedApprovalDecision;
 
   /**
    * Builds the remediation task delivering the operator's rejection message
@@ -170,7 +196,7 @@ export function createApprovalGateService(
   function enterAwaitingApproval(
     execution: GraphWorkflowExecution,
     input: { contextId: string; conversationId: string },
-  ): void {
+  ): EnteredAwaitingApproval {
     const contextState = execution.contextStates[input.contextId];
     if (!contextState) {
       throw new Error(
@@ -188,12 +214,9 @@ export function createApprovalGateService(
       decision: null,
     };
 
-    logger.info("gate.pending", {
-      executionId: execution.id,
-      contextId: input.contextId,
-      conversationId: input.conversationId,
-      requestedAt,
-    });
+    // Pure: return the observability payload. The caller logs `gate.pending`
+    // after its mutation commits (this runs inside the write-queue lock).
+    return { conversationId: input.conversationId, requestedAt };
   }
 
   async function recordDecision(
@@ -282,7 +305,7 @@ export function createApprovalGateService(
   function applyApprovedDecision(
     execution: GraphWorkflowExecution,
     contextId: string,
-  ): void {
+  ): AppliedApprovalDecision {
     const { contextState, decision } = requireRecordedDecision(
       execution,
       contextId,
@@ -295,11 +318,8 @@ export function createApprovalGateService(
 
     contextState.pendingApproval = null;
 
-    logger.info("gate.applied", {
-      executionId: execution.id,
-      contextId,
-      decisionType: "approved",
-    });
+    // Pure: caller logs `gate.applied` post-commit (this runs inside the lock).
+    return { decisionType: "approved" };
   }
 
   function buildRejectionRemediationTask(
@@ -328,7 +348,7 @@ export function createApprovalGateService(
   function applyRejectedDecision(
     execution: GraphWorkflowExecution,
     contextId: string,
-  ): void {
+  ): AppliedApprovalDecision {
     const { contextState, decision } = requireRecordedDecision(
       execution,
       contextId,
@@ -373,13 +393,12 @@ export function createApprovalGateService(
       (task) => task.contextId === contextId,
     ).length;
 
-    logger.info("gate.applied", {
-      executionId: execution.id,
-      contextId,
+    // Pure: caller logs `gate.applied` post-commit (this runs inside the lock).
+    return {
       decisionType: "rejected",
       remediationTaskId: remediationTask.id,
       rejectionMessageLength: decision.message.length,
-    });
+    };
   }
 
   return {

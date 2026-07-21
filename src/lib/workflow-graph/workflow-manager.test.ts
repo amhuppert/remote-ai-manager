@@ -42,11 +42,17 @@ import {
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
   WorkflowStartInputError,
+  type ScheduleEligibleContextsResult,
 } from "./workflow-manager";
 import type { PreflightPrerequisiteService } from "./preflight-prerequisite-service";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { TemplateTier } from "./template-library-service";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
+import {
+  assertLoopFence,
+  runWithLoopFence,
+  StaleLoopFenceError,
+} from "./loop-fence";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createWorkflowCharterService } from "./charter/service";
 import {
@@ -86,11 +92,7 @@ interface InMemoryExecutionRepository {
       execution: GraphWorkflowExecution,
     ) =>
       | GraphWorkflowExecution
-      | { execution: GraphWorkflowExecution; events: unknown[] }
-      | Promise<
-          | GraphWorkflowExecution
-          | { execution: GraphWorkflowExecution; events: unknown[] }
-        >,
+      | { execution: GraphWorkflowExecution; events: unknown[] },
   ): Promise<GraphWorkflowExecution>;
   markContextEventsPreReset(
     projectPath: string,
@@ -122,6 +124,48 @@ function createRepository(
   const preResetCalls: Array<{ executionId: string; contextId: string }> = [];
   const createCalls: CreateSeedCapture[] = [];
   let archiveCalls = 0;
+
+  // Serialized read-modify-write backing the sync `mutateActive`. It awaits
+  // `fn` so a synchronous reducer is applied and its result handled exactly as
+  // the production seam does, and enforces the loop fence like the real repo.
+  const mutateActiveImpl = async (
+    _projectPath: string,
+    _sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) =>
+      | GraphWorkflowExecution
+      | { execution: GraphWorkflowExecution; events: unknown[] }
+      | Promise<
+          | GraphWorkflowExecution
+          | { execution: GraphWorkflowExecution; events: unknown[] }
+        >,
+  ): Promise<GraphWorkflowExecution> => {
+    const previous = lock;
+    let release!: () => void;
+    lock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      if (!activeExecution) {
+        throw new Error(
+          "Session does not have an active graph workflow execution",
+        );
+      }
+      // Mirror the production repository: reject a superseded loop generation's
+      // write against the currently-persisted execution before the reducer runs.
+      assertLoopFence(_projectPath, _sessionName, activeExecution);
+      const result = await fn(structuredClone(activeExecution));
+      activeExecution =
+        "execution" in result && "events" in result
+          ? result.execution
+          : (result as GraphWorkflowExecution);
+      return activeExecution;
+    } finally {
+      release();
+    }
+  };
 
   return {
     async getActive() {
@@ -159,29 +203,7 @@ function createRepository(
     async update(_projectPath, _sessionName, execution) {
       activeExecution = execution;
     },
-    async mutateActive(_projectPath, _sessionName, fn) {
-      const previous = lock;
-      let release!: () => void;
-      lock = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      try {
-        await previous;
-        if (!activeExecution) {
-          throw new Error(
-            "Session does not have an active graph workflow execution",
-          );
-        }
-        const result = await fn(structuredClone(activeExecution));
-        activeExecution =
-          "execution" in result && "events" in result
-            ? result.execution
-            : (result as GraphWorkflowExecution);
-        return activeExecution;
-      } finally {
-        release();
-      }
-    },
+    mutateActive: mutateActiveImpl,
     async markContextEventsPreReset(
       _projectPath,
       _sessionName,
@@ -3506,6 +3528,14 @@ describe("graph workflow manager", () => {
     function createParallelWorktreesStub(options?: {
       failOnContextId?: string;
       failureMessage?: string;
+      // Branch names whose `disposeLane` rejects — used to prove best-effort
+      // disposal (every lane is still attempted) and that reservation release
+      // still runs after a disposal failure.
+      failDisposeBranchNames?: readonly string[];
+      // Runs after each provision is recorded — used to simulate a concurrent
+      // supersession (e.g. a resume bumping loopEpoch) while the slow worktree
+      // work is in flight, out of the write lock.
+      onProvision?: (input: ProvisionInput) => void | Promise<void>;
     }): ParallelWorktrees & {
       provisionCalls: ProvisionCall[];
       disposeCalls: DisposeInput[];
@@ -3517,6 +3547,9 @@ describe("graph workflow manager", () => {
         input: ProvisionInput,
       ): Promise<ProvisionResult> {
         provisionCalls.push(input);
+        if (options?.onProvision) {
+          await options.onProvision(input);
+        }
         if (
           options?.failOnContextId &&
           input.contextId === options.failOnContextId
@@ -3554,7 +3587,12 @@ describe("graph workflow manager", () => {
       }
 
       async function dispose(input: DisposeInput): Promise<DisposeResult> {
+        // Record the attempt BEFORE any rejection so `disposeCalls` proves the
+        // lane was attempted even when disposal fails.
         disposeCalls.push(input);
+        if (options?.failDisposeBranchNames?.includes(input.branchName)) {
+          throw new Error(`dispose failed for ${input.branchName}`);
+        }
         return { status: "removed" };
       }
 
@@ -4021,6 +4059,217 @@ describe("graph workflow manager", () => {
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
+    it("does not double-provision reserved contexts when a concurrent same-epoch scheduler runs during provisioning", async () => {
+      // Owner-discriminated reservation (Design 3.1): the reserve mutation stamps
+      // each claimed context before provisioning worktrees out of the lock. A
+      // second scheduler running in that window must see the stamped contexts as
+      // ineligible, so it schedules and provisions nothing — the batch is
+      // provisioned exactly once.
+      const branchedDefinition = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: branchedDefinition,
+      });
+      const repository = createRepository(
+        createWorkflowExecution({
+          ...baseExecution,
+          status: "running",
+          workingDefinition: branchedDefinition,
+          contextStates: {
+            ...baseExecution.contextStates,
+            "context-plan": {
+              ...baseExecution.contextStates["context-plan"]!,
+              status: "completed",
+              completedTaskCount: 1,
+              iterationCount: 1,
+            },
+          },
+        }),
+      );
+
+      // Boxed so the value assigned inside the `onProvision` callback keeps its
+      // declared union type when read after the await (closure-assignment CFA):
+      // a bare `let` would be narrowed to its `null` initializer at the read
+      // site, collapsing the post-null-guard type to `never`.
+      const concurrentResult: { value: ScheduleEligibleContextsResult | null } =
+        {
+          value: null,
+        };
+      let ranConcurrent = false;
+      // Indirection so the stub can reach the manager without referencing it
+      // before its declaration; wired after the manager is built.
+      let onFirstProvision: (() => Promise<void>) | null = null;
+      const parallelWorktrees = createParallelWorktreesStub({
+        // Fire ONE concurrent scheduler while the first pass is provisioning out
+        // of the lock (both reservations are already committed by then).
+        async onProvision() {
+          if (ranConcurrent) return;
+          ranConcurrent = true;
+          if (onFirstProvision) await onFirstProvision();
+        },
+      });
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      onFirstProvision = async () => {
+        concurrentResult.value = await manager.scheduleEligibleContexts({
+          projectPath: "/repo",
+          sessionName: "session-1",
+        });
+      };
+
+      const result = await manager.scheduleEligibleContexts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
+
+      // The first pass provisioned each eligible context exactly once.
+      expect(result.scheduled.kind).toBe("parallel");
+      expect(
+        parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+      ).toEqual(["context-implement", "context-verify"]);
+
+      // The concurrent scheduler saw both contexts as reserved → nothing to
+      // schedule, and it provisioned nothing (no double-provision).
+      expect(ranConcurrent).toBe(true);
+      const captured = concurrentResult.value;
+      if (captured === null) {
+        throw new Error("concurrent scheduler did not run");
+      }
+      expect(captured.scheduled).toEqual({ kind: "none" });
+
+      // Reservation stamps are cleared once the finalize commits.
+      expect(
+        result.execution.contextStates["context-implement"]
+          ?.reservedByBatchId ?? null,
+      ).toBeNull();
+      expect(
+        result.execution.contextStates["context-verify"]?.reservedByBatchId ??
+          null,
+      ).toBeNull();
+    });
+
+    it("releases the reserve's stamps (contexts stay eligible) when getSession fails after the reserve commits", async () => {
+      // Reservation-stranding guard (Design 3.1): the reserve mutation stamps
+      // `reservedByBatchId` and commits BEFORE resolving the session out of the
+      // lock. If that lookup then rejects, every post-reserve failure path must
+      // release the stamps — otherwise the contexts are ineligible for a
+      // same-epoch retry forever. This drives a `getSession` rejection after the
+      // reserve and asserts the stamps are cleared AND a retry schedules them.
+      const branchedDefinition = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: branchedDefinition,
+      });
+      const repository = createRepository(
+        createWorkflowExecution({
+          ...baseExecution,
+          status: "running",
+          workingDefinition: branchedDefinition,
+          contextStates: {
+            ...baseExecution.contextStates,
+            "context-plan": {
+              ...baseExecution.contextStates["context-plan"]!,
+              status: "completed",
+              completedTaskCount: 1,
+              iterationCount: 1,
+            },
+          },
+        }),
+      );
+
+      const parallelWorktrees = createParallelWorktreesStub();
+
+      // getSession rejects on the FIRST scheduling pass (after the reserve
+      // commits), then succeeds on the retry.
+      let sessionCalls = 0;
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          sessionCalls += 1;
+          if (sessionCalls === 1) {
+            throw new Error("session lookup failed");
+          }
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      // First pass: reserve commits, then getSession rejects → the call rejects.
+      await expect(
+        manager.scheduleEligibleContexts({
+          projectPath: "/repo",
+          sessionName: "session-1",
+        }),
+      ).rejects.toThrow("session lookup failed");
+
+      // Nothing was provisioned, and the reserve's stamps were released — the
+      // contexts are not stranded ineligible.
+      expect(parallelWorktrees.provisionCalls).toEqual([]);
+      const afterFailure = repository.read();
+      expect(
+        afterFailure?.contextStates["context-implement"]?.reservedByBatchId ??
+          null,
+      ).toBeNull();
+      expect(
+        afterFailure?.contextStates["context-verify"]?.reservedByBatchId ??
+          null,
+      ).toBeNull();
+
+      // A same-epoch retry now schedules both contexts, proving they stayed
+      // eligible after the release.
+      const retry = await manager.scheduleEligibleContexts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
+      expect(retry.scheduled.kind).toBe("parallel");
+      expect(
+        parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+      ).toEqual(["context-implement", "context-verify"]);
+    });
+
     it("provisions a worktree per eligible context and assigns a shared batchId when ≥2 are eligible", async () => {
       const branchedDefinition = createResolvedWorkflowDefinition({
         edges: [
@@ -4199,6 +4448,324 @@ describe("graph workflow manager", () => {
       expect(persisted?.contextStates["context-verify"]?.status).not.toBe(
         "running",
       );
+    });
+
+    it("owner-checks the reserve release and surfaces the provision error even when compensating disposal rejects", async () => {
+      // Compensation reliability (Design 3.1 finalize-or-compensate). When
+      // provisioning fails, the catch disposes the already-provisioned lanes
+      // AND releases the reserve's stamps. Here the compensating `disposeLane`
+      // REJECTS — the release must still run (else the contexts strand
+      // ineligible), the ORIGINAL provision error (not the disposal error) must
+      // surface, and the release is OWNER-CHECKED so a stamp a concurrent
+      // same-epoch batch re-owns is left intact.
+      const branchedDefinition = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: branchedDefinition,
+      });
+      const initialExecution = createWorkflowExecution({
+        ...baseExecution,
+        status: "running",
+        workingDefinition: branchedDefinition,
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "completed",
+            completedTaskCount: 1,
+            iterationCount: 1,
+          },
+        },
+      });
+      const repository = createRepository(initialExecution);
+
+      // context-implement provisions first (success); while it is in flight,
+      // simulate a concurrent same-epoch batch re-reserving context-verify by
+      // stamping it with a DIFFERENT batchId. context-verify's own provision
+      // then fails, triggering compensation. The loop generation is NOT bumped,
+      // so the release commits (it is not fenced out).
+      const parallelWorktrees = createParallelWorktreesStub({
+        failOnContextId: "context-verify",
+        failureMessage: "disk full",
+        failDisposeBranchNames: ["csm/feature-abc-context-implement"],
+        async onProvision(input) {
+          if (input.contextId !== "context-implement") return;
+          const persisted = repository.read();
+          if (!persisted) return;
+          const ownBatchId =
+            persisted.contextStates["context-implement"]?.reservedByBatchId ??
+            "batch";
+          await repository.update("/repo", "session-1", {
+            ...persisted,
+            contextStates: {
+              ...persisted.contextStates,
+              "context-verify": {
+                ...persisted.contextStates["context-verify"]!,
+                reservedByBatchId: `${ownBatchId}-foreign`,
+              },
+            },
+          });
+        },
+      });
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      // The ORIGINAL provision error surfaces — not the disposal rejection.
+      await expect(
+        manager.scheduleEligibleContexts({
+          projectPath: "/repo",
+          sessionName: "session-1",
+        }),
+      ).rejects.toThrow(/disk full/);
+
+      // The failing disposal was still ATTEMPTED (best-effort).
+      expect(parallelWorktrees.disposeCalls.map((c) => c.branchName)).toEqual([
+        "csm/feature-abc-context-implement",
+      ]);
+
+      const persisted = repository.read();
+      // Owner-checked release ran despite the disposal rejection: this batch's
+      // own stamp (context-implement) is cleared so it re-schedules...
+      expect(
+        persisted?.contextStates["context-implement"]?.reservedByBatchId ??
+          null,
+      ).toBeNull();
+      // ...but the foreign batch's stamp on context-verify is left intact.
+      expect(
+        persisted?.contextStates["context-verify"]?.reservedByBatchId,
+      ).toMatch(/-foreign$/);
+    });
+
+    it("refuses the fenced finalize and disposes provisioned worktrees when the loop generation is superseded mid-provision", async () => {
+      // Two eligible contexts route through the staged protocol: reserve marks
+      // them ready, provisioning runs out of the lock, then a fenced finalize
+      // commits the batch. This test supersedes the loop generation while the
+      // slow provisioning is in flight and asserts the finalize refuses to
+      // commit and disposes the orphaned worktrees.
+      const branchedDefinition = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: branchedDefinition,
+      });
+      const initialExecution = createWorkflowExecution({
+        ...baseExecution,
+        status: "running",
+        workingDefinition: branchedDefinition,
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "completed",
+            completedTaskCount: 1,
+            iterationCount: 1,
+          },
+        },
+      });
+      const repository = createRepository(initialExecution);
+      const executionId = initialExecution.id;
+
+      // The first provision simulates a concurrent resume superseding this
+      // generation: it bumps the persisted loopEpoch out from under the
+      // in-flight schedule, out of the write lock.
+      const parallelWorktrees = createParallelWorktreesStub({
+        async onProvision() {
+          const persisted = repository.read();
+          if (persisted && persisted.loopEpoch === 0) {
+            await repository.update("/repo", "session-1", {
+              ...persisted,
+              loopEpoch: 1,
+            });
+          }
+        },
+      });
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      await expect(
+        runWithLoopFence(
+          {
+            projectPath: "/repo",
+            sessionName: "session-1",
+            executionId,
+            loopEpoch: 0,
+          },
+          () =>
+            manager.scheduleEligibleContexts({
+              projectPath: "/repo",
+              sessionName: "session-1",
+            }),
+        ),
+      ).rejects.toBeInstanceOf(StaleLoopFenceError);
+
+      // Both worktrees were provisioned out of the lock, then the fenced
+      // finalize refused to commit and disposed them as compensation.
+      expect(
+        parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+      ).toEqual(["context-implement", "context-verify"]);
+      expect(
+        parallelWorktrees.disposeCalls.map((c) => c.branchName).sort(),
+      ).toEqual([
+        "csm/feature-abc-context-implement",
+        "csm/feature-abc-context-verify",
+      ]);
+
+      // The superseded generation committed no running/lane state for the batch.
+      const persisted = repository.read();
+      expect(persisted?.loopEpoch).toBe(1);
+      expect(persisted?.contextStates["context-implement"]?.status).not.toBe(
+        "running",
+      );
+      expect(persisted?.contextStates["context-verify"]?.status).not.toBe(
+        "running",
+      );
+    });
+
+    it("attempts every lane's disposal (best-effort) and surfaces the fence error when a compensating disposal rejects", async () => {
+      // Best-effort disposal (Design 3.1). Two lanes provision out of the lock,
+      // then a concurrent resume supersedes the generation so the fenced
+      // finalize refuses and disposes both lanes as compensation. Disposing the
+      // FIRST lane rejects — the second lane must still be attempted, and the
+      // original StaleLoopFenceError (not the disposal error) must surface.
+      const branchedDefinition = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: branchedDefinition,
+      });
+      const initialExecution = createWorkflowExecution({
+        ...baseExecution,
+        status: "running",
+        workingDefinition: branchedDefinition,
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "completed",
+            completedTaskCount: 1,
+            iterationCount: 1,
+          },
+        },
+      });
+      const repository = createRepository(initialExecution);
+      const executionId = initialExecution.id;
+
+      const parallelWorktrees = createParallelWorktreesStub({
+        // BOTH lanes' disposal rejects; the first rejection must not abort the
+        // second attempt.
+        failDisposeBranchNames: [
+          "csm/feature-abc-context-implement",
+          "csm/feature-abc-context-verify",
+        ],
+        async onProvision() {
+          const persisted = repository.read();
+          if (persisted && persisted.loopEpoch === 0) {
+            await repository.update("/repo", "session-1", {
+              ...persisted,
+              loopEpoch: 1,
+            });
+          }
+        },
+      });
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      // The fenced finalize's StaleLoopFenceError surfaces — not the disposal
+      // rejection that happened during compensation.
+      await expect(
+        runWithLoopFence(
+          {
+            projectPath: "/repo",
+            sessionName: "session-1",
+            executionId,
+            loopEpoch: 0,
+          },
+          () =>
+            manager.scheduleEligibleContexts({
+              projectPath: "/repo",
+              sessionName: "session-1",
+            }),
+        ),
+      ).rejects.toBeInstanceOf(StaleLoopFenceError);
+
+      // Both lanes were attempted for disposal even though the first rejected —
+      // disposal is best-effort across every lane.
+      expect(
+        parallelWorktrees.disposeCalls.map((c) => c.branchName).sort(),
+      ).toEqual([
+        "csm/feature-abc-context-implement",
+        "csm/feature-abc-context-verify",
+      ]);
     });
 
     it("rejects scheduling before any worktree is created when a contextId is unsafe", async () => {

@@ -38,7 +38,7 @@ import {
 } from "@/lib/shared/route-resolution";
 import { resolveProjectConversationRoute } from "./route-resolution";
 import { readConversationMessagesWithSeq as defaultReadConversationMessagesWithSeq } from "@/lib/prompt/transcript";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import {
   createProjectConversationRequestSchema,
   projectConversationOpenRequestSchema,
@@ -501,12 +501,20 @@ export function createProjectConversationRouteHandlers(
 }
 
 const _handlers = createProjectConversationRouteHandlers();
-export const projectConversationsCreatePOST = _handlers.createPOST;
-export const projectConversationsListGET = _handlers.listGET;
-export const projectConversationMessagesGET = _handlers.messagesGET;
-export const projectFirstPromptPOST = _handlers.firstPromptPOST;
-export const projectConversationPromptPOST = _handlers.promptPOST;
-export const projectConversationRenamePATCH = _handlers.renamePATCH;
-export const projectConversationArchivePATCH = _handlers.archivePATCH;
-export const projectConversationOpenPATCH = _handlers.openPATCH;
-export const projectConversationMarkReadPOST = _handlers.markReadPOST;
+export const projectConversationsCreatePOST = withTracing(_handlers.createPOST);
+export const projectConversationsListGET = withTracing(_handlers.listGET);
+export const projectConversationMessagesGET = withTracing(
+  _handlers.messagesGET,
+);
+export const projectFirstPromptPOST = withTracing(_handlers.firstPromptPOST);
+export const projectConversationPromptPOST = withTracing(_handlers.promptPOST);
+export const projectConversationRenamePATCH = withTracing(
+  _handlers.renamePATCH,
+);
+export const projectConversationArchivePATCH = withTracing(
+  _handlers.archivePATCH,
+);
+export const projectConversationOpenPATCH = withTracing(_handlers.openPATCH);
+export const projectConversationMarkReadPOST = withTracing(
+  _handlers.markReadPOST,
+);

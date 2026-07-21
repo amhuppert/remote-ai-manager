@@ -71,7 +71,6 @@ const okConversation: ConversationState = {
   agentBackend: "claude",
   backendRef: null,
   debugMode: null,
-  machineSnapshot: null,
   pendingQueue: [],
   lastSeenAlignmentVersion: null,
   pendingAgentNotices: [],

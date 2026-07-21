@@ -3,6 +3,10 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config/loader";
 import { createStateStore as createStateManager } from "@/lib/state-store";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import type { Db } from "@/lib/state-store/schemas";
+import type { ManagerState } from "@/lib/projects/schemas";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import {
   createSessionStateWorkflowEnvelopeStore,
   type WorkflowEnvelopeStore,
@@ -14,33 +18,45 @@ const PROJECT_PATH = "/projects/collab-fixture";
 const SESSION_NAME = "collab-1";
 
 let TEST_DIR: string;
+let db: Db;
 
 function createTestStateManager() {
   const configReader = createConfigReader(TEST_DIR);
   return createStateManager({
+    db,
     readConfig: () => configReader.readConfig(),
   });
 }
 
-async function seedSession(): Promise<void> {
-  const { updateSession } = createTestStateManager();
-  await updateSession(PROJECT_PATH, {
-    sessionName: SESSION_NAME,
-    worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-    branchName: `csm/${SESSION_NAME}`,
-    createdAt: "2026-04-28T09:00:00.000Z",
-    lastActivityAt: "2026-04-28T09:00:00.000Z",
-    archived: false,
-    finished: false,
-    conversations: [],
-    source: "cc",
-    creationMode: "normal",
-    tddEnabled: true,
-    targetBranch: "main",
-    parentSessionName: null,
-    graphWorkflowExecution: null,
-    referenceDocuments: [],
-  });
+function seedStateWithSession(): ManagerState {
+  return {
+    projects: {
+      [PROJECT_PATH]: {
+        rootPath: PROJECT_PATH,
+        sessions: {
+          [SESSION_NAME]: {
+            sessionName: SESSION_NAME,
+            worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
+            branchName: `csm/${SESSION_NAME}`,
+            createdAt: "2026-04-28T09:00:00.000Z",
+            lastActivityAt: "2026-04-28T09:00:00.000Z",
+            archived: false,
+            finished: false,
+            conversations: [],
+            source: "cc",
+            creationMode: "normal",
+            tddEnabled: true,
+            targetBranch: "main",
+            parentSessionName: null,
+            graphWorkflowExecution: null,
+            referenceDocuments: [],
+          },
+        },
+      },
+    },
+    archivedProjects: [],
+    pinnedProjects: [],
+  };
 }
 
 function buildStore(): WorkflowEnvelopeStore {
@@ -74,7 +90,8 @@ beforeEach(async () => {
     `cc-envelope-session-state-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   await mkdir(TEST_DIR, { recursive: true });
-  await seedSession();
+  db = _createTestDb({ inMemory: true });
+  seedWholeState(db, seedStateWithSession());
 });
 
 afterEach(async () => {

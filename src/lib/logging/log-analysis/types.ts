@@ -15,6 +15,7 @@ type LogAnalysisCategory =
   | "client-timing"
   | "error-correlation"
   | "instrumentation-gap"
+  | "convention-violation"
   | "regression";
 
 export interface ParsedServerLogRecord {

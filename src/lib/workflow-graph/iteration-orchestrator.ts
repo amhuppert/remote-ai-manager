@@ -42,7 +42,10 @@ import {
   createGraphWorkflowValidationService,
   type GraphWorkflowValidationService,
 } from "@/lib/workflow-graph/execution-validation";
-import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
+import {
+  createGraphWorkflowExecutionEventPublisher,
+  type GraphWorkflowEventDelivery,
+} from "@/lib/workflow-graph/execution-events";
 import {
   createApprovalGateService,
   type ApprovalGateService,
@@ -81,10 +84,7 @@ interface GraphWorkflowIterationExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -676,6 +676,7 @@ export function createGraphWorkflowIterationOrchestrator(
         deps.executionRepository.mutateActive(projectPath, sessionName, fn),
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
       // Withdraw-only concern; the orchestrator never calls `withdrawAll`, so a
       // no-op refusal (actor treated as not live) is correct on the park path.
       sendConversationEvent: () => false,
@@ -843,15 +844,20 @@ export function createGraphWorkflowIterationOrchestrator(
     taskFailureMessages: Record<string, string>;
     publishValidationEvent?: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecutionEvent[];
+    ) => GraphWorkflowEventDelivery;
   }): Promise<GraphWorkflowExecution> {
-    return deps.executionRepository.mutateActive(
+    // Reopened-task observability captured (pure) inside the reducer and emitted
+    // AFTER the mutation commits, so the write-queue critical section performs no
+    // logging I/O (`no-slow-work-in-critical-section`).
+    const reopenedTaskLog: Array<{ taskId: string; failureMessage: string }> =
+      [];
+    const committed = await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
       (latest) => {
         const nextExecution = cloneExecution(latest);
         const failureTimestamp = getNow(deps);
-        const execLogger = getExecutionLogger(nextExecution.id);
+        reopenedTaskLog.length = 0;
 
         for (const taskId of input.reopenTaskIds) {
           const taskState = nextExecution.taskStates[taskId];
@@ -881,15 +887,7 @@ export function createGraphWorkflowIterationOrchestrator(
             { message: failureMessage, timestamp: failureTimestamp },
           );
 
-          execLogger?.task(input.contextId, "task.reopened", {
-            taskId,
-            failureMessage,
-          });
-          logger.info("graph-workflow.task.reopened", {
-            executionId: nextExecution.id,
-            contextId: input.contextId,
-            taskId,
-          });
+          reopenedTaskLog.push({ taskId, failureMessage });
         }
 
         const contextState = nextExecution.contextStates[input.contextId];
@@ -906,14 +904,29 @@ export function createGraphWorkflowIterationOrchestrator(
           hasLiveIteration: true,
         });
 
+        const delivery = input.publishValidationEvent?.(nextExecution);
         return {
           execution: nextExecution,
-          events: input.publishValidationEvent
-            ? input.publishValidationEvent(nextExecution)
-            : [],
+          events: delivery?.events ?? [],
+          pushes: delivery?.pushes ?? [],
         };
       },
     );
+
+    // Post-commit: emit the reopened-task logs (file I/O) outside the lock.
+    const execLogger = getExecutionLogger(committed.id);
+    for (const { taskId, failureMessage } of reopenedTaskLog) {
+      execLogger?.task(input.contextId, "task.reopened", {
+        taskId,
+        failureMessage,
+      });
+      logger.info("graph-workflow.task.reopened", {
+        executionId: committed.id,
+        contextId: input.contextId,
+        taskId,
+      });
+    }
+    return committed;
   }
 
   function buildScriptValidatorRemediationTaskInstructions(
@@ -1321,9 +1334,8 @@ export function createGraphWorkflowIterationOrchestrator(
       await deps.executionRepository.mutateActive(
         input.projectPath,
         input.sessionName,
-        (latest) => ({
-          execution: latest,
-          events: eventPublisher.publishValidationResult({
+        (latest) => {
+          const delivery = eventPublisher.publishValidationResult({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             execution: latest,
@@ -1335,8 +1347,9 @@ export function createGraphWorkflowIterationOrchestrator(
             reopenTaskIds: [],
             sessionRef: null,
             reviewArtifact: null,
-          }),
-        }),
+          });
+          return { execution: latest, ...delivery };
+        },
       );
       const haltReason: GraphWorkflowHaltReason = {
         type: "validator_infra_error",
@@ -1457,22 +1470,20 @@ export function createGraphWorkflowIterationOrchestrator(
         reset.machineSnapshot = buildLifecycleSnapshot(reset, {
           hasLiveIteration: true,
         });
-        return {
+        const delivery = eventPublisher.publishValidationResult({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
           execution: reset,
-          events: eventPublisher.publishValidationResult({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            execution: reset,
-            contextId: input.contextId,
-            validatorType: "context",
-            pass: true,
-            summary: validation.summary,
-            issues: [],
-            reopenTaskIds: [],
-            sessionRef: validation.sessionRef ?? null,
-            reviewArtifact: validation.reviewArtifact ?? null,
-          }),
-        };
+          contextId: input.contextId,
+          validatorType: "context",
+          pass: true,
+          summary: validation.summary,
+          issues: [],
+          reopenTaskIds: [],
+          sessionRef: validation.sessionRef ?? null,
+          reviewArtifact: validation.reviewArtifact ?? null,
+        });
+        return { execution: reset, ...delivery };
       },
     );
 
@@ -1645,24 +1656,33 @@ export function createGraphWorkflowIterationOrchestrator(
 
     if (approvalRequestedAt !== null) {
       const requestedAt: string = approvalRequestedAt;
-      // The parking mutation has committed; this follow-up mutation only
-      // persists the approval-pending history entry that the publisher
-      // appends alongside its SSE broadcast and push dispatch.
+      // Post-commit `gate.pending` — the parking mutation (which called the now
+      // pure `enterAwaitingApproval`) has committed, so this logging I/O runs
+      // outside the write-queue critical section (`no-slow-work-in-critical-section`).
+      logger.info("gate.pending", {
+        executionId: persistedExecution.id,
+        contextId: input.contextId,
+        conversationId,
+        requestedAt,
+      });
+      // This follow-up mutation only persists the approval-pending history
+      // entry that the publisher appends alongside its SSE broadcast and push
+      // dispatch.
       const executionWithApprovalEvent =
         await deps.executionRepository.mutateActive(
           input.projectPath,
           input.sessionName,
-          (latest) => ({
-            execution: latest,
-            events: eventPublisher.publishApprovalPending({
+          (latest) => {
+            const delivery = eventPublisher.publishApprovalPending({
               projectPath: input.projectPath,
               sessionName: input.sessionName,
               execution: latest,
               contextId: input.contextId,
               conversationId,
               requestedAt,
-            }),
-          }),
+            });
+            return { execution: latest, ...delivery };
+          },
         );
       return {
         conversationId,

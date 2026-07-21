@@ -3,11 +3,13 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config/loader";
 import { createStateStore as createStateManager } from "@/lib/state-store";
+import { getStateDb } from "@/lib/state-store/store";
 import {
   _createTestDb,
   _installTestDb,
   _resetForTesting as _resetStateDb,
 } from "@/lib/state-store/state-db";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -324,22 +326,33 @@ describe("graph workflow execution repository", () => {
   it("creates, updates, and archives active executions in session state", async () => {
     const { repository, stateManager } = createServices();
 
-    await stateManager.updateSession("/repo", {
-      sessionName: "session-1",
-      worktreePath: "/repo/.worktrees/session-1",
-      branchName: "csm/session-1",
-      createdAt: "2026-03-27T12:00:00.000Z",
-      lastActivityAt: "2026-03-27T12:00:00.000Z",
-      archived: false,
-      finished: false,
-      conversations: [],
-      source: "cc",
-      creationMode: "normal",
-      tddEnabled: true,
-      targetBranch: "main",
-      parentSessionName: null,
-      graphWorkflowExecution: null,
-      referenceDocuments: [],
+    seedWholeState(getStateDb(), {
+      projects: {
+        "/repo": {
+          rootPath: "/repo",
+          sessions: {
+            "session-1": {
+              sessionName: "session-1",
+              worktreePath: "/repo/.worktrees/session-1",
+              branchName: "csm/session-1",
+              createdAt: "2026-03-27T12:00:00.000Z",
+              lastActivityAt: "2026-03-27T12:00:00.000Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              creationMode: "normal",
+              tddEnabled: true,
+              targetBranch: "main",
+              parentSessionName: null,
+              graphWorkflowExecution: null,
+              referenceDocuments: [],
+            },
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
     });
 
     const created = await repository.create("/repo", "session-1", {

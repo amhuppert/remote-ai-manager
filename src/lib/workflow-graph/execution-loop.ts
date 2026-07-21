@@ -17,6 +17,7 @@ import {
 import {
   createApprovalGateService,
   type ApprovalGateService,
+  type AppliedApprovalDecision,
 } from "@/lib/workflow-graph/approval-gate";
 import {
   createUserInputGateService,
@@ -127,10 +128,7 @@ export interface GraphWorkflowExecutionLoopWorkflowManager {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   getActive(
     projectPath: string,
@@ -472,6 +470,7 @@ export function createGraphWorkflowExecutionLoop(
         deps.workflowManager.mutateActive(projectPath, sessionName, fn),
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
       sendConversationEvent,
       now: () => new Date().toISOString(),
     });
@@ -844,6 +843,13 @@ export function createGraphWorkflowExecutionLoop(
       decision: GraphWorkflowApprovalDecision,
     ): Promise<ApprovalApplicationOutcome> {
       let exitedStatus: Exclude<GraphWorkflowStatus, "running"> | null = null;
+      // Applied-decision observability captured (pure) inside the reducer and
+      // emitted AFTER the mutation commits, so the write-queue critical section
+      // performs no logging I/O (`no-slow-work-in-critical-section`). Boxed so
+      // the reducer's assignment survives control-flow narrowing after the call.
+      const appliedBox: { value: AppliedApprovalDecision | null } = {
+        value: null,
+      };
       execution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
@@ -854,14 +860,20 @@ export function createGraphWorkflowExecutionLoop(
           }
           const next = structuredClone(e);
           if (decision.type === "approved") {
-            approvalGateService.applyApprovedDecision(next, contextId);
+            appliedBox.value = approvalGateService.applyApprovedDecision(
+              next,
+              contextId,
+            );
             if (next.contextStates[contextId]) {
               transitionContextStatus(next, contextId, "completed", {
                 reason: "approval_gate.apply_approved_decision",
               });
             }
           } else {
-            approvalGateService.applyRejectedDecision(next, contextId);
+            appliedBox.value = approvalGateService.applyRejectedDecision(
+              next,
+              contextId,
+            );
           }
           // Decision application rebuilds the snapshot the same way the
           // gate-off completion path would have; there is never a live
@@ -885,6 +897,21 @@ export function createGraphWorkflowExecutionLoop(
         });
         return { applied: false, status: exitedStatus };
       }
+      // Post-commit: emit `gate.applied` now that the decision has persisted.
+      const applied = appliedBox.value;
+      if (applied !== null) {
+        logger.info("gate.applied", {
+          executionId: execution.id,
+          contextId,
+          decisionType: applied.decisionType,
+          ...(applied.decisionType === "rejected"
+            ? {
+                remediationTaskId: applied.remediationTaskId,
+                rejectionMessageLength: applied.rejectionMessageLength,
+              }
+            : {}),
+        });
+      }
       return { applied: true };
     }
 
@@ -900,9 +927,8 @@ export function createGraphWorkflowExecutionLoop(
       execution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
-        (latest) => ({
-          execution: latest,
-          events: eventPublisher.publishApprovalResolved({
+        (latest) => {
+          const delivery = eventPublisher.publishApprovalResolved({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             execution: latest,
@@ -911,8 +937,9 @@ export function createGraphWorkflowExecutionLoop(
             decision: decision.type,
             message: decision.type === "rejected" ? decision.message : null,
             decidedAt: decision.decidedAt,
-          }),
-        }),
+          });
+          return { execution: latest, ...delivery };
+        },
       );
     }
 

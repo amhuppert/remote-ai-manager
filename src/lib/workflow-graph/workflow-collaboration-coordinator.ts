@@ -44,9 +44,7 @@ interface WorkflowCollaborationCoordinatorWorkflowManager {
   mutateActive(
     projectPath: string,
     sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   recordPendingHaltReason(input: {
     projectPath: string;

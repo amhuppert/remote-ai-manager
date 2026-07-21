@@ -4,7 +4,6 @@ import {
   type DebugLogsIngestDeps,
 } from "./ingest-route-handlers";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ManagerState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 const BASE_CONVERSATION: ConversationState = {
   id: "conv-1",
@@ -42,7 +41,6 @@ const BASE_CONVERSATION: ConversationState = {
     verificationSteps: [],
     lastTurnFailed: false,
   },
-  machineSnapshot: null,
   agentBackend: "claude" as const,
   backendRef: null,
   unread: false,
@@ -69,22 +67,20 @@ const BASE_SESSION: SessionState = {
   referenceDocuments: [],
 };
 
-const BASE_STATE: ManagerState = {
-  projects: {
-    "test-proj": {
-      rootPath: "/home/projects/test-proj",
-      sessions: { "test-session": BASE_SESSION },
-    },
-  },
-  archivedProjects: [],
-  pinnedProjects: [],
-};
-
 function createTestDeps(
   overrides: Partial<DebugLogsIngestDeps> = {},
 ): DebugLogsIngestDeps {
   return {
-    readState: vi.fn().mockResolvedValue(BASE_STATE),
+    getConversationById: vi.fn(async (conversationId: string) =>
+      conversationId === BASE_CONVERSATION.id
+        ? {
+            projectPath: "/home/projects/test-proj",
+            sessionName: "test-session",
+            worktreePath: "/tmp/worktree",
+            conversation: BASE_CONVERSATION,
+          }
+        : null,
+    ),
     getSession: vi.fn().mockResolvedValue(BASE_SESSION),
     resolveProjectPath: vi.fn().mockResolvedValue("/home/projects/test-proj"),
     appendDebugLogEntry: vi.fn(),
@@ -165,7 +161,7 @@ describe("POST /api/debug-logs", () => {
       reason: "self_log",
     });
     expect(deps.appendDebugLogEntry).not.toHaveBeenCalled();
-    expect(deps.readState).not.toHaveBeenCalled();
+    expect(deps.getConversationById).not.toHaveBeenCalled();
     expect(deps.getSession).not.toHaveBeenCalled();
   });
 
@@ -194,7 +190,7 @@ describe("POST /api/debug-logs", () => {
       "/home/projects/test-proj",
       "test-session",
     );
-    expect(deps.readState).not.toHaveBeenCalled();
+    expect(deps.getConversationById).not.toHaveBeenCalled();
     expect(deps.appendDebugLogEntry).toHaveBeenCalledWith(
       "/tmp/.debug/conv-1/logs.jsonl",
       expect.objectContaining({ hypothesisId: "H1" }),
@@ -221,7 +217,7 @@ describe("POST /api/debug-logs", () => {
     );
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ accepted: 1, dropped: 0 });
-    expect(deps.readState).toHaveBeenCalled();
+    expect(deps.getConversationById).toHaveBeenCalledWith("conv-1");
     expect(deps.appendDebugLogEntry).toHaveBeenCalled();
   });
 
@@ -244,15 +240,6 @@ describe("POST /api/debug-logs", () => {
     };
     deps = createTestDeps({
       getSession: vi.fn().mockResolvedValue(inactiveSession),
-      readState: vi.fn().mockResolvedValue({
-        ...BASE_STATE,
-        projects: {
-          "test-proj": {
-            ...BASE_STATE.projects["test-proj"]!,
-            sessions: { "test-session": inactiveSession },
-          },
-        },
-      }),
     });
     handlers = createDebugLogsIngestHandlers(deps);
 

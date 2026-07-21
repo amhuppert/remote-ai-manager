@@ -59,7 +59,7 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
       pendingApproval: null,
     });
 
-    service.enterAwaitingApproval(execution, {
+    const entered = service.enterAwaitingApproval(execution, {
       contextId: GATED_CONTEXT_ID,
       conversationId: CONVERSATION_ID,
     });
@@ -70,6 +70,12 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
       conversationId: CONVERSATION_ID,
       requestedAt: NOW,
       decision: null,
+    });
+    // Pure helper: the `gate.pending` observability is returned as DATA for the
+    // caller to log post-commit (no logging I/O inside the write-queue reducer).
+    expect(entered).toEqual({
+      conversationId: CONVERSATION_ID,
+      requestedAt: NOW,
     });
   });
 
@@ -144,7 +150,11 @@ describe("createApprovalGateService.applyApprovedDecision", () => {
     });
     const before = structuredClone(execution);
 
-    service.applyApprovedDecision(execution, GATED_CONTEXT_ID);
+    const applied = service.applyApprovedDecision(execution, GATED_CONTEXT_ID);
+
+    // Pure helper: returns the `gate.applied` observability as DATA for the
+    // caller to log post-commit (no logging I/O inside the write-queue reducer).
+    expect(applied).toEqual({ decisionType: "approved" });
 
     const contextState = execution.contextStates[GATED_CONTEXT_ID];
     expect(contextState?.pendingApproval).toBeNull();
@@ -225,7 +235,15 @@ describe("createApprovalGateService.applyRejectedDecision", () => {
     if (!contextStateBefore) throw new Error("fixture missing gated context");
     contextStateBefore.consecutiveFailureCount = 2;
 
-    service.applyRejectedDecision(execution, GATED_CONTEXT_ID);
+    const applied = service.applyRejectedDecision(execution, GATED_CONTEXT_ID);
+
+    // Pure helper: returns the `gate.applied` observability as DATA for the
+    // caller to log post-commit (no logging I/O inside the write-queue reducer).
+    expect(applied).toEqual({
+      decisionType: "rejected",
+      remediationTaskId: `task-${GATED_CONTEXT_ID}-rejection-1`,
+      rejectionMessageLength: REJECTION_MESSAGE.length,
+    });
 
     const contextState = execution.contextStates[GATED_CONTEXT_ID];
     expect(contextState?.pendingApproval).toBeNull();
@@ -423,7 +441,7 @@ describe("createApprovalGateService.recordDecision", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 

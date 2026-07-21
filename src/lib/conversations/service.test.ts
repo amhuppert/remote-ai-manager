@@ -7,11 +7,13 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createConfigReader } from "../config/loader";
 import { createStateStore as createStateManager } from "../state-store";
+import { getStateDb } from "../state-store/store";
 import {
   _createTestDb,
   _installTestDb,
   _resetForTesting as _resetStateDb,
 } from "../state-store/state-db";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import { createConversationService } from "./service";
 import {
   ContinuityForkError,
@@ -192,7 +194,6 @@ function makeConvo(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude" as const,
     backendRef: null,
     unread: false,
@@ -228,10 +229,10 @@ function makeSessionWith(
 }
 
 async function seedSession(
-  state: ReturnType<typeof createStateManager>,
+  _state: ReturnType<typeof createStateManager>,
   sessionOverrides: Record<string, unknown> = {},
 ) {
-  await state.writeState({
+  seedWholeState(getStateDb(), {
     projects: {
       "/proj": {
         rootPath: "/proj",

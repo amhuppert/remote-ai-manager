@@ -6,7 +6,7 @@ import {
   getProjectDisplayName as defaultGetProjectDisplayName,
 } from "@/lib/projects/resolver";
 import { getProjectConversation as defaultGetProjectConversation } from "@/lib/state-store";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { spawnProposalSchema, type SpawnResult } from "./schemas";
@@ -119,4 +119,4 @@ export function createSpawnRouteHandlers(
 }
 
 const _handlers = createSpawnRouteHandlers();
-export const spawnSessionsPOST = _handlers.POST;
+export const spawnSessionsPOST = withTracing(_handlers.POST);

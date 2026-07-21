@@ -134,22 +134,35 @@ function buildRealContext(
     broadcast: () => undefined,
     now: () => "2026-03-27T12:00:00.000Z",
   });
+  // Serialized read-modify-write backing the sync `mutateActive`; awaits `fn`
+  // so a synchronous reducer is applied and its result handled like production.
+  const mutateActiveImpl = async (
+    _projectPath: string,
+    _sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) =>
+      | GraphWorkflowExecution
+      | { execution: GraphWorkflowExecution; events: unknown[] }
+      | Promise<
+          | GraphWorkflowExecution
+          | { execution: GraphWorkflowExecution; events: unknown[] }
+        >,
+  ): Promise<GraphWorkflowExecution> => {
+    const next = queue.then(async () => {
+      const draft = structuredClone(current);
+      const result = await fn(draft);
+      current = structuredClone(
+        "execution" in result && "events" in result ? result.execution : result,
+      );
+      return current;
+    });
+    queue = next.catch(() => undefined);
+    return next;
+  };
   const factory = createGraphWorkflowExecutionToolContext({
     workflowManager: {
-      async mutateActive(_projectPath, _sessionName, fn) {
-        const next = queue.then(async () => {
-          const draft = structuredClone(current);
-          const result = await fn(draft);
-          current = structuredClone(
-            "execution" in result && "events" in result
-              ? result.execution
-              : result,
-          );
-          return current;
-        });
-        queue = next.catch(() => undefined);
-        return next;
-      },
+      mutateActive: mutateActiveImpl,
     },
     runtimeEditService: createGraphWorkflowRuntimeEditService({
       createTaskId: () => "task-agent-generated",

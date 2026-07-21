@@ -588,6 +588,13 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
       if ("execution" in result && "events" in result) {
         setCurrent(result.execution);
         appendedEvents.push(...result.events);
+        // Mirror the repository-level mutation seam: commit the rows, then
+        // perform delivery post-commit through the injected event publisher so
+        // the reducer's derived events reach the broadcast spy.
+        input.eventPublisher?.deliver({
+          events: result.events,
+          pushes: result.pushes,
+        });
         return result.execution;
       }
       setCurrent(result);
@@ -5648,16 +5655,34 @@ describe("execution loop", () => {
           harness.setCurrent(next);
           return next;
         },
-        publishUserInputPending: () => [],
-        publishUserInputResolved: (input) => {
-          overrides.broadcast?.({
-            type: "graph-workflow-user-input-resolved",
-            contextId: input.contextId,
-            conversationId: input.conversationId,
-            questionBatchId: input.questionBatchId,
-            resolution: input.resolution,
-          });
-          return [];
+        publishUserInputPending: () => ({ events: [], pushes: [] }),
+        publishUserInputResolved: (input) => ({
+          events: [
+            {
+              occurredAt: "2026-03-27T12:03:00.000Z",
+              preReset: false,
+              event: {
+                type: "graph-workflow-user-input-resolved",
+                projectName: "test",
+                sessionName: input.sessionName,
+                executionId: input.execution.id,
+                contextId: input.contextId,
+                conversationId: input.conversationId,
+                questionBatchId: input.questionBatchId,
+                resolution: input.resolution,
+                resolvedAt: input.resolvedAt,
+              },
+            },
+          ],
+          pushes: [],
+        }),
+        // The gate delivers post-commit: broadcast each derived row's event so
+        // the test's broadcast capture sees the resolved event, mirroring the
+        // production publisher's deliver.
+        deliver: (delivery) => {
+          for (const row of delivery.events) {
+            overrides.broadcast?.(row.event);
+          }
         },
         sendConversationEvent: overrides.sendConversationEvent ?? (() => true),
         now: () => "2026-03-27T12:03:00.000Z",

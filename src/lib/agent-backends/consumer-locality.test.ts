@@ -32,7 +32,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fromPromise } from "xstate";
 
 import { agentSessionRefSchema } from "@/lib/shared/schemas";
-import { managerStateSchema } from "@/lib/projects/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
@@ -177,7 +176,6 @@ function makeConversationRecord(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: TESTFAKE_BACKEND_ID,
     backendRef: null,
     unread: false,
@@ -209,7 +207,8 @@ function createInMemoryCapabilityComposer(
 ) {
   const deps: ConversationStartCapabilityComposerDeps = {
     readGlobalOverrides: async () => undefined,
-    readState: async () => managerStateSchema.parse({ projects: {} }),
+    getProjectAgentCapabilityOverrides: async () => undefined,
+    getSession: async () => null,
     getProjectConversation: async () => null,
     getDiscoveryProvider: (cascadeKind) => {
       lookups.push(cascadeKind);
@@ -449,6 +448,7 @@ describe("E2: executePromptForMachine drives a testfake turn end-to-end", () => 
     setActorDeps(harness.deps);
 
     const input: ExecutePromptInput = {
+      persistence: "durable",
       projectPath: PROJECT_PATH,
       projectName: PROJECT_NAME,
       sessionName: SESSION_NAME,
@@ -626,6 +626,7 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
         loadActorInput: async () => ({
           projectName: PROJECT_NAME,
           sessionWorktreePath: WORKTREE_PATH,
+          persistence: "durable",
           conversation: {
             createdAt: NOW,
             forkedFrom: null,

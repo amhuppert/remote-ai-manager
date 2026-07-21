@@ -69,7 +69,6 @@ export function buildConversation(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: input.agentBackend,
     backendRef: input.backendRef ?? null,
     unread: false,

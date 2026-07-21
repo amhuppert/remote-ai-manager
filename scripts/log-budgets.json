@@ -1,0 +1,6 @@
+{
+  "routeClassP95Ms": 1000,
+  "writeQueueHoldMs": 500,
+  "stateReadMs": 100,
+  "rowSizeBytes": 262144
+}

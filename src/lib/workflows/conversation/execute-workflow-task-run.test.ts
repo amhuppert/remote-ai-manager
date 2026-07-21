@@ -120,6 +120,7 @@ function makeActorInputData(
   return {
     projectName: "test-project",
     sessionWorktreePath: "/test/project/.worktrees/test-session",
+    persistence: "ephemeral",
     conversation: {
       createdAt: "2026-01-01T00:00:00.000Z",
       forkedFrom: null,

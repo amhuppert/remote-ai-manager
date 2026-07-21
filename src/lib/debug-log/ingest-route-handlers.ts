@@ -10,7 +10,7 @@
 
 import { NextResponse } from "next/server";
 import {
-  readState as defaultReadState,
+  getConversationById as defaultGetConversationById,
   getSession as defaultGetSession,
 } from "@/lib/state-store";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
@@ -20,7 +20,7 @@ import {
   getDebugLogStats as defaultGetDebugLogStats,
 } from "@/lib/debug-log/service";
 import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
-import { createLogger } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { DebugLogEntry } from "@/lib/debug-log/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -45,11 +45,15 @@ interface ConversationContext {
   projectName: string;
   sessionName: string;
   conversation: ConversationState;
-  session: SessionState;
 }
 
 export interface DebugLogsIngestDeps {
-  readState: typeof defaultReadState;
+  getConversationById(conversationId: string): Promise<{
+    projectPath: string;
+    sessionName: string;
+    worktreePath: string;
+    conversation: ConversationState;
+  } | null>;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -69,7 +73,7 @@ export interface DebugLogsIngestDeps {
 }
 
 const defaultDeps: DebugLogsIngestDeps = {
-  readState: defaultReadState,
+  getConversationById: defaultGetConversationById,
   getSession: defaultGetSession,
   resolveProjectPath: defaultResolveProjectPath,
   appendDebugLogEntry: defaultAppendDebugLogEntry,
@@ -103,30 +107,19 @@ export function createDebugLogsIngestHandlers(
       projectName: projectNameHint,
       sessionName: session.sessionName,
       conversation,
-      session,
     };
   }
 
   async function scanForConversation(
     conversationId: string,
   ): Promise<ConversationContext | null> {
-    const state = await deps.readState();
-    for (const [projectName, project] of Object.entries(state.projects)) {
-      for (const [, session] of Object.entries(project.sessions)) {
-        const conversation = session.conversations.find(
-          (c) => c.id === conversationId,
-        );
-        if (conversation) {
-          return {
-            projectName,
-            sessionName: session.sessionName,
-            conversation,
-            session,
-          };
-        }
-      }
-    }
-    return null;
+    const found = await deps.getConversationById(conversationId);
+    if (!found) return null;
+    return {
+      projectName: found.projectPath,
+      sessionName: found.sessionName,
+      conversation: found.conversation,
+    };
   }
 
   function OPTIONS(): NextResponse {
@@ -272,5 +265,11 @@ export function createDebugLogsIngestHandlers(
 // ---------------------------------------------------------------------------
 
 const _defaultDebugLogsIngestHandlers = createDebugLogsIngestHandlers();
-export const debugLogsIngestOptions = _defaultDebugLogsIngestHandlers.OPTIONS;
-export const ingestDebugLogs = _defaultDebugLogsIngestHandlers.POST;
+// OPTIONS is a synchronous CORS preflight; wrap it in an async adapter so it
+// matches withTracing's Promise-returning handler contract.
+export const debugLogsIngestOptions = withTracing(async () =>
+  _defaultDebugLogsIngestHandlers.OPTIONS(),
+);
+export const ingestDebugLogs = withTracing(
+  _defaultDebugLogsIngestHandlers.POST,
+);

@@ -323,57 +323,46 @@ describe("resetExecutionContext", () => {
       vi.clearAllMocks();
     });
 
-    it("routes a paused-execution reset through the transition owner (context_transition.applied old -> pending)", () => {
+    it("resets a paused-execution context to pending through the transition owner WITHOUT logging in the critical section", () => {
       const next = resetExecutionContext(
         buildExecution({ status: "paused" }),
         "context-implement",
       );
 
       expect(next.contextStates["context-implement"]!.status).toBe("pending");
-      expect(logSpy.debug).toHaveBeenCalledWith(
-        "context_transition.applied",
-        expect.objectContaining({
-          contextId: "context-implement",
-          from: "running",
-          to: "pending",
-        }),
-      );
+      // The transition owner runs inside a write-queue reducer, so it is pure —
+      // no logging I/O (`no-slow-work-in-critical-section`, Design 3.1/3.3).
+      expect(logSpy.debug).not.toHaveBeenCalled();
+      expect(logSpy.info).not.toHaveBeenCalled();
+      expect(logSpy.warn).not.toHaveBeenCalled();
+      expect(logSpy.error).not.toHaveBeenCalled();
     });
 
-    it("routes a halted-execution reset through the transition owner", () => {
+    it("resets a halted-execution context to pending through the transition owner WITHOUT logging in the critical section", () => {
       const next = resetExecutionContext(
         buildExecution({ status: "halted" }),
         "context-implement",
       );
 
       expect(next.contextStates["context-implement"]!.status).toBe("pending");
-      expect(logSpy.debug).toHaveBeenCalledWith(
-        "context_transition.applied",
-        expect.objectContaining({
-          contextId: "context-implement",
-          from: "running",
-          to: "pending",
-        }),
-      );
+      expect(logSpy.debug).not.toHaveBeenCalled();
+      expect(logSpy.info).not.toHaveBeenCalled();
+      expect(logSpy.warn).not.toHaveBeenCalled();
+      expect(logSpy.error).not.toHaveBeenCalled();
     });
 
-    it("rejects a completed context via the owner's legality check while keeping the reset error contract", () => {
+    it("rejects a completed context via the owner's legality check while keeping the reset error contract, and does NOT log in the critical section", () => {
       expect(() =>
         resetExecutionContext(buildExecution(), "context-plan"),
       ).toThrow(ResetExecutionContextError);
 
-      expect(logSpy.error).toHaveBeenCalledWith(
-        "context_transition.illegal",
-        expect.objectContaining({
-          contextId: "context-plan",
-          from: "completed",
-          to: "pending",
-        }),
-      );
-      expect(logSpy.debug).not.toHaveBeenCalledWith(
-        "context_transition.applied",
-        expect.anything(),
-      );
+      // The illegal transition throws (the error carries from/to/contextId/reason)
+      // but does NOT log — the mutation seam's owner reconstructs the log
+      // post-abort, outside the write-queue lock.
+      expect(logSpy.error).not.toHaveBeenCalled();
+      expect(logSpy.debug).not.toHaveBeenCalled();
+      expect(logSpy.info).not.toHaveBeenCalled();
+      expect(logSpy.warn).not.toHaveBeenCalled();
     });
   });
 

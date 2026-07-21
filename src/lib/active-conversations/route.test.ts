@@ -5,7 +5,18 @@ import {
 } from "./route-handlers";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
+import type { SessionConversationListItem } from "@/lib/state-store";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+
+/**
+ * Internal fixture source shared by the derived accessors. Tests reconfigure it
+ * via `deps.readState.mockResolvedValue(makeState(...))`; the handler itself
+ * never receives it — the list-item and archived-project accessors project from
+ * it, mirroring how the production accessors read the same rows.
+ */
+type TestDeps = ActiveConversationsRouteDeps & {
+  readState: ReturnType<typeof vi.fn>;
+};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -108,10 +119,27 @@ function makeState(
 // Mock deps
 // ---------------------------------------------------------------------------
 
-function createTestDeps(): ActiveConversationsRouteDeps {
+function createTestDeps(): TestDeps {
   const readState = vi.fn().mockResolvedValue(makeState());
   return {
     readState,
+    listSessionConversationListItems: vi.fn(async () => {
+      const state: ManagerState = await readState();
+      return Object.entries(state.projects).flatMap(([projectPath, project]) =>
+        Object.values(project.sessions).map(
+          (session) =>
+            ({
+              projectPath,
+              session,
+              conversations: session.conversations,
+            }) as unknown as SessionConversationListItem,
+        ),
+      );
+    }),
+    getArchivedProjects: vi.fn(async (): Promise<Set<string>> => {
+      const state: ManagerState = await readState();
+      return new Set(state.archivedProjects);
+    }),
     getProjectDisplayName: vi.fn().mockReturnValue("my-project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
     listProjectConversations: vi.fn().mockResolvedValue([]),
@@ -142,7 +170,7 @@ function createTestDeps(): ActiveConversationsRouteDeps {
 // Setup
 // ---------------------------------------------------------------------------
 
-let deps: ActiveConversationsRouteDeps;
+let deps: TestDeps;
 let handlers: ReturnType<typeof createActiveConversationsRouteHandlers>;
 
 beforeEach(() => {

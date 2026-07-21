@@ -7,6 +7,7 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import type { MutateActiveResult } from "./execution-repository";
 import { createGraphWorkflowExecutionToolContext } from "./execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
@@ -54,39 +55,46 @@ function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
 }
 
 function isMutateActiveResult(
-  value: unknown,
-): value is { execution: GraphWorkflowExecution; events: unknown[] } {
+  value: MutateActiveResult | GraphWorkflowExecution,
+): value is MutateActiveResult {
   return (
-    typeof value === "object" &&
-    value !== null &&
     "execution" in value &&
     "events" in value &&
-    Array.isArray((value as { events: unknown }).events)
+    Array.isArray((value as MutateActiveResult).events)
   );
 }
 
-function createFakeMutateActive(store: FakeStore) {
+function createFakeMutateActive(
+  store: FakeStore,
+  // The publisher the fake seam delivers through post-commit, mirroring the real
+  // `createGraphWorkflowExecutionRepository`: the reducer returns inert
+  // `{ events, pushes }` DATA and the broadcast fires only after the (fake)
+  // commit — never from a callable the reducer returned (`post-commit-delivery`).
+  eventPublisher: ReturnType<typeof createGraphWorkflowExecutionEventPublisher>,
+) {
   return async function mutateActive(
     _projectPath: string,
     _sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | GraphWorkflowExecution
-      | { execution: GraphWorkflowExecution; events: unknown[] }
-      | Promise<
-          | GraphWorkflowExecution
-          | { execution: GraphWorkflowExecution; events: unknown[] }
-        >,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution> {
-    const next = store.serializedQueue.then(async () => {
+    const next = store.serializedQueue.then(() => {
       store.mutateCount += 1;
       const draft = structuredClone(store.current);
-      const result = await fn(draft);
+      const result = fn(draft);
       const execution = isMutateActiveResult(result)
         ? result.execution
         : result;
       store.current = structuredClone(execution);
+      // Mirror the production seam: broadcast the derived events only after the
+      // (fake) commit.
+      if (isMutateActiveResult(result)) {
+        eventPublisher.deliver({
+          events: result.events,
+          pushes: result.pushes ?? [],
+        });
+      }
       return store.current;
     });
     store.serializedQueue = next.catch(() => undefined);
@@ -234,7 +242,9 @@ function buildContext(options: BuildContextOptions = {}): {
     now: () => "2026-03-27T12:00:00.000Z",
   });
   const factory = createGraphWorkflowExecutionToolContext({
-    workflowManager: { mutateActive: createFakeMutateActive(store) },
+    workflowManager: {
+      mutateActive: createFakeMutateActive(store, eventPublisher),
+    },
     runtimeEditService: createGraphWorkflowRuntimeEditService({
       createTaskId: () => "task-agent-generated",
       now: () => "2026-03-27T12:00:00.000Z",

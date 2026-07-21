@@ -1,4 +1,3 @@
-import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 export interface RuntimeTarget {
   projectPath: string;
@@ -8,34 +7,36 @@ export interface RuntimeTarget {
   backend: AgentBackendId;
 }
 
-export interface RuntimeTargetProject {
+/**
+ * Identity tuple for one conversation whose live runtime may need targeting.
+ * The caller supplies these directly (identity-tier read), never a full
+ * `SessionState` tree.
+ */
+export interface RuntimeTargetConversation {
   projectPath: string;
-  projectName: string;
-  sessions: readonly SessionState[];
+  sessionName: string;
+  conversationId: string;
 }
 
 export function collectRuntimeTargets(input: {
-  projects: readonly RuntimeTargetProject[];
+  conversations: readonly RuntimeTargetConversation[];
+  getProjectName(projectPath: string): string;
   getRuntime(
     conversationId: string,
   ): { status: "alive" | "dead"; backend: AgentBackendId } | undefined;
 }): RuntimeTarget[] {
   const targets: RuntimeTarget[] = [];
 
-  for (const project of input.projects) {
-    for (const session of project.sessions) {
-      for (const conversation of session.conversations) {
-        const runtime = input.getRuntime(conversation.id);
-        if (!runtime || runtime.status !== "alive") continue;
-        targets.push({
-          projectPath: project.projectPath,
-          projectName: project.projectName,
-          sessionName: session.sessionName,
-          conversationId: conversation.id,
-          backend: runtime.backend,
-        });
-      }
-    }
+  for (const conversation of input.conversations) {
+    const runtime = input.getRuntime(conversation.conversationId);
+    if (!runtime || runtime.status !== "alive") continue;
+    targets.push({
+      projectPath: conversation.projectPath,
+      projectName: input.getProjectName(conversation.projectPath),
+      sessionName: conversation.sessionName,
+      conversationId: conversation.conversationId,
+      backend: runtime.backend,
+    });
   }
 
   return targets;

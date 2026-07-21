@@ -67,6 +67,33 @@ export interface WithTracingOptions {
   mapError?(error: unknown): Response | undefined;
 }
 
+/**
+ * Marker stamped on every handler `withTracing` returns. A route export cannot
+ * be statically proven wrapped — most route shells re-export a handler wrapped
+ * inside a lib module — so the architecture test that asserts every API route
+ * export went through the tracing net checks for this symbol at runtime instead
+ * (`route-tracing.architecture.test.ts`). The property is non-enumerable and
+ * symbol-keyed, so it is invisible to JSON, spreads, and `for..in` — it changes
+ * nothing about how the handler runs.
+ */
+export const WITH_TRACING_MARKER: unique symbol = Symbol(
+  "cc.logging.withTracing.wrapped",
+);
+
+/**
+ * True when `value` is a handler produced by `withTracing` (carries the
+ * `WITH_TRACING_MARKER`). Narrow enough that an ordinary function — even one
+ * that merely calls a wrapped handler — is not mistaken for a wrapped one.
+ */
+export function isWithTracingWrapped(value: unknown): boolean {
+  return (
+    typeof value === "function" &&
+    (value as unknown as { [WITH_TRACING_MARKER]?: unknown })[
+      WITH_TRACING_MARKER
+    ] === true
+  );
+}
+
 function buildErrorResponse(
   err: unknown,
   mapError: WithTracingOptions["mapError"],
@@ -107,7 +134,7 @@ export function withTracing<
   handler: (request: Request, context: C) => Promise<Response>,
   options?: WithTracingOptions,
 ): (request: Request, context: C) => Promise<Response> {
-  return async (request, context) => {
+  const wrapped = async (request: Request, context: C): Promise<Response> => {
     const start = Date.now();
     const url = new URL(request.url);
 
@@ -200,4 +227,15 @@ export function withTracing<
       }
     });
   };
+
+  // Stamp the wrapper so the architecture test can prove, at runtime, that this
+  // export went through tracing. Non-enumerable + symbol-keyed keeps it out of
+  // every normal property view; the handler behaves exactly as before.
+  Object.defineProperty(wrapped, WITH_TRACING_MARKER, {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return wrapped;
 }

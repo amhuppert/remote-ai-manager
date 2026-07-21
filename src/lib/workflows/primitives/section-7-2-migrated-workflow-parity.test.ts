@@ -124,12 +124,13 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       });
       const previousExecution = executionWith("pending");
       const nextExecution = executionWith("running");
-      graphPublisher.publishExecutionUpdate({
+      const graphDelivery = graphPublisher.publishExecutionUpdate({
         projectPath: "/projects/acme",
         sessionName: "session-1",
         previousExecution,
         nextExecution,
       });
+      graphPublisher.deliver(graphDelivery);
 
       // 3. Merge job: running → completed.
       const jobRunning: JobStatusEvent = {

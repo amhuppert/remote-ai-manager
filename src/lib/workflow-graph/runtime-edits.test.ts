@@ -73,9 +73,24 @@ describe("graph workflow runtime edit service", () => {
       },
     });
 
-    const updated = service.applyAgentTaskAdd(execution, "context-plan", {
+    const { execution: updated, added } = service.applyAgentTaskAdd(
+      execution,
+      "context-plan",
+      {
+        title: "Capture open questions",
+        instructions: "Document the unknowns discovered during planning.",
+      },
+    );
+
+    // Pure helper: the observability payload is returned as DATA (the caller
+    // emits `task.added_by_agent` post-commit, outside the write-queue lock).
+    expect(added).toEqual({
+      executionId: execution.id,
+      contextId: "context-plan",
+      taskId: "task-agent-1",
       title: "Capture open questions",
-      instructions: "Document the unknowns discovered during planning.",
+      instructionsLength: "Document the unknowns discovered during planning."
+        .length,
     });
 
     expect(
@@ -251,10 +266,14 @@ describe("graph workflow runtime edit service", () => {
         },
       };
 
-      const updated = service.applyAgentTaskAdd(execution, "context-verify", {
-        title: "Verify subtask discovered mid-run",
-        instructions: "Cover the newly identified case.",
-      });
+      const { execution: updated } = service.applyAgentTaskAdd(
+        execution,
+        "context-verify",
+        {
+          title: "Verify subtask discovered mid-run",
+          instructions: "Cover the newly identified case.",
+        },
+      );
 
       // context-verify gains a task, tipping the task-count tiebreaker.
       expect(updated.lanePlan.continuationMap["context-plan"]).toBe(

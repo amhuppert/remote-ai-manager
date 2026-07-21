@@ -104,6 +104,7 @@ const defaultInput: ConversationInput = {
   agentBackend: "claude",
   backendRef: null,
   promptCount: 0,
+  persistence: "durable",
 };
 
 const TARGET = {

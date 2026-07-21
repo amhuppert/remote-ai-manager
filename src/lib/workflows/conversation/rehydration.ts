@@ -11,6 +11,7 @@
 
 import { createActor, type Snapshot } from "xstate";
 import { getActorRegistry, getMachineFactory, isActorSettled } from "./manager";
+import { durableConversationPersistence } from "./persistence-adapter";
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
@@ -29,7 +30,15 @@ import type {
   ConversationRole,
 } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
-import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  PROJECT_CONVERSATION_SESSION_SENTINEL,
+  isProjectSentinel,
+} from "@/lib/conversations/project-conversation-scope";
+import type { ConversationSnapshotOwner } from "@/lib/state-store";
+// Deep import (not the barrel): the whole-state startup read is deliberately
+// NOT a StateStore method, so it is reachable only through the startup-owned
+// module. The `no-restricted-imports` startup-reader gate allowlists this file.
+import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 // The `conversation-manager` module key is a stable log-query key: rehydration
@@ -102,7 +111,9 @@ export async function rehydrateOneConversationActor(
       abortController: new AbortController(),
     });
 
-    const machine = getMachineFactory()();
+    // A persisted resume-token snapshot means a real ConversationState record
+    // exists, so rehydration always restores onto the durable persistence path.
+    const machine = getMachineFactory()(durableConversationPersistence);
     // XState v5 requires `input` even when restoring from snapshot.
     // The snapshot already contains the full context, so input is
     // only used for type satisfaction — it won't override the snapshot.
@@ -120,6 +131,7 @@ export async function rehydrateOneConversationActor(
         agentBackend: conversation.agentBackend,
         backendRef: conversation.backendRef,
         promptCount: conversation.promptCount,
+        persistence: "durable",
       },
       snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]>,
     });
@@ -231,11 +243,25 @@ export function collectRehydrationCandidates(
 }
 
 export interface RehydrateConversationActorsDeps {
-  readState(): Promise<ManagerState>;
+  /**
+   * The startup-only whole-state read. Assembles the project/session/
+   * conversation tree without touching the snapshot sidecar — resume tokens are
+   * fetched per candidate via `getConversationMachineSnapshot` below.
+   */
+  readAllForStartup(): ManagerState;
   listAllProjectConversations(): Promise<
     { projectPath: string; conversation: ConversationState }[]
   >;
   getProjectDisplayName(projectPath: string): string;
+  /**
+   * Point read of one conversation's persisted resume-token snapshot from the
+   * owner-discriminated sidecar. The snapshot no longer rides the conversation
+   * row, so rehydration fetches it per candidate on demand.
+   */
+  getConversationMachineSnapshot(
+    owner: ConversationSnapshotOwner,
+    conversationId: string,
+  ): unknown | null;
   validateRestoredSnapshot(
     raw: unknown,
     conversationId: string,
@@ -248,9 +274,10 @@ async function defaultRehydrateDeps(): Promise<RehydrateConversationActorsDeps> 
   const { getProjectDisplayName } = await import("@/lib/projects/resolver");
   const { validateRestoredSnapshot } = await import("./persistence");
   return {
-    readState: stateMod.readState,
+    readAllForStartup: readAllForStartupFromDb,
     listAllProjectConversations: stateMod.listAllProjectConversations,
     getProjectDisplayName,
+    getConversationMachineSnapshot: stateMod.getConversationMachineSnapshot,
     validateRestoredSnapshot,
   };
 }
@@ -264,10 +291,8 @@ export async function rehydrateConversationActors(
   deps?: RehydrateConversationActorsDeps,
 ): Promise<number> {
   const resolved = deps ?? (await defaultRehydrateDeps());
-  const [state, projectConversations] = await Promise.all([
-    resolved.readState(),
-    resolved.listAllProjectConversations(),
-  ]);
+  const projectConversations = await resolved.listAllProjectConversations();
+  const state = resolved.readAllForStartup();
 
   let count = 0;
   let skippedNonResumable = 0;
@@ -278,10 +303,17 @@ export async function rehydrateConversationActors(
     worktreePath,
     conversation,
   } of collectRehydrationCandidates(state, projectConversations)) {
-    if (!conversation.machineSnapshot) continue;
+    const owner: ConversationSnapshotOwner = isProjectSentinel(sessionName)
+      ? "project"
+      : "session";
+    const persistedSnapshot = resolved.getConversationMachineSnapshot(
+      owner,
+      conversation.id,
+    );
+    if (persistedSnapshot == null) continue;
 
     const snapshot = resolved.validateRestoredSnapshot(
-      conversation.machineSnapshot,
+      persistedSnapshot,
       conversation.id,
       1, // expected schema version
     );

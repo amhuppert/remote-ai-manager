@@ -48,6 +48,37 @@ function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
   publishEvent(event);
 }
 
+/**
+ * The pure-DATA result of a publisher-derivation call (Design 3.2). Building it
+ * has NO side effects and it carries NO callable: `events` are the append-only
+ * rows persisted in the mutation's transaction (each row's inner SSE event is
+ * also what gets broadcast), and `pushes` are the push-notification descriptors
+ * to dispatch. Because the record is inert data, a mutation reducer that returns
+ * it literally cannot broadcast before its write persists — delivery is
+ * performed only by {@link deliverGraphWorkflowEvents}, which the mutation seam
+ * invokes AFTER its transaction commits (`post-commit-delivery`). Callers lose
+ * delivery access entirely; the seam owns delivery timing.
+ */
+export interface GraphWorkflowEventDelivery {
+  events: GraphWorkflowExecutionEvent[];
+  pushes: GraphWorkflowPushInfo[];
+}
+
+/**
+ * Concatenate several deliveries into one: append-only rows and push descriptors
+ * join in order. Pure data — used where a single mutation bundles events from
+ * more than one publisher call (e.g. charter-registered + the initial status
+ * diff at execution create).
+ */
+export function combineEventDeliveries(
+  deliveries: readonly GraphWorkflowEventDelivery[],
+): GraphWorkflowEventDelivery {
+  return {
+    events: deliveries.flatMap((delivery) => delivery.events),
+    pushes: deliveries.flatMap((delivery) => delivery.pushes),
+  };
+}
+
 interface PublishExecutionUpdateInput {
   projectPath: string;
   sessionName: string;
@@ -138,7 +169,7 @@ export interface PublishLiveEditAppliedInput {
   source: GraphWorkflowLiveEditAppliedEvent["source"];
 }
 
-interface GraphWorkflowPushInfo {
+export interface GraphWorkflowPushInfo {
   kind:
     | "workflow-completed"
     | "workflow-halted"
@@ -433,27 +464,54 @@ function buildEvents(
   );
 }
 
-function publishEvents(
+/**
+ * Perform the post-commit delivery of a derived {@link GraphWorkflowEventDelivery}
+ * (Design 3.2). Broadcasts each persisted row's inner SSE event through the
+ * publication seam (default) or the injected test broadcaster, then dispatches
+ * every push descriptor. This is the ONLY code that produces external side
+ * effects for a mutation's events, and the mutation seam calls it strictly AFTER
+ * the transaction commits — so the delivery cannot precede the write. The
+ * live-edit observability log fires here (post-commit), never during the pure
+ * derivation that builds the delivery.
+ */
+export function deliverGraphWorkflowEvents(
   deps: GraphWorkflowExecutionEventPublisherDeps,
-  events: GraphWorkflowSSEEvent[],
+  delivery: GraphWorkflowEventDelivery,
 ): void {
   const send = deps.broadcast ?? defaultBroadcast;
-  for (const event of events) {
-    send(event);
+  for (const row of delivery.events) {
+    send(row.event);
+    if (row.event.type === "graph-workflow-live-edit-applied") {
+      logger.info("live_edit.applied", {
+        executionId: row.event.executionId,
+        liveRevision: row.event.liveRevision,
+        source: row.event.source,
+        operationCount: row.event.operationCount,
+        affectedContextIds: row.event.affectedContextIds,
+      });
+    }
+  }
+  if (deps.dispatchPush) {
+    for (const push of delivery.pushes) {
+      deps.dispatchPush(push);
+    }
   }
 }
 
-function dispatchPushNotifications(
-  deps: GraphWorkflowExecutionEventPublisherDeps,
+/**
+ * Pure derivation of the push-notification descriptors for an execution-update
+ * diff. Returns data only — no dispatch happens here; the seam dispatches these
+ * post-commit through {@link deliverGraphWorkflowEvents}.
+ */
+function derivePushNotifications(
   events: GraphWorkflowSSEEvent[],
   input: PublishExecutionUpdateInput,
   nextExecution: GraphWorkflowExecution,
   index: ExecutionIndex,
-): void {
-  if (!deps.dispatchPush) return;
-
+): GraphWorkflowPushInfo[] {
   const projectName = getProjectName(input.projectPath);
   const { sessionName } = input;
+  const pushes: GraphWorkflowPushInfo[] = [];
 
   const hasCircuitBreaker = events.some(
     (e) => e.type === "graph-workflow-circuit-breaker",
@@ -462,7 +520,7 @@ function dispatchPushNotifications(
   for (const event of events) {
     if (event.type === "graph-workflow-status") {
       if (event.workflowStatus === "completed") {
-        deps.dispatchPush({
+        pushes.push({
           kind: "workflow-completed",
           projectName,
           sessionName,
@@ -470,7 +528,7 @@ function dispatchPushNotifications(
       } else if (event.workflowStatus === "halted" && !hasCircuitBreaker) {
         // Circuit-breaker events send their own, more specific push —
         // skip the generic halt push to avoid duplicate notifications.
-        deps.dispatchPush({
+        pushes.push({
           kind: "workflow-halted",
           projectName,
           sessionName,
@@ -480,7 +538,7 @@ function dispatchPushNotifications(
 
     if (event.type === "graph-workflow-circuit-breaker") {
       const contextDef = index.contextById.get(event.contextId);
-      deps.dispatchPush({
+      pushes.push({
         kind: "circuit-breaker",
         projectName,
         sessionName,
@@ -498,7 +556,7 @@ function dispatchPushNotifications(
       ).filter((cs) => cs.status === "completed").length;
       const totalContexts = index.contextById.size;
 
-      deps.dispatchPush({
+      pushes.push({
         kind: "context-completed",
         projectName,
         sessionName,
@@ -508,6 +566,8 @@ function dispatchPushNotifications(
       });
     }
   }
+
+  return pushes;
 }
 
 export function createGraphWorkflowExecutionEventPublisher(
@@ -515,7 +575,7 @@ export function createGraphWorkflowExecutionEventPublisher(
 ) {
   function publishExecutionUpdate(
     input: PublishExecutionUpdateInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const projectName = getProjectName(input.projectPath);
     const previousExecution = input.previousExecution;
     const nextExecution = input.nextExecution;
@@ -815,14 +875,15 @@ export function createGraphWorkflowExecutionEventPublisher(
     }
 
     const occurredAt = getNow(deps);
-    publishEvents(deps, events);
-    dispatchPushNotifications(deps, events, input, nextExecution, nextIndex);
-    return buildEvents(occurredAt, events);
+    return {
+      events: buildEvents(occurredAt, events),
+      pushes: derivePushNotifications(events, input, nextExecution, nextIndex),
+    };
   }
 
   function publishValidationResult(
     input: PublishValidationResultInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const event: GraphWorkflowValidationResultEvent = {
       type: "graph-workflow-validation-result",
       projectName: getProjectName(input.projectPath),
@@ -838,13 +899,15 @@ export function createGraphWorkflowExecutionEventPublisher(
       reviewArtifact: input.reviewArtifact ?? null,
     };
 
-    publishEvents(deps, [event]);
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
   }
 
   function publishApprovalPending(
     input: PublishApprovalPendingInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const projectName = getProjectName(input.projectPath);
     const index = createExecutionIndex(
       input.execution.workingDefinition,
@@ -863,19 +926,22 @@ export function createGraphWorkflowExecutionEventPublisher(
       requestedAt: input.requestedAt,
     };
 
-    publishEvents(deps, [event]);
-    deps.dispatchPush?.({
-      kind: "approval-pending",
-      projectName,
-      sessionName: input.sessionName,
-      contextTitle: contextTitle ?? input.contextId,
-    });
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [
+        {
+          kind: "approval-pending",
+          projectName,
+          sessionName: input.sessionName,
+          contextTitle: contextTitle ?? input.contextId,
+        },
+      ],
+    };
   }
 
   function publishApprovalResolved(
     input: PublishApprovalResolvedInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const event: GraphWorkflowApprovalResolvedEvent = {
       type: "graph-workflow-approval-resolved",
       projectName: getProjectName(input.projectPath),
@@ -888,13 +954,15 @@ export function createGraphWorkflowExecutionEventPublisher(
       decidedAt: input.decidedAt,
     };
 
-    publishEvents(deps, [event]);
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
   }
 
   function publishUserInputPending(
     input: PublishUserInputPendingInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const projectName = getProjectName(input.projectPath);
     const index = createExecutionIndex(
       input.execution.workingDefinition,
@@ -916,13 +984,15 @@ export function createGraphWorkflowExecutionEventPublisher(
 
     // No push here: the existing conversation ask-registration flow already
     // notifies the operator when the question batch registers (Req 2.4).
-    publishEvents(deps, [event]);
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
   }
 
   function publishUserInputResolved(
     input: PublishUserInputResolvedInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const event: GraphWorkflowUserInputResolvedEvent = {
       type: "graph-workflow-user-input-resolved",
       projectName: getProjectName(input.projectPath),
@@ -935,13 +1005,15 @@ export function createGraphWorkflowExecutionEventPublisher(
       resolvedAt: input.resolvedAt,
     };
 
-    publishEvents(deps, [event]);
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
   }
 
   function publishCharterRegistered(
     input: PublishCharterRegisteredInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const event: GraphWorkflowCharterRegisteredEvent = {
       type: "graph-workflow-charter-registered",
       projectName: getProjectName(input.projectPath),
@@ -952,13 +1024,15 @@ export function createGraphWorkflowExecutionEventPublisher(
       charterHash: input.charterHash,
     };
 
-    publishEvents(deps, [event]);
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
   }
 
   function publishCharterUpdated(
     input: PublishCharterUpdatedInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const event: GraphWorkflowCharterUpdatedEvent = {
       type: "graph-workflow-charter-updated",
       projectName: getProjectName(input.projectPath),
@@ -969,21 +1043,24 @@ export function createGraphWorkflowExecutionEventPublisher(
       charterHash: input.charterHash,
     };
 
-    publishEvents(deps, [event]);
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
   }
 
   /**
-   * Broadcast the mandatory live-edit event AND return it as an appendable row
-   * (doc 06, D16). A live edit may change only config or future structure and
-   * so produce no status/diff event; broadcasting here is the sole wire signal.
-   * The repository's extra-events path only appends returned rows to
-   * `graph_workflow_events` — it never broadcasts — so the route calls this and
-   * includes the returned rows in the mutation's events (broadcast + persisted).
+   * Derive the mandatory live-edit event as an appendable row (doc 06, D16) —
+   * the sole wire signal for a live edit that changes only config or future
+   * structure and so produces no status/diff event. Pure: no logging, no
+   * broadcast. The repository's extra-events path appends the returned rows to
+   * `graph_workflow_events`; the mutation seam broadcasts them (and emits the
+   * `live_edit.applied` observability log) post-commit via
+   * {@link deliverGraphWorkflowEvents}.
    */
   function publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
-  ): GraphWorkflowExecutionEvent[] {
+  ): GraphWorkflowEventDelivery {
     const event: GraphWorkflowLiveEditAppliedEvent = {
       type: "graph-workflow-live-edit-applied",
       projectName: getProjectName(input.projectPath),
@@ -995,15 +1072,20 @@ export function createGraphWorkflowExecutionEventPublisher(
       source: input.source,
     };
 
-    publishEvents(deps, [event]);
-    logger.info("live_edit.applied", {
-      executionId: input.executionId,
-      liveRevision: input.liveRevision,
-      source: input.source,
-      operationCount: input.operationCount,
-      affectedContextIds: input.affectedContextIds,
-    });
-    return buildEvents(getNow(deps), [event]);
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
+  }
+
+  /**
+   * Perform a derived delivery's external side effects (SSE broadcast + push
+   * dispatch) using this publisher's deps. The mutation seam calls this only
+   * after the mutation's transaction has committed; the rare standalone caller
+   * that publishes post-commit (e.g. the user-input gate) calls it directly.
+   */
+  function deliver(delivery: GraphWorkflowEventDelivery): void {
+    deliverGraphWorkflowEvents(deps, delivery);
   }
 
   return {
@@ -1016,5 +1098,6 @@ export function createGraphWorkflowExecutionEventPublisher(
     publishCharterRegistered,
     publishCharterUpdated,
     publishLiveEditApplied,
+    deliver,
   };
 }

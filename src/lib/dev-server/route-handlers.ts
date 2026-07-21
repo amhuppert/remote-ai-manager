@@ -17,6 +17,7 @@ import {
   SessionNotFoundError,
   UnknownDevServerError,
   UnmanagedDevServerDetectedError,
+  awaitReadyDevServer,
   ensureDevServer,
   listDevServers,
   stopDevServer,
@@ -71,6 +72,7 @@ const defaultDeps: DevServerRouteDeps = {
   service: {
     list: listDevServers,
     ensure: ensureDevServer,
+    awaitReady: awaitReadyDevServer,
     stop: stopDevServer,
     stopUnmanaged: stopUnmanagedDevServer,
   },

@@ -226,12 +226,13 @@ describe("section 4 production paths — migrated publishers go through the shar
       activeContextIds: [],
     });
 
-    publisher.publishExecutionUpdate({
+    const delivery = publisher.publishExecutionUpdate({
       projectPath: "/proj/p",
       sessionName: "s",
       previousExecution,
       nextExecution,
     });
+    publisher.deliver(delivery);
 
     unsubscribe();
 

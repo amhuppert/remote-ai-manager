@@ -864,6 +864,44 @@ describe("createValidatorRunner", () => {
     );
   });
 
+  // Construction-site contract (Design 4, AC #3): a `__validator__:*` lane has no
+  // persisted ConversationState record, so its runtime is constructed with an
+  // explicit `persistence: "ephemeral"` choice. This is the exact site that
+  // logged 1,314 `Conversation not found in session` mutation failures before the
+  // adapter existed — one per syncDerived / mark-read / mark-unread transition of
+  // every validator turn. The compaction-lane half of AC #3 is asserted in
+  // context-artifacts/service.test.ts.
+  it("constructs the validator lane as an ephemeral runtime (no ConversationState record)", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: validatorConfig,
+    });
+
+    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: expect.stringMatching(/^__validator__:/),
+        actorInput: expect.objectContaining({ persistence: "ephemeral" }),
+      }),
+    );
+  });
+
   it("dispatches a registered third backend through the semantic conversation strategy", async () => {
     const fake = createTestFakeBackend();
     _registerBackendForTesting(fake.descriptor);

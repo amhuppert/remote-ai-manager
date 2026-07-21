@@ -79,7 +79,6 @@ function makeConversation(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
     ...overrides,
@@ -104,6 +103,37 @@ function emptyDiscovery<T extends AgentCapabilityCascadeKind>(cascadeKind: T) {
     diagnostics: [] as AgentCapabilityDiagnostic[],
     sourceSignature: `${cascadeKind}:empty`,
     refreshedAt: NOW,
+  };
+}
+
+interface FanoutSessionFixture {
+  sessionName: string;
+  worktreePath: string;
+  agentCapabilityOverrides?: AgentCapabilityOverrides;
+  conversations: ConversationState[];
+}
+
+/**
+ * Builds the affected-conversation lister's focused project reads from a plain
+ * project fixture, mirroring the production wiring
+ * (`listProjectPaths` + per-project `getProjectSessions` +
+ * `getProjectAgentCapabilityOverrides`) that replaced the whole-state read.
+ */
+function focusedProjectFanoutDeps(
+  projects: Record<
+    string,
+    {
+      agentCapabilityOverrides?: AgentCapabilityOverrides;
+      sessions?: Record<string, FanoutSessionFixture>;
+    }
+  >,
+) {
+  return {
+    listProjectPaths: async () => Object.keys(projects),
+    getProjectSessions: async (projectPath: string) =>
+      Object.values(projects[projectPath]?.sessions ?? {}),
+    getProjectAgentCapabilityOverrides: async (projectPath: string) =>
+      projects[projectPath]?.agentCapabilityOverrides,
   };
 }
 
@@ -138,32 +168,23 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
 
   it("includes active PLCs affected by project-level override changes", async () => {
     const lister = createAffectedConversationLister({
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              sessions: {
-                "session-a": {
-                  sessionName: "session-a",
-                  worktreePath: "/repo/.worktrees/session-a",
-                  branchName: "session-a",
-                  createdAt: NOW,
-                  lastActivityAt: NOW,
-                  conversations: [
-                    makeConversation({
-                      id: "session-conv",
-                      scope: "session",
-                      agentBackend: "claude",
-                    }),
-                  ],
-                },
-              },
+      ...focusedProjectFanoutDeps({
+        "/repo": {
+          sessions: {
+            "session-a": {
+              sessionName: "session-a",
+              worktreePath: "/repo/.worktrees/session-a",
+              conversations: [
+                makeConversation({
+                  id: "session-conv",
+                  scope: "session",
+                  agentBackend: "claude",
+                }),
+              ],
             },
           },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+        },
+      }),
       readGlobalOverrides: async () => undefined,
       listAllProjectConversations: async () => [
         {
@@ -211,17 +232,7 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
 
   it("includes active PLCs affected by global override changes", async () => {
     const lister = createAffectedConversationLister({
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              sessions: {},
-            },
-          },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+      ...focusedProjectFanoutDeps({ "/repo": { sessions: {} } }),
       readGlobalOverrides: async () => overrides({ alpha: false }),
       listAllProjectConversations: async () => [
         {
@@ -253,32 +264,23 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
 
   it("enumerates an active PLC alongside a session conversation for a global override change (Req 15.3, 17.4)", async () => {
     const lister = createAffectedConversationLister({
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              sessions: {
-                "session-a": {
-                  sessionName: "session-a",
-                  worktreePath: "/repo/.worktrees/session-a",
-                  branchName: "session-a",
-                  createdAt: NOW,
-                  lastActivityAt: NOW,
-                  conversations: [
-                    makeConversation({
-                      id: "session-conv",
-                      scope: "session",
-                      agentBackend: "claude",
-                    }),
-                  ],
-                },
-              },
+      ...focusedProjectFanoutDeps({
+        "/repo": {
+          sessions: {
+            "session-a": {
+              sessionName: "session-a",
+              worktreePath: "/repo/.worktrees/session-a",
+              conversations: [
+                makeConversation({
+                  id: "session-conv",
+                  scope: "session",
+                  agentBackend: "claude",
+                }),
+              ],
             },
           },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+        },
+      }),
       readGlobalOverrides: async () => overrides({ alpha: false }),
       listAllProjectConversations: async () => [
         {
@@ -319,32 +321,23 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
 
   it("does not read PLC records for session-scoped override changes", async () => {
     const lister = createAffectedConversationLister({
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              sessions: {
-                "session-a": {
-                  sessionName: "session-a",
-                  worktreePath: "/repo/.worktrees/session-a",
-                  branchName: "session-a",
-                  createdAt: NOW,
-                  lastActivityAt: NOW,
-                  conversations: [
-                    makeConversation({
-                      id: "session-conv",
-                      scope: "session",
-                      agentBackend: "claude",
-                    }),
-                  ],
-                },
-              },
+      ...focusedProjectFanoutDeps({
+        "/repo": {
+          sessions: {
+            "session-a": {
+              sessionName: "session-a",
+              worktreePath: "/repo/.worktrees/session-a",
+              conversations: [
+                makeConversation({
+                  id: "session-conv",
+                  scope: "session",
+                  agentBackend: "claude",
+                }),
+              ],
             },
           },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+        },
+      }),
       readGlobalOverrides: async () => undefined,
       listAllProjectConversations: async () => {
         throw new Error("session fanout must not read PLC records");
@@ -374,32 +367,23 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
 
   it("keeps global session fanout when PLC enumeration fails", async () => {
     const lister = createAffectedConversationLister({
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              sessions: {
-                "session-a": {
-                  sessionName: "session-a",
-                  worktreePath: "/repo/.worktrees/session-a",
-                  branchName: "session-a",
-                  createdAt: NOW,
-                  lastActivityAt: NOW,
-                  conversations: [
-                    makeConversation({
-                      id: "session-conv",
-                      scope: "session",
-                      agentBackend: "claude",
-                    }),
-                  ],
-                },
-              },
+      ...focusedProjectFanoutDeps({
+        "/repo": {
+          sessions: {
+            "session-a": {
+              sessionName: "session-a",
+              worktreePath: "/repo/.worktrees/session-a",
+              conversations: [
+                makeConversation({
+                  id: "session-conv",
+                  scope: "session",
+                  agentBackend: "claude",
+                }),
+              ],
             },
           },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+        },
+      }),
       readGlobalOverrides: async () => undefined,
       listAllProjectConversations: async () => {
         throw new Error("project conversation repo unavailable");
@@ -425,36 +409,24 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
 
   it("isolates project-conversation override fanout to the selected active PLC", async () => {
     const lister = createAffectedConversationLister({
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              sessions: {
-                "session-a": {
-                  sessionName: "session-a",
-                  worktreePath: "/repo/.worktrees/session-a",
-                  branchName: "session-a",
-                  createdAt: NOW,
-                  lastActivityAt: NOW,
-                  conversations: [
-                    makeConversation({
-                      id: "session-conv",
-                      scope: "session",
-                      agentBackend: "claude",
-                    }),
-                  ],
-                },
-              },
-            },
-            "/other": {
-              rootPath: "/other",
-              sessions: {},
+      ...focusedProjectFanoutDeps({
+        "/repo": {
+          sessions: {
+            "session-a": {
+              sessionName: "session-a",
+              worktreePath: "/repo/.worktrees/session-a",
+              conversations: [
+                makeConversation({
+                  id: "session-conv",
+                  scope: "session",
+                  agentBackend: "claude",
+                }),
+              ],
             },
           },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+        },
+        "/other": { sessions: {} },
+      }),
       readGlobalOverrides: async () => undefined,
       listAllProjectConversations: async () => [
         {
@@ -505,6 +477,73 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
         conversationId: "plc-1",
       }),
     ]);
+  });
+
+  it("re-reads project overrides on every fanout so a later change is not masked by a stale rule", async () => {
+    const repoProject: {
+      agentCapabilityOverrides?: AgentCapabilityOverrides;
+      sessions?: Record<string, FanoutSessionFixture>;
+    } = {
+      agentCapabilityOverrides: overrides({ alpha: true }),
+      sessions: {},
+    };
+    const projects: Record<string, typeof repoProject> = {
+      "/repo": repoProject,
+    };
+
+    let projectOverrideReads = 0;
+    const lister = createAffectedConversationLister({
+      listProjectPaths: async () => Object.keys(projects),
+      getProjectSessions: async (projectPath: string) =>
+        Object.values(projects[projectPath]?.sessions ?? {}),
+      getProjectAgentCapabilityOverrides: async (projectPath: string) => {
+        projectOverrideReads += 1;
+        return projects[projectPath]?.agentCapabilityOverrides;
+      },
+      readGlobalOverrides: async () => overrides({ alpha: false }),
+      listAllProjectConversations: async () => [
+        {
+          projectPath: "/repo",
+          conversation: makeConversation({
+            id: "plc-1",
+            agentBackend: "claude",
+          }),
+        },
+      ],
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+      getProjectDisplayName: () => "Repo",
+    });
+
+    // First fanout: the project's explicit `alpha` override masks the global change.
+    const firstFanout = await lister({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+    expect(firstFanout).toEqual([]);
+
+    // A later mutation removes the project's masking rule for `alpha`.
+    repoProject.agentCapabilityOverrides = undefined;
+
+    // Second fanout must reflect the new project rules: the global change now
+    // reaches the PLC. A lister that memoized overrides across fanouts would
+    // reuse the stale masking rule and wrongly exclude it.
+    const secondFanout = await lister({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+    expect(secondFanout).toEqual([
+      expect.objectContaining({
+        conversationScope: "project",
+        projectPath: "/repo",
+        conversationId: "plc-1",
+      }),
+    ]);
+
+    // Dedup is per fanout (session + PLC fanout share one read each invocation),
+    // so exactly one read per fanout — two across both, never one cached forever.
+    expect(projectOverrideReads).toBe(2);
   });
 });
 
@@ -602,32 +641,13 @@ describe("agent-capabilities/default-deps project conversation composition", () 
     const composer = createConversationStartCapabilityComposer({
       readGlobalOverrides: async () =>
         overridesFor("codex-skills", { alpha: false }),
-      readState: async () =>
-        ({
-          projects: {
-            "/repo": {
-              rootPath: "/repo",
-              agentCapabilityOverrides: overridesFor("codex-skills", {
-                alpha: false,
-              }),
-              sessions: {
-                masked: {
-                  sessionName: "masked",
-                  worktreePath: "/repo/.worktrees/masked",
-                  branchName: "masked",
-                  createdAt: NOW,
-                  lastActivityAt: NOW,
-                  conversations: [],
-                  agentCapabilityOverrides: overridesFor("codex-skills", {
-                    alpha: false,
-                  }),
-                },
-              },
-            },
-          },
-          archivedProjects: [],
-          pinnedProjects: [],
-        }) as never,
+      getProjectAgentCapabilityOverrides: async () =>
+        overridesFor("codex-skills", { alpha: false }),
+      getSession: async () => {
+        throw new Error(
+          "project-conversation compose must not read session state",
+        );
+      },
       getProjectConversation: async () =>
         makeConversation({
           id: "plc-1",

@@ -1,0 +1,5 @@
+{"timestamp":"2026-07-20T12:00:00.000Z","level":"warn","module":"tracing","message":"request.complete","traceId":"t-route","action":"queue","method":"POST","path":"/api/projects/demo/sessions/main/conversations/c1/queue","status":200,"durationMs":2500}
+{"timestamp":"2026-07-20T12:00:01.000Z","level":"info","module":"state-store.write-queue","message":"state-store.write_queue.timing","traceId":"t-hold","label":"createSession","waitMs":10,"holdMs":14200}
+{"timestamp":"2026-07-20T12:00:02.000Z","level":"error","module":"state-store.write-queue","message":"state-store.write_queue.hold_budget_exceeded","traceId":"t-hold","label":"createSession","holdMs":14200,"budgetMs":500}
+{"timestamp":"2026-07-20T12:00:03.000Z","level":"warn","module":"tracing","message":"request.complete","traceId":"t-202","action":"dev-server-start","method":"POST","path":"/api/projects/demo/dev-servers","status":202,"durationMs":9000}
+{"timestamp":"2026-07-20T12:00:04.000Z","level":"warn","module":"state-store","message":"state-store.row_size.exceeded","table":"conversations","column":"machine_snapshot","id":"c1","bytes":3000000}

@@ -12,11 +12,17 @@ import {
   createWorkflowCharterService,
   type WorkflowCharterService,
 } from "./charter/service";
-import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import {
+  combineEventDeliveries,
+  createGraphWorkflowExecutionEventPublisher,
+  type GraphWorkflowEventDelivery,
+  type GraphWorkflowPushInfo,
+} from "./execution-events";
 import {
   buildInitialContextStates,
   buildInitialTaskStates,
 } from "./execution-state";
+import { IllegalContextStatusTransitionError } from "./context-transitions";
 import { computeLanePlan } from "./lane-plan";
 import { substituteContent } from "./parameter-substitution";
 import type { TemplateTier } from "./template-library-service";
@@ -63,14 +69,19 @@ export interface GraphWorkflowExecutionSeed {
 
 /**
  * A `mutateActive` callback may return the next execution alone (its
- * append-only events are derived from the prev→next diff) or pair it with
- * `events` it published directly (e.g. a validation-result or approval event,
- * which no state diff can reconstruct). Both the diff events and these extra
- * events are appended to `graph_workflow_events` in the same write.
+ * append-only events are derived from the prev→next diff) or pair it with a
+ * pure-DATA delivery it derived directly (e.g. a validation-result or approval
+ * event, which no state diff can reconstruct). Both the diff events and these
+ * extra events are appended to `graph_workflow_events` in the same write.
+ *
+ * This is inert data — `events` (append-only rows) and `pushes` (push
+ * descriptors), NO callable. The reducer therefore cannot broadcast; the
+ * mutation seam derives the full delivery, and the repository performs it only
+ * AFTER the transaction commits (Design 3.2, `post-commit-delivery`). A callback
+ * that returns only the next execution has no extra events.
  */
-export interface MutateActiveResult {
+export interface MutateActiveResult extends GraphWorkflowEventDelivery {
   execution: GraphWorkflowExecution;
-  events: GraphWorkflowExecutionEvent[];
 }
 
 function isMutateActiveResult(
@@ -100,17 +111,28 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   /**
    * Atomically persist the history-free execution blob and append the
    * publisher-computed events to `graph_workflow_events` inside one write-queue
-   * critical section. The mutator receives the currently-persisted execution.
+   * critical section. The mutator receives the currently-persisted execution
+   * and MUST be synchronous and pure — it runs on the sync WriteQueue entry, so
+   * no I/O (logging included), awaits, or O(total-state) work (Design 3.3,
+   * `no-slow-work-in-critical-section`). It returns inert delivery DATA (rows +
+   * push descriptors), never a callable, so it cannot broadcast. This seam
+   * commits the rows and hands the committed delivery back for the repository to
+   * perform post-commit; the seam itself performs no external delivery. Slow
+   * callers stage their work around it (reserve/finalize).
    */
   mutateActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (current: GraphWorkflowExecution | null) => Promise<{
+    mutate: (current: GraphWorkflowExecution | null) => {
       execution: GraphWorkflowExecution;
       events: GraphWorkflowExecutionEvent[];
-    }>,
-  ): Promise<GraphWorkflowExecution>;
+      pushes?: GraphWorkflowPushInfo[];
+    },
+  ): Promise<{
+    execution: GraphWorkflowExecution;
+    delivery: GraphWorkflowEventDelivery;
+  }>;
   /**
    * Move the active execution to the archived-executions table and null the
    * active blob (its events stay in `graph_workflow_events`).
@@ -274,7 +296,7 @@ export function createGraphWorkflowExecutionRepository(
     // charter onto the execution, and compute the charter-registered event. A
     // render/write/register failure throws here, halting the seed with no
     // partial charter state.
-    const { nextExecution: seededExecution, events: charterEvents } =
+    const { nextExecution: seededExecution, delivery: charterDelivery } =
       await charterService.seedCharter({
         charter: baseExecution.charter,
         worktreePath: session.worktreePath,
@@ -283,49 +305,80 @@ export function createGraphWorkflowExecutionRepository(
         sessionName,
       });
 
-    return deps.mutateActiveGraphWorkflowExecution(
-      projectPath,
-      sessionName,
-      "graphWorkflowExecution.create",
-      async (current) => {
-        // Compare-and-set inside the write-queue critical section. start()'s
-        // active-execution guard runs a long async gauntlet (git probes,
-        // definition load, charter seeding) before create, so two concurrent
-        // starts can both pass it — the second create must not silently
-        // overwrite the first execution, which would leave two loop drivers
-        // on one execution under matching (executionId, loopEpoch) fences.
-        // Terminal statuses mirror the start() guard: those actives are
-        // replaceable (start archives them before creating).
-        const replaceableStatuses: GraphWorkflowStatus[] = [
-          "completed",
-          "halted",
-          "aborted",
-        ];
-        if (current && !replaceableStatuses.includes(current.status)) {
+    // Conflict details captured (pure) inside the reducer and logged AFTER the
+    // critical section, so the queue callback performs no logging I/O
+    // (`no-slow-work-in-critical-section`). The reducer throws the guard error
+    // without logging; the catch below reconstructs the warn from this data.
+    let createConflict: {
+      activeExecutionId: string;
+      activeStatus: GraphWorkflowStatus;
+    } | null = null;
+    const { execution, delivery } = await deps
+      .mutateActiveGraphWorkflowExecution(
+        projectPath,
+        sessionName,
+        "graphWorkflowExecution.create",
+        (current) => {
+          // Compare-and-set inside the write-queue critical section. start()'s
+          // active-execution guard runs a long async gauntlet (git probes,
+          // definition load, charter seeding) before create, so two concurrent
+          // starts can both pass it — the second create must not silently
+          // overwrite the first execution, which would leave two loop drivers
+          // on one execution under matching (executionId, loopEpoch) fences.
+          // Terminal statuses mirror the start() guard: those actives are
+          // replaceable (start archives them before creating).
+          const replaceableStatuses: GraphWorkflowStatus[] = [
+            "completed",
+            "halted",
+            "aborted",
+          ];
+          if (current && !replaceableStatuses.includes(current.status)) {
+            createConflict = {
+              activeExecutionId: current.id,
+              activeStatus: current.status,
+            };
+            throw new WorkflowStartGuardError(
+              "active_execution",
+              `Session "${sessionName}" already has an active graph workflow execution`,
+            );
+          }
+          const updateDelivery = eventPublisher.publishExecutionUpdate({
+            projectPath,
+            sessionName,
+            previousExecution: null,
+            nextExecution: seededExecution,
+          });
+          const combined = combineEventDeliveries([
+            charterDelivery,
+            updateDelivery,
+          ]);
+          return {
+            execution: seededExecution,
+            events: combined.events,
+            pushes: combined.pushes,
+          };
+        },
+      )
+      .catch((err: unknown) => {
+        // Log the CAS-conflict rejection OUTSIDE the write-queue critical section
+        // (the reducer threw inside it without logging).
+        if (err instanceof WorkflowStartGuardError && createConflict !== null) {
           logger.warn("graph-workflow.execution.create_conflict_rejected", {
             projectPath,
             sessionName,
             attemptedExecutionId: seededExecution.id,
-            activeExecutionId: current.id,
-            activeStatus: current.status,
+            activeExecutionId: createConflict.activeExecutionId,
+            activeStatus: createConflict.activeStatus,
           });
-          throw new WorkflowStartGuardError(
-            "active_execution",
-            `Session "${sessionName}" already has an active graph workflow execution`,
-          );
         }
-        const updateEvents = eventPublisher.publishExecutionUpdate({
-          projectPath,
-          sessionName,
-          previousExecution: null,
-          nextExecution: seededExecution,
-        });
-        return {
-          execution: seededExecution,
-          events: [...charterEvents, ...updateEvents],
-        };
-      },
-    );
+        throw err;
+      });
+    // Post-commit, post-critical-section: the mutation seam has durably
+    // committed the event rows; the repository (which owns the publisher, hence
+    // the broadcaster + push dispatcher) performs delivery now — no reducer ever
+    // holds a delivery capability (`post-commit-delivery`).
+    eventPublisher.deliver(delivery);
+    return execution;
   }
 
   async function update(
@@ -335,79 +388,154 @@ export function createGraphWorkflowExecutionRepository(
   ): Promise<void> {
     const parsed = graphWorkflowExecutionSchema.parse(execution);
 
-    await deps.mutateActiveGraphWorkflowExecution(
+    const { delivery } = await deps.mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
       "graphWorkflowExecution.update",
-      async (current) => {
+      (current) => {
         if (!current) {
           throw new Error("No active graph workflow execution");
         }
-        const events = eventPublisher.publishExecutionUpdate({
+        const diff = eventPublisher.publishExecutionUpdate({
           projectPath,
           sessionName,
           previousExecution: current,
           nextExecution: parsed,
         });
-        return { execution: parsed, events };
+        return {
+          execution: parsed,
+          events: diff.events,
+          pushes: diff.pushes,
+        };
       },
     );
+    eventPublisher.deliver(delivery);
   }
 
+  /**
+   * Loop-generation fence, checked inside the write-queue critical section
+   * against the *persisted* execution: a mutation issued by a superseded loop
+   * instance (its execution aborted/replaced, or resumed under a new epoch) is
+   * rejected atomically before the mutator runs. Also asserts an active
+   * execution exists, narrowing `current` to non-null for the reducer.
+   *
+   * Purely computational: it throws {@link StaleLoopFenceError} (which carries
+   * the fence + observed generation) but performs NO logging — logging is I/O
+   * and this runs inside the queue critical section (`no-slow-work-in-critical-
+   * section`). The rejection is logged by `mutateActive`'s catch, outside the
+   * lock.
+   */
+  function assertMutableActive(
+    projectPath: string,
+    sessionName: string,
+    current: GraphWorkflowExecution | null,
+  ): asserts current is GraphWorkflowExecution {
+    const fence = getCurrentLoopFence();
+    if (
+      fence !== null &&
+      loopFenceAppliesTo(fence, projectPath, sessionName) &&
+      !matchesLoopFence(fence, current)
+    ) {
+      throw new StaleLoopFenceError(fence, current);
+    }
+    if (!current) {
+      throw new Error(
+        "Session does not have an active graph workflow execution",
+      );
+    }
+  }
+
+  /**
+   * Derive the seam return from a reducer's result: parse the next execution,
+   * compute the prev→next diff delivery, and merge it with any pure delivery
+   * DATA (events + pushes) the reducer supplied directly. Pure — the result is
+   * inert data the seam commits and the repository delivers post-commit; no
+   * side effect happens here.
+   */
+  function deriveMutateResult(
+    projectPath: string,
+    sessionName: string,
+    current: GraphWorkflowExecution,
+    result: MutateActiveResult | GraphWorkflowExecution,
+  ): {
+    execution: GraphWorkflowExecution;
+    events: GraphWorkflowExecutionEvent[];
+    pushes: GraphWorkflowPushInfo[];
+  } {
+    const next = isMutateActiveResult(result) ? result.execution : result;
+    const extraEvents = isMutateActiveResult(result) ? result.events : [];
+    const extraPushes = isMutateActiveResult(result) ? result.pushes : [];
+    const parsed = graphWorkflowExecutionSchema.parse(next);
+    const diffDelivery = eventPublisher.publishExecutionUpdate({
+      projectPath,
+      sessionName,
+      previousExecution: current,
+      nextExecution: parsed,
+    });
+    return {
+      execution: parsed,
+      events: [...diffDelivery.events, ...extraEvents],
+      pushes: [...diffDelivery.pushes, ...extraPushes],
+    };
+  }
+
+  /**
+   * Atomic read-modify-write of the active execution. The reducer runs inside
+   * the global write queue, so it MUST be synchronous and pure — no I/O, no
+   * awaits, nothing that can block (Design 3.1, `no-slow-work-in-critical-
+   * section`). The non-async reducer type makes "await an LLM / git / registry
+   * while holding the global lock" unrepresentable here; slow callers use their
+   * own staged reserve → work-outside-lock → fenced-finalize protocols.
+   */
   async function mutateActive(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution> {
-    return deps.mutateActiveGraphWorkflowExecution(
-      projectPath,
-      sessionName,
-      "graphWorkflowExecution.mutateActive",
-      async (current) => {
-        // Loop-generation fence, checked inside the write-queue critical
-        // section against the *persisted* execution: a mutation issued by a
-        // superseded loop instance (its execution aborted/replaced, or resumed
-        // under a new epoch) is rejected atomically before the mutator runs.
-        const fence = getCurrentLoopFence();
-        if (
-          fence !== null &&
-          loopFenceAppliesTo(fence, projectPath, sessionName) &&
-          !matchesLoopFence(fence, current)
-        ) {
+    const { execution, delivery } = await deps
+      .mutateActiveGraphWorkflowExecution(
+        projectPath,
+        sessionName,
+        "graphWorkflowExecution.mutateActive",
+        (current) => {
+          assertMutableActive(projectPath, sessionName, current);
+          const result = fn(structuredClone(current));
+          return deriveMutateResult(projectPath, sessionName, current, result);
+        },
+      )
+      .catch((err: unknown) => {
+        // Log rejections OUTSIDE the write-queue critical section. The reducer
+        // (and the transition helpers it calls) throw WITHOUT logging — logging
+        // is `appendFileSync` I/O and must not run inside the lock
+        // (`no-slow-work-in-critical-section`). Each error carries the data the
+        // structured log needs, reconstructed here post-abort.
+        if (err instanceof StaleLoopFenceError) {
           logger.warn("graph-workflow.loop_fence.stale_write_rejected", {
             projectPath,
             sessionName,
-            fencedExecutionId: fence.executionId,
-            fencedLoopEpoch: fence.loopEpoch,
-            activeExecutionId: current?.id ?? null,
-            activeLoopEpoch: current?.loopEpoch ?? null,
+            fencedExecutionId: err.fence.executionId,
+            fencedLoopEpoch: err.fence.loopEpoch,
+            activeExecutionId: err.actualExecutionId,
+            activeLoopEpoch: err.actualLoopEpoch,
           });
-          throw new StaleLoopFenceError(fence, current);
+        } else if (err instanceof IllegalContextStatusTransitionError) {
+          logger.error("graph-workflow.context_transition.illegal", {
+            projectPath,
+            sessionName,
+            contextId: err.contextId,
+            from: err.from,
+            to: err.to,
+            reason: err.reason,
+          });
         }
-        if (!current) {
-          throw new Error(
-            "Session does not have an active graph workflow execution",
-          );
-        }
-
-        const result = await fn(structuredClone(current));
-        const next = isMutateActiveResult(result) ? result.execution : result;
-        const extraEvents = isMutateActiveResult(result) ? result.events : [];
-        const parsed = graphWorkflowExecutionSchema.parse(next);
-        const diffEvents = eventPublisher.publishExecutionUpdate({
-          projectPath,
-          sessionName,
-          previousExecution: current,
-          nextExecution: parsed,
-        });
-        return { execution: parsed, events: [...diffEvents, ...extraEvents] };
-      },
-    );
+        throw err;
+      });
+    // Delivery is performed by the mutation seam post-commit, never by the
+    // reducer (`post-commit-delivery`).
+    eventPublisher.deliver(delivery);
+    return execution;
   }
 
   async function archiveActive(

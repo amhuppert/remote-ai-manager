@@ -439,7 +439,6 @@ const baseSession: SessionState = {
       contextTokens: null,
       contextWindowMax: null,
       debugMode: null,
-      machineSnapshot: null,
       agentBackend: "claude" as const,
       backendRef: null,
       unread: false,

@@ -4,19 +4,65 @@ import { createLogger } from "@/lib/logging";
 import { createVersionedRowCache } from "@/lib/shared/versioned-row-cache";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
+  decodeConversationListItemColumns,
   decodeSharedConversationColumns,
   encodeSharedConversationColumns,
   stableStringify,
   throwConversationValidationError,
   type ChangedConversationColumns,
+  type ConversationListItemFields,
+  type ConversationListItemRawColumns,
 } from "./conversation-row-codec";
 import type {
   ConversationState,
   ConversationStatus,
 } from "@/lib/conversations/schemas";
+import { checkRowColumnSizes } from "./row-size-telemetry";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.conversations");
+
+/**
+ * Identity-tier projection of a conversation row: key columns plus `status`,
+ * with no blob columns and no heavy Zod parse. Serves callers that need
+ * conversation identity tuples across the whole store (e.g. MCP runtime-target
+ * listing) rather than any conversation's full state.
+ */
+export interface ConversationIdentity {
+  id: string;
+  projectPath: string;
+  sessionName: string;
+  status: ConversationStatus;
+}
+
+/**
+ * List-item-tier projection of a conversation: identity/location columns plus
+ * the display and small-structured fields list surfaces render, with no heavy
+ * blob columns pulled or parsed. Serves the cross-project conversation lists
+ * (autocomplete list, active-conversations feed).
+ */
+export interface ConversationListItemProjection extends ConversationListItemFields {
+  id: string;
+  projectPath: string;
+  sessionName: string;
+}
+
+/**
+ * The serialized-JSON columns of a `conversations` row that can grow unbounded
+ * enough to matter — the machine-snapshot resume token now lives in a sidecar,
+ * so these are the remaining big blobs. Row-size telemetry sweeps them on write
+ * so a ballooning column surfaces as a `state-store.row_size.exceeded` finding.
+ */
+const CONVERSATION_JSON_COLUMNS = [
+  "pending_queue",
+  "mcp_runtime",
+  "agent_capabilities_runtime",
+  "mcp_overrides",
+  "agent_capability_overrides",
+  "debug_mode",
+  "pending_questions",
+  "pending_agent_notices",
+] as const;
 
 export interface ConversationsRepo {
   findById(id: string): ConversationState | null;
@@ -39,6 +85,8 @@ export interface ConversationsRepo {
     promptCount: number;
     lastActivityAt: string;
   }>;
+  findAllIdentities(): ConversationIdentity[];
+  findAllListItems(): ConversationListItemProjection[];
   findAll(): {
     projectPath: string;
     sessionName: string;
@@ -92,6 +140,14 @@ export interface ConversationsRepo {
     conversationId: string,
     text: string | null,
   ): boolean;
+  /**
+   * Invalidate the parsed-row cache after conversation rows were removed
+   * out-of-band — an FK `ON DELETE CASCADE` from a session/project delete drops
+   * the rows at the SQL layer without routing through this repo's own `delete`.
+   * Bumps the version so `findAll`/`findBySession` re-read from SQLite instead
+   * of serving evicted rows from a warm cache.
+   */
+  invalidateCache(): void;
 }
 
 /**
@@ -123,7 +179,6 @@ const conversationsTableRowSchema = z.object({
   context_tokens: z.number().int().nullable(),
   context_window_max: z.number().int().nullable(),
   debug_mode: z.string().nullable(),
-  machine_snapshot: z.string().nullable(),
   agent_backend: z.string(),
   backend_ref: z.string().nullable(),
   mcp_overrides: z.string().nullable(),
@@ -161,7 +216,6 @@ interface SqlBindRow {
   context_tokens: number | null;
   context_window_max: number | null;
   debug_mode: string | null;
-  machine_snapshot: string | null;
   agent_backend: string;
   backend_ref: string | null;
   mcp_overrides: string | null;
@@ -293,7 +347,6 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "context_tokens",
   "context_window_max",
   "debug_mode",
-  "machine_snapshot",
   "agent_backend",
   "backend_ref",
   "mcp_overrides",
@@ -305,6 +358,15 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "last_seen_alignment_version",
   "pending_agent_notices",
 ];
+
+/**
+ * Explicit projection for every read statement. The `machine_snapshot` column
+ * still exists on the row (nulled by migration 0007, kept for forward-compat)
+ * but the snapshot now lives in the `conversation_machine_snapshots` sidecar, so
+ * no hot enumeration (`findAll` / `findBySession` / `findByKey` / `findById`) may
+ * drag its bytes: every read selects this explicit column list, never `*`.
+ */
+const CONVERSATION_SELECT_COLUMNS = CONVERSATION_COLUMN_KEYS.join(", ");
 
 function rawRowsEqual(
   a: Record<string, unknown>,
@@ -345,15 +407,15 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     { version: number; ids: string[] }
   >();
   const findByIdStmt = db.prepare(
-    `SELECT * FROM conversations WHERE id = ? LIMIT 1`,
+    `SELECT ${CONVERSATION_SELECT_COLUMNS} FROM conversations WHERE id = ? LIMIT 1`,
   );
   const findByKeyStmt = db.prepare(
-    `SELECT * FROM conversations
+    `SELECT ${CONVERSATION_SELECT_COLUMNS} FROM conversations
      WHERE project_path = ? AND session_name = ? AND id = ?
      LIMIT 1`,
   );
   const findBySessionStmt = db.prepare(
-    `SELECT * FROM conversations
+    `SELECT ${CONVERSATION_SELECT_COLUMNS} FROM conversations
      WHERE project_path = ? AND session_name = ?
      ORDER BY created_at ASC, id ASC`,
   );
@@ -366,8 +428,21 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
      FROM conversations
      WHERE project_path = ?`,
   );
+  const findAllIdentitiesStmt = db.prepare(
+    `SELECT id, project_path, session_name, status
+     FROM conversations
+     ORDER BY project_path ASC, session_name ASC, created_at ASC, id ASC`,
+  );
+  const findAllListItemsStmt = db.prepare(
+    `SELECT id, project_path, session_name, name, summary, status, role,
+            archived, agent_backend, backend_ref, transcript_path,
+            last_activity_at, debug_mode, pending_question_id, pending_questions,
+            forked_from, unread
+     FROM conversations
+     ORDER BY project_path ASC, session_name ASC, created_at ASC, id ASC`,
+  );
   const findAllStmt = db.prepare(
-    `SELECT * FROM conversations
+    `SELECT ${CONVERSATION_SELECT_COLUMNS} FROM conversations
      ORDER BY project_path ASC, session_name ASC, created_at ASC, id ASC`,
   );
   // Conversation rows are leaf rows from the FK perspective, so OR REPLACE is
@@ -379,7 +454,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        prompt_count, created_at, last_activity_at, source, summary, archived,
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
-       debug_mode, machine_snapshot, agent_backend, backend_ref,
+       debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, pending_queue, last_seen_alignment_version, pending_agent_notices
      ) VALUES (
@@ -387,7 +462,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
-       @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
+       @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
        @unread, @pending_queue, @last_seen_alignment_version, @pending_agent_notices
      )
@@ -414,7 +489,6 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        context_tokens             = excluded.context_tokens,
        context_window_max         = excluded.context_window_max,
        debug_mode                 = excluded.debug_mode,
-       machine_snapshot           = excluded.machine_snapshot,
        agent_backend              = excluded.agent_backend,
        backend_ref                = excluded.backend_ref,
        mcp_overrides              = excluded.mcp_overrides,
@@ -426,6 +500,12 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        last_seen_alignment_version = excluded.last_seen_alignment_version,
        pending_agent_notices      = excluded.pending_agent_notices`,
   );
+  // The machine snapshot lives in the owner-discriminated sidecar table, not on
+  // the conversation row. Its cleanup is DB-enforced by the AFTER DELETE trigger
+  // on `conversations` (see SCHEMA_DDL): it fires inside this DELETE's
+  // transaction and also covers the FK CASCADE path (deleting a session/project)
+  // that never calls this method — so a single canonical owner cleans the
+  // sidecar for every delete path.
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
   const setPendingPromptTextStmt = db.prepare(
     `UPDATE conversations
@@ -585,6 +665,39 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         }));
       });
     },
+    findAllIdentities() {
+      return timed("findAllIdentities", {}, () => {
+        const rows = findAllIdentitiesStmt.all() as Array<{
+          id: string;
+          project_path: string;
+          session_name: string;
+          status: ConversationStatus;
+        }>;
+        return rows.map((row) => ({
+          id: row.id,
+          projectPath: row.project_path,
+          sessionName: row.session_name,
+          status: row.status,
+        }));
+      });
+    },
+    findAllListItems() {
+      return timed("findAllListItems", {}, () => {
+        const rows = findAllListItemsStmt.all() as Array<
+          {
+            id: string;
+            project_path: string;
+            session_name: string;
+          } & ConversationListItemRawColumns
+        >;
+        return rows.map((row) => ({
+          id: row.id,
+          projectPath: row.project_path,
+          sessionName: row.session_name,
+          ...decodeConversationListItemColumns(row.id, row),
+        }));
+      });
+    },
     findAll() {
       return timed("findAll", {}, () =>
         cache.readAll(
@@ -607,6 +720,13 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           sessionName,
           conversation,
         );
+        checkRowColumnSizes({
+          logger,
+          table: "conversations",
+          id: conversation.id,
+          bind: { ...bind },
+          columns: CONVERSATION_JSON_COLUMNS,
+        });
         upsertStmt.run(bind);
         cache.bump();
       });
@@ -633,6 +753,13 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             sessionName,
             conversation,
           );
+          checkRowColumnSizes({
+            logger,
+            table: "conversations",
+            id: conversation.id,
+            bind: { ...bind },
+            columns: CONVERSATION_JSON_COLUMNS,
+          });
           upsertWithSessionTouchTxn.immediate(bind, lastActivityAt);
           cache.bump();
         },
@@ -660,6 +787,13 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           for (const col of sortedColumns) {
             bind[col] = changedColumns[col]!;
           }
+          checkRowColumnSizes({
+            logger,
+            table: "conversations",
+            id: conversationId,
+            bind,
+            columns: CONVERSATION_JSON_COLUMNS,
+          });
           updateChangedColumnsWithSessionTouchTxn.immediate(
             stmt,
             bind,
@@ -692,6 +826,13 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           for (const col of sortedColumns) {
             bind[col] = changedColumns[col]!;
           }
+          checkRowColumnSizes({
+            logger,
+            table: "conversations",
+            id: conversationId,
+            bind,
+            columns: CONVERSATION_JSON_COLUMNS,
+          });
           stmt.run(bind);
           cache.bump();
         },
@@ -713,6 +854,9 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           return changed;
         },
       );
+    },
+    invalidateCache() {
+      cache.bump();
     },
   };
 }

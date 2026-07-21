@@ -44,17 +44,21 @@ export function createScopeOverrideStore(
     projectPath: string,
     operations: readonly McpOverrideOperation[],
   ): Promise<ScopeOverridePatchResult> {
-    return stateManager.mutateState(
-      `mcp.patchProject[${projectPath}]`,
-      (state) => {
-        const project = state.projects[projectPath];
-        if (!project) {
-          throw new Error(`Project "${projectPath}" not found`);
-        }
-        const result = patchAndPrune(project.mcpOverrides, operations);
-        writeOrDelete(project, "mcpOverrides", result.overrides);
+    // Focused single-column write of the project's `mcp_overrides`. The mutator
+    // runs inside the write queue against the FRESH persisted overrides, so
+    // concurrent patches merge atomically. Missing servers prune the field to
+    // NULL (persist `undefined`).
+    return stateManager.mutateProjectMcpOverrides(
+      projectPath,
+      "mcp.patchProject",
+      (current) => {
+        const result = patchAndPrune(current, operations);
         logPatch("project", projectPath, result.changedServerKeys);
-        return result;
+        return {
+          write: true,
+          overrides: pruneEmptyOverrides(result.overrides),
+          result,
+        };
       },
     );
   }
@@ -130,6 +134,15 @@ function writeOrDelete<T extends { mcpOverrides?: McpOverrides }>(
     return;
   }
   target[field] = value;
+}
+
+/**
+ * Collapse an empty override set to `undefined` so the focused project-column
+ * write clears the column (NULL) rather than persisting `{ servers: {} }` —
+ * the row-level analogue of `writeOrDelete`'s field pruning.
+ */
+function pruneEmptyOverrides(value: McpOverrides): McpOverrides | undefined {
+  return Object.keys(value.servers).length === 0 ? undefined : value;
 }
 
 function logPatch(

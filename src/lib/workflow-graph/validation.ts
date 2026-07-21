@@ -288,6 +288,11 @@ export function getEligibleContextIds(
       const state = execution.contextStates[contextId];
       if (!state) return false;
       if (state.status !== "pending" && state.status !== "ready") return false;
+      // Owner-discriminated reservation (Design 3.1): a context a scheduler has
+      // reserved (and is provisioning worktrees for out of the lock) is not
+      // eligible for a concurrent same-epoch scheduler to re-classify and
+      // double-provision. The owning pass clears the stamp at finalize.
+      if (state.reservedByBatchId != null) return false;
 
       return (prerequisites.get(contextId) ?? []).every((upstreamId) => {
         const upstream = execution.contextStates[upstreamId];

@@ -1,4 +1,4 @@
-import { readState } from "./lib/state-store";
+import { listSessionConversationListItems } from "./lib/state-store";
 import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";
 import { runMigrations } from "./lib/state-store/migrator";
@@ -220,7 +220,7 @@ export function createStartupRegistrar(
         "startup:recover-workflow-envelopes",
         () =>
           deps.recoverActiveWorkflowEnvelopes({
-            readState,
+            listSessionConversationListItems,
             createRepository: ({ projectPath, sessionName }) =>
               createSessionWorkflowEnvelopeRepositoryForProduction({
                 projectPath,

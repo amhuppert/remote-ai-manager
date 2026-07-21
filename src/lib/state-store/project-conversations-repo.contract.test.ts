@@ -113,10 +113,6 @@ function buildMaximalProjectConversation(): ConversationState {
       lastTurnFailed: true,
       cleanupVerificationAttempt: 2,
     },
-    machineSnapshot: {
-      value: "awaiting",
-      context: { iteration: 3, lastError: null },
-    },
     agentBackend: "codex",
     backendRef: { backend: "codex", ref: "thread-maximal" },
     mcpOverrides: {

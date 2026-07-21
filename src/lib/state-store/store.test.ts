@@ -20,9 +20,13 @@ import { createProjectsRepo, type ProjectsRepo } from "./projects-repo";
 import { createStateStore, type StateStore } from "./store";
 import { createWriteQueue } from "./write-queue";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
-import { managerStateSchema } from "@/lib/projects/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
+import {
+  readWholeStateForTest,
+  seedWholeState,
+} from "@/lib/shared/testing/whole-state-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -54,6 +58,17 @@ function makeConversation(
   });
 }
 
+function makeState(projects: Record<string, ProjectState>): ManagerState {
+  return { projects, archivedProjects: [], pinnedProjects: [] };
+}
+
+function makeProject(
+  rootPath: string,
+  sessions: Record<string, SessionState>,
+): ProjectState {
+  return { rootPath, sessions };
+}
+
 beforeEach(() => {
   db = _createTestDb({ inMemory: true });
   store = createStateStore({ db, writeQueue: createWriteQueue() });
@@ -64,9 +79,8 @@ afterEach(() => {
 });
 
 describe("createStateStore lifecycle", () => {
-  it("returns the same StateStore surface for an empty DB: empty projects, empty archive/pin sets", async () => {
-    const state = await store.readState();
-    expect(managerStateSchema.parse(state)).toEqual(state);
+  it("exposes empty archive/pin sets for an empty DB", async () => {
+    const state = readWholeStateForTest(db);
     expect(state.projects).toEqual({});
     expect(state.archivedProjects).toEqual([]);
     expect(state.pinnedProjects).toEqual([]);
@@ -76,22 +90,14 @@ describe("createStateStore lifecycle", () => {
   });
 });
 
-describe("getOrCreateProject", () => {
-  it("creates a project on first call and returns the same project on subsequent calls", async () => {
-    const created = await store.getOrCreateProject("/proj-a");
-    expect(created.rootPath).toBe("/proj-a");
-
-    const second = await store.getOrCreateProject("/proj-a");
-    expect(second.rootPath).toBe("/proj-a");
-  });
-});
-
 describe("mutateSession", () => {
   it("mutates the target session and persists the change", async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      state.projects["/proj-a"]!.sessions["alpha"] = makeSession();
-    });
+    seedWholeState(
+      db,
+      makeState({
+        "/proj-a": makeProject("/proj-a", { alpha: makeSession() }),
+      }),
+    );
 
     await store.mutateSession(
       "/proj-a",
@@ -107,26 +113,30 @@ describe("mutateSession", () => {
   });
 
   it("throws when the session does not exist", async () => {
-    await store.getOrCreateProject("/proj-a");
+    seedWholeState(db, makeState({ "/proj-a": makeProject("/proj-a", {}) }));
     await expect(
       store.mutateSession("/proj-a", "missing", "x", () => {}),
     ).rejects.toThrow(/Session "missing" not found/);
   });
 
   it("mutates only the target session and leaves a sibling session untouched", async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      state.projects["/proj-a"]!.sessions["alpha"] = makeSession({
-        sessionName: "alpha",
-        targetBranch: "alpha-branch",
-      });
-      state.projects["/proj-a"]!.sessions["beta"] = makeSession({
-        sessionName: "beta",
-        worktreePath: "/wt/beta",
-        branchName: "csm/beta",
-        targetBranch: "beta-branch",
-      });
-    });
+    seedWholeState(
+      db,
+      makeState({
+        "/proj-a": makeProject("/proj-a", {
+          alpha: makeSession({
+            sessionName: "alpha",
+            targetBranch: "alpha-branch",
+          }),
+          beta: makeSession({
+            sessionName: "beta",
+            worktreePath: "/wt/beta",
+            branchName: "csm/beta",
+            targetBranch: "beta-branch",
+          }),
+        }),
+      }),
+    );
 
     await store.mutateSession(
       "/proj-a",
@@ -149,28 +159,22 @@ describe("mutateSession", () => {
 });
 
 describe("setConversationPendingPromptText focused write", () => {
-  beforeEach(async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      const session = makeSession();
-      session.conversations.push(makeConversation({ id: "conv-1" }));
-      state.projects["/proj-a"]!.sessions["alpha"] = session;
-    });
+  beforeEach(() => {
+    const session = makeSession();
+    session.conversations.push(makeConversation({ id: "conv-1" }));
+    seedWholeState(
+      db,
+      makeState({ "/proj-a": makeProject("/proj-a", { alpha: session }) }),
+    );
   });
 
-  it("persists a string value without invoking the whole-state aggregate", async () => {
-    const aggregateSpy = vi.spyOn(managerStateSchema, "parse");
-    aggregateSpy.mockClear();
-
+  it("persists a string value through the focused setter", async () => {
     await store.setConversationPendingPromptText(
       "/proj-a",
       "alpha",
       "conv-1",
       "draft text",
     );
-
-    expect(aggregateSpy).not.toHaveBeenCalled();
-    aggregateSpy.mockRestore();
 
     const after = await store.getConversation("/proj-a", "alpha", "conv-1");
     expect(after?.pendingPromptText).toBe("draft text");
@@ -242,13 +246,13 @@ describe("setConversationPendingPromptText focused write", () => {
 });
 
 describe("mutateConversation", () => {
-  beforeEach(async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      const session = makeSession();
-      session.conversations.push(makeConversation({ id: "conv-1" }));
-      state.projects["/proj-a"]!.sessions["alpha"] = session;
-    });
+  beforeEach(() => {
+    const session = makeSession();
+    session.conversations.push(makeConversation({ id: "conv-1" }));
+    seedWholeState(
+      db,
+      makeState({ "/proj-a": makeProject("/proj-a", { alpha: session }) }),
+    );
   });
 
   it("mutates a conversation in the target session and bumps lastActivityAt on both", async () => {
@@ -301,28 +305,32 @@ describe("read accessors", () => {
   });
 
   it("getSessionConversations returns conversations seeded for the session", async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      const session = makeSession();
-      session.conversations.push(makeConversation({ id: "c-1" }));
-      session.conversations.push(makeConversation({ id: "c-2" }));
-      state.projects["/proj-a"]!.sessions["alpha"] = session;
-    });
+    const session = makeSession();
+    session.conversations.push(makeConversation({ id: "c-1" }));
+    session.conversations.push(makeConversation({ id: "c-2" }));
+    seedWholeState(
+      db,
+      makeState({ "/proj-a": makeProject("/proj-a", { alpha: session }) }),
+    );
 
     const list = await store.getSessionConversations("/proj-a", "alpha");
     expect(list.map((c) => c.id).sort()).toEqual(["c-1", "c-2"]);
   });
 
   it("getProjectSessions returns the sessions for the project", async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      state.projects["/proj-a"]!.sessions["alpha"] = makeSession();
-      state.projects["/proj-a"]!.sessions["beta"] = makeSession({
-        sessionName: "beta",
-        worktreePath: "/wt/beta",
-        branchName: "csm/beta",
-      });
-    });
+    seedWholeState(
+      db,
+      makeState({
+        "/proj-a": makeProject("/proj-a", {
+          alpha: makeSession(),
+          beta: makeSession({
+            sessionName: "beta",
+            worktreePath: "/wt/beta",
+            branchName: "csm/beta",
+          }),
+        }),
+      }),
+    );
 
     const list = await store.getProjectSessions("/proj-a");
     expect(list.map((s) => s.sessionName).sort()).toEqual(["alpha", "beta"]);
@@ -406,45 +414,6 @@ describe("setProjectArchived / setProjectPinned atomicity (R2)", () => {
   });
 });
 
-describe("mutateState clone-and-validate", () => {
-  beforeEach(async () => {
-    await store.getOrCreateProject("/proj-a");
-    await store.mutateState("seed", (state) => {
-      state.projects["/proj-a"]!.sessions["alpha"] = makeSession();
-    });
-  });
-
-  it("skips all whole-state validation under NODE_ENV=production (both cloneAndValidate and diffAndCommit)", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    const parseSpy = vi.spyOn(managerStateSchema, "parse");
-    try {
-      await store.mutateState("noop", () => {
-        // no-op mutation
-      });
-      // Both the snapshot-clone validation and the diffAndCommit validation
-      // are gated to non-production; in production neither runs.
-      expect(parseSpy).toHaveBeenCalledTimes(0);
-    } finally {
-      parseSpy.mockRestore();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("runs the snapshot-clone validation outside production (cloneAndValidate + diffAndCommit)", async () => {
-    vi.stubEnv("NODE_ENV", "test");
-    const parseSpy = vi.spyOn(managerStateSchema, "parse");
-    try {
-      await store.mutateState("noop", () => {
-        // no-op mutation
-      });
-      expect(parseSpy).toHaveBeenCalledTimes(2);
-    } finally {
-      parseSpy.mockRestore();
-      vi.unstubAllEnvs();
-    }
-  });
-});
-
 describe("state.read.timing log threshold", () => {
   beforeEach(() => {
     logger.info.mockClear();
@@ -497,13 +466,12 @@ describe("empty-store first-boot (R8.3)", () => {
 
     const freshDb = _createTestDbAtPath(dbPath);
     try {
-      const freshStore = createStateStore({
+      createStateStore({
         db: freshDb,
         writeQueue: createWriteQueue(),
       });
 
-      const state = await freshStore.readState();
-      expect(managerStateSchema.parse(state)).toEqual(state);
+      const state = readWholeStateForTest(freshDb);
       expect(state.projects).toEqual({});
       expect(state.archivedProjects).toEqual([]);
       expect(state.pinnedProjects).toEqual([]);

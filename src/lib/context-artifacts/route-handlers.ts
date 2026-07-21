@@ -13,6 +13,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createLogger, withTracing } from "@/lib/logging";
+// Imported from the submodule so span timing survives tests that stub the
+// `@/lib/logging` barrel with a partial vi.mock (createLogger/withTracing only).
+import { timed, timedSync } from "@/lib/logging/timed";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
@@ -371,14 +374,35 @@ export function createContextArtifactRouteHandlers(
     _request: Request,
     target: ArtifactTarget,
   ): Promise<Response> {
-    const current = await readCurrentEntries(target);
+    const current = await timed(
+      logger,
+      "artifact.list.read_transcript",
+      { conversationId: target.conversationId, scope: target.scope },
+      () => readCurrentEntries(target),
+      (result) =>
+        result.ok
+          ? { entryCount: result.value.entries.length }
+          : { readFailed: true },
+    );
     if (!current.ok) return current.response;
 
-    const rows = deps
-      .getRepo()
-      .findByConversation(target.conversationId)
-      .filter((row) => rowMatchesTarget(row, target));
-    return NextResponse.json(rows.map((row) => toListItem(row, current.value)));
+    let rowCount = 0;
+    return timedSync(
+      logger,
+      "artifact.list.assemble",
+      { conversationId: target.conversationId, scope: target.scope },
+      () => {
+        const rows = deps
+          .getRepo()
+          .findByConversation(target.conversationId)
+          .filter((row) => rowMatchesTarget(row, target));
+        rowCount = rows.length;
+        return NextResponse.json(
+          rows.map((row) => toListItem(row, current.value)),
+        );
+      },
+      () => ({ rowCount }),
+    );
   }
 
   async function create(
@@ -510,7 +534,19 @@ export function createContextArtifactRouteHandlers(
       if (validation.kind === "invalid") {
         return jsonError("Invalid Command Center API token", 401);
       }
-      const target = await resolveTarget(context);
+      const target = await timed(
+        logger,
+        "artifact.resolve_target",
+        {},
+        () => resolveTarget(context),
+        (result) =>
+          result.ok
+            ? {
+                scope: result.value.scope,
+                conversationId: result.value.conversationId,
+              }
+            : { resolved: false },
+      );
       if (!target.ok) return target.response;
       return handler(request, target.value);
     };

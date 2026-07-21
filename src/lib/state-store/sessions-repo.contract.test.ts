@@ -967,6 +967,101 @@ describe("sessions-repo updateChangedColumns", () => {
     }
   });
 
+  it("retargetChildrenOfParents points every direct child of the named parents at main and clears their parent link, touching no unrelated session", () => {
+    // parent p, children c1/c2 of p, grandchild-of-c1 g, and an unrelated
+    // session u whose parent is someone else. Retargeting p must move only
+    // c1 and c2 — not g (grandchild; retarget is non-cascading) and not u.
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "p" }));
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({
+        sessionName: "c1",
+        parentSessionName: "p",
+        targetBranch: "csm/p",
+      }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({
+        sessionName: "c2",
+        parentSessionName: "p",
+        targetBranch: "csm/p",
+      }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({
+        sessionName: "g",
+        parentSessionName: "c1",
+        targetBranch: "csm/c1",
+      }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({
+        sessionName: "u",
+        parentSessionName: "other",
+        targetBranch: "csm/other",
+      }),
+    );
+
+    repo.retargetChildrenOfParents(PROJECT_PATH, ["p"]);
+
+    for (const child of ["c1", "c2"]) {
+      const reloaded = repo.findByKey(PROJECT_PATH, child)!;
+      expect(reloaded.parentSessionName).toBeNull();
+      expect(reloaded.targetBranch).toBe("main");
+    }
+    // Non-direct child and unrelated session untouched.
+    expect(repo.findByKey(PROJECT_PATH, "g")!.parentSessionName).toBe("c1");
+    expect(repo.findByKey(PROJECT_PATH, "g")!.targetBranch).toBe("csm/c1");
+    expect(repo.findByKey(PROJECT_PATH, "u")!.parentSessionName).toBe("other");
+    expect(repo.findByKey(PROJECT_PATH, "u")!.targetBranch).toBe("csm/other");
+  });
+
+  it("retargetChildrenOfParents accepts multiple parents in one statement and is a no-op for an empty parent list", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "p1" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "p2" }));
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "a", parentSessionName: "p1" }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "b", parentSessionName: "p2" }),
+    );
+
+    // Empty list touches nothing.
+    repo.retargetChildrenOfParents(PROJECT_PATH, []);
+    expect(repo.findByKey(PROJECT_PATH, "a")!.parentSessionName).toBe("p1");
+
+    repo.retargetChildrenOfParents(PROJECT_PATH, ["p1", "p2"]);
+    expect(repo.findByKey(PROJECT_PATH, "a")!.parentSessionName).toBeNull();
+    expect(repo.findByKey(PROJECT_PATH, "b")!.parentSessionName).toBeNull();
+  });
+
+  it("retargetChildrenOfParents bumps the findAll cache so a warm read observes the retarget", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "p" }));
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "child", parentSessionName: "p" }),
+    );
+    // Warm the findAll cache.
+    const warm = repo.findAll();
+    expect(
+      warm.find((r) => r.session.sessionName === "child")!.session
+        .parentSessionName,
+    ).toBe("p");
+
+    repo.retargetChildrenOfParents(PROJECT_PATH, ["p"]);
+
+    const after = repo.findAll();
+    expect(
+      after.find((r) => r.session.sessionName === "child")!.session
+        .parentSessionName,
+    ).toBeNull();
+  });
+
   it("a per-column update of every mutable column matches the full-upsert bytes (no column drift)", () => {
     // Seed a minimal row, then drive every column to its makeFullSession value
     // via the focused per-column path. The result must be byte-identical to a

@@ -3,14 +3,23 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createConfigReader } from "@/lib/config/loader";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { Logger } from "@/lib/logging";
 import type { ManagerState } from "@/lib/projects/schemas";
+import {
+  readWholeStateForTest,
+  seedWholeState,
+} from "@/lib/shared/testing/whole-state-fixture";
 import { createStateStore } from "@/lib/state-store";
 import { _createTestDb } from "@/lib/state-store/state-db";
-import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
+import {
+  _resetForTesting as resetMutex,
+  withWriteQueue,
+} from "@/lib/state-store/write-queue";
 
 import { createScopeCapabilityOverrideStore } from "./scope-store";
+
+const SEED_TS = "2026-04-21T00:00:00.000Z";
 
 const PROJECT_PATH = "/test/project-cap";
 const SESSION_NAME = "test-session";
@@ -19,12 +28,10 @@ const CONVERSATION_ID = "conv-1";
 const TEST_DIR = path.join("/tmp", "cc-agent-cap-scope-test-" + Date.now());
 
 function createTestHarness() {
-  const configReader = createConfigReader(TEST_DIR);
-  const state = createStateStore({
-    readConfig: () => configReader.readConfig(),
-  });
+  const db: InstanceType<typeof Database> = _createTestDb({ inMemory: true });
+  const state = createStateStore({ db });
   const store = createScopeCapabilityOverrideStore({ stateManager: state });
-  return { state, store };
+  return { db, state, store };
 }
 
 function createSqlHarness() {
@@ -60,7 +67,6 @@ function projectConversation(id: string): ConversationState {
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
     unread: false,
@@ -109,7 +115,6 @@ function stateWithAllScopes(): ManagerState {
                 contextTokens: null,
                 contextWindowMax: null,
                 debugMode: null,
-                machineSnapshot: null,
                 agentBackend: "claude",
                 backendRef: null,
                 unread: false,
@@ -145,8 +150,8 @@ afterEach(async () => {
 
 describe("agent-capabilities / scope-store / project", () => {
   it("patches project agentCapabilityOverrides and returns changed item ids", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     const result = await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -160,7 +165,7 @@ describe("agent-capabilities / scope-store / project", () => {
       result.overrides.cascades["claude-skills"]?.items["skill:a"]?.enabled,
     ).toBe(false);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     expect(
       persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades[
         "claude-skills"
@@ -169,8 +174,8 @@ describe("agent-capabilities / scope-store / project", () => {
   });
 
   it("does not persist a resolved view — only the patched cascade is written", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -179,7 +184,7 @@ describe("agent-capabilities / scope-store / project", () => {
       ],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const cascades =
       persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades;
     expect(Object.keys(cascades ?? {})).toEqual(["claude-skills"]);
@@ -189,8 +194,8 @@ describe("agent-capabilities / scope-store / project", () => {
   });
 
   it("writes each layer independently — a project edit does not touch session or conversation overrides", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -199,15 +204,15 @@ describe("agent-capabilities / scope-store / project", () => {
       ],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
     expect(session?.agentCapabilityOverrides).toBeUndefined();
     expect(session?.conversations[0]?.agentCapabilityOverrides).toBeUndefined();
   });
 
   it("preserves existing overrides on other cascades when patching one cascade", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -222,7 +227,7 @@ describe("agent-capabilities / scope-store / project", () => {
       ],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const cascades =
       persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades;
     expect(cascades?.["claude-skills"]?.items["skill:a"]?.enabled).toBe(false);
@@ -230,8 +235,8 @@ describe("agent-capabilities / scope-store / project", () => {
   });
 
   it("prunes the cascade record after the only item is reset", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -245,7 +250,7 @@ describe("agent-capabilities / scope-store / project", () => {
     });
     expect(result.changedItemIds).toEqual(["skill:a"]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     expect(
       persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades[
         "claude-skills"
@@ -254,8 +259,8 @@ describe("agent-capabilities / scope-store / project", () => {
   });
 
   it("removes the agentCapabilityOverrides field once every cascade is empty", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -268,15 +273,15 @@ describe("agent-capabilities / scope-store / project", () => {
       operations: [{ type: "reset-item", itemId: "skill:a" }],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     expect(
       persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides,
     ).toBeUndefined();
   });
 
   it("throws when the project does not exist", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState({
+    const { db, store } = createTestHarness();
+    seedWholeState(db, {
       projects: {},
       archivedProjects: [],
       pinnedProjects: [],
@@ -293,8 +298,8 @@ describe("agent-capabilities / scope-store / project", () => {
   });
 
   it("preserves existing non-capability state records on read and write", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -303,14 +308,14 @@ describe("agent-capabilities / scope-store / project", () => {
       ],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const project = persisted.projects[PROJECT_PATH];
     expect(project?.rootPath).toBe(PROJECT_PATH);
     expect(project?.sessions[SESSION_NAME]).toBeDefined();
   });
 
   it("restores scoped overrides and conversation runtime apply state after state manager recreation", async () => {
-    const { state, store } = createTestHarness();
+    const { db, store } = createTestHarness();
     const initial = stateWithAllScopes();
     initial.projects[PROJECT_PATH]!.sessions[
       SESSION_NAME
@@ -322,7 +327,7 @@ describe("agent-capabilities / scope-store / project", () => {
         },
       },
     };
-    await state.writeState(initial);
+    seedWholeState(db, initial);
 
     await store.patchProject(PROJECT_PATH, {
       cascadeKind: "claude-skills",
@@ -343,8 +348,10 @@ describe("agent-capabilities / scope-store / project", () => {
       ],
     });
 
-    const restarted = createTestHarness();
-    const restored = await restarted.state.readState();
+    // Fresh repos over the same persisted db carry no in-memory cache or
+    // write-queue, so a successful read proves the overrides and runtime apply
+    // state survived to disk across a state-manager recreation.
+    const restored = readWholeStateForTest(db);
     const session = restored.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
     const conversation = session?.conversations[0];
 
@@ -370,10 +377,108 @@ describe("agent-capabilities / scope-store / project", () => {
   });
 });
 
+describe("agent-capabilities / scope-store / project conflict check", () => {
+  it("propagates a precondition conflict and writes nothing", async () => {
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("hash conflict");
+    await expect(
+      store.patchProject(PROJECT_PATH, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+        ],
+        precondition: async () => {
+          throw conflict;
+        },
+      }),
+    ).rejects.toBe(conflict);
+
+    const persisted = readWholeStateForTest(db);
+    expect(
+      persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides,
+    ).toBeUndefined();
+  });
+
+  it("re-runs the precondition and preserves both writes when a concurrent patch lands between resolve and commit", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        // A concurrent writer commits AFTER we read `before`. Issuing this
+        // focused write from inside the precondition would deadlock if the
+        // precondition ran while holding the queue — so a clean commit here
+        // also proves the precondition runs OUTSIDE the critical section.
+        await state.mutateProjectAgentCapabilityOverrides<void>(
+          PROJECT_PATH,
+          "test.concurrent",
+          () => ({
+            write: true,
+            overrides: {
+              cascades: {
+                "codex-skills": { items: { z: { enabled: true } } },
+              },
+            },
+            result: undefined,
+          }),
+        );
+      }
+    };
+
+    const result = await store.patchProject(PROJECT_PATH, {
+      cascadeKind: "claude-skills",
+      operations: [
+        { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+      ],
+      precondition,
+    });
+
+    expect(calls).toBe(2);
+    expect(result.changedItemIds).toEqual(["skill:a"]);
+
+    const persisted = readWholeStateForTest(db);
+    const cascades =
+      persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades;
+    // Neither write was lost: the concurrent codex-skills change survives and
+    // our claude-skills patch merged onto it.
+    expect(cascades?.["codex-skills"]?.items["z"]?.enabled).toBe(true);
+    expect(cascades?.["claude-skills"]?.items["skill:a"]?.enabled).toBe(false);
+  });
+
+  it("commits on the happy path when the precondition passes", async () => {
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    let calls = 0;
+    const result = await store.patchProject(PROJECT_PATH, {
+      cascadeKind: "claude-skills",
+      operations: [
+        { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+      ],
+      precondition: async () => {
+        calls += 1;
+      },
+    });
+
+    expect(calls).toBe(1);
+    expect(result.changedItemIds).toEqual(["skill:a"]);
+    const persisted = readWholeStateForTest(db);
+    expect(
+      persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades[
+        "claude-skills"
+      ]?.items["skill:a"]?.enabled,
+    ).toBe(false);
+  });
+});
+
 describe("agent-capabilities / scope-store / session", () => {
   it("patches session overrides and returns changed item ids", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     const result = await store.patchSession(PROJECT_PATH, SESSION_NAME, {
       cascadeKind: "claude-plugins",
@@ -383,7 +488,7 @@ describe("agent-capabilities / scope-store / session", () => {
     });
     expect(result.changedItemIds).toEqual(["plugin:p"]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
     expect(
       session?.agentCapabilityOverrides?.cascades["claude-plugins"]?.items[
@@ -393,8 +498,8 @@ describe("agent-capabilities / scope-store / session", () => {
   });
 
   it("does not touch project or conversation overrides", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchSession(PROJECT_PATH, SESSION_NAME, {
       cascadeKind: "claude-skills",
@@ -403,7 +508,7 @@ describe("agent-capabilities / scope-store / session", () => {
       ],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const project = persisted.projects[PROJECT_PATH];
     expect(project?.agentCapabilityOverrides).toBeUndefined();
     const conversation = project?.sessions[SESSION_NAME]?.conversations[0];
@@ -411,8 +516,8 @@ describe("agent-capabilities / scope-store / session", () => {
   });
 
   it("removes the field once every cascade is empty", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchSession(PROJECT_PATH, SESSION_NAME, {
       cascadeKind: "claude-skills",
@@ -425,14 +530,14 @@ describe("agent-capabilities / scope-store / session", () => {
       operations: [{ type: "reset-item", itemId: "skill:s" }],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
     expect(session?.agentCapabilityOverrides).toBeUndefined();
   });
 
   it("throws when the session does not exist", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
     await expect(
       store.patchSession(PROJECT_PATH, "missing", {
         cascadeKind: "claude-skills",
@@ -446,8 +551,8 @@ describe("agent-capabilities / scope-store / session", () => {
 
 describe("agent-capabilities / scope-store / conversation", () => {
   it("patches conversation overrides and returns changed item ids", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     const result = await store.patchConversation(
       PROJECT_PATH,
@@ -462,7 +567,7 @@ describe("agent-capabilities / scope-store / conversation", () => {
     );
     expect(result.changedItemIds).toEqual(["skill:c"]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const conversation =
       persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME]
         ?.conversations[0];
@@ -474,8 +579,8 @@ describe("agent-capabilities / scope-store / conversation", () => {
   });
 
   it("removes the field once empty", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, {
       cascadeKind: "claude-skills",
@@ -488,7 +593,7 @@ describe("agent-capabilities / scope-store / conversation", () => {
       operations: [{ type: "reset-item", itemId: "skill:c" }],
     });
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const conversation =
       persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME]
         ?.conversations[0];
@@ -496,8 +601,8 @@ describe("agent-capabilities / scope-store / conversation", () => {
   });
 
   it("throws when the conversation does not exist", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
     await expect(
       store.patchConversation(PROJECT_PATH, SESSION_NAME, "missing", {
         cascadeKind: "claude-skills",
@@ -567,7 +672,7 @@ describe("agent-capabilities / scope-store / project conversation", () => {
           ?.agentCapabilityOverrides,
       ).toBeUndefined();
       expect(
-        (await state.readState()).projects[PROJECT_PATH]
+        readWholeStateForTest(db).projects[PROJECT_PATH]
           ?.agentCapabilityOverrides?.cascades["claude-skills"]?.items[
           "skill:a"
         ]?.enabled,
@@ -667,7 +772,7 @@ describe("agent-capabilities / scope-store / project conversation", () => {
   it("keeps project conversations separate from same-id session conversations", async () => {
     const { db, state, store } = createSqlHarness();
     try {
-      await state.writeState(stateWithAllScopes());
+      seedWholeState(db, stateWithAllScopes());
       await state.createProjectConversation(
         PROJECT_PATH,
         projectConversation(CONVERSATION_ID),
@@ -695,9 +800,9 @@ describe("agent-capabilities / scope-store / project conversation", () => {
         ],
       });
 
-      const sessionConversation = (await state.readState()).projects[
-        PROJECT_PATH
-      ]?.sessions[SESSION_NAME]?.conversations[0];
+      const sessionConversation =
+        readWholeStateForTest(db).projects[PROJECT_PATH]?.sessions[SESSION_NAME]
+          ?.conversations[0];
       const projectConversationRecord = await state.getProjectConversation(
         PROJECT_PATH,
         CONVERSATION_ID,
@@ -727,10 +832,571 @@ describe("agent-capabilities / scope-store / project conversation", () => {
   });
 });
 
+describe("agent-capabilities / scope-store / session conflict check", () => {
+  it("propagates a precondition conflict and writes nothing", async () => {
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("hash conflict");
+    await expect(
+      store.patchSession(PROJECT_PATH, SESSION_NAME, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:s", enabled: false },
+        ],
+        precondition: async () => {
+          throw conflict;
+        },
+      }),
+    ).rejects.toBe(conflict);
+
+    const persisted = readWholeStateForTest(db);
+    expect(
+      persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME]
+        ?.agentCapabilityOverrides,
+    ).toBeUndefined();
+  });
+
+  it("re-runs the precondition and preserves both writes when a concurrent patch lands between resolve and commit", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        // A concurrent writer commits AFTER we read `before`. Issuing this
+        // focused write from inside the precondition would DEADLOCK if the
+        // precondition ran while holding the write queue — so a clean commit
+        // here also proves the precondition runs OUTSIDE the critical section.
+        await state.mutateSession(
+          PROJECT_PATH,
+          SESSION_NAME,
+          "test.concurrent",
+          (session) => {
+            session.agentCapabilityOverrides = {
+              cascades: { "codex-skills": { items: { z: { enabled: true } } } },
+            };
+          },
+        );
+      }
+    };
+
+    const result = await store.patchSession(PROJECT_PATH, SESSION_NAME, {
+      cascadeKind: "claude-skills",
+      operations: [
+        { type: "set-item-enabled", itemId: "skill:s", enabled: false },
+      ],
+      precondition,
+    });
+
+    expect(calls).toBe(2);
+    expect(result.changedItemIds).toEqual(["skill:s"]);
+
+    const cascades =
+      readWholeStateForTest(db).projects[PROJECT_PATH]?.sessions[SESSION_NAME]
+        ?.agentCapabilityOverrides?.cascades;
+    // Neither write was lost across the fence retry.
+    expect(cascades?.["codex-skills"]?.items["z"]?.enabled).toBe(true);
+    expect(cascades?.["claude-skills"]?.items["skill:s"]?.enabled).toBe(false);
+  });
+});
+
+describe("agent-capabilities / scope-store / conversation conflict check", () => {
+  it("propagates a precondition conflict and writes nothing", async () => {
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("hash conflict");
+    await expect(
+      store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:c", enabled: false },
+        ],
+        precondition: async () => {
+          throw conflict;
+        },
+      }),
+    ).rejects.toBe(conflict);
+
+    const persisted = readWholeStateForTest(db);
+    expect(
+      persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME]?.conversations[0]
+        ?.agentCapabilityOverrides,
+    ).toBeUndefined();
+  });
+
+  it("re-runs the precondition and preserves both writes when a concurrent patch lands between resolve and commit", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        await state.mutateConversation(
+          PROJECT_PATH,
+          SESSION_NAME,
+          CONVERSATION_ID,
+          "test.concurrent",
+          (conversation) => {
+            conversation.agentCapabilityOverrides = {
+              cascades: { "codex-skills": { items: { z: { enabled: true } } } },
+            };
+          },
+        );
+      }
+    };
+
+    const result = await store.patchConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+      {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:c", enabled: false },
+        ],
+        precondition,
+      },
+    );
+
+    expect(calls).toBe(2);
+    expect(result.changedItemIds).toEqual(["skill:c"]);
+
+    const cascades =
+      readWholeStateForTest(db).projects[PROJECT_PATH]?.sessions[SESSION_NAME]
+        ?.conversations[0]?.agentCapabilityOverrides?.cascades;
+    expect(cascades?.["codex-skills"]?.items["z"]?.enabled).toBe(true);
+    expect(cascades?.["claude-skills"]?.items["skill:c"]?.enabled).toBe(false);
+  });
+});
+
+describe("agent-capabilities / scope-store / project conversation conflict check", () => {
+  it("re-runs the precondition and preserves both writes when a concurrent patch lands between resolve and commit", async () => {
+    const { db, state, store } = createSqlHarness();
+    try {
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation("plc-1"),
+      );
+
+      let calls = 0;
+      const precondition = async (): Promise<void> => {
+        calls += 1;
+        if (calls === 1) {
+          await state.mutateProjectConversation(
+            PROJECT_PATH,
+            "plc-1",
+            "test.concurrent",
+            (conversation) => {
+              conversation.agentCapabilityOverrides = {
+                cascades: {
+                  "codex-skills": { items: { z: { enabled: true } } },
+                },
+              };
+            },
+          );
+        }
+      };
+
+      const result = await store.patchProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+        {
+          cascadeKind: "claude-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+          precondition,
+        },
+      );
+
+      expect(calls).toBe(2);
+      expect(result.changedItemIds).toEqual(["skill:a"]);
+
+      const restored = await state.getProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+      );
+      const cascades = restored?.agentCapabilityOverrides?.cascades;
+      expect(cascades?.["codex-skills"]?.items["z"]?.enabled).toBe(true);
+      expect(cascades?.["claude-skills"]?.items["skill:a"]?.enabled).toBe(
+        false,
+      );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("agent-capabilities / scope-store / ancestor effective-hash fence", () => {
+  it("session: a PROJECT ancestor change after the precondition surfaces a conflict, no stale commit", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("ancestor hash conflict");
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        // The PROJECT ancestor override changes AFTER the child session
+        // precondition validated — the effective hash the session patch was
+        // fenced against moved. A target-only fence would miss this (the session
+        // overrides are unchanged) and commit the stale patch.
+        await state.mutateProjectAgentCapabilityOverrides<void>(
+          PROJECT_PATH,
+          "test.parent-change",
+          () => ({
+            write: true,
+            overrides: {
+              cascades: { "codex-skills": { items: { p: { enabled: true } } } },
+            },
+            result: undefined,
+          }),
+        );
+        return;
+      }
+      // The re-run precondition recomputes the effective hash against the now-
+      // changed ancestor and rejects — exactly what computeEffectiveHash does.
+      throw conflict;
+    };
+
+    await expect(
+      store.patchSession(PROJECT_PATH, SESSION_NAME, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:s", enabled: false },
+        ],
+        precondition,
+      }),
+    ).rejects.toBe(conflict);
+
+    // The ancestor change forced the fence to miss and re-run the precondition.
+    expect(calls).toBe(2);
+    const persisted = readWholeStateForTest(db);
+    const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
+    // The stale-hash session patch never committed.
+    expect(session?.agentCapabilityOverrides).toBeUndefined();
+    // The concurrent parent change did land.
+    expect(
+      persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades[
+        "codex-skills"
+      ]?.items["p"]?.enabled,
+    ).toBe(true);
+  });
+
+  it("conversation: a SESSION ancestor change after the precondition surfaces a conflict, no stale commit", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("ancestor hash conflict");
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        // The SESSION ancestor override changes after the conversation
+        // precondition passed. The no-touch setter is used so the change itself
+        // never restamps activity.
+        await state.mutateSessionAgentCapabilityOverrides<void>(
+          PROJECT_PATH,
+          SESSION_NAME,
+          "test.parent-change",
+          () => ({
+            write: true,
+            overrides: {
+              cascades: { "codex-skills": { items: { s: { enabled: true } } } },
+            },
+            result: undefined,
+          }),
+        );
+        return;
+      }
+      throw conflict;
+    };
+
+    await expect(
+      store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:c", enabled: false },
+        ],
+        precondition,
+      }),
+    ).rejects.toBe(conflict);
+
+    expect(calls).toBe(2);
+    const persisted = readWholeStateForTest(db);
+    const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
+    expect(session?.conversations[0]?.agentCapabilityOverrides).toBeUndefined();
+    expect(
+      session?.agentCapabilityOverrides?.cascades["codex-skills"]?.items["s"]
+        ?.enabled,
+    ).toBe(true);
+  });
+
+  it("conversation: a PROJECT ancestor change after the precondition surfaces a conflict, no stale commit", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("ancestor hash conflict");
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        // The PROJECT ancestor override changes after the conversation
+        // precondition passed. The session-conversation effective hash spans
+        // global → project → session → conversation, so the commit must fence
+        // the PROJECT ancestor too — a target-only or project-omitting fence
+        // would miss this (the conversation target is unchanged) and commit the
+        // stale patch. Removing the `ancestors.project` check in
+        // `patchConversationChecked` turns this test red — the commit would pass
+        // the fence and return without re-running the precondition, so
+        // `calls === 2` and the conflict rejection both fail (regression guard).
+        await state.mutateProjectAgentCapabilityOverrides<void>(
+          PROJECT_PATH,
+          "test.parent-change",
+          () => ({
+            write: true,
+            overrides: {
+              cascades: { "codex-skills": { items: { p: { enabled: true } } } },
+            },
+            result: undefined,
+          }),
+        );
+        return;
+      }
+      throw conflict;
+    };
+
+    await expect(
+      store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:c", enabled: false },
+        ],
+        precondition,
+      }),
+    ).rejects.toBe(conflict);
+
+    expect(calls).toBe(2);
+    const persisted = readWholeStateForTest(db);
+    const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
+    // The stale-hash conversation patch never committed.
+    expect(session?.conversations[0]?.agentCapabilityOverrides).toBeUndefined();
+    // The concurrent PROJECT ancestor change did land.
+    expect(
+      persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades[
+        "codex-skills"
+      ]?.items["p"]?.enabled,
+    ).toBe(true);
+  });
+
+  it("project conversation: a PROJECT ancestor change after the precondition surfaces a conflict, no stale commit", async () => {
+    const { db, state, store } = createSqlHarness();
+    try {
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation("plc-1"),
+      );
+
+      const conflict = new Error("ancestor hash conflict");
+      let calls = 0;
+      const precondition = async (): Promise<void> => {
+        calls += 1;
+        if (calls === 1) {
+          await state.mutateProjectAgentCapabilityOverrides<void>(
+            PROJECT_PATH,
+            "test.parent-change",
+            () => ({
+              write: true,
+              overrides: {
+                cascades: {
+                  "codex-skills": { items: { p: { enabled: true } } },
+                },
+              },
+              result: undefined,
+            }),
+          );
+          return;
+        }
+        throw conflict;
+      };
+
+      await expect(
+        store.patchProjectConversation(PROJECT_PATH, "plc-1", {
+          cascadeKind: "claude-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+          precondition,
+        }),
+      ).rejects.toBe(conflict);
+
+      expect(calls).toBe(2);
+      const restored = await state.getProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+      );
+      expect(restored?.agentCapabilityOverrides).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("agent-capabilities / scope-store / fence miss does not restamp activity", () => {
+  it("conversation: a raced conflict leaves conversation and session lastActivityAt unchanged", async () => {
+    const { db, state, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const conflict = new Error("hash conflict");
+    let calls = 0;
+    const precondition = async (): Promise<void> => {
+      calls += 1;
+      if (calls === 1) {
+        // Change the conversation TARGET so the first commit's fence misses
+        // (write:false) — the exact path the old generic mutateConversation
+        // restamped conversation + session activity on.
+        await state.mutateConversationAgentCapabilityOverrides<void>(
+          PROJECT_PATH,
+          SESSION_NAME,
+          CONVERSATION_ID,
+          "test.concurrent",
+          () => ({
+            write: true,
+            overrides: {
+              cascades: { "codex-skills": { items: { z: { enabled: true } } } },
+            },
+            result: undefined,
+          }),
+        );
+        return;
+      }
+      throw conflict;
+    };
+
+    await expect(
+      store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:c", enabled: false },
+        ],
+        precondition,
+      }),
+    ).rejects.toBe(conflict);
+    expect(calls).toBe(2);
+
+    const persisted = readWholeStateForTest(db);
+    const session = persisted.projects[PROJECT_PATH]?.sessions[SESSION_NAME];
+    // Neither the fence-miss commit nor the concurrent no-touch write restamped
+    // activity — a config edit must not reorder the conversation or session.
+    expect(session?.conversations[0]?.lastActivityAt).toBe(SEED_TS);
+    expect(session?.lastActivityAt).toBe(SEED_TS);
+  });
+
+  it("project conversation: a raced conflict leaves the PLC lastActivityAt unchanged", async () => {
+    const { db, state, store } = createSqlHarness();
+    try {
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation("plc-1"),
+      );
+
+      const conflict = new Error("hash conflict");
+      let calls = 0;
+      const precondition = async (): Promise<void> => {
+        calls += 1;
+        if (calls === 1) {
+          // Change the PLC TARGET so the first commit's fence misses
+          // (write:false) — the exact path the old restamping
+          // mutateProjectConversation bumped the PLC's lastActivityAt on. The
+          // no-touch focused setter must leave it unchanged.
+          await state.mutateProjectConversationAgentCapabilityOverrides<void>(
+            PROJECT_PATH,
+            "plc-1",
+            "test.concurrent",
+            () => ({
+              write: true,
+              overrides: {
+                cascades: {
+                  "codex-skills": { items: { z: { enabled: true } } },
+                },
+              },
+              result: undefined,
+            }),
+          );
+          return;
+        }
+        throw conflict;
+      };
+
+      await expect(
+        store.patchProjectConversation(PROJECT_PATH, "plc-1", {
+          cascadeKind: "claude-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+          precondition,
+        }),
+      ).rejects.toBe(conflict);
+      expect(calls).toBe(2);
+
+      const restored = await state.getProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+      );
+      // Neither the fence-miss commit nor the concurrent no-touch write restamped
+      // the PLC — a config edit must not reorder a project conversation.
+      expect(restored?.lastActivityAt).toBe(SEED_TS);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("agent-capabilities / scope-store / logging ordering", () => {
+  it("emits logPatch only AFTER the focused write queue releases (queue-exit-before-log)", async () => {
+    const { db, state } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
+
+    const order: string[] = [];
+    const spyLogger: Logger = {
+      debug() {},
+      warn() {},
+      error() {},
+      info(message: string) {
+        order.push(`log:${message}`);
+      },
+    };
+    const store = createScopeCapabilityOverrideStore({
+      stateManager: state,
+      logger: spyLogger,
+    });
+
+    const patchP = store.patchProject(PROJECT_PATH, {
+      cascadeKind: "claude-skills",
+      operations: [
+        { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+      ],
+    });
+    // Enqueue an unrelated write directly behind the patch's sync commit. If
+    // logPatch ran INSIDE the critical section it would fire before this marker;
+    // because it runs only after the queue releases, the marker runs first.
+    const markerP = withWriteQueue("ordering-marker", async () => {
+      order.push("marker");
+    });
+    await Promise.all([patchP, markerP]);
+
+    expect(order).toEqual(["marker", "log:project.patch"]);
+  });
+});
+
 describe("agent-capabilities / scope-store / serialization", () => {
   it("serializes concurrent patches through the state mutex (no lost updates)", async () => {
-    const { state, store } = createTestHarness();
-    await state.writeState(stateWithAllScopes());
+    const { db, store } = createTestHarness();
+    seedWholeState(db, stateWithAllScopes());
 
     await Promise.all([
       store.patchProject(PROJECT_PATH, {
@@ -747,7 +1413,7 @@ describe("agent-capabilities / scope-store / serialization", () => {
       }),
     ]);
 
-    const persisted = await state.readState();
+    const persisted = readWholeStateForTest(db);
     const items =
       persisted.projects[PROJECT_PATH]?.agentCapabilityOverrides?.cascades[
         "claude-skills"

@@ -5,7 +5,7 @@ import type {
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type { GraphWorkflowEventDelivery } from "@/lib/workflow-graph/execution-events";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
@@ -125,18 +125,29 @@ export interface UserInputGateServiceDeps {
   mutateActive(
     projectPath: string,
     sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
-  /** Publish the `graph-workflow-user-input-pending` SSE event (post-commit). */
+  /**
+   * Derive the pure `graph-workflow-user-input-pending` delivery DATA. The gate
+   * hands it to {@link deliver} directly because it runs post-commit (after the
+   * parking mutation), so it owns delivery timing rather than the mutation seam.
+   */
   publishUserInputPending(
     input: PublishUserInputPendingInput,
-  ): GraphWorkflowExecutionEvent[];
-  /** Publish the `graph-workflow-user-input-resolved` SSE event (post-commit). */
+  ): GraphWorkflowEventDelivery;
+  /**
+   * Derive the pure `graph-workflow-user-input-resolved` delivery DATA,
+   * performed via {@link deliver} post-commit (see `publishUserInputPending`).
+   */
   publishUserInputResolved(
     input: PublishUserInputResolvedInput,
-  ): GraphWorkflowExecutionEvent[];
+  ): GraphWorkflowEventDelivery;
+  /**
+   * Perform a derived delivery's SSE broadcast + push dispatch. The gate calls
+   * this only after its parking/resolution mutation has committed, so no event
+   * reaches a client before the write persists (`post-commit-delivery`).
+   */
+  deliver(delivery: GraphWorkflowEventDelivery): void;
   /**
    * Dispatch a conversation-machine event to a lane conversation (used only to
    * send `CLEAR_PENDING_QUESTION` on withdraw). Returns false when the actor is
@@ -359,15 +370,17 @@ export function createUserInputGateService(
       return "answers_ready";
     }
 
-    deps.publishUserInputPending({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      execution,
-      contextId: input.contextId,
-      conversationId: input.conversationId,
-      questionBatchId: input.questionBatchId,
-      requestedAt,
-    });
+    deps.deliver(
+      deps.publishUserInputPending({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        execution,
+        contextId: input.contextId,
+        conversationId: input.conversationId,
+        questionBatchId: input.questionBatchId,
+        requestedAt,
+      }),
+    );
 
     logger.info("gate.parked", {
       executionId: execution.id,
@@ -457,16 +470,18 @@ export function createUserInputGateService(
     }
 
     if (resolvedContextId !== null) {
-      deps.publishUserInputResolved({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        execution,
-        contextId: resolvedContextId,
-        conversationId: input.conversationId,
-        questionBatchId: input.questionBatchId,
-        resolution: "answered",
-        resolvedAt: answeredAt,
-      });
+      deps.deliver(
+        deps.publishUserInputResolved({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution,
+          contextId: resolvedContextId,
+          conversationId: input.conversationId,
+          questionBatchId: input.questionBatchId,
+          resolution: "answered",
+          resolvedAt: answeredAt,
+        }),
+      );
     }
 
     logger.info("gate.answers_recorded", {
@@ -573,16 +588,18 @@ export function createUserInputGateService(
         entry.conversationId,
         { type: "CLEAR_PENDING_QUESTION" },
       );
-      deps.publishUserInputResolved({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        execution,
-        contextId: entry.contextId,
-        conversationId: entry.conversationId,
-        questionBatchId: entry.questionBatchId,
-        resolution: "withdrawn",
-        resolvedAt,
-      });
+      deps.deliver(
+        deps.publishUserInputResolved({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution,
+          contextId: entry.contextId,
+          conversationId: entry.conversationId,
+          questionBatchId: entry.questionBatchId,
+          resolution: "withdrawn",
+          resolvedAt,
+        }),
+      );
     }
 
     logger.info("gate.withdrew", {

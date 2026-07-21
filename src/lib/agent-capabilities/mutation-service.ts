@@ -6,11 +6,15 @@
  *
  *  1. Expected-hash conflict detection. When the caller passes
  *     `expectedHash`, the service installs a precondition on the store patch
- *     that runs *inside* the serialized write boundary (the global-store
- *     write mutex or the state-manager mutate boundary). The precondition
- *     recomputes the effective hash and throws `CapabilityHashConflictError`
- *     when it disagrees with `expectedHash`. Because the precondition runs
- *     under the same lock as the read and the write, two concurrent patches
+ *     that recomputes the effective hash and throws
+ *     `CapabilityHashConflictError` when it disagrees with `expectedHash`. The
+ *     store decides where the precondition runs so it never holds a lock across
+ *     the recompute's discovery + whole-chain I/O (no-slow-work-in-critical-
+ *     section): the global store runs it inside its own serialized file-write
+ *     lock (the recompute is over the fresh on-disk overrides), while the scoped
+ *     store runs it OUTSIDE the state write queue and then fences a short
+ *     synchronous commit on the target and every state-backed ancestor the hash
+ *     depends on, retrying on a change. Either way two concurrent patches
  *     sharing the same `expectedHash` cannot both succeed.
  *  2. Fanout metadata. After a successful write, the service returns the
  *     changed item ids, target scope, cascade kind, post-write effective

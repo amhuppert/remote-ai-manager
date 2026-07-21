@@ -17,9 +17,7 @@ import type {
 const logger = createLogger("graph-workflow-join-runner");
 
 export type JoinRunnerMutateActive = (
-  mutator: (
-    execution: GraphWorkflowExecution,
-  ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  mutator: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
 ) => Promise<GraphWorkflowExecution>;
 
 interface JoinRunnerRunInput {

@@ -3,6 +3,9 @@ import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 
 export { createStateStore, getStateDb, type StateStore } from "./store";
 export type { AllRepos, StateStoreDeps } from "./schemas";
+export type { SessionConversationListItem } from "./accessors";
+export type { ConversationListItemProjection } from "./conversations-repo";
+export type { SessionListItemProjection } from "./sessions-repo";
 
 // One store per process, like the DB connection it wraps (`state-db`'s
 // `__cc_state_db`). The repos inside hold parsed-row caches invalidated by a
@@ -24,12 +27,17 @@ export function getStateStore(): StateStore {
   return defaultStore;
 }
 
-export const readState = defaultStore.readState;
-export const mutateState = defaultStore.mutateState;
 export const mutateSession = defaultStore.mutateSession;
 export const mutateConversation = defaultStore.mutateConversation;
 export const createSessionConversation = defaultStore.createSessionConversation;
 export const mutateProjectConversation = defaultStore.mutateProjectConversation;
+export const getConversationMachineSnapshot =
+  defaultStore.getConversationMachineSnapshot;
+export const upsertConversationMachineSnapshot =
+  defaultStore.upsertConversationMachineSnapshot;
+export const deleteConversationMachineSnapshot =
+  defaultStore.deleteConversationMachineSnapshot;
+export type { ConversationSnapshotOwner } from "./conversation-machine-snapshots-repo";
 export const getProjectSessionListItems =
   defaultStore.getProjectSessionListItems;
 export const getSession = defaultStore.getSession;
@@ -40,6 +48,10 @@ export const getProjectConversation = defaultStore.getProjectConversation;
 export const getProjectConversations = defaultStore.getProjectConversations;
 export const listAllProjectConversations =
   defaultStore.listAllProjectConversations;
+export const listConversationIdentities =
+  defaultStore.listConversationIdentities;
+export const listSessionConversationListItems =
+  defaultStore.listSessionConversationListItems;
 export const getSpawnedSessionStatuses = defaultStore.getSpawnedSessionStatuses;
 export const getReferenceDocuments = defaultStore.getReferenceDocuments;
 export const getSessionMarkdownDocuments =
@@ -54,8 +66,19 @@ export const upsertDocumentComment = defaultStore.upsertDocumentComment;
 export const deleteDocumentComment = defaultStore.deleteDocumentComment;
 /** @public Accessed via dynamic `import()` in actor-implementations. */
 export const getProjectMcpOverrides = defaultStore.getProjectMcpOverrides;
+export const getProjectAgentCapabilityOverrides =
+  defaultStore.getProjectAgentCapabilityOverrides;
+export const mutateProjectMcpOverrides = defaultStore.mutateProjectMcpOverrides;
+export const mutateProjectAgentCapabilityOverrides =
+  defaultStore.mutateProjectAgentCapabilityOverrides;
+export const listProjectPaths = defaultStore.listProjectPaths;
 export const getArchivedProjects = defaultStore.getArchivedProjects;
 export const getPinnedProjects = defaultStore.getPinnedProjects;
+export const createSessionRow = defaultStore.createSessionRow;
+export const deleteSessionRow = defaultStore.deleteSessionRow;
+export const retargetChildrenToMain = defaultStore.retargetChildrenToMain;
+export const applyFusedSessionDelete = defaultStore.applyFusedSessionDelete;
+export const deleteProjectRow = defaultStore.deleteProjectRow;
 export const setSessionArchived = defaultStore.setSessionArchived;
 export const setSessionTddEnabled = defaultStore.setSessionTddEnabled;
 export const setSessionFinished = defaultStore.setSessionFinished;

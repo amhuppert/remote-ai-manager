@@ -16,7 +16,6 @@ import {
   markGraphWorkflowContextEventsPreReset,
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowExecutionContextDefinition,
@@ -26,6 +25,7 @@ import type { WorkflowLiveEditRequest } from "@/lib/workflows/edit-schemas";
 import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
+  type GraphWorkflowEventDelivery,
   type PublishLiveEditAppliedInput,
 } from "./execution-events";
 import {
@@ -122,15 +122,12 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | MutateActiveResult
-      | GraphWorkflowExecution
-      | Promise<MutateActiveResult | GraphWorkflowExecution>,
+    ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
-  ): GraphWorkflowExecutionEvent[];
+  ): GraphWorkflowEventDelivery;
 }
 
 const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
@@ -381,7 +378,7 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
           ...gate.execution,
           liveRevision: bumpedLiveRevision,
         };
-        const rows = deps.publishLiveEditApplied({
+        const delivery = deps.publishLiveEditApplied({
           projectPath,
           sessionName,
           executionId: bumped.id,
@@ -394,7 +391,7 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
         applied = editRequest.operations.length;
         liveRevision = bumpedLiveRevision;
         affectedContextIds = gate.affectedContextIds;
-        return { execution: bumped, events: rows };
+        return { execution: bumped, ...delivery };
       });
     } catch (error) {
       if (error instanceof LiveEditRejectionSignal) {

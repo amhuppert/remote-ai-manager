@@ -10,6 +10,7 @@ import { z } from "zod";
 import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { setProjectPinned as defaultSetProjectPinned } from "@/lib/state-store";
+import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -83,4 +84,4 @@ export function createPinRouteHandlers(deps: PinRouteDeps = defaultDeps) {
 // ---------------------------------------------------------------------------
 
 const _defaultPinHandlers = createPinRouteHandlers();
-export const pinProject = _defaultPinHandlers.POST;
+export const pinProject = withTracing(_defaultPinHandlers.POST);

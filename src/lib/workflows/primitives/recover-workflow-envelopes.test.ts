@@ -12,6 +12,9 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config/loader";
 import { createStateStore as createStateManager } from "@/lib/state-store";
+import { getStateDb } from "@/lib/state-store/store";
+import type { ManagerState } from "@/lib/projects/schemas";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import {
   _createTestDb,
   _installTestDb,
@@ -48,25 +51,35 @@ async function buildManager() {
   });
 }
 
-async function seedSession(sessionName: string) {
-  const manager = await buildManager();
-  await manager.updateSession(PROJECT_PATH, {
-    sessionName,
-    worktreePath: `${PROJECT_PATH}/.worktrees/${sessionName}`,
-    branchName: `csm/${sessionName}`,
-    createdAt: "2026-04-28T09:00:00.000Z",
-    lastActivityAt: "2026-04-28T09:00:00.000Z",
-    archived: false,
-    finished: false,
-    conversations: [],
-    source: "cc",
-    creationMode: "normal",
-    tddEnabled: true,
-    targetBranch: "main",
-    parentSessionName: null,
-    graphWorkflowExecution: null,
-    referenceDocuments: [],
-  });
+function seedStateWithSession(sessionName: string): ManagerState {
+  return {
+    projects: {
+      [PROJECT_PATH]: {
+        rootPath: PROJECT_PATH,
+        sessions: {
+          [sessionName]: {
+            sessionName,
+            worktreePath: `${PROJECT_PATH}/.worktrees/${sessionName}`,
+            branchName: `csm/${sessionName}`,
+            createdAt: "2026-04-28T09:00:00.000Z",
+            lastActivityAt: "2026-04-28T09:00:00.000Z",
+            archived: false,
+            finished: false,
+            conversations: [],
+            source: "cc",
+            creationMode: "normal",
+            tddEnabled: true,
+            targetBranch: "main",
+            parentSessionName: null,
+            graphWorkflowExecution: null,
+            referenceDocuments: [],
+          },
+        },
+      },
+    },
+    archivedProjects: [],
+    pinnedProjects: [],
+  };
 }
 
 beforeEach(async () => {
@@ -76,7 +89,7 @@ beforeEach(async () => {
   );
   await mkdir(TEST_DIR, { recursive: true });
   _installTestDb(_createTestDb({ inMemory: true }));
-  await seedSession(SESSION_NAME);
+  seedWholeState(getStateDb(), seedStateWithSession(SESSION_NAME));
 });
 
 afterEach(async () => {
@@ -116,7 +129,8 @@ describe("recoverActiveWorkflowEnvelopes", () => {
     // Process restart: brand-new state manager, no in-memory workers exist.
     const afterRestart = await buildManager();
     const summary = await recoverActiveWorkflowEnvelopes({
-      readState: afterRestart.readState,
+      listSessionConversationListItems:
+        afterRestart.listSessionConversationListItems,
       createRepository: ({ projectPath, sessionName }) =>
         createDefaultSessionWorkflowEnvelopeRepository({
           projectPath,
@@ -165,7 +179,8 @@ describe("recoverActiveWorkflowEnvelopes", () => {
 
     const afterRestart = await buildManager();
     const summary = await recoverActiveWorkflowEnvelopes({
-      readState: afterRestart.readState,
+      listSessionConversationListItems:
+        afterRestart.listSessionConversationListItems,
       createRepository: ({ projectPath, sessionName }) =>
         createDefaultSessionWorkflowEnvelopeRepository({
           projectPath,
@@ -194,7 +209,8 @@ describe("recoverActiveWorkflowEnvelopes", () => {
   it("returns zero counts for sessions with no envelopes", async () => {
     const manager = await buildManager();
     const summary = await recoverActiveWorkflowEnvelopes({
-      readState: manager.readState,
+      listSessionConversationListItems:
+        manager.listSessionConversationListItems,
       createRepository: ({ projectPath, sessionName }) =>
         createDefaultSessionWorkflowEnvelopeRepository({
           projectPath,

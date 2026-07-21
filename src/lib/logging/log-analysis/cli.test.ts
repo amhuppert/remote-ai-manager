@@ -1,5 +1,15 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { runLogAnalysisCli, type LogAnalysisCliRuntime } from "./cli";
+
+const budgetViolationLog = readFileSync(
+  new URL("./fixtures/budget-violation.ndjson", import.meta.url),
+  "utf-8",
+);
+const budgetConfigJson = readFileSync(
+  new URL("../../../../scripts/log-budgets.json", import.meta.url),
+  "utf-8",
+);
 
 interface RuntimeOptions {
   stats?: Record<string, { size: number; mtimeMs: number }>;
@@ -93,6 +103,71 @@ describe("runLogAnalysisCli", () => {
 
     expect(exitCode).toBe(3);
     expect(rt.stderrText()).toContain("trace not found");
+  });
+
+  describe("--assert-budgets", () => {
+    it("report stays advisory (exit 0) but still reports the violations by default", async () => {
+      const rt = runtime({
+        "/violation.log": budgetViolationLog,
+        "scripts/log-budgets.json": budgetConfigJson,
+      });
+      const exitCode = await runLogAnalysisCli(
+        ["report", "--in", "/violation.log", "--format", "json"],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      const report = JSON.parse(rt.stdoutText()) as {
+        budgets: { violationCount: number; violations: { kind: string }[] };
+      };
+      expect(report.budgets.violationCount).toBeGreaterThan(0);
+      const kinds = report.budgets.violations.map((v) => v.kind);
+      expect(kinds).toContain("write-queue-hold");
+      expect(kinds).toContain("row-size");
+    });
+
+    it("exits non-zero under --assert-budgets when a ceiling is exceeded", async () => {
+      const rt = runtime({
+        "/violation.log": budgetViolationLog,
+        "scripts/log-budgets.json": budgetConfigJson,
+      });
+      const exitCode = await runLogAnalysisCli(
+        [
+          "report",
+          "--in",
+          "/violation.log",
+          "--format",
+          "json",
+          "--assert-budgets",
+        ],
+        rt,
+      );
+
+      expect(exitCode).not.toBe(0);
+      expect(rt.stderrText()).toContain("budget assertion failed");
+      // The report is still emitted so CI can see what violated.
+      expect(() => JSON.parse(rt.stdoutText())).not.toThrow();
+    });
+
+    it("passes (exit 0) under --assert-budgets when nothing exceeds a ceiling", async () => {
+      const rt = runtime({
+        "/clean.log": logLine,
+        "scripts/log-budgets.json": budgetConfigJson,
+      });
+      const exitCode = await runLogAnalysisCli(
+        [
+          "report",
+          "--in",
+          "/clean.log",
+          "--format",
+          "json",
+          "--assert-budgets",
+        ],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("compare requires --before and --after", async () => {

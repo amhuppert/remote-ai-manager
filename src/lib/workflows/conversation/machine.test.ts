@@ -41,6 +41,7 @@ const defaultInput: ConversationInput = {
   agentBackend: "claude" as const,
   backendRef: null,
   promptCount: 0,
+  persistence: "durable" as const,
 };
 
 function successResult(

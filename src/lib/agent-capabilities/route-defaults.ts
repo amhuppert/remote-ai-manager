@@ -151,10 +151,7 @@ interface ResolutionContext {
 async function buildResolutionContext(
   scope: CapabilityRouteScope,
 ): Promise<ResolutionContext> {
-  const [globalOverrides, state] = await Promise.all([
-    defaultGlobalCapabilityOverrideStore.read(),
-    stateManager.readState(),
-  ]);
+  const globalOverrides = await defaultGlobalCapabilityOverrideStore.read();
   const chain: Array<{
     layer: AgentCapabilityCascadeLayer;
     overrides: AgentCapabilityOverrides | undefined;
@@ -168,21 +165,8 @@ async function buildResolutionContext(
     };
   }
 
-  const project = state.projects[scope.projectPath];
-  if (!project) {
-    throw new CapabilityRouteNotFoundError(
-      `Project "${scope.projectName}" not found`,
-    );
-  }
-  chain.push({ layer: "project", overrides: project.agentCapabilityOverrides });
-
-  if (scope.level === "project") {
-    return {
-      scopeContext: { level: "project", projectName: scope.projectName },
-      worktreePath: scope.projectPath,
-      overrideChain: chain,
-    };
-  }
+  const projectOverrides =
+    await stateManager.getProjectAgentCapabilityOverrides(scope.projectPath);
 
   if (scope.level === "conversation" && scope.conversationScope === "project") {
     const conversation = await stateManager.getProjectConversation(
@@ -194,6 +178,7 @@ async function buildResolutionContext(
         `Project conversation "${scope.conversationId}" not found`,
       );
     }
+    chain.push({ layer: "project", overrides: projectOverrides });
     chain.push({
       layer: "conversation",
       overrides: conversation.agentCapabilityOverrides,
@@ -205,18 +190,39 @@ async function buildResolutionContext(
         conversationScope: "project",
         conversationId: scope.conversationId,
       },
-      worktreePath: project.rootPath,
+      worktreePath: scope.projectPath,
       overrideChain: chain,
       runtimeApplyState: conversation.agentCapabilitiesRuntime,
     };
   }
 
-  const session = project.sessions[scope.sessionName];
+  if (scope.level === "project") {
+    const projectExists = (await stateManager.listProjectPaths()).includes(
+      scope.projectPath,
+    );
+    if (!projectExists) {
+      throw new CapabilityRouteNotFoundError(
+        `Project "${scope.projectName}" not found`,
+      );
+    }
+    chain.push({ layer: "project", overrides: projectOverrides });
+    return {
+      scopeContext: { level: "project", projectName: scope.projectName },
+      worktreePath: scope.projectPath,
+      overrideChain: chain,
+    };
+  }
+
+  const session = await stateManager.getSession(
+    scope.projectPath,
+    scope.sessionName,
+  );
   if (!session) {
     throw new CapabilityRouteNotFoundError(
       `Session "${scope.sessionName}" not found`,
     );
   }
+  chain.push({ layer: "project", overrides: projectOverrides });
   chain.push({ layer: "session", overrides: session.agentCapabilityOverrides });
 
   if (scope.level === "session") {

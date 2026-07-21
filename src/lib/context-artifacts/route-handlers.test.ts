@@ -73,7 +73,6 @@ function makeConvo(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
     unread: false,
@@ -341,6 +340,34 @@ beforeEach(() => {
 
 afterEach(() => {
   fixture.close();
+});
+
+/** Whether a `<base>.complete` span landed on any logger level. */
+function spanCompleteFired(base: string): boolean {
+  const event = `${base}.complete`;
+  return [logSpies.debug, logSpies.info, logSpies.warn].some((spy) =>
+    spy.mock.calls.some(([name]) => name === event),
+  );
+}
+
+// ===========================================================================
+// Interior timed() spans (Design 6.1 — the context-artifacts GET offender)
+// ===========================================================================
+
+describe("GET list interior timed() spans", () => {
+  it("times target resolution, the transcript read, and response assembly", async () => {
+    repo.upsert(makeRow({ scope: "project", sessionName: null }));
+
+    const response = await handlers.projectList(
+      new Request(PROJECT_BASE),
+      projectCollectionParams(),
+    );
+    expect(response.status).toBe(200);
+
+    expect(spanCompleteFired("artifact.resolve_target")).toBe(true);
+    expect(spanCompleteFired("artifact.list.read_transcript")).toBe(true);
+    expect(spanCompleteFired("artifact.list.assemble")).toBe(true);
+  });
 });
 
 // ===========================================================================

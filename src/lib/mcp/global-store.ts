@@ -44,6 +44,15 @@ export interface GlobalOverrideStoreDeps {
 
 interface GlobalOverridePatchInput {
   operations: readonly McpOverrideOperation[];
+  /**
+   * Optional guard run inside the serialized write boundary after the current
+   * on-disk overrides have been read and before the new state is written.
+   * Throwing from the precondition aborts the patch without persisting and
+   * propagates the error to the caller. The config-mutation service uses this
+   * hook for atomic expected-hash conflict detection — the same mechanism the
+   * agent-capability global store exposes.
+   */
+  precondition?(current: McpOverrides): Promise<void> | void;
 }
 
 interface GlobalOverridePatchResult {
@@ -88,8 +97,12 @@ export function createGlobalOverrideStore(
   async function patch(
     input: GlobalOverridePatchInput,
   ): Promise<GlobalOverridePatchResult> {
+    const precondition = input.precondition;
     return store.patch<GlobalOverridePatchResult>({
       apply: (current) => applyOperations(current, input.operations),
+      ...(precondition
+        ? { precondition: (current) => precondition.call(input, current) }
+        : {}),
       logFields: (result) => ({
         operationCount: input.operations.length,
         changedCount: result.changedServerKeys.length,

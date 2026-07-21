@@ -1953,7 +1953,7 @@ describe("graph workflow resolve-approval route handler", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 

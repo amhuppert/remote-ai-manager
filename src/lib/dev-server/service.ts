@@ -1,6 +1,7 @@
 import path from "node:path";
 import net from "node:net";
-import { createLogger } from "../logging";
+import { createLogger, timed } from "../logging";
+import type { Logger } from "../logging";
 import * as registry from "./registry";
 import type { DevServerEntry, DevServerStartMode } from "./registry";
 import { reconcileSessionDevServers } from "./reconciliation";
@@ -65,6 +66,15 @@ interface EnsureDevServerParams {
   worktreePath?: string;
 }
 
+interface AwaitReadyDevServerParams {
+  projectPath: string;
+  sessionName: string;
+  serverName: string;
+  timeoutMs?: number;
+  /** Override the resolved worktree (graph-workflow lane). Defaults to the session worktree. */
+  worktreePath?: string;
+}
+
 interface StopDevServerParams {
   projectPath: string;
   sessionName: string;
@@ -87,7 +97,21 @@ export interface StopUnmanagedResult {
 
 export interface DevServerService {
   list(params: ListDevServersParams): Promise<DevServerStatusItem[]>;
+  /**
+   * Records intent and initiates the spawn — the durable-acceptance boundary.
+   * Returns the current status item once the spawn is initiated; it does NOT
+   * await readiness. Post-boundary readiness is observed via `awaitReady`
+   * (the CLI/tool blocking path) or the registry's readiness probe, which
+   * broadcasts `dev-server-status` over SSE. `wait: true` composes `awaitReady`
+   * for callers that need the blocking semantics.
+   */
   ensure(params: EnsureDevServerParams): Promise<DevServerStatusItem>;
+  /**
+   * Post-boundary readiness observation: polls until the named server reaches
+   * `running`, errors, or the timeout elapses. Separated from `ensure` so the
+   * accept path structurally cannot await readiness.
+   */
+  awaitReady(params: AwaitReadyDevServerParams): Promise<DevServerStatusItem>;
   stop(params: StopDevServerParams): Promise<DevServerStatusItem | null>;
   stopUnmanaged(params: StopUnmanagedParams): Promise<StopUnmanagedResult>;
 }
@@ -113,6 +137,11 @@ interface ReconcileInput {
 }
 
 export interface DevServerServiceDeps {
+  /**
+   * Logger for the service's own events and per-phase `timed()` spans.
+   * Defaults to the module logger; injected in tests to capture spans.
+   */
+  logger?: Logger;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -287,20 +316,28 @@ function toStatusItem(
 export function createDevServerService(
   deps: DevServerServiceDeps,
 ): DevServerService {
+  const log = deps.logger ?? logger;
   // One-shot gate: stale-serve reconciliation runs exactly once per service
   // instance (i.e. once per CC process). The promise is cached so concurrent
   // ensure() calls share it instead of each spawning their own scan.
   let tailscaleReconcileOnce: Promise<void> | null = null;
   async function reconcileTailscaleOnce(): Promise<void> {
-    if (!deps.reconcileTailscaleServeOrphans) return;
+    const reconcileOrphans = deps.reconcileTailscaleServeOrphans;
+    if (!reconcileOrphans) return;
     if (!tailscaleReconcileOnce) {
-      tailscaleReconcileOnce = deps
-        .reconcileTailscaleServeOrphans()
-        .catch((err) => {
-          logger.warn("dev-server.tailscale.reconcile_failed", {
-            error: getErrorMessage(err),
-          });
+      // Span wraps the actual once-per-process scan (the external tailscale
+      // CLI), so its cost is attributable even though later ensure() calls
+      // await an already-resolved promise for free.
+      tailscaleReconcileOnce = timed(
+        log,
+        "dev-server.ensure.reconcile_tailscale",
+        {},
+        () => reconcileOrphans(),
+      ).catch((err) => {
+        log.warn("dev-server.tailscale.reconcile_failed", {
+          error: getErrorMessage(err),
         });
+      });
     }
     await tailscaleReconcileOnce;
   }
@@ -369,7 +406,7 @@ export function createDevServerService(
       sessionName: params.sessionName,
     });
 
-    logger.info("dev-server.tool.list", {
+    log.info("dev-server.tool.list", {
       projectPath: params.projectPath,
       sessionName: params.sessionName,
       configuredCount: configured.length,
@@ -406,12 +443,18 @@ export function createDevServerService(
       throw new AmbiguousDevServerError(configured.map((s) => s.name));
     }
 
-    await deps.reconcileSessionDevServers({
-      projectPath: params.projectPath,
-      sessionName: params.sessionName,
-      worktreePath,
-      configuredServers: [toReconcileConfig(target)],
-    });
+    await timed(
+      log,
+      "dev-server.ensure.reconcile_session",
+      { serverName: target.name, sessionName: params.sessionName },
+      () =>
+        deps.reconcileSessionDevServers({
+          projectPath: params.projectPath,
+          sessionName: params.sessionName,
+          worktreePath,
+          configuredServers: [toReconcileConfig(target)],
+        }),
+    );
 
     let runtime = deps.getServer({
       projectPath: params.projectPath,
@@ -423,7 +466,7 @@ export function createDevServerService(
     const ownedAndRunning =
       runtime?.status === "running" && runtime.ownedByThisSession;
     if (ownedAndRunning) {
-      logger.info("dev-server.tool.ensure", {
+      log.info("dev-server.tool.ensure", {
         serverName: target.name,
         outcome: "already_running",
         port: runtime!.port,
@@ -445,25 +488,33 @@ export function createDevServerService(
       // specific-address bind. Runs at most once per CC process.
       await reconcileTailscaleOnce();
 
-      const startMode = await resolveStartMode({
-        normalized: target,
-        worktreePath,
-      });
+      const startMode = await timed(
+        log,
+        "dev-server.ensure.resolve_start_mode",
+        { serverName: target.name },
+        () => resolveStartMode({ normalized: target, worktreePath }),
+      );
 
-      logger.info("dev-server.tool.ensure", {
+      log.info("dev-server.tool.ensure", {
         serverName: target.name,
         outcome: "starting",
         priorStatus: runtime?.status ?? "absent",
         port: startMode.port,
       });
-      await deps.startServer({
-        projectPath: params.projectPath,
-        sessionName: params.sessionName,
-        serverName: target.name,
-        command: target.command,
-        worktreePath,
-        startMode,
-      });
+      await timed(
+        log,
+        "dev-server.ensure.start_server",
+        { serverName: target.name, port: startMode.port },
+        () =>
+          deps.startServer({
+            projectPath: params.projectPath,
+            sessionName: params.sessionName,
+            serverName: target.name,
+            command: target.command,
+            worktreePath,
+            startMode,
+          }),
+      );
       runtime = deps.getServer({
         projectPath: params.projectPath,
         sessionName: params.sessionName,
@@ -472,26 +523,64 @@ export function createDevServerService(
       });
     }
 
+    // Durable-acceptance boundary: intent is recorded and the spawn is
+    // initiated. The accept path (wait:false — the START route) returns the
+    // current status item here WITHOUT awaiting readiness; readiness is
+    // observed post-boundary by the registry's readiness probe, which
+    // broadcasts `dev-server-status` over SSE (see sse-reactions.ts). The
+    // pre-spawn phases (reconcile, tailscale, port selection) stay before the
+    // boundary: port selection surfaces the synchronous unmanaged-listener
+    // rejection, and the EADDRINUSE ordering pins the tailscale reconcile
+    // ahead of it — so neither can move behind the response here.
     const wait = params.wait ?? true;
     if (!wait) {
       return toStatusItem(runtime, target);
     }
 
-    const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // wait:true (the CLI/tool blocking path) preserves its semantics by
+    // composing the post-boundary readiness observation.
+    return pollUntilReady({
+      projectPath: params.projectPath,
+      sessionName: params.sessionName,
+      worktreePath,
+      target,
+      timeoutMs: params.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * Poll registry status until the named server reaches `running` (owned),
+   * errors, or the timeout elapses. This is the post-boundary readiness
+   * observation extracted out of `ensure` so the accept path never runs it.
+   */
+  async function pollUntilReady(args: {
+    projectPath: string;
+    sessionName: string;
+    worktreePath: string;
+    target: NormalizedDevServerConfig;
+    timeoutMs: number;
+  }): Promise<DevServerStatusItem> {
+    const { projectPath, sessionName, worktreePath, target, timeoutMs } = args;
     const deadline = deps.now() + timeoutMs;
-    let lastStatus: DevServerStatus = runtime?.status ?? "stopped";
+    let lastStatus: DevServerStatus =
+      deps.getServer({
+        projectPath,
+        sessionName,
+        worktreePath,
+        serverName: target.name,
+      })?.status ?? "stopped";
 
     while (true) {
       const current = deps.getServer({
-        projectPath: params.projectPath,
-        sessionName: params.sessionName,
+        projectPath,
+        sessionName,
         worktreePath,
         serverName: target.name,
       });
       lastStatus = current?.status ?? "stopped";
 
       if (current?.status === "running" && current.ownedByThisSession) {
-        logger.info("dev-server.tool.ensure_wait", {
+        log.info("dev-server.tool.ensure_wait", {
           serverName: target.name,
           outcome: "running",
           port: current.port,
@@ -500,7 +589,7 @@ export function createDevServerService(
       }
 
       if (current?.status === "error") {
-        logger.warn("dev-server.tool.ensure_error", {
+        log.warn("dev-server.tool.ensure_error", {
           serverName: target.name,
           errorMessage: current.errorMessage,
         });
@@ -510,7 +599,7 @@ export function createDevServerService(
       }
 
       if (deps.now() >= deadline) {
-        logger.warn("dev-server.tool.ensure_error", {
+        log.warn("dev-server.tool.ensure_error", {
           serverName: target.name,
           reason: "timeout",
           timeoutMs,
@@ -521,6 +610,21 @@ export function createDevServerService(
 
       await deps.sleep(POLL_INTERVAL_MS);
     }
+  }
+
+  async function awaitReady(
+    params: AwaitReadyDevServerParams,
+  ): Promise<DevServerStatusItem> {
+    const { worktreePath, configured } = await resolveContext(params);
+    const target = configured.find((s) => s.name === params.serverName);
+    if (!target) throw new UnknownDevServerError(params.serverName);
+    return pollUntilReady({
+      projectPath: params.projectPath,
+      sessionName: params.sessionName,
+      worktreePath,
+      target,
+      timeoutMs: params.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
   }
 
   async function resolveStartMode(args: {
@@ -575,7 +679,7 @@ export function createDevServerService(
     const target = configured.find((s) => s.name === params.serverName);
     if (!target) throw new UnknownDevServerError(params.serverName);
 
-    logger.info("dev-server.tool.stop", {
+    log.info("dev-server.tool.stop", {
       projectPath: params.projectPath,
       sessionName: params.sessionName,
       serverName: target.name,
@@ -606,7 +710,7 @@ export function createDevServerService(
 
     const allowedCwd = resolveCwd(target.cwd, worktreePath) ?? undefined;
 
-    logger.info("dev-server.tool.stop_unmanaged", {
+    log.info("dev-server.tool.stop_unmanaged", {
       projectPath: params.projectPath,
       sessionName: params.sessionName,
       serverName: target.name,
@@ -624,7 +728,7 @@ export function createDevServerService(
     return deps.killListeningProcessForPort(killInput);
   }
 
-  return { list, ensure, stop, stopUnmanaged };
+  return { list, ensure, awaitReady, stop, stopUnmanaged };
 }
 
 function probeBackendReachableViaConnect(
@@ -692,5 +796,6 @@ const defaultService = createDevServerService(defaultDevServerServiceDeps);
 
 export const listDevServers = defaultService.list;
 export const ensureDevServer = defaultService.ensure;
+export const awaitReadyDevServer = defaultService.awaitReady;
 export const stopDevServer = defaultService.stop;
 export const stopUnmanagedDevServer = defaultService.stopUnmanaged;

@@ -144,6 +144,17 @@ case "$cmd" in
         echo "FAIL $name"; echo "$err" | sed 's/^/       /'; fails=$((fails + 1))
       fi
     done
+    # Ad-hoc regression probe: the documented `jget(raw, '$.field')` pattern
+    # must support multiple extracts in one WHERE. Bare `->>` cannot: DuckDB
+    # v1.5.4 parses the arrow operators at the wrong precedence, so
+    # `raw->>'$.a'='x' AND raw->>'$.b'='y'` swallows the rest of the predicate
+    # as the path argument and dies with a conversion error on arbitrary rows.
+    got="$(duckdb -csv -noheader -c ".read $PRELUDE" -c "SELECT count(*) FROM logs WHERE message='state.mutate.error' AND jget(raw, '$.label')='createConversation' AND jget(raw, '$.traceId')='t-8' AND since_ok(ts)" 2>&1 || true)"
+    if [[ "$got" == "1" ]]; then
+      echo "ok   adhoc-jget-probe"
+    else
+      echo "FAIL adhoc-jget-probe"; echo "       expected count 1, got: $got"; fails=$((fails + 1))
+    fi
     echo "---"; echo "$fails failed"
     [[ $fails -eq 0 ]]
     ;;

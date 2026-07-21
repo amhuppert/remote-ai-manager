@@ -195,6 +195,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       mutateActive: repository.mutateActive,
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
       sendConversationEvent: () => true,
       now: () => NOW,
     });
@@ -205,7 +206,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      async () => ({ execution, events: [] }),
+      () => ({ execution, events: [] }),
     );
   }
 

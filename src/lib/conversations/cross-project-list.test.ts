@@ -7,8 +7,38 @@ import {
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import type { ConversationState } from "./schemas";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
+import type { SessionConversationListItem } from "@/lib/state-store";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+
+/**
+ * Project a `ManagerState` fixture into the two focused accessors
+ * `listAllConversations` now consumes. The full session/conversation objects
+ * carry every field the list builder reads, so a controlled cast to the
+ * list-item projection keeps the fixtures faithful without re-declaring the
+ * projection shapes here.
+ */
+function stateToListDeps(
+  state: ManagerState,
+): Pick<
+  ListAllConversationsDeps,
+  "listSessionConversationListItems" | "getArchivedProjects"
+> {
+  return {
+    getArchivedProjects: async () => new Set(state.archivedProjects),
+    listSessionConversationListItems: async () =>
+      Object.entries(state.projects).flatMap(([projectPath, project]) =>
+        Object.values(project.sessions).map(
+          (session) =>
+            ({
+              projectPath,
+              session,
+              conversations: session.conversations,
+            }) as unknown as SessionConversationListItem,
+        ),
+      ),
+  };
+}
 
 function makeConversation(
   overrides: Partial<ConversationState> & { id: string },
@@ -37,7 +67,6 @@ function makeConversation(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: overrides.debugMode ?? null,
-    machineSnapshot: null,
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
@@ -87,7 +116,10 @@ function makeDeps(
   overrides: Partial<ListAllConversationsDeps> = {},
 ): ListAllConversationsDeps {
   return {
-    readState: overrides.readState ?? (async () => makeState({ projects: {} })),
+    listSessionConversationListItems:
+      overrides.listSessionConversationListItems ?? (async () => []),
+    getArchivedProjects:
+      overrides.getArchivedProjects ?? (async () => new Set<string>()),
     listAllProjectConversations:
       overrides.listAllProjectConversations ?? (async () => []),
     getFirstPromptSnippet:
@@ -156,7 +188,7 @@ describe("listAllConversations", () => {
     });
 
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const { items, totalCount } = await listAll({ includeArchived: false });
@@ -187,7 +219,7 @@ describe("listAllConversations", () => {
     });
 
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const { items } = await listAll({ includeArchived: false });
@@ -219,7 +251,7 @@ describe("listAllConversations", () => {
     });
 
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const { items } = await listAll({ includeArchived: false });
@@ -249,7 +281,7 @@ describe("listAllConversations", () => {
     });
 
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const { items, totalCount } = await listAll({ includeArchived: true });
@@ -277,7 +309,7 @@ describe("listAllConversations", () => {
     });
 
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const { items } = await listAll({ includeArchived: false });
@@ -317,7 +349,7 @@ describe("listAllConversations", () => {
     const snippetCalls: string[] = [];
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         getFirstPromptSnippet: async (path) => {
           snippetCalls.push(path);
           return "snippet for " + path;
@@ -358,7 +390,7 @@ describe("listAllConversations", () => {
     let called = false;
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         getFirstPromptSnippet: async () => {
           called = true;
           return null;
@@ -407,7 +439,7 @@ describe("listAllConversations", () => {
     });
 
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const { items } = await listAll({ includeArchived: false });
@@ -426,7 +458,7 @@ describe("listAllConversations", () => {
   it("returns empty result with totalCount 0 when there are no projects", async () => {
     const state = makeState({ projects: {} });
     const listAll = createListAllConversations(
-      makeDeps({ readState: async () => state }),
+      makeDeps(stateToListDeps(state)),
     );
 
     const result = await listAll({ includeArchived: false });
@@ -455,7 +487,7 @@ describe("listAllConversations project conversations", () => {
 
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         listAllProjectConversations: async () => [
           {
             projectPath: "/repos/awesome-app",
@@ -512,7 +544,7 @@ describe("listAllConversations project conversations", () => {
 
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         listAllProjectConversations: projectConversations,
       }),
     );
@@ -544,7 +576,7 @@ describe("listAllConversations project conversations", () => {
     const artifactCalls: string[][] = [];
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         listAllProjectConversations: async () => [
           {
             projectPath: "/projects/a",
@@ -592,7 +624,7 @@ describe("listAllConversations compaction enrichment", () => {
     ]);
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         findArtifactsByConversationIds: () => [
           makeArtifactRow({
             conversationId: "c1",
@@ -622,7 +654,7 @@ describe("listAllConversations compaction enrichment", () => {
     const readPaths: string[] = [];
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         findArtifactsByConversationIds: () => [
           makeArtifactRow({ conversationId: "c1", coveredEndSeq: 421 }),
         ],
@@ -646,7 +678,7 @@ describe("listAllConversations compaction enrichment", () => {
     let reads = 0;
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         findArtifactsByConversationIds: () => [
           makeArtifactRow({
             conversationId: "c1",
@@ -680,7 +712,7 @@ describe("listAllConversations compaction enrichment", () => {
     const calls: string[][] = [];
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         findArtifactsByConversationIds: (ids) => {
           calls.push(ids);
           return [];
@@ -714,7 +746,7 @@ describe("listAllConversations compaction enrichment", () => {
     let reads = 0;
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         findArtifactsByConversationIds: () => [
           makeArtifactRow({ conversationId: "c1", id: "art-c1" }),
         ],
@@ -737,7 +769,7 @@ describe("listAllConversations compaction enrichment", () => {
     ]);
     const listAll = createListAllConversations(
       makeDeps({
-        readState: async () => state,
+        ...stateToListDeps(state),
         findArtifactsByConversationIds: () => [
           makeArtifactRow({ conversationId: "c1", id: "art-c1" }),
         ],

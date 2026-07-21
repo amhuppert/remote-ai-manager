@@ -240,6 +240,7 @@ function makePrepareTurnInput(
   overrides: Partial<PrepareTurnInput> = {},
 ): PrepareTurnInput {
   return {
+    persistence: "durable",
     projectPath: "/projects/repo",
     sessionName: "test-session",
     conversationId: "conv-1",
@@ -253,6 +254,7 @@ function makeExecutePromptInput(
   overrides: Partial<ExecutePromptInput> = {},
 ): ExecutePromptInput {
   return {
+    persistence: "durable",
     projectPath: "/projects/repo",
     projectName: "repo",
     sessionName: "test-session",
@@ -934,6 +936,149 @@ describe("executePromptForMachine", () => {
     });
     expect(result.costUsd).toBe(0.05);
     expect(result.contentBlocks).toEqual([{ type: "text", text: "Hello!" }]);
+  });
+
+  // Design 4 (invoked-actor half): the runtime's construction-time persistence
+  // choice reaches the invoked actor and gates its durable state-store writes.
+  // A new-runtime turn seeds MCP runtime state via `mutateConversation`
+  // ("prompt.seedMcpRuntime"); the ephemeral variant must skip that write.
+  it("gates the invoked actor's durable mutateConversation on the ephemeral persistence mode", async () => {
+    const durableInput = makeExecutePromptInput({
+      conversationId: "conv-durable",
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        durableInput.projectPath,
+        durableInput.sessionName,
+        durableInput.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+    await executePromptForMachine(durableInput);
+    expect(mockDeps.mutateConversation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "conv-durable",
+      "prompt.seedMcpRuntime",
+      expect.anything(),
+    );
+
+    vi.mocked(mockDeps.mutateConversation).mockClear();
+
+    const ephemeralInput = makeExecutePromptInput({
+      conversationId: "conv-ephemeral",
+      persistence: "ephemeral",
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        ephemeralInput.projectPath,
+        ephemeralInput.sessionName,
+        ephemeralInput.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+    await executePromptForMachine(ephemeralInput);
+    // The persistence facet's `gateActorDurableWrites` replaced the actor's
+    // `mutateConversation` seam with a no-op, so the injected durable seam is
+    // never reached.
+    expect(mockDeps.mutateConversation).not.toHaveBeenCalled();
+  });
+
+  // Design 4 (invoked-actor half), apply services: `applyMcpAtTurnStart`
+  // persists through `stateManager.mutateConversation` and the capability
+  // applies through `writeRuntimeState`, so the facet must gate them too — not
+  // just the direct writes. On the runtime-REUSE path the actor runs the MCP
+  // turn-start apply hook and the capability idle drain; both must be inert for
+  // an ephemeral runtime. A durable control on the same paths proves the drive
+  // reaches them (not a dead assertion).
+  it("gates the invoked actor's apply-service durable writes (applyMcpAtTurnStart) on the ephemeral mode", async () => {
+    // Reuse an alive runtime so `isNewRuntime` is false and the MCP turn-start
+    // apply hook fires (a new runtime seeds MCP instead and skips the hook).
+    const makeAliveRuntime = () => {
+      const rt = createMockBackendRuntime({ modelId: "opus" });
+      (rt.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+        defaultTurnResult,
+      );
+      return rt;
+    };
+
+    const durableInput = makeExecutePromptInput({ conversationId: "conv-d" });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        durableInput.projectPath,
+        durableInput.sessionName,
+        durableInput.conversationId,
+      ),
+      {
+        abortController: new AbortController(),
+        backendRuntime: makeAliveRuntime(),
+      },
+    );
+    await executePromptForMachine(durableInput);
+    expect(mockDeps.applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
+    // The turn-start capability cascade (persists via writeRuntimeState) runs
+    // on every turn — gate it too.
+    expect(mockDeps.applyCapabilityAtTurnStart).toHaveBeenCalled();
+
+    vi.mocked(mockDeps.applyMcpAtTurnStart).mockClear();
+    vi.mocked(mockDeps.applyCapabilityAtTurnStart).mockClear();
+
+    const ephemeralInput = makeExecutePromptInput({
+      conversationId: "conv-e",
+      persistence: "ephemeral",
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        ephemeralInput.projectPath,
+        ephemeralInput.sessionName,
+        ephemeralInput.conversationId,
+      ),
+      {
+        abortController: new AbortController(),
+        backendRuntime: makeAliveRuntime(),
+      },
+    );
+    await executePromptForMachine(ephemeralInput);
+    // The facet replaced applyMcpAtTurnStart / applyCapabilityAtTurnStart with
+    // inert no-ops, so the production apply services (which write via
+    // mutateConversation / writeRuntimeState) are never reached.
+    expect(mockDeps.applyMcpAtTurnStart).not.toHaveBeenCalled();
+    expect(mockDeps.applyCapabilityAtTurnStart).not.toHaveBeenCalled();
+  });
+
+  it("gates the invoked actor's capability idle drain (applyCapabilityWhenIdle) on the ephemeral mode", async () => {
+    // A failed caller turn drains Claude idle capability work via
+    // `applyCapabilityWhenIdle` (which persists through `writeRuntimeState`).
+    mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
+
+    const durableInput = makeExecutePromptInput({ conversationId: "conv-d" });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        durableInput.projectPath,
+        durableInput.sessionName,
+        durableInput.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+    await executePromptForMachine(durableInput);
+    expect(mockDeps.applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
+
+    vi.mocked(mockDeps.applyCapabilityWhenIdle).mockClear();
+
+    const ephemeralInput = makeExecutePromptInput({
+      conversationId: "conv-e",
+      persistence: "ephemeral",
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        ephemeralInput.projectPath,
+        ephemeralInput.sessionName,
+        ephemeralInput.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+    await executePromptForMachine(ephemeralInput);
+    expect(mockDeps.applyCapabilityWhenIdle).not.toHaveBeenCalled();
   });
 
   it("reuses an existing alive backend runtime", async () => {
@@ -4592,6 +4737,7 @@ describe("runTaskRunTurnForMachine", () => {
     overrides: Partial<RunTaskRunInput> = {},
   ): RunTaskRunInput {
     return {
+      persistence: "durable",
       projectPath: "/projects/repo",
       projectName: "repo",
       sessionName: "test-session",

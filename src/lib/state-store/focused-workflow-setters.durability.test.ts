@@ -56,7 +56,7 @@ async function seedSessionWithExecution(
     PROJECT_PATH,
     SESSION_NAME,
     "test.seed-active-execution",
-    async () => ({ execution: makeExecution(), events: [] }),
+    () => ({ execution: makeExecution(), events: [] }),
   );
 }
 

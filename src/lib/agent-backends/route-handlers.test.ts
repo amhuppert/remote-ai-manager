@@ -4,9 +4,18 @@ import { z } from "zod";
 import { GET } from "./route-handlers";
 import { backendCatalogResponseSchema } from "./catalog";
 
+// GET is withTracing-wrapped, so it takes the (request, routeContext) shape
+// Next.js hands a route handler. The catalog route reads neither, but the
+// wrapper does — give it a real request and an empty-params context.
+function callGet(): Promise<Response> {
+  return GET(new Request("http://localhost/api/agent-backends"), {
+    params: Promise.resolve({}),
+  });
+}
+
 describe("GET /api/agent-backends", () => {
   it("serves the registered backend catalog and Zod-parses on the wire shape", async () => {
-    const response = await GET();
+    const response = await callGet();
     expect(response.status).toBe(200);
 
     const parsed = backendCatalogResponseSchema.parse(await response.json());
@@ -34,7 +43,7 @@ describe("GET /api/agent-backends", () => {
   });
 
   it("serves metadata and capability labels only — no provider config payloads", async () => {
-    const response = await GET();
+    const response = await callGet();
     // Inspect the RAW wire keys (not a Zod-stripped copy) so a leaked
     // adapter/config payload field fails instead of being silently dropped.
     const raw = z

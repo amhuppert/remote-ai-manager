@@ -141,12 +141,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           status === "pending" ? null : makeExecutionWithStatus("pending");
         const nextExecution = makeExecutionWithStatus(status);
 
-        publisher.publishExecutionUpdate({
+        const delivery = publisher.publishExecutionUpdate({
           projectPath: "/projects/acme",
           sessionName: "session-1",
           previousExecution,
           nextExecution,
         });
+        publisher.deliver(delivery);
 
         unsubscribe();
 
@@ -223,12 +224,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           },
         };
 
-        publisher.publishExecutionUpdate({
+        const delivery = publisher.publishExecutionUpdate({
           projectPath: "/projects/acme",
           sessionName: "session-1",
           previousExecution,
           nextExecution,
         });
+        publisher.deliver(delivery);
 
         unsubscribe();
 
@@ -290,12 +292,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       },
     };
 
-    publisher.publishExecutionUpdate({
+    const delivery = publisher.publishExecutionUpdate({
       projectPath: "/projects/acme",
       sessionName: "session-1",
       previousExecution,
       nextExecution,
     });
+    publisher.deliver(delivery);
 
     unsubscribe();
 
@@ -332,7 +335,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     });
 
     const execution = makeExecutionWithStatus("running");
-    publisher.publishValidationResult({
+    const validationDelivery = publisher.publishValidationResult({
       projectPath: "/projects/acme",
       sessionName: "session-1",
       execution,
@@ -356,6 +359,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         workflowConversationId: "claude-conv-1",
       },
     });
+    publisher.deliver(validationDelivery);
 
     unsubscribe();
 
@@ -416,12 +420,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       ],
     };
 
-    publisher.publishExecutionUpdate({
+    const delivery = publisher.publishExecutionUpdate({
       projectPath: "/projects/acme",
       sessionName: "session-1",
       previousExecution,
       nextExecution,
     });
+    publisher.deliver(delivery);
 
     unsubscribe();
 
@@ -468,12 +473,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       },
     };
 
-    publisher.publishExecutionUpdate({
+    const delivery = publisher.publishExecutionUpdate({
       projectPath: "/projects/acme",
       sessionName: "session-1",
       previousExecution,
       nextExecution,
     });
+    publisher.deliver(delivery);
 
     unsubscribe();
 
@@ -537,12 +543,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     const previousExecution = makeExecutionWithStatus("pending");
     const nextExecution = makeExecutionWithStatus("running");
 
-    publisher.publishExecutionUpdate({
+    const delivery = publisher.publishExecutionUpdate({
       projectPath: "/projects/acme",
       sessionName: "session-1",
       previousExecution,
       nextExecution,
     });
+    publisher.deliver(delivery);
 
     expect(overrideBroadcast).toHaveBeenCalled();
     expect(wire).not.toHaveBeenCalled();
@@ -972,12 +979,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       ],
     };
 
-    publisher.publishExecutionUpdate({
+    const delivery = publisher.publishExecutionUpdate({
       projectPath: "/projects/acme",
       sessionName: "session-1",
       previousExecution,
       nextExecution,
     });
+    publisher.deliver(delivery);
 
     const types = wire.mock.calls.map(
       (c) => (c[0] as GraphWorkflowSSEEvent).type,

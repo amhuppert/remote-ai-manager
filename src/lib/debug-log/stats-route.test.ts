@@ -45,7 +45,6 @@ const BASE_CONVERSATION: ConversationState = {
     verificationSteps: [],
     lastTurnFailed: false,
   },
-  machineSnapshot: null,
   agentBackend: "claude" as const,
   backendRef: null,
   unread: false,

@@ -130,6 +130,9 @@ describe("cctl dev against the real dev-server route handlers", () => {
         status = "stopped";
         return item(status);
       },
+      async awaitReady() {
+        return item("running");
+      },
       async stopUnmanaged() {
         return { killed: [], skipped: [] };
       },
@@ -162,6 +165,9 @@ describe("cctl dev against the real dev-server route handlers", () => {
       async stop() {
         return item("stopped");
       },
+      async awaitReady() {
+        return item("running");
+      },
       async stopUnmanaged() {
         return { killed: [], skipped: [] };
       },
@@ -187,6 +193,9 @@ describe("cctl dev against the real dev-server route handlers", () => {
       async stop() {
         return item("stopped");
       },
+      async awaitReady() {
+        return item("running");
+      },
       async stopUnmanaged() {
         return { killed: [], skipped: [] };
       },
@@ -211,6 +220,9 @@ describe("cctl dev against the real dev-server route handlers", () => {
       },
       async stop() {
         return item("stopped");
+      },
+      async awaitReady() {
+        return item("running");
       },
       async stopUnmanaged() {
         return { killed: [], skipped: [] };

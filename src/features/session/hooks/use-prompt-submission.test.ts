@@ -39,7 +39,6 @@ function makeConversation(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     archived: false,
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],

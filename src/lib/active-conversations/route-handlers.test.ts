@@ -15,6 +15,7 @@ import type {
   ConversationStatus,
 } from "@/lib/conversations/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
+import type { SessionConversationListItem } from "@/lib/state-store";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowApprovalDecision,
@@ -122,6 +123,34 @@ function makeState(
 }
 
 /**
+ * Project a `ManagerState` fixture into the two focused accessors the handler
+ * now consumes. The full session/conversation fixtures carry every field the
+ * feed reads, so a controlled cast to the list-item projection keeps the
+ * fixtures faithful without re-declaring the projection shapes here.
+ */
+function stateToActiveDeps(
+  state: ManagerState,
+): Pick<
+  ActiveConversationsRouteDeps,
+  "listSessionConversationListItems" | "getArchivedProjects"
+> {
+  return {
+    getArchivedProjects: async () => new Set(state.archivedProjects),
+    listSessionConversationListItems: async () =>
+      Object.entries(state.projects).flatMap(([projectPath, project]) =>
+        Object.values(project.sessions).map(
+          (session) =>
+            ({
+              projectPath,
+              session,
+              conversations: session.conversations,
+            }) as unknown as SessionConversationListItem,
+        ),
+      ),
+  };
+}
+
+/**
  * Build the active-executions map the handlers read, keyed by the NUL-separated
  * `${projectPath} ${sessionName}` the production accessor emits. The fixture
  * state's single session is `/repo/project` :: `session-a`.
@@ -144,9 +173,7 @@ async function listRows(
   graphWorkflowExecution: GraphWorkflowExecution | null = null,
 ) {
   const deps: ActiveConversationsRouteDeps = {
-    readState: vi
-      .fn()
-      .mockResolvedValue(makeState(conversations, graphWorkflowExecution)),
+    ...stateToActiveDeps(makeState(conversations, graphWorkflowExecution)),
     getProjectDisplayName: vi.fn().mockReturnValue("project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
     listProjectConversations: vi.fn().mockResolvedValue([]),
@@ -181,7 +208,7 @@ describe("GET — active spec executions", () => {
       projectName: "archived",
     };
     const deps: ActiveConversationsRouteDeps = {
-      readState: vi.fn().mockResolvedValue({
+      ...stateToActiveDeps({
         ...makeState([]),
         archivedProjects: ["/repo/archived"],
       }),
@@ -206,17 +233,21 @@ describe("GET — active spec executions", () => {
 });
 
 describe("GET — top-level read concurrency", () => {
-  it("does not serialize the project-conversation and workflow reads behind readState", async () => {
-    let releaseState!: (state: ReturnType<typeof makeState>) => void;
-    const stateGate = new Promise<ReturnType<typeof makeState>>((resolve) => {
-      releaseState = resolve;
+  it("does not serialize the project-conversation and workflow reads behind the session-list read", async () => {
+    let releaseSessions!: () => void;
+    const sessionsGate = new Promise<void>((resolve) => {
+      releaseSessions = resolve;
     });
     const listProjectConversations = vi.fn().mockResolvedValue([]);
     const listActiveGraphWorkflowExecutions = vi
       .fn()
       .mockResolvedValue(activeExecutionsMap(null));
     const deps: ActiveConversationsRouteDeps = {
-      readState: vi.fn().mockImplementation(() => stateGate),
+      ...stateToActiveDeps(makeState([])),
+      listSessionConversationListItems: vi.fn().mockImplementation(async () => {
+        await sessionsGate;
+        return [];
+      }),
       getProjectDisplayName: vi.fn().mockReturnValue("project"),
       readLastAssistantContent: vi.fn().mockResolvedValue(null),
       listProjectConversations,
@@ -228,12 +259,12 @@ describe("GET — top-level read concurrency", () => {
     const pending = handlers.GET();
     await Promise.resolve();
     await Promise.resolve();
-    // All three reads are independent; the two list reads must be in flight
-    // while readState is still unresolved.
+    // All reads are independent; the two list reads must be in flight while the
+    // session-list read is still unresolved.
     expect(listProjectConversations).toHaveBeenCalledTimes(1);
     expect(listActiveGraphWorkflowExecutions).toHaveBeenCalledTimes(1);
 
-    releaseState(makeState([]));
+    releaseSessions();
     const response = await pending;
     expect(response.status).toBe(200);
   });
@@ -584,7 +615,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
 
   it("returns null pendingApproval for project-scope rows", async () => {
     const deps: ActiveConversationsRouteDeps = {
-      readState: vi.fn().mockResolvedValue(makeState([])),
+      ...stateToActiveDeps(makeState([])),
       getProjectDisplayName: vi.fn().mockReturnValue("project"),
       readLastAssistantContent: vi.fn().mockResolvedValue(null),
       listProjectConversations: vi.fn().mockResolvedValue([

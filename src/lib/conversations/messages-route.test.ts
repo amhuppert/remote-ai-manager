@@ -39,7 +39,6 @@ function makeConvo(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
     unread: false,

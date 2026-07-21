@@ -647,4 +647,6 @@ export const executePrompt = withTracing(defaultPromptHandlers.POST);
 export const executeConversationPrompt = withTracing(
   defaultPromptHandlers.conversationPOST,
 );
-export const updatePendingPrompt = defaultPendingPromptHandlers.POST;
+export const updatePendingPrompt = withTracing(
+  defaultPendingPromptHandlers.POST,
+);

@@ -111,7 +111,7 @@ export const updateDebugMode = withTracing(async (request, { params }) => {
 });
 
 /** GET .../debug-mode/logs — return debug log entry count */
-export const getDebugModeLogs = createDebugLogStatsHandlers().GET;
+export const getDebugModeLogs = withTracing(createDebugLogStatsHandlers().GET);
 
 /** DELETE .../debug-mode/logs — clear the debug log file */
 export const deleteDebugModeLogs = withTracing(async (_request, { params }) => {

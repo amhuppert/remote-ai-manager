@@ -288,12 +288,14 @@ function setupObservability() {
         session = makeSession();
         sessions.set(key, session);
       }
-      const { execution, events } = await mutate(
+      const { execution, events, pushes } = await mutate(
         session.graphWorkflowExecution,
       );
       session.graphWorkflowExecution = execution;
       appendedEvents.push(...events);
-      return execution;
+      // Mirror the production seam: commit the rows and hand the committed
+      // delivery back; the repository performs delivery post-commit.
+      return { execution, delivery: { events, pushes: pushes ?? [] } };
     },
     async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
       const key = `${projectPath}:${sessionName}`;

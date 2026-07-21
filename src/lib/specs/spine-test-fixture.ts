@@ -850,6 +850,33 @@ export function createSpecSpineWorld(): SpecSpineWorld {
   // linked exclusively through the registered lifecycle port — the same seam
   // production uses. Only the lane/agent execution loop is inert.
   let activeWorkflowExecution: GraphWorkflowExecution | null = null;
+  // Read-modify-write backing the sync `mutateActive`; awaits `fn` so a
+  // synchronous reducer is applied exactly as the production seam does.
+  const mutateActiveImpl = async (
+    _projectPath: string,
+    _sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) =>
+      | GraphWorkflowExecution
+      | { execution: GraphWorkflowExecution; events: unknown[] }
+      | Promise<
+          | GraphWorkflowExecution
+          | { execution: GraphWorkflowExecution; events: unknown[] }
+        >,
+  ): Promise<GraphWorkflowExecution> => {
+    if (activeWorkflowExecution === null) {
+      throw new Error(
+        "Session does not have an active graph workflow execution",
+      );
+    }
+    const result = await fn(structuredClone(activeWorkflowExecution));
+    activeWorkflowExecution =
+      typeof result === "object" && "execution" in result && "events" in result
+        ? result.execution
+        : (result as GraphWorkflowExecution);
+    return activeWorkflowExecution;
+  };
   const workflowExecutionRepository = {
     async getActive(): Promise<GraphWorkflowExecution | null> {
       return activeWorkflowExecution;
@@ -893,33 +920,7 @@ export function createSpecSpineWorld(): SpecSpineWorld {
     ): Promise<void> {
       activeWorkflowExecution = execution;
     },
-    async mutateActive(
-      _projectPath: string,
-      _sessionName: string,
-      fn: (
-        execution: GraphWorkflowExecution,
-      ) =>
-        | GraphWorkflowExecution
-        | { execution: GraphWorkflowExecution; events: unknown[] }
-        | Promise<
-            | GraphWorkflowExecution
-            | { execution: GraphWorkflowExecution; events: unknown[] }
-          >,
-    ): Promise<GraphWorkflowExecution> {
-      if (activeWorkflowExecution === null) {
-        throw new Error(
-          "Session does not have an active graph workflow execution",
-        );
-      }
-      const result = await fn(structuredClone(activeWorkflowExecution));
-      activeWorkflowExecution =
-        typeof result === "object" &&
-        "execution" in result &&
-        "events" in result
-          ? result.execution
-          : (result as GraphWorkflowExecution);
-      return activeWorkflowExecution;
-    },
+    mutateActive: mutateActiveImpl,
     async markContextEventsPreReset(): Promise<number> {
       return 0;
     },

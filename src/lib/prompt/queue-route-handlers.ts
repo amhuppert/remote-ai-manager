@@ -11,6 +11,9 @@ import {
   resolveProjectSessionOr404,
 } from "@/lib/shared/route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
+// Imported from the submodule so span timing survives tests that stub the
+// `@/lib/logging` barrel with a partial vi.mock (createLogger/withTracing only).
+import { timed } from "@/lib/logging/timed";
 import {
   resolveProjectPath as defaultResolveProjectPath,
   getProjectDisplayName as defaultGetProjectDisplayName,
@@ -176,10 +179,11 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     if (!resolved.ok) return resolved.response;
     const { projectPath } = resolved.value;
 
-    const conversation = await deps.getConversation(
-      projectPath,
-      sessionName,
-      conversationId,
+    const conversation = await timed(
+      logger,
+      "queue.post.load_conversation",
+      { projectPath, sessionName, conversationId },
+      () => deps.getConversation(projectPath, sessionName, conversationId),
     );
     if (!conversation) {
       return notFound("Conversation not found");
@@ -216,17 +220,24 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       );
     }
 
-    const result = await deps.queueMessage({
-      projectPath,
-      sessionName,
-      conversationId,
-      text: parsed.data.text,
-      images: parsed.data.images,
-      ...(parsed.data.documentFeedback
-        ? { documentFeedback: parsed.data.documentFeedback }
-        : {}),
-      backend: conversation.agentBackend,
-    });
+    const result = await timed(
+      logger,
+      "queue.post.enqueue",
+      { projectPath, sessionName, conversationId },
+      () =>
+        deps.queueMessage({
+          projectPath,
+          sessionName,
+          conversationId,
+          text: parsed.data.text,
+          images: parsed.data.images,
+          ...(parsed.data.documentFeedback
+            ? { documentFeedback: parsed.data.documentFeedback }
+            : {}),
+          backend: conversation.agentBackend,
+        }),
+      (r) => ({ deliveryTiming: r.deliveryTiming }),
+    );
 
     if (parsed.data.submittedPendingPromptText !== undefined) {
       try {
@@ -261,10 +272,16 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     // busy actor drains on its own idle entry) and delivers immediately when
     // the actor settled. Never fails the already-committed enqueue.
     try {
-      await deps.ensureConversationActorAndDrain(
-        projectPath,
-        sessionName,
-        conversationId,
+      await timed(
+        logger,
+        "queue.post.drain",
+        { projectPath, sessionName, conversationId },
+        () =>
+          deps.ensureConversationActorAndDrain(
+            projectPath,
+            sessionName,
+            conversationId,
+          ),
       );
     } catch (err) {
       logger.error("queue.post_enqueue_drain_failed", {

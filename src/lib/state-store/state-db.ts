@@ -1124,6 +1124,36 @@ const SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_project_conversations_last_activity
     ON project_conversations(last_activity_at);
 
+  CREATE TABLE IF NOT EXISTS conversation_machine_snapshots (
+    owner           TEXT NOT NULL CHECK (owner IN ('session', 'project')),
+    conversation_id TEXT NOT NULL,
+    snapshot_json   TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (owner, conversation_id)
+  );
+
+  -- DB-enforced sidecar cleanup. The sidecar's owner discriminator ties one
+  -- table to two possible parents (conversations / project_conversations), which
+  -- a single foreign key cannot express — so a parent row dying by FK CASCADE
+  -- (deleting a session removes its conversations; deleting a project removes
+  -- both its sessions' conversations and its project conversations) would leave
+  -- the sidecar orphaned. These AFTER DELETE triggers fire for BOTH direct
+  -- deletes and FK cascade deletes, within the same transaction as the parent
+  -- delete, so a sidecar row can never outlive its owning conversation.
+  CREATE TRIGGER IF NOT EXISTS trg_conversation_machine_snapshots_session_cleanup
+    AFTER DELETE ON conversations
+  BEGIN
+    DELETE FROM conversation_machine_snapshots
+      WHERE owner = 'session' AND conversation_id = OLD.id;
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS trg_conversation_machine_snapshots_project_cleanup
+    AFTER DELETE ON project_conversations
+  BEGIN
+    DELETE FROM conversation_machine_snapshots
+      WHERE owner = 'project' AND conversation_id = OLD.id;
+  END;
+
   CREATE TABLE IF NOT EXISTS reference_documents (
     id            TEXT PRIMARY KEY,
     project_path  TEXT NOT NULL,

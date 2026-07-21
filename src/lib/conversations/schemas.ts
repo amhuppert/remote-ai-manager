@@ -249,7 +249,6 @@ export const conversationStateSchema = z.object({
   contextTokens: z.number().nullable().default(null),
   contextWindowMax: z.number().nullable().default(null),
   debugMode: debugModeStateSchema.nullable().default(null),
-  machineSnapshot: z.unknown().nullable().default(null),
   agentBackend: agentBackendSchema.default("claude"),
   backendRef: agentSessionRefSchema.nullable().default(null),
   mcpOverrides: mcpOverridesSchema.optional(),

@@ -132,6 +132,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         branchName: "csm/ctx-1",
         isolation: "worktree",
         batchId: "batch-1",
+        reservedByBatchId: "batch-1",
         laneId: "lane-1",
         joinId: "join-1",
         mergeStatus: "in-progress",

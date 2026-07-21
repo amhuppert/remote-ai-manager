@@ -2,10 +2,13 @@ import { readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { GlobalConfig } from "@/lib/config/schemas";
-import type { DiscoveredProject, ManagerState } from "@/lib/projects/schemas";
+import type { DiscoveredProject } from "@/lib/projects/schemas";
+import type { SessionListItem } from "@/lib/sessions/schemas";
 import { readConfig as readConfigDefault } from "@/lib/config/loader";
-import { readState as readStateDefault } from "@/lib/state-store";
-import { deriveSessionStatus } from "@/lib/conversations/service";
+import {
+  getProjectSessionListItems as getProjectSessionListItemsDefault,
+  listProjectPaths as listProjectPathsDefault,
+} from "@/lib/state-store";
 
 /* ------------------------------------------------------------------ */
 /*  DI factory                                                         */
@@ -13,12 +16,16 @@ import { deriveSessionStatus } from "@/lib/conversations/service";
 
 export interface DiscoveryDeps {
   readConfig: () => Promise<GlobalConfig>;
-  readState: () => Promise<ManagerState>;
+  listProjectPaths: () => Promise<readonly string[]>;
+  getProjectSessionListItems: (
+    projectPath: string,
+  ) => Promise<SessionListItem[]>;
 }
 
 const defaultDiscoveryDeps: DiscoveryDeps = {
   readConfig: readConfigDefault,
-  readState: readStateDefault,
+  listProjectPaths: listProjectPathsDefault,
+  getProjectSessionListItems: getProjectSessionListItemsDefault,
 };
 
 export interface DiscoveryService {
@@ -34,9 +41,9 @@ export function createDiscoveryService(
      * Returns discovered projects with session metadata from manager state.
      */
     async discoverProjects(): Promise<DiscoveredProject[]> {
-      const [config, state] = await Promise.all([
+      const [config, statePaths] = await Promise.all([
         deps.readConfig(),
-        deps.readState(),
+        deps.listProjectPaths(),
       ]);
       const baseDir = config.baseDir;
 
@@ -45,6 +52,31 @@ export function createDiscoveryService(
       }
 
       const entries = await readdir(baseDir, { withFileTypes: true });
+
+      // One focused list-item read per state project, in parallel; sessions'
+      // `derivedStatus` is already computed by the accessor, so no whole-state
+      // read and no per-session status derivation here.
+      const sessionsByProject = new Map<string, SessionListItem[]>();
+      await Promise.all(
+        statePaths.map(async (projectPath) => {
+          sessionsByProject.set(
+            projectPath,
+            await deps.getProjectSessionListItems(projectPath),
+          );
+        }),
+      );
+
+      const summarize = (
+        sessions: SessionListItem[] | undefined,
+      ): { activeSessions: number; hasRunningSession: boolean } => {
+        const nonArchived = (sessions ?? []).filter((s) => !s.archived);
+        return {
+          activeSessions: nonArchived.length,
+          hasRunningSession: nonArchived.some(
+            (s) => s.derivedStatus === "running",
+          ),
+        };
+      };
 
       const candidates = await Promise.all(
         entries.map(async (entry): Promise<DiscoveredProject | null> => {
@@ -63,22 +95,10 @@ export function createDiscoveryService(
             return null; // No .git — skip
           }
 
-          // Gather session stats from manager state
-          const projectState = state.projects[repoPath];
-          const sessions = projectState
-            ? Object.values(projectState.sessions)
-            : [];
-          const nonArchivedSessions = sessions.filter((s) => !s.archived);
-          const activeSessions = nonArchivedSessions.length;
-          const hasRunningSession = nonArchivedSessions.some(
-            (s) => deriveSessionStatus(s) === "running",
-          );
-
           return {
             name: entry.name,
             path: repoPath,
-            activeSessions,
-            hasRunningSession,
+            ...summarize(sessionsByProject.get(repoPath)),
           };
         }),
       );
@@ -88,21 +108,14 @@ export function createDiscoveryService(
 
       // Surface state-only (orphan) projects so they can be deleted from the UI.
       const discoveredPaths = new Set(projects.map((p) => p.path));
-      for (const [statePath, projectState] of Object.entries(state.projects)) {
+      for (const statePath of statePaths) {
         if (discoveredPaths.has(statePath)) continue;
         if (existsSync(statePath)) continue;
-
-        const sessions = Object.values(projectState.sessions);
-        const nonArchivedSessions = sessions.filter((s) => !s.archived);
-        const hasRunningSession = nonArchivedSessions.some(
-          (s) => deriveSessionStatus(s) === "running",
-        );
 
         projects.push({
           name: path.basename(statePath),
           path: statePath,
-          activeSessions: nonArchivedSessions.length,
-          hasRunningSession,
+          ...summarize(sessionsByProject.get(statePath)),
           missing: true,
         });
       }

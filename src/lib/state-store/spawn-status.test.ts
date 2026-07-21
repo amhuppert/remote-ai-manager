@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import { createStateStore } from "./store";
+import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
 import {
   conversationStateSchema,
@@ -56,14 +57,18 @@ describe("spawned-session status read + back-link setters", () => {
   beforeEach(async () => {
     db = _createTestDb({ inMemory: true });
     store = createStateStore({ db });
-    await store.mutateState("seed", (state) => {
-      state.projects[PROJECT] = {
-        rootPath: PROJECT,
-        sessions: {
-          alpha: makeSession("alpha"),
-          beta: makeSession("beta"),
+    seedWholeState(db, {
+      projects: {
+        [PROJECT]: {
+          rootPath: PROJECT,
+          sessions: {
+            alpha: makeSession("alpha"),
+            beta: makeSession("beta"),
+          },
         },
-      };
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
     });
     await store.createProjectConversation(PROJECT, makePlc());
   });
@@ -105,7 +110,7 @@ describe("spawned-session status read + back-link setters", () => {
 
   it("excludes a since-deleted session name from the status read", async () => {
     await store.addPlcSpawnedSessionIds(PROJECT, PLC_ID, ["alpha", "beta"]);
-    await store.removeSession(PROJECT, "beta");
+    await store.deleteSessionRow(PROJECT, "beta", "test-remove");
     const statuses = await store.getSpawnedSessionStatuses(PROJECT, PLC_ID);
     expect(statuses.map((s) => s.sessionName)).toEqual(["alpha"]);
   });
