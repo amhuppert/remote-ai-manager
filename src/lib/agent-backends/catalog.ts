@@ -274,6 +274,49 @@ export function effortLevelsForCatalogEntry(
   return [...effortLevelSchema.options];
 }
 
+export interface BackendSelectionDefaults {
+  modelId: string;
+  /** UI preference retained even when the selected model hides effort input. */
+  effort: EffortLevel;
+}
+
+export type BackendSelectionDefaultsById = Readonly<
+  Record<AgentBackendId, BackendSelectionDefaults>
+>;
+
+/**
+ * The per-backend profile fields that selection defaults derive from — the
+ * structural subset of the global config satisfied by both `GlobalConfig`
+ * and `ConversationTurnConfig`.
+ */
+export interface ConfiguredBackendSelectionProfiles {
+  agentBackends: Readonly<
+    Record<
+      AgentBackendId,
+      { model: string; reasoningEffort?: string | undefined }
+    >
+  >;
+}
+
+/** Project configured backend profiles into conversation selection controls. */
+export function resolveConfiguredBackendSelectionDefaults(
+  config: ConfiguredBackendSelectionProfiles,
+): BackendSelectionDefaultsById {
+  return Object.fromEntries(
+    agentBackendSchema.options.map((backend) => {
+      const profile = config.agentBackends[backend];
+      const parsed = effortLevelSchema.safeParse(profile.reasoningEffort);
+      return [
+        backend,
+        {
+          modelId: profile.model,
+          effort: parsed.success ? parsed.data : "high",
+        },
+      ];
+    }),
+  ) as Record<AgentBackendId, BackendSelectionDefaults>;
+}
+
 export function backendLabel(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).label;
 }

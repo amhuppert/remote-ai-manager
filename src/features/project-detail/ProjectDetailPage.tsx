@@ -1,7 +1,7 @@
 import ProjectDetailView from "./ProjectDetailView";
 import { decodeRouteSegment } from "@/lib/shared/decode-route-segment";
 import { readConfig } from "@/lib/config/loader";
-import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/conversation-policy";
+import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
 
 interface ProjectDetailPageProps {
   params: Promise<{ name: string }>;

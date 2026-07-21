@@ -14,6 +14,9 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useQueryClient } from "@tanstack/react-query";
 
+import BackendToggle from "@/components/BackendToggle";
+import ModelSelector from "@/components/ModelSelector";
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { ChatIcon, ChevronRightIcon, CloseIcon } from "@/components/icons";
 import {
   MultilinePrimaryActionScope,
@@ -50,8 +53,12 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { Switch } from "@/components/ui/Switch";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
+import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import { readCapturedClientErrors } from "@/lib/client-errors/ring-buffer";
+import { useFullConfigQuery } from "@/lib/config/queries";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   useCommandCenterProjectQuery,
@@ -89,6 +96,10 @@ import {
 import AttachmentDialog, {
   type QueuedTicketAttachment,
 } from "@/features/tickets/components/AttachmentDialog";
+import {
+  resolveKickoffSelection,
+  type ResolvedKickoffSelection,
+} from "./kickoff-selection";
 import {
   captureQuickTicketScreenshot,
   type QuickTicketScreenshot,
@@ -233,6 +244,7 @@ export default function QuickTicketDialog({
   const contextSnapshot = useQuickTicketStore((state) => state.contextSnapshot);
   const projectsQuery = useProjectsQuery();
   const commandCenterQuery = useCommandCenterProjectQuery(open);
+  const configQuery = useFullConfigQuery({ enabled: open });
   const createMutation = useCreateTicketMutation();
   const startMutation = useStartTicketMutation();
   const addAttachmentMutation = useAddTicketAttachmentMutation();
@@ -288,6 +300,66 @@ export default function QuickTicketDialog({
   const projectSelectionBlocked =
     projectsQuery.isPending || projectDiscoveryUnavailable;
   const pending = createMutation.isPending;
+
+  // Auto-start kickoff selection: null until the configuration is available;
+  // starting without it omits the overrides so the server applies its own
+  // configured defaults.
+  const kickoffConfig = configQuery.data?.config;
+  const kickoffDefaults =
+    kickoffConfig === undefined
+      ? null
+      : resolveConfiguredBackendSelectionDefaults(kickoffConfig);
+  const kickoffSelection =
+    draft === null || kickoffConfig === undefined || kickoffDefaults === null
+      ? null
+      : resolveKickoffSelection({
+          draft,
+          defaultBackend: kickoffConfig.defaultAgentBackend,
+          backendDefaults: kickoffDefaults,
+        });
+
+  const patchKickoff = (selection: ResolvedKickoffSelection) => {
+    useQuickTicketStore.getState().updateQuickTicketDraft({
+      kickoffBackend: selection.backend,
+      kickoffModel: selection.model,
+      kickoffReasoningEffort: selection.reasoningEffort ?? null,
+    });
+  };
+
+  const changeKickoffBackend = (backend: AgentBackendId) => {
+    if (kickoffDefaults === null) return;
+    patchKickoff(
+      resolveKickoffSelection({
+        draft: {
+          kickoffBackend: backend,
+          kickoffModel: null,
+          kickoffReasoningEffort: null,
+        },
+        defaultBackend: backend,
+        backendDefaults: kickoffDefaults,
+      }),
+    );
+  };
+
+  const changeKickoffModel = (model: string) => {
+    if (kickoffSelection === null || kickoffDefaults === null) return;
+    patchKickoff(
+      resolveKickoffSelection({
+        draft: {
+          kickoffBackend: kickoffSelection.backend,
+          kickoffModel: model,
+          kickoffReasoningEffort: kickoffSelection.reasoningEffort ?? null,
+        },
+        defaultBackend: kickoffSelection.backend,
+        backendDefaults: kickoffDefaults,
+      }),
+    );
+  };
+
+  const changeKickoffEffort = (effort: EffortLevel) => {
+    if (kickoffSelection === null) return;
+    patchKickoff({ ...kickoffSelection, reasoningEffort: effort });
+  };
 
   const invalidateCapture = useCallback(() => {
     generation.current += 1;
@@ -521,6 +593,7 @@ export default function QuickTicketDialog({
   const startCreatedTicket = async (
     ticket: Pick<TicketDetail, "id" | "projectName" | "number">,
     toastId: string,
+    kickoff: ResolvedKickoffSelection | null,
   ) => {
     const identifier = formatTicketIdentifier(
       ticket.projectName,
@@ -533,6 +606,15 @@ export default function QuickTicketDialog({
           projectName: ticket.projectName,
           number: ticket.number,
           mode: "agent",
+          ...(kickoff === null
+            ? {}
+            : {
+                backend: kickoff.backend,
+                model: kickoff.model,
+                ...(kickoff.reasoningEffort === undefined
+                  ? {}
+                  : { reasoningEffort: kickoff.reasoningEffort }),
+              }),
         }),
       refetchLinks: () =>
         queryClient.fetchQuery({
@@ -753,7 +835,11 @@ export default function QuickTicketDialog({
         void attachQueuedContext(result.ticket, queued);
       }
       if (draft.autoStart) {
-        void startCreatedTicket(result.ticket, createdToastId);
+        void startCreatedTicket(
+          result.ticket,
+          createdToastId,
+          kickoffSelection,
+        );
       }
     } catch (error) {
       const message =
@@ -1460,19 +1546,60 @@ export default function QuickTicketDialog({
                 </section>
               ) : null}
 
-              <CheckboxField
-                id="quick-ticket-auto-start"
-                label="Start agent after create"
-                description="Creates a session and sends the ticket kickoff prompt using the project's configured backend, model, and effort defaults."
-                checked={draft.autoStart}
-                disabled={pending}
-                onCheckedChange={(checked) =>
-                  useQuickTicketStore.getState().updateQuickTicketDraft({
-                    autoStart: checked === true,
-                  })
-                }
-                layoutClassName="mb-lg"
-              />
+              <div className="mb-lg">
+                <CheckboxField
+                  id="quick-ticket-auto-start"
+                  label="Start agent after create"
+                  description={
+                    draft.autoStart && kickoffSelection !== null
+                      ? "Creates a session and sends the ticket kickoff prompt with the agent configured below."
+                      : "Creates a session and sends the ticket kickoff prompt using the project's configured backend, model, and effort defaults."
+                  }
+                  checked={draft.autoStart}
+                  disabled={pending}
+                  onCheckedChange={(checked) =>
+                    useQuickTicketStore.getState().updateQuickTicketDraft({
+                      autoStart: checked === true,
+                    })
+                  }
+                />
+                {draft.autoStart && kickoffSelection !== null ? (
+                  <div className="mt-md flex flex-wrap items-end gap-lg">
+                    <div className="flex flex-col gap-2xs">
+                      <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                        Backend
+                      </span>
+                      <BackendToggle
+                        value={kickoffSelection.backend}
+                        onChange={changeKickoffBackend}
+                        disabled={pending}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2xs">
+                      <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                        Model
+                      </span>
+                      <ModelSelector
+                        backend={kickoffSelection.backend}
+                        value={kickoffSelection.model}
+                        onChange={changeKickoffModel}
+                        disabled={pending}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2xs">
+                      <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                        Reasoning
+                      </span>
+                      <ReasoningLevelSelector
+                        value={kickoffSelection.reasoningEffort ?? "high"}
+                        onChange={changeKickoffEffort}
+                        availableLevels={kickoffSelection.effortLevels}
+                        disabled={pending}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
 
               {submitError !== null ? (
                 <div

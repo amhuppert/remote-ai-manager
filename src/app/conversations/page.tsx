@@ -1,5 +1,5 @@
 import ConversationsPage from "@/features/session/ConversationsPage";
-import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/conversation-policy";
+import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
 import { readConfig } from "@/lib/config/loader";
 
 export const dynamic = "force-dynamic";

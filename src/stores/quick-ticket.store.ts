@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   resolveQuickTicketContext,
   type QuickTicketConversationRegistration,
@@ -22,6 +24,10 @@ export interface QuickTicketDraft {
   conversationAttached: boolean;
   removedBundleKeys: QuickTicketBundleKey[];
   autoStart: boolean;
+  /** Auto-start kickoff overrides; null follows the configured defaults. */
+  kickoffBackend: AgentBackendId | null;
+  kickoffModel: string | null;
+  kickoffReasoningEffort: EffortLevel | null;
 }
 
 export interface QuickTicketStoreState {
@@ -67,6 +73,9 @@ function createDraft(context: ResolvedQuickTicketContext): QuickTicketDraft {
     conversationAttached: context.conversation !== undefined,
     removedBundleKeys: [],
     autoStart: false,
+    kickoffBackend: null,
+    kickoffModel: null,
+    kickoffReasoningEffort: null,
   };
 }
 

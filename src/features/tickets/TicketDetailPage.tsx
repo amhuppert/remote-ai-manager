@@ -3,7 +3,7 @@ import { decodeRouteSegment } from "@/lib/shared/decode-route-segment";
 import { parseTicketNumberSegment } from "@/lib/tickets/ticket-number";
 import { notFound } from "next/navigation";
 import { readConfig } from "@/lib/config/loader";
-import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/conversation-policy";
+import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
 
 interface TicketDetailPageProps {
   params: Promise<{ projectName: string; number: string }>;

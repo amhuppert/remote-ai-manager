@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { pastedImageDescription } from "@/lib/tickets/description-images";
 import type { TicketDetail } from "@/lib/tickets/schemas";
 import {
@@ -84,6 +85,25 @@ function installBaseRoutes(): void {
   ]);
   api.json("GET", "/api/command-center-project", {
     projectName: "command-center",
+  });
+  api.json("GET", "/api/config", {
+    config: {
+      baseDir: "/repos",
+      ignorePatterns: [],
+      agentBackends: {
+        claude: { model: "opus", reasoningEffort: "medium", timeoutMs: null },
+        codex: {
+          model: "gpt-5.6-sol",
+          reasoningEffort: "ultra",
+          timeoutMs: null,
+        },
+      },
+      defaultAgentBackend: "claude",
+    },
+    raw: {},
+  });
+  api.json("GET", "/api/agent-backends", {
+    backends: listBackendCatalogEntries(),
   });
 }
 
@@ -874,7 +894,12 @@ describe("QuickTicketDialog", () => {
     expect(
       api.requestsTo("POST", "/api/projects/command-center/tickets/14/start")[0]
         ?.jsonBody,
-    ).toEqual({ mode: "agent" });
+    ).toEqual({
+      mode: "agent",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "medium",
+    });
     await waitFor(() =>
       expect(useToastStoreForTesting.getState().toasts.at(-1)).toMatchObject({
         message: "Agent queued on command-center#14",
@@ -896,6 +921,149 @@ describe("QuickTicketDialog", () => {
     expect(navigation.push).toHaveBeenCalledWith(
       "/conversations?c=conversation-started",
     );
+  });
+
+  it("reveals kickoff controls prefilled from configured defaults while auto-start is checked", async () => {
+    open("/projects/command-center");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    const autoStart = await screen.findByRole("checkbox", {
+      name: "Start agent after create",
+    });
+    expect(
+      screen.queryByTestId("model-selector-trigger"),
+    ).not.toBeInTheDocument();
+
+    await user.click(autoStart);
+    expect(await screen.findByTestId("model-selector-label")).toHaveTextContent(
+      /^Opus$/,
+    );
+    expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
+      /^Medium$/,
+    );
+    expect(screen.getByRole("button", { name: "Claude" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(autoStart).toHaveAccessibleDescription(
+      "Creates a session and sends the ticket kickoff prompt with the agent configured below.",
+    );
+
+    await user.click(autoStart);
+    expect(
+      screen.queryByTestId("model-selector-trigger"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("switches kickoff defaults per backend, clamps effort per model, and sends the selection", async () => {
+    open("/projects/command-center");
+    api.reply("POST", "/api/projects/command-center/tickets", {
+      status: 201,
+      json: { ticket: CREATED_TICKET, warnings: [] },
+    });
+    api.json("POST", "/api/projects/command-center/tickets/14/start", {
+      ticket: { ...CREATED_TICKET, status: "in_progress" },
+      sessionName: "ticket-capture-the-failure",
+      conversationId: "conversation-started",
+      initialPromptQueued: true,
+    });
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    await user.type(
+      await screen.findByLabelText("Title"),
+      "Capture the failure",
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Start agent after create" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Codex" }));
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      /^GPT-5\.6 Sol$/,
+    );
+    expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
+      /^Ultra$/,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.click(
+      await screen.findByRole("option", { name: /GPT-5\.6 Terra/ }),
+    );
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      /^GPT-5\.6 Terra$/,
+    );
+    expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
+      /^High$/,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create ticket" }));
+    await waitFor(() =>
+      expect(
+        api.requestsTo("POST", "/api/projects/command-center/tickets/14/start"),
+      ).toHaveLength(1),
+    );
+    expect(
+      api.requestsTo("POST", "/api/projects/command-center/tickets/14/start")[0]
+        ?.jsonBody,
+    ).toEqual({
+      mode: "agent",
+      backend: "codex",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "high",
+    });
+  });
+
+  it("omits kickoff overrides when the configuration is unavailable", async () => {
+    api.reply("GET", "/api/config", {
+      status: 500,
+      json: { error: "Config unavailable" },
+    });
+    open("/projects/command-center");
+    api.reply("POST", "/api/projects/command-center/tickets", {
+      status: 201,
+      json: { ticket: CREATED_TICKET, warnings: [] },
+    });
+    api.json("POST", "/api/projects/command-center/tickets/14/start", {
+      ticket: { ...CREATED_TICKET, status: "in_progress" },
+      sessionName: "ticket-capture-the-failure",
+      conversationId: "conversation-started",
+      initialPromptQueued: true,
+    });
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    await user.type(
+      await screen.findByLabelText("Title"),
+      "Capture the failure",
+    );
+    const autoStart = screen.getByRole("checkbox", {
+      name: "Start agent after create",
+    });
+    await user.click(autoStart);
+    expect(
+      screen.queryByTestId("model-selector-trigger"),
+    ).not.toBeInTheDocument();
+    expect(autoStart).toHaveAccessibleDescription(
+      "Creates a session and sends the ticket kickoff prompt using the project's configured backend, model, and effort defaults.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create ticket" }));
+    await waitFor(() =>
+      expect(
+        api.requestsTo("POST", "/api/projects/command-center/tickets/14/start"),
+      ).toHaveLength(1),
+    );
+    expect(
+      api.requestsTo("POST", "/api/projects/command-center/tickets/14/start")[0]
+        ?.jsonBody,
+    ).toEqual({ mode: "agent" });
   });
 
   it("keeps a reopened draft interactive while the previous ticket starts", async () => {

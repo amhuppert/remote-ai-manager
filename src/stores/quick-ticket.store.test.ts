@@ -55,7 +55,30 @@ describe("quick-ticket store — open-time snapshot", () => {
         conversationAttached: true,
         removedBundleKeys: [],
         autoStart: false,
+        kickoffBackend: null,
+        kickoffModel: null,
+        kickoffReasoningEffort: null,
       },
+    });
+  });
+
+  it("stashes and restores the auto-start kickoff selection with the draft", () => {
+    const store = useQuickTicketStore.getState();
+    store.openQuickTicket({ pathname: "/projects/first" });
+    store.updateQuickTicketDraft({
+      autoStart: true,
+      kickoffBackend: "codex",
+      kickoffModel: "gpt-5.6-sol",
+      kickoffReasoningEffort: "ultra",
+    });
+    store.closeQuickTicket({ stashDraft: true });
+    store.openQuickTicket({ pathname: "/projects/second" });
+
+    expect(useQuickTicketStore.getState().draft).toMatchObject({
+      autoStart: true,
+      kickoffBackend: "codex",
+      kickoffModel: "gpt-5.6-sol",
+      kickoffReasoningEffort: "ultra",
     });
   });
 

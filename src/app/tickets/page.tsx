@@ -1,5 +1,5 @@
 import TicketsPage from "@/features/tickets/TicketsPage";
-import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/conversation-policy";
+import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
 import { readConfig } from "@/lib/config/loader";
 
 // The split pane hosts the full ticket dossier, whose Start-work dialog needs

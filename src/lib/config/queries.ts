@@ -13,9 +13,10 @@ export function useConfigQuery() {
   });
 }
 
-export function useFullConfigQuery() {
+export function useFullConfigQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: configKeys.full(),
     queryFn: () => apiFetch("/api/config", fullConfigResponseSchema),
+    enabled: options?.enabled ?? true,
   });
 }

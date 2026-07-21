@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveConfiguredAgentBackendDefaults,
-  resolveConfiguredBackendSelectionDefaults,
   type ConversationTurnConfig,
 } from "./conversation-policy";
 
@@ -122,38 +121,5 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
     expect(
       resolveConfiguredAgentBackendDefaults(disabled, "codex").stallTimeoutMs,
     ).toBe(0);
-  });
-});
-
-describe("resolveConfiguredBackendSelectionDefaults", () => {
-  it("projects the normalized profiles into backend-keyed UI defaults", () => {
-    const config = makeConfig({
-      claude: {
-        model: "sonnet",
-        reasoningEffort: "medium",
-        timeoutMs: 300_000,
-      },
-      codex: {
-        model: "gpt-5.6-sol",
-        reasoningEffort: "xhigh",
-        timeoutMs: null,
-      },
-    });
-
-    expect(resolveConfiguredBackendSelectionDefaults(config)).toEqual({
-      claude: { modelId: "sonnet", effort: "medium" },
-      codex: { modelId: "gpt-5.6-sol", effort: "xhigh" },
-    });
-  });
-
-  it("keeps the UI effort preference at high for Haiku while runtime omits it", () => {
-    const config = makeConfig({
-      claude: { model: "haiku", timeoutMs: null },
-    });
-
-    expect(resolveConfiguredBackendSelectionDefaults(config).claude).toEqual({
-      modelId: "haiku",
-      effort: "high",
-    });
   });
 });

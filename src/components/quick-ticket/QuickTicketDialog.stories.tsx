@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { userEvent, within } from "storybook/test";
 
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { useQuickTicketStore } from "@/stores/quick-ticket.store";
 import QuickTicketDialog from "./QuickTicketDialog";
 
@@ -39,6 +40,31 @@ function installStoryFetch(behavior: CreateBehavior): () => void {
     }
     if (method === "GET" && url.pathname === "/api/voice/health") {
       return Response.json({ available: false });
+    }
+    if (method === "GET" && url.pathname === "/api/config") {
+      return Response.json({
+        config: {
+          baseDir: "/home/alex/github",
+          ignorePatterns: [],
+          agentBackends: {
+            claude: {
+              model: "opus",
+              reasoningEffort: "medium",
+              timeoutMs: null,
+            },
+            codex: {
+              model: "gpt-5.6-sol",
+              reasoningEffort: "ultra",
+              timeoutMs: null,
+            },
+          },
+          defaultAgentBackend: "claude",
+        },
+        raw: {},
+      });
+    }
+    if (method === "GET" && url.pathname === "/api/agent-backends") {
+      return Response.json({ backends: listBackendCatalogEntries() });
     }
     if (
       method === "POST" &&
@@ -169,6 +195,18 @@ export const BugReport: Story = {
 
 export const RestoredDraft: Story = {
   render: () => <StoryHarness restored />,
+};
+
+export const AutoStartAgent: Story = {
+  render: () => <StoryHarness />,
+  play: async () => {
+    const canvas = within(document.body);
+    const autoStart = await canvas.findByRole("checkbox", {
+      name: "Start agent after create",
+    });
+    await userEvent.click(autoStart);
+    await canvas.findByTestId("model-selector-trigger");
+  },
 };
 
 export const Pending: Story = {

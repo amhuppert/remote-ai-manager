@@ -1,4 +1,4 @@
-import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   getDefaultStallTimeoutForBackend,
   getEffortLevelsForBackend,
@@ -40,15 +40,12 @@ export interface AgentBackendSettingsOverride {
   reasoningEffort?: string | null;
 }
 
-export interface BackendSelectionDefaults {
-  modelId: string;
-  /** UI preference retained even when the selected model hides effort input. */
-  effort: EffortLevel;
-}
-
-export type BackendSelectionDefaultsById = Readonly<
-  Record<AgentBackendId, BackendSelectionDefaults>
->;
+// Selection defaults are resolved by the client-safe catalog; the aliases keep
+// this module's existing type importers stable.
+export type {
+  BackendSelectionDefaults,
+  BackendSelectionDefaultsById,
+} from "./catalog";
 
 function resolveModelValidEffort(
   backend: AgentBackendId,
@@ -130,25 +127,6 @@ export function resolveConfiguredAgentBackendDefaults(
   backend: AgentBackendId,
 ): ResolvedAgentBackendDefaults {
   return resolveAgentBackendTurnDefaults({ config, backend });
-}
-
-/** Project configured backend profiles into conversation selection controls. */
-export function resolveConfiguredBackendSelectionDefaults(
-  config: ConversationTurnConfig,
-): BackendSelectionDefaultsById {
-  return Object.fromEntries(
-    agentBackendSchema.options.map((backend) => {
-      const profile = config.agentBackends[backend];
-      const parsed = effortLevelSchema.safeParse(profile.reasoningEffort);
-      return [
-        backend,
-        {
-          modelId: profile.model,
-          effort: parsed.success ? parsed.data : "high",
-        },
-      ];
-    }),
-  ) as Record<AgentBackendId, BackendSelectionDefaults>;
 }
 
 /** Whether any declared capability can be applied to an idle live runtime. */
