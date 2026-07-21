@@ -685,6 +685,93 @@ describe("ConversationSidebar", () => {
       expect(screen.queryByText("Open in New Tab")).toBeNull();
       expect(screen.queryByText("Open in New Pane")).toBeNull();
     });
+
+    it("archives every sibling via the archive-others endpoint from the context menu", async () => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse({ ok: true, archivedIds: [] }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderSidebarWithActiveData(sessionActiveData);
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+      fireEvent.click(screen.getByText("Archive Other Conversations"));
+
+      await waitFor(() => {
+        const hit = fetchMock.mock.calls.some(
+          (call) =>
+            String(call[0]).includes(
+              "/api/projects/remote-ai-manager/sessions/conversation-ui-overhaul/conversations/session-convo-1/archive-others",
+            ) && (call[1] as RequestInit | undefined)?.method === "POST",
+        );
+        expect(hit).toBe(true);
+      });
+    });
+
+    it("copies the canonical conversation-ref XML from the context menu", async () => {
+      const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      const lookupItem = {
+        projectName: "remote-ai-manager",
+        projectPath: "/home/alex/github/remote-ai-manager",
+        sessionName: "conversation-ui-overhaul",
+        worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/overhaul",
+        conversationId: "session-convo-1",
+        conversationName: "Session conversation one",
+        summary: null,
+        firstPromptSnippet: null,
+        backend: "claude",
+        backendRef: { backend: "claude", ref: "claude-sess-1" },
+        transcriptPath: null,
+        debugLogPath: null,
+        status: "awaiting",
+        lastActivityAt: "2026-05-15T12:36:00.000Z",
+        archived: false,
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: RequestInfo | URL) => {
+          if (String(url).includes("/api/conversations/session-convo-1")) {
+            return jsonResponse(lookupItem);
+          }
+          return jsonResponse([]);
+        }),
+      );
+
+      renderSidebarWithActiveData(sessionActiveData);
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+      fireEvent.click(screen.getByText("Copy Conversation Reference"));
+
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalled();
+      });
+      const copied = writeText.mock.calls[0]![0];
+      expect(copied).toContain("<conversation-ref ");
+      expect(copied).toContain('conversation-id="session-convo-1"');
+      expect(copied).toContain('backend-ref="claude-sess-1"');
+      expect(copied).toContain(
+        'read-command="cctl conversation read session-convo-1 --outline"',
+      );
+    });
+
+    it("omits Archive Other Conversations and Copy Conversation Reference for project rows", () => {
+      renderSidebarWithActiveData(sessionActiveData);
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Current project cockpit — running"),
+      );
+
+      expect(screen.queryByText("Archive Other Conversations")).toBeNull();
+      expect(screen.queryByText("Copy Conversation Reference")).toBeNull();
+    });
   });
 
   it("renders closed project conversations in Closed and excludes them from Needs/Run counts", () => {

@@ -11,6 +11,7 @@ import {
   useMarkConversationReadMutation,
   useGenericRenameConversationMutation,
   useGenericArchiveConversationMutation,
+  useArchiveOtherConversationsMutation,
 } from "@/lib/conversations/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
@@ -831,6 +832,140 @@ describe("useGenericArchiveConversationMutation", () => {
     const activeData =
       client.getQueryData<ActiveConversationsResponse>(activeKey);
     expect(activeData?.conversations.map((c) => c.id)).toEqual(["pc1", "pc2"]);
+  });
+});
+
+describe("useArchiveOtherConversationsMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("optimistically archives every sibling in the session list and drops them from the active cache", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", archived: false }),
+      conversation({ id: "c2", archived: false }),
+      conversation({ id: "c3", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1" }),
+        activeConvo({ id: "c2" }),
+        // A same-id-space row from a DIFFERENT session must survive.
+        activeConvo({ id: "other", sessionName: "s2" }),
+      ]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useArchiveOtherConversationsMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => {
+      const listData = client.getQueryData<ConversationState[]>(listKey);
+      expect(listData?.map((c) => [c.id, c.archived])).toEqual([
+        ["c1", false],
+        ["c2", true],
+        ["c3", true],
+      ]);
+      const activeData =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(activeData?.conversations.map((c) => c.id)).toEqual([
+        "c1",
+        "other",
+      ]);
+    });
+
+    resolveFetch(jsonResponse({ ok: true, archivedIds: ["c2", "c3"] }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back both caches when the server rejects", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", archived: false }),
+      conversation({ id: "c2", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1" }), activeConvo({ id: "c2" })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useArchiveOtherConversationsMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const listData = client.getQueryData<ConversationState[]>(listKey);
+    expect(listData?.map((c) => c.archived)).toEqual([false, false]);
+    const activeData =
+      client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(activeData?.conversations.map((c) => c.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("POSTs the archive-others endpoint and invalidates the session list and active caches", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, []);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([]),
+    );
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true, archivedIds: [] }));
+
+    const { result } = renderHook(
+      () => useArchiveOtherConversationsMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/sessions/s/conversations/c1/archive-others",
+      expect.objectContaining({ method: "POST" }),
+    );
+    await waitFor(() => {
+      expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
   });
 });
 

@@ -10,6 +10,12 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 
+// The tab strip's context menu navigates via the app router, which jsdom
+// tests don't mount.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
+
 // Stub only the genuinely-heavy non-strip children that need full app context
 // and are NOT under test here. The tab strip, add menu, and panes grid render
 // for real so the click → operation wiring is exercised end-to-end (the

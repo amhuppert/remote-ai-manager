@@ -1,14 +1,31 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
-import { useGenericRenameConversationMutation } from "@/lib/conversations/mutations";
+import {
+  useGenericRenameConversationMutation,
+  useGenericArchiveConversationMutation,
+  useArchiveOtherConversationsMutation,
+} from "@/lib/conversations/mutations";
+import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
+import { copyConversationRefToClipboard } from "@/lib/conversations/copy-conversation-ref";
+import { copyConversationContextToClipboard } from "@/lib/conversations/copy-context-client";
+import {
+  useSidebarSessionFilter,
+  useSetSidebarSessionFilter,
+} from "@/stores/session-detail.store";
+import { useSidebarActiveListFilter } from "@/hooks/use-sidebar-persistent-filters";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
-  ContextMenuItem,
 } from "@/components/ui/ContextMenu";
+import {
+  ConversationRowMenuItems,
+  buildConversationRowMenuItems,
+} from "@/components/session/sidebar/conversation-row-menu";
 import ConversationTab from "./ConversationTab";
 
 export interface ConversationTabStripProps {
@@ -46,9 +63,20 @@ export default function ConversationTabStrip({
   onClose,
   onAddClick,
 }: ConversationTabStripProps): React.JSX.Element {
+  const router = useRouter();
   const renameMutation = useGenericRenameConversationMutation();
+  const archiveMutation = useGenericArchiveConversationMutation();
+  const archiveOthersMutation = useArchiveOtherConversationsMutation();
+  const archiveSessionMutation = useGenericArchiveSessionMutation();
+  const sidebarSessionFilter = useSidebarSessionFilter();
+  const setSidebarSessionFilter = useSetSidebarSessionFilter();
+  const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [pendingArchiveSession, setPendingArchiveSession] = useState<{
+    projectName: string;
+    sessionName: string;
+  } | null>(null);
 
   const startRename = useCallback((conversation: SessionActiveConversation) => {
     setEditingId(conversation.id);
@@ -73,6 +101,90 @@ export default function ConversationTabStrip({
     setEditingId(null);
   }, [workingSet, editingId, editValue, renameMutation]);
 
+  // Same structure as the Active Conversations sidebar menu (shared builder);
+  // tab-specific handlers slot in where the surfaces differ. Open-in-tab/pane
+  // are omitted — the clicked conversation already is a tab.
+  const buildTabMenuItems = useCallback(
+    (conversation: SessionActiveConversation) => {
+      const sessionFilterActive =
+        activeListFilter === "session" &&
+        sidebarSessionFilter?.projectName === conversation.projectName &&
+        sidebarSessionFilter?.sessionName === conversation.sessionName;
+      return buildConversationRowMenuItems(
+        {
+          scope: "session",
+          sessionName: conversation.sessionName,
+          branchName: conversation.branchName,
+          worktreePath: conversation.worktreePath,
+          // Tabs come from the active feed, which only carries open rows.
+          archived: false,
+          approvalGatePending: conversation.pendingApproval !== null,
+        },
+        {
+          onOpenConversation: () => onActivate(conversation.id),
+          onOpenProjectPage: () => {
+            router.push(
+              `/projects/${encodeURIComponent(conversation.projectName)}`,
+            );
+          },
+          sessionFilter: {
+            active: sessionFilterActive,
+            onSelect: () => {
+              setSidebarSessionFilter({
+                projectName: conversation.projectName,
+                sessionName: conversation.sessionName,
+              });
+              setActiveListFilter("session");
+            },
+          },
+          onCopyContext: () => {
+            void copyConversationContextToClipboard({
+              projectName: conversation.projectName,
+              sessionName: conversation.sessionName,
+              conversationId: conversation.id,
+            });
+          },
+          onCopyReference: () => {
+            void copyConversationRefToClipboard(conversation.id);
+          },
+          onRename: () => startRename(conversation),
+          onToggleArchived: () => {
+            archiveMutation.mutate({
+              projectName: conversation.projectName,
+              sessionName: conversation.sessionName,
+              conversationId: conversation.id,
+              archived: true,
+            });
+          },
+          onArchiveOthers: () => {
+            archiveOthersMutation.mutate({
+              projectName: conversation.projectName,
+              sessionName: conversation.sessionName,
+              conversationId: conversation.id,
+            });
+          },
+          onArchiveSession: () => {
+            setPendingArchiveSession({
+              projectName: conversation.projectName,
+              sessionName: conversation.sessionName,
+            });
+          },
+        },
+      );
+    },
+    [
+      activeListFilter,
+      archiveMutation,
+      archiveOthersMutation,
+      onActivate,
+      router,
+      setActiveListFilter,
+      setSidebarSessionFilter,
+      sidebarSessionFilter,
+      startRename,
+    ],
+  );
+
   return (
     <div className={stripClass} role="tablist">
       {workingSet.map((conversation, index) => (
@@ -96,9 +208,7 @@ export default function ConversationTabStrip({
             />
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem onSelect={() => startRename(conversation)}>
-              Rename…
-            </ContextMenuItem>
+            <ConversationRowMenuItems items={buildTabMenuItems(conversation)} />
           </ContextMenuContent>
         </ContextMenu>
       ))}
@@ -116,6 +226,22 @@ export default function ConversationTabStrip({
       >
         +
       </button>
+      <ConfirmDialog
+        open={pendingArchiveSession !== null}
+        title="Archive session"
+        message="This hides the session and all its conversations, and stops any running dev servers. You can unarchive it later to restore."
+        confirmLabel="Archive session"
+        onConfirm={() => {
+          if (pendingArchiveSession === null) return;
+          archiveSessionMutation.mutate({
+            projectName: pendingArchiveSession.projectName,
+            sessionName: pendingArchiveSession.sessionName,
+            archived: true,
+          });
+          setPendingArchiveSession(null);
+        }}
+        onCancel={() => setPendingArchiveSession(null)}
+      />
     </div>
   );
 }

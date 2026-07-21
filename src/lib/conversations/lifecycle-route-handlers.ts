@@ -277,10 +277,65 @@ export function createConversationRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
+  // Archives every non-archived conversation in the session except the
+  // addressed one ("Archive Other Conversations"). Runs sequentially and
+  // broadcasts the standard conversation-archived event per sibling as soon
+  // as it is persisted, so streaming clients stay consistent even if a later
+  // sibling fails.
+  async function POST_ARCHIVE_OTHERS(
+    _request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId, session } =
+      resolved.value;
+
+    const siblings = session.conversations.filter(
+      (c) => c.id !== conversationId && !c.archived,
+    );
+
+    const projectName = deps.getProjectDisplayName(projectPath);
+    const archivedIds: string[] = [];
+    for (const sibling of siblings) {
+      try {
+        await deps.setConversationArchived(
+          projectPath,
+          sessionName,
+          sibling.id,
+          true,
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to archive conversation";
+        return jsonError(message, 500);
+      }
+      archivedIds.push(sibling.id);
+      publishEventBestEffort({
+        publish: deps.broadcast,
+        logger,
+        failureEvent: "conversation_archived.broadcast_failed",
+        context: { projectName, sessionName, conversationId: sibling.id },
+        build: () =>
+          conversationArchivedEventSchema.parse({
+            type: "conversation-archived",
+            scope: "session",
+            projectName,
+            sessionName,
+            conversationId: sibling.id,
+            archived: true,
+          }),
+      });
+    }
+
+    return NextResponse.json({ ok: true, archivedIds });
+  }
+
   return {
     POST_CREATE,
     PATCH_RENAME,
     PATCH_ARCHIVE,
+    POST_ARCHIVE_OTHERS,
   };
 }
 
@@ -300,6 +355,9 @@ export const createSessionConversation = withTracing(
 );
 export const archiveConversation = withTracing(
   _defaultConversationHandlers.PATCH_ARCHIVE,
+);
+export const archiveOtherConversations = withTracing(
+  _defaultConversationHandlers.POST_ARCHIVE_OTHERS,
 );
 export const renameConversation = withTracing(
   _defaultConversationHandlers.PATCH_RENAME,

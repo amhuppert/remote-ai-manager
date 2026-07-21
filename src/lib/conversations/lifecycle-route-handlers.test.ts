@@ -252,6 +252,118 @@ describe("PATCH_RENAME — conversation-renamed broadcast", () => {
 });
 
 // ============================================================================
+// POST_ARCHIVE_OTHERS
+// ============================================================================
+
+describe("POST_ARCHIVE_OTHERS — bulk archive of sibling conversations", () => {
+  function makeSiblingDeps(overrides: Partial<ConversationRouteDeps> = {}) {
+    const kept = makeConversation({ id: "conv-keep" });
+    const siblingA = makeConversation({ id: "conv-a" });
+    const siblingB = makeConversation({ id: "conv-b" });
+    const alreadyArchived = makeConversation({
+      id: "conv-archived",
+      archived: true,
+    });
+    const session = makeSession([kept, siblingA, siblingB, alreadyArchived]);
+    const { deps } = makeDeps({
+      getSession: vi.fn(async () => session),
+      ...overrides,
+    });
+    return { deps };
+  }
+
+  it("archives every non-archived sibling, skips the target and already-archived rows", async () => {
+    const { deps } = makeSiblingDeps();
+    const { POST_ARCHIVE_OTHERS } = createConversationRouteHandlers(deps);
+
+    const response = await POST_ARCHIVE_OTHERS(
+      jsonRequest(),
+      context({ name: "demo", session: "s1", conversationId: "conv-keep" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { archivedIds: string[] };
+    expect(body.archivedIds).toEqual(["conv-a", "conv-b"]);
+
+    const archiveCalls = vi.mocked(deps.setConversationArchived).mock.calls;
+    expect(archiveCalls).toEqual([
+      ["/repos/demo", "s1", "conv-a", true],
+      ["/repos/demo", "s1", "conv-b", true],
+    ]);
+
+    const events = vi
+      .mocked(deps.broadcast)
+      .mock.calls.map((call) => call[0] as SSEEvent);
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      const parsed = conversationArchivedEventSchema.safeParse(event);
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.archived).toBe(true);
+      }
+    }
+    expect(
+      events.map((e) => (e as { conversationId: string }).conversationId),
+    ).toEqual(["conv-a", "conv-b"]);
+  });
+
+  it("returns an empty archivedIds list when the target is the only open conversation", async () => {
+    const kept = makeConversation({ id: "conv-keep" });
+    const { deps } = makeDeps({
+      getSession: vi.fn(async () => makeSession([kept])),
+    });
+    const { POST_ARCHIVE_OTHERS } = createConversationRouteHandlers(deps);
+
+    const response = await POST_ARCHIVE_OTHERS(
+      jsonRequest(),
+      context({ name: "demo", session: "s1", conversationId: "conv-keep" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { archivedIds: string[] };
+    expect(body.archivedIds).toEqual([]);
+    expect(deps.setConversationArchived).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the target conversation is not in the session", async () => {
+    const { deps } = makeSiblingDeps();
+    const { POST_ARCHIVE_OTHERS } = createConversationRouteHandlers(deps);
+
+    const response = await POST_ARCHIVE_OTHERS(
+      jsonRequest(),
+      context({ name: "demo", session: "s1", conversationId: "missing" }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(deps.setConversationArchived).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when the archive service throws mid-run", async () => {
+    const { deps } = makeSiblingDeps({
+      setConversationArchived: vi
+        .fn(async () => {})
+        .mockImplementationOnce(async () => {})
+        .mockImplementationOnce(async () => {
+          throw new Error("io err");
+        }),
+    });
+    const { POST_ARCHIVE_OTHERS } = createConversationRouteHandlers(deps);
+
+    const response = await POST_ARCHIVE_OTHERS(
+      jsonRequest(),
+      context({ name: "demo", session: "s1", conversationId: "conv-keep" }),
+    );
+
+    expect(response.status).toBe(500);
+    // The first sibling archived successfully before the failure, so its
+    // event was already broadcast — streaming clients stay consistent.
+    expect(vi.mocked(deps.broadcast).mock.calls).toHaveLength(1);
+  });
+});
+
+// ============================================================================
 // PATCH_ARCHIVE
 // ============================================================================
 

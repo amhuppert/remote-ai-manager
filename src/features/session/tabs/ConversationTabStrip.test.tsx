@@ -13,6 +13,14 @@ import ConversationTabStrip, {
   type ConversationTabStripProps,
 } from "./ConversationTabStrip";
 
+const routerPushMock = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: routerPushMock,
+  }),
+}));
+
 function convo(
   id: string,
   overrides: Partial<SessionActiveConversation> = {},
@@ -234,6 +242,176 @@ describe("ConversationTabStrip", () => {
       ).toBeNull();
       expect(screen.getByText("Conversation a")).toBeInTheDocument();
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("context menu parity with the Active Conversations menu", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function jsonResponse(body: unknown): Response {
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    it("shows the full conversation menu on right-click", () => {
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+
+      for (const label of [
+        "Open conversation",
+        "Open project page",
+        "Filter sidebar to session: session-a",
+        "Copy branch name",
+        "Copy worktree path",
+        "Copy context",
+        "Copy Conversation Reference",
+        "Rename…",
+        "Archive conversation",
+        "Archive Other Conversations",
+        "Archive session",
+      ]) {
+        expect(screen.getByText(label)).toBeInTheDocument();
+      }
+    });
+
+    it("activates the tab through Open conversation", () => {
+      const { onActivate } = renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[1]!);
+      fireEvent.click(screen.getByText("Open conversation"));
+
+      expect(onActivate).toHaveBeenCalledWith("b");
+    });
+
+    it("routes Open project page through the router", () => {
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Open project page"));
+
+      expect(routerPushMock).toHaveBeenCalledWith("/projects/proj");
+    });
+
+    it("archives the clicked conversation via the archive endpoint", async () => {
+      const fetchSpy = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse({ ok: true }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Archive conversation"));
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "/api/projects/proj/sessions/session-a/conversations/a/archive",
+          expect.objectContaining({
+            method: "PATCH",
+            body: JSON.stringify({ archived: true }),
+          }),
+        );
+      });
+    });
+
+    it("archives every sibling via the archive-others endpoint", async () => {
+      const fetchSpy = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse({ ok: true, archivedIds: [] }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Archive Other Conversations"));
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "/api/projects/proj/sessions/session-a/conversations/a/archive-others",
+          expect.objectContaining({ method: "POST" }),
+        );
+      });
+    });
+
+    it("copies the canonical conversation-ref XML to the clipboard", async () => {
+      const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      const lookupItem = {
+        projectName: "proj",
+        projectPath: "/tmp/proj",
+        sessionName: "session-a",
+        worktreePath: "/tmp/proj/.worktrees/x",
+        conversationId: "a",
+        conversationName: "Conversation a",
+        summary: null,
+        firstPromptSnippet: null,
+        backend: "claude",
+        backendRef: { backend: "claude", ref: "claude-sess-a" },
+        transcriptPath: null,
+        debugLogPath: null,
+        status: "running",
+        lastActivityAt: "2026-06-14T00:00:00.000Z",
+        archived: false,
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: RequestInfo | URL) => {
+          if (String(url).includes("/api/conversations/a")) {
+            return jsonResponse(lookupItem);
+          }
+          return jsonResponse([]);
+        }),
+      );
+
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Copy Conversation Reference"));
+
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalled();
+      });
+      const copied = writeText.mock.calls[0]![0];
+      expect(copied).toContain("<conversation-ref ");
+      expect(copied).toContain('conversation-id="a"');
+      expect(copied).toContain(
+        'read-command="cctl conversation read a --outline"',
+      );
+    });
+
+    it("archives the session only after confirmation", async () => {
+      const fetchSpy = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse({ ok: true }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Archive session"));
+
+      // No mutation before the confirm dialog is accepted.
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "/api/projects/proj/sessions/session-a/archive",
+          expect.objectContaining({
+            method: "PATCH",
+            body: JSON.stringify({ archived: true }),
+          }),
+        );
+      });
     });
   });
 });

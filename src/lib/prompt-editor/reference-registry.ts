@@ -12,6 +12,10 @@ import {
   SpecRefEditorChip,
   SpecRefTranscriptChip,
 } from "@/components/references/SpecRefChips";
+import {
+  buildConversationRefXml,
+  conversationListItemToMentionAttrs,
+} from "@/lib/conversations/conversation-ref";
 import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 import { filterAndScoreConversations } from "@/lib/conversations/conversation-autocomplete-filter";
 import { resolveDisplayLabel } from "@/lib/conversations/display-label";
@@ -20,7 +24,6 @@ import {
   messageRefAttrsSchema,
   type ConversationListItem,
 } from "@/lib/conversations/schemas";
-import { escapeXmlAttr } from "@/lib/shared/xml";
 import { buildTicketRefXml } from "@/lib/tickets/references";
 import { filterAndScoreTickets } from "@/lib/tickets/ticket-autocomplete-filter";
 import {
@@ -136,59 +139,6 @@ function transcriptChip<TAttrs>(
   return function RegisteredTranscriptChip({ attrs }) {
     return createElement(Chip, { attrs: schema.parse(attrs) });
   };
-}
-
-const CONVERSATION_REF_ATTR_ORDER: ReadonlyArray<[string, string]> = [
-  ["projectName", "project-name"],
-  ["projectPath", "project-path"],
-  ["sessionName", "session-name"],
-  ["worktreePath", "worktree-path"],
-  ["conversationId", "conversation-id"],
-  ["conversationName", "conversation-name"],
-  ["backend", "backend"],
-  ["backendRef", "backend-ref"],
-  ["debugLogPath", "debug-log-path"],
-  ["status", "status"],
-  ["lastActivityAt", "last-activity-at"],
-  ["compactArtifactId", "compact-artifact-id"],
-  ["compactStatus", "compact-status"],
-  ["compactCoveredSeq", "compact-covered-seq"],
-  ["compactCreatedAt", "compact-created-at"],
-];
-
-// Emitted only when a completed conversation compaction exists; refs without
-// one carry compact-status="none" alone to keep the XML lean (design §12.4).
-const COMPACTION_DETAIL_ATTRS = new Set([
-  "compactArtifactId",
-  "compactCoveredSeq",
-  "compactCreatedAt",
-]);
-
-function buildConversationRefXml(attrs: Record<string, unknown>): string {
-  const rawStatus = attrs["compactStatus"];
-  const compactStatus =
-    rawStatus === "fresh" || rawStatus === "stale" ? rawStatus : "none";
-  const parts: string[] = ["<conversation-ref"];
-  for (const [camel, kebab] of CONVERSATION_REF_ATTR_ORDER) {
-    if (camel === "compactStatus") {
-      parts.push(`${kebab}="${compactStatus}"`);
-      continue;
-    }
-    if (COMPACTION_DETAIL_ATTRS.has(camel) && compactStatus === "none") {
-      continue;
-    }
-    const raw = attrs[camel];
-    const value = typeof raw === "string" ? raw : "";
-    parts.push(`${kebab}="${escapeXmlAttr(value)}"`);
-  }
-  const conversationId = stringAttr(attrs, "conversationId");
-  for (const [kebab, command] of conversationReadCommands(
-    conversationId,
-    compactStatus,
-  )) {
-    parts.push(`${kebab}="${escapeXmlAttr(command)}"`);
-  }
-  return `${parts.join(" ")} />`;
 }
 
 /**
@@ -323,29 +273,6 @@ function matchingIndices(value: string, normalizedQuery: string): number[] {
   );
 }
 
-/**
- * Ready-to-run `cctl` commands a reading agent can copy verbatim. cctl resolves
- * the owning project/session from the id, so these need no flags. Compaction
- * first (the dense structured summary) when one exists, then the windowed read.
- */
-function conversationReadCommands(
-  conversationId: string,
-  compactStatus: "none" | "fresh" | "stale",
-): Array<[string, string]> {
-  const commands: Array<[string, string]> = [];
-  if (compactStatus !== "none") {
-    commands.push([
-      "compaction-command",
-      `cctl conversation compaction get ${conversationId} --json`,
-    ]);
-  }
-  commands.push([
-    "read-command",
-    `cctl conversation read ${conversationId} --outline`,
-  ]);
-  return commands;
-}
-
 export const REFERENCE_REGISTRY = [
   {
     type: "conversation",
@@ -381,24 +308,7 @@ export const REFERENCE_REGISTRY = [
           }),
           description: [item.projectName, item.sessionName].join(" · "),
           matchIndices: indices,
-          attrs: {
-            projectName: item.projectName,
-            projectPath: item.projectPath,
-            sessionName: item.sessionName,
-            worktreePath: item.worktreePath,
-            conversationId: item.conversationId,
-            conversationName: item.conversationName ?? "",
-            backend: item.backend,
-            backendRef: item.backendRef?.ref ?? "",
-            transcriptPath: item.transcriptPath ?? "",
-            debugLogPath: item.debugLogPath ?? "",
-            status: item.status,
-            lastActivityAt: item.lastActivityAt,
-            compactArtifactId: item.compactArtifactId ?? "",
-            compactStatus: item.compactStatus ?? "none",
-            compactCoveredSeq: item.compactCoveredSeq ?? "",
-            compactCreatedAt: item.compactCreatedAt ?? "",
-          },
+          attrs: { ...conversationListItemToMentionAttrs(item) },
         })),
     },
   },

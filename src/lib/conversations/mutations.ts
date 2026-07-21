@@ -467,6 +467,60 @@ export function useGenericArchiveConversationMutation() {
 }
 
 /**
+ * Archive every other conversation in the clicked conversation's session
+ * ("Archive Other Conversations"). One POST; the server decides the sibling
+ * set, so the optimistic write mirrors that: all non-target session rows flip
+ * to archived and drop from the active feed.
+ */
+export function useArchiveOtherConversationsMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: (variables: {
+        projectName: string;
+        sessionName: string;
+        conversationId: string;
+      }) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(variables.projectName)}/sessions/${encodeURIComponent(variables.sessionName)}/conversations/${encodeURIComponent(variables.conversationId)}/archive-others`,
+          "archive-other-conversations",
+          { method: "POST" },
+        ),
+      updates: (vars) => [
+        cacheUpdate<typeof vars, ConversationState[]>({
+          key: () => conversationKeys.list(vars.projectName, vars.sessionName),
+          update: (old, v) =>
+            old?.map((c) =>
+              c.id === v.conversationId ? c : { ...c, archived: true },
+            ),
+        }),
+        cacheUpdate<typeof vars, ActiveConversationsResponse>({
+          key: () => conversationKeys.active(),
+          update: (old, v) =>
+            old === undefined
+              ? undefined
+              : {
+                  ...old,
+                  conversations: old.conversations.filter(
+                    (c) =>
+                      c.id === v.conversationId ||
+                      c.scope !== "session" ||
+                      c.projectName !== v.projectName ||
+                      c.sessionName !== v.sessionName,
+                  ),
+                },
+        }),
+      ],
+      invalidateKeys: (vars) => [
+        conversationKeys.active(),
+        conversationKeys.list(vars.projectName, vars.sessionName),
+      ],
+    }),
+  );
+}
+
+/**
  * Mark a conversation as read (clear the "Needs you" pinned slot).
  *
  * Optimistically clears the `unread` flag in the active-conversations cache

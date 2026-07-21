@@ -24,7 +24,9 @@ import {
   useAnswerQuestionMutation,
   useForkConversationMutation,
   useMarkConversationReadMutation,
+  useArchiveOtherConversationsMutation,
 } from "@/lib/conversations/mutations";
+import { copyConversationRefToClipboard } from "@/lib/conversations/copy-conversation-ref";
 import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
 import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
@@ -35,10 +37,7 @@ import {
 } from "@/lib/git/mutations";
 import { useNotificationJobs } from "@/stores/notification.store";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
-import { apiFetch } from "@/lib/api/fetcher";
-import { sessionStateSchema } from "@/lib/sessions/schemas";
-import { graphWorkflowExecutionFullResponseSchema } from "@/lib/workflow-graph/schemas";
-import { buildConversationContext } from "@/lib/conversations/copy-context";
+import { copyConversationContextToClipboard } from "@/lib/conversations/copy-context-client";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import {
@@ -67,6 +66,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import {
   ConversationRowMenuItems,
+  buildConversationRowMenuItems,
   type ConversationRowMenuItem,
 } from "@/components/session/sidebar/conversation-row-menu";
 import PeekPopover, {
@@ -363,6 +363,7 @@ function ConversationSidebar({
     sessionName,
   );
   const genericArchiveMutation = useGenericArchiveConversationMutation();
+  const archiveOthersMutation = useArchiveOtherConversationsMutation();
   const genericRenameMutation = useGenericRenameConversationMutation();
   const genericArchiveSessionMutation = useGenericArchiveSessionMutation();
   const markReadMutation = useMarkConversationReadMutation();
@@ -502,26 +503,11 @@ function ConversationSidebar({
 
   const handleCopyContext = useCallback(
     async (row: SessionActiveConversation): Promise<void> => {
-      const [session, executionResponse] = await Promise.all([
-        apiFetch(
-          `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}`,
-          sessionStateSchema,
-        ),
-        // The execution no longer rides the session payload (decoupled table),
-        // so fetch it separately to keep the workflow block in the copy.
-        apiFetch(
-          `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}/graph-workflow/execution`,
-          graphWorkflowExecutionFullResponseSchema,
-        ),
-      ]);
-      const text = buildConversationContext({
+      await copyConversationContextToClipboard({
         projectName: row.projectName,
         sessionName: row.sessionName,
-        session,
         conversationId: row.id,
-        graphWorkflowExecution: executionResponse.execution,
       });
-      await navigator.clipboard.writeText(text);
     },
     [],
   );
@@ -666,12 +652,23 @@ function ConversationSidebar({
       const descriptor = describeActiveRow(row);
       const href = descriptor.href;
       const projectHref = `/projects/${encodeURIComponent(row.projectName)}`;
-      const items: ConversationRowMenuItem[] = [
+      const isSession = row.scope === "session";
+      const sessionFilterActive =
+        isSession &&
+        activeListFilter === "session" &&
+        sessionScope.projectName === row.projectName &&
+        sessionScope.sessionName === row.sessionName;
+      return buildConversationRowMenuItems(
         {
-          kind: "item",
-          label: "Open conversation",
-          hotkey: "Enter",
-          onSelect: () => {
+          scope: row.scope,
+          sessionName: isSession ? row.sessionName : undefined,
+          branchName: isSession ? row.branchName : null,
+          worktreePath: row.worktreePath,
+          archived,
+          approvalGatePending: row.pendingApproval !== null,
+        },
+        {
+          onOpenConversation: () => {
             if (row.scope === "session") {
               openSessionScopedConversation(
                 {
@@ -686,146 +683,91 @@ function ConversationSidebar({
             }
             if (onMobileClose) onMobileClose();
           },
-        },
-        ...(row.scope === "session" && onOpenInTab
-          ? [
-              {
-                kind: "item" as const,
-                label: "Open in New Tab",
-                onSelect: () => {
+          onOpenInTab:
+            row.scope === "session" && onOpenInTab
+              ? () => {
                   onOpenInTab({
                     conversationId: row.id,
                     projectName: row.projectName,
                     sessionName: row.sessionName,
                   });
                   if (onMobileClose) onMobileClose();
-                },
-              },
-            ]
-          : []),
-        ...(row.scope === "session" && onOpenInPane
-          ? [
-              {
-                kind: "item" as const,
-                label: "Open in New Pane",
-                onSelect: () => {
+                }
+              : undefined,
+          onOpenInPane:
+            row.scope === "session" && onOpenInPane
+              ? () => {
                   onOpenInPane({
                     conversationId: row.id,
                     projectName: row.projectName,
                     sessionName: row.sessionName,
                   });
                   if (onMobileClose) onMobileClose();
-                },
-              },
-            ]
-          : []),
-        { kind: "divider" },
-        {
-          kind: "item",
-          label: "Open project page",
-          onSelect: () => {
+                }
+              : undefined,
+          onOpenProjectPage: () => {
             router.push(projectHref);
             if (onMobileClose) onMobileClose();
           },
-        },
-        ...(row.scope === "session"
-          ? [
-              {
-                kind: "item" as const,
-                label:
-                  activeListFilter === "session" &&
-                  sessionScope.projectName === row.projectName &&
-                  sessionScope.sessionName === row.sessionName
-                    ? `Filtered to ${row.sessionName}`
-                    : `Filter sidebar to session: ${row.sessionName}`,
-                disabled:
-                  activeListFilter === "session" &&
-                  sessionScope.projectName === row.projectName &&
-                  sessionScope.sessionName === row.sessionName,
-                onSelect: () => {
-                  setSidebarSessionFilter({
-                    projectName: row.projectName,
-                    sessionName: row.sessionName,
-                  });
-                  setActiveListFilter("session");
-                },
-              },
-              {
-                kind: "item" as const,
-                label: "Copy branch name",
-                disabled: row.branchName === null,
-                onSelect: () => {
-                  if (row.branchName === null) return;
-                  void navigator.clipboard.writeText(row.branchName);
-                },
-              },
-            ]
-          : []),
-        {
-          kind: "item",
-          label: "Copy worktree path",
-          onSelect: () => {
-            void navigator.clipboard.writeText(row.worktreePath);
-          },
-        },
-        ...(row.scope === "session"
-          ? [
-              {
-                kind: "item" as const,
-                label: "Copy context",
-                hotkey: "⌘⇧C",
-                onSelect: () => {
+          sessionFilter:
+            row.scope === "session"
+              ? {
+                  active: sessionFilterActive,
+                  onSelect: () => {
+                    setSidebarSessionFilter({
+                      projectName: row.projectName,
+                      sessionName: row.sessionName,
+                    });
+                    setActiveListFilter("session");
+                  },
+                }
+              : undefined,
+          onCopyContext:
+            row.scope === "session"
+              ? () => {
                   void handleCopyContext(row);
-                },
-              },
-            ]
-          : []),
-        { kind: "divider" },
-        {
-          kind: "item",
-          label: "Rename…",
-          onSelect: () => {
+                }
+              : undefined,
+          onCopyReference: isSession
+            ? () => {
+                void copyConversationRefToClipboard(row.id);
+              }
+            : undefined,
+          onRename: () => {
             handleRenameStart(
               row.id,
               row.name ?? row.summary ?? "",
               actionScope,
             );
           },
-        },
-        // While an approval gate is pending the row must stay visible and
-        // actionable in Needs Input, so the archive affordance is withheld.
-        ...(row.pendingApproval === null
-          ? [
-              {
-                kind: "item" as const,
-                label: archived
-                  ? "Unarchive conversation"
-                  : "Archive conversation",
-                onSelect: () => {
-                  handleArchive(row.id, !archived, actionScope);
-                },
-              },
-            ]
-          : []),
-        ...(row.scope === "session"
-          ? [
-              {
-                kind: "item" as const,
-                label: "Archive session",
-                onSelect: () => {
+          onToggleArchived: () => {
+            handleArchive(row.id, !archived, actionScope);
+          },
+          onArchiveOthers:
+            row.scope === "session"
+              ? () => {
+                  archiveOthersMutation.mutate({
+                    projectName: row.projectName,
+                    sessionName: row.sessionName,
+                    conversationId: row.id,
+                  });
+                }
+              : undefined,
+          onArchiveSession:
+            row.scope === "session"
+              ? () => {
                   setPendingArchiveSession({
                     projectName: row.projectName,
                     sessionName: row.sessionName,
                   });
-                },
-              },
-            ]
-          : []),
-      ];
-      return items;
+                }
+              : undefined,
+        },
+      );
     },
     [
       activeListFilter,
+      archiveOthersMutation,
       handleArchive,
       handleCopyContext,
       handleRenameStart,
