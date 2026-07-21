@@ -122,6 +122,7 @@ interface ReviewReadiness {
   approved: number;
   total: number;
   approvalsReady: boolean;
+  combined: boolean;
   blockingThreadCount: number;
   rejectedAssumptionCount: number;
   ready: boolean;
@@ -539,14 +540,24 @@ export default function SpecReviewMode({
         >
           <div className="min-w-0 grow">
             <div className="flex flex-wrap items-center gap-sm">
-              <span className="font-mono text-[0.78rem] font-bold text-text-primary tabular-nums">
-                {readiness.approved}/{readiness.total} approved
-              </span>
-              <StatusChip tone={readiness.approvalsReady ? "green" : "amber"}>
-                {readiness.approvalsReady
-                  ? "Approvals complete"
-                  : "Approvals incomplete"}
-              </StatusChip>
+              {readiness.combined ? (
+                <StatusChip tone="green">
+                  Sign-off approves all items
+                </StatusChip>
+              ) : (
+                <>
+                  <span className="font-mono text-[0.78rem] font-bold text-text-primary tabular-nums">
+                    {readiness.approved}/{readiness.total} approved
+                  </span>
+                  <StatusChip
+                    tone={readiness.approvalsReady ? "green" : "amber"}
+                  >
+                    {readiness.approvalsReady
+                      ? "Approvals complete"
+                      : "Approvals incomplete"}
+                  </StatusChip>
+                </>
+              )}
               <StatusChip
                 tone={readiness.blockingThreadCount === 0 ? "green" : "amber"}
               >
@@ -609,8 +620,9 @@ export default function SpecReviewMode({
               <div className="mb-lg grid gap-sm rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.72rem] text-text-secondary">
                 <span className="flex items-center gap-sm">
                   <CheckIcon size={12} className="text-green" />
-                  {readiness.approved}/{readiness.total} review approvals
-                  recorded
+                  {readiness.combined
+                    ? "Combined approval — this sign-off approves every item"
+                    : `${readiness.approved}/${readiness.total} review approvals recorded`}
                 </span>
                 <span className="flex items-center gap-sm">
                   <CheckIcon size={12} className="text-green" />
@@ -728,41 +740,51 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
       approved: 0,
       total: 0,
       approvalsReady: false,
+      combined: false,
       blockingThreadCount: 0,
       rejectedAssumptionCount: 0,
       ready: false,
     };
   }
 
+  // Mirrors the server sign-off preconditions: when every propose-time dial
+  // is the combined dial, the human sign-off act itself is the combined
+  // approval and no per-item approvals are required.
+  const combined = (["requirements", "design", "plan"] as const).every(
+    (gate) =>
+      resolveDial(detail.spec.gatePolicy, gate) === COMBINED_APPROVAL_DIAL,
+  );
   const requiresApproval = (gate: "requirements" | "design" | "plan") => {
     const dial = resolveDial(detail.spec.gatePolicy, gate);
     return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
   };
   const subjects: BulkApprovalSubject[] = [];
-  for (const entry of snapshot.elements) {
-    switch (entry.version.payload.kind) {
-      case "requirement":
-        if (requiresApproval("requirements")) {
-          subjects.push({
-            subjectKind: "requirement",
-            elementId: entry.element.id,
-          });
-        }
-        break;
-      case "decision":
-        if (requiresApproval("design")) {
-          subjects.push({
-            subjectKind: "decision",
-            elementId: entry.element.id,
-          });
-        }
-        break;
-      default:
-        break;
+  if (!combined) {
+    for (const entry of snapshot.elements) {
+      switch (entry.version.payload.kind) {
+        case "requirement":
+          if (requiresApproval("requirements")) {
+            subjects.push({
+              subjectKind: "requirement",
+              elementId: entry.element.id,
+            });
+          }
+          break;
+        case "decision":
+          if (requiresApproval("design")) {
+            subjects.push({
+              subjectKind: "decision",
+              elementId: entry.element.id,
+            });
+          }
+          break;
+        default:
+          break;
+      }
     }
-  }
-  if (requiresApproval("plan")) {
-    subjects.push({ subjectKind: "plan", elementId: null });
+    if (requiresApproval("plan")) {
+      subjects.push({ subjectKind: "plan", elementId: null });
+    }
   }
 
   const approved = subjects.filter(
@@ -794,6 +816,7 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     approved,
     total: subjects.length,
     approvalsReady,
+    combined,
     blockingThreadCount,
     rejectedAssumptionCount,
     ready:

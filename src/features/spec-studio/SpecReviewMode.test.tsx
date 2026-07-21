@@ -295,6 +295,42 @@ describe("SpecReviewMode", () => {
     ).toBeDisabled();
   });
 
+  it("enables sign-off immediately under the fast-path combined policy", async () => {
+    const user = userEvent.setup();
+    const detail = reviewDetailFixture(false);
+    renderWithQuery(
+      <SpecReviewMode
+        detail={{
+          ...detail,
+          spec: { ...detail.spec, gatePolicy: { preset: "fast-path" } },
+          approvals: [],
+        }}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const readiness = screen.getByTestId("review-readiness");
+    expect(
+      within(readiness).getByText("Sign-off approves all items"),
+    ).toBeInTheDocument();
+    expect(
+      within(readiness).queryByText("0/0 approved"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(readiness).queryByRole("progressbar"),
+    ).not.toBeInTheDocument();
+    const trigger = within(readiness).getByRole("button", {
+      name: "Sign off revision 2",
+    });
+    expect(trigger).toBeEnabled();
+
+    await user.click(trigger);
+    expect(
+      screen.getByText("Combined approval — this sign-off approves every item"),
+    ).toBeInTheDocument();
+  });
+
   it("reflows review rows and preserves touch targets on the mobile spine", () => {
     renderReview();
 

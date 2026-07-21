@@ -59,7 +59,6 @@ export interface SignOffReviewSnapshot {
   revisionRows: DiffRevisionElement[];
   blockingThreads: ReviewThreadSnapshot[];
   approvals: ApprovalSnapshot[];
-  combinedApprovalConfirmed: boolean;
 }
 
 export interface ProposeContext {
@@ -203,9 +202,12 @@ function approvalUnmetConditions(
   );
 
   if (allCombined) {
-    return review.combinedApprovalConfirmed
-      ? []
-      : ["Fast-path combined approval has not been confirmed by a human."];
+    // The combined dial collapses per-element approvals into one human act:
+    // the sign-off itself (R11.5). signOffRevision refuses non-human actors
+    // before reaching these preconditions, and propose absorbs sign-off only
+    // when every dial is Notify/Off, so no combined-dial transition can get
+    // here without a human sign-off in progress.
+    return [];
   }
 
   const diff = diffRevisions(review.baseRevisionRows, review.revisionRows);

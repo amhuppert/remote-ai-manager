@@ -47,7 +47,6 @@ export const SPEC_ACTIONS = [
   "approve-execution-start",
   "withdraw",
   "bulk-approve",
-  "fast-path-approve",
   "open-question",
   "answer-question",
   "propose-assumption",

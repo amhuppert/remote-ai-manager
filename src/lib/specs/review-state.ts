@@ -224,7 +224,6 @@ export function loadProposalState(
         revisionId: approval.revision_id,
         validity: approval.validity,
       })),
-    combinedApprovalConfirmed: false,
   };
   return { draft, records, reviewSnapshot, baseSnapshot };
 }

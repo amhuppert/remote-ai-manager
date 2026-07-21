@@ -153,7 +153,6 @@ function reviewSnapshot(): SignOffReviewSnapshot {
         validity: "valid" as const,
       },
     ],
-    combinedApprovalConfirmed: false,
   };
 }
 
@@ -478,6 +477,28 @@ describe("transition predicates", () => {
         });
       },
     );
+
+    it("treats a human sign-off as the fast-path combined approval", () => {
+      const review = reviewSnapshot();
+      review.approvals = [];
+
+      expect(
+        signOffRevision(
+          signOffContext({ policy: { preset: "fast-path" }, review }),
+        ),
+      ).toEqual({ ok: true });
+    });
+
+    it("refuses a fast-path sign-off by an agent", () => {
+      expect(
+        signOffRevision(
+          signOffContext({ policy: { preset: "fast-path" }, actor: agent }),
+        ),
+      ).toMatchObject({
+        ok: false,
+        refusal: { code: "human_act_required" },
+      });
+    });
 
     it("requires a current approval after a direct revision change", () => {
       const review = reviewSnapshot();

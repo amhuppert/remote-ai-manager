@@ -223,11 +223,6 @@ export interface ReviewService {
   bulkApprove(
     input: BulkApproveInput,
   ): Promise<ReviewResult<SpecApprovalRow[]>>;
-  fastPathCombinedApproval(
-    input: SignOffRevisionInput,
-  ): Promise<
-    ReviewResult<{ revision: SpecRevision; approvals: SpecApprovalRow[] }>
-  >;
   openQuestion(
     input: OpenQuestionInput,
   ): Promise<ReviewResult<SpecQuestionRow>>;
@@ -1518,6 +1513,39 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 occurredAt,
               );
           if (approval !== null) deps.review.saveApproval(approval);
+          const allCombined = resolvedGates.every(
+            ({ dial }) => dial === COMBINED_APPROVAL_DIAL,
+          );
+          // R11.5: under the fast-path policy this human sign-off IS the
+          // combined approval — every per-element approval is recorded with
+          // the revision sign-off in the same transaction, all or none.
+          const combinedSubjects = allCombined
+            ? [
+                ...snapshot.elements.flatMap(({ element }) =>
+                  element.kind === "requirement" || element.kind === "decision"
+                    ? [
+                        {
+                          subjectKind: element.kind,
+                          elementId: element.id,
+                        } as const,
+                      ]
+                    : [],
+                ),
+                { subjectKind: "plan", elementId: null } as const,
+              ]
+            : [];
+          for (const subject of combinedSubjects) {
+            deps.review.saveApproval(
+              approvalForSubject(
+                parsed.specId,
+                parsed.revisionId,
+                subject.subjectKind,
+                subject.elementId,
+                parsed.approver,
+                occurredAt,
+              ),
+            );
+          }
           const revision = repo.approveRevision({
             revisionId: parsed.revisionId,
             approvedAt: occurredAt,
@@ -1586,7 +1614,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           grantedNotice = grantNoticeFor(target.spec, {
             approvalId: approval?.id ?? null,
             satisfiedGates: ["requirements", "design", "plan"],
-            approvedSubjects: ["revision"],
+            approvedSubjects: [
+              ...combinedSubjects.map((subject) => subject.elementId ?? "plan"),
+              "revision",
+            ],
             occurredAt,
           });
           return {
@@ -1604,7 +1635,11 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 parsed.actor,
                 occurredAt,
                 "spec-review-revision-signed-off",
-                policyAdmitted ? "policy-signed-off" : "signed-off",
+                policyAdmitted
+                  ? "policy-signed-off"
+                  : allCombined
+                    ? "combined-signed-off"
+                    : "signed-off",
                 approval?.id,
                 parsed.activeStartedAt,
               ),
@@ -1836,189 +1871,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         },
       );
       publishAll(transaction.prepared);
-      return transaction.result;
-    },
-
-    async fastPathCombinedApproval(input) {
-      const parsed = signOffRevisionInputSchema.parse(input);
-      const occurredAt = now();
-      let grantedNotice: SpecApprovalGrantNotice | null = null;
-      const transaction = await deps.specs.transaction(
-        "specs.review.fast-path-combined",
-        (repo) => {
-          const target = requireReviewTarget(
-            repo,
-            parsed.specId,
-            parsed.revisionId,
-          );
-          if (target === null)
-            return {
-              result: refused(
-                "not_found",
-                ["Review target not found."],
-                "Refresh Spec Studio.",
-              ),
-              prepared: [],
-            };
-          const allCombined = (
-            ["requirements", "design", "plan"] as const
-          ).every(
-            (gate) =>
-              resolveDial(target.spec.gatePolicy, gate) ===
-              COMBINED_APPROVAL_DIAL,
-          );
-          if (!allCombined)
-            return {
-              result: refused(
-                "gate_blocked",
-                [
-                  "The combined approval action requires the fast-path propose policy.",
-                ],
-                "Use the configured per-gate review actions.",
-              ),
-              prepared: [],
-            };
-          const snapshot = repo.getRevisionSnapshot(target.revision.id);
-          if (snapshot === null)
-            return {
-              result: refused(
-                "not_found",
-                ["Revision snapshot not found."],
-                "Refresh Spec Studio.",
-              ),
-              prepared: [],
-            };
-          const loaded = loadProposalState(
-            repo,
-            deps.review,
-            deps.links,
-            target.spec,
-            snapshot,
-          );
-          const decision = evaluateSignOffRevision({
-            actor: parsed.actor,
-            revisionState: target.revision.state,
-            policy: target.spec.gatePolicy,
-            draft: loaded.draft,
-            records: loaded.records,
-            review: {
-              ...loaded.reviewSnapshot,
-              combinedApprovalConfirmed: true,
-            },
-          });
-          if (!decision.ok)
-            return {
-              result: { ok: false, refusal: decision.refusal } as ReviewResult<{
-                revision: SpecRevision;
-                approvals: SpecApprovalRow[];
-              }>,
-              prepared: [],
-            };
-          const subjects = snapshot.elements.flatMap(({ element }) =>
-            element.kind === "requirement" || element.kind === "decision"
-              ? [{ subjectKind: element.kind, elementId: element.id } as const]
-              : [],
-          );
-          const approvals = [
-            ...subjects.map((subject) =>
-              approvalForSubject(
-                parsed.specId,
-                parsed.revisionId,
-                subject.subjectKind,
-                subject.elementId,
-                parsed.approver,
-                occurredAt,
-              ),
-            ),
-            approvalForSubject(
-              parsed.specId,
-              parsed.revisionId,
-              "plan",
-              null,
-              parsed.approver,
-              occurredAt,
-            ),
-            approvalForSubject(
-              parsed.specId,
-              parsed.revisionId,
-              "revision",
-              null,
-              parsed.approver,
-              occurredAt,
-            ),
-          ];
-          for (const approval of approvals) deps.review.saveApproval(approval);
-          const signOffApproval = approvals.at(-1)!;
-          const revision = repo.approveRevision({
-            revisionId: parsed.revisionId,
-            approvedAt: occurredAt,
-          });
-          const stalePrepared = markWaiversStaleAtSignOffInTransaction({
-            spec: target.spec,
-            approvedRevisionId: parsed.revisionId,
-            getSnapshot: (targetRevisionId) =>
-              repo.getRevisionSnapshot(targetRevisionId),
-            waivers: deps.delivery,
-            events: deps.events,
-            actor: parsed.actor,
-            occurredAt,
-          });
-          for (const gate of ["requirements", "design", "plan"] as const) {
-            deps.review.insertGateAdmission({
-              id: newId("admission"),
-              spec_id: parsed.specId,
-              gate,
-              basis: "human_approval",
-              approval_id: signOffApproval.id,
-              revision_id: parsed.revisionId,
-              execution_id: null,
-              actor_json: stableStringify(parsed.actor),
-              created_at: occurredAt,
-            });
-          }
-          grantedNotice = grantNoticeFor(target.spec, {
-            approvalId: signOffApproval.id,
-            satisfiedGates: ["requirements", "design", "plan"],
-            approvedSubjects: [
-              ...subjects.map((subject) => subject.elementId),
-              "plan",
-              "revision",
-            ],
-            occurredAt,
-          });
-          return {
-            result: {
-              ok: true,
-              value: { revision, approvals },
-            } as ReviewResult<{
-              revision: SpecRevision;
-              approvals: SpecApprovalRow[];
-            }>,
-            prepared: [
-              appendEvent(
-                target.spec,
-                revision.id,
-                parsed.actor,
-                occurredAt,
-                "spec-review-revision-signed-off",
-                "combined-signed-off",
-                signOffApproval.id,
-                parsed.activeStartedAt,
-              ),
-              ...stalePrepared,
-            ],
-          };
-        },
-      );
-      publishAll(transaction.prepared);
-      if (transaction.result.ok && grantedNotice !== null) {
-        deps.notifier?.approvalGranted(grantedNotice);
-      }
-      logger.info("specs.review.fast_path_combined.complete", {
-        specId: parsed.specId,
-        revisionId: parsed.revisionId,
-        ok: transaction.result.ok,
-      });
       return transaction.result;
     },
   };

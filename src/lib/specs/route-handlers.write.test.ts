@@ -122,7 +122,6 @@ function createServices() {
       })),
       withdraw: vi.fn(),
       bulkApprove: vi.fn(),
-      fastPathCombinedApproval: vi.fn(),
       openQuestion: vi.fn(async (input: unknown) => ({
         ok: true as const,
         value: { id: "question-1", input },

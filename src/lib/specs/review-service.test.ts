@@ -512,6 +512,109 @@ describe("ReviewService", () => {
     });
   });
 
+  it("signs off a fast-path revision as the combined approval without a separate fast-track act", async () => {
+    const created = await proposedSpec("fast-path");
+
+    const signed = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(signed).toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
+    });
+
+    const approvals = reviewRepo.findApprovalsBySpecId(created.spec.id);
+    expect(
+      approvals.map(({ subject_kind, element_id }) => ({
+        subject_kind,
+        element_id,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        { subject_kind: "requirement", element_id: "requirement-1" },
+        { subject_kind: "decision", element_id: "decision-1" },
+        { subject_kind: "plan", element_id: null },
+        { subject_kind: "revision", element_id: null },
+      ]),
+    );
+    expect(approvals).toHaveLength(4);
+
+    const revisionApproval = approvals.find(
+      (approval) => approval.subject_kind === "revision",
+    )!;
+    expect(
+      reviewRepo
+        .findGateAdmissionsByRevision(created.draft.id)
+        .map(({ gate, basis, approval_id }) => ({ gate, basis, approval_id })),
+    ).toEqual([
+      {
+        gate: "requirements",
+        basis: "human_approval",
+        approval_id: revisionApproval.id,
+      },
+      {
+        gate: "design",
+        basis: "human_approval",
+        approval_id: revisionApproval.id,
+      },
+      {
+        gate: "plan",
+        basis: "human_approval",
+        approval_id: revisionApproval.id,
+      },
+    ]);
+  });
+
+  it("signs off a fast-path revision after per-item approvals without duplicate approval rows", async () => {
+    const created = await proposedSpec("fast-path");
+    const bulk = await reviewing.bulkApprove({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjects: [
+        { subjectKind: "requirement", elementId: "requirement-1" },
+        { subjectKind: "decision", elementId: "decision-1" },
+        { subjectKind: "plan", elementId: null },
+      ],
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(bulk.ok).toBe(true);
+
+    const signed = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(signed).toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
+    });
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(4);
+  });
+
+  it("refuses a fast-path sign-off by an agent", async () => {
+    const created = await proposedSpec("fast-path");
+
+    const signed = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "agent",
+      actor: AGENT,
+    });
+    expect(signed).toMatchObject({
+      ok: false,
+      refusal: { code: "human_act_required" },
+    });
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([]);
+    expect((await specs.findRevision(created.draft.id))?.state).toBe(
+      "proposed",
+    );
+  });
+
   it("writes the fast-path combined approvals, sign-off, and admissions all-or-none", async () => {
     const created = await proposedSpec("fast-path");
     await reviewing.comment({
@@ -526,7 +629,7 @@ describe("ReviewService", () => {
       actor: HUMAN,
     });
 
-    const failed = await reviewing.fastPathCombinedApproval({
+    const failed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
       approver: "alex",
@@ -552,7 +655,7 @@ describe("ReviewService", () => {
       actor: HUMAN,
     });
     expect(resolved.ok).toBe(true);
-    const succeeded = await reviewing.fastPathCombinedApproval({
+    const succeeded = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
       approver: "alex",

@@ -357,14 +357,14 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
     ]);
   });
 
-  it("fastPathCombinedApproval stales waivers for the changed criterion", async () => {
+  it("fast-path sign-off stales waivers for the changed criterion", async () => {
     const created = await createSpecWithContent("fast-path", "fast-path");
     await authoring.proposeRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
       actor: AGENT,
     });
-    const first = await reviewing.fastPathCombinedApproval({
+    const first = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
       approver: "operator",
@@ -388,7 +388,7 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       revisionId: revision2,
       actor: AGENT,
     });
-    const second = await reviewing.fastPathCombinedApproval({
+    const second = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: revision2,
       approver: "operator",

@@ -1982,7 +1982,6 @@ const HUMAN_ONLY_ACTIONS = new Set([
   "approve-item",
   "sign-off",
   "bulk-approve",
-  "fast-path-approve",
   "grant-gate-approval",
   "approve-execution-start",
   "grant-waiver",
@@ -2280,13 +2279,6 @@ export function createSpecWriteRouteHandlers(
         case "bulk-approve":
           return invokeAction(request, bulkApproveBodySchema, (input) =>
             services.review.bulkApprove({
-              ...withReviewIdentity(input),
-              approver: "operator",
-            }),
-          );
-        case "fast-path-approve":
-          return invokeAction(request, signOffBodySchema, (input) =>
-            services.review.fastPathCombinedApproval({
               ...withReviewIdentity(input),
               approver: "operator",
             }),
