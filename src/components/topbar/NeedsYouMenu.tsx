@@ -198,7 +198,7 @@ export function NeedsYouMenu({
           type="button"
           title={decisionLabel}
           aria-label={accessibleLabel}
-          className="cursor-pointer transition-colors duration-[140ms] ease-[ease] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px] hover:[&_[data-needs-you-chip]]:border-amber hover:[&_[data-needs-you-chip]]:bg-[var(--cc-topbar-needs-hover-bg)]"
+          className="cursor-pointer appearance-none border-0 bg-transparent p-0 transition-colors duration-[140ms] ease-[ease] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px] hover:[&_[data-needs-you-chip]]:border-amber hover:[&_[data-needs-you-chip]]:bg-[var(--cc-topbar-needs-hover-bg)]"
         >
           <StatusChip
             tone="amber"

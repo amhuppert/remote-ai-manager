@@ -31,6 +31,16 @@ const items: NeedsYouItem[] = [
 ];
 
 describe("NeedsYouMenu", () => {
+  it("keeps the menu trigger free of native button styling", () => {
+    render(<NeedsYouMenu items={items} nowMs={NOW_MS} />);
+
+    expect(
+      screen.getByRole("button", {
+        name: "Needs you: 2 items need your decision",
+      }),
+    ).toHaveClass("appearance-none", "border-0", "bg-transparent", "p-0");
+  });
+
   it("routes phase, detail, time, and the exact decision through compact attention rows", () => {
     render(<NeedsYouMenu items={items} nowMs={NOW_MS} defaultOpen />);
 
