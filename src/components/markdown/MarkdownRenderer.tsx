@@ -11,6 +11,7 @@ import {
   type MouseEvent,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { Element, Nodes } from "hast";
 import MarkdownLink from "./MarkdownLink";
@@ -36,11 +37,11 @@ interface MarkdownRendererProps {
 
 const ROOT_CLASSES: Record<MarkdownIntent, string> = {
   document:
-    "min-w-0 max-w-full whitespace-pre-wrap break-words px-xl py-[20px] font-body text-[0.95rem] leading-[1.75] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong max-640:px-md max-640:py-lg",
+    "min-w-0 max-w-full break-words px-xl py-[20px] font-body text-[0.95rem] leading-[1.75] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong max-640:px-md max-640:py-lg",
   message:
-    "min-w-0 max-w-full whitespace-pre-wrap break-words font-body text-[0.9rem] leading-[1.65] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
+    "min-w-0 max-w-full break-words font-body text-[0.9rem] leading-[1.65] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
   compact:
-    "min-w-0 max-w-full whitespace-pre-wrap break-words font-body text-[0.78rem] leading-[1.5] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
+    "min-w-0 max-w-full break-words font-body text-[0.78rem] leading-[1.5] text-text-primary [overflow-wrap:anywhere] selection:bg-cyan-glow-strong",
 };
 
 const HEADING_CLASSES: Record<
@@ -277,17 +278,28 @@ function loadHighlightRuntime(
     import("react-syntax-highlighter"),
     languageLoader(),
     import("react-syntax-highlighter/dist/esm/styles/prism"),
-  ]).then(([syntaxModule, languageModule, styleModule]) => {
-    const SyntaxHighlighter = syntaxModule.PrismLight;
-    const registeredName = highlighterName(canonical);
-    SyntaxHighlighter.registerLanguage(registeredName, languageModule.default);
+  ])
+    .then(([syntaxModule, languageModule, styleModule]) => {
+      const SyntaxHighlighter = syntaxModule.PrismLight;
+      const registeredName = highlighterName(canonical);
+      SyntaxHighlighter.registerLanguage(
+        registeredName,
+        languageModule.default,
+      );
 
-    return {
-      SyntaxHighlighter,
-      language: registeredName,
-      style: styleModule.atomDark as Record<string, CSSProperties>,
-    };
-  });
+      return {
+        SyntaxHighlighter,
+        language: registeredName,
+        style: styleModule.atomDark as Record<string, CSSProperties>,
+      };
+    })
+    .catch(() => {
+      // A failed chunk load must degrade to the unhighlighted <pre> fallback
+      // instead of surfacing an unhandled rejection; drop the cached promise
+      // so a later mount can retry the import.
+      highlightRuntimePromises.delete(canonical);
+      return null;
+    });
 
   highlightRuntimePromises.set(canonical, promise);
   return promise;
@@ -744,7 +756,10 @@ const COMPONENTS_BY_INTENT: Record<MarkdownIntent, Components> = {
   compact: createMarkdownComponents("compact"),
 };
 
-const REMARK_PLUGINS = [remarkGfm];
+// remark-breaks keeps single-newline content (e.g. workflow builder briefs)
+// rendering as visible line breaks without a pre-wrap root, which would also
+// render the "\n" text nodes between sibling blocks as blank lines.
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const SOURCE_MAP_PLUGINS = [rehypeStampSourcePosition];
 
 const MarkdownRenderer = forwardRef<HTMLDivElement, MarkdownRendererProps>(

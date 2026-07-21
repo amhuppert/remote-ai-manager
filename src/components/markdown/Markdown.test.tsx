@@ -87,8 +87,35 @@ describe("canonical Markdown semantics", () => {
 
     for (const intent of ["document", "message", "compact"] as const) {
       const root = markdownRoot(container, intent)!;
-      expect(root).toHaveClass("whitespace-pre-wrap");
-      expect(root.querySelector("p")?.textContent).toBe(content);
+      const paragraph = root.querySelector("p");
+      expect(paragraph?.querySelector("br")).not.toBeNull();
+      expect(paragraph?.textContent).toBe(content);
+    }
+  });
+
+  it("does not turn the whitespace between block elements into visible blank lines", async () => {
+    const content = "First paragraph\n\nSecond paragraph\n\n- one\n- two";
+    const { container } = render(
+      <>
+        <DocumentMarkdown content={content} />
+        <MessageMarkdown content={content} />
+        <CompactMarkdown content={content} />
+      </>,
+    );
+
+    await waitFor(() => {
+      for (const intent of ["document", "message", "compact"] as const) {
+        expect(markdownRoot(container, intent)).not.toBeNull();
+      }
+    });
+
+    for (const intent of ["document", "message", "compact"] as const) {
+      const root = markdownRoot(container, intent)!;
+      // react-markdown emits literal "\n" text nodes between sibling blocks;
+      // a pre-wrap root renders each one as an extra blank line.
+      expect(root).not.toHaveClass("whitespace-pre-wrap");
+      expect(root.querySelectorAll("p")).toHaveLength(2);
+      expect(root.querySelectorAll("li")).toHaveLength(2);
     }
   });
 
