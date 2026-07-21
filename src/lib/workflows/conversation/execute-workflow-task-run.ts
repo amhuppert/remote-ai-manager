@@ -44,7 +44,7 @@ export interface ExecuteWorkflowTaskRunInput {
   systemInstructions?: string;
   outputFormat?: StructuredOutputFormat;
   tooling?: PortableMcpConfig;
-  timeoutMs: number;
+  timeoutMs?: number;
   /** Override the agent model on this turn. */
   modelId?: string;
   /** Override the agent reasoning effort / verbosity on this turn. */
@@ -175,7 +175,7 @@ async function runOnce(
     hasOutputFormat: input.outputFormat !== undefined,
     hasSystemInstructions: input.systemInstructions !== undefined,
     hasTooling: input.tooling !== undefined,
-    timeoutMs: input.timeoutMs,
+    timeoutMs: input.timeoutMs ?? null,
   });
 
   const completion = waitForTaskRunCompletion(actor, input);
@@ -196,7 +196,7 @@ async function runOnce(
       ? { structuredOutputTextField: input.structuredOutputTextField }
       : {}),
     ...(input.origin !== undefined ? { origin: input.origin } : {}),
-    timeoutMs: input.timeoutMs,
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
   });
 
   const { result, error, timedOut } = await completion;
@@ -212,10 +212,11 @@ async function runOnce(
   });
 
   if (timedOut) {
+    const timeoutMs = input.timeoutMs ?? 0;
     return {
       kind: "error",
       error:
-        `executeWorkflowTaskRun: timed out after ${input.timeoutMs}ms ` +
+        `executeWorkflowTaskRun: timed out after ${timeoutMs}ms ` +
         `(conversation ${input.conversationId})`,
       aborted: false,
       usage: {
@@ -299,10 +300,11 @@ function waitForTaskRunCompletion(
       },
     );
 
-    if (input.timeoutMs > 0) {
+    const timeoutMs = input.timeoutMs ?? 0;
+    if (timeoutMs > 0) {
       timeoutHandle = setTimeout(() => {
         finish({ result: null, error: null, timedOut: true });
-      }, input.timeoutMs);
+      }, timeoutMs);
     }
   });
 }

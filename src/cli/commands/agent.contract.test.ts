@@ -39,8 +39,18 @@ function makeConfig(): GlobalConfig {
   return {
     baseDir: "/repos",
     ignorePatterns: [],
-    claudeTimeoutMs: 3_600_000,
-    defaultModel: "opus",
+    agentBackends: {
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 3_600_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+      },
+    },
     defaultAgentBackend: "claude",
     pushNotification: {
       enabled: false,
@@ -58,7 +68,6 @@ function makeConfig(): GlobalConfig {
         specPolicyAdmitted: true,
       },
     },
-    codex: { enabled: true, model: "gpt-5.4" },
   };
 }
 
@@ -309,56 +318,5 @@ describe("cctl agent against the real route handlers", () => {
       host,
     );
     expect(result.exitCode).toBe(3);
-  });
-
-  it("exits 1 when codex is disabled (409 business precondition)", async () => {
-    // A dedicated host whose config reports codex disabled.
-    const handlers = createAgentRunHandlers({
-      auth: createAgentAuth({ configDir: dir }),
-      async resolveProjectPath() {
-        return PROJECT_PATH;
-      },
-      async getSession() {
-        return { sessionName: "sess", worktreePath: WORKTREE };
-      },
-      async readConfig() {
-        return { ...makeConfig(), codex: { enabled: false, model: "gpt-5.4" } };
-      },
-      startRun: () => ({ runId: "x" }),
-      getRun: getAgentRun,
-      cancelRun: cancelAgentRun,
-    });
-    const host: CliHost = {
-      async fetch(url, init) {
-        return handlers.POST(
-          new Request(url, {
-            method: init.method,
-            headers: init.headers,
-            body: init.body,
-          }),
-          { params: Promise.resolve({ name: "cc", session: "sess" }) },
-        );
-      },
-      async readTextFile(filePath) {
-        try {
-          return await readFile(filePath, "utf-8");
-        } catch {
-          return null;
-        }
-      },
-      async readFileBytes() {
-        return null;
-      },
-      async sleep() {},
-      platform: os.platform(),
-      homedir: os.homedir(),
-    };
-    const result = await runCli(
-      ["agent", "run", "--file", path.join(dir, "prompt.json")],
-      env(),
-      host,
-    );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("not enabled");
   });
 });

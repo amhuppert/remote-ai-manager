@@ -9,9 +9,14 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 import { withSeededQueryClient } from "./story-support";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import "./styles/cockpit.css";
 
 const PROJECT = "command-center";
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 function makeConversation(
   id: string,
@@ -125,6 +130,7 @@ function Harness() {
         onRunCommand={fn()}
         selectedBackend={backend}
         onSelectedBackendChange={setBackend}
+        backendDefaults={BACKEND_DEFAULTS}
         rail={<RailStub />}
       />
     </div>

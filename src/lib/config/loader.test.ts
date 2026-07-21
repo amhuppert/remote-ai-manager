@@ -61,7 +61,33 @@ describe("createConfigReader", () => {
     await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
   });
 
-  it("reads codex.pricing rate overrides from disk", async () => {
+  it("materializes independent Claude and Codex defaults", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({}),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+
+    expect(config.defaultAgentBackend).toBe("claude");
+    expect(config.agentBackends).toEqual({
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 3_600_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+      },
+    });
+  });
+
+  it("reads agentBackends.codex.pricing rate overrides from disk", async () => {
     const configDir = await createTempConfigDir();
     const pricing = {
       "gpt-5.5": {
@@ -72,14 +98,14 @@ describe("createConfigReader", () => {
     };
     await writeFile(
       path.join(configDir, "config.json"),
-      JSON.stringify({ codex: { enabled: true, pricing } }),
+      JSON.stringify({ agentBackends: { codex: { pricing } } }),
       "utf-8",
     );
 
     const reader = createConfigReader(configDir);
     const config = await reader.readConfig();
 
-    expect(config.codex?.pricing).toEqual(pricing);
+    expect(config.agentBackends.codex.pricing).toEqual(pricing);
   });
 
   it("round-trips the file-only Command Center project override", async () => {
@@ -100,12 +126,14 @@ describe("createConfigReader", () => {
     await expect(reader.readConfig()).resolves.toMatchObject(rawConfig);
   });
 
-  it("reads codex.timeoutMs and codex.stallTimeoutMs from disk under the names consumers use", async () => {
+  it("reads Codex timeout fields from its backend profile", async () => {
     const configDir = await createTempConfigDir();
     await writeFile(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        codex: { enabled: true, timeoutMs: 300_000, stallTimeoutMs: 60_000 },
+        agentBackends: {
+          codex: { timeoutMs: 300_000, stallTimeoutMs: 60_000 },
+        },
       }),
       "utf-8",
     );
@@ -113,8 +141,80 @@ describe("createConfigReader", () => {
     const reader = createConfigReader(configDir);
     const config = await reader.readConfig();
 
-    expect(config.codex?.timeoutMs).toBe(300_000);
-    expect(config.codex?.stallTimeoutMs).toBe(60_000);
+    expect(config.agentBackends.codex.timeoutMs).toBe(300_000);
+    expect(config.agentBackends.codex.stallTimeoutMs).toBe(60_000);
+  });
+
+  it("does not inherit an effort when the selected Claude model has none", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ agentBackends: { claude: { model: "haiku" } } }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+
+    expect(config.agentBackends.claude).toEqual({
+      model: "haiku",
+      timeoutMs: 3_600_000,
+    });
+  });
+
+  it("preserves sparse backend fields when reading raw config", async () => {
+    const configDir = await createTempConfigDir();
+    const rawConfig = {
+      agentBackends: {
+        claude: { model: "sonnet" },
+        codex: { timeoutMs: null },
+      },
+    };
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify(rawConfig),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+
+    await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
+  });
+
+  it("round-trips sparse Codex extras without materializing profile defaults", async () => {
+    const configDir = await createTempConfigDir();
+    const pricing = {
+      "custom-codex-model": {
+        inputPerMillion: 1,
+        cachedInputPerMillion: 0.1,
+        outputPerMillion: 5,
+      },
+    };
+    const rawConfig = {
+      agentBackends: {
+        codex: { stallTimeoutMs: null, pricing },
+      },
+    };
+    const reader = createConfigReader(configDir);
+
+    await reader.writeRawConfig(rawConfig);
+
+    await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
+  });
+
+  it("rejects legacy config paths instead of silently stripping them", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ defaultModel: "sonnet" }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+
+    await expect(reader.readConfig()).rejects.toThrow(
+      /agentBackends\.claude\.model/,
+    );
   });
 });
 

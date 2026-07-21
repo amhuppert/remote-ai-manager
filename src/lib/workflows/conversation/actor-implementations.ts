@@ -85,6 +85,7 @@ import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-cap
 import {
   getConversationTranscriptProjection,
   getTaskTranscriptProjection,
+  resolveAgentBackendTurnDefaults,
 } from "@/lib/agent-backends/conversation-policy";
 import { getDebugManifestPath } from "@/lib/debug-log/service";
 import type { ActorConfig } from "./pre-turn/resolve-model-effort";
@@ -174,7 +175,7 @@ export interface TurnExecutionDeps {
   buildChildEnv(): NodeJS.ProcessEnv;
   resolvePluginPaths(): Promise<Array<{ name: string; path: string }>>;
 
-  getCodexToolPromptHint(enabled: boolean): string | null;
+  getCodexToolPromptHint(): string;
 
   // State mutations
   mutateConversation(
@@ -1217,7 +1218,7 @@ export async function executePromptForMachine(
       isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,
       alignmentInstruction,
       sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
-      deps.getCodexToolPromptHint(config.codex?.enabled === true),
+      deps.getCodexToolPromptHint(),
       referenceDocsPrompt,
       pendingNoticesInstruction,
     ].filter((s): s is string => s != null && s.length > 0);
@@ -1959,13 +1960,41 @@ export async function runTaskRunTurnForMachine(
     }
   }
 
+  let effectiveModel = input.modelId ?? undefined;
+  let effectiveEffort = input.effort ?? undefined;
+  let effectiveTimeoutMs = input.timeoutMs;
+  let taskStallTimeoutMs: number | undefined;
+  try {
+    const defaults = resolveAgentBackendTurnDefaults({
+      backend: input.agentBackend,
+      config: await deps.readConfig(),
+      explicit: {
+        modelId: input.modelId,
+        reasoningEffort: input.effort,
+      },
+    });
+    effectiveModel = defaults.modelId;
+    effectiveEffort = defaults.reasoningEffort;
+    effectiveTimeoutMs = input.timeoutMs ?? defaults.timeoutMs;
+    taskStallTimeoutMs = defaults.stallTimeoutMs;
+  } catch (err) {
+    logger.warn("task_run.defaults_resolution_failed", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      error: getErrorMessage(err),
+    });
+  }
+
   const request: AgentCallRequest = {
     kind: "task_run",
     prompt: effectivePrompt,
     backend: input.agentBackend,
     writeCapability: "write_capable",
-    ...(input.modelId != null ? { modelId: input.modelId } : {}),
-    ...(input.effort != null ? { reasoningEffort: input.effort } : {}),
+    ...(effectiveModel !== undefined ? { modelId: effectiveModel } : {}),
+    ...(effectiveEffort !== undefined
+      ? { reasoningEffort: effectiveEffort }
+      : {}),
     ...(input.outputFormat?.type === "json_schema"
       ? { outputSchema: input.outputFormat.schema }
       : {}),
@@ -1973,7 +2002,9 @@ export async function runTaskRunTurnForMachine(
       ? { systemInstructions: input.systemInstructions }
       : {}),
     ...(input.tooling !== undefined ? { tooling: input.tooling } : {}),
-    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    ...(effectiveTimeoutMs !== undefined
+      ? { timeoutMs: effectiveTimeoutMs }
+      : {}),
   };
 
   // Register the run in the conversations abort-registry so a workflow
@@ -1983,24 +2014,6 @@ export async function runTaskRunTurnForMachine(
   const abortController = new AbortController();
   deps.registerAbortController(input.conversationId, abortController);
 
-  // Per-run inactivity bound, resolved from config + the backend descriptor
-  // exactly like the streaming prompt path's stall watchdog. A config read
-  // failure degrades to the descriptor default via the runner's own fallback.
-  let taskStallTimeoutMs: number | undefined;
-  try {
-    taskStallTimeoutMs = resolveBackendStallTimeoutMs(
-      input.agentBackend,
-      await deps.readConfig(),
-    );
-  } catch (err) {
-    logger.warn("task_run.stall_timeout_resolution_failed", {
-      sessionName: input.sessionName,
-      backend: input.agentBackend,
-      conversationId: input.conversationId,
-      error: getErrorMessage(err),
-    });
-  }
-
   // Semantic execution intent: the facade resolves the runner and capability
   // view from the registry (`deps.getTaskRunner` stays the DI seam for tests).
   const facadeDeps: AgentCallFacadeDeps = {
@@ -2009,8 +2022,8 @@ export async function runTaskRunTurnForMachine(
       autonomous: true,
       signal: abortController.signal,
       ...(input.backendRef !== null ? { resumeRef: input.backendRef } : {}),
-      ...(input.timeoutMs !== undefined
-        ? { defaultTimeoutMs: input.timeoutMs }
+      ...(effectiveTimeoutMs !== undefined
+        ? { defaultTimeoutMs: effectiveTimeoutMs }
         : {}),
       ...(taskStallTimeoutMs !== undefined
         ? { stallTimeoutMs: taskStallTimeoutMs }

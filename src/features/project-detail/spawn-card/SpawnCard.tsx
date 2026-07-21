@@ -9,6 +9,7 @@ import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
 import type { ProposalValidation } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { DerivedSessionStatus } from "@/lib/sessions/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import SpawnCardRow, { type SpawnCardRowHandle } from "./SpawnCardRow";
 import { useSpawnCard } from "./useSpawnCard";
 
@@ -27,6 +28,7 @@ export interface SpawnCardProps {
    * reflects status, it never drives the sessions.
    */
   spawnedStatuses?: SpawnedSessionStatus[];
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 // Card shell; the left-border colour distinguishes valid (cyan) from invalid (amber).
@@ -106,6 +108,7 @@ export default function SpawnCard(props: SpawnCardProps): React.JSX.Element {
       projectName={props.projectName}
       conversationId={props.conversationId}
       spawnedStatuses={props.spawnedStatuses}
+      backendDefaults={props.backendDefaults}
     />
   );
 }
@@ -122,11 +125,13 @@ function ConnectedSpawnCard({
   projectName,
   conversationId,
   spawnedStatuses,
+  backendDefaults,
 }: {
   proposal: SpawnProposal;
   projectName: string;
   conversationId: string;
   spawnedStatuses: SpawnedSessionStatus[] | undefined;
+  backendDefaults: BackendSelectionDefaultsById;
 }): React.JSX.Element {
   const sessionsQuery = useSessionsQuery(projectName);
   const branchPrefixQuery = useBranchPrefixQuery(projectName);
@@ -148,6 +153,7 @@ function ConnectedSpawnCard({
       spawnedStatuses={spawnedStatuses}
       branchPrefix={branchPrefixQuery.data}
       targetOptions={targetOptions}
+      backendDefaults={backendDefaults}
     />
   );
 }
@@ -164,6 +170,7 @@ export function ValidSpawnCard({
   spawnedStatuses,
   branchPrefix,
   targetOptions,
+  backendDefaults,
 }: {
   proposal: SpawnProposal;
   projectName: string;
@@ -171,8 +178,14 @@ export function ValidSpawnCard({
   spawnedStatuses: SpawnedSessionStatus[] | undefined;
   branchPrefix: string | undefined;
   targetOptions: string[];
+  backendDefaults: BackendSelectionDefaultsById;
 }): React.JSX.Element {
-  const card = useSpawnCard({ projectName, conversationId, proposal });
+  const card = useSpawnCard({
+    projectName,
+    conversationId,
+    proposal,
+    backendDefaults,
+  });
   const count = proposal.sessions.length;
   const n = card.includedCount;
   const createLabel = `Create ${n} session${n === 1 ? "" : "s"}`;

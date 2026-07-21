@@ -4,7 +4,8 @@
  * rates. They are estimates: the long-context surcharge tier (requests above
  * ~272k input tokens) is not modeled, and users on ChatGPT-subscription auth
  * pay a flat rate, making the figure an API-equivalent estimate rather than
- * billed spend. Rates are overridable per model via `codex.pricing` in
+ * billed spend. Rates are overridable per model via
+ * `agentBackends.codex.pricing` in
  * config.json.
  */
 
@@ -62,6 +63,12 @@ export interface CodexUsageTokens {
   input_tokens: number;
   cached_input_tokens: number;
   output_tokens: number;
+}
+
+export function resolveConfiguredCodexPricingOverrides(config: {
+  agentBackends: { codex: { pricing?: CodexPricingTable } };
+}): CodexPricingTable | null {
+  return config.agentBackends.codex.pricing ?? null;
 }
 
 /**

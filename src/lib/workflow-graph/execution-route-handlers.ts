@@ -30,7 +30,11 @@ import {
 } from "@/lib/state-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
-import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
+import {
+  resolveConfiguredAgentBackendDefaults,
+  type ConversationTurnConfig,
+} from "@/lib/agent-backends/conversation-policy";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
@@ -231,6 +235,13 @@ const continuityService = createGraphLaneContinuity({
     ),
 });
 
+export function resolveGraphValidatorTimeoutMs(
+  config: ConversationTurnConfig,
+  backend: AgentBackendId,
+): number {
+  return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
+}
+
 const validatorRunner = createValidatorRunner({
   async resolveWorktreePath(projectPath, sessionName) {
     const session = await defaultGetSession(projectPath, sessionName);
@@ -239,16 +250,7 @@ const validatorRunner = createValidatorRunner({
   },
   async resolveTimeoutMs(validatorType) {
     const config = await readConfig();
-    if (validatorType === "codex") {
-      const codexConfig = config.codex;
-      if (codexConfig?.enabled !== true) {
-        throw new Error(
-          "Codex validator is configured for this workflow, but Codex is disabled in global config",
-        );
-      }
-      return resolveConfiguredTimeoutMs(codexConfig.timeoutMs);
-    }
-    return config.claudeTimeoutMs;
+    return resolveGraphValidatorTimeoutMs(config, validatorType);
   },
   continuityService,
   executionRepository: workflowManager,

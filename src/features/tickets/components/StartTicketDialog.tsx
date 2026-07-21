@@ -25,10 +25,8 @@ import { FormError, FormGroup } from "@/components/ui/FormField";
 import { RadioGroup, RadioGroupOption } from "@/components/ui/RadioGroup";
 import { Spinner } from "@/components/ui/Spinner";
 import { useDialogRequestGeneration } from "@/hooks/use-dialog-request-generation";
-import {
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
-} from "@/lib/agent-backends/catalog";
+import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { useStartTicketMutation } from "@/lib/tickets/mutations";
@@ -43,11 +41,25 @@ function defaultEffort(backend: AgentBackendId, model: string): EffortLevel {
   return levels[levels.length - 1] ?? "high";
 }
 
+function profileDefaults(
+  backend: AgentBackendId,
+  backendDefaults: BackendSelectionDefaultsById,
+): { model: string; effort: EffortLevel } {
+  const configured = backendDefaults[backend];
+  const levels = getEffortLevelsForBackend(backend, configured.modelId);
+  const effort = levels.includes(configured.effort)
+    ? configured.effort
+    : defaultEffort(backend, configured.modelId);
+  return { model: configured.modelId, effort };
+}
+
 export interface StartTicketDialogProps {
   projectName: string;
   number: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 export default function StartTicketDialog({
@@ -55,13 +67,16 @@ export default function StartTicketDialog({
   number,
   open,
   onOpenChange,
+  defaultBackend,
+  backendDefaults,
 }: StartTicketDialogProps): React.JSX.Element {
   const router = useRouter();
+  const initialDefaults = profileDefaults(defaultBackend, backendDefaults);
   const [mode, setMode] = useState<TicketStartMode>("agent");
-  const [backend, setBackend] = useState<AgentBackendId>("claude");
-  const [model, setModel] = useState(() => getDefaultModelForBackend("claude"));
-  const [reasoningEffort, setReasoningEffort] = useState<EffortLevel>(() =>
-    defaultEffort("claude", model),
+  const [backend, setBackend] = useState<AgentBackendId>(defaultBackend);
+  const [model, setModel] = useState(initialDefaults.model);
+  const [reasoningEffort, setReasoningEffort] = useState<EffortLevel>(
+    initialDefaults.effort,
   );
   const [error, setError] = useState<string | null>(null);
   const [preparedSessionName, setPreparedSessionName] = useState<string | null>(
@@ -87,10 +102,10 @@ export default function StartTicketDialog({
     if (!nextOpen) {
       requestGeneration.invalidate();
       setMode("agent");
-      const defaultModel = getDefaultModelForBackend("claude");
-      setBackend("claude");
-      setModel(defaultModel);
-      setReasoningEffort(defaultEffort("claude", defaultModel));
+      const defaults = profileDefaults(defaultBackend, backendDefaults);
+      setBackend(defaultBackend);
+      setModel(defaults.model);
+      setReasoningEffort(defaults.effort);
       setError(null);
       setPreparedSessionName(null);
     }
@@ -138,10 +153,10 @@ export default function StartTicketDialog({
   };
 
   const changeBackend = (nextBackend: AgentBackendId) => {
-    const nextModel = getDefaultModelForBackend(nextBackend);
+    const defaults = profileDefaults(nextBackend, backendDefaults);
     setBackend(nextBackend);
-    setModel(nextModel);
-    setReasoningEffort(defaultEffort(nextBackend, nextModel));
+    setModel(defaults.model);
+    setReasoningEffort(defaults.effort);
   };
 
   const changeModel = (nextModel: string) => {

@@ -4,9 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
-import type { CodexConfig } from "@/lib/agent-backends/schemas";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
-import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import type { InspectorTab } from "./WorkflowInspectorPanel";
 import {
@@ -36,8 +34,6 @@ interface WorkflowBuilderEditorProps {
     layout: WorkflowDefinitionRecord["layout"];
   }) => void | Promise<void>;
   saveError?: string | null;
-  defaultImplementerConfig?: GraphWorkflowAgentConfig;
-  codexConfig?: CodexConfig;
   globalDefaults?: WorkflowDefaults;
   activeTab?: InspectorTab;
   onTabChange?: (tab: InspectorTab) => void;
@@ -66,8 +62,6 @@ function WorkflowBuilderEditorInner({
   deleting,
   onSave,
   saveError,
-  defaultImplementerConfig,
-  codexConfig,
   globalDefaults,
   activeTab,
   onTabChange,
@@ -223,8 +217,6 @@ function WorkflowBuilderEditorInner({
           onSave={handleSave}
           onDelete={handleDeleteContext}
           saving={isSaving}
-          defaultImplementerConfig={defaultImplementerConfig}
-          codexConfig={codexConfig}
           globalDefaults={globalDefaults}
           activeTab={activeTab}
           onTabChange={onTabChange}

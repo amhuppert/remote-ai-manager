@@ -46,6 +46,8 @@ const input: TicketEnrichmentInput = {
     title: "Observed failure",
   },
   backend: "codex",
+  modelId: "gpt-5.4",
+  reasoningEffort: "high",
 };
 
 interface HarnessOptions {
@@ -87,6 +89,23 @@ function createHarness(options: HarnessOptions = {}) {
 }
 
 describe("createTicketEnrichmentService", () => {
+  it("forwards the selected backend profile without changing the fixed enrichment timeout", async () => {
+    const harness = createHarness();
+    const configuredInput = {
+      ...input,
+      modelId: "gpt-5.6-terra",
+      reasoningEffort: "ultra",
+    };
+
+    await harness.service.enrich(configuredInput);
+
+    expect(harness.requests[0]).toMatchObject({
+      modelId: configuredInput.modelId,
+      reasoningEffort: configuredInput.reasoningEffort,
+      timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
+    });
+  });
+
   it("runs the configured backend once with the isolated one-shot policy and appends server-owned triage", async () => {
     const harness = createHarness();
 

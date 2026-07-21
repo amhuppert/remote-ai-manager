@@ -17,6 +17,12 @@ import type { TicketDetail } from "@/lib/tickets/schemas";
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import { useToastStoreForTesting } from "@/stores/toast.store";
 import TicketDetailView from "./TicketDetailView";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 const navigation = vi.hoisted(() => ({ push: vi.fn() }));
 
@@ -63,7 +69,12 @@ function renderDetail(
 ) {
   return render(
     <QueryClientProvider client={queryClient}>
-      <TicketDetailView projectName="command-center" number={12} />
+      <TicketDetailView
+        projectName="command-center"
+        number={12}
+        defaultAgentBackend="claude"
+        backendDefaults={BACKEND_DEFAULTS}
+      />
     </QueryClientProvider>,
   );
 }
@@ -104,7 +115,12 @@ describe("TicketDetailView loading failures", () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <TicketDetailView projectName="command-center" number={12} />
+        <TicketDetailView
+          projectName="command-center"
+          number={12}
+          defaultAgentBackend="claude"
+          backendDefaults={BACKEND_DEFAULTS}
+        />
       </QueryClientProvider>,
     );
     const user = userEvent.setup();

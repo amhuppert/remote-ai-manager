@@ -7,9 +7,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import type { TicketDetail } from "@/lib/tickets/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import StartTicketDialog from "./StartTicketDialog";
 
 const routerPush = vi.fn();
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -20,7 +26,11 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-function renderDialog(onOpenChange = vi.fn()) {
+function renderDialog(
+  onOpenChange = vi.fn(),
+  defaultBackend: "claude" | "codex" = "claude",
+  backendDefaults: BackendSelectionDefaultsById = BACKEND_DEFAULTS,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -31,6 +41,8 @@ function renderDialog(onOpenChange = vi.fn()) {
         number={12}
         open
         onOpenChange={onOpenChange}
+        defaultBackend={defaultBackend}
+        backendDefaults={backendDefaults}
       />
     </QueryClientProvider>,
   );
@@ -83,6 +95,8 @@ function renderDeferredStart() {
           number={12}
           open={open}
           onOpenChange={setOpen}
+          defaultBackend="claude"
+          backendDefaults={BACKEND_DEFAULTS}
         />
       </QueryClientProvider>
     );
@@ -156,6 +170,70 @@ describe("StartTicketDialog", () => {
         mode: "agent",
         backend: "codex",
         model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+      }),
+    );
+  });
+
+  it("submits the configured default backend profile without requiring edits", async () => {
+    let requestBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          ticket: STARTED_TICKET,
+          sessionName: "Ticket: Harden ticket context",
+          conversationId: "conv-12",
+          initialPromptQueued: true,
+        });
+      },
+    );
+    renderDialog(vi.fn(), "codex");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Start work" }));
+
+    await waitFor(() =>
+      expect(requestBody).toEqual({
+        mode: "agent",
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+      }),
+    );
+  });
+
+  it("shows and submits a custom configured Codex model without edits", async () => {
+    let requestBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          ticket: STARTED_TICKET,
+          sessionName: "Ticket: Harden ticket context",
+          conversationId: "conv-12",
+          initialPromptQueued: true,
+        });
+      },
+    );
+    renderDialog(vi.fn(), "codex", {
+      claude: { modelId: "sonnet", effort: "medium" },
+      codex: { modelId: "custom-codex-model", effort: "ultra" },
+    });
+    const user = userEvent.setup();
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "custom-codex-model",
+    );
+    await user.click(screen.getByRole("button", { name: "Start work" }));
+
+    await waitFor(() =>
+      expect(requestBody).toEqual({
+        mode: "agent",
+        backend: "codex",
+        model: "custom-codex-model",
         reasoningEffort: "ultra",
       }),
     );

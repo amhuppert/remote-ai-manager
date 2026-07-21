@@ -15,6 +15,12 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 import { buildTicketRefXml } from "@/lib/tickets/references";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 // Radix focuses items / captures the pointer on open; jsdom implements neither.
 Element.prototype.scrollIntoView = () => {};
@@ -67,6 +73,7 @@ function renderValid(
       branchPrefix="csm"
       targetOptions={["main"]}
       {...overrides}
+      backendDefaults={overrides.backendDefaults ?? BACKEND_DEFAULTS}
     />,
   );
 }
@@ -130,6 +137,42 @@ describe("SpawnCard", () => {
     expect(screen.getByTestId("effort-selector-trigger")).toBeTruthy();
   });
 
+  it("shows and submits a custom configured Codex model", async () => {
+    const api = installFetchFixture();
+    fetchFixture = api;
+    api.json("GET", "/api/voice/health", { available: false });
+    const spawnPath = "/api/projects/repo/conversations/plc-1/spawn";
+    api.json("POST", spawnPath, { created: [], failed: [] });
+    const codexOnly = asProposal({
+      sessions: [{ name: "beta", agent: "codex", mode: "normal" }],
+    });
+
+    renderValid(codexOnly, {
+      backendDefaults: {
+        claude: { modelId: "sonnet", effort: "medium" },
+        codex: { modelId: "custom-codex-model", effort: "ultra" },
+      },
+    });
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "custom-codex-model",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create 1 session" }));
+
+    await waitFor(() =>
+      expect(api.requestsTo("POST", spawnPath)).toHaveLength(1),
+    );
+    expect(api.requestsTo("POST", spawnPath)[0]?.jsonBody).toMatchObject({
+      sessions: [
+        {
+          agent: "codex",
+          model: "custom-codex-model",
+          reasoningEffort: "ultra",
+        },
+      ],
+    });
+  });
+
   it("hides model + reasoning controls for a dual agent (both run defaults)", () => {
     renderValid(dual);
     expect(screen.queryByTestId("model-selector-trigger")).toBeNull();
@@ -177,6 +220,7 @@ describe("SpawnCard", () => {
         validation={invalid}
         projectName="repo"
         conversationId="plc-1"
+        backendDefaults={BACKEND_DEFAULTS}
       />,
     );
     expect(screen.getByText("Invalid spawn proposal")).toBeTruthy();

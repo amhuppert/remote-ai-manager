@@ -30,8 +30,15 @@ export function CompactionSection({
 }: {
   controller: ConfigFormController;
 }): React.JSX.Element {
-  const { formState, handleChange, handleChangeMulti, isDefault, isModified } =
-    controller;
+  const {
+    formState,
+    formRevision,
+    handleChange,
+    handleChangeMulti,
+    handleValidityChange,
+    isDefault,
+    isModified,
+  } = controller;
 
   const compaction = formState.compaction;
   const backend: AgentBackendId =
@@ -49,9 +56,9 @@ export function CompactionSection({
   }
 
   const modelOptions = entry.models.map((m) => m.id);
-  // A single effort applies to both models; scope its options to the primary
-  // (conversation) model, matching the DefaultsSection convention. The backend
-  // clamps per-model, so an effort the message model doesn't support is safe.
+  // A single effort applies to both models, so its options follow the primary
+  // conversation model. The backend clamps per-model, so an effort the message
+  // model doesn't support is safe.
   const effortOptions = useMemo(
     () => effortLevelsForCatalogEntry(entry, conversationModel),
     [entry, conversationModel],
@@ -155,6 +162,13 @@ export function CompactionSection({
             }
             displayAsMinutes
             positive
+            name="compaction.timeoutMs"
+            aria-label="Compaction timeout"
+            aria-describedby="compaction.timeoutMs-hint"
+            onValidityChange={(valid) =>
+              handleValidityChange("compaction.timeoutMs", valid)
+            }
+            resetKey={formRevision}
           />
         </ConfigField>
       </SettingsSubSection>

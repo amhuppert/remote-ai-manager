@@ -16,8 +16,14 @@ describe("ConfigField", () => {
         <input data-testid="input" />
       </ConfigField>,
     );
-    expect(screen.getByText("Base directory")).toBeVisible();
-    expect(screen.getByText("Where projects live")).toBeVisible();
+    expect(screen.getByText("Base directory")).toHaveAttribute(
+      "id",
+      "baseDir-label",
+    );
+    expect(screen.getByText("Where projects live")).toHaveAttribute(
+      "id",
+      "baseDir-hint",
+    );
     expect(screen.getByTestId("input")).toBeInTheDocument();
   });
 

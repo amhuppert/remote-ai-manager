@@ -25,7 +25,19 @@ function createTestDeps(
       tailscaleEnabled: true,
       baseDir: "/tmp",
       ignorePatterns: [],
-      claudeTimeoutMs: 300_000,
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 300_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
+      defaultAgentBackend: "claude",
     }),
     livenessStart: vi.fn(),
     getLanUrl: vi.fn((port: number) => `http://192.168.1.100:${port}`),

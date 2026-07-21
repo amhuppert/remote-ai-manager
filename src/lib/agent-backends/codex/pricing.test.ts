@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CODEX_PRICING, estimateCodexCostUsd } from "./pricing";
+import {
+  DEFAULT_CODEX_PRICING,
+  estimateCodexCostUsd,
+  resolveConfiguredCodexPricingOverrides,
+} from "./pricing";
+
+describe("resolveConfiguredCodexPricingOverrides", () => {
+  it("reads pricing from the normalized Codex backend profile", () => {
+    const pricing = {
+      "gpt-5.6-sol": {
+        inputPerMillion: 7,
+        cachedInputPerMillion: 0.7,
+        outputPerMillion: 35,
+      },
+    };
+
+    expect(
+      resolveConfiguredCodexPricingOverrides({
+        agentBackends: { codex: { pricing } },
+      }),
+    ).toEqual(pricing);
+    expect(
+      resolveConfiguredCodexPricingOverrides({
+        agentBackends: { codex: {} },
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("estimateCodexCostUsd", () => {
   const usage = {

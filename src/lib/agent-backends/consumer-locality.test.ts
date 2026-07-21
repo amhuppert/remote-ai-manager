@@ -243,7 +243,10 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     acquireQuerySlot: async () => () => {},
     getTranscriptPath: async (id) => `/inmemory/${id}.jsonl`,
     readConfig: async () => ({
-      claudeTimeoutMs: 0,
+      agentBackends: {
+        claude: { model: "opus", timeoutMs: null },
+        codex: { model: "gpt-5.4", timeoutMs: null },
+      },
       maxTurns: 50,
       idleQuerySessionTtlMs: 0,
     }),
@@ -262,7 +265,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     unregisterBackendRuntime: () => {},
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     resolvePluginPaths: async () => [],
-    getCodexToolPromptHint: () => null,
+    getCodexToolPromptHint: () => "",
     mutateConversation: async (_pp, _sn, _id, _label, mutate) => {
       mutate(conversation);
     },

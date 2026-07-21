@@ -12,9 +12,8 @@ import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-a
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
-  resolveConfiguredConversationTimeoutMs,
-  resolveConfiguredConversationTurnSettings,
-  resolveConfiguredStallTimeoutMs,
+  resolveAgentBackendTurnDefaults,
+  resolveConfiguredAgentBackendDefaults,
   type ConversationTurnConfig,
 } from "@/lib/agent-backends/conversation-policy";
 
@@ -31,10 +30,17 @@ export function resolveBackendTurnSettings(
   explicitModel: string | null,
   explicitEffort: string | null,
 ): { effectiveModel: string | undefined; effectiveEffort: string | undefined } {
-  const configured = resolveConfiguredConversationTurnSettings(backend, config);
+  const resolved = resolveAgentBackendTurnDefaults({
+    backend,
+    config,
+    explicit: {
+      modelId: explicitModel,
+      reasoningEffort: explicitEffort,
+    },
+  });
   return {
-    effectiveModel: explicitModel ?? configured.modelId,
-    effectiveEffort: explicitEffort ?? configured.reasoningEffort,
+    effectiveModel: resolved.modelId,
+    effectiveEffort: resolved.reasoningEffort,
   };
 }
 
@@ -64,12 +70,22 @@ export function resolveTurnModelEffort(input: {
   effectiveEffort: string | undefined;
 } {
   const lastUsed = selectLastUserTurnAgentSettings(input.priorMessages);
-  return resolveBackendTurnSettings(
-    input.backend,
-    input.config,
-    input.explicitModel ?? lastUsed.modelId ?? null,
-    input.explicitEffort ?? lastUsed.effort ?? null,
-  );
+  const resolved = resolveAgentBackendTurnDefaults({
+    backend: input.backend,
+    config: input.config,
+    explicit: {
+      modelId: input.explicitModel,
+      reasoningEffort: input.explicitEffort,
+    },
+    scoped: {
+      modelId: lastUsed.modelId,
+      reasoningEffort: lastUsed.effort,
+    },
+  });
+  return {
+    effectiveModel: resolved.modelId,
+    effectiveEffort: resolved.reasoningEffort,
+  };
 }
 
 /**
@@ -80,7 +96,7 @@ export function resolveBackendTimeoutMs(
   backend: AgentBackendId,
   config: ActorConfig,
 ): number {
-  return resolveConfiguredConversationTimeoutMs(backend, config);
+  return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
 }
 
 /**
@@ -91,5 +107,5 @@ export function resolveBackendStallTimeoutMs(
   backend: AgentBackendId,
   config: ActorConfig,
 ): number {
-  return resolveConfiguredStallTimeoutMs(backend, config);
+  return resolveConfiguredAgentBackendDefaults(config, backend).stallTimeoutMs;
 }

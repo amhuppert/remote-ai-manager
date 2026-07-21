@@ -25,6 +25,7 @@ async function pickModel(
 }
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { RawGlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import ConfigPage, { SEEDED_WORKFLOW_DEFAULTS } from "./ConfigPage";
 
 // next/link and next/navigation are external framework modules with no
@@ -42,9 +43,19 @@ vi.mock(
 const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
   config: {
     baseDir: "/home/user/projects",
-    defaultModel: "opus",
     defaultAgentBackend: "claude",
-    claudeTimeoutMs: 3_600_000,
+    agentBackends: {
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 3_600_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+      },
+    },
     maxConcurrentQueries: 3,
     preMergeTimeoutMs: 300_000,
     ignorePatterns: ["node_modules"],
@@ -70,13 +81,16 @@ function seedConfigRoutes(
   });
   api.json("GET", "/api/conversations/active", { conversations: [] });
   api.pending("GET", "/api/config/mcp");
+  api.json("GET", "/api/agent-backends", {
+    backends: listBackendCatalogEntries(),
+  });
 }
 
 /** The last full-config payload PUT to /api/config, parsed from the wire. */
-function savedConfig(): GlobalConfig {
+function savedConfig(): RawGlobalConfig {
   const puts = api.requestsTo("PUT", "/api/config");
   expect(puts).toHaveLength(1);
-  return puts[0]?.jsonBody as GlobalConfig;
+  return puts[0]?.jsonBody as RawGlobalConfig;
 }
 
 beforeEach(() => {
@@ -159,6 +173,138 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(tablist.tagName).toBe("NAV");
   });
 
+  it("consolidates backend defaults into a single Agent backends section", async () => {
+    await renderConfigPage();
+
+    expect(
+      screen.getByRole("tab", { name: "Agent backends" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Agent defaults" }),
+    ).not.toBeInTheDocument();
+
+    selectSettingsTab("Agent backends");
+    expect(
+      screen.getByRole("heading", { name: /Agent backends/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Default backend")).toBeVisible();
+    expect(screen.getByText("Claude model")).toBeVisible();
+    expect(screen.getByText("Codex model")).toBeVisible();
+    expect(
+      screen.getByRole("tab", { name: "Agent backends" }).className,
+    ).toContain("max-768:min-h-[var(--touch-target-min)]");
+    expect(
+      screen
+        .getByRole("heading", { name: /Agent backends/i })
+        .closest("section")?.parentElement?.className,
+    ).toContain(
+      "max-768:pb-[calc(var(--spacing-3xl)+var(--touch-target-min))]",
+    );
+  });
+
+  it("saves independent backend edits while preserving untouched raw settings", async () => {
+    api.json("GET", "/api/config", {
+      config: {
+        ...fullConfigData.config,
+        agentBackends: {
+          ...fullConfigData.config.agentBackends,
+          codex: {
+            ...fullConfigData.config.agentBackends.codex,
+            model: "gpt-5.4-mini",
+          },
+        },
+      },
+      raw: {
+        baseDir: "/home/user/projects",
+        branchPrefix: "feature",
+        agentBackends: { codex: { model: "gpt-5.4-mini" } },
+      },
+    });
+    await renderConfigPage();
+    selectSettingsTab("Agent backends");
+
+    const backendField = screen
+      .getByText("Backend")
+      .closest('[data-field="defaultAgentBackend"]')!;
+    fireEvent.click(
+      [...backendField.querySelectorAll("button")].find(
+        (button) => button.textContent === "codex",
+      )!,
+    );
+    const claudeModelField = screen
+      .getByText("Claude model")
+      .closest('[data-field="agentBackends.claude.model"]')!;
+    fireEvent.click(
+      [...claudeModelField.querySelectorAll("button")].find(
+        (button) => button.textContent === "sonnet",
+      )!,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig()).toEqual({
+      baseDir: "/home/user/projects",
+      branchPrefix: "feature",
+      defaultAgentBackend: "codex",
+      agentBackends: {
+        claude: { model: "sonnet" },
+        codex: { model: "gpt-5.4-mini" },
+      },
+    });
+  });
+
+  it("reverts unsaved backend profile edits", async () => {
+    await renderConfigPage();
+    selectSettingsTab("Agent backends");
+
+    const claudeModelField = screen
+      .getByText("Claude model")
+      .closest('[data-field="agentBackends.claude.model"]')!;
+    fireEvent.click(
+      [...claudeModelField.querySelectorAll("button")].find(
+        (button) => button.textContent === "sonnet",
+      )!,
+    );
+    expect(screen.getByText(/unsaved change/i)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+
+    expect(screen.getByText("All changes saved")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Save changes/i }),
+    ).toBeDisabled();
+  });
+
+  it("blocks save for an invalid backend timeout and Revert clears the local error", async () => {
+    await renderConfigPage();
+    selectSettingsTab("Agent backends");
+
+    const backendField = screen
+      .getByText("Backend")
+      .closest('[data-field="defaultAgentBackend"]')!;
+    fireEvent.click(
+      [...backendField.querySelectorAll("button")].find(
+        (button) => button.textContent === "codex",
+      )!,
+    );
+    const timeout = screen.getByRole("textbox", { name: "Claude timeout" });
+    fireEvent.change(timeout, { target: { value: "invalid" } });
+
+    expect(screen.getByText(/1 invalid field/i)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Save changes/i }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+    expect(api.requestsTo("PUT", "/api/config")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /Revert/i }));
+    expect(timeout).toHaveValue("60");
+    expect(timeout).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText(/invalid field/i)).not.toBeInTheDocument();
+  });
+
   it("wires the active section to a role=tabpanel", async () => {
     await renderConfigPage();
 
@@ -183,15 +329,15 @@ describe("ConfigPage — Workflow Defaults", () => {
 
     await user.keyboard("{ArrowDown}");
 
-    const defaultsTab = screen.getByRole("tab", { name: /Agent defaults/i });
-    expect(defaultsTab).toHaveFocus();
-    expect(defaultsTab).toHaveAttribute("aria-selected", "true");
+    const backendsTab = screen.getByRole("tab", { name: /Agent backends/i });
+    expect(backendsTab).toHaveFocus();
+    expect(backendsTab).toHaveAttribute("aria-selected", "true");
     expect(generalTab).toHaveAttribute("aria-selected", "false");
 
     const panel = screen.getByRole("tabpanel");
     expect(panel).toHaveAttribute(
       "aria-labelledby",
-      defaultsTab.getAttribute("id"),
+      backendsTab.getAttribute("id"),
     );
   });
 

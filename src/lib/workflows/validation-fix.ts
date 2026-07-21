@@ -14,7 +14,6 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readConfig as defaultReadConfig } from "../config/loader";
 import { createLogger } from "../logging";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
@@ -29,7 +28,6 @@ const logger = createLogger("validation-fix");
 // ============================================================
 
 export interface ValidationFixDeps {
-  readConfig: typeof defaultReadConfig;
   /**
    * Named entrypoint that routes a single `task_run` turn through the
    * conversation actor for the conversation identified by
@@ -40,9 +38,7 @@ export interface ValidationFixDeps {
   ): Promise<TaskRunResult>;
 }
 
-const defaultDeps: ValidationFixDeps = {
-  readConfig: defaultReadConfig,
-};
+const defaultDeps: ValidationFixDeps = {};
 
 // ============================================================
 // Public Types
@@ -210,7 +206,6 @@ async function fixValidationErrorsImpl(
     conversationId,
     isRetry,
   } = params;
-  const { readConfig } = deps;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
@@ -221,16 +216,6 @@ async function fixValidationErrorsImpl(
     conversationId,
     isRetry: isRetry === true,
   });
-
-  let config;
-  try {
-    config = await readConfig();
-  } catch (err) {
-    const errorMsg =
-      err instanceof Error ? err.message : "Failed to read config";
-    logger.error("validation-fix.config_error", { error: errorMsg });
-    return { status: "failed", error: errorMsg };
-  }
 
   const jobId = `${sessionName}-${Date.now()}`;
   const attempt = isRetry === true ? 2 : 1;
@@ -270,7 +255,6 @@ async function fixValidationErrorsImpl(
       kind: "task_run",
       prompt,
       systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
-      timeoutMs: config.claudeTimeoutMs,
       origin: { source: "workflow" },
     });
 

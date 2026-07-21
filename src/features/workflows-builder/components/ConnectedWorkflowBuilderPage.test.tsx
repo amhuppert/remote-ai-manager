@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, beforeEach, beforeAll } from "vitest";
+import {
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+  beforeEach,
+  beforeAll,
+} from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -70,8 +78,18 @@ const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {
   config: {
     baseDir: "/projects",
     ignorePatterns: [],
-    claudeTimeoutMs: 3600000,
-    defaultModel: "opus",
+    agentBackends: {
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 3_600_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+      },
+    },
     defaultAgentBackend: "claude",
     workflowDefaults,
   },
@@ -161,11 +179,6 @@ function renderPage() {
     <QueryClientProvider client={qc}>
       <ConnectedWorkflowBuilderPage
         scope={{ kind: "project", projectName: "test-project" }}
-        defaultImplementerConfig={{
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
-        }}
       />
     </QueryClientProvider>,
   );
@@ -174,6 +187,15 @@ function renderPage() {
 describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () => {
   beforeEach(() => {
     resetStore();
+  });
+
+  it("does not accept unused backend-default pass-through props", () => {
+    expectTypeOf<
+      React.ComponentProps<typeof ConnectedWorkflowBuilderPage>
+    >().not.toHaveProperty("defaultImplementerConfig");
+    expectTypeOf<
+      React.ComponentProps<typeof ConnectedWorkflowBuilderPage>
+    >().not.toHaveProperty("codexConfig");
   });
 
   it("renders the Workflow settings ghost button in the toolbar chrome", () => {

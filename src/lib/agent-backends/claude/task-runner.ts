@@ -220,7 +220,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
     // Inactivity watchdog: disabled unless the caller passes a bound (the
     // claude descriptor declares no default — background-task waits produce
-    // legitimate long silences and claudeTimeoutMs already caps a hung turn).
+    // legitimate long silences and the safety-net timeout caps a hung turn).
     const stallTimeoutMs = input.stallTimeoutMs ?? 0;
     const stallWatchdog = createStallWatchdog({
       stallTimeoutMs,

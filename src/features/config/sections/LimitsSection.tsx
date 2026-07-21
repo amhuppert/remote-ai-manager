@@ -8,7 +8,14 @@ export function LimitsSection({
 }: {
   controller: ConfigFormController;
 }): React.JSX.Element {
-  const { formState, handleChange, isDefault, isModified } = controller;
+  const {
+    formState,
+    formRevision,
+    handleChange,
+    handleValidityChange,
+    isDefault,
+    isModified,
+  } = controller;
   return (
     <SettingsPage
       title="Limits &"
@@ -16,23 +23,6 @@ export function LimitsSection({
       sub="Bounds for runaway agents, idle sessions and pre-merge automation."
     >
       <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-md rounded-lg border border-solid border-border-subtle bg-bg-surface px-[14px] pt-md pb-[14px] max-768:grid-cols-[1fr]">
-        <ConfigField
-          label="Claude timeout"
-          fieldPath="claudeTimeoutMs"
-          isDefault={isDefault("claudeTimeoutMs")}
-          isModified={isModified("claudeTimeoutMs")}
-          hint="minutes"
-        >
-          <ConfigNumericInput
-            value={formState.claudeTimeoutMs}
-            onChange={(value) =>
-              handleChange("claudeTimeoutMs", value ?? 3_600_000)
-            }
-            displayAsMinutes
-            required
-            positive
-          />
-        </ConfigField>
         <ConfigField
           label="Max turns"
           fieldPath="maxTurns"
@@ -43,6 +33,12 @@ export function LimitsSection({
           <ConfigNumericInput
             value={formState.maxTurns}
             onChange={(value) => handleChange("maxTurns", value)}
+            name="maxTurns"
+            aria-label="Max turns"
+            onValidityChange={(valid) =>
+              handleValidityChange("maxTurns", valid)
+            }
+            resetKey={formRevision}
             positive
             integer
           />
@@ -56,6 +52,12 @@ export function LimitsSection({
           <ConfigNumericInput
             value={formState.maxConcurrentQueries}
             onChange={(value) => handleChange("maxConcurrentQueries", value)}
+            name="maxConcurrentQueries"
+            aria-label="Max concurrent queries"
+            onValidityChange={(valid) =>
+              handleValidityChange("maxConcurrentQueries", valid)
+            }
+            resetKey={formRevision}
             positive
             integer
           />
@@ -70,6 +72,13 @@ export function LimitsSection({
           <ConfigNumericInput
             value={formState.preMergeTimeoutMs}
             onChange={(value) => handleChange("preMergeTimeoutMs", value)}
+            name="preMergeTimeoutMs"
+            aria-label="Pre-merge timeout"
+            aria-describedby="preMergeTimeoutMs-hint"
+            onValidityChange={(valid) =>
+              handleValidityChange("preMergeTimeoutMs", valid)
+            }
+            resetKey={formRevision}
             displayAsMinutes
             positive
           />
@@ -84,6 +93,13 @@ export function LimitsSection({
           <ConfigNumericInput
             value={formState.idleQuerySessionTtlMs}
             onChange={(value) => handleChange("idleQuerySessionTtlMs", value)}
+            name="idleQuerySessionTtlMs"
+            aria-label="Idle session TTL"
+            aria-describedby="idleQuerySessionTtlMs-hint"
+            onValidityChange={(valid) =>
+              handleValidityChange("idleQuerySessionTtlMs", valid)
+            }
+            resetKey={formRevision}
             displayAsMinutes
             positive
           />

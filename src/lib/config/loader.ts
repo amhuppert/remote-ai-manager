@@ -3,9 +3,18 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { resolveConfigDirFrom } from "./config-dir";
-import { rawGlobalConfigSchema } from "./schemas";
+import {
+  globalConfigSchema,
+  rawGlobalConfigSchema,
+  type RawGlobalConfig,
+} from "./schemas";
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
+import {
+  clampEffortToModel,
+  getCodexReasoningLevelsForModel,
+  type CodexReasoningEffort,
+} from "@/lib/agent-backends/schemas";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -116,8 +125,18 @@ function defaultConfig(): GlobalConfig {
       "**/*.a",
       "**/*.wasm",
     ],
-    claudeTimeoutMs: 3_600_000,
-    defaultModel: "opus",
+    agentBackends: {
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 3_600_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+      },
+    },
     defaultAgentBackend: "claude",
     preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
@@ -177,15 +196,51 @@ function defaultConfig(): GlobalConfig {
   };
 }
 
+function resolveDefaultCodexEffort(
+  model: string,
+): CodexReasoningEffort | undefined {
+  const supported = getCodexReasoningLevelsForModel(model);
+  if (supported === null || supported.includes("high")) return "high";
+  return supported.at(-1);
+}
+
+export function materializeGlobalConfig(
+  rawConfig: RawGlobalConfig,
+): GlobalConfig {
+  const merged = mergeConfigWithDefaults(defaultConfig(), rawConfig);
+  const rawClaude = rawConfig.agentBackends?.claude;
+  const rawCodex = rawConfig.agentBackends?.codex;
+
+  if (rawClaude?.reasoningEffort === undefined) {
+    const effort = clampEffortToModel(
+      "high",
+      merged.agentBackends.claude.model,
+    );
+    if (effort === undefined) {
+      delete merged.agentBackends.claude.reasoningEffort;
+    } else {
+      merged.agentBackends.claude.reasoningEffort = effort;
+    }
+  }
+
+  if (rawCodex?.reasoningEffort === undefined) {
+    merged.agentBackends.codex.reasoningEffort = resolveDefaultCodexEffort(
+      merged.agentBackends.codex.model,
+    );
+  }
+
+  return globalConfigSchema.parse(merged);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Config reader factory                                             */
 /* ------------------------------------------------------------------ */
 
 export interface ConfigReader {
   readConfig(): Promise<GlobalConfig>;
-  readRawConfig(): Promise<Partial<GlobalConfig>>;
+  readRawConfig(): Promise<RawGlobalConfig>;
   writeConfig(config: GlobalConfig): Promise<void>;
-  writeRawConfig(config: Partial<GlobalConfig>): Promise<void>;
+  writeRawConfig(config: RawGlobalConfig): Promise<void>;
   getConfigDirPath(): string;
 }
 
@@ -246,7 +301,7 @@ export function createConfigReader(configDir: string): ConfigReader {
 
       const raw = await readFile(configFile, "utf-8");
       const parsed = rawGlobalConfigSchema.parse(JSON.parse(raw));
-      const config = mergeConfigWithDefaults(defaultConfig(), parsed);
+      const config = materializeGlobalConfig(parsed);
       configCache = {
         mtimeMs: fileStat.mtimeMs,
         size: fileStat.size,
@@ -255,7 +310,7 @@ export function createConfigReader(configDir: string): ConfigReader {
       return config;
     },
 
-    async readRawConfig(): Promise<Partial<GlobalConfig>> {
+    async readRawConfig(): Promise<RawGlobalConfig> {
       if (!existsSync(configFile)) {
         log.debug("config.raw_read", { exists: false, configDir });
         return {};
@@ -286,10 +341,7 @@ export function createConfigReader(configDir: string): ConfigReader {
       // level. Intersect the validated result with the original JSON keys
       // recursively so callers can distinguish explicit config from
       // schema defaults.
-      const filtered = intersectKeys(
-        parsed,
-        result.data,
-      ) as Partial<GlobalConfig>;
+      const filtered = intersectKeys(parsed, result.data) as RawGlobalConfig;
 
       log.debug("config.raw_read", {
         exists: true,
@@ -306,7 +358,7 @@ export function createConfigReader(configDir: string): ConfigReader {
       configCache = null;
     },
 
-    async writeRawConfig(config: Partial<GlobalConfig>): Promise<void> {
+    async writeRawConfig(config: RawGlobalConfig): Promise<void> {
       await ensureDir();
       const json = JSON.stringify(config, null, 2);
       await writeFile(configFile, json, "utf-8");
@@ -345,12 +397,12 @@ export function readConfig(): Promise<GlobalConfig> {
 }
 
 /** Read the raw config from disk without merging defaults. Returns {} if file doesn't exist. */
-export function readRawConfig(): Promise<Partial<GlobalConfig>> {
+export function readRawConfig(): Promise<RawGlobalConfig> {
   return getDefaultReader().readRawConfig();
 }
 
 /** Write raw (explicit-only) config to disk, replacing the entire file. */
-export function writeRawConfig(config: Partial<GlobalConfig>): Promise<void> {
+export function writeRawConfig(config: RawGlobalConfig): Promise<void> {
   return getDefaultReader().writeRawConfig(config);
 }
 

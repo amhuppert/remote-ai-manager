@@ -48,6 +48,32 @@ describe("deepEqual", () => {
 });
 
 describe("ALL_FIELD_PATHS", () => {
+  it("tracks the normalized default selector and each backend profile field", () => {
+    for (const path of [
+      "defaultAgentBackend",
+      "agentBackends.claude.model",
+      "agentBackends.claude.reasoningEffort",
+      "agentBackends.claude.timeoutMs",
+      "agentBackends.codex.model",
+      "agentBackends.codex.reasoningEffort",
+      "agentBackends.codex.timeoutMs",
+    ]) {
+      expect(ALL_FIELD_PATHS).toContain(path);
+    }
+
+    for (const legacyPath of [
+      "defaultModel",
+      "defaultEffort",
+      "claudeTimeoutMs",
+      "codex.enabled",
+      "codex.model",
+      "codex.reasoningEffort",
+      "codex.timeoutMs",
+    ]) {
+      expect(ALL_FIELD_PATHS).not.toContain(legacyPath);
+    }
+  });
+
   it("tracks the editable compaction fields so they are dirty-tracked and saved", () => {
     // Without these paths, changes in CompactionSection would never be detected
     // as dirty nor written by buildSavePayload.

@@ -14,6 +14,7 @@ import {
   getDefaultModelForBackend,
   getEffortLevelsForBackend,
 } from "@/lib/agent-backends/catalog";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
@@ -70,26 +71,38 @@ export function backendForAgent(agent: SpawnAgent): AgentBackendId | null {
 function defaultEffortForModel(
   backend: AgentBackendId,
   model: string,
+  preferred: EffortLevel = "high",
 ): EffortLevel {
   const levels = getEffortLevelsForBackend(backend, model);
+  if (levels.includes(preferred)) return preferred;
   if (levels.includes("high")) return "high";
   return levels[levels.length - 1] ?? "high";
 }
 
-/** Backend-default model + effort for an agent (dual borrows the claude defaults — held but never submitted). */
-function modelEffortDefaults(agent: SpawnAgent): {
+/** Configured model + effort for an agent (dual borrows Claude's held-but-unsubmitted values). */
+function modelEffortDefaults(
+  agent: SpawnAgent,
+  backendDefaults?: BackendSelectionDefaultsById,
+): {
   model: string;
   reasoningEffort: EffortLevel;
 } {
   const backend = backendForAgent(agent) ?? "claude";
-  const model = getDefaultModelForBackend(backend);
-  return { model, reasoningEffort: defaultEffortForModel(backend, model) };
+  const configured = backendDefaults?.[backend];
+  const model = configured?.modelId ?? getDefaultModelForBackend(backend);
+  return {
+    model,
+    reasoningEffort: defaultEffortForModel(backend, model, configured?.effort),
+  };
 }
 
 /** Project a validated proposal into editable rows (pure). All included by default. */
-export function toEditableSessions(proposal: SpawnProposal): EditableSession[] {
+export function toEditableSessions(
+  proposal: SpawnProposal,
+  backendDefaults?: BackendSelectionDefaultsById,
+): EditableSession[] {
   return proposal.sessions.map((s) => {
-    const defaults = modelEffortDefaults(s.agent);
+    const defaults = modelEffortDefaults(s.agent, backendDefaults);
     return {
       name: s.name,
       target: s.target,
@@ -105,17 +118,21 @@ export function toEditableSessions(proposal: SpawnProposal): EditableSession[] {
 }
 
 /** Reset model + effort to the new agent's backend defaults (storage kept as-is for dual). */
-function applyAgentChange(s: EditableSession, value: string): EditableSession {
+function applyAgentChange(
+  s: EditableSession,
+  value: string,
+  backendDefaults?: BackendSelectionDefaultsById,
+): EditableSession {
   const parsed = spawnAgentSchema.safeParse(value);
   const agent = parsed.success ? parsed.data : s.agent;
   const backend = backendForAgent(agent);
   if (backend === null) return { ...s, agent };
-  const model = getDefaultModelForBackend(backend);
+  const defaults = modelEffortDefaults(agent, backendDefaults);
   return {
     ...s,
     agent,
-    model,
-    reasoningEffort: defaultEffortForModel(backend, model),
+    model: defaults.model,
+    reasoningEffort: defaults.reasoningEffort,
   };
 }
 
@@ -125,7 +142,7 @@ function applyModelChange(s: EditableSession, model: string): EditableSession {
   const levels = getEffortLevelsForBackend(backend, model);
   const reasoningEffort = levels.includes(s.reasoningEffort)
     ? s.reasoningEffort
-    : (levels[levels.length - 1] ?? s.reasoningEffort);
+    : defaultEffortForModel(backend, model);
   return { ...s, model, reasoningEffort };
 }
 
@@ -139,10 +156,11 @@ export function updateEditableSession(
   index: number,
   field: EditableField,
   value: string,
+  backendDefaults?: BackendSelectionDefaultsById,
 ): EditableSession[] {
   return sessions.map((s, i) => {
     if (i !== index) return s;
-    if (field === "agent") return applyAgentChange(s, value);
+    if (field === "agent") return applyAgentChange(s, value, backendDefaults);
     if (field === "model") return applyModelChange(s, value);
     return { ...s, [field]: value };
   });
@@ -252,6 +270,7 @@ export interface UseSpawnCardInput {
   projectName: string;
   conversationId: string;
   proposal: SpawnProposal;
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 export interface UseSpawnCardResult {
@@ -279,18 +298,23 @@ export interface UseSpawnCardResult {
  * spawn mutation.
  */
 export function useSpawnCard(input: UseSpawnCardInput): UseSpawnCardResult {
-  const { projectName, conversationId, proposal } = input;
+  const { projectName, conversationId, proposal, backendDefaults } = input;
   const mutation = useSpawnSessions(projectName, conversationId);
   const [editing, setEditing] = useState(false);
-  const initialDraft = useMemo(() => toEditableSessions(proposal), [proposal]);
+  const initialDraft = useMemo(
+    () => toEditableSessions(proposal, backendDefaults),
+    [proposal, backendDefaults],
+  );
   const [draft, setDraft] = useState<EditableSession[]>(initialDraft);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const updateField = useCallback(
     (index: number, field: EditableField, value: string) => {
-      setDraft((prev) => updateEditableSession(prev, index, field, value));
+      setDraft((prev) =>
+        updateEditableSession(prev, index, field, value, backendDefaults),
+      );
     },
-    [],
+    [backendDefaults],
   );
 
   const setIncluded = useCallback((index: number, included: boolean) => {

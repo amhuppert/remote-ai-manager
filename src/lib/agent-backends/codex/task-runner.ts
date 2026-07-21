@@ -26,7 +26,10 @@ import {
   type CodexReasoningEffort,
 } from "@/lib/agent-backends/schemas";
 import { readConfig } from "@/lib/config/loader";
-import { estimateCodexCostUsd } from "./pricing";
+import {
+  estimateCodexCostUsd,
+  resolveConfiguredCodexPricingOverrides,
+} from "./pricing";
 import {
   CODEX_DEFAULT_STALL_TIMEOUT_MS,
   toSdkModelReasoningEffort,
@@ -138,7 +141,7 @@ export interface CodexTaskRunnerDeps {
     cwd: string;
     env: Record<string, string>;
   }): Promise<NativeCodexMcpServer[]>;
-  /** Per-model rate overrides from `codex.pricing` in config.json; null when unset. */
+  /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
 }
 
@@ -148,7 +151,7 @@ const defaultDeps: CodexTaskRunnerDeps = {
   buildChildEnv,
   listNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
-    (await readConfig()).codex?.pricing ?? null,
+    resolveConfiguredCodexPricingOverrides(await readConfig()),
 };
 
 function buildPrompt(input: AgentTaskRequest): CodexTaskInput {

@@ -1,71 +1,85 @@
-import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { GlobalConfig } from "@/lib/config/schemas";
-import type { RawGlobalConfig } from "@/lib/config/schemas";
+import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { userEvent } from "storybook/test";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+import type { GlobalConfig, RawGlobalConfig } from "@/lib/config/schemas";
 import ConfigPage from "./ConfigPage";
 
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
+const ignorePatterns = [
+  "node_modules",
+  ".next",
+  "dist",
+  "build",
+  "target",
+  ".cache",
+  ".turbo",
+  ".venv",
+];
 
 const defaultConfig: GlobalConfig = {
   baseDir: "/home/user/projects",
-  defaultModel: "opus",
   defaultAgentBackend: "claude",
-  claudeTimeoutMs: 3_600_000,
+  agentBackends: {
+    claude: {
+      model: "opus",
+      reasoningEffort: "high",
+      timeoutMs: 3_600_000,
+    },
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      timeoutMs: null,
+    },
+  },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,
-  ignorePatterns: [
-    "node_modules",
-    ".next",
-    "dist",
-    "build",
-    "target",
-    ".cache",
-    ".turbo",
-    ".venv",
-  ],
+  ignorePatterns,
   tailscaleEnabled: true,
 };
 
 const minimalRaw: RawGlobalConfig = {
   baseDir: "/home/user/projects",
-  defaultModel: "opus",
+};
+
+const notificationConfig = {
+  enabled: true,
+  provider: "ntfy" as const,
+  serverUrl: "https://ntfy.example.com",
+  topic: "cc-notifications",
+  triggers: {
+    jobCompleted: true,
+    waitingForInput: false,
+    workflowCompleted: true,
+    workflowHalted: true,
+    conversationIdle: false,
+    specApprovalRequested: true,
+    specApprovalGranted: true,
+    specPolicyAdmitted: true,
+  },
 };
 
 const fullyConfiguredRaw: RawGlobalConfig = {
   baseDir: "/home/user/projects",
-  defaultModel: "sonnet",
   defaultAgentBackend: "codex",
-  defaultEffort: "high",
+  agentBackends: {
+    claude: {
+      model: "sonnet",
+      reasoningEffort: "high",
+      timeoutMs: 7_200_000,
+    },
+    codex: {
+      model: "gpt-5.4-mini",
+      reasoningEffort: "high",
+      timeoutMs: 5_400_000,
+    },
+  },
   branchPrefix: "feat",
-  claudeTimeoutMs: 7_200_000,
   maxTurns: 50,
   maxConcurrentQueries: 5,
   preMergeTimeoutMs: 600_000,
   idleQuerySessionTtlMs: 1_800_000,
   tailscaleEnabled: false,
-  pushNotification: {
-    enabled: true,
-    provider: "ntfy",
-    serverUrl: "https://ntfy.example.com",
-    topic: "cc-notifications",
-    triggers: {
-      jobCompleted: true,
-      waitingForInput: false,
-      workflowCompleted: true,
-      workflowHalted: true,
-      conversationIdle: false,
-      specApprovalRequested: true,
-      specApprovalGranted: true,
-      specPolicyAdmitted: true,
-    },
-  },
-  codex: {
-    enabled: true,
-    model: "gpt-5.4-mini",
-    reasoningEffort: "high",
-  },
+  pushNotification: notificationConfig,
   workflowDefaults: {
     contextValidator: {
       type: "codex",
@@ -81,28 +95,26 @@ const fullyConfiguredRaw: RawGlobalConfig = {
 
 const fullyConfiguredConfig: GlobalConfig = {
   ...defaultConfig,
-  ...fullyConfiguredRaw,
-  pushNotification: {
-    enabled: true,
-    provider: "ntfy",
-    serverUrl: "https://ntfy.example.com",
-    topic: "cc-notifications",
-    triggers: {
-      jobCompleted: true,
-      waitingForInput: false,
-      workflowCompleted: true,
-      workflowHalted: true,
-      conversationIdle: false,
-      specApprovalRequested: true,
-      specApprovalGranted: true,
-      specPolicyAdmitted: true,
+  defaultAgentBackend: "codex",
+  agentBackends: {
+    claude: {
+      model: "sonnet",
+      reasoningEffort: "high",
+      timeoutMs: 7_200_000,
+    },
+    codex: {
+      model: "gpt-5.4-mini",
+      reasoningEffort: "high",
+      timeoutMs: 5_400_000,
     },
   },
-  codex: {
-    enabled: true,
-    model: "gpt-5.4-mini",
-    reasoningEffort: "high",
-  },
+  branchPrefix: "feat",
+  maxTurns: 50,
+  maxConcurrentQueries: 5,
+  preMergeTimeoutMs: 600_000,
+  idleQuerySessionTtlMs: 1_800_000,
+  tailscaleEnabled: false,
+  pushNotification: notificationConfig,
   workflowDefaults: {
     implementer: {
       backend: "claude",
@@ -118,23 +130,15 @@ const fullyConfiguredConfig: GlobalConfig = {
       },
       continuity: { enabled: true },
     },
-    scriptValidator: {
-      enabled: false,
-    },
-    humanApprovalGate: {
-      enabled: false,
-    },
+    scriptValidator: { enabled: false },
+    humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },
     },
-    circuitBreaker: {
-      consecutiveFailureThreshold: 3,
-    },
-    mutability: {
-      allowAgentTaskAdd: false,
-    },
+    circuitBreaker: { consecutiveFailureThreshold: 3 },
+    mutability: { allowAgentTaskAdd: false },
     collaboration: {
       secondAgent: {
         backend: "claude",
@@ -154,14 +158,29 @@ const fullyConfiguredConfig: GlobalConfig = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Fetch mocking
-// ---------------------------------------------------------------------------
+const haikuConfig: GlobalConfig = {
+  ...defaultConfig,
+  agentBackends: {
+    ...defaultConfig.agentBackends,
+    claude: {
+      model: "haiku",
+      timeoutMs: 3_600_000,
+    },
+  },
+};
+
+const haikuRaw: RawGlobalConfig = {
+  baseDir: "/home/user/projects",
+  agentBackends: { claude: { model: "haiku" } },
+};
 
 function mockFetch(config: GlobalConfig, raw: RawGlobalConfig) {
   const original = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/agent-backends")) {
+      return Response.json({ backends: listBackendCatalogEntries() });
+    }
     if (url.includes("/api/config")) {
       if (init?.method === "PUT") {
         return Response.json({ config, raw });
@@ -169,11 +188,10 @@ function mockFetch(config: GlobalConfig, raw: RawGlobalConfig) {
       return Response.json({ config, raw });
     }
     if (url.includes("/api/notifications")) {
-      return Response.json({
-        notifications: [],
-        unreadCount: 0,
-        totalCount: 0,
-      });
+      return Response.json({ notifications: [], unreadCount: 0, total: 0 });
+    }
+    if (url.includes("/api/conversations/active")) {
+      return Response.json({ conversations: [] });
     }
     return original(input, init);
   };
@@ -208,14 +226,11 @@ function WithMockData({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Meta
-// ---------------------------------------------------------------------------
-
 const meta = {
   title: "Config/ConfigPage",
   component: ConfigPage,
   parameters: {
+    a11y: { test: "error" },
     layout: "fullscreen",
     nextjs: {
       appDirectory: true,
@@ -227,9 +242,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// ---------------------------------------------------------------------------
-// Stories
-// ---------------------------------------------------------------------------
+async function openAgentBackends(
+  canvas: Parameters<NonNullable<Story["play"]>>[0]["canvas"],
+) {
+  await userEvent.click(
+    await canvas.findByRole("tab", { name: "Agent backends" }),
+  );
+  await canvas.findByText("Claude model");
+}
 
 export const Default = {
   decorators: [
@@ -251,32 +271,47 @@ export const FullyConfigured = {
   ],
 } satisfies Story;
 
-const codexBackendConfig: GlobalConfig = {
-  ...defaultConfig,
-  defaultAgentBackend: "codex",
-  codex: {
-    enabled: true,
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-  },
-};
-
-const codexBackendRaw: RawGlobalConfig = {
-  baseDir: "/home/user/projects",
-  defaultAgentBackend: "codex",
-  codex: {
-    enabled: true,
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-  },
-};
-
-export const CodexBackend = {
+export const AgentBackends = {
   decorators: [
     (Story) => (
-      <WithMockData config={codexBackendConfig} raw={codexBackendRaw}>
+      <WithMockData config={fullyConfiguredConfig} raw={fullyConfiguredRaw}>
         <Story />
       </WithMockData>
     ),
   ],
+  play: async ({ canvas }) => openAgentBackends(canvas),
+} satisfies Story;
+
+export const AgentBackendsMobile = {
+  decorators: [
+    (Story) => (
+      <WithMockData config={fullyConfiguredConfig} raw={fullyConfiguredRaw}>
+        <Story />
+      </WithMockData>
+    ),
+  ],
+  parameters: {
+    viewport: {
+      defaultViewport: "configMobile",
+      viewports: {
+        configMobile: {
+          name: "390 × 844",
+          styles: { width: "390px", height: "844px" },
+          type: "mobile",
+        },
+      },
+    },
+  },
+  play: async ({ canvas }) => openAgentBackends(canvas),
+} satisfies Story;
+
+export const ClaudeHaikuNoEffort = {
+  decorators: [
+    (Story) => (
+      <WithMockData config={haikuConfig} raw={haikuRaw}>
+        <Story />
+      </WithMockData>
+    ),
+  ],
+  play: async ({ canvas }) => openAgentBackends(canvas),
 } satisfies Story;

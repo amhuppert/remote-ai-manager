@@ -5,6 +5,12 @@ import { render, screen, cleanup } from "@testing-library/react";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import { useConversationSpawnCards } from "./useConversationSpawnCards";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 afterEach(cleanup);
 
@@ -38,6 +44,7 @@ function Harness({
     conversationId,
     messages,
     sessions,
+    backendDefaults: BACKEND_DEFAULTS,
   });
   return (
     <div>

@@ -78,12 +78,6 @@ function createTestDeps(
   overrides?: Partial<ConflictResolutionDeps>,
 ): ConflictResolutionDeps {
   return {
-    readConfig: vi.fn().mockResolvedValue({
-      baseDir: "/home/user/projects",
-      ignorePatterns: [],
-      claudeTimeoutMs: 60_000,
-      defaultModel: "opus",
-    }) as unknown as ConflictResolutionDeps["readConfig"],
     executeWorkflowTaskRun: vi.fn().mockResolvedValue(textOk("")),
     listUnmergedFiles: async () => [],
     readWorktreeFile: async () => null,
@@ -151,7 +145,7 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
       },
       required: ["conflicts"],
     });
-    expect(input.timeoutMs).toBe(60_000);
+    expect(input.timeoutMs).toBeUndefined();
   });
 
   it("pins the agent turn to the merge worktree (worktreePath forwarded to executeWorkflowTaskRun)", async () => {

@@ -55,10 +55,14 @@ import StartTicketDialog, {
 } from "./StartTicketDialog";
 import { TicketDescriptionEditor, TicketTitleEditor } from "./TicketEditor";
 import TicketSpecsCard from "./TicketSpecsCard";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 export interface TicketDetailViewProps {
   projectName: string;
   number: number;
+  defaultAgentBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 const RAIL_CARD_CLASS =
@@ -73,6 +77,8 @@ const COUNT_PILL_CLASS =
 export default function TicketDetailView({
   projectName,
   number,
+  defaultAgentBackend,
+  backendDefaults,
 }: TicketDetailViewProps): React.JSX.Element {
   const detailQuery = useTicketDetailQuery(projectName, number);
   const identifier = ticketIdentifier({ projectName, number });
@@ -125,7 +131,11 @@ export default function TicketDetailView({
             </EmptyState>
           </div>
         ) : (
-          <TicketDossier detail={detailQuery.data} />
+          <TicketDossier
+            detail={detailQuery.data}
+            defaultAgentBackend={defaultAgentBackend}
+            backendDefaults={backendDefaults}
+          />
         )}
       </main>
     </div>
@@ -138,8 +148,12 @@ function isNotFound(error: unknown): boolean {
 
 function TicketDossier({
   detail,
+  defaultAgentBackend,
+  backendDefaults,
 }: {
   detail: TicketDetail;
+  defaultAgentBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
 }): React.JSX.Element {
   const router = useRouter();
   const updateMutation = useUpdateTicketMutation();
@@ -349,6 +363,8 @@ function TicketDossier({
         number={detail.number}
         open={startOpen}
         onOpenChange={setStartOpen}
+        defaultBackend={defaultAgentBackend}
+        backendDefaults={backendDefaults}
       />
       {conflictSessionName !== null && (
         <StartTicketConflictAlert

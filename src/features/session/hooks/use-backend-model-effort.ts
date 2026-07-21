@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import {
   getEffortLevelsForBackend,
   getModelsForBackend,
+  isSelectableModelForBackend,
 } from "@/lib/agent-backends/catalog";
 import {
   effortLevelSchema,
@@ -63,10 +64,16 @@ function pickModel(
   fallback: string,
 ): string {
   const models = getModelsForBackend(backend);
-  if (preferred !== undefined && models.some((m) => m.id === preferred)) {
+
+  if (
+    preferred !== undefined &&
+    isSelectableModelForBackend(backend, preferred)
+  ) {
     return preferred;
   }
-  return models.some((m) => m.id === fallback) ? fallback : models[0]!.id;
+  return isSelectableModelForBackend(backend, fallback)
+    ? fallback
+    : models[0]!.id;
 }
 
 function resolveModelEffortSelection({

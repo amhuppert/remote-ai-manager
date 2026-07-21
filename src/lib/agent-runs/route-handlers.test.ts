@@ -14,8 +14,18 @@ function makeConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
   return {
     baseDir: "/projects",
     ignorePatterns: [],
-    claudeTimeoutMs: 3_600_000,
-    defaultModel: "opus",
+    agentBackends: {
+      claude: {
+        model: "sonnet",
+        reasoningEffort: "medium",
+        timeoutMs: 45_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: 60_000,
+      },
+    },
     defaultAgentBackend: "claude",
     pushNotification: {
       enabled: false,
@@ -33,7 +43,6 @@ function makeConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
         specPolicyAdmitted: true,
       },
     },
-    codex: { enabled: true, model: "gpt-5.4", timeoutMs: 60_000 },
     ...overrides,
   };
 }
@@ -107,17 +116,9 @@ describe("POST /agent-runs", () => {
     );
   });
 
-  it("runs a claude-backed job with the catalog default model — no codex gate involved", async () => {
+  it("runs a claude-backed job with the configured Claude profile", async () => {
     const startRun = vi.fn(() => ({ runId: "run-claude" }));
-    const handlers = createAgentRunHandlers(
-      makeDeps({
-        startRun,
-        // Codex disabled: the claude path must not be blocked by it.
-        readConfig: vi.fn(async () =>
-          makeConfig({ codex: { enabled: false, model: "gpt-5.4" } }),
-        ),
-      }),
-    );
+    const handlers = createAgentRunHandlers(makeDeps({ startRun }));
 
     const res = await handlers.POST(
       req({ backend: "claude", prompt: "p" }),
@@ -128,7 +129,9 @@ describe("POST /agent-runs", () => {
     expect(startRun).toHaveBeenCalledWith(
       expect.objectContaining({
         backend: "claude",
-        model: expect.any(String),
+        model: "sonnet",
+        reasoningEffort: "medium",
+        timeoutMs: 45_000,
       }),
     );
   });
@@ -187,23 +190,17 @@ describe("POST /agent-runs", () => {
     expect(res.status).toBe(404);
   });
 
-  it("409 when codex is requested but not enabled", async () => {
+  it("always accepts a configured codex run without an enablement gate", async () => {
     const startRun = vi.fn(() => ({ runId: "x" }));
-    const handlers = createAgentRunHandlers(
-      makeDeps({
-        startRun,
-        readConfig: vi.fn(async () =>
-          makeConfig({ codex: { enabled: false, model: "gpt-5.4" } }),
-        ),
-      }),
-    );
+    const handlers = createAgentRunHandlers(makeDeps({ startRun }));
     const res = await handlers.POST(
       req({ backend: "codex", prompt: "p" }),
       params(),
     );
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toContain("not enabled");
-    expect(startRun).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ backend: "codex", model: "gpt-5.4" }),
+    );
   });
 
   it("400 with issues when backend is missing", async () => {

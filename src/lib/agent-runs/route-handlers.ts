@@ -20,8 +20,7 @@ import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { createLogger, withTracing } from "@/lib/logging";
-import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
-import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import { resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
 import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
 import { resolveInsideWorktree } from "@/lib/sessions/reference-documents-route-handlers";
 import type { ApiError } from "@/lib/api/errors";
@@ -66,59 +65,6 @@ export interface AgentRunRouteDeps {
   startRun(input: StartRunInput): { runId: string };
   getRun(runId: string, owner: RunOwner): AgentRunStatusResponse | null;
   cancelRun(runId: string, owner: RunOwner): CancelResult;
-}
-
-interface RunDefaults {
-  model: string;
-  reasoningEffort?: EffortLevel;
-  timeoutMs: number;
-}
-
-/**
- * The config edge where per-backend run policy lives — the run pipeline below
- * it is backend-generic, so adding a backend means adding a row here, not a
- * branch. `unavailableReason` gates opt-in providers (Codex requires
- * `config.codex.enabled`; Claude is the instance's primary backend and is
- * always available). `defaults` resolves the config-cascade fallbacks a
- * request doesn't specify; every backend bottoms out at its catalog default
- * model/timeout.
- */
-const BACKEND_RUN_POLICY: Record<
-  AgentBackendId,
-  {
-    unavailableReason(config: GlobalConfig): string | null;
-    defaults(config: GlobalConfig): RunDefaults;
-  }
-> = {
-  claude: {
-    unavailableReason: () => null,
-    defaults: () => catalogRunDefaults("claude"),
-  },
-  codex: {
-    unavailableReason: (config) =>
-      config.codex?.enabled === true
-        ? null
-        : "Codex is not enabled for this instance — enable it in the CC config to run codex agent runs",
-    defaults: (config) => {
-      const catalog = catalogRunDefaults("codex");
-      if (config.codex === undefined) return catalog;
-      return {
-        model: config.codex.model ?? catalog.model,
-        ...(config.codex.reasoningEffort !== undefined
-          ? { reasoningEffort: config.codex.reasoningEffort }
-          : {}),
-        timeoutMs: resolveConfiguredTimeoutMs(config.codex.timeoutMs),
-      };
-    },
-  },
-};
-
-function catalogRunDefaults(backend: AgentBackendId): RunDefaults {
-  const entry = getBackendCatalogEntry(backend);
-  return {
-    model: entry.defaultModelId,
-    timeoutMs: resolveConfiguredTimeoutMs(entry.defaultTimeoutMs),
-  };
 }
 
 export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
@@ -190,13 +136,6 @@ export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
     }
 
     const config = await deps.readConfig();
-    const policy = BACKEND_RUN_POLICY[parsed.data.backend];
-    const unavailable = policy.unavailableReason(config);
-    if (unavailable !== null) {
-      return NextResponse.json({ error: unavailable } satisfies ApiError, {
-        status: 409,
-      });
-    }
 
     let workingDirectory = resolved.worktreePath;
     if (parsed.data.workingDirectory !== undefined) {
@@ -221,11 +160,15 @@ export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
       workingDirectory = inside;
     }
 
-    const defaults = policy.defaults(config);
+    const defaults = resolveAgentBackendTurnDefaults({
+      backend: parsed.data.backend,
+      config,
+      explicit: {
+        modelId: parsed.data.model,
+        reasoningEffort: parsed.data.reasoning_effort,
+      },
+    });
     const timeoutMs = parsed.data.timeoutMs ?? defaults.timeoutMs;
-    const model = parsed.data.model ?? defaults.model;
-    const reasoningEffort =
-      parsed.data.reasoning_effort ?? defaults.reasoningEffort;
 
     const { runId } = deps.startRun({
       backend: parsed.data.backend,
@@ -236,8 +179,10 @@ export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
       worktreePath: resolved.worktreePath,
       workingDirectory,
       timeoutMs,
-      model,
-      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      model: defaults.modelId,
+      ...(defaults.reasoningEffort !== undefined
+        ? { reasoningEffort: defaults.reasoningEffort }
+        : {}),
     });
 
     log.info("agent-run.created", {

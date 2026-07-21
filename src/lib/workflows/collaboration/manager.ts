@@ -57,7 +57,10 @@ import {
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
+import {
+  resolveConfiguredAgentBackendDefaults,
+  type ConversationTurnConfig,
+} from "@/lib/agent-backends/conversation-policy";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import {
@@ -442,6 +445,13 @@ export async function prepareCollaborationInitialImages(
   return { brief: assembled.rewrittenPromptText, imageRefs: refs };
 }
 
+export interface CollaborationBackendRuntimeConfig {
+  model: string;
+  reasoningEffort?: string;
+  timeoutMs: number;
+  stallTimeoutMs: number;
+}
+
 export interface CollaborationManagerDeps {
   /**
    * Resolves the session worktree path the slice will write artifacts under.
@@ -537,34 +547,28 @@ export interface CollaborationManagerDeps {
     laneService: LaneService;
     codexModel: string;
     codexReasoningEffort?: string;
+    codexTimeoutMs: number;
+    codexStallTimeoutMs: number;
     claudeModel: string;
     claudeReasoningEffort?: string;
+    claudeTimeoutMs: number;
+    claudeStallTimeoutMs: number;
   }): AsymmetricCollaborationSliceDeps["callAgent"];
 
   /**
-   * Resolves the Codex lane's model + reasoning effort from the global config
-   * cascade. Standalone Collaboration mode carries no per-call model, so the
-   * resolved model is threaded to the Codex lane to avoid the Codex SDK's
-   * built-in default (rejected for ChatGPT-account auth). Defaults to reading
-   * the singleton global config; tests inject a deterministic value.
+   * Resolves the Codex lane's independent runtime profile from global config.
+   * Standalone Collaboration mode carries no per-call settings, so these
+   * defaults must cross the manager boundary together. Defaults to reading the
+   * singleton global config; tests inject a deterministic value.
    */
-  resolveCodexModelConfig(): Promise<{
-    model: string;
-    reasoningEffort?: string;
-  }>;
+  resolveCodexModelConfig(): Promise<CollaborationBackendRuntimeConfig>;
 
   /**
-   * Resolves the Claude lane's model + reasoning effort from the global config
-   * cascade. Standalone Collaboration mode carries no per-call model, so the
-   * resolved model is threaded to the Claude lane to avoid the Claude SDK's
-   * built-in CLI default model (which the account may not have access to,
-   * surfacing as a misleading structured-output validation failure). Defaults
-   * to reading the singleton global config; tests inject a deterministic value.
+   * Resolves the Claude lane's independent runtime profile from global config.
+   * The manager carries it alongside the Codex profile without requiring
+   * either backend to be selected as the conversation default.
    */
-  resolveClaudeModelConfig(): Promise<{
-    model: string;
-    reasoningEffort?: string;
-  }>;
+  resolveClaudeModelConfig(): Promise<CollaborationBackendRuntimeConfig>;
 
   /**
    * Runs the slice. Production uses the imported
@@ -701,11 +705,30 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
     ...(input.codexReasoningEffort !== undefined
       ? { codexReasoningEffort: input.codexReasoningEffort }
       : {}),
+    codexTimeoutMs: input.codexTimeoutMs,
+    codexStallTimeoutMs: input.codexStallTimeoutMs,
     claudeModel: input.claudeModel,
     ...(input.claudeReasoningEffort !== undefined
       ? { claudeReasoningEffort: input.claudeReasoningEffort }
       : {}),
+    claudeTimeoutMs: input.claudeTimeoutMs,
+    claudeStallTimeoutMs: input.claudeStallTimeoutMs,
   });
+
+export function resolveCollaborationBackendModelConfig(
+  config: ConversationTurnConfig,
+  backend: AgentBackendId,
+): CollaborationBackendRuntimeConfig {
+  const resolved = resolveConfiguredAgentBackendDefaults(config, backend);
+  return {
+    model: resolved.modelId,
+    ...(resolved.reasoningEffort !== undefined
+      ? { reasoningEffort: resolved.reasoningEffort }
+      : {}),
+    timeoutMs: resolved.timeoutMs,
+    stallTimeoutMs: resolved.stallTimeoutMs,
+  };
+}
 
 const defaultDeps: CollaborationManagerDeps = {
   async resolveSession(input) {
@@ -762,21 +785,11 @@ const defaultDeps: CollaborationManagerDeps = {
   buildCallAgent: defaultBuildCallAgent,
   async resolveCodexModelConfig() {
     const config = await defaultReadConfig();
-    return {
-      model: config.codex?.model ?? getDefaultCodexModel(),
-      ...(config.codex?.reasoningEffort !== undefined
-        ? { reasoningEffort: config.codex.reasoningEffort }
-        : {}),
-    };
+    return resolveCollaborationBackendModelConfig(config, "codex");
   },
   async resolveClaudeModelConfig() {
     const config = await defaultReadConfig();
-    return {
-      model: config.defaultModel,
-      ...(config.defaultEffort !== undefined
-        ? { reasoningEffort: config.defaultEffort }
-        : {}),
-    };
+    return resolveCollaborationBackendModelConfig(config, "claude");
   },
   runSlice: runAsymmetricCollaborationSlice,
   createEnvelopeRepository(input) {
@@ -1034,10 +1047,14 @@ export function createCollaborationManager(
         ...(codexModelConfig.reasoningEffort !== undefined
           ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
           : {}),
+        codexTimeoutMs: codexModelConfig.timeoutMs,
+        codexStallTimeoutMs: codexModelConfig.stallTimeoutMs,
         claudeModel: claudeModelConfig.model,
         ...(claudeModelConfig.reasoningEffort !== undefined
           ? { claudeReasoningEffort: claudeModelConfig.reasoningEffort }
           : {}),
+        claudeTimeoutMs: claudeModelConfig.timeoutMs,
+        claudeStallTimeoutMs: claudeModelConfig.stallTimeoutMs,
       });
 
       const sliceDeps = deps.createDeps({
@@ -1259,10 +1276,14 @@ export function createCollaborationManager(
         ...(codexModelConfig.reasoningEffort !== undefined
           ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
           : {}),
+        codexTimeoutMs: codexModelConfig.timeoutMs,
+        codexStallTimeoutMs: codexModelConfig.stallTimeoutMs,
         claudeModel: claudeModelConfig.model,
         ...(claudeModelConfig.reasoningEffort !== undefined
           ? { claudeReasoningEffort: claudeModelConfig.reasoningEffort }
           : {}),
+        claudeTimeoutMs: claudeModelConfig.timeoutMs,
+        claudeStallTimeoutMs: claudeModelConfig.stallTimeoutMs,
       });
       const sliceDeps = deps.createDeps({
         projectPath: input.projectPath,

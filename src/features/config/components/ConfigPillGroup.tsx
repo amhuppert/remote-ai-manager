@@ -4,21 +4,30 @@ import { cn } from "@/lib/ui/cn";
 // chrome (a `2px outset` bevel) so the flat, token-driven pills render correctly;
 // the selected state only overrides the border color, keeping geometry stable.
 const PILL_BASE =
-  "block appearance-none border border-solid border-transparent px-[14px] py-[6px] rounded-sm font-mono text-[0.74rem] cursor-pointer transition-all duration-150 ease-[ease]";
+  "block appearance-none border border-solid border-transparent px-[14px] py-[6px] rounded-sm font-mono text-[0.74rem] cursor-pointer transition-all duration-150 ease-[ease] max-768:min-h-[var(--touch-target-min)] max-768:px-[16px] max-768:py-[10px]";
 
 export function ConfigPillGroup<T extends string>({
   value,
   options,
   onChange,
   disabled,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
 }: {
   value: T;
   options: readonly T[];
   onChange: (v: T) => void;
   disabled?: boolean;
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
 }) {
   return (
-    <div className="inline-flex w-fit max-w-full flex-wrap gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[3px]">
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      className="inline-flex w-fit max-w-full flex-wrap gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[3px]"
+    >
       {options.map((opt) => (
         <button
           key={opt}
@@ -29,6 +38,7 @@ export function ConfigPillGroup<T extends string>({
               ? "border-cyan bg-cyan font-semibold text-text-inverse"
               : "bg-transparent font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary",
           )}
+          aria-pressed={value === opt}
           onClick={() => !disabled && onChange(opt)}
           disabled={disabled}
         >

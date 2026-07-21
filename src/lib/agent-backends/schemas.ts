@@ -29,7 +29,7 @@ export const claudeEffortLevelSchema = z.enum([
 ]);
 export type ClaudeEffortLevel = z.infer<typeof claudeEffortLevelSchema>;
 
-const MODEL_EFFORT_LEVELS: Record<ClaudeModel, EffortLevel[]> = {
+const MODEL_EFFORT_LEVELS: Record<ClaudeModel, ClaudeEffortLevel[]> = {
   fable: ["low", "medium", "high", "xhigh", "max"],
   opus: ["low", "medium", "high", "xhigh", "max"],
   sonnet: ["low", "medium", "high"],
@@ -37,7 +37,9 @@ const MODEL_EFFORT_LEVELS: Record<ClaudeModel, EffortLevel[]> = {
 };
 
 /** Returns the effort levels supported by the given model. */
-export function getEffortLevelsForModel(model: ClaudeModel): EffortLevel[] {
+export function getEffortLevelsForModel(
+  model: ClaudeModel,
+): ClaudeEffortLevel[] {
   return MODEL_EFFORT_LEVELS[model];
 }
 
@@ -48,12 +50,53 @@ export function getEffortLevelsForModel(model: ClaudeModel): EffortLevel[] {
 export function clampEffortToModel(
   effort: EffortLevel,
   model: ClaudeModel,
-): EffortLevel | undefined {
+): ClaudeEffortLevel | undefined {
   const supported = MODEL_EFFORT_LEVELS[model];
   if (supported.length === 0) return undefined;
-  if (supported.includes(effort)) return effort;
+  const parsed = claudeEffortLevelSchema.safeParse(effort);
+  if (parsed.success && supported.includes(parsed.data)) return parsed.data;
   return supported[supported.length - 1];
 }
+
+export function isClaudeReasoningEffortSupported(
+  model: ClaudeModel,
+  reasoningEffort: ClaudeEffortLevel,
+): boolean {
+  return MODEL_EFFORT_LEVELS[model].includes(reasoningEffort);
+}
+
+export function validateClaudeBackendModelEffort(
+  config: {
+    model?: ClaudeModel;
+    reasoningEffort?: ClaudeEffortLevel;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (
+    config.model === undefined ||
+    config.reasoningEffort === undefined ||
+    isClaudeReasoningEffortSupported(config.model, config.reasoningEffort)
+  ) {
+    return;
+  }
+
+  context.addIssue({
+    code: "custom",
+    path: ["reasoningEffort"],
+    message: `Reasoning effort "${config.reasoningEffort}" is not supported by Claude model "${config.model}".`,
+  });
+}
+
+export const backendTimeoutMsSchema = z.number().int().positive().nullable();
+
+export const claudeBackendConfigSchema = z
+  .object({
+    model: claudeModelSchema,
+    reasoningEffort: claudeEffortLevelSchema.optional(),
+    timeoutMs: backendTimeoutMsSchema,
+  })
+  .superRefine(validateClaudeBackendModelEffort);
+export type ClaudeBackendConfig = z.infer<typeof claudeBackendConfigSchema>;
 
 // ============================================================
 // Codex Config
@@ -100,20 +143,6 @@ export const codexPricingTableSchema = z.record(
 );
 export type CodexPricingTable = z.infer<typeof codexPricingTableSchema>;
 
-export const codexConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  model: z.string().optional().default("gpt-5.4"),
-  reasoningEffort: codexReasoningEffortSchema.optional(),
-  timeoutMs: z.number().positive().nullable().optional(),
-  /**
-   * Per-turn inactivity bound override; unset falls back to the codex
-   * descriptor's default, explicit null disables the bound.
-   */
-  stallTimeoutMs: z.number().positive().nullable().optional(),
-  pricing: codexPricingTableSchema.optional(),
-});
-export type CodexConfig = z.infer<typeof codexConfigSchema>;
-
 // ============================================================
 // Codex Model Reasoning Levels
 // ============================================================
@@ -141,3 +170,48 @@ export function getCodexReasoningLevelsForModel(
 ): CodexReasoningEffort[] | null {
   return CODEX_MODEL_REASONING_LEVELS[model] ?? null;
 }
+
+export function isCodexReasoningEffortSupported(
+  model: string,
+  reasoningEffort: CodexReasoningEffort,
+): boolean {
+  const supported = getCodexReasoningLevelsForModel(model);
+  return supported === null || supported.includes(reasoningEffort);
+}
+
+export function validateCodexBackendModelEffort(
+  config: {
+    model?: string;
+    reasoningEffort?: CodexReasoningEffort;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (
+    config.model === undefined ||
+    config.reasoningEffort === undefined ||
+    isCodexReasoningEffortSupported(config.model, config.reasoningEffort)
+  ) {
+    return;
+  }
+
+  context.addIssue({
+    code: "custom",
+    path: ["reasoningEffort"],
+    message: `Reasoning effort "${config.reasoningEffort}" is not supported by Codex model "${config.model}".`,
+  });
+}
+
+export const codexConfigSchema = z
+  .object({
+    model: z.string().trim().min(1),
+    reasoningEffort: codexReasoningEffortSchema.optional(),
+    timeoutMs: backendTimeoutMsSchema,
+    /**
+     * Per-turn inactivity bound override; unset falls back to the Codex
+     * descriptor's default, explicit null disables the bound.
+     */
+    stallTimeoutMs: backendTimeoutMsSchema.optional(),
+    pricing: codexPricingTableSchema.optional(),
+  })
+  .superRefine(validateCodexBackendModelEffort);
+export type CodexConfig = z.infer<typeof codexConfigSchema>;

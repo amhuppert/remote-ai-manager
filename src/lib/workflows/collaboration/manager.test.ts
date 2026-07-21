@@ -18,6 +18,7 @@ import path from "node:path";
 import {
   createCollaborationStartPersister,
   createCollaborationManager,
+  resolveCollaborationBackendModelConfig,
   prepareCollaborationInitialImages,
   createInMemoryCollaborationStopRegistry,
   CollaborationStartConflictError,
@@ -53,6 +54,49 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore } from "@/lib/state-store/store";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
+
+describe("resolveCollaborationBackendModelConfig", () => {
+  const config = {
+    agentBackends: {
+      claude: {
+        model: "sonnet",
+        reasoningEffort: "medium",
+        timeoutMs: 45_000,
+      },
+      codex: {
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+        timeoutMs: null,
+        stallTimeoutMs: 60_000,
+      },
+    },
+  };
+
+  it.each([
+    [
+      "claude" as const,
+      {
+        model: "sonnet",
+        reasoningEffort: "medium",
+        timeoutMs: 45_000,
+        stallTimeoutMs: 0,
+      },
+    ],
+    [
+      "codex" as const,
+      {
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+        timeoutMs: 0,
+        stallTimeoutMs: 60_000,
+      },
+    ],
+  ])("uses the configured %s profile", (backend, expected) => {
+    expect(resolveCollaborationBackendModelConfig(config, backend)).toEqual(
+      expected,
+    );
+  });
+});
 
 function buildEnvelope(
   overrides: Partial<WorkflowEnvelope> = {},
@@ -177,8 +221,18 @@ interface ScriptedDepsOptions {
   >;
   stopRegistryOverride?: CollaborationStopRegistry;
   sliceDepsOverride?: AsymmetricCollaborationSliceDeps;
-  resolveCodexModelConfigResult?: { model: string; reasoningEffort?: string };
-  resolveClaudeModelConfigResult?: { model: string; reasoningEffort?: string };
+  resolveCodexModelConfigResult?: {
+    model: string;
+    reasoningEffort?: string;
+    timeoutMs?: number;
+    stallTimeoutMs?: number;
+  };
+  resolveClaudeModelConfigResult?: {
+    model: string;
+    reasoningEffort?: string;
+    timeoutMs?: number;
+    stallTimeoutMs?: number;
+  };
   persistStartError?: Error;
   /**
    * In-memory stand-in for the durable artifacts sidecar keyed by workflowId.
@@ -200,8 +254,12 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     worktreePath: string;
     codexModel?: string;
     codexReasoningEffort?: string;
+    codexTimeoutMs?: number;
+    codexStallTimeoutMs?: number;
     claudeModel?: string;
     claudeReasoningEffort?: string;
+    claudeTimeoutMs?: number;
+    claudeStallTimeoutMs?: number;
   }>;
   publishedStatuses: Array<
     Omit<
@@ -232,8 +290,12 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     worktreePath: string;
     codexModel?: string;
     codexReasoningEffort?: string;
+    codexTimeoutMs?: number;
+    codexStallTimeoutMs?: number;
     claudeModel?: string;
     claudeReasoningEffort?: string;
+    claudeTimeoutMs?: number;
+    claudeStallTimeoutMs?: number;
   }> = [];
   const publishedStatuses: Array<
     Omit<
@@ -327,17 +389,29 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         worktreePath: input.worktreePath,
         codexModel: input.codexModel,
         codexReasoningEffort: input.codexReasoningEffort,
+        codexTimeoutMs: input.codexTimeoutMs,
+        codexStallTimeoutMs: input.codexStallTimeoutMs,
         claudeModel: input.claudeModel,
         claudeReasoningEffort: input.claudeReasoningEffort,
+        claudeTimeoutMs: input.claudeTimeoutMs,
+        claudeStallTimeoutMs: input.claudeStallTimeoutMs,
       });
       return async () => {
         throw new Error("stub callAgent should not be called in tests");
       };
     },
-    resolveCodexModelConfig: async () =>
-      options.resolveCodexModelConfigResult ?? { model: "gpt-5.4" },
-    resolveClaudeModelConfig: async () =>
-      options.resolveClaudeModelConfigResult ?? { model: "opus" },
+    resolveCodexModelConfig: async () => ({
+      model: "gpt-5.4",
+      timeoutMs: 0,
+      stallTimeoutMs: 60_000,
+      ...options.resolveCodexModelConfigResult,
+    }),
+    resolveClaudeModelConfig: async () => ({
+      model: "opus",
+      timeoutMs: 0,
+      stallTimeoutMs: 0,
+      ...options.resolveClaudeModelConfigResult,
+    }),
     runSlice: async (input, sliceDeps) => {
       runSliceCalls.push({ input, deps: sliceDeps });
       try {
@@ -838,10 +912,14 @@ describe("createCollaborationManager.start", () => {
         resolveCodexModelConfigResult: {
           model: "gpt-5.5",
           reasoningEffort: "high",
+          timeoutMs: 120_000,
+          stallTimeoutMs: 30_000,
         },
         resolveClaudeModelConfigResult: {
           model: "sonnet",
           reasoningEffort: "xhigh",
+          timeoutMs: 90_000,
+          stallTimeoutMs: 0,
         },
       },
     );
@@ -864,8 +942,12 @@ describe("createCollaborationManager.start", () => {
         worktreePath: "/wt/xyz",
         codexModel: "gpt-5.5",
         codexReasoningEffort: "high",
+        codexTimeoutMs: 120_000,
+        codexStallTimeoutMs: 30_000,
         claudeModel: "sonnet",
         claudeReasoningEffort: "xhigh",
+        claudeTimeoutMs: 90_000,
+        claudeStallTimeoutMs: 0,
       },
     ]);
   });
@@ -906,8 +988,12 @@ describe("createCollaborationManager.start", () => {
         worktreePath: "/wt/xyz",
         codexModel: "gpt-5.5",
         codexReasoningEffort: "high",
+        codexTimeoutMs: 0,
+        codexStallTimeoutMs: 60_000,
         claudeModel: "fable",
         claudeReasoningEffort: "max",
+        claudeTimeoutMs: 0,
+        claudeStallTimeoutMs: 0,
       },
     ]);
   });
@@ -948,8 +1034,12 @@ describe("createCollaborationManager.start", () => {
         worktreePath: "/wt/xyz",
         codexModel: "gpt-5.5-codex",
         codexReasoningEffort: "medium",
+        codexTimeoutMs: 0,
+        codexStallTimeoutMs: 60_000,
         claudeModel: "opus",
         claudeReasoningEffort: "xhigh",
+        claudeTimeoutMs: 0,
+        claudeStallTimeoutMs: 0,
       },
     ]);
   });
@@ -983,8 +1073,12 @@ describe("createCollaborationManager.start", () => {
         worktreePath: "/wt/xyz",
         codexModel: "gpt-5.5",
         codexReasoningEffort: undefined,
+        codexTimeoutMs: 0,
+        codexStallTimeoutMs: 60_000,
         claudeModel: "opus",
         claudeReasoningEffort: "low",
+        claudeTimeoutMs: 0,
+        claudeStallTimeoutMs: 0,
       },
     ]);
   });
@@ -1518,9 +1612,20 @@ describe("createCollaborationManager.resume", () => {
       resumeToken: "good-token",
     });
 
-    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
-      envelopeStoreOverride: envelopeStore,
-    });
+    const { deps, runSliceCalls, buildCallAgentCalls, runSliceCompletion } =
+      buildScriptedDeps({
+        envelopeStoreOverride: envelopeStore,
+        resolveCodexModelConfigResult: {
+          model: "gpt-5.5",
+          timeoutMs: 120_000,
+          stallTimeoutMs: 30_000,
+        },
+        resolveClaudeModelConfigResult: {
+          model: "sonnet",
+          timeoutMs: 90_000,
+          stallTimeoutMs: 0,
+        },
+      });
     const manager = createCollaborationManager(deps);
 
     const result = await manager.resume({
@@ -1552,6 +1657,14 @@ describe("createCollaborationManager.resume", () => {
       q1: "yes",
       q2: "no",
     });
+    expect(buildCallAgentCalls[0]).toEqual(
+      expect.objectContaining({
+        codexTimeoutMs: 120_000,
+        codexStallTimeoutMs: 30_000,
+        claudeTimeoutMs: 90_000,
+        claudeStallTimeoutMs: 0,
+      }),
+    );
   });
 });
 

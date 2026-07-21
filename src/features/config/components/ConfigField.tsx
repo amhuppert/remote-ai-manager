@@ -38,7 +38,9 @@ export function ConfigField({
       data-field={fieldPath}
     >
       <div className="mb-sm flex min-h-[18px] items-center gap-sm">
-        <span className={FIELD_LABEL}>{label}</span>
+        <span id={`${fieldPath}-label`} className={FIELD_LABEL}>
+          {label}
+        </span>
         {readOnly && <span className={FIELD_BADGE_BASE}>LOCKED</span>}
         {isDefault && (
           <span
@@ -52,7 +54,7 @@ export function ConfigField({
         )}
       </div>
       {children}
-      {hint && <FormHint>{hint}</FormHint>}
+      {hint && <FormHint id={`${fieldPath}-hint`}>{hint}</FormHint>}
     </div>
   );
 }

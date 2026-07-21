@@ -22,9 +22,7 @@ import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobile
 import { useGlobalDefaults } from "@/hooks/use-global-defaults";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-import type { CodexConfig } from "@/lib/agent-backends/schemas";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
-import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
@@ -38,8 +36,6 @@ import type { InspectorTab } from "./WorkflowInspectorPanel";
 
 interface ConnectedWorkflowBuilderPageProps {
   scope: WorkflowDefinitionScope;
-  defaultImplementerConfig: GraphWorkflowAgentConfig;
-  codexConfig?: CodexConfig;
   /** Deep-link target (`?definition=<id>`): pre-selects this definition. */
   initialWorkflowId?: string | null;
 }
@@ -92,8 +88,6 @@ export function resolveDefinitionClientSide(
 
 export default function ConnectedWorkflowBuilderPage({
   scope,
-  defaultImplementerConfig,
-  codexConfig,
   initialWorkflowId = null,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
   const isGlobal = scope.kind === "global";
@@ -299,8 +293,6 @@ export default function ConnectedWorkflowBuilderPage({
                 onDelete={() => void handleDeleteWorkflow()}
                 deleting={deleteMutation.isPending}
                 saveError={saveError}
-                defaultImplementerConfig={defaultImplementerConfig}
-                codexConfig={codexConfig}
                 globalDefaults={workflowDefaults}
                 activeTab={activeTab}
                 onTabChange={setActiveTab}

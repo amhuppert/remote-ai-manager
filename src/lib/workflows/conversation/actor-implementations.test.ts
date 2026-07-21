@@ -81,11 +81,12 @@ const mockSendTurn = vi.fn();
 function createMockBackendRuntime(
   overrides: Partial<ConversationBackendRuntime> = {},
 ): ConversationBackendRuntime {
+  const backend = overrides.backend ?? "claude";
   return {
-    backend: "claude" as const,
+    backend,
     status: "alive",
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelId: backend === "codex" ? "gpt-5.4" : "opus",
+    reasoningEffort: "high",
     outputFormat: undefined,
     capabilities: {
       queueWhileRunning: false,
@@ -120,11 +121,20 @@ function createMockDeps(
     acquireQuerySlot: vi.fn(async () => vi.fn()),
     getTranscriptPath: vi.fn(async (id: string) => `/transcripts/${id}.jsonl`),
     readConfig: vi.fn(async () => ({
-      claudeTimeoutMs: 300_000,
-      defaultModel: "opus",
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 300_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
-      defaultEffort: undefined,
     })),
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     getDebugLogUrl: vi.fn(
@@ -916,7 +926,7 @@ describe("executePromptForMachine", () => {
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
       modelId: "opus",
-      reasoningEffort: undefined,
+      reasoningEffort: "high",
     });
     expect(result.backendRef).toEqual({
       backend: "claude",
@@ -949,7 +959,7 @@ describe("executePromptForMachine", () => {
     expect(mockFactory.createRuntime).not.toHaveBeenCalled();
     expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
       modelId: "opus",
-      reasoningEffort: undefined,
+      reasoningEffort: "high",
     });
     expect(result.backendRef).toEqual({
       backend: "claude",
@@ -1289,10 +1299,16 @@ describe("executePromptForMachine", () => {
   it("uses config-derived Codex model and effort for actor-side validation", async () => {
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
-        claudeTimeoutMs: 300_000,
+        agentBackends: {
+          claude: { model: "opus", timeoutMs: 300_000 },
+          codex: {
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            timeoutMs: null,
+          },
+        },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
-        codex: { model: "gpt-5.4", reasoningEffort: "high" },
       })),
     });
     setActorDeps(mockDeps);
@@ -1319,10 +1335,16 @@ describe("executePromptForMachine", () => {
     const streamEmit = vi.fn();
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
-        claudeTimeoutMs: 300_000,
+        agentBackends: {
+          claude: { model: "opus", timeoutMs: 300_000 },
+          codex: {
+            model: "gpt-5.6-sol",
+            reasoningEffort: "max",
+            timeoutMs: null,
+          },
+        },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
-        codex: { model: "gpt-5.4", reasoningEffort: "max" },
       })),
     });
     setActorDeps(mockDeps);
@@ -1480,11 +1502,12 @@ describe("executePromptForMachine", () => {
     vi.useFakeTimers();
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
-        claudeTimeoutMs: 25,
-        defaultModel: "opus",
+        agentBackends: {
+          claude: { model: "opus", timeoutMs: 25 },
+          codex: { model: "gpt-5.4", timeoutMs: null },
+        },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
-        defaultEffort: undefined,
       })),
     });
     setActorDeps(mockDeps);
@@ -1561,11 +1584,12 @@ describe("executePromptForMachine", () => {
 
   it("aborts the controller before closing the runtime when the safety-net timeout fires", async () => {
     vi.mocked(mockDeps.readConfig).mockResolvedValue({
-      claudeTimeoutMs: 30,
-      defaultModel: "opus",
+      agentBackends: {
+        claude: { model: "opus", timeoutMs: 30 },
+        codex: { model: "gpt-5.4", timeoutMs: null },
+      },
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
-      defaultEffort: undefined,
     });
 
     const events: string[] = [];
@@ -4584,9 +4608,10 @@ describe("runTaskRunTurnForMachine", () => {
 
   function makeMockTaskRunner(
     runImpl: (req: AgentTaskRequest) => Promise<AgentTaskResult>,
+    backend: "claude" | "codex" = "claude",
   ): AgentTaskRunner {
     return {
-      backend: "claude" as const,
+      backend,
       run: vi.fn(runImpl),
     };
   }
@@ -5005,6 +5030,86 @@ describe("runTaskRunTurnForMachine", () => {
       autonomous: true,
     });
     expect(typeof facadeDeps.getTaskRunner).toBe("function");
+  });
+
+  it("fills missing task-run model, effort, timeout, and stall settings from the actual backend profile", async () => {
+    let received: AgentTaskRequest | undefined;
+    const runner = makeMockTaskRunner(async (request) => {
+      received = request;
+      return {
+        backendRef: null,
+        text: "done",
+        usage: null,
+        error: null,
+        timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+    }, "codex");
+
+    mockDeps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        agentBackends: {
+          claude: { model: "opus", timeoutMs: 300_000 },
+          codex: {
+            model: "gpt-5.6-sol",
+            reasoningEffort: "ultra",
+            timeoutMs: 90_000,
+            stallTimeoutMs: 45_000,
+          },
+        },
+      })),
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ agentBackend: "codex" }),
+    );
+
+    expect(received).toMatchObject({
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+      timeoutMs: 90_000,
+      stallTimeoutMs: 45_000,
+    });
+  });
+
+  it("preserves explicit task-run settings over the backend profile", async () => {
+    let received: AgentTaskRequest | undefined;
+    const runner = makeMockTaskRunner(async (request) => {
+      received = request;
+      return {
+        backendRef: null,
+        text: "done",
+        usage: null,
+        error: null,
+        timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+    }, "codex");
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        agentBackend: "codex",
+        modelId: "gpt-5.5",
+        effort: "low",
+        timeoutMs: 12_000,
+      }),
+    );
+
+    expect(received).toMatchObject({
+      modelId: "gpt-5.5",
+      reasoningEffort: "low",
+      timeoutMs: 12_000,
+    });
   });
 
   it("rebuilds and prepends the linked ticket block for every task_run turn", async () => {

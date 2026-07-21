@@ -10,6 +10,12 @@ import {
   type EditableSession,
 } from "./useSpawnCard";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 const proposal: SpawnProposal = {
   sessions: [
@@ -44,6 +50,34 @@ function editable(overrides: Partial<EditableSession> = {}): EditableSession {
 }
 
 describe("toEditableSessions", () => {
+  it("defaults each row from the configured profile for its backend", () => {
+    const rows = toEditableSessions(proposal, BACKEND_DEFAULTS);
+    expect(rows[0]).toMatchObject({
+      model: "sonnet",
+      reasoningEffort: "medium",
+    });
+    expect(rows[1]).toMatchObject({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+    });
+  });
+
+  it("preserves a custom Codex profile model through the submitted proposal", () => {
+    const rows = toEditableSessions(proposal, {
+      claude: { modelId: "sonnet", effort: "medium" },
+      codex: { modelId: "custom-codex-model", effort: "ultra" },
+    });
+
+    expect(rows[1]).toMatchObject({
+      model: "custom-codex-model",
+      reasoningEffort: "ultra",
+    });
+    expect(toSpawnProposal(rows).sessions[1]).toMatchObject({
+      model: "custom-codex-model",
+      reasoningEffort: "ultra",
+    });
+  });
+
   it("projects a proposal into editable rows with initialPrompt as a string", () => {
     const rows = toEditableSessions(proposal);
     expect(rows).toHaveLength(2);
@@ -90,6 +124,22 @@ describe("toEditableSessions", () => {
 });
 
 describe("updateEditableSession", () => {
+  it("resets model and effort to the configured profile on agent change", () => {
+    const rows = [editable({ agent: "claude", model: "opus" })];
+    const next = updateEditableSession(
+      rows,
+      0,
+      "agent",
+      "codex",
+      BACKEND_DEFAULTS,
+    );
+    expect(next[0]).toMatchObject({
+      agent: "codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+    });
+  });
+
   it("updates one field at one index without mutating the input", () => {
     const rows = toEditableSessions(proposal);
     const next = updateEditableSession(rows, 0, "name", "renamed");

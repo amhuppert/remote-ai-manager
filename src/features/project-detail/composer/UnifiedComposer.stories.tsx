@@ -6,6 +6,12 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 function makeConversation(
   overrides: Partial<ConversationState> = {},
@@ -86,6 +92,7 @@ function Harness({
         activeConversationId={activeConversationId}
         activeConversation={conversation}
         agentBackend={agent}
+        backendDefaults={BACKEND_DEFAULTS}
         onAgentChange={(next) => {
           setAgent(next);
           fn()(next);

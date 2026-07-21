@@ -10,9 +10,19 @@ import type { ConfigFormController } from "./types";
 
 export const baseFormState: GlobalConfig = {
   baseDir: "/home/user/projects",
-  defaultModel: "opus",
   defaultAgentBackend: "claude",
-  claudeTimeoutMs: 3_600_000,
+  agentBackends: {
+    claude: {
+      model: "opus",
+      reasoningEffort: "high",
+      timeoutMs: 3_600_000,
+    },
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      timeoutMs: null,
+    },
+  },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,
   ignorePatterns: ["node_modules", ".next"],
@@ -31,6 +41,7 @@ export function makeController(initial: Partial<GlobalConfig> = {}): {
   const loaded = structuredClone(state);
 
   const controller: ConfigFormController = {
+    formRevision: 0,
     get formState() {
       return state;
     },
@@ -54,6 +65,7 @@ export function makeController(initial: Partial<GlobalConfig> = {}): {
     isModified(path: FieldPath) {
       return !deepEqual(deepGet(loaded, path), deepGet(state, path));
     },
+    handleValidityChange() {},
   };
 
   return { controller, getState: () => state };

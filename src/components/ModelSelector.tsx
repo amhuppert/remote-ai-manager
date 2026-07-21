@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { modelOptionsForCatalogEntry } from "@/lib/agent-backends/catalog";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import {
   Select,
@@ -35,7 +36,7 @@ export default function ModelSelector({
   if (!entry) {
     throw new Error(`Unknown agent backend: ${backend}`);
   }
-  const options = entry.models;
+  const options = modelOptionsForCatalogEntry(entry, value);
   // Fall back to the first option (the most capable of the set) when `value`
   // does not match the current backend's set — e.g. mid backend-switch.
   const selected = options.find((m) => m.id === value) ?? options[0]!;

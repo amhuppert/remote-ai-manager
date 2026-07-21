@@ -2,13 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { configKeys } from "@/lib/config/query-keys";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { fullConfigResponseSchema } from "@/lib/config/schemas";
-import type { GlobalConfig } from "@/lib/config/schemas";
+import type { RawGlobalConfig } from "@/lib/config/schemas";
 import { projectKeys } from "@/lib/projects/query-keys";
 export function useUpdateConfigMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: Partial<GlobalConfig>) =>
+    mutationFn: (data: RawGlobalConfig) =>
       mutationFetch(
         "/api/config",
         "update-config",

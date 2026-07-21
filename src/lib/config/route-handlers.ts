@@ -6,17 +6,25 @@
  */
 
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   readConfig as defaultReadConfig,
   readRawConfig as defaultReadRawConfig,
+  materializeGlobalConfig,
   writeRawConfig as defaultWriteRawConfig,
 } from "@/lib/config/loader";
 import { intersectKeys } from "@/lib/config/cascade";
 import { rawGlobalConfigSchema } from "@/lib/config/schemas";
-import type { GlobalConfig } from "@/lib/config/schemas";
+import type { GlobalConfig, RawGlobalConfig } from "@/lib/config/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
 
 const log = createLogger("config");
+
+function formatValidationIssues(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+    .join("; ");
+}
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -24,8 +32,8 @@ const log = createLogger("config");
 
 export interface ConfigRouteDeps {
   readConfig(): Promise<GlobalConfig>;
-  readRawConfig(): Promise<Partial<GlobalConfig>>;
-  writeRawConfig(config: Partial<GlobalConfig>): Promise<void>;
+  readRawConfig(): Promise<RawGlobalConfig>;
+  writeRawConfig(config: RawGlobalConfig): Promise<void>;
 }
 
 const defaultDeps: ConfigRouteDeps = {
@@ -64,9 +72,7 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
 
     const validation = rawGlobalConfigSchema.safeParse(body);
     if (!validation.success) {
-      const detail = validation.error.issues
-        .map((i) => `${i.path.join(".")}: ${i.message}`)
-        .join("; ");
+      const detail = formatValidationIssues(validation.error);
       log.warn("config.update_validation_error", { error: detail });
       return NextResponse.json(
         { error: `Invalid config: ${detail}` },
@@ -74,12 +80,25 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
       );
     }
 
+    // Strip Zod-injected defaults so only user-submitted keys are persisted.
+    const stripped = intersectKeys(body, validation.data) as RawGlobalConfig;
     try {
-      // Strip Zod-injected defaults so only user-submitted keys are persisted
-      const stripped = intersectKeys(
-        body,
-        validation.data,
-      ) as Partial<GlobalConfig>;
+      materializeGlobalConfig(stripped);
+    } catch (err) {
+      const detail =
+        err instanceof z.ZodError
+          ? formatValidationIssues(err)
+          : err instanceof Error
+            ? err.message
+            : "Invalid effective config";
+      log.warn("config.update_effective_validation_error", { error: detail });
+      return NextResponse.json(
+        { error: `Invalid config: ${detail}` },
+        { status: 400 },
+      );
+    }
+
+    try {
       await deps.writeRawConfig(stripped);
       log.info("config.updated", {
         fieldCount: Object.keys(stripped).length,

@@ -14,8 +14,18 @@ function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
   return {
     baseDir: "/projects",
     ignorePatterns: [],
-    claudeTimeoutMs: 60_000,
-    defaultModel: "opus",
+    agentBackends: {
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 60_000,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+      },
+    },
     defaultAgentBackend: "claude",
     ...overrides,
   };

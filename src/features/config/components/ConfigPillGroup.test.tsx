@@ -14,6 +14,14 @@ describe("ConfigPillGroup", () => {
     );
     const buttons = screen.getAllByRole("button");
     expect(buttons.map((b) => b.textContent)).toEqual(["a", "b", "c"]);
+    expect(screen.getByRole("button", { name: "a" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "b" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("calls onChange with the clicked option", () => {
@@ -41,5 +49,34 @@ describe("ConfigPillGroup", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "b" }));
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("uses the minimum touch-target height on mobile", () => {
+    render(
+      <ConfigPillGroup
+        value="a"
+        options={["a", "b"] as const}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "a" }).className).toContain(
+      "max-768:min-h-[var(--touch-target-min)]",
+    );
+  });
+
+  it("exposes an accessible name for the related choices", () => {
+    render(
+      <ConfigPillGroup
+        value="a"
+        options={["a", "b"] as const}
+        onChange={() => {}}
+        aria-label="Default backend"
+      />,
+    );
+
+    expect(
+      screen.getByRole("group", { name: "Default backend" }),
+    ).toContainElement(screen.getByRole("button", { name: "a" }));
   });
 });

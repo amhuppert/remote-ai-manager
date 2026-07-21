@@ -21,7 +21,6 @@ import { SEEDED_WORKFLOW_DEFAULTS } from "./form-state";
 import { BackendsSection } from "./sections/BackendsSection";
 import { CapabilitiesSection } from "./sections/CapabilitiesSection";
 import { CompactionSection } from "./sections/CompactionSection";
-import { DefaultsSection } from "./sections/DefaultsSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { LimitsSection } from "./sections/LimitsSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
@@ -32,7 +31,6 @@ export { SEEDED_WORKFLOW_DEFAULTS };
 
 type ConfigNavSection =
   | "general"
-  | "defaults"
   | "capabilities"
   | "backends"
   | "workflow"
@@ -42,9 +40,8 @@ type ConfigNavSection =
 
 const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
   { id: "general", label: "General" },
-  { id: "defaults", label: "Agent defaults" },
+  { id: "backends", label: "Agent backends" },
   { id: "capabilities", label: "Capabilities" },
-  { id: "backends", label: "Backends" },
   { id: "workflow", label: "Workflow defaults" },
   { id: "compaction", label: "Compaction" },
   { id: "limits", label: "Limits & timeouts" },
@@ -55,7 +52,7 @@ const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
 // bevel) so the flat, token-driven appearance below is what renders; the active
 // accent is the inset cyan box-shadow applied per-state, not a border.
 const NAV_ITEM_BASE =
-  "flex items-center gap-[8px] w-full min-h-[34px] px-[10px] py-[8px] appearance-none border-none rounded-sm font-mono text-[0.76rem] text-left whitespace-nowrap cursor-pointer transition-all duration-150 ease-[ease] max-900:flex-[0_0_auto] max-900:w-auto";
+  "flex items-center gap-[8px] w-full min-h-[34px] px-[10px] py-[8px] appearance-none border-none rounded-sm font-mono text-[0.76rem] text-left whitespace-nowrap cursor-pointer transition-all duration-150 ease-[ease] max-900:flex-[0_0_auto] max-900:w-auto max-768:min-h-[var(--touch-target-min)] max-768:px-[16px] max-768:py-[10px]";
 
 // The config route's main region: the shell's flex-1 scroll box (flex-1/w-full/
 // min-h-0) with the shared fadeIn page-transition, run full-bleed with no padding,
@@ -64,11 +61,20 @@ const NAV_ITEM_BASE =
 const MAIN_CLASS =
   "flex-1 w-full min-h-0 overflow-hidden p-0 bg-bg-base animate-[fadeIn_0.2s_ease]";
 
+const CONTENT_CLASS =
+  "p-2xl max-768:pb-[calc(var(--spacing-3xl)+var(--touch-target-min))]";
+
 export default function ConfigPage(): React.JSX.Element {
   const configQuery = useFullConfigQuery();
   const mutation = useUpdateConfigMutation();
-  const { controller, dirtyCount, buildSavePayload, applySaved, revert } =
-    useConfigForm(configQuery.data);
+  const {
+    controller,
+    dirtyCount,
+    invalidCount,
+    buildSavePayload,
+    applySaved,
+    revert,
+  } = useConfigForm(configQuery.data);
   const [activeSection, setActiveSection] =
     useState<ConfigNavSection>("general");
 
@@ -158,16 +164,8 @@ export default function ConfigPage(): React.JSX.Element {
                 value="general"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
-                <div className="p-2xl">
+                <div className={CONTENT_CLASS}>
                   <GeneralSection controller={controller} />
-                </div>
-              </TabsContent>
-              <TabsContent
-                value="defaults"
-                layoutClassName="min-h-0 flex-auto overflow-y-auto"
-              >
-                <div className="p-2xl">
-                  <DefaultsSection controller={controller} />
                 </div>
               </TabsContent>
               <TabsContent
@@ -182,7 +180,7 @@ export default function ConfigPage(): React.JSX.Element {
                 value="backends"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
-                <div className="p-2xl">
+                <div className={CONTENT_CLASS}>
                   <BackendsSection controller={controller} />
                 </div>
               </TabsContent>
@@ -190,7 +188,7 @@ export default function ConfigPage(): React.JSX.Element {
                 value="workflow"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
-                <div className="p-2xl">
+                <div className={CONTENT_CLASS}>
                   <WorkflowSection controller={controller} />
                 </div>
               </TabsContent>
@@ -198,7 +196,7 @@ export default function ConfigPage(): React.JSX.Element {
                 value="compaction"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
-                <div className="p-2xl">
+                <div className={CONTENT_CLASS}>
                   <CompactionSection controller={controller} />
                 </div>
               </TabsContent>
@@ -206,7 +204,7 @@ export default function ConfigPage(): React.JSX.Element {
                 value="limits"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
-                <div className="p-2xl">
+                <div className={CONTENT_CLASS}>
                   <LimitsSection controller={controller} />
                 </div>
               </TabsContent>
@@ -214,13 +212,14 @@ export default function ConfigPage(): React.JSX.Element {
                 value="notifications"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
-                <div className="p-2xl">
+                <div className={CONTENT_CLASS}>
                   <NotificationsSection controller={controller} />
                 </div>
               </TabsContent>
               {!contentIsCapabilities ? (
                 <ConfigSaveBar
                   dirtyCount={dirtyCount}
+                  invalidCount={invalidCount}
                   saving={mutation.isPending}
                   onRevert={revert}
                   onSave={handleSave}

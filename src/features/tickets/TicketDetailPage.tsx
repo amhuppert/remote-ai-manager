@@ -2,6 +2,8 @@ import TicketDetailView from "./components/TicketDetailView";
 import { decodeRouteSegment } from "@/lib/shared/decode-route-segment";
 import { parseTicketNumberSegment } from "@/lib/tickets/ticket-number";
 import { notFound } from "next/navigation";
+import { readConfig } from "@/lib/config/loader";
+import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/conversation-policy";
 
 interface TicketDetailPageProps {
   params: Promise<{ projectName: string; number: string }>;
@@ -13,10 +15,13 @@ export default async function TicketDetailPage({
   const { projectName, number } = await params;
   const ticketNumber = parseTicketNumberSegment(number);
   if (ticketNumber === null) notFound();
+  const config = await readConfig();
   return (
     <TicketDetailView
       projectName={decodeRouteSegment(projectName)}
       number={ticketNumber}
+      defaultAgentBackend={config.defaultAgentBackend}
+      backendDefaults={resolveConfiguredBackendSelectionDefaults(config)}
     />
   );
 }

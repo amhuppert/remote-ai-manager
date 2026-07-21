@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ProposalValidation } from "@/lib/chat-spawning/proposal-validator";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import type {
   RenderSpawnCardRow,
   SpawnCardRowData,
@@ -9,6 +10,7 @@ import SpawnCard, { type SpawnedSessionStatus } from "./SpawnCard";
 export interface SpawnCardRendererContext {
   projectName: string;
   conversationId: string;
+  backendDefaults: BackendSelectionDefaultsById;
   /** Resolve the validated proposal for a spawn-card row's opaque proposalId. */
   resolveProposal(proposalId: string): ProposalValidation | undefined;
   /** Live status of the linked sessions for a proposalId (passive tracking). */
@@ -33,6 +35,7 @@ export function createSpawnCardRenderer(
         validation={validation}
         projectName={ctx.projectName}
         conversationId={ctx.conversationId}
+        backendDefaults={ctx.backendDefaults}
         spawnedStatuses={ctx.resolveStatuses?.(row.proposalId)}
       />
     );

@@ -54,12 +54,6 @@ function createTestDeps(
   overrides?: Partial<ValidationFixDeps>,
 ): ValidationFixDeps {
   return {
-    readConfig: vi.fn().mockResolvedValue({
-      baseDir: "/home/user/projects",
-      ignorePatterns: [],
-      claudeTimeoutMs: 60_000,
-      defaultModel: "opus",
-    }) as unknown as ValidationFixDeps["readConfig"],
     executeWorkflowTaskRun: vi.fn().mockResolvedValue(textOk("fixes applied")),
     ...overrides,
   };
@@ -111,7 +105,7 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     expect(input.kind).toBe("task_run");
     expect(input.outputFormat).toBeUndefined();
     expect(typeof input.systemInstructions).toBe("string");
-    expect(input.timeoutMs).toBe(60_000);
+    expect(input.timeoutMs).toBeUndefined();
     expect(input.prompt).toContain("lint: 1 error");
   });
 

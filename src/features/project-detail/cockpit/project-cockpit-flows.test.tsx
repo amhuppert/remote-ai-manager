@@ -28,6 +28,12 @@ import type {
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 vi.mock(
   "next/link",
@@ -159,6 +165,7 @@ function PageHarness({
       onRunCommand={vi.fn()}
       selectedBackend={backend}
       onSelectedBackendChange={setBackend}
+      backendDefaults={BACKEND_DEFAULTS}
       openConversations={openConversations}
       rail={<div data-testid="rail-stub" />}
     />
@@ -268,6 +275,7 @@ describe("project page: pre-init backend selection in the cockpit", () => {
       onRunCommand: vi.fn(),
       selectedBackend: backend,
       onSelectedBackendChange,
+      backendDefaults: BACKEND_DEFAULTS,
       rail: <div data-testid="rail-stub" />,
     });
     const { rerender } = render(

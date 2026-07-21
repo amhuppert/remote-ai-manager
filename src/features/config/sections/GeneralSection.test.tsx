@@ -13,6 +13,12 @@ describe("GeneralSection", () => {
     ).toBeVisible();
     expect(screen.getByText(/^Workspace$/)).toBeVisible();
     expect(screen.getByText(/^Infrastructure$/)).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: "Base directory" }),
+    ).toHaveAttribute("name", "baseDir");
+    expect(
+      screen.getByRole("textbox", { name: "Branch prefix" }),
+    ).toHaveAttribute("name", "branchPrefix");
   });
 
   it("editing baseDir flows through the controller", () => {

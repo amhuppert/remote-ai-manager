@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type {
   FullConfigResponse,
   GlobalConfig,
+  RawGlobalConfig,
   WorkflowDefaults,
 } from "@/lib/config/schemas";
 import {
@@ -19,7 +20,8 @@ export interface UseConfigFormResult {
   controller: ConfigFormController | null;
   loadedData: FullConfigResponse | null;
   dirtyCount: number;
-  buildSavePayload(): Partial<GlobalConfig> | null;
+  invalidCount: number;
+  buildSavePayload(): RawGlobalConfig | null;
   applySaved(data: FullConfigResponse): void;
   revert(): void;
 }
@@ -29,6 +31,10 @@ export function useConfigForm(
 ): UseConfigFormResult {
   const [formState, setFormState] = useState<GlobalConfig | null>(null);
   const [loadedData, setLoadedData] = useState<FullConfigResponse | null>(null);
+  const [invalidFieldPaths, setInvalidFieldPaths] = useState<Set<FieldPath>>(
+    () => new Set(),
+  );
+  const [formRevision, setFormRevision] = useState(0);
 
   if (queryData && !formState) {
     setFormState(queryData.config);
@@ -68,6 +74,20 @@ export function useConfigForm(
     [],
   );
 
+  const handleValidityChange = useCallback(
+    (path: FieldPath, valid: boolean) => {
+      setInvalidFieldPaths((current) => {
+        const isInvalid = current.has(path);
+        if (valid === !isInvalid) return current;
+        const next = new Set(current);
+        if (valid) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+    },
+    [],
+  );
+
   const isDefault = useCallback(
     (path: FieldPath): boolean => {
       if (!loadedData) return false;
@@ -100,22 +120,26 @@ export function useConfigForm(
     if (!formState) return null;
     return {
       formState,
+      formRevision,
       handleChange,
       handleChangeMulti,
       handleChangeBlock,
       isDefault,
       isModified,
+      handleValidityChange,
     };
   }, [
     formState,
+    formRevision,
     handleChange,
     handleChangeMulti,
     handleChangeBlock,
     isDefault,
     isModified,
+    handleValidityChange,
   ]);
 
-  const buildSavePayload = useCallback((): Partial<GlobalConfig> | null => {
+  const buildSavePayload = useCallback((): RawGlobalConfig | null => {
     if (!formState || !loadedData) return null;
     const result: Record<string, unknown> = structuredClone(
       loadedData.raw as Record<string, unknown>,
@@ -139,23 +163,28 @@ export function useConfigForm(
       }
     }
 
-    return stripUndefinedDeep(result) as Partial<GlobalConfig>;
+    return stripUndefinedDeep(result) as RawGlobalConfig;
   }, [formState, loadedData]);
 
   const applySaved = useCallback((data: FullConfigResponse) => {
     setFormState(data.config);
     setLoadedData(data);
+    setInvalidFieldPaths(new Set());
+    setFormRevision((current) => current + 1);
   }, []);
 
   const revert = useCallback(() => {
     if (!loadedData) return;
     setFormState(loadedData.config);
+    setInvalidFieldPaths(new Set());
+    setFormRevision((current) => current + 1);
   }, [loadedData]);
 
   return {
     controller,
     loadedData,
     dirtyCount,
+    invalidCount: invalidFieldPaths.size,
     buildSavePayload,
     applySaved,
     revert,

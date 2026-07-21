@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createCollaborationProductionCallAgent } from "./agent-caller-production";
 import {
@@ -693,6 +693,8 @@ describe("createCollaborationProductionCallAgent", () => {
       getTaskRunner: () => runner,
       codexModel: "gpt-5.5",
       codexReasoningEffort: "high",
+      codexTimeoutMs: 75_000,
+      codexStallTimeoutMs: 25_000,
     });
 
     await callAgent({
@@ -710,6 +712,8 @@ describe("createCollaborationProductionCallAgent", () => {
 
     expect(taskRequests[0]?.modelId).toBe("gpt-5.5");
     expect(taskRequests[0]?.reasoningEffort).toBe("high");
+    expect(taskRequests[0]?.timeoutMs).toBe(75_000);
+    expect(taskRequests[0]?.stallTimeoutMs).toBe(25_000);
   });
 
   it("prefers an explicit request modelId over the configured codex model", async () => {
@@ -754,6 +758,8 @@ describe("createCollaborationProductionCallAgent", () => {
       laneService,
       getTaskRunner: () => runner,
       codexModel: "gpt-5.5",
+      codexTimeoutMs: 75_000,
+      codexStallTimeoutMs: 25_000,
     });
 
     await callAgent({
@@ -761,6 +767,7 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       prompt: "round 1",
       modelId: "gpt-5.4",
+      timeoutMs: 5_000,
       laneRef: { workflowId: "wf-codex-model-override", laneId: "codex" },
       writeCapability: "write_capable",
       outputSchema:
@@ -771,6 +778,106 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     expect(taskRequests[0]?.modelId).toBe("gpt-5.4");
+    expect(taskRequests[0]?.timeoutMs).toBe(5_000);
+    expect(taskRequests[0]?.stallTimeoutMs).toBe(25_000);
+  });
+
+  it("applies the configured Claude timeout to a conversation turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const laneService = createLaneService({
+        store: createInMemoryLaneStore(),
+      });
+      await laneService.initialize({
+        workflowId: "wf-claude-timeout",
+        laneId: "claude",
+        backend: "claude",
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        ref: null,
+        metrics: { rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-04-28T10:00:00.000Z",
+      });
+
+      const observedSignals: AbortSignal[] = [];
+      let resolveTurnStarted: () => void = () => undefined;
+      const turnStarted = new Promise<void>((resolve) => {
+        resolveTurnStarted = resolve;
+      });
+      const factory: ConversationBackendFactory = {
+        backend: "claude",
+        async createRuntime(): Promise<ConversationBackendRuntime> {
+          return {
+            backend: "claude",
+            status: "alive",
+            modelId: undefined,
+            reasoningEffort: undefined,
+            outputFormat: undefined,
+            alignmentVersion: null,
+            async sendTurn(
+              input: ConversationBackendTurnInput,
+            ): Promise<ConversationBackendTurnResult> {
+              observedSignals.push(input.signal);
+              resolveTurnStarted();
+              await new Promise<void>((resolve) => {
+                input.signal.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+              });
+              return {
+                backendRef: null,
+                costUsd: null,
+                durationMs: null,
+                numTurns: null,
+                contextTokens: null,
+                contextWindowMax: null,
+                contentBlocks: [],
+                aborted: true,
+                compacted: false,
+                failure: null,
+                continuationDisposition: "retain",
+              };
+            },
+            close: () => undefined,
+          };
+        },
+      };
+
+      const callAgent = createCollaborationProductionCallAgent({
+        workflowId: "wf-claude-timeout",
+        projectPath: "/projects/example",
+        sessionName: "sess-1",
+        worktreePath: "/worktrees/sess-1",
+        sessionKey: "/projects/example::sess-1",
+        originatingConversationId: "test-originating-conv",
+        laneService,
+        getConversationBackendFactory: () => factory,
+        claudeTimeoutMs: 5_000,
+      });
+
+      const resultPromise = callAgent({
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "round 1",
+        laneRef: { workflowId: "wf-claude-timeout", laneId: "claude" },
+        writeCapability: "write_capable",
+      });
+
+      await turnStarted;
+      vi.advanceTimersByTime(4_999);
+      expect(observedSignals[0]?.aborted).toBe(false);
+      vi.advanceTimersByTime(1);
+      const result = await resultPromise;
+
+      expect(observedSignals[0]?.aborted).toBe(true);
+      expect(result.outcome.kind).toBe("failed");
+      if (result.outcome.kind === "failed") {
+        expect(result.outcome.error.failureKind).toBe("timeout");
+        expect(result.outcome.error.message).toContain("5000ms");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("applies the configured claude model and reasoning effort to a conversation_turn request that carries none", async () => {

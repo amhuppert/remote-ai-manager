@@ -14,6 +14,22 @@ import type { TicketListItem } from "@/lib/tickets/schemas";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { _useCockpitViewStore } from "./cockpit/use-cockpit-view-state";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "opus", effort: "high" },
+  codex: { modelId: "gpt-5.4", effort: "high" },
+};
+
+function projectDetailView(): React.JSX.Element {
+  return (
+    <ProjectDetailView
+      projectName="my-project"
+      defaultAgentBackend="claude"
+      backendDefaults={BACKEND_DEFAULTS}
+    />
+  );
+}
 
 // These are external framework/browser-integration modules, not internal seams:
 // next routing and the browser voice/hotkey hooks. The sanctioned client-test
@@ -184,7 +200,7 @@ function renderProjectWithConversations(
     conversations,
   );
 
-  renderWithQuery(<ProjectDetailView projectName="my-project" />, queryClient);
+  renderWithQuery(projectDetailView(), queryClient);
 }
 
 // ===========================================================================
@@ -196,7 +212,7 @@ describe("ProjectDetailView", () => {
     const sessions = makeSessions(3);
     sessions[0] = { ...sessions[0]!, creationMode: "optimistic" };
     seedSessions(sessions);
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    renderWithQuery(projectDetailView());
 
     const titleLink = (await screen.findByText("session-1")).closest("a");
     expect(titleLink?.getAttribute("href")).toBe(
@@ -236,7 +252,7 @@ describe("ProjectDetailView", () => {
 
   it("renders empty state when no sessions (Req 2.5)", async () => {
     seedSessions([]);
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    renderWithQuery(projectDetailView());
     expect(await screen.findByText("No sessions yet")).toBeInTheDocument();
     expect(
       screen.getByText("Create a session to start working in this project."),
@@ -245,7 +261,7 @@ describe("ProjectDetailView", () => {
 
   it("renders the project header as a compact single-row summary", async () => {
     seedSessions(makeSessions(2));
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    renderWithQuery(projectDetailView());
 
     const summary = await screen.findByLabelText("Project summary");
     expect(summary.textContent).toContain("my-project");
@@ -280,7 +296,7 @@ describe("ProjectDetailView", () => {
       makeTicket(2, "in_progress"),
       makeTicket(3, "done"),
     ]);
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    renderWithQuery(projectDetailView());
 
     const link = await screen.findByTitle("Tickets for this project");
     expect(link.getAttribute("href")).toBe("/tickets?project=my-project");
@@ -293,9 +309,7 @@ describe("ProjectDetailView", () => {
 
   it("renders the shared prompt composer in place of the legacy command console", async () => {
     seedSessions([]);
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
+    const { container } = renderWithQuery(projectDetailView());
     const viewTabs = await screen.findByRole("tablist", {
       name: "Project view",
     });
@@ -311,7 +325,7 @@ describe("ProjectDetailView", () => {
   it("shows loading state when pending", () => {
     // Hold the session list unresolved so the loading branch renders.
     api.pending("GET", "/api/projects/my-project/sessions");
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    renderWithQuery(projectDetailView());
     expect(screen.getByText("Loading sessions...")).toBeInTheDocument();
   });
 

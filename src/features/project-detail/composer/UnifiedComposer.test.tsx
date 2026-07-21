@@ -14,6 +14,12 @@ import UnifiedComposer, {
 } from "./UnifiedComposer";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 function makeConversation(
   o: Partial<ConversationState> = {},
@@ -83,6 +89,7 @@ function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
     activeConversationId: "plc-1",
     activeConversation: makeConversation(),
     agentBackend: "claude",
+    backendDefaults: BACKEND_DEFAULTS,
     onAgentChange: vi.fn(),
     tokens: [],
     onTokensChange: vi.fn(),
@@ -93,12 +100,21 @@ function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
     busy: false,
     ...overrides,
   };
-  render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <UnifiedComposer {...props} />
     </QueryClientProvider>,
   );
-  return props;
+  return {
+    props,
+    rerender(nextOverrides: Partial<UnifiedComposerProps>) {
+      rendered.rerender(
+        <QueryClientProvider client={client}>
+          <UnifiedComposer {...props} {...nextOverrides} />
+        </QueryClientProvider>,
+      );
+    },
+  };
 }
 
 beforeEach(() => {
@@ -166,7 +182,7 @@ describe("UnifiedComposer shared prompt input", () => {
 
 describe("UnifiedComposer backend lock", () => {
   it("allows selecting the backend before the conversation is initialized", () => {
-    const props = renderComposer({
+    const { props } = renderComposer({
       activeConversation: makeConversation({ promptCount: 0 }),
     });
     const codexBtn = document.querySelector('[data-backend="codex"]');
@@ -185,6 +201,25 @@ describe("UnifiedComposer backend lock", () => {
 });
 
 describe("UnifiedComposer model settings", () => {
+  it("initializes and switches controls from each configured backend profile", async () => {
+    const rendered = renderComposer({
+      activeConversation: makeConversation({ promptCount: 0 }),
+    });
+
+    expect(screen.getByTitle(/Model: Sonnet/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: /Effort: Medium/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(document.querySelector('[data-backend="codex"]')!);
+    rendered.rerender({ agentBackend: "codex" });
+
+    expect(await screen.findByTitle(/Model: GPT-5.6 Sol/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: /Effort: Ultra/i }),
+    ).toBeInTheDocument();
+  });
+
   it("initializes controls from the active conversation's last sent model and effort", async () => {
     renderComposer({
       activeConversation: makeConversation({ promptCount: 2 }),
@@ -201,6 +236,39 @@ describe("UnifiedComposer model settings", () => {
     expect(
       screen.getByRole("combobox", { name: /Effort: Medium/i }),
     ).toBeInTheDocument();
+  });
+
+  it("shows and submits the configured custom Codex model unchanged", () => {
+    const customModel = "custom-codex-model";
+    renderComposer({
+      agentBackend: "codex",
+      activeConversation: makeConversation({
+        agentBackend: "codex",
+        promptCount: 0,
+      }),
+      backendDefaults: {
+        claude: { modelId: "sonnet", effort: "medium" },
+        codex: { modelId: customModel, effort: "ultra" },
+      },
+    });
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      customModel,
+    );
+    expect(
+      resolveProjectComposerSubmit({
+        draft: "run it",
+        pendingImages: [],
+        tokens: [],
+        backend: "codex",
+        modelId: customModel,
+        effort: "ultra",
+        effortSupported: true,
+      }),
+    ).toMatchObject({
+      kind: "send",
+      input: { backend: "codex", modelId: customModel, effort: "ultra" },
+    });
   });
 });
 

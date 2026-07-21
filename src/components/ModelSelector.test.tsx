@@ -82,6 +82,49 @@ describe("ModelSelector", () => {
     expect(labels.some((l) => l.startsWith("Fable"))).toBe(false);
   });
 
+  it("shows a configured custom Codex model as the selected option", async () => {
+    const user = userEvent.setup();
+    renderSelector(
+      <ModelSelector
+        value="custom-codex-model"
+        backend="codex"
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "custom-codex-model",
+    );
+    expect(screen.getByTestId("model-selector-trigger")).toHaveAttribute(
+      "title",
+      expect.stringContaining("custom-codex-model"),
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      screen.getByRole("option", { name: /custom-codex-model/i }),
+    ).toHaveAttribute("data-state", "checked");
+  });
+
+  it("does not add an unknown Claude model to the catalog options", async () => {
+    const user = userEvent.setup();
+    renderSelector(
+      <ModelSelector
+        value="custom-claude-model"
+        backend="claude"
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("model-selector-label")).not.toHaveTextContent(
+      "custom-claude-model",
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      screen.queryByRole("option", { name: /custom-claude-model/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("fails loudly for an unknown backend id instead of coercing to Claude", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() =>

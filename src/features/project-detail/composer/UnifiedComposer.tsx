@@ -6,10 +6,10 @@ import type { PromptEditorHandle } from "@/components/session/prompt/PromptEdito
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
 import {
-  getDefaultModelForBackend,
   getEffortLevelsForBackend,
   getModelsForBackend,
 } from "@/lib/agent-backends/catalog";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
@@ -41,6 +41,7 @@ export interface UnifiedComposerProps {
   activeConversationId: string | null;
   activeConversation: ConversationState | undefined;
   agentBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
   /** Disabled (presented fixed) once the conversation is initialized. */
   onAgentChange: (next: AgentBackendId) => void;
   tokens: FilterToken[];
@@ -70,12 +71,16 @@ const DEFAULT_EFFORT: EffortLevel = "high";
 function modelForBackend(
   backend: AgentBackendId,
   preferred: string | undefined,
+  backendDefaults: BackendSelectionDefaultsById,
 ): string {
   const modelOptions = getModelsForBackend(backend).map((m) => m.id);
-  if (preferred !== undefined && modelOptions.includes(preferred)) {
+  if (
+    preferred !== undefined &&
+    (backend === "codex" || modelOptions.includes(preferred))
+  ) {
     return preferred;
   }
-  return getDefaultModelForBackend(backend);
+  return backendDefaults[backend].modelId;
 }
 
 function parseEffort(value: string | undefined): EffortLevel | undefined {
@@ -154,6 +159,7 @@ export default function UnifiedComposer({
   activeConversationId,
   activeConversation,
   agentBackend,
+  backendDefaults,
   onAgentChange,
   tokens,
   onTokensChange,
@@ -168,15 +174,16 @@ export default function UnifiedComposer({
   const rememberedSettingsKey = JSON.stringify([
     activeConversationId,
     agentBackend,
+    backendDefaults,
     lastUsedModelId,
     lastUsedEffort,
   ]);
   const [draft, setDraft] = useState("");
   const [modelPref, setModelPref] = useState(() =>
-    modelForBackend(agentBackend, lastUsedModelId),
+    modelForBackend(agentBackend, lastUsedModelId, backendDefaults),
   );
   const [effortPref, setEffortPref] = useState<EffortLevel>(
-    () => parseEffort(lastUsedEffort) ?? DEFAULT_EFFORT,
+    () => parseEffort(lastUsedEffort) ?? backendDefaults[agentBackend].effort,
   );
   const [prevRememberedSettingsKey, setPrevRememberedSettingsKey] = useState(
     rememberedSettingsKey,
@@ -195,17 +202,15 @@ export default function UnifiedComposer({
 
   if (prevRememberedSettingsKey !== rememberedSettingsKey) {
     setPrevRememberedSettingsKey(rememberedSettingsKey);
-    setModelPref(modelForBackend(agentBackend, lastUsedModelId));
-    setEffortPref(parseEffort(lastUsedEffort) ?? DEFAULT_EFFORT);
+    setModelPref(
+      modelForBackend(agentBackend, lastUsedModelId, backendDefaults),
+    );
+    setEffortPref(
+      parseEffort(lastUsedEffort) ?? backendDefaults[agentBackend].effort,
+    );
   }
 
-  const modelOptions = useMemo(
-    () => getModelsForBackend(agentBackend).map((m) => m.id),
-    [agentBackend],
-  );
-  const selectedModel = modelOptions.includes(modelPref)
-    ? modelPref
-    : getDefaultModelForBackend(agentBackend);
+  const selectedModel = modelPref;
 
   const availableEffortLevels = useMemo(
     () => getEffortLevelsForBackend(agentBackend, selectedModel),

@@ -101,4 +101,40 @@ describe("useBackendModelEffort", () => {
     expect(result.current.selectedModel).toBe("gpt-5.6-terra");
     expect(result.current.selectedEffort).toBe("xhigh");
   });
+
+  it("preserves a custom configured Codex model", () => {
+    const { result } = renderHook(() =>
+      useBackendModelEffort({
+        conversationId: "c1",
+        activeConversation: makeConversation({
+          agentBackend: "codex",
+          promptCount: 0,
+        }),
+        backendDefaults: {
+          claude: { modelId: "opus", effort: "high" },
+          codex: { modelId: "custom-codex-model", effort: "ultra" },
+        },
+      }),
+    );
+
+    expect(result.current.selectedModel).toBe("custom-codex-model");
+    expect(result.current.selectedEffort).toBe("ultra");
+  });
+
+  it("rejects a non-catalog last-used Claude model", () => {
+    const { result } = renderHook(() =>
+      useBackendModelEffort({
+        conversationId: "c1",
+        activeConversation: makeConversation(),
+        backendDefaults: {
+          claude: { modelId: "sonnet", effort: "medium" },
+          codex: { modelId: "gpt-5.4", effort: "high" },
+        },
+        lastUsedModelId: "custom-claude-model",
+        lastUsedEffort: "high",
+      }),
+    );
+
+    expect(result.current.selectedModel).toBe("sonnet");
+  });
 });

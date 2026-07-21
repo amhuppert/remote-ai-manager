@@ -8,6 +8,7 @@ describe("ConfigSaveBar", () => {
     render(
       <ConfigSaveBar
         dirtyCount={0}
+        invalidCount={0}
         saving={false}
         onRevert={() => {}}
         onSave={() => {}}
@@ -24,6 +25,7 @@ describe("ConfigSaveBar", () => {
     render(
       <ConfigSaveBar
         dirtyCount={1}
+        invalidCount={0}
         saving={false}
         onRevert={() => {}}
         onSave={() => {}}
@@ -36,6 +38,7 @@ describe("ConfigSaveBar", () => {
     render(
       <ConfigSaveBar
         dirtyCount={3}
+        invalidCount={0}
         saving={false}
         onRevert={() => {}}
         onSave={() => {}}
@@ -51,6 +54,7 @@ describe("ConfigSaveBar", () => {
     render(
       <ConfigSaveBar
         dirtyCount={2}
+        invalidCount={0}
         saving={false}
         onRevert={onRevert}
         onSave={onSave}
@@ -66,6 +70,7 @@ describe("ConfigSaveBar", () => {
     render(
       <ConfigSaveBar
         dirtyCount={1}
+        invalidCount={0}
         saving={true}
         onRevert={() => {}}
         onSave={() => {}}
@@ -75,5 +80,23 @@ describe("ConfigSaveBar", () => {
       screen.getByRole("button", { name: /Saving\.\.\./i }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Revert/i })).toBeDisabled();
+  });
+
+  it("blocks saving invalid local input while keeping Revert available", () => {
+    render(
+      <ConfigSaveBar
+        dirtyCount={0}
+        invalidCount={1}
+        saving={false}
+        onRevert={() => {}}
+        onSave={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/1 invalid field/i)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Save changes/i }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Revert/i })).toBeEnabled();
   });
 });

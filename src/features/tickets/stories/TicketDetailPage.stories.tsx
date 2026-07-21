@@ -11,6 +11,12 @@ import type {
 } from "@/lib/tickets/schemas";
 import type { TicketSpecReadThrough } from "@/lib/specs/queries";
 import TicketDetailView from "@/features/tickets/components/TicketDetailView";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 // ---------------------------------------------------------------------------
 // Sample data
@@ -269,6 +275,8 @@ function DetailHarness({
       <TicketDetailView
         projectName={detail.projectName}
         number={detail.number}
+        defaultAgentBackend="claude"
+        backendDefaults={BACKEND_DEFAULTS}
       />
       <GenericToastSource />
     </QueryClientProvider>
@@ -284,7 +292,12 @@ const meta = {
   component: TicketDetailView,
   // Stories render through DetailHarness (query-cache-backed, like the app);
   // meta-level args only satisfy the component's required-prop contract.
-  args: { projectName: "command-center", number: 12 },
+  args: {
+    projectName: "command-center",
+    number: 12,
+    defaultAgentBackend: "claude",
+    backendDefaults: BACKEND_DEFAULTS,
+  },
   parameters: {
     layout: "fullscreen",
     nextjs: {

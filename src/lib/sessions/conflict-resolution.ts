@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { conflictEntrySchema } from "../jobs/schemas";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
-import { readConfig as defaultReadConfig } from "../config/loader";
 import { assertNever } from "../shared/assert-never";
 import { createLogger } from "../logging";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
@@ -45,7 +44,6 @@ const CONFLICT_ENTRIES_OUTPUT_SCHEMA = {
 // ============================================================
 
 export interface ConflictResolutionDeps {
-  readConfig: typeof defaultReadConfig;
   /**
    * Named entrypoint that routes a single `task_run` turn through the
    * conversation actor for the conversation identified by
@@ -81,9 +79,7 @@ export interface ConflictResolutionDeps {
   ): Promise<string | null>;
 }
 
-const defaultDeps: ConflictResolutionDeps = {
-  readConfig: defaultReadConfig,
-};
+const defaultDeps: ConflictResolutionDeps = {};
 
 // ============================================================
 // Public Types
@@ -444,7 +440,6 @@ async function resolveConflictsImpl(
     targetBranch,
     conflictFiles,
   } = params;
-  const { readConfig } = deps;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
@@ -456,16 +451,6 @@ async function resolveConflictsImpl(
     resolutionContextLength: resolutionContext?.length ?? 0,
     targetBranch: targetBranch ?? null,
   });
-
-  let config;
-  try {
-    config = await readConfig();
-  } catch (err) {
-    const errorMsg =
-      err instanceof Error ? err.message : "Failed to read config";
-    logger.error("conflict-resolution.config_error", { error: errorMsg });
-    return { status: "failed", error: errorMsg };
-  }
 
   let prompt =
     "Resolve all merge conflicts in this worktree. Follow the instructions in your system prompt precisely.";
@@ -499,7 +484,6 @@ async function resolveConflictsImpl(
           unknown
         >,
       },
-      timeoutMs: config.claudeTimeoutMs,
       origin: { source: "workflow" },
     });
 
@@ -620,7 +604,6 @@ async function analyzeConflictsImpl(
     resolutionContext,
     targetBranch,
   } = params;
-  const { readConfig } = deps;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
@@ -632,16 +615,6 @@ async function analyzeConflictsImpl(
     resolutionContextLength: resolutionContext?.length ?? 0,
     targetBranch: targetBranch ?? null,
   });
-
-  let config;
-  try {
-    config = await readConfig();
-  } catch (err) {
-    const errorMsg =
-      err instanceof Error ? err.message : "Failed to read config";
-    logger.error("conflict-analysis.config_error", { error: errorMsg });
-    return { status: "failed", error: errorMsg };
-  }
 
   let prompt =
     "Analyze all merge conflicts in this worktree. Follow the instructions in your system prompt precisely. Do NOT edit any files.";
@@ -671,7 +644,6 @@ async function analyzeConflictsImpl(
           unknown
         >,
       },
-      timeoutMs: config.claudeTimeoutMs,
       origin: { source: "workflow" },
     });
 

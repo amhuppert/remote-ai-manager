@@ -15,8 +15,18 @@ import { createTemplateLibraryRouteHandlers } from "./template-library-route-han
 const MOCK_CONFIG: GlobalConfig = {
   baseDir: "/projects",
   ignorePatterns: [],
-  claudeTimeoutMs: 3600000,
-  defaultModel: "opus",
+  agentBackends: {
+    claude: {
+      model: "opus",
+      reasoningEffort: "high",
+      timeoutMs: 3_600_000,
+    },
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      timeoutMs: null,
+    },
+  },
   defaultAgentBackend: "claude",
 };
 

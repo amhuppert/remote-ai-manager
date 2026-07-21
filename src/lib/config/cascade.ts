@@ -23,7 +23,7 @@ export function mergeConfigWithDefaults<T>(defaults: T, overrides: unknown): T {
 /**
  * Recursively intersect `validated` with only the keys present in `raw`.
  * For nested plain objects, recurse so that Zod-injected defaults inside
- * nested schemas (e.g. codexConfigSchema.enabled) are stripped.
+ * nested schemas are stripped.
  */
 export function intersectKeys(raw: unknown, validated: unknown): unknown {
   if (

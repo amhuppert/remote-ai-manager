@@ -11,8 +11,18 @@ import {
 const fullConfig = {
   baseDir: "/home/user/projects",
   ignorePatterns: ["node_modules", ".next"],
-  claudeTimeoutMs: 3_600_000,
-  defaultModel: "opus" as const,
+  agentBackends: {
+    claude: {
+      model: "opus" as const,
+      reasoningEffort: "high" as const,
+      timeoutMs: 3_600_000,
+    },
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "high" as const,
+      timeoutMs: null,
+    },
+  },
   defaultAgentBackend: "claude" as const,
   preMergeTimeoutMs: 300_000,
   maxConcurrentQueries: 3,
@@ -21,7 +31,7 @@ const fullConfig = {
 
 const rawConfig = {
   baseDir: "/home/user/projects",
-  claudeTimeoutMs: 3_600_000,
+  agentBackends: { claude: { timeoutMs: 3_600_000 } },
 };
 
 // ---------------------------------------------------------------------------
@@ -80,7 +90,7 @@ describe("GET /api/config", () => {
     const body = await response.json();
 
     expect(body.config).toEqual(fullConfig);
-    expect(body.config.defaultModel).toBe("opus");
+    expect(body.config.agentBackends.claude.model).toBe("opus");
     expect(body.config.ignorePatterns).toEqual(["node_modules", ".next"]);
   });
 
@@ -121,7 +131,10 @@ describe("GET /api/config", () => {
 
 describe("PUT /api/config", () => {
   it("accepts valid partial config body and persists to disk", async () => {
-    const input = { baseDir: "/new/path", claudeTimeoutMs: 120_000 };
+    const input = {
+      baseDir: "/new/path",
+      agentBackends: { claude: { timeoutMs: 120_000 } },
+    };
     const response = await handlers.PUT(makePutRequest(input));
 
     expect(response.status).toBe(200);
@@ -162,12 +175,61 @@ describe("PUT /api/config", () => {
 
   it("rejects invalid config body with 400 status and { error }", async () => {
     const response = await handlers.PUT(
-      makePutRequest({ claudeTimeoutMs: "not-a-number" }),
+      makePutRequest({
+        agentBackends: { claude: { timeoutMs: "not-a-number" } },
+      }),
     );
 
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toMatch(/Invalid config/i);
+  });
+
+  it("rejects a legacy path with its normalized replacement", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({ claudeTimeoutMs: 120_000 }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/agentBackends\.claude\.timeoutMs/);
+  });
+
+  it("rejects the removed Codex enable gate", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({ agentBackends: { codex: { enabled: true } } }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/Codex is always available/);
+  });
+
+  it("rejects unsupported model and effort pairs", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({
+        agentBackends: {
+          codex: { model: "gpt-5.4", reasoningEffort: "ultra" },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/not supported by Codex model "gpt-5\.4"/);
+  });
+
+  it("rejects an effort incompatible with the materialized default model before writing", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({
+        agentBackends: { codex: { reasoningEffort: "ultra" } },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/not supported by Codex model "gpt-5\.4"/);
+    expect(deps.writeRawConfig).not.toHaveBeenCalled();
   });
 
   it("handles write errors with 500 status and { error }", async () => {

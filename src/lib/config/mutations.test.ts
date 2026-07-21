@@ -23,7 +23,18 @@ describe("useUpdateConfigMutation", () => {
             config: {
               baseDir: "/repos",
               ignorePatterns: [],
-              claudeTimeoutMs: 3_600_000,
+              agentBackends: {
+                claude: {
+                  model: "opus",
+                  reasoningEffort: "high",
+                  timeoutMs: 3_600_000,
+                },
+                codex: {
+                  model: "gpt-5.4",
+                  reasoningEffort: "high",
+                  timeoutMs: null,
+                },
+              },
             },
             raw: { commandCenterProjectName: "command-center" },
           }),

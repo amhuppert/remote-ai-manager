@@ -30,6 +30,9 @@ export function GeneralSection({
         >
           <FormInput
             type="text"
+            name="baseDir"
+            aria-labelledby="baseDir-label"
+            aria-describedby="baseDir-hint"
             value={formState.baseDir}
             onChange={(e) => handleChange("baseDir", e.target.value)}
           />
@@ -43,6 +46,9 @@ export function GeneralSection({
         >
           <FormInput
             type="text"
+            name="branchPrefix"
+            aria-labelledby="branchPrefix-label"
+            aria-describedby="branchPrefix-hint"
             value={formState.branchPrefix ?? ""}
             onChange={(e) =>
               handleChange("branchPrefix", e.target.value || undefined)

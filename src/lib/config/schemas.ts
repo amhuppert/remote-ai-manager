@@ -1,10 +1,15 @@
 import { z } from "zod";
 import {
+  backendTimeoutMsSchema,
+  claudeBackendConfigSchema,
+  claudeEffortLevelSchema,
   claudeModelSchema,
   codexConfigSchema,
   codexPricingTableSchema,
   codexReasoningEffortSchema,
   effortLevelSchema,
+  validateClaudeBackendModelEffort,
+  validateCodexBackendModelEffort,
 } from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
@@ -63,7 +68,7 @@ export const compactionConfigSchema = z.object({
   messageModel: z.string().default("sonnet"),
   effort: effortLevelSchema.default("medium"),
   // No default: an unset (or null) timeout means "no timeout applied", matching
-  // codex.timeoutMs. Resolved through resolveConfiguredTimeoutMs (→ 0) at the
+  // agentBackends.codex.timeoutMs. Resolved through resolveConfiguredTimeoutMs (→ 0) at the
   // task-run boundary, where the runner treats 0 as unbounded.
   timeoutMs: z.number().int().positive().nullable().optional(),
 });
@@ -81,19 +86,22 @@ const rawCompactionConfigSchema = z.object({
 // Global Config
 // ============================================================
 
+export const agentBackendsConfigSchema = z.object({
+  claude: claudeBackendConfigSchema,
+  codex: codexConfigSchema,
+});
+export type AgentBackendsConfig = z.infer<typeof agentBackendsConfigSchema>;
+
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
   commandCenterProjectName: z.string().min(1).optional(),
   ignorePatterns: z.array(z.string()),
-  claudeTimeoutMs: z.number(),
-  defaultModel: claudeModelSchema.default("opus"),
-  defaultEffort: effortLevelSchema.optional(),
+  agentBackends: agentBackendsConfigSchema,
   maxTurns: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
-  codex: codexConfigSchema.optional(),
   workflowDefaults: workflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
@@ -102,32 +110,56 @@ export const globalConfigSchema = z.object({
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
-// Field names must match codexConfigSchema exactly — the loader merges the
-// parsed raw file into GlobalConfig by key, with no renaming. A historical
-// `timeout` key here silently no-opped because every consumer reads
-// `timeoutMs`; stray legacy `timeout` keys in config.json are now stripped.
-const rawCodexConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  model: z.string().optional(),
-  reasoningEffort: codexReasoningEffortSchema.optional(),
-  timeoutMs: z.number().positive().nullable().optional(),
-  stallTimeoutMs: z.number().positive().nullable().optional(),
-  pricing: codexPricingTableSchema.optional(),
+const rawClaudeBackendConfigSchema = z
+  .object({
+    model: claudeModelSchema.optional(),
+    reasoningEffort: claudeEffortLevelSchema.optional(),
+    timeoutMs: backendTimeoutMsSchema.optional(),
+  })
+  .superRefine(validateClaudeBackendModelEffort);
+
+const rawCodexBackendConfigSchema = z
+  .object({
+    enabled: z
+      .never({
+        error: "Codex is always available; remove agentBackends.codex.enabled.",
+      })
+      .optional(),
+    model: z.string().trim().min(1).optional(),
+    reasoningEffort: codexReasoningEffortSchema.optional(),
+    timeoutMs: backendTimeoutMsSchema.optional(),
+    stallTimeoutMs: backendTimeoutMsSchema.optional(),
+    pricing: codexPricingTableSchema.optional(),
+  })
+  .superRefine(validateCodexBackendModelEffort);
+
+const rawAgentBackendsConfigSchema = z.object({
+  claude: rawClaudeBackendConfigSchema.optional(),
+  codex: rawCodexBackendConfigSchema.optional(),
 });
+
+function movedConfigField(replacement: string) {
+  return z
+    .never({
+      error: `This config field has moved; use ${replacement}.`,
+    })
+    .optional();
+}
 
 export const rawGlobalConfigSchema = z.object({
   baseDir: z.string().optional(),
   commandCenterProjectName: z.string().min(1).optional(),
   ignorePatterns: z.array(z.string()).optional(),
-  claudeTimeoutMs: z.number().optional(),
-  defaultModel: claudeModelSchema.optional(),
-  defaultEffort: effortLevelSchema.optional(),
+  claudeTimeoutMs: movedConfigField("agentBackends.claude.timeoutMs"),
+  defaultModel: movedConfigField("agentBackends.claude.model"),
+  defaultEffort: movedConfigField("agentBackends.claude.reasoningEffort"),
+  codex: movedConfigField("agentBackends.codex"),
+  agentBackends: rawAgentBackendsConfigSchema.optional(),
   maxTurns: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
   pushNotification: rawPushNotificationConfigSchema.optional(),
-  codex: rawCodexConfigSchema.optional(),
   workflowDefaults: rawWorkflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),

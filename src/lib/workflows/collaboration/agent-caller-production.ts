@@ -40,6 +40,7 @@ import {
 } from "@/lib/agent-backends/continuity";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import { createStallWatchdog } from "@/lib/agent-backends/stall-watchdog";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   executeAgentCall,
@@ -111,6 +112,10 @@ export interface CollaborationProductionAgentCallerInput {
   codexModel?: string;
   /** Reasoning effort the Codex lane runs with, resolved alongside `codexModel`. */
   codexReasoningEffort?: string;
+  /** Whole-turn safety bound from the Codex backend profile; zero disables it. */
+  codexTimeoutMs?: number;
+  /** Inactivity bound from the Codex backend profile; zero disables it. */
+  codexStallTimeoutMs?: number;
   /**
    * Model the Claude lane runs with. The asymmetric slice builds Claude
    * `conversation_turn` requests without a per-call model, so without this the
@@ -122,6 +127,10 @@ export interface CollaborationProductionAgentCallerInput {
   claudeModel?: string;
   /** Reasoning effort the Claude lane runs with, resolved alongside `claudeModel`. */
   claudeReasoningEffort?: string;
+  /** Whole-turn safety bound from the Claude backend profile; zero disables it. */
+  claudeTimeoutMs?: number;
+  /** Inactivity bound from the Claude backend profile; zero disables it. */
+  claudeStallTimeoutMs?: number;
   /** Optional override for testing. Defaults to module-level `executeAgentCall`. */
   executeAgentCallImpl?: (
     request: AgentCallRequest,
@@ -151,6 +160,46 @@ type InnerCallAgent = (
   continuity: WorkflowAgentCallContinuity,
 ) => Promise<AgentCallResult>;
 
+interface CollaborationLaneDefaults {
+  model?: string;
+  reasoningEffort?: string;
+  timeoutMs?: number;
+  stallTimeoutMs?: number;
+}
+
+function resolveLaneDefaults(
+  input: CollaborationProductionAgentCallerInput,
+  backend: AgentBackendId,
+): CollaborationLaneDefaults {
+  if (backend === "codex") {
+    return {
+      ...(input.codexModel !== undefined ? { model: input.codexModel } : {}),
+      ...(input.codexReasoningEffort !== undefined
+        ? { reasoningEffort: input.codexReasoningEffort }
+        : {}),
+      ...(input.codexTimeoutMs !== undefined
+        ? { timeoutMs: input.codexTimeoutMs }
+        : {}),
+      ...(input.codexStallTimeoutMs !== undefined
+        ? { stallTimeoutMs: input.codexStallTimeoutMs }
+        : {}),
+    };
+  }
+
+  return {
+    ...(input.claudeModel !== undefined ? { model: input.claudeModel } : {}),
+    ...(input.claudeReasoningEffort !== undefined
+      ? { reasoningEffort: input.claudeReasoningEffort }
+      : {}),
+    ...(input.claudeTimeoutMs !== undefined
+      ? { timeoutMs: input.claudeTimeoutMs }
+      : {}),
+    ...(input.claudeStallTimeoutMs !== undefined
+      ? { stallTimeoutMs: input.claudeStallTimeoutMs }
+      : {}),
+  };
+}
+
 function buildInnerCallAgent(
   input: CollaborationProductionAgentCallerInput,
 ): InnerCallAgent {
@@ -168,6 +217,7 @@ function buildInnerCallAgent(
     if (request.kind === "task_run") {
       const runner = resolveTaskRunner(request.backend);
       const isCodex = request.backend === "codex";
+      const laneDefaults = resolveLaneDefaults(input, request.backend);
       const codexResumeRef =
         continuity.laneAction === "reuse" &&
         continuity.resumeRef &&
@@ -183,13 +233,11 @@ function buildInnerCallAgent(
             networkAccessEnabled: true,
           }
         : {};
-      // The slice omits a per-call model, so fall back to the lane's configured
-      // Codex model rather than the SDK's built-in default.
-      const effectiveModelId =
-        request.modelId ?? (isCodex ? input.codexModel : undefined);
+      // The slice omits per-call settings, so fall back to the lane's complete
+      // backend profile rather than independent SDK defaults.
+      const effectiveModelId = request.modelId ?? laneDefaults.model;
       const effectiveReasoningEffort =
-        request.reasoningEffort ??
-        (isCodex ? input.codexReasoningEffort : undefined);
+        request.reasoningEffort ?? laneDefaults.reasoningEffort;
       const result = await exec(request, {
         resolveTaskRunner: () => ({
           runner,
@@ -201,6 +249,12 @@ function buildInnerCallAgent(
             : {}),
           ...(effectiveReasoningEffort !== undefined
             ? { reasoningEffort: effectiveReasoningEffort }
+            : {}),
+          ...(laneDefaults.timeoutMs !== undefined
+            ? { defaultTimeoutMs: laneDefaults.timeoutMs }
+            : {}),
+          ...(laneDefaults.stallTimeoutMs !== undefined
+            ? { stallTimeoutMs: laneDefaults.stallTimeoutMs }
             : {}),
           ...(codexResumeRef !== null ? { resumeRef: codexResumeRef } : {}),
           ...codexHardenedSettings,
@@ -222,6 +276,7 @@ function buildInnerCallAgent(
     }
 
     const backend = request.backend ?? "claude";
+    const laneDefaults = resolveLaneDefaults(input, backend);
     const claudeResumeRef =
       continuity.laneAction === "reuse" &&
       continuity.resumeRef &&
@@ -238,12 +293,9 @@ function buildInnerCallAgent(
     // Claude model rather than the SDK's built-in CLI default. The Claude
     // conversation runtime fixes the model at creation time, so it must be set
     // here (the per-turn modelId on the dispatch resolution is ignored).
-    const isClaude = backend === "claude";
-    const effectiveModelId =
-      request.modelId ?? (isClaude ? input.claudeModel : undefined);
+    const effectiveModelId = request.modelId ?? laneDefaults.model;
     const effectiveReasoningEffort =
-      request.reasoningEffort ??
-      (isClaude ? input.claudeReasoningEffort : undefined);
+      request.reasoningEffort ?? laneDefaults.reasoningEffort;
     const runtime = await factory.createRuntime({
       conversationId,
       mcpScopeConversationId: input.originatingConversationId,
@@ -261,6 +313,51 @@ function buildInnerCallAgent(
       tooling: {},
     });
     const abort = new AbortController();
+    const timeoutMs = request.timeoutMs ?? laneDefaults.timeoutMs ?? 0;
+    const stallTimeoutMs = laneDefaults.stallTimeoutMs ?? 0;
+    let timeoutFired = false;
+    let runtimeClosed = false;
+    const closeRuntime = (): void => {
+      if (runtimeClosed) return;
+      runtimeClosed = true;
+      runtime.close();
+    };
+    logger.debug("collaboration.agent_call.timeout_resolved", {
+      workflowId: input.workflowId,
+      laneId: request.laneRef?.laneId,
+      backend,
+      timeoutMs,
+      timeoutEnabled: timeoutMs > 0,
+      stallTimeoutMs,
+      stallTimeoutEnabled: stallTimeoutMs > 0,
+    });
+    const timeoutHandle =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            timeoutFired = true;
+            logger.warn("collaboration.agent_call.timeout", {
+              workflowId: input.workflowId,
+              laneId: request.laneRef?.laneId,
+              backend,
+              timeoutMs,
+            });
+            abort.abort();
+            closeRuntime();
+          }, timeoutMs)
+        : null;
+    const stallWatchdog = createStallWatchdog({
+      stallTimeoutMs,
+      onStall: () => {
+        logger.warn("collaboration.agent_call.stalled", {
+          workflowId: input.workflowId,
+          laneId: request.laneRef?.laneId,
+          backend,
+          stallTimeoutMs,
+        });
+        abort.abort();
+        closeRuntime();
+      },
+    });
     try {
       const result = await exec(request, {
         resolveConversationRuntime: () => ({
@@ -268,6 +365,7 @@ function buildInnerCallAgent(
           capabilityView: capabilityViewForBackend(backend),
           signal: abort.signal,
           autonomous: true,
+          onEvent: () => stallWatchdog.touch(),
           ...(request.modelId !== undefined
             ? { modelId: request.modelId }
             : {}),
@@ -283,9 +381,30 @@ function buildInnerCallAgent(
       if (staleResumeMessage) {
         throw markStaleBackendRefError(new Error(staleResumeMessage));
       }
+      if (
+        result.outcome.kind === "failed" &&
+        (timeoutFired || stallWatchdog.fired())
+      ) {
+        const message = stallWatchdog.fired()
+          ? `conversation stalled: no backend activity for ${stallTimeoutMs}ms`
+          : `conversation timed out after ${timeoutMs}ms`;
+        return {
+          ...result,
+          outcome: {
+            ...result.outcome,
+            error: {
+              ...result.outcome.error,
+              failureKind: "timeout",
+              message,
+            },
+          },
+        };
+      }
       return result;
     } finally {
-      runtime.close();
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      stallWatchdog.cancel();
+      closeRuntime();
     }
   };
 }

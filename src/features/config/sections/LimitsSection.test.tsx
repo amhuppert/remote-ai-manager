@@ -11,20 +11,9 @@ describe("LimitsSection", () => {
     expect(
       screen.getByRole("heading", { name: /Limits & timeouts/i }),
     ).toBeVisible();
-    expect(screen.getByText(/Claude timeout/)).toBeVisible();
+    expect(screen.queryByText(/Claude timeout/)).not.toBeInTheDocument();
     expect(screen.getByText(/Max turns/)).toBeVisible();
     expect(screen.getByText(/Pre-merge timeout/)).toBeVisible();
-  });
-
-  it("editing Claude timeout converts minutes to ms in the controller", () => {
-    const { controller, getState } = makeController();
-    render(<LimitsSection controller={controller} />);
-    const input = screen
-      .getByText("Claude timeout")
-      .closest("[data-field]")!
-      .querySelector("input")! as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "30" } });
-    expect(getState().claudeTimeoutMs).toBe(1_800_000);
   });
 
   it("clearing Max turns sends undefined to the controller", () => {

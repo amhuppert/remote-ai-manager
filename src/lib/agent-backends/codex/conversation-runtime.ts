@@ -35,7 +35,10 @@ import {
   getDefaultCodexModel,
   type CodexPricingTable,
 } from "@/lib/agent-backends/schemas";
-import { estimateCodexCostUsd } from "./pricing";
+import {
+  estimateCodexCostUsd,
+  resolveConfiguredCodexPricingOverrides,
+} from "./pricing";
 import type { AgentFailureClassification } from "../errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
 import { createLogger } from "@/lib/logging";
@@ -99,7 +102,7 @@ export interface CodexConversationRuntimeDeps {
     cwd: string;
     env: Record<string, string>;
   }): Promise<NativeCodexMcpServer[]>;
-  /** Per-model rate overrides from `codex.pricing` in config.json; null when unset. */
+  /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
   now(): number;
 }
@@ -114,7 +117,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   translatePortableMcpToCodex,
   listNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
-    (await readConfig()).codex?.pricing ?? null,
+    resolveConfiguredCodexPricingOverrides(await readConfig()),
   now: () => Date.now(),
 };
 

@@ -28,7 +28,6 @@ import {
   updateTask,
 } from "@/lib/workflow-graph/builder-draft";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
-import type { CodexConfig } from "@/lib/agent-backends/schemas";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
@@ -119,8 +118,6 @@ interface WorkflowInspectorPanelProps {
   onSave: () => Promise<void>;
   onDelete: (contextId: string) => void;
   saving: boolean;
-  defaultImplementerConfig?: GraphWorkflowAgentConfig;
-  codexConfig?: CodexConfig;
   globalDefaults?: WorkflowDefaults;
   activeTab?: InspectorTab;
   onTabChange?: (tab: InspectorTab) => void;

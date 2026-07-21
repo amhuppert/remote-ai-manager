@@ -2,6 +2,12 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import SpawnCard, { ValidSpawnCard } from "./SpawnCard";
 import { validateProposal } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 const meta: Meta<typeof ValidSpawnCard> = {
   title: "Spawn Card/SpawnCard",
@@ -64,6 +70,7 @@ export const SingleSession: Story = {
     spawnedStatuses: undefined,
     branchPrefix: "csm",
     targetOptions: TARGET_OPTIONS,
+    backendDefaults: BACKEND_DEFAULTS,
   },
 };
 
@@ -76,6 +83,7 @@ export const MultiSession: Story = {
     spawnedStatuses: undefined,
     branchPrefix: "csm",
     targetOptions: TARGET_OPTIONS,
+    backendDefaults: BACKEND_DEFAULTS,
   },
 };
 
@@ -88,5 +96,6 @@ export const Invalid: StoryObj<typeof SpawnCard> = {
     }),
     projectName: "command-center",
     conversationId: "plc-1",
+    backendDefaults: BACKEND_DEFAULTS,
   },
 };

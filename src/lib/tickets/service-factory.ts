@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import packageMetadata from "../../../package.json";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
+import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
 import { BUILD_INFO } from "@/lib/build-info";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
@@ -165,7 +166,12 @@ function scheduleTicketEnrichment(input: {
   conversationContext?: QuickTicketConversationContext;
 }): void {
   void (async () => {
-    const backend = (await readConfig()).defaultAgentBackend;
+    const config = await readConfig();
+    const backend = config.defaultAgentBackend;
+    const backendDefaults = resolveConfiguredAgentBackendDefaults(
+      config,
+      backend,
+    );
     await getTicketEnrichmentService().enrich({
       projectName: input.ticket.projectName,
       projectPath: input.ticket.projectPath,
@@ -181,6 +187,10 @@ function scheduleTicketEnrichment(input: {
         ? { conversationContext: input.conversationContext }
         : {}),
       backend,
+      modelId: backendDefaults.modelId,
+      ...(backendDefaults.reasoningEffort !== undefined
+        ? { reasoningEffort: backendDefaults.reasoningEffort }
+        : {}),
     });
   })().catch((error: unknown) => {
     logger.warn("tickets.service_factory.enrichment_schedule_failed", {

@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import {
   noopRenderSpawnCardRow,
   type RenderSpawnCardRow,
@@ -22,6 +23,7 @@ export interface UseConversationSpawnCardsInput {
   messages: readonly TranscriptMessage[];
   /** Sessions signal — used to resolve passive spawned-session status. */
   sessions: readonly SessionListItem[];
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 export interface ConversationSpawnCards {
@@ -42,6 +44,7 @@ export function useConversationSpawnCards({
   conversationId,
   messages,
   sessions,
+  backendDefaults,
 }: UseConversationSpawnCardsInput): ConversationSpawnCards {
   const { spawnCards, validations } = useMemo(
     () => deriveSpawnCards(messages),
@@ -58,10 +61,11 @@ export function useConversationSpawnCards({
     return createSpawnCardRenderer({
       projectName,
       conversationId,
+      backendDefaults,
       resolveProposal: (proposalId) => validations.get(proposalId),
       resolveStatuses: () => statuses,
     });
-  }, [projectName, conversationId, validations, statuses]);
+  }, [projectName, conversationId, backendDefaults, validations, statuses]);
 
   return { spawnCards, renderSpawnCardRow };
 }

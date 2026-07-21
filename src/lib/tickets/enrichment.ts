@@ -50,6 +50,8 @@ export interface TicketEnrichmentInput {
   diagnosticsMarkdown: string | null;
   conversationContext?: QuickTicketConversationContext;
   backend: AgentBackendId;
+  modelId: string;
+  reasoningEffort?: string;
 }
 
 export interface AppendTriageNoteInput {
@@ -210,6 +212,8 @@ export function createTicketEnrichmentService(
         ticketId: input.ticketId,
         number: input.number,
         backend: input.backend,
+        modelId: input.modelId,
+        reasoningEffort: input.reasoningEffort ?? null,
         hasDiagnostics: input.diagnosticsMarkdown !== null,
         hasConversationContext: input.conversationContext !== undefined,
       });
@@ -220,6 +224,10 @@ export function createTicketEnrichmentService(
         result = await runner.run({
           workingDirectory: input.projectPath,
           prompt: buildEnrichmentPrompt(input),
+          modelId: input.modelId,
+          ...(input.reasoningEffort !== undefined
+            ? { reasoningEffort: input.reasoningEffort }
+            : {}),
           outputSchema: TICKET_ENRICHMENT_OUTPUT_SCHEMA,
           timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
           tooling: { portableMcp: { servers: [] } },

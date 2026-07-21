@@ -3,6 +3,7 @@ import type { FieldPath, WorkflowDefaultsBlock } from "../form-state";
 
 export interface ConfigFormController {
   formState: GlobalConfig;
+  formRevision: number;
   handleChange(path: FieldPath, value: unknown): void;
   handleChangeMulti(changes: Array<[FieldPath, unknown]>): void;
   handleChangeBlock<K extends WorkflowDefaultsBlock>(
@@ -11,4 +12,5 @@ export interface ConfigFormController {
   ): void;
   isDefault(path: FieldPath): boolean;
   isModified(path: FieldPath): boolean;
+  handleValidityChange(path: FieldPath, valid: boolean): void;
 }

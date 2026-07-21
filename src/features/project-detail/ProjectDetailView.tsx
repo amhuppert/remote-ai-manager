@@ -29,6 +29,7 @@ import Topbar from "@/components/Topbar";
 import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import {
   useProjectConversationsQuery,
   useRefetchProjectConversationsOnFocus,
@@ -44,6 +45,8 @@ import {
 
 interface ProjectDetailViewProps {
   projectName: string;
+  defaultAgentBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 // Byte-for-byte reproduction of the `.cc-ibtn` leaf recipe (project-detail.css).
@@ -148,6 +151,8 @@ function WorkflowGlyph(): React.JSX.Element {
 
 export default function ProjectDetailView({
   projectName,
+  defaultAgentBackend,
+  backendDefaults,
 }: ProjectDetailViewProps): React.JSX.Element {
   const sessionsQuery = useSessionsQuery(projectName);
   const projectsQuery = useProjectsQuery();
@@ -163,7 +168,7 @@ export default function ProjectDetailView({
 
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const [selectedBackend, setSelectedBackend] =
-    useState<AgentBackendId>("claude");
+    useState<AgentBackendId>(defaultAgentBackend);
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -392,6 +397,7 @@ export default function ProjectDetailView({
                 onTokensChange={setTokens}
                 onRunCommand={handleRunCommand}
                 selectedBackend={selectedBackend}
+                backendDefaults={backendDefaults}
                 onSelectedBackendChange={setSelectedBackend}
                 onBranch={handleBranch}
                 rail={

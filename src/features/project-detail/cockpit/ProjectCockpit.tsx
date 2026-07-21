@@ -11,6 +11,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import { IconButton } from "@/components/ui/IconButton";
 import { WithTooltip } from "@/components/ui/WithTooltip";
@@ -59,6 +60,7 @@ export interface ProjectCockpitProps {
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
   /** Pre-init backend selection (claude/codex); fixed once initialized. */
   selectedBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
   onSelectedBackendChange: (next: AgentBackendId) => void;
   onBranch?: (sessionName: string) => void;
   /** The global Active Conversations rail, mounted as the left column. */
@@ -190,6 +192,7 @@ export default function ProjectCockpit({
   onTokensChange,
   onRunCommand,
   selectedBackend,
+  backendDefaults,
   onSelectedBackendChange,
   onBranch,
   rail,
@@ -306,6 +309,7 @@ export default function ProjectCockpit({
     conversationId: activeTabId,
     messages,
     sessions,
+    backendDefaults,
   });
 
   const handleNewChat = useCallback(() => {
@@ -339,6 +343,7 @@ export default function ProjectCockpit({
       activeConversationId={activeTabId}
       activeConversation={activeConversation}
       agentBackend={agentBackend}
+      backendDefaults={backendDefaults}
       onAgentChange={onSelectedBackendChange}
       tokens={tokens}
       onTokensChange={onTokensChange}

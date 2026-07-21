@@ -52,4 +52,66 @@ describe("ConfigNumericInput", () => {
     rerender(<ConfigNumericInput value={9} onChange={() => {}} />);
     expect(screen.getByRole("textbox")).toHaveValue("9");
   });
+
+  it("uses the minimum touch-target height on mobile", () => {
+    render(<ConfigNumericInput value={42} onChange={() => {}} />);
+
+    expect(screen.getByRole("textbox").className).toContain(
+      "max-768:min-h-[var(--touch-target-min)]",
+    );
+  });
+
+  it("forwards the form name and accessible label", () => {
+    render(
+      <ConfigNumericInput
+        value={42}
+        onChange={() => {}}
+        name="agentBackends.claude.timeoutMs"
+        aria-label="Claude timeout"
+      />,
+    );
+
+    expect(
+      screen.getByRole("textbox", { name: "Claude timeout" }),
+    ).toHaveAttribute("name", "agentBackends.claude.timeoutMs");
+  });
+
+  it("reports invalid input accessibly and resets local text on revert", () => {
+    const onValidityChange = vi.fn();
+    const { rerender } = render(
+      <ConfigNumericInput
+        value={3_600_000}
+        onChange={() => {}}
+        displayAsMinutes
+        positive
+        aria-label="Claude timeout"
+        onValidityChange={onValidityChange}
+        resetKey={0}
+      />,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Claude timeout" });
+    fireEvent.change(input, { target: { value: "not-a-number" } });
+
+    const error = screen.getByRole("alert");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input.getAttribute("aria-describedby")).toContain(error.id);
+    expect(onValidityChange).toHaveBeenLastCalledWith(false);
+
+    rerender(
+      <ConfigNumericInput
+        value={3_600_000}
+        onChange={() => {}}
+        displayAsMinutes
+        positive
+        aria-label="Claude timeout"
+        onValidityChange={onValidityChange}
+        resetKey={1}
+      />,
+    );
+
+    expect(input).toHaveValue("60");
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

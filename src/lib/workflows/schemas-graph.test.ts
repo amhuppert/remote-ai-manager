@@ -1405,7 +1405,18 @@ describe("globalConfigSchema workflowDefaults", () => {
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
       ignorePatterns: [],
-      claudeTimeoutMs: 3600000,
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 3_600_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
       workflowDefaults: createWorkflowDefaults(),
     });
     expect(result.success).toBe(true);
@@ -1420,7 +1431,18 @@ describe("globalConfigSchema workflowDefaults", () => {
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
       ignorePatterns: [],
-      claudeTimeoutMs: 3600000,
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 3_600_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
     });
     expect(result.success).toBe(true);
     if (result.success) {

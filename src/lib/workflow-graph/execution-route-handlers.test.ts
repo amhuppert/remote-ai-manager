@@ -15,6 +15,7 @@ import {
   createGraphWorkflowExecutionRouteHandlers,
   createGraphWorkflowRouteScriptValidatorService,
   launchGraphWorkflowExecution,
+  resolveGraphValidatorTimeoutMs,
   type GraphWorkflowExecutionRouteDeps,
 } from "./execution-route-handlers";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
@@ -59,6 +60,20 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     ...overrides,
   };
 }
+
+describe("resolveGraphValidatorTimeoutMs", () => {
+  const config = {
+    agentBackends: {
+      claude: { model: "opus", timeoutMs: 45_000 },
+      codex: { model: "gpt-5.4", timeoutMs: null },
+    },
+  };
+
+  it("uses the selected validator backend profile without an enablement gate", () => {
+    expect(resolveGraphValidatorTimeoutMs(config, "claude")).toBe(45_000);
+    expect(resolveGraphValidatorTimeoutMs(config, "codex")).toBe(0);
+  });
+});
 
 describe("graph workflow execution route handlers", () => {
   const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();

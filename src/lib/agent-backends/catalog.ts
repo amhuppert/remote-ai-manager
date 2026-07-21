@@ -128,6 +128,12 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
   ),
 };
 
+const BACKEND_METADATA: Readonly<Record<AgentBackendId, AgentBackendMetadata>> =
+  {
+    claude: claudeBackendMetadata,
+    codex: codexBackendMetadata,
+  };
+
 const CONVERSATION_CAPABILITIES: Readonly<
   Record<AgentBackendId, BackendConversationCapabilities>
 > = {
@@ -179,6 +185,29 @@ export function listBackendCatalogEntries(): readonly BackendCatalogEntry[] {
   return Object.values(CATALOG);
 }
 
+export function modelOptionsForCatalogEntry(
+  entry: BackendCatalogEntry,
+  configuredModel?: string,
+): BackendCatalogEntry["models"] {
+  if (
+    entry.id !== "codex" ||
+    !configuredModel?.trim() ||
+    entry.models.some((model) => model.id === configuredModel)
+  ) {
+    return entry.models;
+  }
+
+  return [
+    {
+      id: configuredModel,
+      label: configuredModel,
+      description: "Custom Codex model configured globally.",
+      effortLevels: [...effortLevelSchema.options],
+    },
+    ...entry.models,
+  ];
+}
+
 export function queueCapabilityForBackend(
   backend: AgentBackendId,
 ): QueueCapability {
@@ -195,14 +224,33 @@ export function getModelsForBackend(
   return getBackendCatalogEntry(backend).models;
 }
 
+export function isSelectableModelForBackend(
+  backend: AgentBackendId,
+  model: string,
+): boolean {
+  if (model.trim().length === 0) return false;
+  const entry = getBackendCatalogEntry(backend);
+  return (
+    entry.id === "codex" || entry.models.some((option) => option.id === model)
+  );
+}
+
 export function getDefaultModelForBackend(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).defaultModelId;
 }
 
+/** Runtime inactivity default declared by the backend metadata. */
+export function getDefaultStallTimeoutForBackend(
+  backend: AgentBackendId,
+): number | null | undefined {
+  return BACKEND_METADATA[backend].defaultStallTimeoutMs;
+}
+
 /**
  * Effort/reasoning levels for a backend + optional model. An unknown model id
- * (custom Codex models are legal config) resolves to the union of every level
- * some cataloged model of that backend supports.
+ * (custom Codex models are legal config) accepts the canonical cross-backend
+ * effort vocabulary; the backend adapter remains the authority for a custom
+ * model's actual support.
  */
 export function getEffortLevelsForBackend(
   backend: AgentBackendId,
@@ -223,8 +271,7 @@ export function effortLevelsForCatalogEntry(
     (m) => m.id === (model ?? entry.defaultModelId),
   );
   if (match) return [...match.effortLevels];
-  const declared = new Set(entry.models.flatMap((m) => m.effortLevels));
-  return effortLevelSchema.options.filter((level) => declared.has(level));
+  return [...effortLevelSchema.options];
 }
 
 export function backendLabel(backend: AgentBackendId): string {

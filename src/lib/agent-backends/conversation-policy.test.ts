@@ -1,26 +1,144 @@
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  resolveConfiguredAgentBackendDefaults,
   resolveConfiguredBackendSelectionDefaults,
-  resolveConfiguredStallTimeoutMs,
   type ConversationTurnConfig,
 } from "./conversation-policy";
-import { bootstrapBackends } from "./registry";
 
-beforeAll(() => {
-  bootstrapBackends();
+function makeConfig(
+  overrides: Partial<ConversationTurnConfig["agentBackends"]> = {},
+): ConversationTurnConfig {
+  return {
+    agentBackends: {
+      claude: {
+        model: "opus",
+        reasoningEffort: "high",
+        timeoutMs: 300_000,
+        ...overrides.claude,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        timeoutMs: null,
+        ...overrides.codex,
+      },
+    },
+  };
+}
+
+describe("resolveConfiguredAgentBackendDefaults", () => {
+  it("resolves each backend exclusively from its own profile", () => {
+    const config = makeConfig({
+      claude: {
+        model: "sonnet",
+        reasoningEffort: "medium",
+        timeoutMs: 45_000,
+      },
+      codex: {
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+        timeoutMs: 90_000,
+        stallTimeoutMs: 60_000,
+      },
+    });
+
+    expect(resolveConfiguredAgentBackendDefaults(config, "claude")).toEqual({
+      modelId: "sonnet",
+      reasoningEffort: "medium",
+      timeoutMs: 45_000,
+      stallTimeoutMs: 0,
+    });
+    expect(resolveConfiguredAgentBackendDefaults(config, "codex")).toEqual({
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+      timeoutMs: 90_000,
+      stallTimeoutMs: 60_000,
+    });
+  });
+
+  it("uses high when effort is unset and the model supports it", () => {
+    const config = makeConfig({
+      claude: {
+        model: "opus",
+        reasoningEffort: undefined,
+        timeoutMs: null,
+      },
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: undefined,
+        timeoutMs: null,
+      },
+    });
+
+    expect(
+      resolveConfiguredAgentBackendDefaults(config, "claude").reasoningEffort,
+    ).toBe("high");
+    expect(
+      resolveConfiguredAgentBackendDefaults(config, "codex").reasoningEffort,
+    ).toBe("high");
+  });
+
+  it("omits effort for a model that does not support reasoning effort", () => {
+    const config = makeConfig({
+      claude: {
+        model: "haiku",
+        reasoningEffort: undefined,
+        timeoutMs: null,
+      },
+    });
+
+    expect(
+      resolveConfiguredAgentBackendDefaults(config, "claude").reasoningEffort,
+    ).toBeUndefined();
+  });
+
+  it("converts null safety timeouts to the runtime's unbounded sentinel", () => {
+    const config = makeConfig({
+      claude: { model: "opus", timeoutMs: null },
+      codex: { model: "gpt-5.4", timeoutMs: null },
+    });
+
+    expect(
+      resolveConfiguredAgentBackendDefaults(config, "claude").timeoutMs,
+    ).toBe(0);
+    expect(
+      resolveConfiguredAgentBackendDefaults(config, "codex").timeoutMs,
+    ).toBe(0);
+  });
+
+  it("uses the descriptor stall default when unset and lets null disable it", () => {
+    expect(
+      resolveConfiguredAgentBackendDefaults(makeConfig(), "codex")
+        .stallTimeoutMs,
+    ).toBe(20 * 60 * 1000);
+
+    const disabled = makeConfig({
+      codex: {
+        model: "gpt-5.4",
+        timeoutMs: null,
+        stallTimeoutMs: null,
+      },
+    });
+    expect(
+      resolveConfiguredAgentBackendDefaults(disabled, "codex").stallTimeoutMs,
+    ).toBe(0);
+  });
 });
 
 describe("resolveConfiguredBackendSelectionDefaults", () => {
-  it("projects provider configuration into backend-keyed selection defaults", () => {
-    const config: ConversationTurnConfig = {
-      claudeTimeoutMs: 300_000,
-      defaultModel: "sonnet",
-      defaultEffort: "medium",
+  it("projects the normalized profiles into backend-keyed UI defaults", () => {
+    const config = makeConfig({
+      claude: {
+        model: "sonnet",
+        reasoningEffort: "medium",
+        timeoutMs: 300_000,
+      },
       codex: {
         model: "gpt-5.6-sol",
         reasoningEffort: "xhigh",
+        timeoutMs: null,
       },
-    };
+    });
 
     expect(resolveConfiguredBackendSelectionDefaults(config)).toEqual({
       claude: { modelId: "sonnet", effort: "medium" },
@@ -28,46 +146,14 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
     });
   });
 
-  it("uses each backend's declared model and the composer effort fallback", () => {
-    const config: ConversationTurnConfig = {
-      claudeTimeoutMs: 300_000,
-    };
-
-    expect(resolveConfiguredBackendSelectionDefaults(config)).toEqual({
-      claude: { modelId: "opus", effort: "high" },
-      codex: { modelId: "gpt-5.4", effort: "high" },
+  it("keeps the UI effort preference at high for Haiku while runtime omits it", () => {
+    const config = makeConfig({
+      claude: { model: "haiku", timeoutMs: null },
     });
-  });
-});
 
-describe("resolveConfiguredStallTimeoutMs", () => {
-  const baseConfig: ConversationTurnConfig = { claudeTimeoutMs: 300_000 };
-
-  it("codex defaults to the descriptor's stall bound when unconfigured", () => {
-    expect(resolveConfiguredStallTimeoutMs("codex", baseConfig)).toBe(
-      20 * 60 * 1000,
-    );
-  });
-
-  it("codex honors a configured override", () => {
-    expect(
-      resolveConfiguredStallTimeoutMs("codex", {
-        ...baseConfig,
-        codex: { stallTimeoutMs: 60_000 },
-      }),
-    ).toBe(60_000);
-  });
-
-  it("an explicit null disables the codex stall bound", () => {
-    expect(
-      resolveConfiguredStallTimeoutMs("codex", {
-        ...baseConfig,
-        codex: { stallTimeoutMs: null },
-      }),
-    ).toBe(0);
-  });
-
-  it("claude stays disabled (descriptor declares no stall bound)", () => {
-    expect(resolveConfiguredStallTimeoutMs("claude", baseConfig)).toBe(0);
+    expect(resolveConfiguredBackendSelectionDefaults(config).claude).toEqual({
+      modelId: "haiku",
+      effort: "high",
+    });
   });
 });
