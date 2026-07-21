@@ -548,14 +548,20 @@ describe("list query", () => {
     expect(ticketListQuerySchema.parse({})).toEqual({ sort: "updated" });
   });
 
-  it("accepts field-equality filters", () => {
+  it("accepts project/type equality filters and a status set", () => {
     const query = {
       projectPath: "/repos/command-center",
-      status: "in_progress",
+      statuses: ["in_progress", "blocked"],
       workType: "bug",
       sort: "created",
     };
     expect(ticketListQuerySchema.parse(query)).toEqual(query);
+  });
+
+  it("rejects an empty status set (absent means all statuses)", () => {
+    expect(ticketListQuerySchema.safeParse({ statuses: [] }).success).toBe(
+      false,
+    );
   });
 
   it("rejects an unknown sort field via safeParse without throwing", () => {

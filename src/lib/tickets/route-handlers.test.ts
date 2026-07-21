@@ -275,6 +275,23 @@ describe("global list GET /api/tickets", () => {
     expect(filteredItems).toHaveLength(1);
     expect(filteredItems[0]?.["title"]).toBe("Bug B");
 
+    // The status param is a comma-separated set: membership, not equality.
+    const multi = await handlers.globalListGET(
+      new Request(
+        "http://localhost/api/tickets?status=in_progress,not_started",
+      ),
+    );
+    const multiItems = (await multi.json()) as Array<Record<string, unknown>>;
+    expect(multiItems.map((row) => row["title"]).sort()).toEqual([
+      "Bug B",
+      "Feature A",
+    ]);
+
+    const invalid = await handlers.globalListGET(
+      new Request("http://localhost/api/tickets?status=in_progress,bogus"),
+    );
+    expect(invalid.status).toBe(400);
+
     const byProject = await handlers.globalListGET(
       new Request(`http://localhost/api/tickets?project=${PROJECT_NAME}`),
     );

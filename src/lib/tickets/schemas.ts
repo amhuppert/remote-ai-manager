@@ -361,7 +361,8 @@ export type TicketListSort = z.infer<typeof ticketListSortSchema>;
 
 export const ticketListQuerySchema = z.object({
   projectPath: z.string().min(1).optional(),
-  status: ticketStatusSchema.optional(),
+  // A set of statuses to include (membership); absent means every status.
+  statuses: z.array(ticketStatusSchema).min(1).optional(),
   workType: ticketWorkTypeSchema.optional(),
   sort: ticketListSortSchema.default("updated"),
 });

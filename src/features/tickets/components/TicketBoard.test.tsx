@@ -172,12 +172,17 @@ function installFetchStub(initialTickets: TicketListItem[]): {
         /^\/api\/projects\/([^/]+)\/tickets$/,
       );
       if (method === "GET" && (globalList || projectList)) {
+        const statusParam = parsed.searchParams.get("status");
         const filters = normalizeTicketListFilters({
           projectName: projectList
             ? decodeURIComponent(projectList[1]!)
             : (parsed.searchParams.get("project") ?? undefined),
-          status: (parsed.searchParams.get("status") ??
-            undefined) as TicketListFilterInput["status"],
+          statuses:
+            statusParam === null
+              ? undefined
+              : (statusParam.split(",") as NonNullable<
+                  TicketListFilterInput["statuses"]
+                >[number][]),
           workType: (parsed.searchParams.get("workType") ??
             undefined) as TicketListFilterInput["workType"],
           sort: (parsed.searchParams.get("sort") ??
@@ -250,14 +255,24 @@ function installFetchStub(initialTickets: TicketListItem[]): {
   return { log, patches, deletes };
 }
 
-function renderBoard() {
-  window.history.replaceState(null, "", "/tickets?view=board");
+const PAGE_PROPS = {
+  defaultAgentBackend: "claude",
+  backendDefaults: {
+    claude: { modelId: "sonnet", effort: "medium" },
+    codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  },
+} as const;
+
+// `status=all` keeps every column on the board — the default open-statuses
+// filter hides Done/Closed, which the filtered-columns tests cover separately.
+function renderBoard(search = "/tickets?status=all") {
+  window.history.replaceState(null, "", search);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, refetchInterval: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <TicketsPage />
+      <TicketsPage {...PAGE_PROPS} />
     </QueryClientProvider>,
   );
 }
@@ -403,6 +418,59 @@ describe("TicketBoard columns", () => {
 
     expect(notStarted).toHaveAttribute("aria-pressed", "false");
     expect(inProgress).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("TicketBoard filtered columns", () => {
+  it("renders only the open-status columns by default, hiding Done and Closed", async () => {
+    installFetchStub(TICKETS);
+    renderBoard("/tickets");
+
+    await waitFor(() =>
+      expect(screen.getByText("command-center#12")).toBeInTheDocument(),
+    );
+    expect(column("Not Started")).toBeInTheDocument();
+    expect(column("In Progress")).toBeInTheDocument();
+    expect(column("Blocked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Done column" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Closed column" }),
+    ).not.toBeInTheDocument();
+    // The done ticket doesn't match the default filter at all.
+    expect(screen.queryByText("aerotrainer#3")).not.toBeInTheDocument();
+  });
+
+  it("keeps hidden statuses reachable via Move-to; the moved card leaves the board", async () => {
+    const { log, patches } = installFetchStub(TICKETS);
+    renderBoard("/tickets");
+    const user = userEvent.setup();
+
+    await waitFor(() =>
+      expect(screen.getByText("command-center#9")).toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Ticket actions for command-center#9",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Done" }),
+    );
+
+    // Optimistic: done no longer matches the open-statuses filter.
+    await waitFor(() =>
+      expect(screen.queryByText("command-center#9")).not.toBeInTheDocument(),
+    );
+    expect(
+      log.some(
+        (entry) =>
+          entry.method === "PATCH" &&
+          (entry.body as { status?: string }).status === "done",
+      ),
+    ).toBe(true);
+    patches.pending.forEach((resolve) => resolve());
   });
 });
 

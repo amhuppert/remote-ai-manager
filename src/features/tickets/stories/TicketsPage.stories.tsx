@@ -1,14 +1,25 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { GenericToastSource } from "@/components/ToastHost";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import {
   matchesTicketListFilters,
   normalizeTicketListFilters,
   sortTicketListItems,
-  type TicketListFilterInput,
 } from "@/lib/tickets/list-filters";
-import type { TicketListItem } from "@/lib/tickets/schemas";
+import type {
+  TicketDetail,
+  TicketListItem,
+  TicketStatus,
+  TicketWorkType,
+} from "@/lib/tickets/schemas";
 import TicketsPage from "@/features/tickets/TicketsPage";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "sonnet", effort: "medium" },
+  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+};
 
 // ---------------------------------------------------------------------------
 // Sample data
@@ -100,31 +111,84 @@ const TICKETS: TicketListItem[] = [
   }),
 ];
 
+function detailFromListItem(item: TicketListItem): TicketDetail {
+  return {
+    id: item.id,
+    projectPath: item.projectPath,
+    projectName: item.projectName,
+    number: item.number,
+    title: item.title,
+    description:
+      "The attachment index on ticket detail re-renders every entry on any SSE delta. Virtualize the index list (windowed rendering), keeping keyboard navigation and expand-in-place previews intact.",
+    workType: item.workType,
+    status: item.status,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    attachments: Array.from({ length: item.attachmentCount }, (_, index) => ({
+      id: `${item.id}-att-${index + 1}`,
+      ticketId: item.id,
+      description: `Context attachment ${index + 1} for ${item.title}.`,
+      payload: {
+        kind: "note" as const,
+        markdown: "## Notes\n- captured from the conversation",
+      },
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    })),
+    sessions:
+      item.activeSessionName === null
+        ? []
+        : [
+            {
+              id: `${item.id}-link-1`,
+              ticketId: item.id,
+              projectPath: item.projectPath,
+              sessionName: item.activeSessionName,
+              sessionCreatedAt: item.createdAt,
+              startMode: "agent" as const,
+              linkedAt: item.createdAt,
+              endedAt: null,
+              endReason: null,
+            },
+          ],
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Fetch mocking — serves the list endpoints' contract from the fixture with
-// the real shared filter/sort module, so every URL-state combination works.
+// Fetch mocking — serves the list/detail endpoints' contract from the fixture
+// with the real shared filter/sort module, so every URL-state combination and
+// the optimistic inline edits behave exactly like the app.
 // ---------------------------------------------------------------------------
 
-function mockTicketFetch(tickets: TicketListItem[]) {
+function mockTicketFetch(initialTickets: TicketListItem[]) {
+  let tickets = [...initialTickets];
   const original = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input.toString();
+    const method = init?.method?.toUpperCase() ?? "GET";
     const parsed = new URL(url, window.location.origin);
 
     const projectList = parsed.pathname.match(
       /^\/api\/projects\/([^/]+)\/tickets$/,
     );
-    if (parsed.pathname === "/api/tickets" || projectList) {
+    if (
+      method === "GET" &&
+      (parsed.pathname === "/api/tickets" || projectList)
+    ) {
+      const statusParam = parsed.searchParams.get("status");
       const filters = normalizeTicketListFilters({
         projectName: projectList
           ? decodeURIComponent(projectList[1]!)
           : (parsed.searchParams.get("project") ?? undefined),
-        status: (parsed.searchParams.get("status") ??
-          undefined) as TicketListFilterInput["status"],
-        workType: (parsed.searchParams.get("workType") ??
-          undefined) as TicketListFilterInput["workType"],
-        sort: (parsed.searchParams.get("sort") ??
-          undefined) as TicketListFilterInput["sort"],
+        statuses:
+          statusParam === null
+            ? undefined
+            : (statusParam.split(",") as TicketStatus[]),
+        workType: (parsed.searchParams.get("workType") ?? undefined) as
+          | TicketWorkType
+          | undefined,
+        sort:
+          parsed.searchParams.get("sort") === "created" ? "created" : "updated",
       });
       return Response.json(
         sortTicketListItems(
@@ -132,6 +196,59 @@ function mockTicketFetch(tickets: TicketListItem[]) {
           tickets.filter((item) => matchesTicketListFilters(filters, item)),
         ),
       );
+    }
+
+    const detailMatch = parsed.pathname.match(
+      /^\/api\/projects\/([^/]+)\/tickets\/(\d+)$/,
+    );
+    if (detailMatch) {
+      const projectName = decodeURIComponent(detailMatch[1]!);
+      const number = Number(detailMatch[2]!);
+      const index = tickets.findIndex(
+        (row) => row.projectName === projectName && row.number === number,
+      );
+      const item = tickets[index];
+      if (item === undefined) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      if (method === "GET") return Response.json(detailFromListItem(item));
+      if (method === "PATCH") {
+        const body =
+          typeof init?.body === "string"
+            ? (JSON.parse(init.body) as Partial<TicketListItem>)
+            : {};
+        const next = {
+          ...item,
+          ...body,
+          updatedAt: new Date().toISOString(),
+        };
+        tickets[index] = next;
+        return Response.json(detailFromListItem(next));
+      }
+      if (method === "DELETE") {
+        tickets = tickets.filter((row) => row.id !== item.id);
+        return Response.json({
+          id: item.id,
+          projectPath: item.projectPath,
+          projectName: item.projectName,
+          number: item.number,
+        });
+      }
+    }
+
+    if (
+      method === "GET" &&
+      /^\/api\/projects\/([^/]+)\/tickets\/session-links$/.test(parsed.pathname)
+    ) {
+      return Response.json({});
+    }
+    if (
+      method === "GET" &&
+      /^\/api\/specs\/([^/]+)\/ticket-read-through\/(\d+)$/.test(
+        parsed.pathname,
+      )
+    ) {
+      return Response.json({ specs: [] });
     }
     if (parsed.pathname === "/api/projects") {
       return Response.json([
@@ -185,7 +302,10 @@ function WithTickets({
     defaultOptions: { queries: { retry: false, refetchInterval: false } },
   });
   return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      {children}
+      <GenericToastSource />
+    </QueryClientProvider>
   );
 }
 
@@ -196,6 +316,10 @@ function WithTickets({
 const meta = {
   title: "Tickets/TicketsPage",
   component: TicketsPage,
+  args: {
+    defaultAgentBackend: "claude",
+    backendDefaults: BACKEND_DEFAULTS,
+  },
   parameters: {
     layout: "fullscreen",
     nextjs: {
@@ -219,28 +343,76 @@ type Story = StoryObj<typeof meta>;
 // Stories
 // ---------------------------------------------------------------------------
 
-/** Every ticket across projects, newest update first (the default sort). */
+/**
+ * The default landing: the Kanban board scoped to the OPEN statuses — done
+ * and closed columns are filtered out of the default view.
+ */
 export const Default = {} satisfies Story;
 
-/** `?sort=created` orders by creation time instead of last update. */
-export const SortedByCreated = {
+/**
+ * `?view=list` — the table presentation. Column headers sort (Updated desc by
+ * default); status, type, and title edit inline from the rows.
+ */
+export const ListView = {
   parameters: {
     nextjs: {
       appDirectory: true,
-      navigation: { pathname: "/tickets", query: { sort: "created" } },
+      navigation: { pathname: "/tickets", query: { view: "list" } },
+    },
+  },
+} satisfies Story;
+
+/** `?sort=title` — a column sort carried in the URL (title ascending). */
+export const ListSortedByTitle = {
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: {
+        pathname: "/tickets",
+        query: { view: "list", sort: "title" },
+      },
     },
   },
 } satisfies Story;
 
 /**
- * `?status=not_started` — the filter row reports "n of m shown" and offers
- * Clear filters.
+ * `?view=list&t=command-center%2312` — the split screen: the condensed,
+ * filter-preserving list on the left and the full ticket dossier on the right.
  */
-export const FilteredByStatus = {
+export const SplitScreenDetail = {
   parameters: {
     nextjs: {
       appDirectory: true,
-      navigation: { pathname: "/tickets", query: { status: "not_started" } },
+      navigation: {
+        pathname: "/tickets",
+        query: { view: "list", t: "command-center#12" },
+      },
+    },
+  },
+} satisfies Story;
+
+/** `?status=all` — every status, including the done/closed backlog. */
+export const AllStatuses = {
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: {
+        pathname: "/tickets",
+        query: { view: "list", status: "all" },
+      },
+    },
+  },
+} satisfies Story;
+
+/** `?status=done,closed` — a multi-status set from the checkbox filter. */
+export const DoneAndClosedOnly = {
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: {
+        pathname: "/tickets",
+        query: { view: "list", status: "done,closed" },
+      },
     },
   },
 } satisfies Story;
@@ -265,7 +437,7 @@ export const FilteredNoMatches = {
       appDirectory: true,
       navigation: {
         pathname: "/tickets",
-        query: { project: "aerotrainer", status: "blocked" },
+        query: { view: "list", project: "aerotrainer", type: "research" },
       },
     },
   },
@@ -273,6 +445,12 @@ export const FilteredNoMatches = {
 
 /** No tickets exist anywhere — the zero state nudges /ticket creation. */
 export const ZeroState = {
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: { pathname: "/tickets", query: { view: "list" } },
+    },
+  },
   decorators: [
     (Story) => (
       <WithTickets tickets={[]}>
@@ -282,17 +460,27 @@ export const ZeroState = {
   ],
 } satisfies Story;
 
-/** `?view=board` — the Kanban board presentation of the same filtered set. */
-export const BoardView = {
+/** Compact list rows, non-overlapping page actions, and mobile filter controls. */
+export const MobileList = {
   parameters: {
+    viewport: { defaultViewport: "mobile1" },
     nextjs: {
       appDirectory: true,
-      navigation: { pathname: "/tickets", query: { view: "board" } },
+      navigation: { pathname: "/tickets", query: { view: "list" } },
     },
   },
 } satisfies Story;
 
-/** Compact list rows, non-overlapping page actions, and mobile filter controls. */
-export const MobileList = {
-  parameters: { viewport: { defaultViewport: "mobile1" } },
+/** Mobile split behavior: the detail pane replaces the list entirely. */
+export const MobileDetailPane = {
+  parameters: {
+    viewport: { defaultViewport: "mobile1" },
+    nextjs: {
+      appDirectory: true,
+      navigation: {
+        pathname: "/tickets",
+        query: { view: "list", t: "command-center#12" },
+      },
+    },
+  },
 } satisfies Story;

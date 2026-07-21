@@ -1,25 +1,71 @@
 /**
- * URL state for the /tickets route: the view toggle plus the shared list
- * filters, parsed from and serialized to search params. The URL is the single
- * source of truth for the page; defaults are omitted so `/tickets` stays
- * canonical and shareable links stay minimal.
+ * URL state for the /tickets route: the view toggle, the shared list filters,
+ * the list's presentation sort, and the split-pane selection, parsed from and
+ * serialized to search params. The URL is the single source of truth for the
+ * page; defaults are omitted so `/tickets` stays canonical and shareable links
+ * stay minimal.
+ *
+ * The status filter defaults to the OPEN set (everything but done/closed);
+ * `status=all` is the explicit no-filter escape hatch, so absent-param and
+ * all-statuses stay distinguishable.
+ *
+ * The column sort is a list-view presentation concern: the server list stays
+ * in canonical `updated` order (the cache/SSE contract in `list-filters.ts`),
+ * and the list view re-orders rows for display.
  */
 
 import {
+  DEFAULT_TICKET_STATUSES,
+  isDefaultTicketStatusSet,
   normalizeTicketListFilters,
   type TicketListFilters,
 } from "@/lib/tickets/list-filters";
 import {
-  ticketListSortSchema,
   ticketStatusSchema,
   ticketWorkTypeSchema,
+  type TicketStatus,
 } from "@/lib/tickets/schemas";
 
 export type TicketsView = "list" | "board";
 
+export const TICKET_SORT_COLUMNS = [
+  "ticket",
+  "title",
+  "type",
+  "status",
+  "ctx",
+  "updated",
+] as const;
+export type TicketSortColumn = (typeof TICKET_SORT_COLUMNS)[number];
+export type TicketSortDirection = "asc" | "desc";
+
+export interface TicketListSortState {
+  column: TicketSortColumn;
+  direction: TicketSortDirection;
+}
+
+export const DEFAULT_TICKET_LIST_SORT: TicketListSortState = {
+  column: "updated",
+  direction: "desc",
+};
+
+/** First-click direction per column: text reads A→Z, recency/count big-first. */
+export function ticketSortNaturalDirection(
+  column: TicketSortColumn,
+): TicketSortDirection {
+  return column === "updated" || column === "ctx" ? "desc" : "asc";
+}
+
+export interface TicketSelection {
+  projectName: string;
+  number: number;
+}
+
 export interface TicketsPageState {
   view: TicketsView;
   filters: TicketListFilters;
+  listSort: TicketListSortState;
+  selected: TicketSelection | null;
 }
 
 function parseEnumParam<T>(
@@ -31,29 +77,79 @@ function parseEnumParam<T>(
   return parsed.success ? parsed.data : undefined;
 }
 
+function parseStatusesParam(
+  value: string | null,
+): readonly TicketStatus[] | null {
+  if (value === null) return DEFAULT_TICKET_STATUSES;
+  if (value === "all") return null;
+  const statuses = value
+    .split(",")
+    .map((token) => ticketStatusSchema.safeParse(token))
+    .flatMap((parsed) => (parsed.success ? [parsed.data] : []));
+  return statuses.length > 0 ? statuses : DEFAULT_TICKET_STATUSES;
+}
+
+function parseListSort(
+  sort: string | null,
+  dir: string | null,
+): TicketListSortState {
+  const column = TICKET_SORT_COLUMNS.find((candidate) => candidate === sort);
+  if (column === undefined) return DEFAULT_TICKET_LIST_SORT;
+  const direction =
+    dir === "asc" || dir === "desc" ? dir : ticketSortNaturalDirection(column);
+  return { column, direction };
+}
+
+/** Selection wire format is the ticket identifier, `project#number`. */
+function parseSelectionParam(value: string | null): TicketSelection | null {
+  if (value === null) return null;
+  const separator = value.lastIndexOf("#");
+  if (separator <= 0) return null;
+  const projectName = value.slice(0, separator);
+  const rawNumber = value.slice(separator + 1);
+  if (!/^[1-9][0-9]*$/.test(rawNumber)) return null;
+  return { projectName, number: Number(rawNumber) };
+}
+
 export function parseTicketsPageState(
   params: Pick<URLSearchParams, "get">,
 ): TicketsPageState {
   const project = params.get("project");
+  const statuses = parseStatusesParam(params.get("status"));
   return {
-    view: params.get("view") === "board" ? "board" : "list",
+    view: params.get("view") === "list" ? "list" : "board",
     filters: normalizeTicketListFilters({
       projectName: project !== null && project !== "" ? project : undefined,
-      status: parseEnumParam(params.get("status"), ticketStatusSchema),
+      statuses: statuses ?? undefined,
       workType: parseEnumParam(params.get("type"), ticketWorkTypeSchema),
-      sort: parseEnumParam(params.get("sort"), ticketListSortSchema),
     }),
+    listSort: parseListSort(params.get("sort"), params.get("dir")),
+    selected: parseSelectionParam(params.get("t")),
   };
 }
 
 export function ticketsPageHref(state: TicketsPageState): string {
   const params = new URLSearchParams();
-  if (state.view !== "list") params.set("view", state.view);
-  const { projectName, status, workType, sort } = state.filters;
+  if (state.view !== "board") params.set("view", state.view);
+  const { projectName, statuses, workType } = state.filters;
   if (projectName !== null) params.set("project", projectName);
-  if (status !== null) params.set("status", status);
+  if (statuses === null) {
+    params.set("status", "all");
+  } else if (!isDefaultTicketStatusSet(statuses)) {
+    params.set("status", statuses.join(","));
+  }
   if (workType !== null) params.set("type", workType);
-  if (sort !== "updated") params.set("sort", sort);
+  const { column, direction } = state.listSort;
+  if (
+    column !== DEFAULT_TICKET_LIST_SORT.column ||
+    direction !== DEFAULT_TICKET_LIST_SORT.direction
+  ) {
+    params.set("sort", column);
+    params.set("dir", direction);
+  }
+  if (state.view === "list" && state.selected !== null) {
+    params.set("t", `${state.selected.projectName}#${state.selected.number}`);
+  }
   const search = params.toString();
   return search === "" ? "/tickets" : `/tickets?${search}`;
 }

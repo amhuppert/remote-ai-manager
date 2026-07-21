@@ -146,15 +146,23 @@ function isNotFound(error: unknown): boolean {
   return error instanceof ApiCallError && error.status === 404;
 }
 
-function TicketDossier({
-  detail,
-  defaultAgentBackend,
-  backendDefaults,
-}: {
+export interface TicketDossierProps {
   detail: TicketDetail;
   defaultAgentBackend: AgentBackendId;
   backendDefaults: BackendSelectionDefaultsById;
-}): React.JSX.Element {
+  /** `pane` stacks the rail below the main column for the split pane. */
+  layout?: "page" | "pane";
+  /** Where to go after a confirmed delete; defaults to the tickets index. */
+  onDeleted?: () => void;
+}
+
+export function TicketDossier({
+  detail,
+  defaultAgentBackend,
+  backendDefaults,
+  layout = "page",
+  onDeleted,
+}: TicketDossierProps): React.JSX.Element {
   const router = useRouter();
   const updateMutation = useUpdateTicketMutation();
   const deleteMutation = useDeleteTicketMutation();
@@ -253,13 +261,22 @@ function TicketDossier({
       });
     // Optimistic-removal contract: the caches already dropped the ticket, so
     // the dossier leaves the view immediately; a failure restores it and says so.
-    router.push("/tickets");
+    if (onDeleted !== undefined) {
+      onDeleted();
+    } else {
+      router.push("/tickets");
+    }
   };
 
   return (
     <>
       {/* Header */}
-      <div className="flex flex-col gap-[8px] border-x-0 border-t-0 border-b border-solid border-border-dim px-xl py-md max-768:px-md">
+      <div
+        className={cn(
+          "flex flex-col gap-[8px] border-x-0 border-t-0 border-b border-solid border-border-dim py-md max-768:px-md",
+          layout === "pane" ? "px-lg" : "px-xl",
+        )}
+      >
         <div className="flex items-center gap-sm max-768:flex-wrap">
           <span className="font-mono text-[0.8rem] font-semibold text-text-secondary">
             {detail.projectName}
@@ -324,8 +341,15 @@ function TicketDossier({
         />
       </div>
 
-      {/* Body: main + 340px rail */}
-      <div className="grid grid-cols-[minmax(0,1fr)_340px] items-start gap-xl px-xl pt-lg pb-2xl max-768:grid-cols-[minmax(0,1fr)] max-768:px-md">
+      {/* Body: main + 340px rail on the page; single stacked column in the pane */}
+      <div
+        className={cn(
+          "items-start pt-lg pb-2xl max-768:grid-cols-[minmax(0,1fr)] max-768:px-md",
+          layout === "pane"
+            ? "grid grid-cols-[minmax(0,1fr)] gap-lg px-lg"
+            : "grid grid-cols-[minmax(0,1fr)_340px] gap-xl px-xl",
+        )}
+      >
         <div className="flex min-w-0 flex-col gap-xl">
           <TicketDescriptionEditor
             projectName={detail.projectName}

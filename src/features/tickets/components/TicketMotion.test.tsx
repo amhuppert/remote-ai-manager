@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import TicketBoard from "./TicketBoard";
-import TicketList from "./TicketList";
+import TicketList, { type TicketListProps } from "./TicketList";
 
 vi.mock(
   "next/link",
@@ -31,6 +31,21 @@ function ticket(id: string, number: number, title: string): TicketListItem {
 const FIRST = ticket("ticket-1", 1, "First ticket");
 const SECOND = ticket("ticket-2", 2, "Second ticket");
 
+function listProps(items: TicketListItem[]): TicketListProps {
+  return {
+    items,
+    hasAnyTickets: true,
+    statusesNarrowed: false,
+    sort: { column: "updated", direction: "desc" },
+    onSortChange: () => {},
+    selected: null,
+    selectHrefFor: () => "/tickets?view=list",
+    onSelect: () => {},
+    condensed: false,
+    onClearFilters: () => {},
+  };
+}
+
 function Providers({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -46,18 +61,11 @@ afterEach(() => {
 describe("ticket live-update motion", () => {
   it("washes new list rows and retains removed rows for the 150ms collapse", () => {
     vi.useFakeTimers();
-    const view = render(
-      <TicketList items={[FIRST]} hasAnyTickets onClearFilters={() => {}} />,
-      { wrapper: Providers },
-    );
+    const view = render(<TicketList {...listProps([FIRST])} />, {
+      wrapper: Providers,
+    });
 
-    view.rerender(
-      <TicketList
-        items={[FIRST, SECOND]}
-        hasAnyTickets
-        onClearFilters={() => {}}
-      />,
-    );
+    view.rerender(<TicketList {...listProps([FIRST, SECOND])} />);
     expect(
       document.querySelector('[data-ticket-title="Second ticket"]')?.className,
     ).toContain("animate-tk-sse-in");
@@ -65,9 +73,7 @@ describe("ticket live-update motion", () => {
       document.querySelector('[data-ticket-title="Second ticket"]')?.className,
     ).toContain("motion-reduce:animate-none");
 
-    view.rerender(
-      <TicketList items={[SECOND]} hasAnyTickets onClearFilters={() => {}} />,
-    );
+    view.rerender(<TicketList {...listProps([SECOND])} />);
     expect(
       document.querySelector('[data-ticket-title="First ticket"]')?.className,
     ).toContain("animate-tk-sse-out");
@@ -109,10 +115,9 @@ describe("ticket live-update motion", () => {
 
   it("stops active-session pulses when reduced motion is requested", () => {
     const active = { ...FIRST, activeSessionName: "ticket-session" };
-    const list = render(
-      <TicketList items={[active]} hasAnyTickets onClearFilters={() => {}} />,
-      { wrapper: Providers },
-    );
+    const list = render(<TicketList {...listProps([active])} />, {
+      wrapper: Providers,
+    });
 
     expect(list.container.querySelector('[class*="pulse-dot"]')).toHaveClass(
       "motion-reduce:[animation:none]",

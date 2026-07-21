@@ -567,13 +567,30 @@ describe("list queries", () => {
     expect(byProject.map((t) => t.title)).toEqual(["cc bug", "cc feature"]);
 
     const byStatus = await repo.list({
-      status: "in_progress",
+      statuses: ["in_progress"],
       sort: "updated",
     });
     expect(byStatus.map((t) => t.title)).toEqual(["cc bug", "other research"]);
 
     const byType = await repo.list({ workType: "research", sort: "updated" });
     expect(byType.map((t) => t.title)).toEqual(["other research"]);
+  });
+
+  it("filters by a multi-status set (membership, not equality)", async () => {
+    await seedListFixtures();
+
+    const openOnly = await repo.list({
+      statuses: ["not_started", "in_progress"],
+      sort: "updated",
+    });
+    expect(openOnly.map((t) => t.title)).toEqual([
+      "cc bug",
+      "other research",
+      "cc feature",
+    ]);
+
+    const doneOnly = await repo.list({ statuses: ["done"], sort: "updated" });
+    expect(doneOnly).toEqual([]);
   });
 
   it("sorts by last-updated or creation time, newest first", async () => {

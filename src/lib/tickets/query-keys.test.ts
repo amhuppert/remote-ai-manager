@@ -7,7 +7,7 @@ describe("ticketKeys", () => {
   it("embeds every filter and sort input in the list key", () => {
     const filters = normalizeTicketListFilters({
       projectName: "alpha",
-      status: "done",
+      statuses: ["done", "closed"],
       workType: "bug",
       sort: "created",
     });
@@ -16,7 +16,7 @@ describe("ticketKeys", () => {
       "list",
       {
         projectName: "alpha",
-        status: "done",
+        statuses: ["done", "closed"],
         workType: "bug",
         sort: "created",
       },

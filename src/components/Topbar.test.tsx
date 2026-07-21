@@ -260,6 +260,18 @@ describe("Topbar", () => {
     expect(link).toHaveTextContent("Tickets");
   });
 
+  it("scopes the Tickets destination to the active project breadcrumb", () => {
+    renderWithQuery(
+      <Topbar
+        breadcrumbs={[{ label: "command-center", isProject: true }]}
+        page="detail"
+      />,
+    );
+    expect(screen.getByTitle("Tickets").getAttribute("href")).toBe(
+      "/tickets?project=command-center",
+    );
+  });
+
   it("renders Quick ticket before Tickets and opens a route-context draft", async () => {
     navigationState.pathname = "/projects/command-center";
     window.history.replaceState({}, "", "/projects/command-center");

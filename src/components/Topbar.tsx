@@ -125,12 +125,16 @@ export default function Topbar({
   );
   const ticketsActive = pathname?.startsWith("/tickets") ?? false;
   const specsActive = pathname?.startsWith("/specs") ?? false;
-  // Carry the active project into Specs so the studio opens scoped to the
-  // project the user is looking at rather than the alphabetical default.
+  // Carry the active project into Specs and Tickets so both open scoped to
+  // the project the user is looking at rather than the everything view.
   const specsHref =
     activeProjectName !== null
       ? `/specs?project=${encodeURIComponent(activeProjectName)}`
       : "/specs";
+  const ticketsHref =
+    activeProjectName !== null
+      ? `/tickets?project=${encodeURIComponent(activeProjectName)}`
+      : "/tickets";
   const workflowsActive = pathname?.startsWith("/workflows") ?? false;
   const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
@@ -255,7 +259,7 @@ export default function Topbar({
           <span className="leading-none">Specs</span>
         </Link>
         <Link
-          href="/tickets"
+          href={ticketsHref}
           className={cn(
             "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:h-[44px] max-768:px-sm",
             ticketsActive

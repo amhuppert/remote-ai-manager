@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { TicketDetail, TicketListItem } from "./schemas";
 import {
   compareTicketListItems,
+  isDefaultTicketStatusSet,
   matchesTicketListFilters,
   normalizeTicketListFilters,
   removeTicketListItem,
@@ -34,7 +35,7 @@ describe("normalizeTicketListFilters", () => {
   it("fills absent filters with null and defaults sort to updated", () => {
     expect(normalizeTicketListFilters({})).toEqual({
       projectName: null,
-      status: null,
+      statuses: null,
       workType: null,
       sort: "updated",
     });
@@ -44,16 +45,48 @@ describe("normalizeTicketListFilters", () => {
     expect(
       normalizeTicketListFilters({
         projectName: "alpha",
-        status: "in_progress",
+        statuses: ["in_progress"],
         workType: "bug",
         sort: "created",
       }),
     ).toEqual({
       projectName: "alpha",
-      status: "in_progress",
+      statuses: ["in_progress"],
       workType: "bug",
       sort: "created",
     });
+  });
+
+  it("dedupes statuses into canonical status order for stable query keys", () => {
+    expect(
+      normalizeTicketListFilters({
+        statuses: ["done", "not_started", "done", "in_progress"],
+      }).statuses,
+    ).toEqual(["not_started", "in_progress", "done"]);
+  });
+
+  it("normalizes an empty status set to null (no status filter)", () => {
+    expect(normalizeTicketListFilters({ statuses: [] }).statuses).toBeNull();
+  });
+});
+
+describe("isDefaultTicketStatusSet", () => {
+  it("recognizes the open set in any order and rejects everything else", () => {
+    expect(
+      isDefaultTicketStatusSet(["blocked", "in_progress", "not_started"]),
+    ).toBe(true);
+    expect(isDefaultTicketStatusSet(null)).toBe(false);
+    expect(isDefaultTicketStatusSet(["not_started", "in_progress"])).toBe(
+      false,
+    );
+    expect(
+      isDefaultTicketStatusSet([
+        "not_started",
+        "in_progress",
+        "blocked",
+        "done",
+      ]),
+    ).toBe(false);
   });
 });
 
@@ -63,10 +96,10 @@ describe("matchesTicketListFilters", () => {
     expect(matchesTicketListFilters(filters, item({ id: "t1" }))).toBe(true);
   });
 
-  it("applies project, status, and work-type filters exactly", () => {
+  it("applies project, status-set, and work-type filters exactly", () => {
     const filters = normalizeTicketListFilters({
       projectName: "alpha",
-      status: "in_progress",
+      statuses: ["in_progress", "blocked"],
       workType: "bug",
     });
     const matching = item({
@@ -76,6 +109,9 @@ describe("matchesTicketListFilters", () => {
       workType: "bug",
     });
     expect(matchesTicketListFilters(filters, matching)).toBe(true);
+    expect(
+      matchesTicketListFilters(filters, { ...matching, status: "blocked" }),
+    ).toBe(true);
     expect(
       matchesTicketListFilters(filters, {
         ...matching,
@@ -158,7 +194,7 @@ describe("upsertTicketListItem", () => {
   });
 
   it("removes the identity when the updated item no longer matches the filters", () => {
-    const filters = normalizeTicketListFilters({ status: "not_started" });
+    const filters = normalizeTicketListFilters({ statuses: ["not_started"] });
     const list = [item({ id: "t1", status: "not_started" })];
     const moved = item({ id: "t1", status: "in_progress" });
 
@@ -187,9 +223,18 @@ describe("removeTicketListItem", () => {
 describe("ticketListSearchParams", () => {
   it("includes exactly the set filters plus the sort", () => {
     const params = ticketListSearchParams(
-      normalizeTicketListFilters({ status: "done", sort: "created" }),
+      normalizeTicketListFilters({ statuses: ["done"], sort: "created" }),
     );
     expect(params.toString()).toBe("status=done&sort=created");
+  });
+
+  it("joins a multi-status set as one comma-separated status param", () => {
+    const params = ticketListSearchParams(
+      normalizeTicketListFilters({
+        statuses: ["blocked", "not_started", "in_progress"],
+      }),
+    );
+    expect(params.get("status")).toBe("not_started,in_progress,blocked");
   });
 
   it("names the global project filter param `project`", () => {

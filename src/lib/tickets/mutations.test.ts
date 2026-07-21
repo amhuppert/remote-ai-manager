@@ -108,7 +108,7 @@ function detail(
 
 const allKey = ticketKeys.list(normalizeTicketListFilters({}));
 const notStartedKey = ticketKeys.list(
-  normalizeTicketListFilters({ status: "not_started" }),
+  normalizeTicketListFilters({ statuses: ["not_started"] }),
 );
 
 const fetchSpy = vi.fn<typeof fetch>();
@@ -1751,7 +1751,7 @@ describe("useStartTicketMutation", () => {
 
 describe("SSE events interleaved with pending optimistic mutations", () => {
   const inProgressKey = ticketKeys.list(
-    normalizeTicketListFilters({ status: "in_progress" }),
+    normalizeTicketListFilters({ statuses: ["in_progress"] }),
   );
 
   function staleUpdateEvent(listItem: TicketListItem): TicketChangedEvent {

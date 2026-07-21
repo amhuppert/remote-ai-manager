@@ -54,16 +54,32 @@ const boardCollisionDetection: CollisionDetection = (args) => {
 
 export interface TicketBoardProps {
   items: readonly TicketListItem[];
-  statusFilter?: TicketStatus | null;
+  /** The status-filter set; columns render only for these (null = all). */
+  statuses?: readonly TicketStatus[] | null;
 }
+
+// Column-count → static grid template (a computed class string would be
+// rejected by the guardrails and might not be generated).
+const BOARD_GRID_COLS: Record<number, string> = {
+  1: "grid-cols-[repeat(1,minmax(0,1fr))]",
+  2: "grid-cols-[repeat(2,minmax(0,1fr))]",
+  3: "grid-cols-[repeat(3,minmax(0,1fr))]",
+  4: "grid-cols-[repeat(4,minmax(0,1fr))]",
+  5: "grid-cols-[repeat(5,minmax(0,1fr))]",
+};
 
 export default function TicketBoard({
   items,
-  statusFilter = null,
+  statuses = null,
 }: TicketBoardProps): React.JSX.Element {
   const updateMutation = useUpdateTicketMutation();
   const deleteMutation = useDeleteTicketMutation();
   const animatedItems = useAnimatedTicketItems(items);
+
+  const visibleStatuses = statuses ?? TICKET_STATUS_ORDER;
+  const hiddenStatuses = TICKET_STATUS_ORDER.filter(
+    (status) => !visibleStatuses.includes(status),
+  );
 
   const [activeTicket, setActiveTicket] = useState<TicketListItem | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
@@ -72,13 +88,16 @@ export default function TicketBoard({
     null,
   );
   const [mobileStatus, setMobileStatus] = useState<TicketStatus>(
-    statusFilter ?? TICKET_STATUS_ORDER[0]!,
+    visibleStatuses[0] ?? TICKET_STATUS_ORDER[0]!,
   );
-  const [previousStatusFilter, setPreviousStatusFilter] =
-    useState(statusFilter);
-  if (statusFilter !== previousStatusFilter) {
-    setPreviousStatusFilter(statusFilter);
-    if (statusFilter !== null) setMobileStatus(statusFilter);
+  // Snap the mobile pager back into the visible set when the filter narrows.
+  const visibleKey = visibleStatuses.join(",");
+  const [previousVisibleKey, setPreviousVisibleKey] = useState(visibleKey);
+  if (visibleKey !== previousVisibleKey) {
+    setPreviousVisibleKey(visibleKey);
+    if (!visibleStatuses.includes(mobileStatus)) {
+      setMobileStatus(visibleStatuses[0] ?? TICKET_STATUS_ORDER[0]!);
+    }
   }
   const timersRef = useRef<number[]>([]);
   const cancelFocusFrameRef = useRef<number | null>(null);
@@ -192,7 +211,8 @@ export default function TicketBoard({
 
   const commitMove = (ticket: TicketListItem, status: TicketStatus): void => {
     if (ticket.status === status) return;
-    setMobileStatus(status);
+    // A move into a filtered-out status leaves the board; don't page to it.
+    if (visibleStatuses.includes(status)) setMobileStatus(status);
     flash(setLandedId, ticket.id, 950);
     const focusTarget = {
       ticketId: ticket.id,
@@ -207,7 +227,8 @@ export default function TicketBoard({
         fields: { status },
       })
       .catch(() => {
-        setMobileStatus(ticket.status);
+        if (visibleStatuses.includes(ticket.status))
+          setMobileStatus(ticket.status);
         pendingFocusRef.current = {
           ...focusTarget,
           status: ticket.status,
@@ -304,7 +325,7 @@ export default function TicketBoard({
       onDragCancel={handleDragCancel}
     >
       <div className="hidden gap-[6px] overflow-x-auto border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm max-768:flex">
-        {TICKET_STATUS_ORDER.map((status) => {
+        {visibleStatuses.map((status) => {
           const visual = TICKET_STATUS_VISUALS[status];
           const active = status === mobileStatus;
           return (
@@ -334,30 +355,44 @@ export default function TicketBoard({
         })}
       </div>
 
-      <div className="grid grid-cols-[repeat(5,minmax(0,1fr))] items-start gap-md px-xl pt-md pb-lg max-768:grid-cols-1 max-768:px-md">
-        {TICKET_STATUS_ORDER.map((status) => (
-          <BoardColumn
-            key={status}
-            status={status}
-            items={groups[status]}
-            activeTicket={activeTicket}
-            hiddenOnMobile={status !== mobileStatus}
-          >
-            {groups[status].map((item) => (
-              <DraggableTicketCard
-                key={item.id}
-                item={item}
-                entered={motionById.get(item.id)?.entered ?? false}
-                exiting={motionById.get(item.id)?.exiting ?? false}
-                landed={item.id === landedId}
-                failed={item.id === failedId}
-                onMoveTo={(next) => commitMove(item, next)}
-                onCopyReference={() => void copyTicketReference(item)}
-                onDelete={() => setPendingDelete(item)}
-              />
+      <div className="flex items-start gap-md px-xl pt-md pb-lg max-768:px-md">
+        <div
+          className={cn(
+            "grid min-w-0 flex-1 items-start gap-md max-768:grid-cols-1",
+            BOARD_GRID_COLS[visibleStatuses.length] ?? BOARD_GRID_COLS[5],
+          )}
+        >
+          {visibleStatuses.map((status) => (
+            <BoardColumn
+              key={status}
+              status={status}
+              items={groups[status]}
+              activeTicket={activeTicket}
+              hiddenOnMobile={status !== mobileStatus}
+            >
+              {groups[status].map((item) => (
+                <DraggableTicketCard
+                  key={item.id}
+                  item={item}
+                  entered={motionById.get(item.id)?.entered ?? false}
+                  exiting={motionById.get(item.id)?.exiting ?? false}
+                  landed={item.id === landedId}
+                  failed={item.id === failedId}
+                  onMoveTo={(next) => commitMove(item, next)}
+                  onCopyReference={() => void copyTicketReference(item)}
+                  onDelete={() => setPendingDelete(item)}
+                />
+              ))}
+            </BoardColumn>
+          ))}
+        </div>
+        {activeTicket !== null && hiddenStatuses.length > 0 && (
+          <div className="flex w-[150px] shrink-0 flex-col gap-md max-768:hidden">
+            {hiddenStatuses.map((status) => (
+              <HiddenStatusDropStrip key={status} status={status} />
             ))}
-          </BoardColumn>
-        ))}
+          </div>
+        )}
       </div>
 
       <DragOverlay>
@@ -480,6 +515,49 @@ function BoardColumn({
           No tickets — drop a card or use “Move to”
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Drop target for a status the filter hides. Appears only while a drag is
+ * active, so "drag to Done" keeps working when Done's column is filtered out —
+ * the card leaves the board on landing (it no longer matches the filter).
+ */
+function HiddenStatusDropStrip({
+  status,
+}: {
+  status: TicketStatus;
+}): React.JSX.Element {
+  const { isOver, setNodeRef } = useDroppable({ id: status });
+  const visual = TICKET_STATUS_VISUALS[status];
+  return (
+    <div
+      ref={setNodeRef}
+      role="group"
+      aria-label={`${visual.label} column`}
+      className={cn(
+        "flex min-h-[110px] flex-col items-center justify-center gap-[7px] rounded-md border border-dashed p-sm text-center transition-[border-color,background] duration-150 ease-[ease] motion-reduce:transition-none",
+        isOver
+          ? "border-cyan-dim bg-[var(--cc-cyan-a04)] shadow-[0_0_0_1px_var(--color-cyan-glow),inset_0_0_24px_var(--color-cyan-glow)]"
+          : "border-border-default bg-bg-base",
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn("h-[7px] w-[7px] shrink-0 rounded-full", visual.dot)}
+      />
+      <span
+        className={cn(
+          "font-mono text-[0.68rem] font-semibold tracking-[0.07em] uppercase",
+          visual.text,
+        )}
+      >
+        {visual.label}
+      </span>
+      <span className="font-mono text-[0.62rem] leading-[1.4] text-text-tertiary">
+        Hidden by filter — drop to move
+      </span>
     </div>
   );
 }

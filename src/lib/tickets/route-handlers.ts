@@ -196,9 +196,14 @@ function rawListQuery(
   projectName: string | undefined,
 ): Record<string, unknown> {
   const params = new URL(request.url).searchParams;
+  // `status` is a comma-separated set; each token is validated by the schema.
+  const status = paramOrUndefined(params, "status");
   return {
     projectName,
-    status: paramOrUndefined(params, "status"),
+    statuses:
+      status === undefined
+        ? undefined
+        : status.split(",").filter((token) => token.length > 0),
     workType: paramOrUndefined(params, "workType"),
     sort: paramOrUndefined(params, "sort"),
   };

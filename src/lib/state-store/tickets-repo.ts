@@ -1018,9 +1018,12 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
         conditions.push("t.project_path = @project_path");
         bind.project_path = query.projectPath;
       }
-      if (query.status !== undefined) {
-        conditions.push("t.status = @status");
-        bind.status = query.status;
+      if (query.statuses !== undefined) {
+        const placeholders = query.statuses.map((status, index) => {
+          bind[`status_${index}`] = status;
+          return `@status_${index}`;
+        });
+        conditions.push(`t.status IN (${placeholders.join(", ")})`);
       }
       if (query.workType !== undefined) {
         conditions.push("t.work_type = @work_type");

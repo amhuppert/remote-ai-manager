@@ -20,23 +20,60 @@ import {
   type TicketDetail,
   type TicketListItem,
   type TicketListSort,
+  type TicketStatus,
 } from "./schemas";
 
 // Fully explicit (nulls, never absent keys) so query keys hash stably and the
-// SSE reducer can recover typed filters from any cached list key.
+// SSE reducer can recover typed filters from any cached list key. The status
+// filter is a SET (null = every status); normalization dedupes and orders it
+// canonically so equivalent sets hash to the same query key.
 export const ticketListFiltersSchema = z
   .object({
     projectName: z.string().min(1).nullable(),
-    status: ticketStatusSchema.nullable(),
+    statuses: z.array(ticketStatusSchema).min(1).nullable(),
     workType: ticketWorkTypeSchema.nullable(),
     sort: ticketListSortSchema,
   })
   .strict();
 export type TicketListFilters = z.infer<typeof ticketListFiltersSchema>;
 
+/**
+ * The default status set for the tickets page: everything still open. Done and
+ * closed tickets accumulate forever, so they are opt-in via the status filter.
+ */
+export const DEFAULT_TICKET_STATUSES: readonly TicketStatus[] = [
+  "not_started",
+  "in_progress",
+  "blocked",
+];
+
+const CANONICAL_STATUS_ORDER: readonly TicketStatus[] =
+  ticketStatusSchema.options;
+
+export function normalizeTicketStatusSet(
+  statuses: readonly TicketStatus[] | null | undefined,
+): TicketStatus[] | null {
+  if (statuses === null || statuses === undefined) return null;
+  const set = new Set(statuses);
+  if (set.size === 0) return null;
+  return CANONICAL_STATUS_ORDER.filter((status) => set.has(status));
+}
+
+export function isDefaultTicketStatusSet(
+  statuses: readonly TicketStatus[] | null,
+): boolean {
+  if (statuses === null) return false;
+  const normalized = normalizeTicketStatusSet(statuses);
+  return (
+    normalized !== null &&
+    normalized.length === DEFAULT_TICKET_STATUSES.length &&
+    DEFAULT_TICKET_STATUSES.every((status) => normalized.includes(status))
+  );
+}
+
 export interface TicketListFilterInput {
   projectName?: string;
-  status?: TicketListFilters["status"];
+  statuses?: readonly TicketStatus[];
   workType?: TicketListFilters["workType"];
   sort?: TicketListSort;
 }
@@ -46,7 +83,7 @@ export function normalizeTicketListFilters(
 ): TicketListFilters {
   return {
     projectName: input.projectName ?? null,
-    status: input.status ?? null,
+    statuses: normalizeTicketStatusSet(input.statuses),
     workType: input.workType ?? null,
     sort: input.sort ?? "updated",
   };
@@ -58,7 +95,8 @@ export function matchesTicketListFilters(
 ): boolean {
   if (filters.projectName !== null && item.projectName !== filters.projectName)
     return false;
-  if (filters.status !== null && item.status !== filters.status) return false;
+  if (filters.statuses !== null && !filters.statuses.includes(item.status))
+    return false;
   if (filters.workType !== null && item.workType !== filters.workType)
     return false;
   return true;
@@ -113,7 +151,8 @@ export function ticketListSearchParams(
 ): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.projectName !== null) params.set("project", filters.projectName);
-  if (filters.status !== null) params.set("status", filters.status);
+  if (filters.statuses !== null)
+    params.set("status", filters.statuses.join(","));
   if (filters.workType !== null) params.set("workType", filters.workType);
   params.set("sort", filters.sort);
   return params;

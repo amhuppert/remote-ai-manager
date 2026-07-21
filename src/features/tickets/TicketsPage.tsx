@@ -14,30 +14,50 @@ import {
   EmptyStateDesc,
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { TicketListFilters } from "@/lib/tickets/list-filters";
 import { useTicketListQuery } from "@/lib/tickets/queries";
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import {
   parseTicketsPageState,
   ticketsPageHref,
+  type TicketListSortState,
+  type TicketsPageState,
   type TicketsView,
 } from "@/lib/tickets/ticket-url-state";
 import { useQuickTicketStore } from "@/stores/quick-ticket.store";
+import { cn } from "@/lib/ui/cn";
+import { ticketIdentifier } from "./ticket-reference";
 import TicketBoard from "./components/TicketBoard";
-import TicketFilters, { ticketFiltersActive } from "./components/TicketFilters";
+import TicketFilters, {
+  defaultTicketFilters,
+  ticketFiltersActive,
+} from "./components/TicketFilters";
 import TicketList from "./components/TicketList";
+import TicketSplitPane from "./components/TicketSplitPane";
 
-export default function TicketsPage(): React.JSX.Element {
+export interface TicketsPageProps {
+  defaultAgentBackend: AgentBackendId;
+  backendDefaults: BackendSelectionDefaultsById;
+}
+
+export default function TicketsPage(
+  props: TicketsPageProps,
+): React.JSX.Element {
   // useSearchParams() forces a CSR bailout during prerender; Next.js requires
-  // a Suspense boundary above it for the /tickets static shell to build.
+  // a Suspense boundary above it for the /tickets shell to build.
   return (
     <Suspense>
-      <TicketsPageInner />
+      <TicketsPageInner {...props} />
     </Suspense>
   );
 }
 
-function TicketsPageInner(): React.JSX.Element {
+function TicketsPageInner({
+  defaultAgentBackend,
+  backendDefaults,
+}: TicketsPageProps): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const state = useMemo(
@@ -47,13 +67,13 @@ function TicketsPageInner(): React.JSX.Element {
       ),
     [searchParams],
   );
-  const { view, filters } = state;
+  const { view, filters, listSort, selected } = state;
   const filtersAreActive = ticketFiltersActive(filters);
   const openQuickTicket = useQuickTicketStore((store) => store.openQuickTicket);
 
   const listQuery = useTicketListQuery({
     projectName: filters.projectName ?? undefined,
-    status: filters.status ?? undefined,
+    statuses: filters.statuses ?? undefined,
     workType: filters.workType ?? undefined,
     sort: filters.sort,
   });
@@ -72,31 +92,62 @@ function TicketsPageInner(): React.JSX.Element {
     [allItems, filters.projectName],
   );
 
+  const navigate = useCallback(
+    (next: TicketsPageState, mode: "push" | "replace") => {
+      router[mode](ticketsPageHref(next), { scroll: false });
+    },
+    [router],
+  );
+
   const handleFiltersChange = useCallback(
     (next: TicketListFilters) => {
-      router.replace(ticketsPageHref({ view, filters: next }), {
-        scroll: false,
-      });
+      navigate({ ...state, filters: next }, "replace");
     },
-    [router, view],
+    [navigate, state],
   );
 
   const handleViewChange = useCallback(
     (nextView: TicketsView) => {
-      router.push(ticketsPageHref({ view: nextView, filters }), {
-        scroll: false,
-      });
+      navigate({ ...state, view: nextView }, "push");
     },
-    [router, filters],
+    [navigate, state],
+  );
+
+  const handleSortChange = useCallback(
+    (next: TicketListSortState) => {
+      navigate({ ...state, listSort: next }, "replace");
+    },
+    [navigate, state],
+  );
+
+  const handleSelect = useCallback(
+    (item: TicketListItem) => {
+      navigate(
+        {
+          ...state,
+          selected: { projectName: item.projectName, number: item.number },
+        },
+        "push",
+      );
+    },
+    [navigate, state],
+  );
+
+  const handleCloseDetail = useCallback(() => {
+    navigate({ ...state, selected: null }, "push");
+  }, [navigate, state]);
+
+  const selectHrefFor = useCallback(
+    (item: TicketListItem) =>
+      ticketsPageHref({
+        ...state,
+        selected: { projectName: item.projectName, number: item.number },
+      }),
+    [state],
   );
 
   const clearFilters = useCallback(() => {
-    handleFiltersChange({
-      ...filters,
-      projectName: null,
-      status: null,
-      workType: null,
-    });
+    handleFiltersChange(defaultTicketFilters(filters));
   }, [handleFiltersChange, filters]);
 
   const handleNewTicket = useCallback(() => {
@@ -105,6 +156,8 @@ function TicketsPageInner(): React.JSX.Element {
       searchParams: new URLSearchParams(searchParams.toString()),
     });
   }, [openQuickTicket, searchParams]);
+
+  const splitOpen = view === "list" && selected !== null;
 
   return (
     <div className="app" data-page="tickets">
@@ -160,8 +213,8 @@ function TicketsPageInner(): React.JSX.Element {
               value={view}
               onValueChange={(value) => handleViewChange(value as TicketsView)}
             >
-              <SegmentedControlItem value="list">List</SegmentedControlItem>
               <SegmentedControlItem value="board">Board</SegmentedControlItem>
+              <SegmentedControlItem value="list">List</SegmentedControlItem>
             </SegmentedControl>
           </div>
         </div>
@@ -220,20 +273,48 @@ function TicketsPageInner(): React.JSX.Element {
             </EmptyState>
           </div>
         ) : view === "board" ? (
-          <TicketBoard items={items} statusFilter={filters.status} />
+          <TicketBoard items={items} statuses={filters.statuses} />
         ) : (
-          <>
-            <TicketList
-              items={items}
-              hasAnyTickets={
-                totalsQuery.isSuccess ? allItems.length > 0 : filtersAreActive
-              }
-              onClearFilters={clearFilters}
-            />
-            <div className="px-xl py-[10px] font-mono text-[0.68rem] text-text-tertiary">
-              Live via SSE — rows appear, move and vanish without refresh
+          <div
+            className={cn(
+              splitOpen &&
+                "grid grid-cols-[minmax(300px,400px)_minmax(0,1fr)] items-start max-768:block",
+            )}
+          >
+            <div
+              className={cn(
+                splitOpen &&
+                  "min-w-0 border-0 border-r border-solid border-border-dim max-768:hidden",
+              )}
+            >
+              <TicketList
+                items={items}
+                hasAnyTickets={
+                  totalsQuery.isSuccess ? allItems.length > 0 : filtersAreActive
+                }
+                statusesNarrowed={filters.statuses !== null}
+                sort={listSort}
+                onSortChange={handleSortChange}
+                selected={splitOpen ? selected : null}
+                selectHrefFor={selectHrefFor}
+                onSelect={handleSelect}
+                condensed={splitOpen}
+                onClearFilters={clearFilters}
+              />
+              <div className="px-xl py-[10px] font-mono text-[0.68rem] text-text-tertiary">
+                Live via SSE — rows appear, move and vanish without refresh
+              </div>
             </div>
-          </>
+            {splitOpen && (
+              <TicketSplitPane
+                key={ticketIdentifier(selected)}
+                selection={selected}
+                onClose={handleCloseDetail}
+                defaultAgentBackend={defaultAgentBackend}
+                backendDefaults={backendDefaults}
+              />
+            )}
+          </div>
         )}
       </main>
     </div>

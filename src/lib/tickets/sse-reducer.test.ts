@@ -279,7 +279,9 @@ describe("reduceTicketListForEvent — pinned cases", () => {
   });
 
   it("evicts the identity from caches whose filters no longer match", () => {
-    const inProgress = normalizeTicketListFilters({ status: "in_progress" });
+    const inProgress = normalizeTicketListFilters({
+      statuses: ["in_progress"],
+    });
     const a = {
       ...genItem(mulberry32(4), { projectName: "alpha", number: 1 }),
       status: "in_progress" as const,
@@ -316,7 +318,7 @@ describe("reduceTicketListForEvent — pinned cases", () => {
 describe("applyTicketChangedEvent", () => {
   const allKey = ticketKeys.list(normalizeTicketListFilters({}));
   const doneKey = ticketKeys.list(
-    normalizeTicketListFilters({ status: "done" }),
+    normalizeTicketListFilters({ statuses: ["done"] }),
   );
 
   function seededClient() {
@@ -496,10 +498,10 @@ describe("applyTicketChangedEvent", () => {
 describe("applyTicketChangedEvent — pending optimistic overlays", () => {
   const allKey = ticketKeys.list(normalizeTicketListFilters({}));
   const doneKey = ticketKeys.list(
-    normalizeTicketListFilters({ status: "done" }),
+    normalizeTicketListFilters({ statuses: ["done"] }),
   );
   const notStartedKey = ticketKeys.list(
-    normalizeTicketListFilters({ status: "not_started" }),
+    normalizeTicketListFilters({ statuses: ["not_started"] }),
   );
 
   /** Caches as they look right after an optimistic not_started → done move. */
