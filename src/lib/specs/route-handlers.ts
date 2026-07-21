@@ -2441,9 +2441,12 @@ export function createSpecWriteRouteHandlers(
             }),
           );
         case "verify":
-          return invokeAction(request, emptyBodySchema, () =>
-            services.verify(specId),
-          );
+          // The report's own `ok` field collides with the Result-envelope
+          // convention in serviceResultResponse, so wrap it explicitly.
+          return invokeAction(request, emptyBodySchema, async () => ({
+            ok: true as const,
+            value: await services.verify(specId),
+          }));
         default:
           return notFound("Spec action not found");
       }

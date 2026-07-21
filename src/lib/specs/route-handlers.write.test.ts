@@ -615,6 +615,28 @@ describe("spec write route handlers", () => {
     expect(services.authoring.renameSpec).not.toHaveBeenCalled();
   });
 
+  it("preserves ok on a clean integrity report instead of stripping the result envelope", async () => {
+    const services = createServices();
+    vi.mocked(services.verify).mockResolvedValueOnce({
+      ok: true,
+      checkedRevisionIds: ["revision-1"],
+      mismatches: [],
+    });
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.specActionPOST(
+      postRequest({}),
+      routeContext("verify"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      checkedRevisionIds: ["revision-1"],
+      mismatches: [],
+    });
+  });
+
   it("returns integrity mismatches as a successful failed report", async () => {
     const services = createServices();
     const handlers = createSpecWriteRouteHandlers(createDeps(services));
