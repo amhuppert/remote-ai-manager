@@ -102,6 +102,14 @@ export default function SpecDetailViews({
   children: ReactNode;
 }): React.JSX.Element {
   const [view, setView] = useState<DetailView>(initialView);
+  // In-page links (gate policy, verify, lint findings) change the URL without
+  // remounting this component, so a changed URL-derived view must win over the
+  // locally tracked tab state.
+  const [syncedInitialView, setSyncedInitialView] = useState(initialView);
+  if (initialView !== syncedInitialView) {
+    setSyncedInitialView(initialView);
+    setView(initialView);
+  }
   const evidenceTarget = useMemo(
     () => selectEvidenceRevision(detail),
     [detail],

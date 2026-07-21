@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
@@ -801,6 +802,43 @@ describe("Spec Studio routes and inventory", () => {
       "href",
       "/specs/command-center/native-sdd",
     );
+  });
+
+  it("opens the controls view when the gate policy link navigates in place", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState({}, "", "/specs/command-center/native-sdd");
+    api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
+    api.json("POST", "/api/specs/command-center/native-sdd/actions/verify", {
+      ok: true,
+      checkedRevisionIds: [detailRevision.id],
+      mismatches: [],
+    });
+
+    const queryClient = createTestQueryClient();
+    const detailView = renderWithQuery(<SpecDetailPage />, queryClient);
+
+    expect(
+      await screen.findByRole("link", { name: "Gate policy" }),
+    ).toBeInTheDocument();
+
+    // A next/link click to ?view=controls#gate-policy keeps the page mounted:
+    // only the URL (and therefore useSearchParams) changes.
+    act(() => {
+      window.history.pushState(
+        {},
+        "",
+        "/specs/command-center/native-sdd?view=controls#gate-policy",
+      );
+    });
+    detailView.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SpecDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Gate policy" }),
+    ).toBeInTheDocument();
   });
 
   it("renders criterion evidence and live lint from their direct detail routes", async () => {
