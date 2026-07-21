@@ -449,6 +449,8 @@
      darker than --bg-void #06090f. */
   --cc-graph-node-grad-top: #151e30; /* .graph-node gradient start */
   --cc-graph-node-grad-bottom: #0a0f1a; /* .graph-node gradient end (also .react-flow__handle, preserved) */
+  --cc-trace-node-grad-top: rgba(17, 24, 37, 0.92);
+  --cc-trace-node-grad-bottom: rgba(11, 16, 25, 0.92);
   --cc-graph-ink-a40: rgba(
     4,
     8,

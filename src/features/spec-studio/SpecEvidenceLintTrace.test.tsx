@@ -1,34 +1,12 @@
 // @vitest-environment jsdom
-import type { ComponentType, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({
   default: ({ children, href }: { children: ReactNode; href: string }) => (
     <a href={href}>{children}</a>
-  ),
-}));
-
-vi.mock("@xyflow/react", () => ({
-  Background: () => null,
-  Controls: () => null,
-  Handle: () => null,
-  MarkerType: { ArrowClosed: "arrowclosed" },
-  Position: { Left: "left", Right: "right" },
-  ReactFlow: ({
-    nodes,
-    nodeTypes,
-  }: {
-    nodes: Array<{ id: string; type?: string; data: unknown }>;
-    nodeTypes: Record<string, ComponentType<{ data: unknown }>>;
-  }) => (
-    <div data-testid="traceability-canvas">
-      {nodes.map((node) => {
-        const NodeComponent = nodeTypes[node.type ?? "default"];
-        if (NodeComponent === undefined) return null;
-        return <NodeComponent key={node.id} data={node.data} />;
-      })}
-    </div>
   ),
 }));
 
@@ -104,16 +82,123 @@ function proofViews(): CriterionProofView[] {
       isPending: false,
       error: null,
     },
+    {
+      elementId: "criterion-3",
+      handle: "R2.1",
+      text: "Pending evidence remains visible while it loads.",
+      validationStrategy: { kinds: ["test_run"] },
+      evidence: [],
+      verdicts: [],
+      waiver: null,
+      isPending: true,
+      error: null,
+    },
+    {
+      elementId: "criterion-4",
+      handle: "R2.2",
+      text: "Stale proof is distinguished from current proof.",
+      validationStrategy: { kinds: ["screenshot"] },
+      evidence: [],
+      verdicts: [
+        {
+          id: "verdict-stale",
+          spec_id: "spec-1",
+          criterion_element_id: "criterion-4",
+          revision_id: "revision-1",
+          execution_id: "execution-1",
+          verdict_kind: "human",
+          evidence_ids_json: JSON.stringify([]),
+          verdict_at: NOW,
+          stale_at: NOW,
+          stale_reason: "The approved revision changed.",
+        },
+      ],
+      waiver: null,
+      isPending: false,
+      error: null,
+    },
+    {
+      elementId: "criterion-5",
+      handle: "R2.3",
+      text: "A waiver is shown separately from proof.",
+      validationStrategy: { kinds: ["human_signoff"] },
+      evidence: [],
+      verdicts: [],
+      waiver: {
+        id: "waiver-1",
+        spec_id: "spec-1",
+        criterion_element_id: "criterion-5",
+        revision_id: "revision-1",
+        reason: "The hardware fixture is unavailable.",
+        waived_at: NOW,
+        stale: 0,
+      },
+      isPending: false,
+      error: null,
+    },
+    {
+      elementId: "criterion-6",
+      handle: "R3.1",
+      text: "Deferred scope remains auditable.",
+      validationStrategy: { kinds: ["test_run"] },
+      evidence: [],
+      verdicts: [],
+      waiver: null,
+      isPending: false,
+      error: null,
+    },
+    {
+      elementId: "criterion-7",
+      handle: "R3.2",
+      text: "Delivery by another execution remains auditable.",
+      validationStrategy: { kinds: ["validator_verdict"] },
+      evidence: [],
+      verdicts: [],
+      waiver: null,
+      isPending: false,
+      error: null,
+    },
   ];
 }
 
+const criterionDispositions = [
+  {
+    execution_id: "execution-1",
+    criterion_element_id: "criterion-5",
+    disposition: "waived" as const,
+    waiver_id: "waiver-1",
+    delivered_by_execution_id: null,
+    created_at: NOW,
+    updated_at: NOW,
+  },
+  {
+    execution_id: "execution-1",
+    criterion_element_id: "criterion-6",
+    disposition: "deferred" as const,
+    waiver_id: null,
+    delivered_by_execution_id: null,
+    created_at: NOW,
+    updated_at: NOW,
+  },
+  {
+    execution_id: "execution-1",
+    criterion_element_id: "criterion-7",
+    disposition: "delivered_elsewhere" as const,
+    waiver_id: null,
+    delivered_by_execution_id: "execution-previous",
+    created_at: NOW,
+    updated_at: NOW,
+  },
+];
+
 describe("SpecEvidencePanel", () => {
   it("renders proof state per criterion and an explicit nothing-proves-it state", () => {
-    render(<SpecEvidencePanel criteria={proofViews()} />);
+    render(<SpecEvidencePanel criteria={proofViews()} initialFilter="all" />);
 
     const proven = screen.getByRole("article", { name: "R1.1 proof" });
     expect(within(proven).getByText("Proven")).toBeTruthy();
-    expect(within(proven).getAllByText("Test run")).toHaveLength(2);
+    expect(within(proven).getByText("Test run")).toBeTruthy();
+    expect(within(proven).getByText(/Test run · evidence-1/)).toBeTruthy();
     expect(within(proven).getByText("Run the alias test.")).toBeTruthy();
     expect(within(proven).getByText("Deterministic validator")).toBeTruthy();
 
@@ -122,6 +207,107 @@ describe("SpecEvidencePanel", () => {
       within(pending).getByText("Nothing proves this criterion yet."),
     ).toBeTruthy();
     expect(within(pending).getByText("Screenshot")).toBeTruthy();
+  });
+
+  it("summarizes in-scope readiness and groups compact criterion states by requirement", () => {
+    render(
+      <SpecEvidencePanel
+        criteria={proofViews()}
+        dispositions={criterionDispositions}
+        initialFilter="all"
+      />,
+    );
+
+    const readiness = screen.getByRole("region", {
+      name: "Evidence readiness",
+    });
+    expect(within(readiness).getByText("1 / 4 in-scope proven")).toBeVisible();
+    expect(
+      within(readiness).getByText("3 in-scope criteria still need proof."),
+    ).toBeVisible();
+    expect(within(readiness).getByRole("progressbar")).toHaveClass(
+      "h-[4px]",
+      "bg-bg-base",
+    );
+
+    const requirementOne = screen.getByRole("region", {
+      name: "Requirement R1 evidence",
+    });
+    expect(within(requirementOne).getByText("R1.1")).toBeVisible();
+    expect(within(requirementOne).getByText("R1.2")).toBeVisible();
+
+    expect(
+      within(screen.getByRole("article", { name: "R2.1 proof" })).getByText(
+        "Pending",
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("article", { name: "R2.2 proof" })).getByText(
+        "Stale",
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("article", { name: "R2.3 proof" })).getByText(
+        "Waived — not proof",
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("article", { name: "R3.1 proof" })).getByText(
+        "Deferred",
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("article", { name: "R3.2 proof" })).getByText(
+        "Delivered elsewhere",
+      ),
+    ).toBeVisible();
+  });
+
+  it("filters proven criteria while retaining every unresolved or dispositioned state", async () => {
+    const user = userEvent.setup();
+    render(
+      <SpecEvidencePanel
+        criteria={proofViews()}
+        dispositions={criterionDispositions}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: "Unproven" })).toBeChecked();
+
+    expect(
+      screen.queryByRole("article", { name: "R1.1 proof" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "R1.2 proof" })).toBeVisible();
+    expect(screen.getByRole("article", { name: "R2.3 proof" })).toBeVisible();
+    expect(screen.getByRole("article", { name: "R3.2 proof" })).toBeVisible();
+
+    await user.click(screen.getByRole("radio", { name: "All" }));
+    expect(screen.getByRole("article", { name: "R1.1 proof" })).toBeVisible();
+  });
+
+  it("matches the prototype's compact criterion-row composition and filter copy", () => {
+    render(
+      <SpecEvidencePanel
+        criteria={proofViews()}
+        dispositions={criterionDispositions}
+        initialFilter="all"
+      />,
+    );
+
+    const filters = screen.getByRole("radiogroup", {
+      name: "Evidence filter",
+    });
+    expect(
+      within(filters)
+        .getAllByRole("radio")
+        .map((control) => control.textContent),
+    ).toEqual(["All criteria", "Unproven only"]);
+
+    const row = screen.getByRole("article", { name: "R1.1 proof" });
+    expect(row).toHaveClass("px-md", "py-sm");
+    expect(row).not.toHaveClass("gap-sm", "p-md", "rounded-lg");
+    expect(within(row).getByText("Proven")).toBeVisible();
+    expect(within(row).getByText(/Test run · evidence-1/)).toBeVisible();
   });
 });
 
@@ -175,6 +361,7 @@ describe("TraceabilityGraph", () => {
         handle: "R1",
         label: "References remain stable",
         criterionElementIds: ["criterion-1"],
+        approval: "stale",
       },
     ],
     decisions: [
@@ -193,6 +380,8 @@ describe("TraceabilityGraph", () => {
         tracedRequirementElementIds: ["requirement-1"],
         tracedDecisionElementIds: ["decision-1"],
         coveredCriterionElementIds: ["criterion-1"],
+        isNewInRevision: true,
+        revisionNumber: 4,
       },
     ],
     executions: [
@@ -226,21 +415,23 @@ describe("TraceabilityGraph", () => {
     ],
   };
 
-  it("renders the durable requirement-to-decision-to-task traceability chain", () => {
+  it("projects traceability into the prototype's requirement-to-criteria-to-task columns", () => {
     const graph = buildTraceabilityGraph(input);
     const edges = graph.edges.map(({ source, target }) => [source, target]);
 
     expect(edges).toEqual(
       expect.arrayContaining([
-        ["requirement:requirement-1", "decision:decision-1"],
-        ["decision:decision-1", "task:task-1"],
-        ["task:task-1", "execution:execution-1"],
-        ["execution:execution-1", "evidence:evidence-1"],
+        ["requirement:requirement-1", "criterion:criterion-1"],
+        ["criterion:criterion-1", "task:task-1"],
       ]),
     );
+    expect(graph.nodes.map((node) => node.data.kind)).not.toEqual(
+      expect.arrayContaining(["decision", "execution", "evidence"]),
+    );
+    expect(graph.width).toBe(762);
   });
 
-  it("renders active executions before they have evidence", () => {
+  it("keeps execution and evidence records out of the fixed plan graph", () => {
     const graph = buildTraceabilityGraph({
       ...input,
       criteria: input.criteria.map((criterion) => ({
@@ -250,15 +441,70 @@ describe("TraceabilityGraph", () => {
       })),
     });
 
-    expect(graph.nodes.map((node) => node.id)).toContain(
+    expect(graph.nodes.map((node) => node.id)).not.toContain(
       "execution:execution-1",
     );
-    expect(
-      graph.edges.map(({ source, target }) => [source, target]),
-    ).toContainEqual(["task:task-1", "execution:execution-1"]);
+    expect(graph.nodes.some((node) => node.id.startsWith("evidence:"))).toBe(
+      false,
+    );
   });
 
-  it("surfaces lint whose element is absent from the selected revision", () => {
+  it("uses actual node heights when spacing criteria and tasks", () => {
+    const criteria = proofViews().slice(0, 2);
+    const graph = buildTraceabilityGraph({
+      ...input,
+      requirements: [
+        {
+          ...input.requirements[0]!,
+          criterionElementIds: criteria.map((criterion) => criterion.elementId),
+        },
+      ],
+      criteria,
+      tasks: [
+        {
+          ...input.tasks[0]!,
+          coveredCriterionElementIds: criteria.map(
+            (criterion) => criterion.elementId,
+          ),
+        },
+        {
+          ...input.tasks[0]!,
+          elementId: "task-2",
+          handle: "T2",
+          label: "Implement a second trace path with a longer status line",
+          coveredCriterionElementIds: [criteria[1]!.elementId],
+        },
+      ],
+      findings: [
+        {
+          ruleId: "9.3.uncovered-criterion",
+          severity: "blocks_propose",
+          elementHandle: criteria[0]!.handle,
+          message: "The first criterion has a visible layout status.",
+        },
+      ],
+    });
+    const firstCriterion = graph.nodes.find(
+      (node) => node.id === `criterion:${criteria[0]!.elementId}`,
+    );
+    const secondCriterion = graph.nodes.find(
+      (node) => node.id === `criterion:${criteria[1]!.elementId}`,
+    );
+    const tasks = graph.nodes
+      .filter((node) => node.data.kind === "task")
+      .sort((left, right) => left.position.y - right.position.y);
+
+    expect(firstCriterion).toBeDefined();
+    expect(secondCriterion).toBeDefined();
+    expect(secondCriterion!.position.y).toBeGreaterThanOrEqual(
+      firstCriterion!.position.y + firstCriterion!.height + 10,
+    );
+    expect(tasks[1]!.position.y).toBeGreaterThanOrEqual(
+      tasks[0]!.position.y + tasks[0]!.height + 8,
+    );
+  });
+
+  it("keeps lint for absent elements out of the three-column plan graph", () => {
     render(
       <TraceabilityGraph
         input={{
@@ -277,20 +523,129 @@ describe("TraceabilityGraph", () => {
     );
 
     expect(
-      screen.getByRole("link", { name: /T1 depends on removed task T99/ }),
-    ).toHaveAttribute("href", "/specs/command-center/native-sdd?el=T99");
+      screen.queryByRole("link", { name: /T1 depends on removed task T99/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("T1 depends on removed task T99."),
+    ).not.toBeInTheDocument();
   });
 
-  it("surfaces lint on graph nodes and links nodes back to Studio elements", () => {
+  it("surfaces lint on graph nodes and links nodes back to Studio elements", async () => {
+    const user = userEvent.setup();
     render(<TraceabilityGraph input={input} />);
 
-    expect(screen.getByText("R1 needs coverage.")).toBeTruthy();
+    expect(screen.getAllByText("R1 needs coverage.")).toHaveLength(1);
+    expect(
+      screen.getByText("Select a node to inspect its chain."),
+    ).toBeVisible();
+
+    await user.click(
+      screen.getByRole("button", { name: "Select requirement R1" }),
+    );
+    expect(screen.getAllByText("R1 needs coverage.")).toHaveLength(2);
     expect(screen.getByRole("link", { name: /^R1 ·/ })).toHaveAttribute(
       "href",
       "/specs/command-center/native-sdd?el=R1",
     );
     expect(
-      screen.getByRole("link", { name: /Evidence evidence-1/ }),
-    ).toHaveAttribute("href", "/specs/command-center/native-sdd?el=R1.1");
+      screen.queryByRole("article", { name: /Evidence/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("selects a trace chain, exposes an inspector deep link, and provides non-graph navigation", async () => {
+    const user = userEvent.setup();
+    render(<TraceabilityGraph input={input} />);
+
+    await user.click(screen.getByRole("button", { name: "Select task T1" }));
+
+    const selectedTask = screen.getByRole("article", { name: "Task T1" });
+    expect(selectedTask).toHaveAttribute("data-trace-state", "selected");
+    expect(
+      screen.getByRole("article", { name: "Requirement R1" }),
+    ).toHaveAttribute("data-trace-state", "chain");
+
+    const inspector = screen.getByRole("group", {
+      name: "Trace inspector",
+    });
+    expect(within(inspector).getByText("Implement alias lookup")).toBeVisible();
+    expect(
+      within(inspector).getByRole("link", { name: "Open T1" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?el=T1");
+
+    const index = screen.getByRole("navigation", {
+      name: "Traceability elements",
+    });
+    await user.click(
+      within(index).getByRole("button", {
+        name: "Select R1 from trace index",
+      }),
+    );
+    expect(
+      within(inspector).getByText("References remain stable"),
+    ).toBeVisible();
+  });
+
+  it("renders the prototype focus strip, column labels, and verdict legend without generic graph chrome", () => {
+    render(<TraceabilityGraph input={input} />);
+
+    const focus = screen.getByRole("group", { name: "Trace focus" });
+    expect(within(focus).getByRole("button", { name: "All" })).toBeVisible();
+    expect(within(focus).getByRole("button", { name: "R1" })).toBeVisible();
+
+    expect(screen.getByText("Tasks — plan")).toBeVisible();
+    expect(screen.queryByText("Execution")).not.toBeInTheDocument();
+    expect(screen.queryByText("Evidence · verdict")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "glyphs: ✓ approved · ○ pending · ↻ stale — click a node to inspect it",
+      ),
+    ).toBeVisible();
+
+    expect(
+      screen.queryByTestId("react-flow-background"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("react-flow-controls")).not.toBeInTheDocument();
+  });
+
+  it("keeps headers, nodes, and edges in one non-transformable coordinate system", () => {
+    render(<TraceabilityGraph input={input} />);
+
+    const graph = screen.getByRole("region", { name: "Fixed trace graph" });
+    expect(graph).toHaveAttribute("data-viewport-behavior", "static");
+    expect(graph).toHaveClass("overflow-hidden");
+    expect(graph).not.toHaveAttribute("data-mobile-layout", "horizontal-pan");
+
+    const layout = screen.getByTestId("trace-static-layout");
+    expect(layout).toHaveStyle({ width: "762px" });
+    expect(within(layout).getByText("Requirement")).toHaveAttribute(
+      "data-column-x",
+      "16",
+    );
+    expect(within(layout).getByText("Criteria")).toHaveAttribute(
+      "data-column-x",
+      "252",
+    );
+    expect(within(layout).getByText("Tasks — plan")).toHaveAttribute(
+      "data-column-x",
+      "532",
+    );
+    expect(layout.querySelector(".react-flow__viewport")).toBeNull();
+  });
+
+  it("uses the prototype gradient node card, neutral handle, status accent, and approval glyph", () => {
+    render(<TraceabilityGraph input={input} />);
+
+    const requirement = screen.getByRole("article", {
+      name: "Requirement R1",
+    });
+    expect(requirement).toHaveClass(
+      "rounded-lg",
+      "bg-[linear-gradient(175deg,var(--cc-trace-node-grad-top),var(--cc-trace-node-grad-bottom))]",
+    );
+    expect(within(requirement).getByText("R1")).toHaveClass(
+      "text-text-secondary",
+    );
+    expect(within(requirement).getByText("↻")).toBeVisible();
+    expect(requirement.querySelector("[data-node-accent]")).toBeVisible();
   });
 });

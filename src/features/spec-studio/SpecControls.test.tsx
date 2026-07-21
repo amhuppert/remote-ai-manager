@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -17,13 +17,14 @@ import {
   RenameSpecDialog,
 } from "./SpecControls";
 import {
+  denseSpecControlsDetailFixture as denseExecutionFixture,
   policyAdmissionRowFixture,
   SPEC_CONTROLS_FIXTURE_NOW as NOW,
   specControlsDetailFixture as detailFixture,
 } from "./SpecControls.fixtures";
 
 describe("PolicyDialog", () => {
-  it("requires the exact hard confirmation before a preset switch", async () => {
+  it("shows policy controls directly and confirms a loosened preset", async () => {
     const onChangePolicy = vi.fn();
     const user = userEvent.setup();
     render(
@@ -35,18 +36,29 @@ describe("PolicyDialog", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Change policy" }));
-    await user.click(screen.getByRole("combobox", { name: "Preset" }));
-    await user.click(screen.getByRole("option", { name: /Exploratory/ }));
+    expect(
+      screen.getByRole("radiogroup", { name: "Gate policy preset" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Change policy" }),
+    ).not.toBeInTheDocument();
 
-    const apply = screen.getByRole("button", { name: "Apply policy" });
-    expect(apply).toBeDisabled();
-    await user.type(
-      screen.getByRole("textbox", { name: "Hard confirmation" }),
-      "APPLY PROSPECTIVELY",
+    await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
+
+    const confirmation = screen.getByRole("alertdialog", {
+      name: "Loosening a gate — human confirmation",
+    });
+    expect(
+      within(confirmation).getByText(/prospectively only/i),
+    ).toBeInTheDocument();
+    expect(
+      within(confirmation).queryByRole("textbox", {
+        name: "Hard confirmation",
+      }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(confirmation).getByRole("button", { name: "Confirm loosening" }),
     );
-    expect(apply).toBeEnabled();
-    await user.click(apply);
 
     expect(onChangePolicy).toHaveBeenCalledWith({
       proposedPolicy: { preset: "exploratory" },
@@ -54,7 +66,7 @@ describe("PolicyDialog", () => {
     });
   });
 
-  it("requires hard confirmation when an individual gate is loosened", async () => {
+  it("opens the human confirmation only after an individual gate is loosened", async () => {
     const onChangePolicy = vi.fn();
     const user = userEvent.setup();
     render(
@@ -66,15 +78,31 @@ describe("PolicyDialog", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Change policy" }));
+    const requirementsGate = screen.getByRole("radiogroup", {
+      name: "Requirements gate mode",
+    });
     await user.click(
-      screen.getByRole("combobox", { name: "Requirements gate" }),
+      within(requirementsGate).getByRole("radio", { name: "Notify" }),
     );
-    await user.click(screen.getByRole("option", { name: "Notify" }));
 
-    const apply = screen.getByRole("button", { name: "Apply policy" });
-    expect(apply).toBeDisabled();
-    expect(screen.getByText(/prospective executions/i)).toBeInTheDocument();
+    const confirmation = screen.getByRole("alertdialog", {
+      name: "Loosening a gate — human confirmation",
+    });
+    expect(
+      within(confirmation).getByText(/prospectively only/i),
+    ).toBeInTheDocument();
+    expect(onChangePolicy).not.toHaveBeenCalled();
+
+    await user.click(
+      within(confirmation).getByRole("button", { name: "Confirm loosening" }),
+    );
+    expect(onChangePolicy).toHaveBeenCalledWith({
+      proposedPolicy: {
+        preset: "contract-bearing",
+        overrides: { requirements: "notify" },
+      },
+      hardConfirmed: true,
+    });
   });
 });
 
@@ -140,6 +168,246 @@ describe("RenameSpecDialog", () => {
 });
 
 describe("ExecutionPanel", () => {
+  it("renders the prototype workflow header and validates explicit scope exclusions", async () => {
+    const detail = denseExecutionFixture("none");
+    const onStart = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={onStart}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+      />,
+    );
+
+    const surface = screen.getByRole("region", {
+      name: "Execution and merge",
+    });
+    expect(surface).toHaveClass("max-w-[1080px]");
+    expect(
+      within(surface).getByRole("heading", {
+        name: "Execution — inside the workflow surface",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(surface).getByRole("heading", {
+        name: "Start execution — scope selection",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(surface).getByText(/partial task selection is rejected/i),
+    ).toBeInTheDocument();
+
+    const validation = within(surface).getByTestId(
+      "execution-scope-validation",
+    );
+    expect(validation).toHaveTextContent(
+      "2 tasks selected · 2 criteria in scope · 0 exclusions",
+    );
+
+    const sessionName = within(surface).getByRole("textbox", {
+      name: "Session name",
+    });
+    expect(sessionName.parentElement).not.toHaveClass("mb-lg");
+    expect(sessionName.parentElement).toHaveClass("w-[220px]");
+    expect(sessionName.parentElement?.parentElement).toHaveClass(
+      "items-end",
+      "gap-md",
+    );
+
+    await user.click(within(surface).getByRole("checkbox", { name: /R1\.2/ }));
+    expect(
+      within(surface).getByRole("button", { name: "Start execution" }),
+    ).toBeDisabled();
+    const exclusion = within(surface).getByRole("radiogroup", {
+      name: "Exclusion disposition for R1.2",
+    });
+    await user.click(
+      within(exclusion).getByRole("radio", { name: "Deferred" }),
+    );
+    expect(
+      within(surface).getByRole("button", { name: "Start execution" }),
+    ).toBeEnabled();
+
+    await user.click(
+      within(surface).getByRole("button", { name: "Start execution" }),
+    );
+    expect(onStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: expect.objectContaining({
+          selectedCriterionIds: ["criterion-1"],
+          exclusionDispositions: [
+            { criterionId: "criterion-2", disposition: "deferred" },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("blocks a scope whose selected tasks are not dependency closed", async () => {
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={denseExecutionFixture("none")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: /T1 / }));
+    expect(screen.getByTestId("execution-scope-validation")).toHaveTextContent(
+      "T2 requires T1",
+    );
+    expect(
+      screen.getByRole("button", { name: "Start execution" }),
+    ).toBeDisabled();
+  });
+
+  it("presents definition review as a provenance-locked workflow approval", async () => {
+    const onApproveExecutionStart = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={denseExecutionFixture("definition_review")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={onApproveExecutionStart}
+        onCaptureScopeAmendment={vi.fn()}
+      />,
+    );
+
+    const banner = screen.getByTestId("definition-review-banner");
+    expect(banner).toHaveClass("before:from-amber");
+    expect(
+      within(banner).getByText("Definition awaiting approval"),
+    ).toBeVisible();
+    expect(
+      within(banner).getByRole("region", {
+        name: "Contract-derived — provenance-locked",
+      }),
+    ).toHaveTextContent("read-only · owned by native-sdd rev 1");
+    const settings = within(banner).getByRole("region", {
+      name: "Execution-only — editable",
+    });
+    expect(settings).toHaveTextContent("Isolation");
+    expect(settings).toHaveTextContent("Validation");
+    expect(settings).toHaveTextContent("Budgets");
+    expect(
+      within(banner).getByRole("link", { name: "Request changes" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd");
+
+    await user.click(
+      within(banner).getByRole("button", {
+        name: "Approve definition & start",
+      }),
+    );
+    expect(onApproveExecutionStart).toHaveBeenCalledWith({
+      executionId: "execution-1",
+    });
+  });
+
+  it("scopes the running merge gate and keeps non-blocking outcomes out of its demand", async () => {
+    const detail = denseExecutionFixture("running");
+    const onGrantGateApproval = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={onGrantGateApproval}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+      />,
+    );
+
+    const mergeGate = screen.getByRole("region", {
+      name: "Merge gate for execution-1",
+    });
+    expect(within(mergeGate).getByText("R1.1")).toBeInTheDocument();
+    expect(within(mergeGate).getByText("R1.2")).toBeInTheDocument();
+    expect(within(mergeGate).getByText("Waived")).toBeInTheDocument();
+    expect(within(mergeGate).getByText("R1.4")).toBeInTheDocument();
+    expect(
+      within(mergeGate).getByText("Delivered elsewhere"),
+    ).toBeInTheDocument();
+    expect(within(mergeGate).getByText(/1 deferred criterion/i)).toBeVisible();
+    expect(within(mergeGate).getByText(/1 delivered elsewhere/i)).toBeVisible();
+    expect(within(mergeGate).getByText(/1\/3 proven/i)).toBeVisible();
+    expect(
+      within(mergeGate).queryByRole("button", { name: /Merge execution-1/ }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(mergeGate).getByRole("button", {
+        name: "Approve delivery for merge",
+      }),
+    );
+    expect(onGrantGateApproval).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      revisionId: "revision-1",
+    });
+  });
+
+  it("reveals the waiver reason flow only when a scoped criterion is waived", async () => {
+    const onGrantWaiver = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detailFixture("running")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={onGrantWaiver}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("textbox", { name: "Waiver reason for R1.1" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Waive R1.1" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Waiver reason for R1.1" }),
+      "The equivalent trace was reviewed by Alex.",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Record waiver for R1.1" }),
+    );
+    expect(onGrantWaiver).toHaveBeenCalledWith({
+      criterionElementId: "criterion-1",
+      revisionId: "revision-1",
+      reason: "The equivalent trace was reviewed by Alex.",
+    });
+  });
+
   it("starts an approved revision with the selected task and criterion scope", async () => {
     const onStart = vi.fn();
     const user = userEvent.setup();
@@ -309,13 +577,16 @@ describe("ExecutionPanel", () => {
       "href",
       "/projects/command-center/workflows?definition=workflow-definition-1",
     );
-    const grant = screen.getByRole("button", { name: "Grant waiver for R1.1" });
-    expect(grant).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Waive R1.1" }));
+    const record = screen.getByRole("button", {
+      name: "Record waiver for R1.1",
+    });
+    expect(record).toBeDisabled();
     await user.type(
       screen.getByRole("textbox", { name: "Waiver reason for R1.1" }),
       "Hardware capture is unavailable; Alex reviewed the equivalent trace.",
     );
-    await user.click(grant);
+    await user.click(record);
 
     expect(onGrantWaiver).toHaveBeenCalledWith({
       criterionElementId: "criterion-1",
@@ -394,9 +665,7 @@ describe("ExecutionPanel", () => {
     expect(
       screen.queryByRole("combobox", { name: "Disposition for R1.2" }),
     ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Grant waiver for R1.2" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Waive R1.2" })).toBeNull();
   });
 
   it("approves execution start for a definition-review run when the execution-start dial is a gate", async () => {
@@ -420,7 +689,9 @@ describe("ExecutionPanel", () => {
     expect(
       screen.getByText(/won't run until a human approves/),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Approve & start" }));
+    await user.click(
+      screen.getByRole("button", { name: "Approve definition & start" }),
+    );
 
     expect(onApproveExecutionStart).toHaveBeenCalledWith({
       executionId: "execution-1",
@@ -458,7 +729,7 @@ describe("ExecutionPanel", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Approve & start" }),
+      screen.queryByRole("button", { name: "Approve definition & start" }),
     ).toBeNull();
     expect(screen.getByText("Execution start approved")).toBeInTheDocument();
     expect(screen.getByText(/approval stays recorded/)).toBeInTheDocument();
@@ -511,7 +782,9 @@ describe("ExecutionPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Approve delivery" }));
+    await user.click(
+      screen.getByRole("button", { name: "Approve delivery for merge" }),
+    );
 
     expect(onGrantGateApproval).toHaveBeenCalledWith({
       executionId: "execution-1",
@@ -550,7 +823,7 @@ describe("ExecutionPanel", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Approve delivery" }),
+      screen.queryByRole("button", { name: "Approve delivery for merge" }),
     ).toBeNull();
     expect(screen.queryByText(/refuses this run's merge/)).toBeNull();
     expect(screen.getByText("Delivery approved")).toBeInTheDocument();
@@ -584,7 +857,7 @@ describe("ExecutionPanel", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Approve delivery" }),
+      screen.queryByRole("button", { name: "Approve delivery for merge" }),
     ).toBeNull();
   });
 
@@ -842,6 +1115,25 @@ describe("PolicyAdmissionNotices", () => {
 });
 
 describe("IntegrityBanner", () => {
+  it("shows a quiet result surface when verification passes", () => {
+    render(
+      <IntegrityBanner
+        report={{
+          ok: true,
+          checkedRevisionIds: ["revision-1"],
+          mismatches: [],
+        }}
+        isPending={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Integrity intact");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "1 approved revision verified",
+    );
+  });
+
   it("surfaces every verify mismatch as a blocking integrity banner", () => {
     render(
       <IntegrityBanner

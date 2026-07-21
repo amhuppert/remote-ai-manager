@@ -3,12 +3,12 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
+import { Button } from "@/components/ui/Button";
 import {
   TabsContent,
   TabsList,
   TabsRoot,
   TabsTrigger,
-  TabsTriggerCount,
 } from "@/components/ui/Tabs";
 import { parseElementHandle } from "@/lib/specs/handles";
 import {
@@ -20,6 +20,7 @@ import type {
   SpecRevisionElement,
   SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
+import { cn } from "@/lib/ui/cn";
 
 import {
   SpecEvidencePanel,
@@ -29,10 +30,12 @@ import {
   type TraceabilityInput,
 } from "./SpecEvidenceLintTrace";
 import SpecControlsPanel from "./SpecControls";
+import SpecHistoryPanel from "./SpecHistoryPanel";
 import SpecQuestionsAssumptionsPanel from "./SpecQuestionsAssumptions";
 
 export type DetailView =
-  | "content"
+  | "overview"
+  | "history"
   | "evidence"
   | "lint"
   | "traceability"
@@ -55,15 +58,47 @@ export interface EvidenceRevisionTarget {
   executionId: string | null;
 }
 
+const detailTabClass =
+  "cursor-pointer border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-0 py-xs font-mono text-[0.7rem] font-semibold text-text-tertiary transition-colors duration-150 ease-[ease] outline-none hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:border-cyan data-[state=active]:text-text-primary max-768:min-h-[44px] max-768:px-sm";
+
+type PrimarySubscreen = "evidence" | "traceability" | "history";
+
+const primarySubscreenPresentation: Record<
+  PrimarySubscreen,
+  { title: string; description: string; layoutClassName: string }
+> = {
+  evidence: {
+    title: "Evidence by acceptance criterion",
+    description:
+      "Proof is evaluated against each criterion's approved validation strategy.",
+    layoutClassName: "max-w-[1080px]",
+  },
+  traceability: {
+    title: "Traceability",
+    description: "Requirement → criteria → tasks",
+    layoutClassName: "max-w-[1300px]",
+  },
+  history: {
+    title: "History",
+    description:
+      "Human decisions are recorded separately from policy admissions and execution lifecycle events.",
+    layoutClassName: "max-w-[1000px]",
+  },
+};
+
 export default function SpecDetailViews({
   detail,
   projectName,
-  initialView = "content",
+  initialView = "overview",
+  overviewHeader,
+  overviewBanner,
   children,
 }: {
   detail: SpecDetailView;
   projectName: string;
   initialView?: DetailView;
+  overviewHeader?: ReactNode;
+  overviewBanner?: ReactNode;
   children: ReactNode;
 }): React.JSX.Element {
   const [view, setView] = useState<DetailView>(initialView);
@@ -98,13 +133,6 @@ export default function SpecDetailViews({
     toCriterionProofView(criterion, elementQueries[index]),
   );
   const lintFindings = lintQuery.data?.findings ?? [];
-  // Open questions and undispositioned assumptions both wait on a human, so
-  // the tab count surfaces exactly the records needing attention.
-  const attentionCount =
-    detail.questions.filter((question) => question.status === "open").length +
-    detail.assumptions.filter(
-      (assumption) => assumption.disposition === "proposed",
-    ).length;
   const traceabilityInput = buildTraceabilityInput(
     detail,
     traceSnapshot,
@@ -113,124 +141,225 @@ export default function SpecDetailViews({
     lintFindings,
   );
 
+  if (view === "controls") {
+    return (
+      <div className="mt-lg">
+        <SpecControlsPanel detail={detail} projectName={projectName} />
+      </div>
+    );
+  }
+
+  if (isFocusedView(view)) {
+    return (
+      <section className="mt-lg" aria-label={`${focusedViewTitle(view)} view`}>
+        <div className="mb-lg flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
+          <div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setView("overview")}
+            >
+              Back to {detail.spec.slug}
+            </Button>
+            <h2 className="mt-sm mb-0 font-display text-[1rem] font-extrabold text-text-primary">
+              {focusedViewTitle(view)}
+            </h2>
+            <p className="mt-xs mb-0 max-w-[680px] font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
+              {focusedViewDescription(view)}
+            </p>
+          </div>
+        </div>
+        {view === "lint" && (
+          <SpecLintPanel
+            projectName={projectName}
+            slug={detail.spec.slug}
+            revisionId={lintQuery.data?.revisionId ?? null}
+            findings={lintFindings}
+            isPending={lintQuery.isPending || lintQuery.isFetching}
+            error={
+              lintQuery.error instanceof Error ? lintQuery.error.message : null
+            }
+          />
+        )}
+        {view === "questions" && (
+          <SpecQuestionsAssumptionsPanel
+            detail={detail}
+            projectName={projectName}
+          />
+        )}
+      </section>
+    );
+  }
+
   return (
     <TabsRoot
       value={view}
       onValueChange={(value) => setView(value as DetailView)}
     >
-      <TabsList layoutClassName="mt-lg w-fit max-768:w-full max-768:overflow-x-auto">
-        <TabsTrigger
-          value="content"
-          fill
-          layoutClassName="max-768:grow max-768:basis-0"
+      {view === "overview" ? (
+        <>
+          {overviewHeader}
+          <PrimaryViewNavigation />
+        </>
+      ) : isPrimarySubscreen(view) ? (
+        <PrimarySubscreenHeader
+          view={view}
+          slug={detail.spec.slug}
+          onBack={() => setView("overview")}
         >
-          Content
-        </TabsTrigger>
-        <TabsTrigger
-          value="evidence"
-          fill
-          layoutClassName="max-768:grow max-768:basis-0"
-        >
-          Evidence
-        </TabsTrigger>
-        <TabsTrigger
-          value="lint"
-          fill
-          layoutClassName="max-768:grow max-768:basis-0"
-        >
-          Lint
-          {lintFindings.length > 0 && (
-            <TabsTriggerCount>{lintFindings.length}</TabsTriggerCount>
-          )}
-        </TabsTrigger>
-        <TabsTrigger
-          value="traceability"
-          fill
-          layoutClassName="max-768:grow max-768:basis-0"
-        >
-          Traceability
-        </TabsTrigger>
-        <TabsTrigger
-          value="questions"
-          fill
-          layoutClassName="max-768:grow max-768:basis-0"
-        >
-          Questions
-          {attentionCount > 0 && (
-            <TabsTriggerCount>{attentionCount}</TabsTriggerCount>
-          )}
-        </TabsTrigger>
-        <TabsTrigger
-          value="controls"
-          fill
-          layoutClassName="max-768:grow max-768:basis-0"
-        >
-          Controls
-        </TabsTrigger>
-      </TabsList>
+          <PrimaryViewNavigation />
+        </PrimarySubscreenHeader>
+      ) : null}
 
-      <TabsContent value="content" layoutClassName="mt-lg">
+      <TabsContent value="overview" layoutClassName="mt-md">
+        {overviewBanner}
         {children}
       </TabsContent>
-      <TabsContent value="evidence" layoutClassName="mt-lg">
-        <SpecEvidencePanel
-          criteria={proofViews}
-          revisionLabel={
-            evidenceTarget === null
-              ? null
-              : `${evidenceTarget.source === "pinned" ? "Pinned" : "Approved"} revision ${evidenceTarget.snapshot.revision.number}`
-          }
-          emptyMessage={
-            evidenceTarget === null
-              ? "No approved revision is available for proof evaluation."
-              : undefined
-          }
-        />
-      </TabsContent>
-      <TabsContent value="lint" layoutClassName="mt-lg">
-        <SpecLintPanel
-          projectName={projectName}
-          slug={detail.spec.slug}
-          revisionId={lintQuery.data?.revisionId ?? null}
-          findings={lintFindings}
-          isPending={lintQuery.isPending || lintQuery.isFetching}
-          error={
-            lintQuery.error instanceof Error ? lintQuery.error.message : null
-          }
-        />
-      </TabsContent>
+      {view === "evidence" && (
+        <div className="mt-lg">
+          <SpecEvidencePanel
+            criteria={proofViews}
+            dispositions={detail.criterionDispositions.filter(
+              (row) =>
+                evidenceTarget?.executionId !== null &&
+                row.execution_id === evidenceTarget?.executionId,
+            )}
+            revisionLabel={
+              evidenceTarget === null
+                ? null
+                : `${evidenceTarget.source === "pinned" ? "Pinned" : "Approved"} revision ${evidenceTarget.snapshot.revision.number}`
+            }
+            emptyMessage={
+              evidenceTarget === null
+                ? "No approved revision is available for proof evaluation."
+                : undefined
+            }
+            showHeading={false}
+          />
+        </div>
+      )}
       <TabsContent value="traceability" layoutClassName="mt-lg">
-        <TraceabilityGraph input={traceabilityInput} />
+        <TraceabilityGraph
+          input={traceabilityInput}
+          showHeading={false}
+          onOpenElement={() => setView("overview")}
+        />
       </TabsContent>
-      <TabsContent value="questions" layoutClassName="mt-lg">
-        <SpecQuestionsAssumptionsPanel
+      <TabsContent value="history" layoutClassName="mt-lg">
+        <SpecHistoryPanel
           detail={detail}
           projectName={projectName}
+          showHeading={false}
         />
-      </TabsContent>
-      <TabsContent value="controls" layoutClassName="mt-lg">
-        <SpecControlsPanel detail={detail} projectName={projectName} />
       </TabsContent>
     </TabsRoot>
   );
 }
 
-// Q/A records render inside the Questions tab, so a ?el=Q1/?el=A1 deep link
-// must open that tab or its scroll/focus target never mounts.
+function PrimarySubscreenHeader({
+  view,
+  slug,
+  onBack,
+  children,
+}: {
+  view: PrimarySubscreen;
+  slug: string;
+  onBack(): void;
+  children: ReactNode;
+}): React.JSX.Element {
+  const presentation = primarySubscreenPresentation[view];
+  return (
+    <header
+      className={cn(
+        "mx-auto border-x-0 border-t-0 border-b border-solid border-border-dim pt-sm",
+        presentation.layoutClassName,
+      )}
+    >
+      <Button size="sm" variant="ghost" touch onClick={onBack}>
+        Back to {slug}
+      </Button>
+      <div className="mt-2xs flex flex-wrap items-baseline gap-sm">
+        <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
+          {presentation.title}
+        </h1>
+        <p className="m-0 font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
+          {presentation.description}
+        </p>
+      </div>
+      {children}
+    </header>
+  );
+}
+
+function PrimaryViewNavigation(): React.JSX.Element {
+  return (
+    <TabsList asChild aria-label="Spec views">
+      <div
+        data-appearance="underline"
+        className="flex items-center gap-lg pt-sm max-768:w-full max-768:gap-xs max-768:overflow-x-auto"
+      >
+        <TabsTrigger asChild value="overview">
+          <button type="button" className={detailTabClass}>
+            Overview
+          </button>
+        </TabsTrigger>
+        <TabsTrigger asChild value="traceability">
+          <button type="button" className={detailTabClass}>
+            Traceability
+          </button>
+        </TabsTrigger>
+        <TabsTrigger asChild value="history">
+          <button type="button" className={detailTabClass}>
+            History
+          </button>
+        </TabsTrigger>
+      </div>
+    </TabsList>
+  );
+}
+
+// Q/A records render only in the focused Questions surface, so a
+// ?el=Q1/?el=A1 deep link must open it or its scroll/focus target never mounts.
 export function initialDetailViewForDeepLink(
   rawHandle: string | null,
   slug: string | undefined,
 ): DetailView {
   if (rawHandle === "execution_start") return "controls";
-  if (rawHandle === null || slug === undefined) return "content";
+  if (rawHandle === null || slug === undefined) return "overview";
   try {
     const kind = parseElementHandle(rawHandle, slug).kind;
     return kind === "question" || kind === "assumption"
       ? "questions"
-      : "content";
+      : "overview";
   } catch {
-    return "content";
+    return "overview";
   }
+}
+
+function isFocusedView(view: DetailView): view is "lint" | "questions" {
+  return view === "lint" || view === "questions";
+}
+
+function focusedViewTitle(view: "lint" | "questions"): string {
+  switch (view) {
+    case "lint":
+      return "Deterministic lint";
+    case "questions":
+      return "Questions and assumptions";
+  }
+}
+
+function focusedViewDescription(view: "lint" | "questions"): string {
+  switch (view) {
+    case "lint":
+      return "Inspect the exact findings that gate proposal and sign-off.";
+    case "questions":
+      return "Resolve the human decisions that keep the contract explicit.";
+  }
+}
+
+function isPrimarySubscreen(view: DetailView): view is PrimarySubscreen {
+  return view === "evidence" || view === "traceability" || view === "history";
 }
 
 export function selectEvidenceRevision(
@@ -371,6 +500,10 @@ function buildTraceabilityInput(
           label: entry.version.payload.statement,
           criterionElementIds:
             criteriaByRequirement.get(entry.element.id) ?? [],
+          approval:
+            detail.elementStatuses.requirements.find(
+              (status) => status.elementId === entry.element.id,
+            )?.status.approval ?? "unapproved",
         },
       ];
     }),
@@ -409,6 +542,10 @@ function buildTraceabilityInput(
             entry.version.payload.tracedDecisionElementIds,
           coveredCriterionElementIds:
             entry.version.payload.coveredCriterionElementIds,
+          isNewInRevision:
+            entry.version.elementVersion === 1 &&
+            snapshot?.revision.basedOnRevisionId !== null,
+          revisionNumber: snapshot?.revision.number ?? 1,
         },
       ];
     }),

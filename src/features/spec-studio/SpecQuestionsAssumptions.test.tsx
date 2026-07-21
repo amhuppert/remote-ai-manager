@@ -13,7 +13,7 @@ import type {
 import SpecQuestionsAssumptionsPanel, {
   SpecQuestionsAssumptions,
 } from "./SpecQuestionsAssumptions";
-import SpecDetailViews from "./SpecDetailViews";
+import { SpecDetailContent } from "./SpecDetailPage";
 import {
   SPEC_CONTROLS_FIXTURE_NOW as NOW,
   specControlsDetailFixture as detailFixture,
@@ -287,9 +287,8 @@ describe("SpecQuestionsAssumptionsPanel", () => {
   });
 });
 
-describe("SpecDetailViews questions tab", () => {
-  it("shows the attention count and renders the Q/A studio", async () => {
-    const user = userEvent.setup();
+describe("Spec detail questions and assumptions rail", () => {
+  it("keeps questions and assumptions visible on the overview", () => {
     const detail: SpecDetailView = {
       ...detailFixture(),
       questions: [questionFixture()],
@@ -297,22 +296,43 @@ describe("SpecDetailViews questions tab", () => {
     };
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <SpecDetailViews detail={detail} projectName="command-center">
-          <div />
-        </SpecDetailViews>
+        <SpecDetailContent
+          detail={detail}
+          projectName="command-center"
+          requestedSlug="native-sdd"
+          initialView="overview"
+        />
       </QueryClientProvider>,
     );
 
-    const questionsTab = screen.getByRole("tab", { name: /Questions/ });
-    // One open question + one proposed assumption await human attention.
-    expect(questionsTab).toHaveTextContent("2");
-    await user.click(questionsTab);
+    const structure = screen.getByRole("complementary", {
+      name: "Spec structure",
+    });
+    const heading = within(structure).getByRole("heading", {
+      name: "Questions & assumptions",
+    });
+    const questionsSection = heading.closest("section");
+    expect(questionsSection).not.toBeNull();
+    if (questionsSection === null) {
+      throw new Error("Questions & assumptions section was not rendered");
+    }
 
+    expect(within(questionsSection).getByText("2")).toBeInTheDocument();
     expect(
-      await screen.findByText("Which retention window applies?"),
+      within(questionsSection).getByText("Which retention window applies?"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Retention defaults to 30 days."),
+      within(questionsSection).getByText("Retention defaults to 30 days."),
     ).toBeInTheDocument();
+    expect(within(questionsSection).getByText("Open")).toBeInTheDocument();
+    expect(within(questionsSection).getByText("Proposed")).toBeInTheDocument();
+    expect(
+      within(questionsSection).getByRole("button", { name: "Confirm A1" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Open questions and assumptions",
+      }),
+    ).not.toBeInTheDocument();
   });
 });

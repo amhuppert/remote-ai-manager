@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { fn } from "storybook/test";
+import { fn, userEvent, within } from "storybook/test";
 
 import { ExecutionPanel, IntegrityBanner, PolicyDialog } from "./SpecControls";
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
+import { denseSpecControlsDetailFixture } from "./SpecControls.fixtures";
 
 const meta = {
   title: "Specs/Studio/PolicyAndExecutionControls",
@@ -10,9 +10,10 @@ const meta = {
   parameters: { a11y: { test: "error" }, layout: "fullscreen" },
   decorators: [
     (Story) => (
-      <div className="min-h-screen bg-bg-void p-xl text-text-primary max-768:p-md">
+      <main className="h-screen overflow-y-auto bg-bg-void p-xl text-text-primary max-768:p-md">
+        <h1 className="sr-only">Spec policy and execution controls</h1>
         <Story />
-      </div>
+      </main>
     ),
   ],
   args: {
@@ -20,6 +21,8 @@ const meta = {
     pending: false,
     error: null,
     onChangePolicy: fn(),
+    specSlug: "native-sdd",
+    backHref: "/specs/command-center/native-sdd",
   },
 } satisfies Meta<typeof PolicyDialog>;
 
@@ -28,10 +31,26 @@ type Story = StoryObj<typeof meta>;
 
 export const Policy: Story = {};
 
+export const ExploratoryPolicy: Story = {
+  args: { currentPolicy: { preset: "exploratory" } },
+};
+
+export const FastPathPolicy: Story = {
+  args: { currentPolicy: { preset: "fast-path" } },
+};
+
+export const LooseningConfirmation: Story = {
+  play: async () => {
+    await userEvent.click(
+      within(document.body).getByRole("radio", { name: /Exploratory/ }),
+    );
+  },
+};
+
 export const ScopeSelection: Story = {
   render: () => (
     <ExecutionPanel
-      detail={specControlsDetailFixture()}
+      detail={denseSpecControlsDetailFixture("none")}
       projectName="command-center"
       pendingAction={null}
       error={null}
@@ -48,7 +67,7 @@ export const ScopeSelection: Story = {
 export const DefinitionReview: Story = {
   render: () => (
     <ExecutionPanel
-      detail={specControlsDetailFixture("definition_review")}
+      detail={denseSpecControlsDetailFixture("definition_review")}
       projectName="command-center"
       pendingAction={null}
       error={null}
@@ -65,7 +84,7 @@ export const DefinitionReview: Story = {
 export const RunningExecution: Story = {
   render: () => (
     <ExecutionPanel
-      detail={specControlsDetailFixture("running")}
+      detail={denseSpecControlsDetailFixture("running")}
       projectName="command-center"
       pendingAction={null}
       error={null}

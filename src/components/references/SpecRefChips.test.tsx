@@ -6,7 +6,7 @@ import {
   QueryClientProvider,
   useQuery,
 } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import {
@@ -231,6 +231,53 @@ describe("spec reference chips", () => {
     expect(screen.getByText("Approval complete")).toBeVisible();
   });
 
+  it("renders the prototype live revision, preset, counts, and approval progress", async () => {
+    const user = userEvent.setup();
+    const liveSummary = summary("in_review");
+    liveSummary.currentRevision = {
+      ...liveSummary.currentRevision!,
+      number: 4,
+      state: "proposed",
+    };
+    liveSummary.counts = {
+      requirements: 11,
+      criteria: 16,
+      decisions: 4,
+      tasks: 13,
+    };
+    liveSummary.pendingApprovalCount = 6;
+    const { SpecRefTranscriptChip } = createSpecRefChips({
+      useSpecSummary() {
+        return { data: liveSummary, isLoading: false, isError: false };
+      },
+      useSpecElement() {
+        return { data: undefined, isLoading: false, isError: false };
+      },
+    });
+    render(<SpecRefTranscriptChip attrs={specAttrs} />);
+
+    const chip = screen.getByRole("link", { name: /Native SDD.*In review/ });
+    expect(within(chip).getByText("native-sdd")).toBeVisible();
+    await user.hover(chip);
+
+    const peek = await screen.findByLabelText("Spec summary");
+    expect(
+      within(peek).getByText("native-sdd · rev 4 proposed · Contract-bearing"),
+    ).toBeVisible();
+    expect(within(peek).getByLabelText("11 req")).toBeVisible();
+    expect(within(peek).getByLabelText("4 dec")).toBeVisible();
+    expect(within(peek).getByLabelText("13 tasks")).toBeVisible();
+    expect(within(peek).getByLabelText("10/16 approvals")).toBeVisible();
+    expect(
+      within(peek).getByRole("progressbar", {
+        name: "10 of 16 approvals",
+      }),
+    ).toHaveAttribute("aria-valuenow", "10");
+    expect(
+      within(peek).getByRole("link", { name: "open in Spec Studio" }),
+    ).toHaveAttribute("href", "/specs/demo/native-sdd");
+  });
+
   it("deep-links the live element statement and clears staleness when content is restored", () => {
     let currentElement = elementView("changed-hash", 2);
     const { SpecElementRefTranscriptChip } = createSpecRefChips({
@@ -245,11 +292,12 @@ describe("spec reference chips", () => {
       <SpecElementRefTranscriptChip attrs={requirementAttrs} />,
     );
 
-    expect(
-      screen.getByRole("link", {
-        name: /native-sdd\/R5.*References remain addressable.*Changed/,
-      }),
-    ).toHaveAttribute("href", "/specs/demo/native-sdd?el=R5");
+    const chip = screen.getByRole("link", {
+      name: /native-sdd\/R5.*References remain addressable.*Changed/,
+    });
+    expect(chip).toHaveAttribute("href", "/specs/demo/native-sdd?el=R5");
+    expect(chip).toHaveClass("align-middle");
+    expect(chip).not.toHaveClass("align-[-3px]");
 
     currentElement = elementView("observed-hash", 3);
     rerender(<SpecElementRefTranscriptChip attrs={requirementAttrs} />);
@@ -278,6 +326,46 @@ describe("spec reference chips", () => {
     render(<SpecElementRefTranscriptChip attrs={requirementAttrs} />);
 
     expect(screen.queryByText("Changed")).toBeNull();
+  });
+
+  it("explains the observed and current revisions in a changed element peek", async () => {
+    const changedElement = elementView("changed-hash", 2);
+    changedElement.approvals = [
+      {
+        id: "approval-r5",
+        spec_id: "spec-1",
+        subject_kind: "requirement",
+        element_id: "requirement-5",
+        revision_id: "revision-1",
+        approver: "alex",
+        granted_at: "2026-07-18T00:00:00Z",
+        validity: "stale",
+      },
+    ];
+    const { SpecElementRefTranscriptChip } = createSpecRefChips({
+      useSpecSummary() {
+        return { data: undefined, isLoading: false, isError: false };
+      },
+      useSpecElement() {
+        return {
+          data: changedElement,
+          isLoading: false,
+          isError: false,
+        };
+      },
+    });
+    const user = userEvent.setup();
+    render(<SpecElementRefTranscriptChip attrs={requirementAttrs} />);
+
+    const chip = screen.getByRole("link", { name: /native-sdd\/R5/ });
+    expect(within(chip).queryByText("Changed")).toBeNull();
+    await user.hover(chip);
+
+    expect(await screen.findByText("rev 1 observed")).toBeVisible();
+    expect(
+      screen.getByText("rev 2 current — changed since referenced"),
+    ).toBeVisible();
+    expect(screen.getByText("Approval stale")).toBeVisible();
   });
 });
 

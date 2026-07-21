@@ -68,6 +68,8 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}topbar${path.sep}NavSwitchers.tsx`,
   `${path.sep}components${path.sep}topbar${path.sep}QuickTicketButton.tsx`,
   `${path.sep}components${path.sep}topbar${path.sep}QuickTicketButton.stories.tsx`,
+  `${path.sep}components${path.sep}topbar${path.sep}NeedsYouMenu.tsx`,
+  `${path.sep}components${path.sep}topbar${path.sep}NeedsYouMenu.stories.tsx`,
   `${path.sep}components${path.sep}quick-ticket${path.sep}`,
   `${path.sep}components${path.sep}WorkRailMain.tsx`,
   `${path.sep}components${path.sep}ApprovalGatePanel.tsx`,

@@ -46,6 +46,8 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/topbar/NavSwitchers.tsx",
   "src/components/topbar/QuickTicketButton.tsx",
   "src/components/topbar/QuickTicketButton.stories.tsx",
+  "src/components/topbar/NeedsYouMenu.tsx",
+  "src/components/topbar/NeedsYouMenu.stories.tsx",
   "src/components/quick-ticket/**/*.{ts,tsx}",
   "src/components/WorkRailMain.tsx",
   "src/components/ApprovalGatePanel.tsx",

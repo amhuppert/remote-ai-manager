@@ -17,16 +17,16 @@ describe("initialDetailViewForDeepLink", () => {
     );
   });
 
-  it("keeps element handles on content and execution_start on controls", () => {
-    expect(initialDetailViewForDeepLink("R1", "native-sdd")).toBe("content");
-    expect(initialDetailViewForDeepLink("R1.2", "native-sdd")).toBe("content");
+  it("keeps element handles on overview and execution_start on controls", () => {
+    expect(initialDetailViewForDeepLink("R1", "native-sdd")).toBe("overview");
+    expect(initialDetailViewForDeepLink("R1.2", "native-sdd")).toBe("overview");
     expect(initialDetailViewForDeepLink("execution_start", "native-sdd")).toBe(
       "controls",
     );
-    expect(initialDetailViewForDeepLink(null, "native-sdd")).toBe("content");
-    expect(initialDetailViewForDeepLink("Q1", undefined)).toBe("content");
+    expect(initialDetailViewForDeepLink(null, "native-sdd")).toBe("overview");
+    expect(initialDetailViewForDeepLink("Q1", undefined)).toBe("overview");
     expect(initialDetailViewForDeepLink("not a handle", "native-sdd")).toBe(
-      "content",
+      "overview",
     );
   });
 });

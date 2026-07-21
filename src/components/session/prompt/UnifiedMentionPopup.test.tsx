@@ -257,6 +257,7 @@ describe("UnifiedMentionPopup", () => {
   it("renders one grouped picker and excludes the current conversation", () => {
     renderPopup();
 
+    expect(screen.getByText("# reference — all types")).toBeVisible();
     expect(screen.getByRole("group", { name: "Conversations" })).toBeVisible();
     expect(screen.getByRole("group", { name: "Tickets" })).toBeVisible();
     expect(screen.getByRole("group", { name: "Specs" })).toBeVisible();
@@ -265,11 +266,20 @@ describe("UnifiedMentionPopup", () => {
     ).toBeVisible();
     expect(screen.getByRole("option", { name: /alpha#12/ })).toBeVisible();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
+    expect(
+      screen
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label")),
+    ).toEqual(["Conversations", "Specs", "Tickets"]);
   });
 
   it("renders slug-qualified drill-in results grouped by element kind", () => {
     renderPopup("native-sdd/");
 
+    expect(
+      screen.getByText("native-sdd — requirements · decisions · tasks"),
+    ).toBeVisible();
+    expect(screen.getByText("Matched on handle + text")).toBeVisible();
     expect(screen.getByRole("group", { name: "Requirements" })).toBeVisible();
     expect(screen.getByRole("group", { name: "Decisions" })).toBeVisible();
     expect(screen.getByRole("group", { name: "Tasks" })).toBeVisible();
@@ -402,6 +412,9 @@ describe("UnifiedMentionPopup", () => {
     const { ref, onSelect } = renderPopup();
 
     act(() => {
+      ref.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "ArrowDown" }),
+      );
       ref.current?.handleKeyDown(
         new KeyboardEvent("keydown", { key: "ArrowDown" }),
       );

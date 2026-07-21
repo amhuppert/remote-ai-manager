@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useState, type MouseEvent } from "react";
 import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
 import { HoverCard } from "radix-ui";
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
+import { Button } from "@/components/ui/Button";
+import type { StatusChipTone } from "@/components/ui/StatusChip";
 import {
   buildSpecReadCommand,
   buildSpecReferenceXml,
@@ -23,6 +24,7 @@ import {
   type SpecElementReferenceState,
   type SpecSummaryView,
 } from "@/lib/specs/queries";
+import { cn } from "@/lib/ui/cn";
 
 interface QueryShape<T> {
   data: T | undefined;
@@ -43,8 +45,12 @@ export interface SpecRefChipDeps {
   ): QueryShape<SpecElementGetResponse>;
 }
 
-const referenceChipClass =
-  "inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised px-[6px] py-[2px] align-baseline font-mono text-[0.78rem] leading-none text-inherit no-underline transition-[border-color,background,box-shadow] duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:shadow-[0_0_0_2px_var(--cyan-glow)] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+const referenceChipBase =
+  "inline-flex items-center gap-[5px] rounded-full border border-solid px-sm py-2xs align-middle font-mono text-[0.7rem] leading-[1.4] no-underline transition-[border-color,background,box-shadow] duration-150 ease-[ease] hover:shadow-[0_0_0_2px_var(--cyan-glow)] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+const specReferenceChipClass =
+  "border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan hover:border-cyan-dim hover:bg-bg-hover";
+const elementReferenceChipClass =
+  "border-border-default bg-bg-raised text-text-secondary hover:border-border-strong hover:bg-bg-hover";
 const logger = createClientLogger("references.spec");
 
 export function specStudioHref(
@@ -75,7 +81,11 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
     const query = deps.useSpecSummary(projectName, attrs.slug);
     const summary = query.data;
     const name = summary?.spec.name || attrs.name;
-    const phase = summary ? formatSpecPhase(summary.phase) : "Loading";
+    const phase = summary
+      ? formatSpecPhase(summary.phase)
+      : query.isError
+        ? "Unavailable"
+        : "Loading";
     const tone = summary ? specPhaseTone(summary.phase.primary) : "neutral";
 
     return (
@@ -83,15 +93,13 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
         <HoverCard.Trigger asChild>
           <Link
             href={specStudioHref(projectName, attrs.slug)}
-            className={referenceChipClass}
+            className={cn(referenceChipBase, specReferenceChipClass)}
             aria-label={`${name} ${phase}`}
             data-spec-ref-chip=""
           >
             <SpecGlyph />
-            <span className="text-text-primary">{name}</span>
-            <StatusChip tone={tone} appearance="flat">
-              {phase}
-            </StatusChip>
+            <span className="font-semibold text-cyan">{attrs.slug}</span>
+            <ReferenceStatusLabel label={phase} tone={tone} density="chip" />
           </Link>
         </HoverCard.Trigger>
         <HoverCard.Portal>
@@ -99,20 +107,23 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
             sideOffset={6}
             collisionPadding={8}
             aria-label="Spec summary"
-            className="z-popover w-[280px] rounded-md border border-solid border-border-default bg-bg-raised p-md text-text-primary shadow-lg"
+            className="z-popover w-[320px] max-w-[calc(100vw-16px)] rounded-lg border border-solid border-border-default bg-bg-elevated p-md text-text-primary shadow-lg"
           >
             <div className="flex items-start justify-between gap-md">
-              <div className="min-w-0">
-                <div className="truncate font-mono text-[0.78rem] font-semibold">
-                  {name}
-                </div>
-                <div className="mt-xs font-mono text-[0.68rem] text-text-tertiary">
-                  {attrs.slug}
-                </div>
+              <div className="min-w-0 truncate font-mono text-[0.78rem] font-semibold">
+                {name}
               </div>
-              <StatusChip tone={tone}>{phase}</StatusChip>
+              <ReferenceStatusLabel label={phase} tone={tone} density="peek" />
             </div>
-            {summary ? <SpecPeekSummary summary={summary} /> : null}
+            {summary ? (
+              <SpecPeekSummary summary={summary} projectName={projectName} />
+            ) : (
+              <div className="mt-md font-mono text-[0.7rem] text-text-tertiary">
+                {query.isError
+                  ? "Live spec state is unavailable."
+                  : "Loading live spec state…"}
+              </div>
+            )}
             <HoverCard.Arrow className="fill-border-default" />
           </HoverCard.Content>
         </HoverCard.Portal>
@@ -135,32 +146,99 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
     const statement = query.data ? elementDisplayName(query.data) : attrs.name;
     // Q/A records are not revision-scoped, so they carry no reference state
     // and the stale indicator degrades to "never stale".
-    const stale = isSpecElementReferenceStale(
+    const referenceState =
       query.data !== undefined && "referenceState" in query.data
         ? query.data.referenceState
-        : null,
-    );
+        : null;
+    const stale = isSpecElementReferenceStale(referenceState);
     const address = `${attrs.slug}/${attrs.handle}`;
+    const href = specStudioHref(
+      attrs["project-name"],
+      attrs.slug,
+      attrs.handle,
+    );
+    const approval = elementApprovalState(query.data);
 
     return (
-      <Link
-        href={specStudioHref(attrs["project-name"], attrs.slug, attrs.handle)}
-        className={referenceChipClass}
-        aria-label={`${address} ${statement}${stale ? " Changed" : ""}`}
-        title={statement}
-        data-spec-element-ref-chip=""
-      >
-        <SpecGlyph />
-        <span className="text-cyan">{address}</span>
-        <span className="max-w-[260px] truncate text-text-primary">
-          {statement}
-        </span>
-        {stale ? (
-          <StatusChip tone="amber" appearance="flat">
-            Changed
-          </StatusChip>
-        ) : null}
-      </Link>
+      <HoverCard.Root openDelay={100} closeDelay={80}>
+        <HoverCard.Trigger asChild>
+          <Link
+            href={href}
+            className={cn(referenceChipBase, elementReferenceChipClass)}
+            aria-label={`${address} ${statement}${stale ? " Changed" : ""}`}
+            title={statement}
+            data-spec-element-ref-chip=""
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-[5px] shrink-0 rounded-full",
+                stale
+                  ? "bg-amber shadow-[0_0_4px_var(--amber-glow)]"
+                  : "bg-text-tertiary",
+              )}
+            />
+            <span className="font-semibold text-text-primary">
+              {attrs.handle}
+            </span>
+            <span className="max-w-[180px] truncate text-text-secondary">
+              {statement}
+            </span>
+          </Link>
+        </HoverCard.Trigger>
+        <HoverCard.Portal>
+          <HoverCard.Content
+            sideOffset={6}
+            collisionPadding={8}
+            aria-label="Spec element summary"
+            className="z-popover w-[340px] max-w-[calc(100vw-16px)] rounded-lg border border-solid border-border-default bg-bg-elevated p-md text-text-primary shadow-lg"
+          >
+            <div className="flex items-start justify-between gap-md">
+              <span className="min-w-0 truncate font-mono text-[0.74rem] font-semibold text-text-primary">
+                {address}
+              </span>
+              {approval !== null && (
+                <ReferenceStatusLabel
+                  label={approval.label}
+                  tone={approval.tone}
+                  density="peek"
+                  stale={approval.tone === "amber"}
+                />
+              )}
+            </div>
+            <div className="mt-xs font-mono text-[0.74rem] leading-[1.5] text-text-secondary">
+              {statement}
+            </div>
+            {referenceState !== null && (
+              <div className="mt-sm font-mono text-[0.7rem]">
+                <div className="flex flex-wrap items-center gap-[6px]">
+                  <span className="text-text-tertiary">
+                    rev {referenceState.observedRevision} observed
+                  </span>
+                  <RevisionArrowIcon stale={stale} />
+                  <span
+                    className={stale ? "text-amber" : "text-text-secondary"}
+                  >
+                    rev {referenceState.latestContainingRevision} current —{" "}
+                    {stale
+                      ? "changed since referenced"
+                      : "unchanged since referenced"}
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="mt-sm flex justify-end">
+              <Link
+                href={href}
+                className="font-mono text-[0.7rem] text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+              >
+                open in Spec Studio <ExternalLinkIcon />
+              </Link>
+            </div>
+            <HoverCard.Arrow className="fill-border-default" />
+          </HoverCard.Content>
+        </HoverCard.Portal>
+      </HoverCard.Root>
     );
   }
 
@@ -211,18 +289,118 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
 
 function SpecPeekSummary({
   summary,
+  projectName,
 }: {
   summary: SpecSummaryView;
+  projectName: string;
 }): React.JSX.Element {
+  const revision = summary.currentRevision;
+  const preset = formatPreset(summary.spec.gatePolicy.preset);
+  const approvalTotal =
+    summary.counts.requirements +
+    summary.counts.decisions +
+    (revision === null ? 0 : 1);
+  const approvedCount = Math.max(
+    0,
+    approvalTotal - summary.pendingApprovalCount,
+  );
+  const progress =
+    approvalTotal === 0 ? 0 : Math.round((approvedCount / approvalTotal) * 100);
+  const revisionCopy =
+    revision === null
+      ? "no revision"
+      : "rev " + revision.number + " " + revision.state.replaceAll("_", " ");
   return (
-    <div className="mt-md grid gap-xs font-mono text-[0.7rem] text-text-secondary">
-      <span>{summary.counts.requirements} requirements</span>
-      <span>{summary.counts.criteria} acceptance criteria</span>
-      <span>
-        Approval {summary.approvalState === "complete" ? "complete" : "pending"}
+    <div className="font-mono text-[0.7rem] text-text-secondary">
+      <div className="mt-[1px] text-[0.68rem] text-text-tertiary">
+        {summary.spec.slug} · {revisionCopy} · {preset}
+      </div>
+      <div className="mt-[9px] flex flex-wrap gap-[14px]">
+        <span aria-label={summary.counts.requirements + " req"}>
+          <strong className="text-text-primary">
+            {summary.counts.requirements}
+          </strong>{" "}
+          req
+        </span>
+        <span aria-label={summary.counts.decisions + " dec"}>
+          <strong className="text-text-primary">
+            {summary.counts.decisions}
+          </strong>{" "}
+          dec
+        </span>
+        <span aria-label={summary.counts.tasks + " tasks"}>
+          <strong className="text-text-primary">{summary.counts.tasks}</strong>{" "}
+          tasks
+        </span>
+        <span aria-label={approvedCount + "/" + approvalTotal + " approvals"}>
+          <strong
+            className={
+              summary.pendingApprovalCount > 0 ? "text-amber" : "text-green"
+            }
+          >
+            {approvedCount}/{approvalTotal}
+          </strong>{" "}
+          approvals
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={approvedCount + " of " + approvalTotal + " approvals"}
+        aria-valuemin={0}
+        aria-valuemax={approvalTotal}
+        aria-valuenow={approvedCount}
+        className="mt-sm h-[3px] overflow-hidden rounded-[2px] bg-bg-raised"
+      >
+        <div
+          className={cn(
+            "h-full rounded-[2px]",
+            summary.pendingApprovalCount > 0
+              ? "bg-amber shadow-[0_0_6px_var(--amber-glow)]"
+              : "bg-green shadow-[0_0_6px_var(--green-glow)]",
+          )}
+          style={{ width: String(progress) + "%" }}
+        />
+      </div>
+      <span className="sr-only">
+        {summary.counts.requirements} requirements
       </span>
+      <span className="sr-only">
+        {summary.counts.criteria} acceptance criteria
+      </span>
+      <span className="sr-only">
+        {summary.pendingApprovalCount > 0
+          ? summary.pendingApprovalCount + " approvals pending"
+          : "Approval complete"}
+      </span>
+      <div className="mt-[9px] flex justify-end">
+        <Link
+          href={specStudioHref(projectName, summary.spec.slug)}
+          className="text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+        >
+          open in Spec Studio <ExternalLinkIcon />
+        </Link>
+      </div>
     </div>
   );
+}
+
+function formatPreset(preset: string): string {
+  return preset.charAt(0).toUpperCase() + preset.slice(1);
+}
+
+function elementApprovalState(
+  view: SpecElementGetResponse | undefined,
+): { label: string; tone: StatusChipTone } | null {
+  if (view === undefined || !("approvals" in view)) return null;
+  const approval = view.approvals.at(-1);
+  if (approval === undefined) return null;
+  if (approval.validity === "valid") {
+    return { label: "Approved", tone: "green" };
+  }
+  if (approval.validity === "stale") {
+    return { label: "Approval stale", tone: "amber" };
+  }
+  return { label: "Approval closed", tone: "neutral" };
 }
 
 function elementDisplayName(view: SpecElementGetResponse): string {
@@ -278,6 +456,126 @@ export function specPhaseTone(
   }
 }
 
+const referenceStatusTextClass: Record<StatusChipTone, string> = {
+  neutral: "text-text-tertiary",
+  cyan: "text-cyan",
+  amber: "text-amber",
+  green: "text-green",
+  red: "text-red",
+  violet: "text-violet",
+};
+
+const referenceStatusDotClass: Record<StatusChipTone, string> = {
+  neutral: "bg-text-tertiary",
+  cyan: "bg-cyan",
+  amber: "bg-amber",
+  green: "bg-green",
+  red: "bg-red",
+  violet: "bg-violet",
+};
+
+const referenceStatusDensityClass = {
+  chip: "font-medium",
+  peek: "font-semibold",
+} as const;
+
+function ReferenceStatusLabel({
+  label,
+  tone,
+  density,
+  stale = false,
+}: {
+  label: string;
+  tone: StatusChipTone;
+  density: keyof typeof referenceStatusDensityClass;
+  stale?: boolean;
+}): React.JSX.Element {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-xs font-mono text-[0.7rem] tracking-[0.05em] uppercase",
+        referenceStatusDensityClass[density],
+        referenceStatusTextClass[tone],
+      )}
+    >
+      {stale ? (
+        <StaleIcon />
+      ) : (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "size-[4px] rounded-full",
+            referenceStatusDotClass[tone],
+          )}
+        />
+      )}
+      {label}
+    </span>
+  );
+}
+
+function StaleIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M2.5 8a5.5 5.5 0 0 1 9.9-3.4m.2-3.2-.2 3.2-3.2-.2M13.5 8a5.5 5.5 0 0 1-9.9 3.4m-.2 3.2.2-3.2 3.2.2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function RevisionArrowIcon({ stale }: { stale: boolean }): React.JSX.Element {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className={stale ? "text-amber" : "text-text-tertiary"}
+    >
+      <path
+        d="M3 8h10m-3.5-3.5L13 8l-3.5 3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className="ml-xs inline-block align-[-1px]"
+    >
+      <path
+        d="m5 11 6-6M5.5 4.5h6v6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function SpecGlyph(): React.JSX.Element {
   return (
     <svg
@@ -286,7 +584,7 @@ function SpecGlyph(): React.JSX.Element {
       stroke="currentColor"
       strokeWidth={1.2}
       aria-hidden="true"
-      className="h-[12px] w-[12px] shrink-0 text-cyan"
+      className="h-[11px] w-[11px] shrink-0 text-cyan"
     >
       <path d="M3 2.5h6l4 4v7H3z" />
       <path d="M9 2.5v4h4M5.5 9h5M5.5 11.5h5" />
@@ -358,14 +656,15 @@ export function createCopyReferenceControl(deps: CopyReferenceControlDeps) {
       }
     };
     return (
-      <button
-        type="button"
-        className="inline-flex cursor-pointer items-center gap-xs rounded-sm border border-solid border-border-default bg-transparent px-sm py-xs font-mono text-[0.7rem] text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+      <Button
+        variant="default"
+        size="sm"
+        touch
         onClick={() => void handleCopy()}
         aria-label={copied ? "Reference copied" : "Copy reference"}
       >
         {copied ? "Copied" : "Copy reference"}
-      </button>
+      </Button>
     );
   };
 }

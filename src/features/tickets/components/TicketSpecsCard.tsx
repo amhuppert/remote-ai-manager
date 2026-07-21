@@ -9,6 +9,7 @@ import {
   specPhaseTone,
 } from "@/components/references/SpecRefChips";
 import { Button } from "@/components/ui/Button";
+import { Progress } from "@/components/ui/Progress";
 import { Spinner } from "@/components/ui/Spinner";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
@@ -109,7 +110,7 @@ export default function TicketSpecsCard({
         </span>
       ) : (
         specs.map((spec) => (
-          <LinkedSpec
+          <LinkedSpecReadThrough
             key={spec.specId}
             projectName={detail.projectName}
             spec={spec}
@@ -134,7 +135,7 @@ export default function TicketSpecsCard({
   );
 }
 
-function LinkedSpec({
+export function LinkedSpecReadThrough({
   projectName,
   spec,
 }: {
@@ -142,15 +143,27 @@ function LinkedSpec({
   spec: TicketSpecReadThrough["specs"][number];
 }): React.JSX.Element {
   const phase = formatSpecPhase(spec.phase);
+  const progressLabel = `${spec.criteriaProgress.proven} of ${spec.criteriaProgress.total} criteria proven`;
   return (
-    <div className="flex flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-raised p-sm">
-      <div className="flex items-center gap-sm">
+    <article className="flex flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-surface px-[13px] py-[11px]">
+      <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim pb-sm">
+        <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+          Spec
+        </span>
+        <span className="h-px min-w-sm flex-1 bg-border-dim" />
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
+          Computed at query time — not editable here
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-sm">
         <Link
           href={specHref(projectName, spec.slug)}
-          aria-label={`${spec.name} ${phase}`}
-          className="inline-flex min-w-0 items-center gap-xs rounded-md font-mono text-[0.74rem] font-semibold text-text-primary no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+          aria-label={`${spec.slug} ${spec.name} ${phase}`}
+          title={spec.name}
+          className="inline-flex min-w-0 items-center gap-xs rounded-full border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow px-sm py-xs font-mono text-[0.74rem] font-semibold text-cyan no-underline hover:border-cyan-dim hover:bg-bg-hover focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
         >
-          <span className="truncate">{spec.name}</span>
+          <span className="truncate">{spec.slug}</span>
           <StatusChip
             tone={specPhaseTone(spec.phase.primary)}
             appearance="flat"
@@ -158,7 +171,7 @@ function LinkedSpec({
             {phase}
           </StatusChip>
         </Link>
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto shrink-0 max-768:ml-0">
           <CopyReferenceControl
             referenceType="spec"
             attrs={{
@@ -171,33 +184,84 @@ function LinkedSpec({
           />
         </div>
       </div>
-      <span className="font-mono text-[0.68rem] text-text-secondary">
-        {spec.criteriaProgress.proven}/{spec.criteriaProgress.total} criteria
-        proven
-      </span>
+
+      <div className="flex items-center gap-sm">
+        {spec.criteriaProgress.total > 0 ? (
+          <Progress
+            value={spec.criteriaProgress.proven}
+            max={spec.criteriaProgress.total}
+            aria-label={progressLabel}
+            layoutClassName="min-w-0 flex-1"
+          />
+        ) : (
+          <span className="h-[4px] min-w-0 flex-1 rounded-[2px] bg-bg-base" />
+        )}
+        <span className="shrink-0 font-mono text-[0.7rem] text-text-secondary">
+          {spec.criteriaProgress.total > 0
+            ? `${spec.criteriaProgress.proven}/${spec.criteriaProgress.total} in-scope criteria proven`
+            : "No criteria in scope"}
+        </span>
+        {spec.criteriaProgress.total > 0 && (
+          <span className="sr-only">
+            {spec.criteriaProgress.proven}/{spec.criteriaProgress.total}{" "}
+            criteria proven
+          </span>
+        )}
+      </div>
+
       {spec.linkedTasks.map((task) => (
         <div
           key={task.taskElementId}
           data-source-task-state={task.sourceTaskState}
-          className="flex items-center gap-sm border-x-0 border-t border-b-0 border-solid border-border-subtle pt-sm font-mono text-[0.68rem]"
+          className="border-x-0 border-t border-b-0 border-solid border-border-subtle pt-sm font-mono text-[0.7rem]"
         >
-          <span
-            title={task.taskElementId}
-            className="min-w-0 flex-1 truncate text-text-tertiary"
-          >
-            {task.taskHandle ?? task.taskElementId}
-          </span>
-          {task.sourceTaskState !== "current" ? (
-            <StatusChip tone="amber" appearance="flat">
-              Source task {task.sourceTaskState}
+          <div className="flex flex-wrap items-center gap-sm">
+            {task.taskHandle === null ? (
+              <span title={task.taskElementId} className="text-text-tertiary">
+                {task.taskElementId}
+              </span>
+            ) : (
+              <Link
+                href={`${specHref(projectName, spec.slug)}?${new URLSearchParams({ el: task.taskHandle }).toString()}`}
+                aria-label={`${spec.slug}/${task.taskHandle}`}
+                title={task.taskElementId}
+                className="inline-flex rounded-full border border-solid border-border-default bg-bg-raised px-sm py-xs font-semibold text-text-primary no-underline hover:border-border-strong hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+              >
+                {task.taskHandle}
+              </Link>
+            )}
+            <StatusChip
+              tone={taskStatusTone(task.workStatus)}
+              appearance="flat"
+            >
+              {formatTaskStatus(task.workStatus)}
             </StatusChip>
-          ) : null}
-          <StatusChip tone={taskStatusTone(task.workStatus)} appearance="flat">
-            {formatTaskStatus(task.workStatus)}
-          </StatusChip>
+            {task.sourceTaskState !== "current" ? (
+              <span
+                title={`The ticket was materialized from ${spec.slug}/${task.taskHandle ?? task.taskElementId}; that source task is ${task.sourceTaskState} in revision ${spec.revision}. Ticket lifecycle remains ticket-owned.`}
+                className="inline-flex rounded-full border border-dashed border-amber-dim px-sm py-xs font-semibold tracking-[0.05em] text-amber-dim uppercase"
+              >
+                <span aria-hidden="true">source task removed/changed</span>
+                <span className="sr-only">
+                  Source task {task.sourceTaskState}
+                </span>
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-xs text-text-tertiary">
+            materialized from {spec.slug}/
+            {task.taskHandle ?? task.taskElementId}
+            {task.sourceTaskState === "current"
+              ? " · live read-through"
+              : ` · re-scoped in rev ${spec.revision} — still read-through, never synced`}
+          </div>
         </div>
       ))}
-    </div>
+      <p className="m-0 font-mono text-[0.64rem] text-text-tertiary">
+        The ticket persists only the link — phase, progress, and element status
+        are read through it.
+      </p>
+    </article>
   );
 }
 

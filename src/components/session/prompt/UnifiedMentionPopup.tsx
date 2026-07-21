@@ -20,9 +20,11 @@ import {
   autocompleteHeaderClass,
   autocompleteHeaderCountClass,
 } from "@/components/ui/Autocomplete";
+import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useAllConversationsQuery } from "@/lib/conversations/queries";
 import type { AllConversationsResponse } from "@/lib/conversations/schemas";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   getUnifiedMentionGroups,
   parseSpecDrillInQuery,
@@ -42,6 +44,8 @@ import {
 } from "@/lib/specs/queries";
 import { useTicketListQuery } from "@/lib/tickets/queries";
 import type { TicketListItem } from "@/lib/tickets/schemas";
+
+const logger = createClientLogger("prompt-reference-picker");
 
 export interface UnifiedMentionPopupHandle {
   handleKeyDown(event: KeyboardEvent): boolean;
@@ -116,8 +120,9 @@ export function createUnifiedMentionPopup(
         onPickerContextChange?.(pickerContext);
       }, [onPickerContextChange, pickerContext]);
 
+      const drillIn = useMemo(() => parseSpecDrillInQuery(query), [query]);
       const groups = useMemo(
-        () => getUnifiedMentionGroups(query, pickerContext),
+        () => orderMentionGroups(getUnifiedMentionGroups(query, pickerContext)),
         [pickerContext, query],
       );
       const items = useMemo(
@@ -144,13 +149,27 @@ export function createUnifiedMentionPopup(
       const selectAt = useCallback(
         (index: number) => {
           const item = itemsRef.current[index];
-          if (item) onSelect(item);
+          if (item === undefined) return;
+          logger.info("prompt.references.item_selected", {
+            projectName: currentProjectName,
+            query,
+            referenceId: item.id,
+            referenceType: item.type,
+          });
+          onSelect(item);
         },
-        [onSelect],
+        [currentProjectName, onSelect, query],
       );
       const toggleArchived = useCallback(() => {
-        setIncludeArchived((current) => !current);
-      }, []);
+        setIncludeArchived((current) => {
+          const next = !current;
+          logger.info("prompt.references.archived_toggled", {
+            includeArchived: next,
+            projectName: currentProjectName,
+          });
+          return next;
+        });
+      }, [currentProjectName]);
       const handleKeyDown = useCallback(
         (event: KeyboardEvent): boolean => {
           const total = itemsRef.current.length;
@@ -161,20 +180,19 @@ export function createUnifiedMentionPopup(
           }
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            setActiveIndex((current) => {
-              const next = Math.min(current + 1, Math.max(total - 1, 0));
-              activeIndexRef.current = next;
-              return next;
-            });
+            const next = Math.min(
+              activeIndexRef.current + 1,
+              Math.max(total - 1, 0),
+            );
+            activeIndexRef.current = next;
+            setActiveIndex(next);
             return true;
           }
           if (event.key === "ArrowUp") {
             event.preventDefault();
-            setActiveIndex((current) => {
-              const next = Math.max(current - 1, 0);
-              activeIndexRef.current = next;
-              return next;
-            });
+            const next = Math.max(activeIndexRef.current - 1, 0);
+            activeIndexRef.current = next;
+            setActiveIndex(next);
             return true;
           }
           if (event.key === "Enter" || event.key === "Tab") {
@@ -218,26 +236,43 @@ export function createUnifiedMentionPopup(
           empty="No matching references"
           header={
             <div className={autocompleteHeaderClass}>
-              <span>References — grouped by type</span>
-              <span className="flex items-center gap-sm">
-                <span className={autocompleteHeaderCountClass}>
-                  {items.length} {items.length === 1 ? "result" : "results"}
-                </span>
-                <StatusChip
-                  as="button"
-                  aria-pressed={includeArchived}
-                  onClick={toggleArchived}
-                  layoutClassName="border-border-default bg-transparent transition-[border-color,color,background] duration-150 ease-[ease] aria-pressed:border-amber-dim aria-pressed:text-amber [&[aria-pressed=false]]:hover:border-border-strong [&[aria-pressed=false]]:hover:text-text-secondary"
-                >
-                  Archived
-                </StatusChip>
+              <span className="min-w-0 truncate font-semibold tracking-[0.06em] uppercase">
+                {drillIn === null
+                  ? "# reference — all types"
+                  : `${drillIn.slug} — requirements · decisions · tasks`}
               </span>
+              {drillIn === null ? (
+                <span className="flex shrink-0 items-center gap-sm">
+                  <span className={autocompleteHeaderCountClass}>
+                    {items.length} {items.length === 1 ? "result" : "results"}
+                  </span>
+                  <Button
+                    variant={includeArchived ? "primary" : "ghost"}
+                    size="sm"
+                    touch
+                    aria-pressed={includeArchived}
+                    onClick={toggleArchived}
+                  >
+                    Archived
+                  </Button>
+                </span>
+              ) : (
+                <span className="shrink-0 text-text-secondary">
+                  Matched on handle + text
+                </span>
+              )}
             </div>
           }
           footer={
             <AutocompleteNavFooter
               layoutClassName="max-768:hidden"
-              extra={<span>Alt+A archived</span>}
+              extra={
+                drillIn === null ? (
+                  <span>Alt+A archived</span>
+                ) : (
+                  <span>Enter inserts an element reference</span>
+                )
+              }
             />
           }
         >
@@ -250,6 +285,27 @@ export function createUnifiedMentionPopup(
         </AutocompleteListbox>
       );
     },
+  );
+}
+
+const mentionGroupOrder: Record<UnifiedMentionGroup["type"], number> = {
+  conversation: 0,
+  spec: 1,
+  ticket: 2,
+  message: 3,
+  requirement: 4,
+  decision: 5,
+  task: 6,
+  question: 7,
+  assumption: 8,
+};
+
+function orderMentionGroups(
+  groups: UnifiedMentionGroup[],
+): UnifiedMentionGroup[] {
+  return [...groups].sort(
+    (left, right) =>
+      mentionGroupOrder[left.type] - mentionGroupOrder[right.type],
   );
 }
 
@@ -457,8 +513,11 @@ function GroupedOptions({
       {indexedGroups.map(({ group, startIndex }) => {
         return (
           <div key={group.type} role="group" aria-label={group.label}>
-            <div className="border-y-0 border-r-0 border-l-2 border-solid border-l-transparent bg-bg-raised px-sm py-[3px] text-[0.66rem] tracking-[0.08em] text-text-tertiary uppercase">
-              {group.label}
+            <div className="flex items-center justify-between border-y-0 border-r-0 border-l-2 border-solid border-l-transparent bg-bg-raised px-sm py-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+              <span>{group.label}</span>
+              <span aria-label={`${group.items.length} results`}>
+                {group.items.length}
+              </span>
             </div>
             {group.items.map((item, itemIndex) => {
               const index = startIndex + itemIndex;
@@ -466,20 +525,20 @@ function GroupedOptions({
                 <AutocompleteOption
                   key={item.id}
                   id={`unified-mention-option-${index}`}
-                  variant="conversation"
                   active={index === activeIndex}
                   onHover={() => onHover(index)}
                   onSelect={() => onSelect(index)}
                 >
-                  <div className="relative z-raised flex min-w-0 items-center gap-sm text-[0.82rem] text-text-primary">
+                  <div className="relative z-raised flex min-w-0 flex-1 items-center gap-sm text-[0.78rem] text-text-primary">
                     <AutocompleteMatchText
                       text={item.label}
                       indices={item.matchIndices}
-                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                      className="max-w-[42%] shrink-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold"
                     />
-                  </div>
-                  <div className="relative z-raised truncate text-[0.7rem] text-text-tertiary">
-                    {item.description}
+                    <span className="min-w-0 flex-1 truncate text-text-tertiary">
+                      {item.description}
+                    </span>
+                    <ReferenceOptionMeta item={item} />
                   </div>
                 </AutocompleteOption>
               );
@@ -489,6 +548,43 @@ function GroupedOptions({
       })}
     </>
   );
+}
+
+function ReferenceOptionMeta({
+  item,
+}: {
+  item: ReferencePickerItem;
+}): React.JSX.Element | null {
+  if (item.type === "spec") {
+    const revision = item.attrs.revision;
+    return typeof revision === "string" ? (
+      <span className="shrink-0 text-[0.7rem] text-text-tertiary">
+        rev {revision}
+      </span>
+    ) : null;
+  }
+  if (item.type !== "conversation") return null;
+
+  const status = item.attrs.status;
+  if (typeof status !== "string") return null;
+  const tone =
+    status === "running"
+      ? "cyan"
+      : status === "waiting_for_input"
+        ? "amber"
+        : "neutral";
+  return (
+    <StatusChip tone={tone} appearance="flat">
+      {formatOptionStatus(status)}
+    </StatusChip>
+  );
+}
+
+function formatOptionStatus(status: string): string {
+  return status
+    .split("_")
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 export const UnifiedMentionPopup = createUnifiedMentionPopup({

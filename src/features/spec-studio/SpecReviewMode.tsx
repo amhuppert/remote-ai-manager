@@ -15,30 +15,39 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/AlertDialog";
 import { MultilineInput } from "@/components/MultilineInput";
+import { CheckIcon, ChevronDownIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
+import { CheckboxField } from "@/components/ui/Checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/Collapsible";
 import {
   EmptyState,
   EmptyStateDesc,
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
+import { Progress } from "@/components/ui/Progress";
 import {
   TabsContent,
   TabsList,
   TabsRoot,
   TabsTrigger,
-  TabsTriggerCount,
 } from "@/components/ui/Tabs";
 import {
   commentAnchorSchema,
   type CommentAnchor,
 } from "@/lib/document-comments/schemas";
 import { createClientLogger } from "@/lib/logging/client-logger";
+import { COMBINED_APPROVAL_DIAL, resolveDial } from "@/lib/specs/policy";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import {
   diffRevisions,
   type RevisionElement,
+  type RevisionDiffResult,
   type SemanticChange,
 } from "@/lib/specs/revision-diff";
 import {
@@ -51,7 +60,6 @@ import {
 } from "@/lib/specs/schemas";
 
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
-import SpecPhaseFacets from "./SpecPhaseFacets";
 
 const logger = createClientLogger("spec-studio-review");
 
@@ -104,6 +112,35 @@ type BulkApprovalSubject =
   | ApprovalTarget
   | { subjectKind: "plan"; elementId: null };
 
+interface ReviewChangeGroup {
+  key: "sections" | "requirements" | "decisions" | "tasks";
+  label: string;
+  changes: SemanticChange[];
+}
+
+interface ReviewReadiness {
+  approved: number;
+  total: number;
+  approvalsReady: boolean;
+  blockingThreadCount: number;
+  rejectedAssumptionCount: number;
+  ready: boolean;
+}
+
+const reviewGroupOrder: ReviewChangeGroup["key"][] = [
+  "sections",
+  "requirements",
+  "decisions",
+  "tasks",
+];
+
+const reviewGroupLabel: Record<ReviewChangeGroup["key"], string> = {
+  sections: "Sections",
+  requirements: "Requirements",
+  decisions: "Decisions",
+  tasks: "Tasks · plan",
+};
+
 export default function SpecReviewMode({
   detail,
   projectName,
@@ -117,6 +154,8 @@ export default function SpecReviewMode({
   const currentSnapshot = detail.currentRevision;
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [signOffDialogOpen, setSignOffDialogOpen] = useState(false);
+  const [signOffAcknowledged, setSignOffAcknowledged] = useState(false);
 
   const diff = useMemo(() => {
     if (currentSnapshot === null) return null;
@@ -269,118 +308,120 @@ export default function SpecReviewMode({
 
   const requirementSubjects = bulkApprovalSubjects(detail, "requirements");
   const remainingSubjects = bulkApprovalSubjects(detail, "remaining");
+  const changeGroups = groupReviewChanges(diff.changeList);
+  const unchangedViews = unchangedElementViews(diff, currentSnapshot);
+  const readiness = reviewReadiness(detail);
 
   return (
-    <div className="px-xl py-lg max-768:px-md">
-      <header className="flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
-        <div>
-          <div className="flex flex-wrap items-center gap-sm">
-            <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
-              Review revision {currentSnapshot.revision.number}
-            </h1>
-            <StatusChip tone="amber">Proposed</StatusChip>
-            <StatusChip tone="neutral">
-              {baseSnapshot === null
-                ? "Initial proposal"
-                : `From revision ${baseSnapshot.revision.number}`}
-            </StatusChip>
-          </div>
-          <p className="mt-sm mb-0 max-w-[760px] text-[0.78rem] leading-relaxed text-text-secondary">
-            Review semantic changes first. Comments preserve their original
-            revision anchors, and approval validity is projected for this frozen
-            proposal.
-          </p>
-          <div className="mt-sm">
-            <SpecPhaseFacets status={detail.status} />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-sm">
-          <Link
-            href={reviewPath}
-            className="font-mono text-[0.72rem] font-medium text-text-secondary no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-          >
-            Exit review
-          </Link>
-          <Button
-            size="sm"
-            variant="success"
-            loading={bulkApprove.isPending}
-            disabled={requirementSubjects.length === 0}
-            onClick={() => handleBulkApproval("requirements")}
-          >
-            Approve all requirements
-          </Button>
-          <Button
-            size="sm"
-            variant="success"
-            loading={bulkApprove.isPending}
-            disabled={remainingSubjects.length === 0}
-            onClick={() => handleBulkApproval("remaining")}
-          >
-            Approve all remaining
-          </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button size="sm" loading={requestChanges.isPending}>
-                Request changes
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogTitle>Request changes?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This ends the current review attempt, withdraws revision{" "}
-                {currentSnapshot.revision.number}, and opens a follow-up draft
-                based on it.
-              </AlertDialogDescription>
-              <AlertDialogActions>
-                <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
-                <AlertDialogAction onClick={handleRequestChanges}>
-                  End review — open draft
-                </AlertDialogAction>
-              </AlertDialogActions>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </header>
+    <div className="px-md pt-[10px] pb-lg">
+      <div className="mx-auto max-w-[1080px]">
+        <TabsRoot defaultValue="semantic">
+          <header className="flex items-center justify-between gap-lg border-x-0 border-t-0 border-b border-solid border-border-dim pb-[12px] max-768:flex-col max-768:items-stretch">
+            <div className="min-w-0">
+              <Link
+                href={reviewPath}
+                className="inline-flex min-h-[28px] items-center font-mono text-[0.72rem] font-medium text-text-tertiary no-underline hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+              >
+                ← {detail.spec.slug}
+              </Link>
+              <div className="flex flex-wrap items-center gap-sm">
+                <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
+                  Review revision {currentSnapshot.revision.number}
+                </h1>
+                <span className="font-mono text-[0.7rem] text-text-tertiary">
+                  proposed
+                  {currentSnapshot.revision.proposedAt === null
+                    ? ""
+                    : ` ${currentSnapshot.revision.proposedAt.slice(0, 10)}`}{" "}
+                  ·{" "}
+                  {baseSnapshot === null
+                    ? "initial proposal"
+                    : `over revision ${baseSnapshot.revision.number}`}
+                </span>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-sm max-768:justify-between">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    touch
+                    loading={requestChanges.isPending}
+                    title="Ends this review attempt and opens a draft revision"
+                  >
+                    Request changes
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent size="default">
+                  <AlertDialogTitle>
+                    Request changes — end this review?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This ends the review attempt on revision{" "}
+                    {currentSnapshot.revision.number} and opens a follow-up
+                    draft. It is not a comment — the frozen proposal remains in
+                    history, and approvals recorded so far stay recorded.
+                  </AlertDialogDescription>
+                  <AlertDialogActions>
+                    <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleRequestChanges}>
+                      End review — open draft
+                    </AlertDialogAction>
+                  </AlertDialogActions>
+                </AlertDialogContent>
+              </AlertDialog>
+              <TabsList asChild layoutClassName="max-768:grow">
+                <div className="flex shrink-0 items-center rounded-md border border-solid border-border-subtle bg-bg-surface p-[2px]">
+                  <TabsTrigger
+                    value="semantic"
+                    asChild
+                    layoutClassName="max-768:grow max-768:basis-0"
+                  >
+                    <button
+                      type="button"
+                      className="h-6 cursor-pointer rounded-sm border-0 bg-transparent px-[12px] font-mono text-[0.7rem] font-semibold whitespace-nowrap text-text-tertiary transition-colors outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:bg-bg-elevated data-[state=active]:text-text-primary max-768:h-11"
+                    >
+                      Semantic changes
+                    </button>
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="raw"
+                    asChild
+                    layoutClassName="max-768:grow max-768:basis-0"
+                  >
+                    <button
+                      type="button"
+                      className="h-6 cursor-pointer rounded-sm border-0 bg-transparent px-[12px] font-mono text-[0.7rem] font-semibold whitespace-nowrap text-text-tertiary transition-colors outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:bg-bg-elevated data-[state=active]:text-text-primary max-768:h-11"
+                    >
+                      Raw diff
+                    </button>
+                  </TabsTrigger>
+                </div>
+              </TabsList>
+            </div>
+          </header>
 
-      <div
-        aria-live="polite"
-        className="min-h-[28px] py-sm font-mono text-[0.7rem] text-cyan"
-      >
-        {feedback}
-      </div>
-      {error !== null && (
-        <p
-          role="alert"
-          className="mb-md rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.72rem] text-red"
-        >
-          {error}
-        </p>
-      )}
+          {feedback !== null && (
+            <div
+              aria-live="polite"
+              className="pt-sm font-mono text-[0.7rem] text-cyan"
+            >
+              {feedback}
+            </div>
+          )}
+          {error !== null && (
+            <p
+              role="alert"
+              className="mb-md rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.72rem] text-red"
+            >
+              {error}
+            </p>
+          )}
 
-      <TabsRoot defaultValue="semantic">
-        <TabsList layoutClassName="w-fit max-768:w-full">
-          <TabsTrigger
-            value="semantic"
-            fill
-            layoutClassName="max-768:grow max-768:basis-0"
-          >
-            Semantic changes
-            <TabsTriggerCount>{diff.changeList.length}</TabsTriggerCount>
-          </TabsTrigger>
-          <TabsTrigger
-            value="raw"
-            fill
-            layoutClassName="max-768:grow max-768:basis-0"
-          >
-            Raw diff
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="semantic" layoutClassName="mt-lg">
-          <div className="grid grid-cols-[minmax(0,1fr)_320px] items-start gap-xl max-1180:grid-cols-1">
+          <TabsContent value="semantic">
             <section
               aria-label="Semantic changes"
-              className="grid min-w-0 gap-md"
+              className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
             >
               {diff.changeList.length === 0 ? (
                 <EmptyState>
@@ -390,69 +431,395 @@ export default function SpecReviewMode({
                   </EmptyStateDesc>
                 </EmptyState>
               ) : (
-                diff.changeList.map((change) => (
-                  <ReviewChangeCard
-                    key={change.elementId}
-                    change={change}
-                    detail={detail}
-                    projectName={projectName}
-                    baseSnapshot={baseSnapshot}
-                    currentSnapshot={currentSnapshot}
-                    onFeedback={setFeedback}
-                    onError={setError}
-                  />
-                ))
+                <>
+                  <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-stretch">
+                    <div className="min-w-0">
+                      <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
+                        {diff.changeList.length}{" "}
+                        {pluralize(diff.changeList.length, "change")} across{" "}
+                        {changeGroups.length}{" "}
+                        {pluralize(changeGroups.length, "kind")}
+                      </p>
+                      <p className="mt-xs mb-0 truncate font-mono text-[0.7rem] text-text-tertiary">
+                        Approvals on unchanged elements carry forward quietly.
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-sm max-768:grid max-768:grid-cols-2">
+                      <Button
+                        size="sm"
+                        touch
+                        loading={bulkApprove.isPending}
+                        disabled={requirementSubjects.length === 0}
+                        onClick={() => handleBulkApproval("requirements")}
+                      >
+                        Approve all requirements
+                      </Button>
+                      <Button
+                        size="sm"
+                        touch
+                        variant="primary"
+                        loading={bulkApprove.isPending}
+                        disabled={remainingSubjects.length === 0}
+                        onClick={() => handleBulkApproval("remaining")}
+                      >
+                        Approve all remaining
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="mt-[14px] grid gap-[14px]">
+                    {changeGroups.map((group) => (
+                      <section
+                        key={group.key}
+                        aria-labelledby={`review-group-${group.key}`}
+                      >
+                        <div className="mb-sm flex items-center gap-sm">
+                          <h2
+                            id={`review-group-${group.key}`}
+                            className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+                          >
+                            {group.label}
+                          </h2>
+                          <span className="font-mono text-[0.7rem] text-text-tertiary">
+                            {group.changes.length}{" "}
+                            {pluralize(group.changes.length, "change")}
+                          </span>
+                          <span className="h-px min-w-0 grow bg-border-dim" />
+                        </div>
+                        <div className="grid gap-sm">
+                          {group.changes.map((change) => (
+                            <ReviewChangeCard
+                              key={change.elementId}
+                              change={change}
+                              detail={detail}
+                              projectName={projectName}
+                              baseSnapshot={baseSnapshot}
+                              currentSnapshot={currentSnapshot}
+                              initiallyExpanded={
+                                highlightedChangeId === change.elementId
+                              }
+                              onFeedback={setFeedback}
+                              onError={setError}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+
+                  <UnchangedApprovals views={unchangedViews} />
+                </>
               )}
             </section>
-            <ReviewThreads detail={detail} currentSnapshot={currentSnapshot} />
-          </div>
-        </TabsContent>
-        <TabsContent value="raw" layoutClassName="mt-lg">
-          <section className="rounded-lg border border-solid border-border-subtle bg-bg-surface">
-            <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
-              <h2 className="m-0 font-display text-[0.88rem] font-bold text-text-primary">
-                Raw diff
-              </h2>
-              <p className="mt-xs mb-0 font-mono text-[0.68rem] text-text-tertiary">
-                Secondary view — semantic changes are the review contract.
-              </p>
-            </div>
-            <pre className="m-0 max-h-[65vh] overflow-auto p-md font-mono text-[0.7rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
-              {formatRawDiff(baseSnapshot, currentSnapshot, diff.changeList)}
-            </pre>
-          </section>
-        </TabsContent>
-      </TabsRoot>
+            <div className="h-xl" />
+          </TabsContent>
 
-      <footer className="mt-xl flex flex-wrap items-center justify-between gap-md border-x-0 border-t border-b-0 border-solid border-border-dim pt-lg">
-        <p className="m-0 max-w-[680px] text-[0.76rem] leading-relaxed text-text-secondary">
-          Sign-off freezes revision {currentSnapshot.revision.number}. The
-          server will refuse it while required approvals, blocking threads, or
-          gates remain.
-        </p>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="success" loading={signOff.isPending}>
-              Sign off revision
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogTitle>Sign off revision?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This is the explicit human act that freezes revision{" "}
-              {currentSnapshot.revision.number} as approved.
-            </AlertDialogDescription>
-            <AlertDialogActions>
-              <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
-              <AlertDialogAction onClick={handleSignOff}>
-                Sign off — freeze revision
-              </AlertDialogAction>
-            </AlertDialogActions>
-          </AlertDialogContent>
-        </AlertDialog>
-      </footer>
+          <TabsContent value="raw">
+            <section className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base">
+              <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
+                <h2 className="m-0 font-display text-[0.88rem] font-bold text-text-primary">
+                  Raw diff
+                </h2>
+                <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary uppercase">
+                  Secondary view — the semantic change list is the review
+                  contract; use the raw diff for spot checks.
+                </p>
+              </div>
+              <pre className="m-0 max-h-[65vh] overflow-auto p-md font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
+                {formatRawDiff(baseSnapshot, currentSnapshot, diff.changeList)}
+              </pre>
+            </section>
+            <div className="h-xl" />
+          </TabsContent>
+        </TabsRoot>
+
+        <footer
+          data-testid="review-readiness"
+          className="sticky bottom-0 z-[150] flex items-center gap-lg border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-surface px-sm py-md shadow-[0_-12px_32px_var(--color-bg-void)] max-768:flex-col max-768:items-stretch"
+        >
+          <div className="min-w-0 grow">
+            <div className="flex flex-wrap items-center gap-sm">
+              <span className="font-mono text-[0.78rem] font-bold text-text-primary tabular-nums">
+                {readiness.approved}/{readiness.total} approved
+              </span>
+              <StatusChip tone={readiness.approvalsReady ? "green" : "amber"}>
+                {readiness.approvalsReady
+                  ? "Approvals complete"
+                  : "Approvals incomplete"}
+              </StatusChip>
+              <StatusChip
+                tone={readiness.blockingThreadCount === 0 ? "green" : "amber"}
+              >
+                {readiness.blockingThreadCount === 0
+                  ? "Threads resolved"
+                  : `${readiness.blockingThreadCount} blocking ${pluralize(readiness.blockingThreadCount, "thread")}`}
+              </StatusChip>
+              <StatusChip
+                tone={
+                  readiness.rejectedAssumptionCount === 0 ? "green" : "amber"
+                }
+              >
+                {readiness.rejectedAssumptionCount === 0
+                  ? "Assumptions clear"
+                  : `${readiness.rejectedAssumptionCount} rejected ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`}
+              </StatusChip>
+            </div>
+            {readiness.total > 0 && (
+              <Progress
+                aria-label="Review approval progress"
+                value={readiness.approved}
+                max={readiness.total}
+                tone={readiness.ready ? "accent" : "warning"}
+                layoutClassName="mt-sm max-w-[420px] max-768:max-w-none"
+              />
+            )}
+          </div>
+          <AlertDialog
+            open={signOffDialogOpen}
+            onOpenChange={(open) => {
+              setSignOffDialogOpen(open);
+              if (open) setSignOffAcknowledged(false);
+            }}
+          >
+            <AlertDialogTrigger asChild>
+              <Button
+                variant={readiness.ready ? "primary" : "default"}
+                touch
+                loading={signOff.isPending}
+                disabled={!readiness.ready}
+                title={
+                  readiness.ready
+                    ? "Freeze this revision"
+                    : readinessBlockerSummary(readiness)
+                }
+              >
+                Sign off revision {currentSnapshot.revision.number}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent size="default">
+              <AlertDialogTitle>
+                Sign off revision {currentSnapshot.revision.number}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This explicit human act freezes revision{" "}
+                {currentSnapshot.revision.number} as the approved, immutable
+                content of {detail.spec.slug}. Executions pin it; later changes
+                require a new revision.
+              </AlertDialogDescription>
+              <div className="mb-lg grid gap-sm rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.72rem] text-text-secondary">
+                <span className="flex items-center gap-sm">
+                  <CheckIcon size={12} className="text-green" />
+                  {readiness.approved}/{readiness.total} review approvals
+                  recorded
+                </span>
+                <span className="flex items-center gap-sm">
+                  <CheckIcon size={12} className="text-green" />
+                  Blocking threads resolved
+                </span>
+                <span className="flex items-center gap-sm">
+                  <CheckIcon size={12} className="text-green" />
+                  No rejected attached assumption remains cited
+                </span>
+              </div>
+              <CheckboxField
+                checked={signOffAcknowledged}
+                onCheckedChange={(checked) =>
+                  setSignOffAcknowledged(checked === true)
+                }
+                label={`I reviewed the semantic change list and approve revision ${currentSnapshot.revision.number} as a whole.`}
+              />
+              <AlertDialogActions layoutClassName="mt-lg">
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={!signOffAcknowledged}
+                  onClick={handleSignOff}
+                >
+                  Sign off — freeze revision {currentSnapshot.revision.number}
+                </AlertDialogAction>
+              </AlertDialogActions>
+            </AlertDialogContent>
+          </AlertDialog>
+        </footer>
+      </div>
     </div>
   );
+}
+
+function groupReviewChanges(changes: SemanticChange[]): ReviewChangeGroup[] {
+  const groups = new Map<ReviewChangeGroup["key"], SemanticChange[]>();
+  for (const change of changes) {
+    const key = reviewGroupKey(change.kind);
+    const group = groups.get(key) ?? [];
+    group.push(change);
+    groups.set(key, group);
+  }
+
+  return reviewGroupOrder.flatMap((key) => {
+    const group = groups.get(key);
+    return group === undefined
+      ? []
+      : [{ key, label: reviewGroupLabel[key], changes: group }];
+  });
+}
+
+function reviewGroupKey(
+  kind: SemanticChange["kind"],
+): ReviewChangeGroup["key"] {
+  switch (kind) {
+    case "section":
+      return "sections";
+    case "requirement":
+    case "criterion":
+      return "requirements";
+    case "decision":
+      return "decisions";
+    case "task":
+      return "tasks";
+  }
+}
+
+function unchangedElementViews(
+  diff: RevisionDiffResult,
+  currentSnapshot: SpecRevisionSnapshot,
+): ReviewElementView[] {
+  return diff.classifications.flatMap((classification) => {
+    if (classification.classification !== "unchanged") return [];
+    const view = viewForElement(currentSnapshot, classification.elementId);
+    return view === null ? [] : [view];
+  });
+}
+
+function UnchangedApprovals({
+  views,
+}: {
+  views: ReviewElementView[];
+}): React.JSX.Element | null {
+  if (views.length === 0) return null;
+
+  return (
+    <div className="mt-lg rounded-md border border-dashed border-border-default px-md py-sm">
+      <Collapsible>
+        <CollapsibleTrigger layoutClassName="w-full">
+          {views.length} unchanged {pluralize(views.length, "element")} —
+          approvals carried forward quietly
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="flex flex-wrap gap-xs pt-sm">
+            {views.map((view) => (
+              <StatusChip
+                key={view.entry.element.id}
+                tone="green"
+                icon={<CheckIcon size={12} className="text-green" />}
+              >
+                {view.handle}
+              </StatusChip>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
+
+function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
+  const snapshot = detail.currentRevision;
+  if (snapshot === null) {
+    return {
+      approved: 0,
+      total: 0,
+      approvalsReady: false,
+      blockingThreadCount: 0,
+      rejectedAssumptionCount: 0,
+      ready: false,
+    };
+  }
+
+  const requiresApproval = (gate: "requirements" | "design" | "plan") => {
+    const dial = resolveDial(detail.spec.gatePolicy, gate);
+    return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
+  };
+  const subjects: BulkApprovalSubject[] = [];
+  for (const entry of snapshot.elements) {
+    switch (entry.version.payload.kind) {
+      case "requirement":
+        if (requiresApproval("requirements")) {
+          subjects.push({
+            subjectKind: "requirement",
+            elementId: entry.element.id,
+          });
+        }
+        break;
+      case "decision":
+        if (requiresApproval("design")) {
+          subjects.push({
+            subjectKind: "decision",
+            elementId: entry.element.id,
+          });
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  if (requiresApproval("plan")) {
+    subjects.push({ subjectKind: "plan", elementId: null });
+  }
+
+  const approved = subjects.filter(
+    (subject) =>
+      latestSubjectApproval(detail.approvals, subject)?.validity === "valid",
+  ).length;
+  const blockingThreadCount = groupThreads(detail).filter((thread) =>
+    thread.comments.some(
+      (comment) =>
+        comment.revision_id === snapshot.revision.id &&
+        comment.blocking === 1 &&
+        comment.resolution === "open",
+    ),
+  ).length;
+  const currentElementIds = new Set(
+    snapshot.elements.map((entry) => entry.element.id),
+  );
+  const rejectedAssumptionCount = detail.assumptions.filter(
+    (assumption) =>
+      assumption.disposition === "rejected" &&
+      assumption.elementId !== null &&
+      currentElementIds.has(assumption.elementId) &&
+      (snapshot.revision.proposedAt === null ||
+        assumption.createdAt <= snapshot.revision.proposedAt),
+  ).length;
+  const approvalsReady = approved === subjects.length;
+
+  return {
+    approved,
+    total: subjects.length,
+    approvalsReady,
+    blockingThreadCount,
+    rejectedAssumptionCount,
+    ready:
+      approvalsReady &&
+      blockingThreadCount === 0 &&
+      rejectedAssumptionCount === 0,
+  };
+}
+
+function readinessBlockerSummary(readiness: ReviewReadiness): string {
+  const blockers = [
+    ...(readiness.approvalsReady
+      ? []
+      : [`${readiness.total - readiness.approved} approvals outstanding`]),
+    ...(readiness.blockingThreadCount === 0
+      ? []
+      : [
+          `${readiness.blockingThreadCount} blocking ${pluralize(readiness.blockingThreadCount, "thread")}`,
+        ]),
+    ...(readiness.rejectedAssumptionCount === 0
+      ? []
+      : [
+          `${readiness.rejectedAssumptionCount} rejected cited ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`,
+        ]),
+  ];
+  return `Sign-off blocked — ${blockers.join(" · ")}`;
 }
 
 export function bulkApprovalSubjects(
@@ -518,6 +885,7 @@ function ReviewChangeCard({
   projectName,
   baseSnapshot,
   currentSnapshot,
+  initiallyExpanded,
   onFeedback,
   onError,
 }: {
@@ -526,9 +894,11 @@ function ReviewChangeCard({
   projectName: string;
   baseSnapshot: SpecRevisionSnapshot | null;
   currentSnapshot: SpecRevisionSnapshot;
+  initiallyExpanded: boolean;
   onFeedback(feedback: string | null): void;
   onError(error: string | null): void;
 }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [commenting, setCommenting] = useState(false);
   const [commentBody, setCommentBody] = useState("");
   const base = viewForElement(baseSnapshot, change.elementId);
@@ -544,6 +914,9 @@ function ReviewChangeCard({
     approvalTarget === null
       ? null
       : approvalFor(detail.approvals, approvalTarget);
+  const threads = groupThreads(detail).filter(
+    (thread) => thread.comments[0]?.element_id === change.elementId,
+  );
 
   const comment = useSpecActionMutation<
     {
@@ -667,117 +1040,154 @@ function ReviewChangeCard({
   }
 
   return (
-    <article
-      id={reviewChangeTargetId(change.elementId)}
-      data-testid={`review-change-${change.elementId}`}
-      tabIndex={-1}
-      className="rounded-lg border border-solid border-border-subtle bg-bg-surface"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-xs">
-            <StatusChip tone={changeTone[change.change]}>
-              {capitalize(change.change)}
-            </StatusChip>
-            {display !== null && display !== undefined && (
-              <Link
-                href={changeDeepLink(
-                  projectName,
-                  detail.spec.slug,
-                  change,
-                  current,
-                  handle,
-                )}
-                className="font-mono text-[0.7rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-              >
-                {handle}
-              </Link>
-            )}
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <article
+        id={reviewChangeTargetId(change.elementId)}
+        data-testid={`review-change-${change.elementId}`}
+        tabIndex={-1}
+        className="overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+      >
+        <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-sm px-md py-sm max-768:grid-cols-[auto_minmax(0,1fr)] max-768:gap-y-sm">
+          <StatusChip tone={changeTone[change.change]}>
+            {capitalize(change.change)}
+          </StatusChip>
+          {display !== null && display !== undefined && (
+            <Link
+              href={changeDeepLink(
+                projectName,
+                detail.spec.slug,
+                change,
+                current,
+                handle,
+              )}
+              className="inline-flex min-h-[28px] items-center font-mono text-[0.72rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+            >
+              {handle}
+            </Link>
+          )}
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              aria-label={change.summary}
+              className="group flex min-h-[32px] min-w-0 cursor-pointer items-center gap-sm border-0 bg-transparent p-0 text-left font-mono text-[0.78rem] text-text-primary hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:col-span-2 max-768:row-start-2 max-768:min-h-[44px]"
+            >
+              <span className="min-w-0 grow truncate max-768:whitespace-normal">
+                {change.summary}
+              </span>
+              <ChevronDownIcon
+                size={14}
+                className="shrink-0 text-text-tertiary transition-transform duration-150 group-data-[state=open]:rotate-180"
+              />
+            </button>
+          </CollapsibleTrigger>
+          <div className="flex flex-wrap items-center justify-end gap-xs max-768:col-span-2 max-768:row-start-3 max-768:justify-start">
             {approval?.validity === "stale" && (
               <StatusChip tone="amber">Approval stale</StatusChip>
+            )}
+            {approval?.validity === "closed" && (
+              <StatusChip tone="neutral">Approval closed</StatusChip>
             )}
             {approval?.validity === "valid" && (
               <StatusChip tone="green">Approved</StatusChip>
             )}
-          </div>
-          <h2 className="mt-sm mb-0 text-[0.82rem] font-semibold text-text-primary">
-            {change.summary}
-          </h2>
-        </div>
-        <div className="flex flex-wrap gap-xs">
-          <Button size="sm" onClick={() => setCommenting((open) => !open)}>
-            Comment
-          </Button>
-          <Button
-            size="sm"
-            variant="success"
-            disabled={approvalTarget === null || change.change === "removed"}
-            loading={approve.isPending}
-            onClick={approveItem}
-            title={
-              approvalTarget === null
-                ? "This element has no independent approval gate"
-                : undefined
-            }
-          >
-            Approve item
-          </Button>
-        </div>
-      </div>
-
-      {change.change === "modified" ? (
-        <div className="grid grid-cols-2 gap-px bg-border-dim max-768:grid-cols-1">
-          <RevisionValue
-            label={
-              baseSnapshot === null
-                ? "Empty baseline"
-                : `Revision ${baseSnapshot.revision.number}`
-            }
-            body={base?.body ?? "Not present"}
-          />
-          <RevisionValue
-            label={`Revision ${currentSnapshot.revision.number}`}
-            body={current?.body ?? "Not present"}
-          />
-        </div>
-      ) : (
-        <div className="px-md py-sm text-[0.76rem] leading-relaxed text-text-secondary">
-          {(current ?? base)?.body ?? "Element content unavailable"}
-        </div>
-      )}
-
-      {commenting && (
-        <div className="border-x-0 border-t border-b-0 border-solid border-border-dim px-md py-sm">
-          <label
-            htmlFor={`comment-${change.elementId}`}
-            className="mb-xs block font-mono text-[0.68rem] font-semibold tracking-[0.06em] text-text-secondary uppercase"
-          >
-            Comment on {handle}
-          </label>
-          <MultilineInput
-            id={`comment-${change.elementId}`}
-            aria-label={`Comment on ${handle}`}
-            value={commentBody}
-            onValueChange={setCommentBody}
-            voiceProjectName={projectName}
-            rows={3}
-            className="box-border w-full resize-y rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] font-mono text-[0.78rem] text-text-primary outline-0 placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
-            placeholder="Leave review context for this element"
-          />
-          <div className="mt-sm flex justify-end">
             <Button
               size="sm"
-              variant="primary"
-              disabled={commentBody.trim().length === 0}
-              loading={comment.isPending}
-              onClick={recordComment}
+              touch
+              onClick={() => {
+                setCommenting((open) => !open);
+                setExpanded(true);
+              }}
             >
-              Record comment
+              Comment
+            </Button>
+            <Button
+              size="sm"
+              touch
+              variant="success"
+              disabled={approvalTarget === null || change.change === "removed"}
+              loading={approve.isPending}
+              onClick={approveItem}
+              title={
+                approvalTarget === null
+                  ? "This element has no independent approval gate"
+                  : undefined
+              }
+            >
+              Approve item
             </Button>
           </div>
         </div>
-      )}
-    </article>
+
+        <CollapsibleContent forceMount asChild>
+          <div
+            hidden={!expanded}
+            className="border-x-0 border-t border-b-0 border-solid border-border-subtle data-[state=closed]:hidden"
+          >
+            {change.change === "modified" ? (
+              <div className="grid grid-cols-2 gap-px bg-border-dim max-768:grid-cols-1">
+                <RevisionValue
+                  label={
+                    baseSnapshot === null
+                      ? "Empty baseline"
+                      : `Revision ${baseSnapshot.revision.number}`
+                  }
+                  body={base?.body ?? "Not present"}
+                />
+                <RevisionValue
+                  label={`Revision ${currentSnapshot.revision.number}`}
+                  body={current?.body ?? "Not present"}
+                />
+              </div>
+            ) : (
+              <p className="m-0 bg-bg-base px-md py-sm font-mono text-[0.76rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
+                {(current ?? base)?.body ?? "Element content unavailable"}
+              </p>
+            )}
+          </div>
+        </CollapsibleContent>
+
+        {threads.length > 0 && (
+          <ReviewThreads
+            threads={threads}
+            detail={detail}
+            currentSnapshot={currentSnapshot}
+          />
+        )}
+
+        {commenting && (
+          <div className="border-x-0 border-t border-b-0 border-solid border-border-dim bg-bg-base px-md py-sm">
+            <label
+              htmlFor={`comment-${change.elementId}`}
+              className="mb-xs block font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-secondary uppercase"
+            >
+              Comment on {handle}
+            </label>
+            <MultilineInput
+              id={`comment-${change.elementId}`}
+              aria-label={`Comment on ${handle}`}
+              value={commentBody}
+              onValueChange={setCommentBody}
+              voiceProjectName={projectName}
+              rows={3}
+              className="box-border w-full resize-y rounded-md border border-solid border-border-default bg-bg-surface px-[12px] py-[9px] font-mono text-[0.78rem] text-text-primary outline-0 placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
+              placeholder="Leave review context for this element"
+            />
+            <div className="mt-sm flex justify-end">
+              <Button
+                size="sm"
+                touch
+                variant="primary"
+                disabled={commentBody.trim().length === 0}
+                loading={comment.isPending}
+                onClick={recordComment}
+              >
+                Record comment
+              </Button>
+            </div>
+          </div>
+        )}
+      </article>
+    </Collapsible>
   );
 }
 
@@ -790,10 +1200,10 @@ function RevisionValue({
 }): React.JSX.Element {
   return (
     <div className="min-w-0 bg-bg-base px-md py-sm">
-      <span className="font-mono text-[0.64rem] tracking-[0.06em] text-text-tertiary uppercase">
+      <span className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
         {label}
       </span>
-      <p className="mt-sm mb-0 text-[0.76rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
+      <p className="mt-sm mb-0 font-mono text-[0.76rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
         {body}
       </p>
     </div>
@@ -801,84 +1211,76 @@ function RevisionValue({
 }
 
 function ReviewThreads({
+  threads,
   detail,
   currentSnapshot,
 }: {
+  threads: ReturnType<typeof groupThreads>;
   detail: SpecDetailView;
   currentSnapshot: SpecRevisionSnapshot;
 }): React.JSX.Element {
-  const threads = groupThreads(detail);
-
   return (
-    <aside
+    <div
+      role="group"
       aria-label="Review threads"
-      className="sticky top-[calc(var(--topbar-height)+var(--space-lg))] rounded-lg border border-solid border-border-subtle bg-bg-surface max-1180:static"
+      className="grid gap-sm border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm"
     >
-      <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
-        <h2 className="m-0 font-display text-[0.86rem] font-bold text-text-primary">
-          Review threads
-        </h2>
-        <p className="mt-xs mb-0 font-mono text-[0.66rem] text-text-tertiary">
-          Original anchors remain authoritative
-        </p>
-      </div>
-      <div className="grid max-h-[65vh] gap-sm overflow-y-auto p-sm max-1180:max-h-none">
-        {threads.length === 0 ? (
-          <p className="m-0 px-sm py-md font-mono text-[0.7rem] text-text-tertiary">
-            No review threads
-          </p>
-        ) : (
-          threads.map((thread) => {
-            const original = thread.comments[0];
-            if (original === undefined) return null;
-            const anchor = parseAnchor(original.anchor_json);
-            const currentBody = bodyForElement(
-              currentSnapshot,
-              original.element_id,
-            );
-            const state =
-              anchor === null
-                ? { status: "stale" as const }
-                : reanchorSpecThread(anchor, currentBody);
-            const originalRevision = detail.revisions.find(
-              (revision) => revision.id === original.revision_id,
-            );
+      {threads.map((thread) => {
+        const original = thread.comments[0];
+        if (original === undefined) return null;
+        const anchor = parseAnchor(original.anchor_json);
+        const currentBody = bodyForElement(
+          currentSnapshot,
+          original.element_id,
+        );
+        const state =
+          anchor === null
+            ? { status: "stale" as const }
+            : reanchorSpecThread(anchor, currentBody);
+        const originalRevision = detail.revisions.find(
+          (revision) => revision.id === original.revision_id,
+        );
 
-            return (
-              <article
-                key={thread.threadId}
-                data-testid={`review-thread-${thread.threadId}`}
-                className="rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-xs">
-                  <StatusChip tone={anchorTone[state.status]}>
-                    {anchorLabel[state.status]}
-                  </StatusChip>
-                  <span className="font-mono text-[0.64rem] text-text-tertiary">
-                    Original revision {originalRevision?.number ?? "unknown"}
-                  </span>
-                </div>
-                {anchor !== null && (
-                  <blockquote className="mt-sm mb-0 border-x-0 border-t-0 border-b-0 border-l-2 border-solid border-cyan-dim pl-sm text-[0.7rem] leading-relaxed text-text-tertiary">
-                    “{anchor.quote}”
-                  </blockquote>
-                )}
-                <div className="mt-sm grid gap-xs">
-                  {thread.comments.map((comment) => (
-                    <p
-                      key={comment.id}
-                      className="m-0 text-[0.74rem] leading-relaxed text-text-secondary"
-                    >
-                      {comment.body}
-                    </p>
-                  ))}
-                </div>
-              </article>
-            );
-          })
-        )}
-      </div>
-    </aside>
+        return (
+          <article
+            key={thread.threadId}
+            data-testid={`review-thread-${thread.threadId}`}
+            className="rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-xs">
+              {original.blocking === 1 && (
+                <StatusChip
+                  tone={original.resolution === "open" ? "red" : "green"}
+                >
+                  Blocking · {original.resolution}
+                </StatusChip>
+              )}
+              <StatusChip tone={anchorTone[state.status]}>
+                {anchorLabel[state.status]}
+              </StatusChip>
+              <span className="font-mono text-[0.7rem] text-text-tertiary">
+                Original revision {originalRevision?.number ?? "unknown"}
+              </span>
+            </div>
+            {anchor !== null && (
+              <blockquote className="mt-sm mb-0 border-x-0 border-t-0 border-b-0 border-l-2 border-solid border-cyan-dim pl-sm text-[0.7rem] leading-relaxed text-text-tertiary">
+                “{anchor.quote}”
+              </blockquote>
+            )}
+            <div className="mt-sm grid gap-xs">
+              {thread.comments.map((comment) => (
+                <p
+                  key={comment.id}
+                  className="m-0 font-mono text-[0.74rem] leading-relaxed text-text-secondary"
+                >
+                  {comment.body}
+                </p>
+              ))}
+            </div>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1084,4 +1486,8 @@ function createClientId(): string {
 
 function capitalize(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function pluralize(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`;
 }

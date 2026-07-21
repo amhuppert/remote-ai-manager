@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import type { AllConversationsResponse } from "@/lib/conversations/schemas";
 import type { TicketListItem } from "@/lib/tickets/schemas";
+import type { SpecPickerSpec } from "@/lib/prompt-editor/reference-registry";
 import { createUnifiedMentionPopup } from "./UnifiedMentionPopup";
 
 const conversations: AllConversationsResponse = {
@@ -63,6 +64,39 @@ const tickets: TicketListItem[] = [
   },
 ];
 
+const specs: SpecPickerSpec[] = [
+  {
+    projectName: "command-center",
+    specId: "spec-native-sdd",
+    slug: "native-sdd",
+    name: "Native spec-driven development",
+    revision: 4,
+    elements: [
+      {
+        type: "requirement",
+        elementId: "requirement-3",
+        handle: "R3",
+        name: "Granular durable approvals",
+        searchText: "Granular durable approvals per element",
+      },
+      {
+        type: "decision",
+        elementId: "decision-2",
+        handle: "D2",
+        name: "Direct-change-only invalidation",
+        searchText: "Direct-change-only invalidation",
+      },
+      {
+        type: "task",
+        elementId: "task-9",
+        handle: "T9",
+        name: "Render live reference chips",
+        searchText: "Render live reference chips and peek cards",
+      },
+    ],
+  },
+];
+
 const Popup = createUnifiedMentionPopup({
   useAllConversations: () => ({
     data: conversations,
@@ -77,7 +111,7 @@ const Popup = createUnifiedMentionPopup({
     error: null,
   }),
   useSpecs: () => ({
-    data: [],
+    data: specs,
     isLoading: false,
     isError: false,
     error: null,
@@ -106,6 +140,7 @@ const meta = {
   title: "Session/PromptEditor/UnifiedMentionPopup",
   component: Demo,
   args: { query: "" },
+  parameters: { a11y: { test: "error" }, layout: "fullscreen" },
 } satisfies Meta<typeof Demo>;
 
 export default meta;
@@ -115,4 +150,8 @@ export const GroupedExistingReferences = {} satisfies Story;
 
 export const TicketFiltered = {
   args: { query: "tickets:" },
+} satisfies Story;
+
+export const SpecDrillIn = {
+  args: { query: "native-sdd/" },
 } satisfies Story;

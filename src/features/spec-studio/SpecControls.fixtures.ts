@@ -196,3 +196,131 @@ export function specControlsDetailFixture(
     gateAdmissions: [],
   };
 }
+
+export function denseSpecControlsDetailFixture(
+  executionState: "none" | "definition_review" | "running",
+): SpecDetailView {
+  const detail = specControlsDetailFixture(executionState);
+  const snapshot = detail.currentApprovedRevision;
+  if (snapshot === null) throw new Error("Approved fixture missing");
+  const criterion = snapshot.elements.find(
+    (entry) => entry.element.id === "criterion-1",
+  );
+  const task = snapshot.elements.find((entry) => entry.element.id === "task-1");
+  if (
+    criterion === undefined ||
+    criterion.version.payload.kind !== "criterion" ||
+    task === undefined ||
+    task.version.payload.kind !== "task"
+  ) {
+    throw new Error("Dense execution fixture sources missing");
+  }
+
+  const criterionNumbers = executionState === "none" ? [2] : [2, 3, 4];
+  const additionalCriteria = criterionNumbers.map((number) => ({
+    element: {
+      ...criterion.element,
+      id: `criterion-${number}`,
+      number,
+    },
+    version: {
+      ...criterion.version,
+      elementId: `criterion-${number}`,
+      position: number,
+      payload: {
+        ...criterion.version.payload,
+        text: `Criterion ${number} is satisfied for the scoped delivery.`,
+      },
+      payloadHash: `criterion-${number}-hash`,
+    },
+  }));
+  const taskTwo = {
+    element: { ...task.element, id: "task-2", number: 2 },
+    version: {
+      ...task.version,
+      elementId: "task-2",
+      position: 6,
+      payload: {
+        ...task.version.payload,
+        title: "Validate scoped delivery",
+        coveredCriterionElementIds: criterionNumbers.map(
+          (number) => `criterion-${number}`,
+        ),
+        dependsOnTaskElementIds: ["task-1"],
+      },
+      payloadHash: "task-2-hash",
+    },
+  };
+  snapshot.elements.push(...additionalCriteria, taskTwo);
+  detail.status.coverage = {
+    coveredCriteria: criterionNumbers.length + 1,
+    totalCriteria: criterionNumbers.length + 1,
+    percentage: 100,
+  };
+
+  if (executionState === "none") return detail;
+  const execution = detail.executions[0];
+  const sourceDisposition = detail.criterionDispositions[0];
+  if (execution === undefined || sourceDisposition === undefined) {
+    throw new Error("Execution fixture missing");
+  }
+  execution.scope_json = JSON.stringify({
+    selectedTaskIds: ["task-1", "task-2"],
+    selectedCriterionIds: ["criterion-1", "criterion-2", "criterion-4"],
+    exclusionDispositions: [
+      { criterionId: "criterion-3", disposition: "deferred" },
+    ],
+  });
+  detail.criterionDispositions = [
+    {
+      ...sourceDisposition,
+      criterion_element_id: "criterion-1",
+      disposition: "in_scope",
+    },
+    {
+      ...sourceDisposition,
+      criterion_element_id: "criterion-2",
+      disposition: "waived",
+      waiver_id: "waiver-2",
+    },
+    {
+      ...sourceDisposition,
+      criterion_element_id: "criterion-3",
+      disposition: "deferred",
+    },
+    {
+      ...sourceDisposition,
+      criterion_element_id: "criterion-4",
+      disposition: "delivered_elsewhere",
+      delivered_by_execution_id: "execution-prior",
+    },
+  ];
+  detail.waivers = [
+    {
+      id: "waiver-2",
+      spec_id: detail.spec.id,
+      criterion_element_id: "criterion-2",
+      revision_id: snapshot.revision.id,
+      reason: "Equivalent proof accepted by Alex.",
+      waived_at: SPEC_CONTROLS_FIXTURE_NOW,
+      stale: 0,
+    },
+  ];
+  detail.executions.push({
+    ...execution,
+    id: "execution-prior",
+    state: "delivered",
+    scope_json: JSON.stringify({
+      selectedTaskIds: ["task-1"],
+      selectedCriterionIds: ["criterion-4"],
+      exclusionDispositions: [],
+    }),
+    delivered_at: SPEC_CONTROLS_FIXTURE_NOW,
+  });
+  detail.status.delivery = {
+    allWaived: false,
+    provenCount: 1,
+    totalInScope: 3,
+  };
+  return detail;
+}

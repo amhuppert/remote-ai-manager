@@ -16,6 +16,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import { StatusDot, type StatusDotTone } from "@/components/ui/StatusDot";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   useProjectsQuery,
   useProjectPreferencesQuery,
@@ -31,6 +32,8 @@ import { HOTKEY_REGISTRY, formatHotkeyDisplay } from "@/lib/shared/hotkeys";
 const CreateSessionModal = lazy(
   () => import("@/features/project-detail/components/CreateSessionModal"),
 );
+
+const logger = createClientLogger("topbar-project-switcher");
 
 // ---------------------------------------------------------------------------
 // Shared chrome
@@ -172,6 +175,7 @@ function SwitcherSearch({
       <input
         type="text"
         role="combobox"
+        aria-label={placeholder}
         aria-expanded="true"
         aria-controls={listboxId}
         aria-activedescendant={activeOptionId}
@@ -274,6 +278,8 @@ interface ProjectSwitcherProps {
   siblingOpen: boolean;
   /** Layout-only utilities from the breadcrumb row (mobile hide/truncate). */
   triggerLayoutClassName?: string;
+  /** Route family to keep when the user changes project context. */
+  destination?: "project" | "specs";
 }
 
 export function BreadcrumbProjectSwitcher({
@@ -282,6 +288,7 @@ export function BreadcrumbProjectSwitcher({
   onOpenChange,
   siblingOpen,
   triggerLayoutClassName,
+  destination = "project",
 }: ProjectSwitcherProps) {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -318,6 +325,7 @@ export function BreadcrumbProjectSwitcher({
         <ProjectSwitcherPanel
           activeProject={projectName}
           onDone={() => onOpenChange(false)}
+          destination={destination}
         />
       </PopoverContent>
     </Popover>
@@ -327,9 +335,11 @@ export function BreadcrumbProjectSwitcher({
 function ProjectSwitcherPanel({
   activeProject,
   onDone,
+  destination,
 }: {
   activeProject: string;
   onDone: () => void;
+  destination: "project" | "specs";
 }) {
   const router = useRouter();
   const listboxId = useId();
@@ -360,7 +370,16 @@ function ProjectSwitcherPanel({
 
   const selectProject = (name: string) => {
     onDone();
-    router.push(`/projects/${encodeURIComponent(name)}`);
+    const href =
+      destination === "specs"
+        ? `/specs?project=${encodeURIComponent(name)}`
+        : `/projects/${encodeURIComponent(name)}`;
+    logger.info("topbar.project_switcher.selected", {
+      activeProject,
+      destination,
+      projectName: name,
+    });
+    router.push(href);
   };
 
   const { activeIndex, setActiveIndex, onKeyDown } = useOptionNavigation(

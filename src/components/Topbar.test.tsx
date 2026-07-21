@@ -13,6 +13,7 @@ import type {
   ActiveConversation,
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
+import type { Notification } from "@/lib/notifications/schemas";
 import {
   useQuickTicketStore,
   type QuickTicketStoreState,
@@ -63,6 +64,37 @@ function setActiveConversations(conversations: ActiveConversation[]): void {
     "/api/conversations/active",
     makeActiveConversationsResponse(conversations),
   );
+}
+
+function setNotifications(notifications: Notification[]): void {
+  api.json("GET", "/api/notifications", {
+    notifications,
+    total: notifications.length,
+    unreadCount: notifications.filter((row) => !row.read).length,
+  });
+}
+
+function makeSpecNotification(
+  overrides: Partial<Extract<Notification, { source: "spec" }>> = {},
+): Extract<Notification, { source: "spec" }> {
+  return {
+    source: "spec",
+    id: "spec-notification-1",
+    type: "spec-approval-requested",
+    title: "Design approval requested",
+    message: "Native SDD: R6",
+    read: false,
+    projectName: "root-tools",
+    createdAt: "2026-06-10T09:03:00.000Z",
+    sessionName: null,
+    specId: "spec-native-sdd",
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    gate: "design",
+    gateRequestId: "gate-request-1",
+    deepLinkId: "R6",
+    ...overrides,
+  };
 }
 
 function makeSessionConversation(
@@ -122,17 +154,17 @@ function makeProjectConversation(
   };
 }
 
-function getNeedsLink(): HTMLAnchorElement {
+function getNeedsTrigger(): HTMLButtonElement {
   const needsLabel = screen.getByText(/needs? you/);
-  const link = needsLabel.closest("a");
-  expect(link).not.toBeNull();
-  return link as HTMLAnchorElement;
+  const trigger = needsLabel.closest("button");
+  expect(trigger).not.toBeNull();
+  return trigger as HTMLButtonElement;
 }
 
-/** Await the async attention link the active-conversations query drives. */
-async function findNeedsLink(): Promise<HTMLAnchorElement> {
+/** Await the async attention trigger the active-conversations query drives. */
+async function findNeedsTrigger(): Promise<HTMLButtonElement> {
   await screen.findByText(/needs? you/);
-  return getNeedsLink();
+  return getNeedsTrigger();
 }
 
 describe("Topbar", () => {
@@ -413,6 +445,7 @@ describe("Topbar", () => {
   });
 
   it("counts project waiting_for_input rows and links to the project focus URL (Req 11.2, 12.1, 12.3)", async () => {
+    const user = userEvent.setup();
     setActiveConversations([
       makeProjectConversation({
         id: "project-question",
@@ -423,17 +456,23 @@ describe("Topbar", () => {
 
     renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    const link = await findNeedsLink();
-    expect(within(link).getByText("1")).toBeInTheDocument();
-    expect(link.getAttribute("href")).toBe(
-      "/projects/root-tools?focus=project-question",
-    );
+    const trigger = await findNeedsTrigger();
+    expect(within(trigger).getByText("1")).toBeInTheDocument();
+    await user.click(trigger);
     expect(
-      getNeedsLink().querySelector<HTMLElement>("[aria-hidden='true']"),
+      screen
+        .getByRole("menuitem", {
+          name: /Input requested.*Project conversation/i,
+        })
+        .getAttribute("href"),
+    ).toBe("/projects/root-tools?focus=project-question");
+    expect(
+      trigger.querySelector<HTMLElement>("[aria-hidden='true']"),
     ).toHaveClass("motion-reduce:[animation:none]");
   });
 
   it("counts unread project awaiting rows as needing attention (Req 11.2, 11.3)", async () => {
+    const user = userEvent.setup();
     setActiveConversations([
       makeProjectConversation({
         id: "project-unread",
@@ -445,14 +484,20 @@ describe("Topbar", () => {
 
     renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    const link = await findNeedsLink();
-    expect(within(link).getByText("1")).toBeInTheDocument();
-    expect(link.getAttribute("href")).toBe(
-      "/projects/root-tools?focus=project-unread",
-    );
+    const trigger = await findNeedsTrigger();
+    expect(within(trigger).getByText("1")).toBeInTheDocument();
+    await user.click(trigger);
+    expect(
+      screen
+        .getByRole("menuitem", {
+          name: /Unread update.*Project conversation/i,
+        })
+        .getAttribute("href"),
+    ).toBe("/projects/root-tools?focus=project-unread");
   });
 
   it("targets the conversations page when the first attention target is a session row (Req 11.2, 12.4)", async () => {
+    const user = userEvent.setup();
     setActiveConversations([
       makeSessionConversation({
         id: "session-question",
@@ -469,9 +514,12 @@ describe("Topbar", () => {
 
     renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    const link = await findNeedsLink();
-    expect(within(link).getByText("2")).toBeInTheDocument();
-    expect(link.getAttribute("href")).toBe("/conversations?c=session-question");
+    const trigger = await findNeedsTrigger();
+    expect(within(trigger).getByText("2")).toBeInTheDocument();
+    await user.click(trigger);
+    expect(screen.getAllByRole("menuitem")[0]?.getAttribute("href")).toBe(
+      "/conversations?c=session-question",
+    );
   });
 
   it("counts gated conversations as needing attention and calls out approvals distinctly", async () => {
@@ -501,9 +549,76 @@ describe("Topbar", () => {
 
     renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
 
-    const link = await findNeedsLink();
-    expect(within(link).getByText("2")).toBeInTheDocument();
+    const trigger = await findNeedsTrigger();
+    expect(within(trigger).getByText("2")).toBeInTheDocument();
     expect(screen.getByText("need you")).toBeInTheDocument();
     expect(screen.getByText("· 1 approval")).toBeInTheDocument();
+  });
+
+  it("opens one Needs You menu containing conversation and durable spec decisions", async () => {
+    const user = userEvent.setup();
+    setActiveConversations([
+      makeProjectConversation({
+        id: "project-question",
+        name: "Release notes",
+        projectName: "root-tools",
+        status: "waiting_for_input",
+        pendingQuestion: "Which release should this target?",
+        lastActivityAt: "2026-06-10T09:01:00.000Z",
+      }),
+    ]);
+    setNotifications([
+      makeSpecNotification({
+        id: "waiver-request",
+        type: "spec-waiver-requested",
+        title: "Delivery waiver requested",
+        message: "Native SDD: criterion cannot be proven in this execution",
+        gate: "delivery",
+        gateRequestId: "waiver-1",
+        deepLinkId: "R3.2",
+        createdAt: "2026-06-10T09:02:00.000Z",
+      }),
+      makeSpecNotification(),
+    ]);
+
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
+
+    const trigger = await screen.findByRole("button", {
+      name: /3 items need/i,
+    });
+    await user.click(trigger);
+
+    expect(
+      screen.getByRole("menu", { name: /Needs you/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Design approval required")).toBeInTheDocument();
+    expect(screen.getByText("Waiver decision required")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Native SDD: criterion cannot be proven in this execution",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Which release should this target?"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("menuitem").map((row) => row.textContent),
+    ).toEqual([
+      expect.stringContaining("Design approval required"),
+      expect.stringContaining("Waiver decision required"),
+      expect.stringContaining("Input requested"),
+    ]);
+    expect(
+      screen
+        .getByRole("menuitem", {
+          name: /Design approval required.*Native SDD/i,
+        })
+        .getAttribute("href"),
+    ).toBe("/specs/root-tools/native-sdd?el=R6");
+    expect(
+      screen
+        .getByRole("menuitem", { name: /input requested.*Release notes/i })
+        .getAttribute("href"),
+    ).toBe("/projects/root-tools?focus=project-question");
   });
 });

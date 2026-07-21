@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/ui/cn";
@@ -16,10 +16,14 @@ import {
 } from "@/components/topbar/NavSwitchers";
 import QuickTicketButton from "@/components/topbar/QuickTicketButton";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
+import { activeConversationNeedsAttention } from "@/lib/active-conversations/row-helpers";
+import { useNotificationsQuery } from "@/lib/notifications/queries";
+import { useNotificationJobs } from "@/stores/notification.store";
+import { deriveNotificationOutcomes } from "@/components/session/sidebar/active-work-adapters";
 import {
-  activeConversationHref,
-  activeConversationNeedsAttention,
-} from "@/lib/active-conversations/row-helpers";
+  buildNeedsYouItems,
+  NeedsYouMenu,
+} from "@/components/topbar/NeedsYouMenu";
 import { useClientStateReady } from "@/hooks/use-client-state-ready";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 
@@ -87,19 +91,38 @@ export default function Topbar({
   );
 
   const { data: activeConvosData } = useActiveConversationsQuery();
+  const { data: notificationsData } = useNotificationsQuery();
+  const notificationJobs = useNotificationJobs();
   const clientStateReady = useClientStateReady();
-  const pinnedConversations = clientStateReady
-    ? (activeConvosData?.conversations ?? []).filter(
-        activeConversationNeedsAttention,
-      )
-    : [];
-  const needsCount = pinnedConversations.length;
-  const approvalsCount = pinnedConversations.filter(
-    (row) => row.pendingApproval !== null,
-  ).length;
-  const firstPinned = pinnedConversations[0] ?? null;
-  const needsHref =
-    firstPinned !== null ? activeConversationHref(firstPinned) : null;
+  const [needsYouNowMs] = useState(() => Date.now());
+  const pinnedConversations = useMemo(
+    () =>
+      clientStateReady
+        ? (activeConvosData?.conversations ?? []).filter(
+            activeConversationNeedsAttention,
+          )
+        : [],
+    [activeConvosData, clientStateReady],
+  );
+  const liveJobs = useMemo(
+    () => (clientStateReady ? [...notificationJobs.values()] : []),
+    [clientStateReady, notificationJobs],
+  );
+  const actionItems = useMemo(() => {
+    const notifications = clientStateReady
+      ? (notificationsData?.notifications ?? [])
+      : [];
+    const detailByActionId = new Map(
+      notifications.map((row) => [`notification:${row.id}`, row.message]),
+    );
+    return deriveNotificationOutcomes(notifications, liveJobs).needsAction.map(
+      (item) => ({ ...item, detail: detailByActionId.get(item.id) }),
+    );
+  }, [clientStateReady, liveJobs, notificationsData]);
+  const needsYouItems = useMemo(
+    () => buildNeedsYouItems(pinnedConversations, actionItems),
+    [actionItems, pinnedConversations],
+  );
   const ticketsActive = pathname?.startsWith("/tickets") ?? false;
   const specsActive = pathname?.startsWith("/specs") ?? false;
   // Carry the active project into Specs so the studio opens scoped to the
@@ -161,6 +184,7 @@ export default function Topbar({
                     }
                     siblingOpen={openSwitcher === "session"}
                     triggerLayoutClassName={switcherLayout}
+                    destination={page === "specs" ? "specs" : "project"}
                   />
                 ) : seg.isSession && activeProjectName !== null ? (
                   <BreadcrumbSessionSwitcher
@@ -193,27 +217,8 @@ export default function Topbar({
         </nav>
       </div>
       <div className="flex items-center gap-md max-[360px]:gap-xs max-768:gap-sm">
-        {hydrated && needsCount > 0 && needsHref !== null && (
-          <Link
-            href={needsHref}
-            className="inline-flex h-[28px] cursor-pointer items-center gap-[7px] rounded-full border border-solid border-amber-dim bg-amber-glow pr-[11px] pl-[9px] font-mono text-[0.7rem] font-bold tracking-[0.07em] text-amber uppercase no-underline transition-colors duration-[140ms] ease-[ease] hover:border-amber hover:bg-[var(--cc-topbar-needs-hover-bg)] max-[360px]:px-[7px]"
-            title={`${needsCount} conversation${needsCount === 1 ? "" : "s"} need your attention`}
-            aria-label={`${needsCount} conversations need your attention`}
-          >
-            <span
-              className="h-[7px] w-[7px] [animation:pulse-dot_1.6s_ease-in-out_infinite] rounded-full bg-amber [box-shadow:0_0_7px_var(--amber)] motion-reduce:[animation:none]"
-              aria-hidden="true"
-            />
-            <span className="tabular-nums">{needsCount}</span>
-            <span className="font-semibold text-amber-dim max-768:hidden">
-              {needsCount === 1 ? "needs you" : "need you"}
-            </span>
-            {approvalsCount > 0 && (
-              <span className="font-semibold whitespace-nowrap text-amber max-[360px]:hidden">
-                · {approvalsCount} approval{approvalsCount === 1 ? "" : "s"}
-              </span>
-            )}
-          </Link>
+        {hydrated && (
+          <NeedsYouMenu items={needsYouItems} nowMs={needsYouNowMs} />
         )}
         <QuickTicketButton pathname={pathname} />
         <Link
