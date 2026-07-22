@@ -16,6 +16,7 @@ import type {
   SessionAlignmentUpdatedEvent,
 } from "@/lib/session-alignment/schemas";
 import {
+  composeTicketCharter,
   createSessionAlignmentService,
   type CharterMirrorCall,
   type SessionAlignmentService,
@@ -1418,6 +1419,27 @@ describe("createAndActivateTicketCharter", () => {
     title: "Add durable ticket context",
     description: "Agents need the ticket bundle materialized at start.",
   };
+
+  it("labels the ticket fields without presenting the title as the mission", () => {
+    expect(composeTicketCharter(TICKET_INPUT)).toBe(
+      [
+        "# Ticket charter: demo#12",
+        "",
+        "## Mission",
+        "Implement ticket demo#12.",
+        "",
+        "## Title",
+        "Add durable ticket context",
+        "",
+        "## Description",
+        "Agents need the ticket bundle materialized at start.",
+        "",
+        "## Working agreement",
+        "This session exists to work ticket demo#12. The ticket's current state (status and attachment index with retrieval commands) is provided on every turn; creation-time attachments are materialized under `.cc/tickets/` and registered as reference documents.",
+        "",
+      ].join("\n"),
+    );
+  });
 
   it("creates and immediately activates a source=ticket charter with no approval step", async () => {
     const activated =
