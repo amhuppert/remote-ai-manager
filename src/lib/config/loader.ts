@@ -177,6 +177,7 @@ function defaultConfig(): GlobalConfig {
         allowAgentTaskAdd: false,
       },
       collaboration: {
+        enabled: false,
         secondAgent: {
           backend: "claude",
           model: "sonnet",

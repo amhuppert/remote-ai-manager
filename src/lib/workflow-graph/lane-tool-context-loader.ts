@@ -248,6 +248,7 @@ export async function loadGraphWorkflowLaneToolContext(
     },
   );
 
+  const allowAgentCollaboration = resolvedCollaboration.enabled.value;
   const collaboration = buildImplementerCollaborationContext(
     {
       projectPath,
@@ -366,8 +367,8 @@ export async function loadGraphWorkflowLaneToolContext(
     executionTarget,
     executionContextTitle: executionContext.title,
     allowAgentTaskAdd: executionContext.mutability.allowAgentTaskAdd,
-    allowAgentCollaboration: true,
-    collaboration,
+    allowAgentCollaboration,
+    ...(allowAgentCollaboration ? { collaboration } : {}),
   });
 
   return {

@@ -5,6 +5,7 @@ import type {
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigNumericInput } from "../../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../../components/ConfigPillGroup";
+import { ConfigToggle } from "../../components/ConfigToggle";
 import { AgentConfigFields } from "./AgentConfigFields";
 
 const THRESHOLD_VALUES = [
@@ -33,6 +34,20 @@ export function CollaborationFields({
 }) {
   return (
     <>
+      <ConfigField
+        label="Enabled"
+        fieldPath="workflowDefaults.collaboration.enabled"
+        isDefault={false}
+        isModified={false}
+        hint="Let graph-workflow implementer agents request a structured second opinion. Off removes collaboration from their prompt and command access."
+      >
+        <ConfigToggle
+          label="Graph workflow collaboration enabled"
+          value={value.enabled}
+          onChange={(enabled) => onChange({ ...value, enabled })}
+        />
+      </ConfigField>
+
       <AgentConfigFields
         value={value.secondAgent}
         onChange={(secondAgent) => onChange({ ...value, secondAgent })}

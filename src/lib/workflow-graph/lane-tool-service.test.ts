@@ -151,6 +151,7 @@ describe("requestCollaborationSchema", () => {
 
 describe("createRequestCollaborationHandler", () => {
   const RESOLVED_CONFIG: ResolvedCollaborationConfig = {
+    enabled: { value: true, source: "workflow" },
     secondAgent: {
       value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
       source: "global",

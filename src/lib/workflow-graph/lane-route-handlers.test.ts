@@ -714,6 +714,7 @@ describe("lane route handlers — collaboration request", () => {
       executionId: "execution-1",
       iterationIndex: 0,
       resolveCollaborationConfig: () => ({
+        enabled: { value: true, source: "global" },
         secondAgent: {
           value: {
             backend: "codex",

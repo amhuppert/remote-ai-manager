@@ -318,9 +318,10 @@ describe("buildIterationPrompt", () => {
       sharedDocuments: [],
       allowAgentTaskAdd: false,
       allowAgentCollaboration: false,
+      collaborationContinuations: [makeCollaborationContinuation()],
     });
 
-    expect(prompt).not.toContain("cctl workflow collab request");
+    expect(prompt.toLowerCase()).not.toContain("collaboration");
   });
 
   it("omits `cctl workflow collab request` when allowAgentCollaboration is omitted", () => {

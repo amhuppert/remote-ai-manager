@@ -9,6 +9,7 @@ import {
 } from "./collaboration-cascade";
 
 const GLOBAL: WorkflowCollaborationConfig = {
+  enabled: false,
   secondAgent: {
     backend: "claude",
     model: "sonnet",
@@ -19,6 +20,7 @@ const GLOBAL: WorkflowCollaborationConfig = {
 };
 
 const WORKFLOW_FULL: WorkflowCollaborationConfigOverride = {
+  enabled: true,
   secondAgent: {
     backend: "codex",
     model: "gpt-5.4",
@@ -47,6 +49,7 @@ describe("resolveContextCollaboration (whole-block, 3 layers)", () => {
 
   it("reports context-override source when the context layer overrides", () => {
     const context: WorkflowCollaborationConfigOverride = {
+      enabled: false,
       secondAgent: {
         backend: "claude",
         model: "opus",
@@ -70,6 +73,7 @@ describe("resolveContextCollaboration (whole-block, 3 layers)", () => {
     expect(result.value.negotiationRounds).toBe(7);
     expect(result.value.secondAgent).toEqual(GLOBAL.secondAgent);
     expect(result.value.autonomousResolutionThreshold).toBe("minor");
+    expect(result.value.enabled).toBe(false);
   });
 
   it("layers context over workflow over global per field", () => {
@@ -82,6 +86,7 @@ describe("resolveContextCollaboration (whole-block, 3 layers)", () => {
     expect(result.value.negotiationRounds).toBe(7); // from workflow
     expect(result.value.autonomousResolutionThreshold).toBe("blocking"); // from context
     expect(result.value.secondAgent).toEqual(GLOBAL.secondAgent); // from global
+    expect(result.value.enabled).toBe(false); // from global
   });
 });
 
@@ -101,5 +106,11 @@ describe("resolveWorkflowCollaboration (whole-block, 2 layers)", () => {
     expect(result.value.negotiationRounds).toBe(9);
     expect(result.value.secondAgent).toEqual(GLOBAL.secondAgent);
     expect(result.value.autonomousResolutionThreshold).toBe("minor");
+  });
+
+  it("merges the enabled flag from a workflow override", () => {
+    const result = resolveWorkflowCollaboration({ enabled: true }, GLOBAL);
+
+    expect(result.value.enabled).toBe(true);
   });
 });

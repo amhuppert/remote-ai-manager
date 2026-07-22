@@ -70,6 +70,7 @@ function resolvedConfigFixture(
   backend: "claude" | "codex",
 ): ResolvedCollaborationConfig {
   return {
+    enabled: { value: true, source: "global" },
     secondAgent: {
       value:
         backend === "codex"

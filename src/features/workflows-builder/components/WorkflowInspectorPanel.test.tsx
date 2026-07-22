@@ -246,6 +246,27 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     ).toBeUndefined();
   });
 
+  it("uses a default-off header switch to create a workflow collaboration override", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: "Workflow collaboration enabled",
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(findBlockByLabel(container, "Collaboration")?.textContent).toContain(
+      "off",
+    );
+
+    fireEvent.click(toggle);
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .collaboration,
+    ).toHaveProperty("enabled", true);
+  });
+
   it("creates and resets each workflow gate override", () => {
     resetStore();
     setupStore({ selectedContextId: null });
@@ -530,6 +551,25 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     expect(ctx?.scriptValidator).toEqual({ enabled: true });
     expect(ctx?.humanApprovalGate).toEqual({ enabled: true });
     expect(ctx?.askUserQuestions).toEqual({ enabled: true });
+  });
+
+  it("creates a context collaboration override from the header switch", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: "Context collaboration enabled",
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+
+    const context = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find(
+        (candidate) => candidate.id === "context-plan",
+      );
+    expect(context?.collaboration).toHaveProperty("enabled", true);
   });
 });
 

@@ -179,6 +179,7 @@ function collectTransitiveImports(
 }
 
 const RESOLVED_CONFIG: ResolvedCollaborationConfig = {
+  enabled: { value: true, source: "global" },
   secondAgent: {
     value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
     source: "global",

@@ -255,7 +255,7 @@ function summarizeValidator(
 function summarizeCollaboration(
   collaboration: ResolvedCollaborationConfig | undefined,
 ): LiveOutlineCollaborationSummary | null {
-  if (!collaboration) return null;
+  if (!collaboration?.enabled.value) return null;
   return {
     secondAgent: summarizeAgent(collaboration.secondAgent.value),
     negotiationRounds: collaboration.negotiationRounds.value,

@@ -76,6 +76,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             continuity: { enabled: false, contextLimitTokens: 90_000 },
           },
           collaboration: {
+            enabled: { value: true, source: "per-node" },
             secondAgent: {
               value: {
                 backend: "codex",

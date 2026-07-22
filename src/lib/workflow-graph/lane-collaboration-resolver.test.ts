@@ -22,6 +22,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },
   collaboration: {
+    enabled: false,
     secondAgent: {
       backend: "claude",
       model: "sonnet",
@@ -56,6 +57,7 @@ function resolvedContext(
 }
 
 const WORKING_COPY_COLLABORATION: ResolvedCollaborationConfig = {
+  enabled: { value: true, source: "per-node" },
   secondAgent: {
     value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
     source: "per-node",

@@ -9,6 +9,7 @@ import InspectorConfigBlock, {
 import { CollaborationEditor } from "@/components/workflow-config/FieldEditors";
 
 const BASE: WorkflowCollaborationConfig = {
+  enabled: false,
   secondAgent: {
     backend: "claude",
     model: "sonnet",
@@ -19,14 +20,14 @@ const BASE: WorkflowCollaborationConfig = {
 };
 
 const CUSTOM: WorkflowCollaborationConfig = {
+  enabled: true,
   secondAgent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
   negotiationRounds: 5,
   autonomousResolutionThreshold: "major",
 };
 
 function summarize(config: WorkflowCollaborationConfig): string {
-  const agent = `${config.secondAgent.backend} ${config.secondAgent.model}`;
-  return `${agent} · ${config.negotiationRounds} rounds · auto ${config.autonomousResolutionThreshold}`;
+  return config.enabled ? "on" : "off";
 }
 
 function InspectorBlockHarness({
@@ -47,6 +48,14 @@ function InspectorBlockHarness({
           label="Collaboration"
           summary={summarize(value)}
           source={source}
+          headerSwitch={{
+            checked: value.enabled,
+            onCheckedChange: (enabled) => {
+              setValue((current) => ({ ...current, enabled }));
+              setSource("context-override");
+            },
+            ariaLabel: "Collaboration enabled",
+          }}
           onOverride={() => setSource("context-override")}
           onReset={() => setSource("global")}
         >

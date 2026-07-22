@@ -60,6 +60,7 @@ function toFlatCollaboration(
   resolved: ResolvedCollaborationConfig,
 ): WorkflowCollaborationConfig {
   return {
+    enabled: resolved.enabled.value,
     secondAgent: resolved.secondAgent.value,
     negotiationRounds: resolved.negotiationRounds.value,
     autonomousResolutionThreshold: resolved.autonomousResolutionThreshold.value,
@@ -72,6 +73,7 @@ function toProvenancedCollaboration(
   flat: WorkflowCollaborationConfig,
 ): ResolvedCollaborationConfig {
   return {
+    enabled: { value: flat.enabled, source: "per-node" },
     secondAgent: { value: flat.secondAgent, source: "per-node" },
     negotiationRounds: { value: flat.negotiationRounds, source: "per-node" },
     autonomousResolutionThreshold: {
@@ -671,6 +673,18 @@ export default function ContextConfigTab({
             <ConfigBlock
               testId="config-block-collaboration"
               label="Collaboration"
+              headerRight={
+                <ToggleControl
+                  value={draft.collaboration.enabled}
+                  onChange={(enabled) => {
+                    const collaboration = draft.collaboration;
+                    if (!collaboration) return;
+                    patch({ collaboration: { ...collaboration, enabled } });
+                  }}
+                  disabled={readOnly}
+                  ariaLabel="Collaboration enabled"
+                />
+              }
             >
               <CollaborationEditor
                 value={draft.collaboration}

@@ -40,6 +40,7 @@ const CIRCUIT_BREAKER: GraphWorkflowCircuitBreakerPolicy = {
 };
 
 const COLLABORATION: WorkflowCollaborationConfig = {
+  enabled: false,
   secondAgent: {
     backend: "claude",
     model: "sonnet",

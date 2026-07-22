@@ -72,6 +72,22 @@ describe("WorkflowSection", () => {
     ).toBe("blocking");
   });
 
+  it("defaults global workflow collaboration off and enables it from Settings", () => {
+    const { controller, getState } = makeController();
+    render(<WorkflowSection controller={controller} />);
+    const toggle = screen.getByRole("switch", {
+      name: "Graph workflow collaboration enabled",
+    });
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+
+    expect(getState().workflowDefaults?.collaboration).toHaveProperty(
+      "enabled",
+      true,
+    );
+  });
+
   it("flags a block as MODIFIED when its value differs from seeded defaults", () => {
     const customDefaults: WorkflowDefaults = {
       ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),

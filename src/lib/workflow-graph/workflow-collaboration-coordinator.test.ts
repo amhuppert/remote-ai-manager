@@ -12,6 +12,7 @@ import { createGraphWorkflowCollaborationCoordinator } from "./workflow-collabor
 
 function resolvedConfigFixture(): ResolvedCollaborationConfig {
   return {
+    enabled: { value: true, source: "global" },
     secondAgent: {
       value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
       source: "global",

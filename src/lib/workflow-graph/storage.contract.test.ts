@@ -84,6 +84,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
       circuitBreaker: { consecutiveFailureThreshold: 4 },
       mutability: { allowAgentTaskAdd: true },
       collaboration: {
+        enabled: true,
         secondAgent: {
           backend: "claude",
           model: "sonnet",
@@ -165,6 +166,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           continuity: { enabled: false, contextLimitTokens: 90_000 },
         },
         collaboration: {
+          enabled: true,
           secondAgent: {
             backend: "claude",
             model: "opus",

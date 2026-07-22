@@ -54,6 +54,7 @@ function fullContext(): GraphWorkflowResolvedContext {
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     collaboration: {
+      enabled: { value: true, source: "per-node" },
       secondAgent: {
         value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
         source: "per-node",
@@ -173,6 +174,9 @@ describe("ContextConfigTab — display", () => {
     expect(screen.getByLabelText("Failure threshold")).toHaveValue(3);
 
     const collab = screen.getByTestId("config-block-collaboration");
+    expect(
+      within(collab).getByLabelText("Collaboration enabled"),
+    ).toBeChecked();
     expect(within(collab).getByText("GPT-5.4")).toBeInTheDocument();
     expect(within(collab).getByLabelText("Negotiation rounds")).toHaveValue(5);
     expect(
@@ -554,6 +558,7 @@ describe("ContextConfigTab — edit payload shape", () => {
         type: "update-context",
         contextId: "context-impl",
         collaboration: {
+          enabled: { value: true, source: "per-node" },
           secondAgent: {
             value: {
               backend: "codex",
@@ -566,6 +571,32 @@ describe("ContextConfigTab — edit payload shape", () => {
           autonomousResolutionThreshold: { value: "major", source: "per-node" },
         },
       },
+    ]);
+  });
+
+  it("saves collaboration enablement with per-node provenance", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Collaboration enabled"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: "update-context",
+        contextId: "context-impl",
+        collaboration: expect.objectContaining({
+          enabled: { value: false, source: "per-node" },
+        }),
+      }),
     ]);
   });
 

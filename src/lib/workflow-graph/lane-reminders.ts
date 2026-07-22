@@ -30,6 +30,7 @@ export interface LaneReminderInput {
   remainingTaskCount: number;
   /** Halt reason when the verb hit the 409 halt path; `null` on the success path. */
   halted: string | null;
+  allowAgentCollaboration: boolean;
   /**
    * True when this task-complete response carries the rotation-gate
    * `stopInstruction`. A context-limit stop demands an immediate handoff, so
@@ -76,7 +77,7 @@ const laneAutonomy: LaneReminderRule = {
   verbs: ["task-complete"],
   evidence:
     "Lanes stalling instead of collaborating (collab memories, 2026-06); the collab machinery exists precisely for a blocked lane.",
-  when: (input) => input.iterationCount >= 2,
+  when: (input) => input.allowAgentCollaboration && input.iterationCount >= 2,
   text: () =>
     'This lane is autonomous — `cctl ask` is unavailable here. If genuinely blocked, send `cctl workflow collab request --brief "<specific question>"` and stop.',
 };

@@ -1962,6 +1962,8 @@ export function createGraphWorkflowIterationOrchestrator(
       seededExecution,
       input.contextId,
     );
+    const allowAgentCollaboration =
+      context.collaboration?.enabled.value === true;
     const collaborationContinuationWorkflowIds = collaborationContinuations.map(
       (continuation) => continuation.workflowId,
     );
@@ -2223,6 +2225,7 @@ export function createGraphWorkflowIterationOrchestrator(
               maxAttempts: MAX_FOLLOW_UPS,
               latestContextValidationFailure,
               collaborationContinuations,
+              allowAgentCollaboration,
               charter: context.charter,
               resumeUserInput: resumeUserInputPrompt,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
@@ -2235,11 +2238,7 @@ export function createGraphWorkflowIterationOrchestrator(
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
               charter: context.charter,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
-              // Mirrors the request_collaboration registration gate in the
-              // workflow-execution MCP server, which exposes the tool to every
-              // implementer context. Keep these in lockstep if an enable toggle
-              // is ever introduced.
-              allowAgentCollaboration: true,
+              allowAgentCollaboration,
               contextValidationAcceptanceCriteria:
                 context.contextValidator !== null &&
                 context.contextValidator.enabled
@@ -2523,6 +2522,7 @@ export function createGraphWorkflowIterationOrchestrator(
               input.contextId,
             ),
           collaborationContinuations: [],
+          allowAgentCollaboration,
           charter: context.charter,
           askUserQuestionsEnabled: context.askUserQuestions.enabled,
         });

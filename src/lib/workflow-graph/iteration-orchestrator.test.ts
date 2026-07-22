@@ -2664,6 +2664,43 @@ describe("task validation failure handling (circuit breaker)", () => {
     expect(prompts[0]).not.toContain("Acceptance Criteria");
   });
 
+  it("omits every collaboration reference when the resolved context has no enabled collaboration config", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const repository = createRepository(execution);
+    const prompts: string[] = [];
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-no-collab" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput) => {
+        prompts.push(agentInput.prompt);
+        return {
+          conversationId: "conversation-no-collab",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      }),
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(prompts).not.toHaveLength(0);
+    expect(prompts[0]?.toLowerCase()).not.toContain("collaboration");
+  });
+
   it("omits acceptance criteria when contextValidator.enabled is false (same path as null)", async () => {
     const execution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",

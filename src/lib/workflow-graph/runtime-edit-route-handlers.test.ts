@@ -32,6 +32,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     collaboration: {
+      enabled: { value: true, source: "global" },
       secondAgent: {
         value: {
           backend: "claude",

@@ -75,6 +75,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
   collaboration: {
+    enabled: false,
     secondAgent: {
       backend: "claude",
       model: "sonnet",
@@ -327,6 +328,7 @@ describe("resolveContext", () => {
     );
 
     expect(resolved.collaboration).toEqual({
+      enabled: { value: false, source: "global" },
       secondAgent: { value: contextSecondAgent, source: "per-node" },
       negotiationRounds: { value: 5, source: "workflow" },
       autonomousResolutionThreshold: { value: "minor", source: "global" },
@@ -337,6 +339,10 @@ describe("resolveContext", () => {
     const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
 
     expect(resolved.collaboration).toEqual({
+      enabled: {
+        value: GLOBAL_DEFAULTS.collaboration.enabled,
+        source: "global",
+      },
       secondAgent: {
         value: GLOBAL_DEFAULTS.collaboration.secondAgent,
         source: "global",
@@ -564,6 +570,10 @@ describe("resolveWorkflowDefinition", () => {
     const resolved = resolveWorkflowDefinition(makeGlobalConfig(), definition);
 
     expect(resolved.executionContexts[0]?.collaboration).toEqual({
+      enabled: {
+        value: GLOBAL_DEFAULTS.collaboration.enabled,
+        source: "global",
+      },
       secondAgent: {
         value: GLOBAL_DEFAULTS.collaboration.secondAgent,
         source: "global",
@@ -692,6 +702,7 @@ describe("resolveCollaborationConfigWithProvenance", () => {
     "blocking";
 
   const GLOBAL_COLLAB: WorkflowCollaborationConfig = {
+    enabled: false,
     secondAgent: GLOBAL_SECOND_AGENT,
     negotiationRounds: GLOBAL_NEGOTIATION_ROUNDS,
     autonomousResolutionThreshold: GLOBAL_THRESHOLD,
@@ -706,7 +717,37 @@ describe("resolveCollaborationConfigWithProvenance", () => {
     };
   }
 
-  describe("3-field × 3-source matrix", () => {
+  describe("4-field × 3-source matrix", () => {
+    it("enabled: per-node supplies → source = per-node", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        { collaboration: { enabled: true } },
+        makeContext({ collaboration: { enabled: false } }),
+      );
+
+      expect(resolved.enabled).toEqual({ value: false, source: "per-node" });
+    });
+
+    it("enabled: workflow supplies, per-node omits → source = workflow", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        { collaboration: { enabled: true } },
+        makeContext(),
+      );
+
+      expect(resolved.enabled).toEqual({ value: true, source: "workflow" });
+    });
+
+    it("enabled: both override layers omit → source = global", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults({ enabled: true }),
+        {},
+        makeContext(),
+      );
+
+      expect(resolved.enabled).toEqual({ value: true, source: "global" });
+    });
+
     it("secondAgent: per-node supplies → source = per-node", () => {
       const resolved = resolveCollaborationConfigWithProvenance(
         globalDefaults(),

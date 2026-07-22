@@ -19,6 +19,7 @@ function input(overrides: Partial<LaneReminderInput> = {}): LaneReminderInput {
     remainingTaskCount: 1,
     halted: null,
     contextLimitStopped: false,
+    allowAgentCollaboration: true,
     ...overrides,
   };
 }
@@ -130,6 +131,19 @@ describe("lane-autonomy rule", () => {
         input({ iterationCount: 1, circuitBreakerThreshold: 5 }),
       ),
     ).toEqual([]);
+  });
+
+  it("does not mention collaboration when collaboration is disabled", () => {
+    const reminders = computeLaneReminders(
+      input({
+        iterationCount: 2,
+        circuitBreakerThreshold: 5,
+        allowAgentCollaboration: false,
+      }),
+    );
+
+    expect(reminders).toEqual([]);
+    expect(reminders.join(" ").toLowerCase()).not.toContain("collab");
   });
 
   it("only fires for the task-complete verb", () => {

@@ -39,6 +39,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
     allowAgentTaskAdd: false,
   },
   collaboration: {
+    enabled: false,
     secondAgent: {
       backend: "claude",
       model: "sonnet",

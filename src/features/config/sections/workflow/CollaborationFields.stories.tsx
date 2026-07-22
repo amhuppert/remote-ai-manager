@@ -6,6 +6,7 @@ import { ConfigSubsection } from "../../components/ConfigSubsection";
 import { CollaborationFields } from "./CollaborationFields";
 
 const SEEDED: WorkflowCollaborationConfig = {
+  enabled: false,
   secondAgent: {
     backend: "claude",
     model: "sonnet",
@@ -16,6 +17,7 @@ const SEEDED: WorkflowCollaborationConfig = {
 };
 
 const CUSTOM: WorkflowCollaborationConfig = {
+  enabled: true,
   secondAgent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
   negotiationRounds: 6,
   autonomousResolutionThreshold: "blocking",

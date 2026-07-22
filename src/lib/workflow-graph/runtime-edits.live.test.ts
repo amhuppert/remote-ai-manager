@@ -21,6 +21,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   collaboration: {
+    enabled: { value: true, source: "global" },
     secondAgent: {
       value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       source: "global",

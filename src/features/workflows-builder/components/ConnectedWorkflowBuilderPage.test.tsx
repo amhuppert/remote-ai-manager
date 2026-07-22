@@ -64,6 +64,7 @@ const workflowDefaults: WorkflowDefaults = {
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },
   collaboration: {
+    enabled: false,
     secondAgent: {
       backend: "claude",
       model: "sonnet",

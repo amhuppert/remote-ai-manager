@@ -53,6 +53,7 @@ export type CollaborationAutonomousResolutionThreshold = z.infer<
 // `resolveCollaborationConfigWithProvenance` in
 // `src/lib/workflow-graph/resolve-config.ts`.
 export const workflowCollaborationConfigSchema = z.object({
+  enabled: z.boolean().default(false),
   secondAgent: graphWorkflowAgentConfigSchema,
   negotiationRounds: z.number().int().positive(),
   autonomousResolutionThreshold:
@@ -67,6 +68,7 @@ export type WorkflowCollaborationConfig = z.infer<
 // satisfying R2.1–R2.3 and the "no `??` across the block" invariant in
 // `resolveCollaborationConfigWithProvenance`.
 export const workflowCollaborationConfigOverrideSchema = z.object({
+  enabled: z.boolean().optional(),
   secondAgent: graphWorkflowAgentConfigSchema.optional(),
   negotiationRounds: z.number().int().positive().optional(),
   autonomousResolutionThreshold:
@@ -92,6 +94,10 @@ const provenancedField = <T extends z.ZodTypeAny>(value: T) =>
   });
 
 export const resolvedCollaborationConfigSchema = z.object({
+  enabled: provenancedField(z.boolean()).default({
+    value: false,
+    source: "global",
+  }),
   secondAgent: provenancedField(graphWorkflowAgentConfigSchema),
   negotiationRounds: provenancedField(z.number().int().positive()),
   autonomousResolutionThreshold: provenancedField(

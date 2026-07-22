@@ -17,6 +17,7 @@ function resolvedCollaborationFixture(
   overrides?: Partial<ResolvedCollaborationConfig>,
 ): ResolvedCollaborationConfig {
   return {
+    enabled: { value: true, source: "global" },
     secondAgent: {
       value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
       source: "global",
@@ -99,6 +100,7 @@ describe("buildImplementerCollaborationContext", () => {
     expect(typeof block.triggerWorkflowCollaboration).toBe("function");
 
     const resolvedConfig: ResolvedCollaborationConfig = {
+      enabled: { value: true, source: "global" },
       secondAgent: {
         value: {
           backend: "codex",

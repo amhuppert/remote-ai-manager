@@ -162,6 +162,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
     allowAgentTaskAdd: false,
   },
   collaboration: {
+    enabled: false,
     secondAgent: {
       backend: "claude",
       model: "sonnet",
@@ -314,10 +315,8 @@ function summarizeCircuitBreaker(
     : `halt after ${threshold} fails`;
 }
 
-// The second agent's identity is carried by the block's BackendChip; the
-// summary keeps only the negotiation settings.
 function summarizeCollaboration(config: WorkflowCollaborationConfig): string {
-  return `${config.negotiationRounds} rounds · auto ${config.autonomousResolutionThreshold}`;
+  return config.enabled ? "on" : "off";
 }
 
 type ResolvedContextCascade = {
@@ -930,15 +929,17 @@ function WorkflowTabBody({
 
           <InspectorConfigBlock
             label="Collaboration"
-            chip={
-              <BackendChip
-                backend={cascade.collaboration.value.secondAgent.backend}
-              >
-                {cascade.collaboration.value.secondAgent.model}
-              </BackendChip>
-            }
             summary={summarizeCollaboration(cascade.collaboration.value)}
             source={cascade.collaboration.source}
+            headerSwitch={{
+              checked: cascade.collaboration.value.enabled,
+              onCheckedChange: (enabled) =>
+                onSetOverride("collaboration", {
+                  ...deepClone(cascade.collaboration.value),
+                  enabled,
+                }),
+              ariaLabel: "Workflow collaboration enabled",
+            }}
             onOverride={() =>
               onSetOverride(
                 "collaboration",
@@ -1254,15 +1255,17 @@ function ContextTabBody({
 
           <InspectorConfigBlock
             label="Collaboration"
-            chip={
-              <BackendChip
-                backend={cascade.collaboration.value.secondAgent.backend}
-              >
-                {cascade.collaboration.value.secondAgent.model}
-              </BackendChip>
-            }
             summary={summarizeCollaboration(cascade.collaboration.value)}
             source={cascade.collaboration.source}
+            headerSwitch={{
+              checked: cascade.collaboration.value.enabled,
+              onCheckedChange: (enabled) =>
+                onSetContextOverride("collaboration", {
+                  ...deepClone(cascade.collaboration.value),
+                  enabled,
+                }),
+              ariaLabel: "Context collaboration enabled",
+            }}
             onOverride={() =>
               onSetContextOverride(
                 "collaboration",

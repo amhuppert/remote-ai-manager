@@ -198,7 +198,8 @@ Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); the resolv
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
     "mutability":       { "allowAgentTaskAdd": false },
-    "askUserQuestions": { "enabled": false }
+    "askUserQuestions": { "enabled": false },
+    "collaboration":    { "enabled": false, "secondAgent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "negotiationRounds": 3, "autonomousResolutionThreshold": "minor" }
   }
 }
 ```
@@ -226,7 +227,7 @@ for non-default implementer or validator settings.
 
 ## `workflowDefaults` blocks
 
-Seven blocks, all individually overridable per tier:
+Eight blocks, all individually overridable per tier:
 
 | Block | Purpose |
 |---|---|
@@ -237,6 +238,7 @@ Seven blocks, all individually overridable per tier:
 | `circuitBreaker` | `consecutiveFailureThreshold` |
 | `mutability` | E.g. `allowAgentTaskAdd` |
 | `askUserQuestions` | Whether lane agents may ask the operator questions mid-task via `cctl ask`. `{ enabled: boolean }`, default disabled; one value covers both the implementer and context-validator roles |
+| `collaboration` | Whether implementer agents may request a second opinion, plus the collaborator agent and negotiation policy. `enabled` defaults to `false`; when disabled, collaboration instructions and continuation results are omitted from agent prompts and the collaboration command is unavailable |
 
 ## Ask-user-questions gate (`awaiting_user_input`)
 

@@ -46,6 +46,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
     allowAgentTaskAdd: false,
   },
   collaboration: {
+    enabled: false,
     secondAgent: {
       backend: "claude",
       model: "sonnet",
@@ -108,6 +109,7 @@ export function mergeCollaborationOverWithDefaults(
 ): WorkflowCollaborationConfig {
   if (!override) return base;
   return {
+    enabled: override.enabled ?? base.enabled,
     secondAgent: override.secondAgent ?? base.secondAgent,
     negotiationRounds: override.negotiationRounds ?? base.negotiationRounds,
     autonomousResolutionThreshold:
@@ -287,6 +289,11 @@ export function resolveCollaborationConfigWithProvenance(
   const global: WorkflowCollaborationConfig = globalDefaults.collaboration;
 
   return {
+    enabled: pickProvenancedField(
+      perNode.enabled,
+      workflow.enabled,
+      global.enabled,
+    ),
     secondAgent: pickProvenancedField(
       perNode.secondAgent,
       workflow.secondAgent,

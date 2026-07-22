@@ -295,8 +295,9 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     sections.push(latestContextValidationFailureSection);
   }
 
-  const collaborationContinuationSection =
-    buildCollaborationContinuationSection(input.collaborationContinuations);
+  const collaborationContinuationSection = input.allowAgentCollaboration
+    ? buildCollaborationContinuationSection(input.collaborationContinuations)
+    : null;
   if (collaborationContinuationSection) {
     sections.push(collaborationContinuationSection);
   }
@@ -410,6 +411,7 @@ export interface BuildFollowUpPromptInput {
   maxAttempts: number;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
+  allowAgentCollaboration?: boolean;
   charter?: WorkflowCharter;
   /**
    * Answers delivered into a pinned resume: the asking conversation is reused,
@@ -450,8 +452,9 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     sections.push(latestContextValidationFailureSection);
   }
 
-  const collaborationContinuationSection =
-    buildCollaborationContinuationSection(input.collaborationContinuations);
+  const collaborationContinuationSection = input.allowAgentCollaboration
+    ? buildCollaborationContinuationSection(input.collaborationContinuations)
+    : null;
   if (collaborationContinuationSection) {
     sections.push(collaborationContinuationSection);
   }
