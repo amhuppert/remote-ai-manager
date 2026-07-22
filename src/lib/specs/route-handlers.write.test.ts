@@ -115,6 +115,10 @@ function createServices() {
         ok: true as const,
         value: { id: "approval-1" },
       })),
+      unapproveItem: vi.fn(async () => ({
+        ok: true as const,
+        value: { id: "approval-1" },
+      })),
       signOffRevision: vi.fn(),
       grantGateApproval: vi.fn(async () => ({
         ok: true as const,
@@ -451,6 +455,43 @@ describe("spec write route handlers", () => {
       code: "human_act_required",
     });
     expect(services.review.approveItem).not.toHaveBeenCalled();
+  });
+
+  it("removes an item approval from human transport only", async () => {
+    const services = createServices();
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+    const body = {
+      revisionId: "revision-1",
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+    };
+
+    const agentResponse = await handlers.specActionPOST(
+      postRequest(body, {
+        authorization: "Bearer valid",
+        "x-cc-conversation-id": "conversation-agent",
+      }),
+      routeContext("unapprove-item"),
+    );
+    expect(agentResponse.status).toBe(403);
+    await expect(agentResponse.json()).resolves.toMatchObject({
+      code: "human_act_required",
+    });
+    expect(services.review.unapproveItem).not.toHaveBeenCalled();
+
+    const humanResponse = await handlers.specActionPOST(
+      postRequest(body),
+      routeContext("unapprove-item"),
+    );
+    expect(humanResponse.status).toBe(200);
+    await expect(humanResponse.json()).resolves.toEqual({ id: "approval-1" });
+    expect(services.review.unapproveItem).toHaveBeenCalledWith({
+      specId: spec.id,
+      revisionId: "revision-1",
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      actor: { kind: "human" },
+    });
   });
 
   it("grants a delivery gate approval from human transport only", async () => {

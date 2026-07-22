@@ -1251,8 +1251,10 @@ describe("Spec Studio routes and inventory", () => {
     expect(screen.getByText(/initial proposal/i)).toBeInTheDocument();
     const requirement = screen.getByTestId("review-change-requirement-1");
     expect(within(requirement).getByText("Added")).toBeInTheDocument();
+    // The fixture carries a valid approval for this requirement, so the card
+    // offers withdrawal instead of a second approve.
     expect(
-      within(requirement).getByRole("button", { name: "Approve item" }),
+      within(requirement).getByRole("button", { name: "Unapprove item" }),
     ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "Sign off revision 1" }),

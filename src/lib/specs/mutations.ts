@@ -42,6 +42,7 @@ export const SPEC_ACTIONS = [
   "resolve-thread",
   "request-changes",
   "approve-item",
+  "unapprove-item",
   "sign-off",
   "grant-gate-approval",
   "approve-execution-start",

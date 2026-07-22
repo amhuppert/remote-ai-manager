@@ -309,6 +309,16 @@ describe("spec-review-repo durability contract", () => {
     },
   );
 
+  it("deletes an approval row durably", () => {
+    const approval = maximalApproval();
+    expect(repo.findApprovalById(approval.id)).not.toBeNull();
+
+    repo.deleteApproval(approval.id);
+
+    expect(repo.findApprovalById(approval.id)).toBeNull();
+    expect(repo.findApprovalsBySpecId(SPEC_ID)).toEqual([]);
+  });
+
   it.each(["proposed", "confirmed", "rejected", "deferred"] as const)(
     "persists assumption disposition %s",
     (disposition) => {

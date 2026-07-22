@@ -21,6 +21,7 @@ const { parseRow, readMany, readOne, timed } = createSpecRepoHelpers(
 
 export interface SpecReviewRepo {
   saveApproval(approval: SpecApprovalRow): void;
+  deleteApproval(id: string): void;
   findApprovalById(id: string): SpecApprovalRow | null;
   findApprovalsBySpecId(specId: string): SpecApprovalRow[];
   findLatestApprovalForSubject(input: {
@@ -66,6 +67,9 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
        approver = excluded.approver,
        granted_at = excluded.granted_at,
        validity = excluded.validity`,
+  );
+  const deleteApprovalStmt = db.prepare(
+    "DELETE FROM spec_approvals WHERE id = ?",
   );
   const findApprovalStmt = db.prepare(
     "SELECT * FROM spec_approvals WHERE id = ? LIMIT 1",
@@ -218,6 +222,11 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
             approval,
           ),
         );
+      });
+    },
+    deleteApproval(id) {
+      timed("delete", "spec_approval", id, () => {
+        deleteApprovalStmt.run(id);
       });
     },
     findApprovalById(id) {

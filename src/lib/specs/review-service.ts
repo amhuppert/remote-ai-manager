@@ -88,6 +88,14 @@ export const approveItemInputSchema = reviewIdentitySchema
   .strict();
 export type ApproveItemInput = z.infer<typeof approveItemInputSchema>;
 
+export const unapproveItemInputSchema = reviewIdentitySchema
+  .extend({
+    subjectKind: z.enum(["requirement", "decision"]),
+    elementId: z.string().min(1),
+  })
+  .strict();
+export type UnapproveItemInput = z.infer<typeof unapproveItemInputSchema>;
+
 const bulkApprovalSubjectSchema = z.discriminatedUnion("subjectKind", [
   z
     .object({
@@ -210,6 +218,9 @@ export interface ReviewService {
     input: RequestChangesInput,
   ): Promise<ReviewResult<{ withdrawn: SpecRevision; draft: SpecRevision }>>;
   approveItem(input: ApproveItemInput): Promise<ReviewResult<SpecApprovalRow>>;
+  unapproveItem(
+    input: UnapproveItemInput,
+  ): Promise<ReviewResult<SpecApprovalRow>>;
   signOffRevision(input: SignOffRevisionInput): Promise<
     ReviewResult<{
       revision: SpecRevision;
@@ -380,12 +391,15 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       | "spec-review-commented"
       | "spec-review-changes-requested"
       | "spec-review-item-approved"
+      | "spec-review-item-unapproved"
       | "spec-review-revision-signed-off",
     kind: string,
     subjectId?: string,
     activeStartedAt?: string,
   ): PreparedSpecEventPublication {
-    const approvalChanged = durableEventType === "spec-review-item-approved";
+    const approvalChanged =
+      durableEventType === "spec-review-item-approved" ||
+      durableEventType === "spec-review-item-unapproved";
     const revisionChanged =
       durableEventType === "spec-review-changes-requested" ||
       durableEventType === "spec-review-revision-signed-off";
@@ -396,7 +410,9 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           ? ("request_changes" as const)
           : durableEventType === "spec-review-item-approved"
             ? ("approve_item" as const)
-            : ("sign_off" as const);
+            : durableEventType === "spec-review-item-unapproved"
+              ? ("unapprove_item" as const)
+              : ("sign_off" as const);
     const measuredActiveStartedAt =
       activeStartedAt !== undefined &&
       Date.parse(activeStartedAt) <= Date.parse(occurredAt)
@@ -1325,6 +1341,86 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       if (transaction.result.ok && grantedNotice !== null) {
         deps.notifier?.approvalGranted(grantedNotice);
       }
+      return transaction.result;
+    },
+
+    async unapproveItem(input) {
+      const parsed = unapproveItemInputSchema.parse(input);
+      const humanRefusal = humanRequired(parsed.actor);
+      if (humanRefusal !== null) return humanRefusal;
+      const occurredAt = now();
+      const transaction = await deps.specs.transaction(
+        "specs.review.unapprove-item",
+        (repo) => {
+          const target = requireReviewTarget(
+            repo,
+            parsed.specId,
+            parsed.revisionId,
+          );
+          if (target === null)
+            return {
+              result: refused(
+                "not_found",
+                ["Review target not found."],
+                "Refresh Spec Studio.",
+              ),
+              prepared: [],
+            };
+          if (target.revision.state !== "proposed")
+            return {
+              result: refused(
+                "gate_blocked",
+                [
+                  "Approvals can be withdrawn only while their revision is proposed.",
+                ],
+                "Open an amendment to change approved content.",
+              ),
+              prepared: [],
+            };
+          const existing = deps.review
+            .findApprovalsBySpecId(parsed.specId)
+            .find(
+              (approval) =>
+                approval.subject_kind === parsed.subjectKind &&
+                approval.element_id === parsed.elementId,
+            );
+          if (existing === undefined)
+            return {
+              result: refused(
+                "not_found",
+                [`No approval is recorded for ${parsed.elementId}.`],
+                "Refresh Spec Studio.",
+              ),
+              prepared: [],
+            };
+          deps.review.deleteApproval(existing.id);
+          return {
+            result: {
+              ok: true,
+              value: existing,
+            } as ReviewResult<SpecApprovalRow>,
+            prepared: [
+              appendEvent(
+                target.spec,
+                target.revision.id,
+                parsed.actor,
+                occurredAt,
+                "spec-review-item-unapproved",
+                "item-unapproved",
+                parsed.elementId,
+                parsed.activeStartedAt,
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      logger.info("specs.review.unapprove_item.complete", {
+        specId: parsed.specId,
+        revisionId: parsed.revisionId,
+        elementId: parsed.elementId,
+        ok: transaction.result.ok,
+      });
       return transaction.result;
     },
 

@@ -15,6 +15,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/AlertDialog";
 import { MultilineInput } from "@/components/MultilineInput";
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import { CheckIcon, ChevronDownIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { CheckboxField } from "@/components/ui/Checkbox";
@@ -309,7 +310,11 @@ export default function SpecReviewMode({
 
   const requirementSubjects = bulkApprovalSubjects(detail, "requirements");
   const remainingSubjects = bulkApprovalSubjects(detail, "remaining");
-  const changeGroups = groupReviewChanges(diff.changeList);
+  const changeGroups = groupReviewChanges(
+    diff.changeList,
+    currentSnapshot,
+    baseSnapshot,
+  );
   const unchangedViews = unchangedElementViews(diff, currentSnapshot);
   const readiness = reviewReadiness(detail);
 
@@ -496,9 +501,6 @@ export default function SpecReviewMode({
                               projectName={projectName}
                               baseSnapshot={baseSnapshot}
                               currentSnapshot={currentSnapshot}
-                              initiallyExpanded={
-                                highlightedChangeId === change.elementId
-                              }
                               onFeedback={setFeedback}
                               onError={setError}
                             />
@@ -657,7 +659,11 @@ export default function SpecReviewMode({
   );
 }
 
-function groupReviewChanges(changes: SemanticChange[]): ReviewChangeGroup[] {
+function groupReviewChanges(
+  changes: SemanticChange[],
+  currentSnapshot: SpecRevisionSnapshot,
+  baseSnapshot: SpecRevisionSnapshot | null,
+): ReviewChangeGroup[] {
   const groups = new Map<ReviewChangeGroup["key"], SemanticChange[]>();
   for (const change of changes) {
     const key = reviewGroupKey(change.kind);
@@ -668,10 +674,69 @@ function groupReviewChanges(changes: SemanticChange[]): ReviewChangeGroup[] {
 
   return reviewGroupOrder.flatMap((key) => {
     const group = groups.get(key);
-    return group === undefined
-      ? []
-      : [{ key, label: reviewGroupLabel[key], changes: group }];
+    if (group === undefined) return [];
+    return [
+      {
+        key,
+        label: reviewGroupLabel[key],
+        changes:
+          key === "requirements"
+            ? orderCriteriaUnderRequirements(
+                group,
+                currentSnapshot,
+                baseSnapshot,
+              )
+            : group,
+      },
+    ];
   });
+}
+
+// Authoring appends new elements at the end of the snapshot, so the change
+// list can separate a criterion from the requirement it belongs to. Anchor
+// each criterion to its parent requirement's document position; elements only
+// present in the base revision sort after all current ones.
+function orderCriteriaUnderRequirements(
+  changes: SemanticChange[],
+  currentSnapshot: SpecRevisionSnapshot,
+  baseSnapshot: SpecRevisionSnapshot | null,
+): SemanticChange[] {
+  const documentOrder = new Map<
+    string,
+    { position: number; parentElementId: string | null }
+  >();
+  const removedOffset = currentSnapshot.elements.length;
+  baseSnapshot?.elements.forEach((entry, index) => {
+    documentOrder.set(entry.element.id, {
+      position: removedOffset + index,
+      parentElementId: entry.element.parentElementId,
+    });
+  });
+  currentSnapshot.elements.forEach((entry, index) => {
+    documentOrder.set(entry.element.id, {
+      position: index,
+      parentElementId: entry.element.parentElementId,
+    });
+  });
+
+  const sortKey = (change: SemanticChange): [number, number] => {
+    const info = documentOrder.get(change.elementId);
+    if (info === undefined) return [Number.MAX_SAFE_INTEGER, 0];
+    const parent =
+      change.kind === "criterion" && info.parentElementId !== null
+        ? documentOrder.get(info.parentElementId)
+        : undefined;
+    return parent === undefined
+      ? [info.position, 0]
+      : [parent.position, info.position + 1];
+  };
+
+  return changes
+    .map((change) => ({ change, key: sortKey(change) }))
+    .toSorted(
+      (left, right) => left.key[0] - right.key[0] || left.key[1] - right.key[1],
+    )
+    .map(({ change }) => change);
 }
 
 function reviewGroupKey(
@@ -908,7 +973,6 @@ function ReviewChangeCard({
   projectName,
   baseSnapshot,
   currentSnapshot,
-  initiallyExpanded,
   onFeedback,
   onError,
 }: {
@@ -917,11 +981,10 @@ function ReviewChangeCard({
   projectName: string;
   baseSnapshot: SpecRevisionSnapshot | null;
   currentSnapshot: SpecRevisionSnapshot;
-  initiallyExpanded: boolean;
   onFeedback(feedback: string | null): void;
   onError(error: string | null): void;
 }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
+  const [expanded, setExpanded] = useState(true);
   const [commenting, setCommenting] = useState(false);
   const [commentBody, setCommentBody] = useState("");
   const base = viewForElement(baseSnapshot, change.elementId);
@@ -964,6 +1027,17 @@ function ReviewChangeCard({
     },
     z.infer<typeof specApprovalRowSchema>
   >(projectName, detail.spec.slug, "approve-item", specApprovalRowSchema, {
+    specId: detail.spec.id,
+    eventTypes: ["spec-approval-changed"],
+  });
+  const unapprove = useSpecActionMutation<
+    {
+      revisionId: string;
+      subjectKind: "requirement" | "decision";
+      elementId: string;
+    },
+    z.infer<typeof specApprovalRowSchema>
+  >(projectName, detail.spec.slug, "unapprove-item", specApprovalRowSchema, {
     specId: detail.spec.id,
     eventTypes: ["spec-approval-changed"],
   });
@@ -1062,6 +1136,41 @@ function ReviewChangeCard({
     );
   }
 
+  function unapproveItem(): void {
+    if (approvalTarget === null) return;
+    onError(null);
+    onFeedback(`Removing approval on ${handle}…`);
+    unapprove.mutate(
+      {
+        revisionId: currentSnapshot.revision.id,
+        subjectKind: approvalTarget.subjectKind,
+        elementId: approvalTarget.elementId,
+      },
+      {
+        onSuccess: () => {
+          onFeedback(`${handle} approval removed`);
+          logger.info("spec_studio.review_action.completed", {
+            action: "unapprove-item",
+            specId: detail.spec.id,
+            revisionId: currentSnapshot.revision.id,
+            elementId: approvalTarget.elementId,
+          });
+        },
+        onError: (mutationError) => {
+          onFeedback(null);
+          onError(mutationError.message);
+          logger.warn("spec_studio.review_action.failed", {
+            action: "unapprove-item",
+            specId: detail.spec.id,
+            revisionId: currentSnapshot.revision.id,
+            elementId: approvalTarget.elementId,
+            error: mutationError.message,
+          });
+        },
+      },
+    );
+  }
+
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
       <article
@@ -1123,21 +1232,35 @@ function ReviewChangeCard({
             >
               Comment
             </Button>
-            <Button
-              size="sm"
-              touch
-              variant="success"
-              disabled={approvalTarget === null || change.change === "removed"}
-              loading={approve.isPending}
-              onClick={approveItem}
-              title={
-                approvalTarget === null
-                  ? "This element has no independent approval gate"
-                  : undefined
-              }
-            >
-              Approve item
-            </Button>
+            {approval?.validity === "valid" ? (
+              <Button
+                size="sm"
+                touch
+                loading={unapprove.isPending}
+                onClick={unapproveItem}
+                title="Remove the recorded approval for this element"
+              >
+                Unapprove item
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                touch
+                variant="success"
+                disabled={
+                  approvalTarget === null || change.change === "removed"
+                }
+                loading={approve.isPending}
+                onClick={approveItem}
+                title={
+                  approvalTarget === null
+                    ? "This element has no independent approval gate"
+                    : undefined
+                }
+              >
+                Approve item
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1162,9 +1285,13 @@ function ReviewChangeCard({
                 />
               </div>
             ) : (
-              <p className="m-0 bg-bg-base px-md py-sm font-mono text-[0.76rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
-                {(current ?? base)?.body ?? "Element content unavailable"}
-              </p>
+              <div className="bg-bg-base px-md py-sm">
+                <CompactMarkdown
+                  content={
+                    (current ?? base)?.body ?? "Element content unavailable"
+                  }
+                />
+              </div>
             )}
           </div>
         </CollapsibleContent>
@@ -1226,9 +1353,9 @@ function RevisionValue({
       <span className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
         {label}
       </span>
-      <p className="mt-sm mb-0 font-mono text-[0.76rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
-        {body}
-      </p>
+      <div className="mt-sm">
+        <CompactMarkdown content={body} />
+      </div>
     </div>
   );
 }

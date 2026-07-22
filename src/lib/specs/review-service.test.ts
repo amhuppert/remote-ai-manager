@@ -364,6 +364,108 @@ describe("ReviewService", () => {
     expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([]);
   });
 
+  it("unapprove removes the recorded approval so the subject counts as outstanding again", async () => {
+    const created = await proposedSpec();
+    const approved = await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(approved.ok).toBe(true);
+
+    const agentAttempt = await reviewing.unapproveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      actor: AGENT,
+    });
+    expect(agentAttempt).toMatchObject({
+      ok: false,
+      refusal: { code: "human_act_required" },
+    });
+
+    const noApproval = await reviewing.unapproveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "decision",
+      elementId: "decision-1",
+      actor: HUMAN,
+    });
+    expect(noApproval).toMatchObject({
+      ok: false,
+      refusal: { code: "not_found" },
+    });
+
+    const result = await reviewing.unapproveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      actor: HUMAN,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { element_id: "requirement-1" },
+    });
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([]);
+
+    const reapproved = await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(reapproved).toMatchObject({
+      ok: true,
+      value: { validity: "valid" },
+    });
+  });
+
+  it("refuses unapprove once the revision is signed off", async () => {
+    const created = await proposedSpec();
+    await reviewing.bulkApprove({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjects: [
+        { subjectKind: "requirement", elementId: "requirement-1" },
+        { subjectKind: "decision", elementId: "decision-1" },
+        { subjectKind: "plan", elementId: null },
+      ],
+      approver: "alex",
+      actor: HUMAN,
+    });
+    const signed = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(signed.ok).toBe(true);
+
+    const afterSignOff = await reviewing.unapproveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      actor: HUMAN,
+    });
+    expect(afterSignOff).toMatchObject({
+      ok: false,
+      refusal: { code: "gate_blocked" },
+    });
+    expect(
+      reviewRepo
+        .findApprovalsBySpecId(created.spec.id)
+        .filter(({ subject_kind }) => subject_kind === "requirement"),
+    ).toHaveLength(1);
+  });
+
   it("refreshes an item re-approval instead of duplicating its durable subject", async () => {
     const created = await proposedSpec();
     const input = {

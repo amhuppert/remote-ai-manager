@@ -81,6 +81,7 @@ import { toLintSnapshot } from "./review-state";
 import {
   answerQuestionInputSchema,
   approveItemInputSchema,
+  unapproveItemInputSchema,
   bulkApproveInputSchema,
   changeSpecPolicyInputSchema,
   disposeAssumptionInputSchema,
@@ -1691,6 +1692,10 @@ const approveItemBodySchema = approveItemInputSchema.omit({
   actor: true,
   approver: true,
 });
+const unapproveItemBodySchema = unapproveItemInputSchema.omit({
+  specId: true,
+  actor: true,
+});
 const signOffBodySchema = signOffRevisionInputSchema.omit({
   specId: true,
   actor: true,
@@ -1980,6 +1985,7 @@ function serviceResultResponse(result: unknown): Response {
 
 const HUMAN_ONLY_ACTIONS = new Set([
   "approve-item",
+  "unapprove-item",
   "sign-off",
   "bulk-approve",
   "grant-gate-approval",
@@ -2244,6 +2250,10 @@ export function createSpecWriteRouteHandlers(
               ...withReviewIdentity(input),
               approver: "operator",
             }),
+          );
+        case "unapprove-item":
+          return invokeAction(request, unapproveItemBodySchema, (input) =>
+            services.review.unapproveItem(withReviewIdentity(input)),
           );
         case "sign-off":
           return invokeAction(request, signOffBodySchema, (input) =>

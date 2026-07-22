@@ -24,7 +24,12 @@ export interface PostApprovalRevisionCreatedPayload {
 
 export interface ReviewActionPayload {
   kind: "review-action";
-  action: "comment" | "request_changes" | "approve_item" | "sign_off";
+  action:
+    | "comment"
+    | "request_changes"
+    | "approve_item"
+    | "unapprove_item"
+    | "sign_off";
   reviewAttemptId: string;
   activeStartedAt: string;
   subjectId?: string;
@@ -97,6 +102,7 @@ export const specMeasureEventPayloadSchema = z.discriminatedUnion("kind", [
         "comment",
         "request_changes",
         "approve_item",
+        "unapprove_item",
         "sign_off",
       ]),
       reviewAttemptId: z.string().min(1),

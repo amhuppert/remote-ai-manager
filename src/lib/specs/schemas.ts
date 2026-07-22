@@ -224,6 +224,7 @@ export const specReviewEventTypeSchema = z.enum([
   "spec-review-commented",
   "spec-review-changes-requested",
   "spec-review-item-approved",
+  "spec-review-item-unapproved",
   "spec-review-revision-signed-off",
 ]);
 export type SpecReviewEventType = z.infer<typeof specReviewEventTypeSchema>;
