@@ -395,7 +395,7 @@ export default function TicketBoard({
         )}
       </div>
 
-      <DragOverlay>
+      <DragOverlay dropAnimation={null}>
         {activeTicket !== null ? (
           <TicketCard item={activeTicket} isOverlay />
         ) : null}

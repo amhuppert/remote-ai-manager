@@ -868,6 +868,83 @@ describe("TicketBoard status moves", () => {
     }
   });
 
+  it("does not animate the released overlay back to the source card", async () => {
+    const rectSpy = installBoardGeometry();
+    const animateDescriptor = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      "animate",
+    );
+    const animateSpy = vi.fn(() => ({ onfinish: null }));
+    Object.defineProperty(Element.prototype, "animate", {
+      configurable: true,
+      value: animateSpy,
+    });
+    const originalGetComputedStyle = window.getComputedStyle;
+    let restoreComputedStyle: (() => void) | null = null;
+
+    try {
+      const { patches } = installFetchStub(TICKETS);
+      renderBoard();
+
+      await waitFor(() =>
+        expect(screen.getByText("command-center#9")).toBeInTheDocument(),
+      );
+      const dragHandle = screen.getByRole("button", {
+        name: "Drag command-center#9",
+      });
+      dragHandle.focus();
+      fireEvent.keyDown(dragHandle, { key: "Enter", code: "Enter" });
+      await waitFor(() =>
+        expect(
+          document.querySelectorAll("[data-ticket-card='command-center#9']"),
+        ).toHaveLength(2),
+      );
+
+      fireEvent.keyDown(dragHandle, {
+        key: "ArrowRight",
+        code: "ArrowRight",
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByText(/command-center#9 is over In Progress/),
+        ).toBeInTheDocument(),
+      );
+      const computedStyleSpy = vi
+        .spyOn(window, "getComputedStyle")
+        .mockImplementation((element) => {
+          const style = originalGetComputedStyle(element);
+          Object.defineProperty(style, "transform", {
+            configurable: true,
+            value: "matrix(1, 0, 0, 1, 200, 0)",
+          });
+          return style;
+        });
+      restoreComputedStyle = () => computedStyleSpy.mockRestore();
+      fireEvent.keyDown(dragHandle, { key: "Enter", code: "Enter" });
+
+      await waitFor(() =>
+        expect(
+          within(column("In Progress")).getByText("command-center#9"),
+        ).toBeInTheDocument(),
+      );
+      patches.pending.forEach((resolve) => resolve());
+      expect(animateSpy).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(
+          document.querySelectorAll("[data-ticket-card='command-center#9']"),
+        ).toHaveLength(1),
+      );
+    } finally {
+      restoreComputedStyle?.();
+      if (animateDescriptor === undefined) {
+        Reflect.deleteProperty(Element.prototype, "animate");
+      } else {
+        Object.defineProperty(Element.prototype, "animate", animateDescriptor);
+      }
+      rectSpy.mockRestore();
+    }
+  });
+
   it("offers Retry on the failure toast, and Retry re-issues the move", async () => {
     const { log, patches } = installFetchStub(TICKETS);
     patches.failWith = 500;
