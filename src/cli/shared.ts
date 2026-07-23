@@ -721,6 +721,17 @@ function coerceErrorDetails(
 ): CliErrorDetails | undefined {
   const rawDetails = isRecord(body.details) ? body.details : undefined;
 
+  if (
+    code === "definition_approval_required" &&
+    typeof body.executionId === "string" &&
+    body.executionId.trim().length > 0
+  ) {
+    return {
+      ...(rawDetails ?? {}),
+      executionId: body.executionId,
+    };
+  }
+
   if (code === "lint_blocked") {
     const findings = Array.isArray(body.findings)
       ? body.findings
@@ -777,13 +788,17 @@ function classifyErrorBody(
   status: number,
   body: unknown,
 ): Extract<CliRequestResult, { kind: "error" }> {
-  const errorMessage =
-    body &&
-    typeof body === "object" &&
-    typeof (body as { error?: unknown }).error === "string"
-      ? (body as { error: string }).error
-      : `server responded with HTTP ${status}`;
   const bodyRecord = isRecord(body) ? body : undefined;
+  const firstUnmetCondition =
+    bodyRecord &&
+    Array.isArray(bodyRecord.unmetConditions) &&
+    typeof bodyRecord.unmetConditions[0] === "string"
+      ? bodyRecord.unmetConditions[0]
+      : undefined;
+  const errorMessage =
+    bodyRecord && typeof bodyRecord.error === "string"
+      ? bodyRecord.error
+      : (firstUnmetCondition ?? `server responded with HTTP ${status}`);
   const issues = bodyRecord
     ? (coerceIssues(bodyRecord.issues) ??
       coerceUnmetConditions(bodyRecord.unmetConditions))
@@ -1000,8 +1015,9 @@ export function failureFromRequest(
     });
   }
   const detailLines = [
-    ...(result.issues?.map((issue) => `  ${issue.path}: ${issue.message}`) ??
-      []),
+    ...(result.issues
+      ?.filter((issue) => issue.message !== result.error)
+      .map((issue) => `  ${issue.path}: ${issue.message}`) ?? []),
     ...refusalDetailLines(result),
   ];
   const detail = detailLines.length > 0 ? detailLines.join("\n") : undefined;

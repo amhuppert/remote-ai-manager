@@ -387,6 +387,10 @@ function normalizeEvent(
     }
 
     case "graph-workflow-join-status": {
+      const joinLabel =
+        event.kind === "final_publish" ? "Session publish" : "Join";
+      const kindLabel =
+        event.kind === "final_publish" ? "session publish" : "context merge";
       const sourceSummary = event.sourceLaneIds.join(", ");
       const progress =
         event.mergedSourceLaneIds.length > 0
@@ -405,7 +409,7 @@ function normalizeEvent(
               ? "task-running"
               : "neutral";
       const detailText = [
-        `kind: ${event.kind}`,
+        `kind: ${kindLabel}`,
         `sources: ${sourceSummary} -> ${event.targetLaneId}`,
         progress,
       ]
@@ -416,7 +420,7 @@ function normalizeEvent(
         occurredAt,
         contextId: event.contextId,
         dot,
-        title: `Join ${event.status} · ${event.joinId}`,
+        title: `${joinLabel} ${event.status} · ${event.joinId}`,
         detail: errorSummary ? (
           <pre className={eventPreClass}>{errorSummary}</pre>
         ) : detailText ? (

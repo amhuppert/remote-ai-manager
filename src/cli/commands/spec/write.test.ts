@@ -26,6 +26,7 @@ function revision(state: "draft" | "approved" = "draft") {
     specId: spec.id,
     number: 1,
     state,
+    authoringStage: state === "draft" ? "requirements" : "plan",
     basedOnRevisionId: null,
     contentHash: state === "draft" ? null : "approved-hash",
     proposedAt: state === "draft" ? null : CREATED_AT,
@@ -290,6 +291,13 @@ function makeHost(
             },
             diff: {},
             absorbedSignOff: false,
+          });
+        case "advance":
+          return response({
+            revision: {
+              ...revision(),
+              authoringStage: "design",
+            },
           });
         case "answer-question":
           return response({
@@ -682,6 +690,41 @@ describe("cctl spec write verbs", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("R1.1 has no covering task");
     expect(result.stderr).toContain("Resolve the blocking lint findings");
+  });
+
+  it("advances the exact current draft and expected authoring stage", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "advance", "native-sdd", "--from", "requirements", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      revision: { id: "revision-draft", authoringStage: "design" },
+    });
+    const request = actionRequests(host).find(({ url }) =>
+      url.endsWith("/actions/advance"),
+    );
+    expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
+      revisionId: "revision-draft",
+      expectedStage: "requirements",
+    });
+  });
+
+  it("validates the expected advance stage before making a request", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "advance", "native-sdd", "--from", "plan"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("requirements or design");
+    expect(host.requests).toHaveLength(0);
   });
 
   it("lets the server refuse an evidence-less task completion with instruction", async () => {

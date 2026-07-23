@@ -4,6 +4,7 @@ import { graphWorkflowTaskStatusSchema } from "@/lib/workflow-graph/definition-s
 
 import {
   specApprovalValiditySchema,
+  specAuthoringStageSchema,
   specExecutionStateSchema,
   specRevisionStateSchema,
   specTaskClaimStatusSchema,
@@ -26,7 +27,14 @@ export type DeliveryCriterion = z.infer<typeof deliveryCriterionSchema>;
 export const specPhaseInputSchema = z
   .object({
     abandoned: z.boolean(),
-    revisionStates: z.array(specRevisionStateSchema),
+    revisions: z.array(
+      z
+        .object({
+          state: specRevisionStateSchema,
+          authoringStage: specAuthoringStageSchema,
+        })
+        .strict(),
+    ),
     executionStates: z.array(specExecutionStateSchema),
     deliveryCriteria: z.array(deliveryCriterionSchema),
     deliveryPending: z.boolean(),
@@ -51,6 +59,7 @@ export const specPhaseProjectionSchema = z
   .object({
     primary: specPhasePrimarySchema,
     authoringFacet: authoringFacetSchema.optional(),
+    authoringStage: specAuthoringStageSchema.optional(),
   })
   .strict();
 export type SpecPhaseProjection = z.infer<typeof specPhaseProjectionSchema>;
@@ -127,33 +136,39 @@ export const taskWorkStatusSchema = z
 export type TaskWorkStatus = z.infer<typeof taskWorkStatusSchema>;
 
 export function projectSpecPhase(input: SpecPhaseInput): SpecPhaseProjection {
-  const authoringFacet = resolveAuthoringFacet(input.revisionStates);
+  const authoringFacet = resolveAuthoringFacet(input.revisions);
+  const authoringStage = resolveAuthoringStage(input.revisions);
   if (input.abandoned) {
-    return { primary: "abandoned" };
+    return withAuthoringStage({ primary: "abandoned" }, authoringStage);
   }
 
   const executionActive = input.executionStates.some(
     (state) => state === "definition_review" || state === "running",
   );
   if (executionActive) {
-    return authoringFacet === undefined
-      ? { primary: "executing" }
-      : { primary: "executing", authoringFacet };
+    return withAuthoringStage(
+      authoringFacet === undefined
+        ? { primary: "executing" }
+        : { primary: "executing", authoringFacet },
+      authoringStage,
+    );
   }
 
   if (authoringFacet !== undefined) {
-    return { primary: authoringFacet };
+    return withAuthoringStage({ primary: authoringFacet }, authoringStage);
   }
 
-  const approvedRevisionExists = input.revisionStates.includes("approved");
+  const approvedRevisionExists = input.revisions.some(
+    ({ state }) => state === "approved",
+  );
   const deliverySatisfied =
     input.deliveryCriteria.length > 0 &&
     input.deliveryCriteria.every(({ state }) => state !== "pending");
   if (approvedRevisionExists && deliverySatisfied && !input.deliveryPending) {
-    return { primary: "delivered" };
+    return withAuthoringStage({ primary: "delivered" }, authoringStage);
   }
 
-  return { primary: "approved" };
+  return withAuthoringStage({ primary: "approved" }, authoringStage);
 }
 
 export function projectDeliveryDisplay(
@@ -210,16 +225,46 @@ export function projectTaskWorkStatus(
 }
 
 function resolveAuthoringFacet(
-  revisionStates: SpecPhaseInput["revisionStates"],
+  revisions: SpecPhaseInput["revisions"],
 ): AuthoringFacet | undefined {
-  if (revisionStates.includes("proposed")) {
+  if (revisions.some(({ state }) => state === "proposed")) {
     return "in_review";
   }
-  if (revisionStates.includes("draft")) {
+  if (revisions.some(({ state }) => state === "draft")) {
     return "draft";
   }
 
   return undefined;
+}
+
+function resolveAuthoringStage(
+  revisions: SpecPhaseInput["revisions"],
+): SpecPhaseProjection["authoringStage"] {
+  if (
+    revisions.some(
+      ({ state, authoringStage }) =>
+        state === "approved" && authoringStage === "plan",
+    )
+  ) {
+    return undefined;
+  }
+
+  for (const state of ["proposed", "draft", "approved"] as const) {
+    const revision = revisions
+      .toReversed()
+      .find((candidate) => candidate.state === state);
+    if (revision !== undefined) return revision.authoringStage;
+  }
+  return undefined;
+}
+
+function withAuthoringStage(
+  projection: SpecPhaseProjection,
+  authoringStage: SpecPhaseProjection["authoringStage"],
+): SpecPhaseProjection {
+  return authoringStage === undefined
+    ? projection
+    : { ...projection, authoringStage };
 }
 
 function projectCoverage(

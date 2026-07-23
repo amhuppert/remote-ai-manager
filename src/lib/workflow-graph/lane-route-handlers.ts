@@ -23,6 +23,7 @@ import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { createLogger, withTracing } from "@/lib/logging";
+import { GraphExecutionContractViolationError } from "./execution-contract-port";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
 import {
   loadGraphWorkflowLaneToolContext,
@@ -256,6 +257,23 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
       });
       return NextResponse.json(body);
     } catch (error) {
+      if (error instanceof GraphExecutionContractViolationError) {
+        log.warn("graph-workflow-lane.task_completion.contract_rejected", {
+          contextId,
+          taskId,
+          code: error.code,
+          issueCount: error.issues.length,
+        });
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            issues: error.issues,
+            instruction: error.instruction,
+          },
+          { status: 409 },
+        );
+      }
       return jsonError(
         error instanceof Error ? error.message : "Task completion failed",
         409,

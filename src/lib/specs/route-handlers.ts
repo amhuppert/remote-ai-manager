@@ -17,8 +17,10 @@ import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import {
+  SpecElementIdTakenError,
   SpecRevisionImmutableError,
   StaleElementConflictError,
+  StaleStageConflictError,
   createSpecsRepo,
 } from "@/lib/state-store/specs-repo";
 import { getStateDb } from "@/lib/state-store/store";
@@ -30,6 +32,7 @@ import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
 import {
   SpecDraftUnavailableError,
   SpecSlugTakenError,
+  StageBlockedWriteError,
   createAuthoringService,
   createAuthoringSpecInputSchema,
   draftElementWriteInputSchema,
@@ -77,7 +80,7 @@ import {
   type SpecPhaseProjection,
 } from "./phase";
 import { resolveDial, type ResolvedGateDial } from "./policy";
-import { toLintSnapshot } from "./review-state";
+import { toDiffRows, toLintSnapshot } from "./review-state";
 import {
   answerQuestionInputSchema,
   approveItemInputSchema,
@@ -96,12 +99,14 @@ import {
   type ReviewService,
 } from "./review-service";
 import { executionScopeSchema } from "./scope-validation";
+import { consultedAuthoringGates } from "./transitions";
 import type { SpecAssumptionView, SpecQuestionView } from "./view-schemas";
 import {
   actorProvenanceSchema,
   evidenceEvaluatedStateSchema,
   evidenceKindSchema,
   specCriterionDispositionSchema,
+  specAuthoringStageSchema,
   specGateSchema,
   taskElementPayloadSchema,
   validationStrategySchema,
@@ -198,6 +203,7 @@ interface CurrentSpecState {
   revisions: SpecRevision[];
   currentRevision: SpecRevision | null;
   currentSnapshot: SpecRevisionSnapshot | null;
+  baseSnapshot: SpecRevisionSnapshot | null;
   currentApprovedSnapshot: SpecRevisionSnapshot | null;
 }
 
@@ -238,6 +244,7 @@ interface SpecStatusView {
     disposition: SpecAssumptionRow["disposition"];
     elementId: string | null;
   }>;
+  taskPlan: ReturnType<typeof taskPlanStatus>;
   coverage: SpecCoverage;
   delivery: ReturnType<typeof projectDeliveryDisplay>;
 }
@@ -425,10 +432,20 @@ async function loadCurrentState(
       : currentApprovedRevision.id === currentRevision?.id
         ? currentSnapshot
         : await deps.getRevisionSnapshot(currentApprovedRevision.id);
+  const baseRevisionId = currentRevision?.basedOnRevisionId ?? null;
+  const baseSnapshot =
+    baseRevisionId === null
+      ? null
+      : baseRevisionId === currentSnapshot?.revision.id
+        ? currentSnapshot
+        : baseRevisionId === currentApprovedSnapshot?.revision.id
+          ? currentApprovedSnapshot
+          : await deps.getRevisionSnapshot(baseRevisionId);
   return {
     revisions,
     currentRevision,
     currentSnapshot,
+    baseSnapshot,
     currentApprovedSnapshot,
   };
 }
@@ -711,7 +728,10 @@ function phase(
 ): SpecPhaseProjection {
   return projectSpecPhase({
     abandoned: spec.abandonedAt !== null,
-    revisionStates: revisions.map((revision) => revision.state),
+    revisions: revisions.map((revision) => ({
+      state: revision.state,
+      authoringStage: revision.authoringStage,
+    })),
     executionStates: executions.map((execution) => execution.state),
     deliveryCriteria: [...criteria],
     deliveryPending: executions.some(
@@ -776,12 +796,20 @@ function gateStatuses(
 
 function pendingApprovals(
   snapshot: SpecRevisionSnapshot | null,
+  baseSnapshot: SpecRevisionSnapshot | null,
   approvals: readonly SpecApprovalRow[],
   gates: readonly SpecGateStatus[],
 ): PendingApproval[] {
   if (snapshot === null) return [];
 
   const pending: PendingApproval[] = [];
+  const consulted = new Set(
+    consultedAuthoringGates(
+      snapshot.revision.authoringStage,
+      baseSnapshot === null ? [] : toDiffRows(baseSnapshot),
+      toDiffRows(snapshot),
+    ),
+  );
   const gatePending = (gate: SpecGate) =>
     gates.some((status) => status.gate === gate && status.state === "pending");
   const handles = new Map(
@@ -793,6 +821,7 @@ function pendingApprovals(
   for (const row of snapshot.elements) {
     if (
       row.element.kind === "requirement" &&
+      consulted.has("requirements") &&
       gatePending("requirements") &&
       !validApproval(approvals, "requirement", row.element.id)
     ) {
@@ -804,6 +833,7 @@ function pendingApprovals(
     }
     if (
       row.element.kind === "decision" &&
+      consulted.has("design") &&
       gatePending("design") &&
       !validApproval(approvals, "decision", row.element.id)
     ) {
@@ -814,7 +844,12 @@ function pendingApprovals(
       });
     }
   }
-  if (gatePending("plan") && !validApproval(approvals, "plan", null)) {
+  if (
+    consulted.has("plan") &&
+    snapshot.revision.authoringStage === "plan" &&
+    gatePending("plan") &&
+    !validApproval(approvals, "plan", null)
+  ) {
     pending.push({ gate: "plan", subject: "plan", elementId: null });
   }
   for (const gate of ["execution_start", "delivery"] as const) {
@@ -854,6 +889,36 @@ function handlesByElementId(
       element.handle,
     ]),
   );
+}
+
+function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
+  if (snapshot === null) return [];
+  const handles = new Map(
+    snapshot.elements.map((entry) => [
+      entry.element.id,
+      elementHandle(snapshot, entry),
+    ]),
+  );
+  return snapshot.elements.flatMap((entry) => {
+    const payload = entry.version.payload;
+    if (payload.kind !== "task") return [];
+    const handle = handles.get(entry.element.id) ?? entry.element.id;
+    return [
+      {
+        elementId: entry.element.id,
+        handle,
+        title: payload.title,
+        dependsOn: payload.dependsOnTaskElementIds.map(
+          (elementId) => handles.get(elementId) ?? elementId,
+        ),
+        laneGroup: payload.laneGroup ?? null,
+        touchedPaths: payload.touchedPaths ?? [],
+        criterionCoverage: payload.coveredCriterionElementIds.map(
+          (elementId) => handles.get(elementId) ?? elementId,
+        ),
+      },
+    ];
+  });
 }
 
 /**
@@ -944,7 +1009,12 @@ async function buildStatus(
     slug: spec.slug,
     phase: phase(spec, state.revisions, executions, criteria),
     gates,
-    pendingApprovals: pendingApprovals(state.currentSnapshot, approvals, gates),
+    pendingApprovals: pendingApprovals(
+      state.currentSnapshot,
+      state.baseSnapshot,
+      approvals,
+      gates,
+    ),
     openQuestions: deps
       .findQuestionsBySpecId(spec.id)
       .filter((question) => question.status === "open")
@@ -961,6 +1031,7 @@ async function buildStatus(
       disposition: assumption.disposition,
       elementId: assumption.element_id,
     })),
+    taskPlan: taskPlanStatus(state.currentSnapshot),
     coverage: coverage(state.currentSnapshot),
     delivery: projectDeliveryDisplay(displayCriteria),
   };
@@ -1220,10 +1291,7 @@ export function createSpecRouteHandlers(
       state,
       executions,
     );
-    const baseRevision = await snapshotForRevisionId(
-      deps,
-      state.currentRevision?.basedOnRevisionId ?? null,
-    );
+    const baseRevision = state.baseSnapshot;
     const proofSnapshot =
       state.currentApprovedSnapshot ?? state.currentSnapshot;
     const executionRevisionIds = [
@@ -1609,6 +1677,7 @@ export interface SpecMutationServices {
     | "openAmendment"
     | "renameSpec"
     | "proposeRevision"
+    | "advanceAuthoringStage"
   >;
   review: ReviewService;
   evidence: EvidenceService;
@@ -1675,6 +1744,12 @@ const proposeRevisionBodySchema = proposeAuthoringRevisionInputSchema.omit({
   specId: true,
   actor: true,
 });
+const advanceAuthoringStageBodySchema = z
+  .object({
+    revisionId: z.string().min(1),
+    expectedStage: specAuthoringStageSchema,
+  })
+  .strict();
 const reviewCommentBodySchema = reviewCommentInputSchema.omit({
   specId: true,
   actor: true,
@@ -2060,6 +2135,22 @@ function routeFailure(error: unknown, action: string): Response {
       },
     });
   }
+  if (error instanceof StageBlockedWriteError) {
+    return specRefusalResponse(error.refusal);
+  }
+  if (error instanceof StaleStageConflictError) {
+    return specRefusalResponse({
+      code: "stale_stage",
+      unmetConditions: [error.message],
+      instruction:
+        "Read the current draft and authoring stage, then advance that exact revision if it still applies.",
+      details: {
+        expectedRevisionId: error.expectedRevisionId,
+        expectedStage: error.expectedStage,
+        currentRevision: error.currentRevision,
+      },
+    });
+  }
   if (error instanceof SpecSlugTakenError) {
     return specRefusalResponse({
       code: "slug_taken",
@@ -2069,6 +2160,17 @@ function routeFailure(error: unknown, action: string): Response {
       details: {
         existingSpecId: error.existingSpecId,
         name: error.existingName,
+      },
+    });
+  }
+  if (error instanceof SpecElementIdTakenError) {
+    return specRefusalResponse({
+      code: error.code,
+      unmetConditions: [error.message],
+      instruction: `Choose a globally unique element ID, preferably prefixed with the spec slug (for example, "<spec-slug>-${error.elementId}"), then retry.`,
+      details: {
+        elementId: error.elementId,
+        existingSpecId: error.existingSpecId,
       },
     });
   }
@@ -2231,6 +2333,15 @@ export function createSpecWriteRouteHandlers(
         case "propose":
           return invokeAction(request, proposeRevisionBodySchema, (input) =>
             services.authoring.proposeRevision(withReviewIdentity(input)),
+          );
+        case "advance":
+          return invokeAction(
+            request,
+            advanceAuthoringStageBodySchema,
+            (input) =>
+              services.authoring.advanceAuthoringStage(
+                withReviewIdentity(input),
+              ),
           );
         case "comment":
           return invokeAction(request, reviewCommentBodySchema, (input) =>

@@ -59,6 +59,7 @@ export function toLintSnapshot(
 
   return {
     specHandle: spec.slug,
+    authoringStage: snapshot.revision.authoringStage,
     elements: snapshot.elements.map(({ element, version }) => ({
       id: element.id,
       handle: elementHandle(snapshot, element.id),

@@ -105,7 +105,9 @@ export function formatGraphWorkflowHaltReason(
       };
     case "join_failure": {
       const kindLabel =
-        reason.joinKind === "final_publish" ? "Final publish" : "Context join";
+        reason.joinKind === "final_publish"
+          ? "Publish to session"
+          : "Context join";
       const scope = reason.contextId ? ` in ${reason.contextId}` : "";
       const conflictsList =
         reason.conflictFiles.length > 0 && !options.omitConflictFiles ? (

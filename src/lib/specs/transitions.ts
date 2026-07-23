@@ -19,9 +19,13 @@ import type {
   ActorProvenance,
   Refusal,
   RefusalCode,
+  SectionRole,
   SpecApprovalSubjectKind,
   SpecApprovalValidity,
+  SpecAuthoringStage,
+  SpecElementKind,
   SpecExecutionState,
+  SpecGate,
   SpecGatePolicy,
   SpecRevisionState,
 } from "./schemas";
@@ -63,6 +67,7 @@ export interface SignOffReviewSnapshot {
 
 export interface ProposeContext {
   revisionState: SpecRevisionState;
+  authoringStage: SpecAuthoringStage;
   policy: SpecGatePolicy;
   draft: RevisionSnapshot;
   records: SpecRecords;
@@ -78,6 +83,7 @@ export interface ElementApprovalContext {
 export interface SignOffContext {
   actor: ActorProvenance;
   revisionState: SpecRevisionState;
+  authoringStage: SpecAuthoringStage;
   policy: SpecGatePolicy;
   draft: RevisionSnapshot;
   records: SpecRecords;
@@ -89,6 +95,7 @@ export interface StartExecutionContext {
   specAbandoned: boolean;
   revisionId?: string;
   revisionState: SpecRevisionState;
+  authoringStage: SpecAuthoringStage;
   scope?: ExecutionScope;
   plan: ScopePlan;
   activeExecution: boolean;
@@ -158,6 +165,157 @@ function refused(
   };
 }
 
+export type AuthoringGate = Extract<
+  SpecGate,
+  "requirements" | "design" | "plan"
+>;
+export type ResolvedAuthoringDials = Record<AuthoringGate, ResolvedGateDial>;
+
+const authoringStages: readonly SpecAuthoringStage[] = [
+  "requirements",
+  "design",
+  "plan",
+];
+
+function authoringStageIndex(stage: SpecAuthoringStage): number {
+  return authoringStages.indexOf(stage);
+}
+
+function stageForElement(
+  kind: SpecElementKind,
+  sectionRole?: SectionRole,
+): SpecAuthoringStage {
+  if (kind === "task") return "plan";
+  if (kind === "decision") return "design";
+  if (kind === "section" && sectionRole === "design_narrative") {
+    return "design";
+  }
+  return "requirements";
+}
+
+function elementLabel(
+  kind: SpecElementKind,
+  sectionRole?: SectionRole,
+): string {
+  if (kind !== "section") return kind;
+  return sectionRole === undefined
+    ? "section"
+    : `${sectionRole.replaceAll("_", "-")} section`;
+}
+
+export function resolveAuthoringDials(
+  policy: SpecGatePolicy,
+): ResolvedAuthoringDials {
+  return {
+    requirements: resolveDial(policy, "requirements"),
+    design: resolveDial(policy, "design"),
+    plan: resolveDial(policy, "plan"),
+  };
+}
+
+export function admitDraftWrite(
+  stage: SpecAuthoringStage,
+  elementKind: SpecElementKind,
+  sectionRole: SectionRole | undefined,
+  resolvedDials: ResolvedAuthoringDials,
+): TransitionDecision {
+  const elementStage = stageForElement(elementKind, sectionRole);
+  if (authoringStageIndex(elementStage) <= authoringStageIndex(stage)) {
+    return allowed();
+  }
+
+  const label = elementLabel(elementKind, sectionRole);
+  const dial = resolvedDials[stage];
+  const instruction =
+    dial === "notify" || dial === "off"
+      ? `Advance the ${stage} stage before authoring ${label} content.`
+      : `Propose the ${stage} stage and obtain sign-off before authoring ${label} content.`;
+  return refused(
+    "stage_blocked",
+    [`A ${label} cannot be authored during the ${stage} stage.`],
+    instruction,
+  );
+}
+
+export interface OpenDraftAuthoringStageContext {
+  policy: SpecGatePolicy;
+  baseRevision?: {
+    state: Extract<SpecRevisionState, "approved" | "withdrawn">;
+    authoringStage: SpecAuthoringStage;
+  };
+}
+
+export function openDraftAuthoringStage(
+  context: OpenDraftAuthoringStageContext,
+): SpecAuthoringStage {
+  const base = context.baseRevision;
+  if (base?.state === "withdrawn") return base.authoringStage;
+  if (base?.state === "approved") {
+    return nextAuthoringStage(base.authoringStage) ?? "plan";
+  }
+
+  const dials = resolveAuthoringDials(context.policy);
+  const allCombined = authoringStages.every(
+    (stage) => dials[stage] === COMBINED_APPROVAL_DIAL,
+  );
+  return allCombined ? "plan" : "requirements";
+}
+
+export function nextAuthoringStage(
+  stage: SpecAuthoringStage,
+): SpecAuthoringStage | null {
+  return authoringStages[authoringStageIndex(stage) + 1] ?? null;
+}
+
+export function advanceAuthoringStage(
+  stage: SpecAuthoringStage,
+  policy: SpecGatePolicy,
+): TransitionDecision {
+  if (nextAuthoringStage(stage) === null) {
+    return refused(
+      "gate_blocked",
+      ["Plan is the final authoring stage."],
+      "Propose the plan stage when it is ready for review.",
+    );
+  }
+  const dial = resolveDial(policy, stage);
+  if (dial === "notify" || dial === "off") return allowed();
+  return refused(
+    "human_act_required",
+    [`The ${stage} gate requires human sign-off before advancing.`],
+    `Propose the ${stage} stage and obtain human sign-off instead of advancing it directly.`,
+  );
+}
+
+export function consultedAuthoringGates(
+  stage: SpecAuthoringStage,
+  baseRows: DiffRevisionElement[],
+  revisionRows: DiffRevisionElement[],
+): AuthoringGate[] {
+  const diff = diffRevisions(baseRows, revisionRows);
+  const baseById = new Map(baseRows.map((row) => [row.elementId, row]));
+  const revisionById = new Map(revisionRows.map((row) => [row.elementId, row]));
+  const consulted = new Set<AuthoringGate>([stage]);
+  const currentStageIndex = authoringStageIndex(stage);
+
+  for (const classification of diff.classifications) {
+    if (classification.classification === "unchanged") continue;
+    const row =
+      revisionById.get(classification.elementId) ??
+      baseById.get(classification.elementId);
+    if (row === undefined) continue;
+    const elementStage = stageForElement(
+      row.payload.kind,
+      row.payload.kind === "section" ? row.payload.role : undefined,
+    );
+    if (authoringStageIndex(elementStage) < currentStageIndex) {
+      consulted.add(elementStage);
+    }
+  }
+
+  return authoringStages.filter((candidate) => consulted.has(candidate));
+}
+
 function blockingFindings(
   draft: RevisionSnapshot,
   records: SpecRecords,
@@ -191,6 +349,7 @@ function handleByElementId(draft: RevisionSnapshot): Map<string, string> {
 
 function approvalUnmetConditions(
   policy: SpecGatePolicy,
+  authoringStage: SpecAuthoringStage,
   draft: RevisionSnapshot,
   review: SignOffReviewSnapshot,
 ): string[] {
@@ -211,6 +370,13 @@ function approvalUnmetConditions(
   }
 
   const diff = diffRevisions(review.baseRevisionRows, review.revisionRows);
+  const consulted = new Set(
+    consultedAuthoringGates(
+      authoringStage,
+      review.baseRevisionRows,
+      review.revisionRows,
+    ),
+  );
   const classifications = new Map(
     diff.classifications.map((classification) => [
       classification.elementId,
@@ -251,10 +417,14 @@ function approvalUnmetConditions(
     }
   };
 
-  requireElementApprovals(requirementsDial, "requirement", "Requirement");
-  requireElementApprovals(designDial, "decision", "Decision");
+  if (consulted.has("requirements")) {
+    requireElementApprovals(requirementsDial, "requirement", "Requirement");
+  }
+  if (consulted.has("design")) {
+    requireElementApprovals(designDial, "decision", "Decision");
+  }
 
-  if (requiresHumanApproval(planDial)) {
+  if (authoringStage === "plan" && requiresHumanApproval(planDial)) {
     const approval = approvalFor(review, "plan");
     const validForRevision =
       approval !== undefined &&
@@ -278,13 +448,19 @@ function unresolvedThreadConditions(review: SignOffReviewSnapshot): string[] {
 
 function signOffPreconditions(
   policy: SpecGatePolicy,
+  authoringStage: SpecAuthoringStage,
   draft: RevisionSnapshot,
   records: SpecRecords,
   review: SignOffReviewSnapshot,
 ): TransitionDecision {
   const signOffFindings = blockingFindings(draft, records, "blocks_signoff");
   const threadConditions = unresolvedThreadConditions(review);
-  const approvalConditions = approvalUnmetConditions(policy, draft, review);
+  const approvalConditions = approvalUnmetConditions(
+    policy,
+    authoringStage,
+    draft,
+    review,
+  );
   const unmetConditions = [
     ...threadConditions,
     ...signOffFindings.map((finding) => finding.message),
@@ -303,10 +479,16 @@ function signOffPreconditions(
   );
 }
 
-function proposeDials(policy: SpecGatePolicy): ResolvedGateDial[] {
-  return (["requirements", "design", "plan"] as const).map((gate) =>
-    resolveDial(policy, gate),
-  );
+function proposeDials(
+  policy: SpecGatePolicy,
+  authoringStage: SpecAuthoringStage,
+  review: SignOffReviewSnapshot,
+): ResolvedGateDial[] {
+  return consultedAuthoringGates(
+    authoringStage,
+    review.baseRevisionRows,
+    review.revisionRows,
+  ).map((gate) => resolveDial(policy, gate));
 }
 
 export function propose(context: ProposeContext): TransitionDecision {
@@ -331,7 +513,11 @@ export function propose(context: ProposeContext): TransitionDecision {
     );
   }
 
-  const dials = proposeDials(context.policy);
+  const dials = proposeDials(
+    context.policy,
+    context.authoringStage,
+    context.review,
+  );
   const absorbsSignOff = dials.every(
     (dial) => dial === "notify" || dial === "off",
   );
@@ -341,6 +527,7 @@ export function propose(context: ProposeContext): TransitionDecision {
 
   return signOffPreconditions(
     context.policy,
+    context.authoringStage,
     context.draft,
     context.records,
     context.review,
@@ -381,9 +568,11 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
     );
   }
 
-  const humanRequired = proposeDials(context.policy).some(
-    requiresHumanApproval,
-  );
+  const humanRequired = proposeDials(
+    context.policy,
+    context.authoringStage,
+    context.review,
+  ).some(requiresHumanApproval);
   if (humanRequired && context.actor.kind !== "human") {
     return refused(
       "human_act_required",
@@ -394,6 +583,7 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
 
   return signOffPreconditions(
     context.policy,
+    context.authoringStage,
     context.draft,
     context.records,
     context.review,
@@ -433,6 +623,14 @@ export function startExecution(
       "revision_not_approved",
       ["The pinned revision is not approved."],
       "Complete revision sign-off before starting execution.",
+    );
+  }
+
+  if (context.authoringStage !== "plan") {
+    return refused(
+      "gate_blocked",
+      ["The pinned revision has not completed plan-stage authoring."],
+      "Complete plan-stage authoring and sign off that revision before starting execution.",
     );
   }
 

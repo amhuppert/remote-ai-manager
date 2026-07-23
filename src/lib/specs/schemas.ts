@@ -97,6 +97,31 @@ export type DecisionElementPayload = z.infer<
   typeof decisionElementPayloadSchema
 >;
 
+export const touchedPathSchema = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    const segments = value.split("/");
+    const invalid =
+      value !== value.trim() ||
+      value.startsWith("/") ||
+      /^[A-Za-z]:/.test(value) ||
+      value.includes("\\") ||
+      value.endsWith("/") ||
+      segments.some(
+        (segment) =>
+          segment.length === 0 || segment === "." || segment === "..",
+      );
+    if (invalid) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "touched paths must be normalized repo-relative POSIX paths without parent segments or trailing separators",
+      });
+    }
+  });
+export type TouchedPath = z.infer<typeof touchedPathSchema>;
+
 export const taskElementPayloadSchema = z
   .object({
     kind: z.literal("task"),
@@ -106,6 +131,8 @@ export const taskElementPayloadSchema = z
     tracedDecisionElementIds: z.array(idSchema),
     coveredCriterionElementIds: z.array(idSchema),
     dependsOnTaskElementIds: z.array(idSchema),
+    laneGroup: z.string().min(1).optional(),
+    touchedPaths: z.array(touchedPathSchema).optional(),
   })
   .strict();
 export type TaskElementPayload = z.infer<typeof taskElementPayloadSchema>;
@@ -118,6 +145,13 @@ export const specElementPayloadSchema = z.discriminatedUnion("kind", [
   taskElementPayloadSchema,
 ]);
 export type SpecElementPayload = z.infer<typeof specElementPayloadSchema>;
+
+export const specAuthoringStageSchema = z.enum([
+  "requirements",
+  "design",
+  "plan",
+]);
+export type SpecAuthoringStage = z.infer<typeof specAuthoringStageSchema>;
 
 export const specGatePresetSchema = z.enum([
   "contract-bearing",
@@ -182,6 +216,8 @@ export type ActorProvenance = z.infer<typeof actorProvenanceSchema>;
 
 export const refusalCodeSchema = z.enum([
   "gate_blocked",
+  "stage_blocked",
+  "stale_stage",
   "lint_blocked",
   "stale_element",
   "unresolvable_evidence",
@@ -194,6 +230,7 @@ export const refusalCodeSchema = z.enum([
   "region_locked",
   "delivery_gate_failed",
   "slug_taken",
+  "element_id_taken",
   "not_found",
   "validation",
 ]);
@@ -396,6 +433,7 @@ export const specRevisionRowSchema = z.object({
   spec_id: idSchema,
   number: z.number().int().positive(),
   state: specRevisionStateSchema,
+  authoring_stage: specAuthoringStageSchema,
   based_on_revision_id: nullableIdSchema,
   content_hash: z.string().nullable(),
   proposed_at: nullableTimestampSchema,
@@ -473,6 +511,7 @@ export const specRevisionSchema = z
     specId: idSchema,
     number: z.number().int().positive(),
     state: specRevisionStateSchema,
+    authoringStage: specAuthoringStageSchema,
     basedOnRevisionId: nullableIdSchema,
     contentHash: z.string().nullable(),
     proposedAt: nullableTimestampSchema,

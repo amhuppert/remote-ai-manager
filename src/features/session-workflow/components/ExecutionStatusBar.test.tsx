@@ -178,7 +178,7 @@ describe("ExecutionStatusBar halt display", () => {
 
     const summary = screen.getByRole("alert");
     expect(summary).toHaveTextContent(
-      "Final publish failed — 3 source lane(s) → __session__",
+      "Publish to session failed — 3 source lane(s) → __session__",
     );
     // The long message body and per-file conflict list must stay out of the
     // bar — they previously grew it past the viewport.

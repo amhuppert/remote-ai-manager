@@ -53,6 +53,33 @@ const ENTRIES = allHelpEntries();
 const KEYS = new Set(ENTRIES.map((entry) => pathKey(entry.path)));
 
 describe("help registry contract", () => {
+  it("teaches plan-stage execution-graph discipline in draft and task help", () => {
+    for (const command of ["spec draft", "spec task"]) {
+      const entry = ENTRIES.find(
+        (candidate) => pathKey(candidate.path) === command,
+      );
+      expect(entry, `${command}: missing help entry`).toBeDefined();
+
+      const guidance = `${entry?.description ?? ""} ${entry?.domainContext ?? ""}`;
+      expect(guidance, `${command}: missing one-agent lane sizing`).toMatch(
+        /one agent lane/i,
+      );
+      expect(
+        guidance,
+        `${command}: missing dependency ordering guidance`,
+      ).toMatch(/dependencies.*ordering/i);
+      expect(guidance, `${command}: missing parallelism guidance`).toMatch(
+        /parallel/i,
+      );
+      expect(guidance, `${command}: missing touched-surface guidance`).toMatch(
+        /touched paths|touchedPaths/i,
+      );
+      expect(guidance, `${command}: missing task-splitting guidance`).toMatch(
+        /split/i,
+      );
+    }
+  });
+
   describe("every entry has non-empty summary/description/usage", () => {
     for (const entry of ENTRIES) {
       const key = pathKey(entry.path);

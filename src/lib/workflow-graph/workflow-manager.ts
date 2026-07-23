@@ -59,6 +59,11 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import {
+  assertGraphExecutionContractAccepted,
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "@/lib/workflow-graph/execution-contract-port";
 interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
   definitionId: string;
@@ -156,14 +161,14 @@ export class WorkflowStartInputError extends Error {
 
 export class WorkflowDefinitionApprovalRequiredError extends Error {
   readonly code = "definition_approval_required" as const;
-  readonly instruction =
-    "Record approval for the pending workflow definition before starting execution.";
+  readonly instruction: string;
 
   constructor(readonly executionId: string) {
     super(
-      "Workflow definition approval is required before execution can start",
+      `Workflow execution ${executionId} was created and parked awaiting definition approval`,
     );
     this.name = "WorkflowDefinitionApprovalRequiredError";
+    this.instruction = `Approve the pending workflow definition to resume execution ${executionId}.`;
   }
 }
 
@@ -247,6 +252,7 @@ export interface GraphWorkflowManagerDeps {
     definitionId: string,
     tier: TemplateTier,
   ): Promise<WorkflowDefinitionRecord | null>;
+  executionContract?: GraphExecutionContract;
   now?(): string;
   createExecutionId?(): string;
   eventPublisher?: ReturnType<
@@ -560,6 +566,8 @@ function transitionToNonRunningState(
 export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   const stopLaneDevServers =
     deps.stopExecutionLaneDevServers ?? defaultStopExecutionLaneDevServers;
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
 
   function abortRunningTaskConversations(
     projectPath: string,
@@ -710,6 +718,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       throw new WorkflowDefinitionNotFoundError(input.definitionId, tier);
     }
 
+    const contractDecision = executionContract.validateDefinition(
+      definition.definition,
+    );
+    if (!contractDecision.ok) {
+      logger.warn("graph-workflow.start.execution_contract_rejected", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        definitionId: input.definitionId,
+        tier,
+        code: contractDecision.code,
+        issueCount: contractDecision.issues.length,
+      });
+    }
+    assertGraphExecutionContractAccepted(contractDecision);
+
     // Deterministic prerequisite gate. It sits AFTER the dirty-worktree guard
     // (mirroring the existing chain — a dirty worktree is reported before a
     // missing prerequisite, both are pre-token gates) and BEFORE start-input
@@ -830,6 +853,28 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         reason: "no_active_execution",
       });
       return { ok: false, reason: "no_active_execution" };
+    }
+
+    if (
+      active.definitionApproval?.approvedAt === null &&
+      active.status === "pending"
+    ) {
+      const contractDecision = executionContract.validateDefinition(
+        active.workingDefinition,
+      );
+      if (!contractDecision.ok) {
+        logger.warn(
+          "graph-workflow.definition_approval.execution_contract_rejected",
+          {
+            executionId: active.id,
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            code: contractDecision.code,
+            issueCount: contractDecision.issues.length,
+          },
+        );
+      }
+      assertGraphExecutionContractAccepted(contractDecision);
     }
 
     let guardFailure: "not_awaiting_approval" | "already_decided" | null = null;

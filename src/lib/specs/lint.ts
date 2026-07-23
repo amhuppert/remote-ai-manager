@@ -1,9 +1,16 @@
 import type {
   SpecAssumptionDisposition,
+  SpecAuthoringStage,
   SpecElementKind,
   SpecElementPayload,
   SpecQuestionStatus,
 } from "./schemas";
+import {
+  contractTaskGroups,
+  contractedGroupsHavePath,
+  type ContractedTaskGroup,
+  type GroupContraction,
+} from "./group-contraction";
 
 export type LintSeverity =
   | "blocks_propose"
@@ -43,6 +50,7 @@ export interface RevisionElement {
 
 export interface RevisionSnapshot {
   specHandle: string;
+  authoringStage: SpecAuthoringStage;
   elements: RevisionElement[];
 }
 
@@ -105,6 +113,7 @@ export interface SpecRecords {
 const RULE_ORDER = [
   "9.2.empty-spec",
   "9.3.uncovered-criterion",
+  "9.3.task-without-criterion",
   "9.4.untraced-task",
   "9.5.dependency-cycle",
   "9.5.removed-task-dependency",
@@ -115,7 +124,14 @@ const RULE_ORDER = [
   "9.9.cited-element-change",
   "9.9.open-question",
   "9.9.materialized-task-change",
+  "9.11.lane-group-cycle",
+  "9.12.serialized-plan",
+  "9.12.overloaded-task",
+  "9.12.conflicting-parallel-surfaces",
 ] as const;
+
+export const GRAPH_SHAPE_MINIMUM_TASKS = 3;
+export const OVERLOADED_TASK_CRITERION_SHARE = 0.5;
 
 const ruleOrder = new Map<string, number>(
   RULE_ORDER.map((ruleId, index) => [ruleId, index]),
@@ -267,6 +283,191 @@ function dependencyCycleFindings(tasks: RevisionElement[]): LintFinding[] {
   return findings;
 }
 
+function graphShapeFindings(
+  tasks: RevisionElement[],
+  criteria: RevisionElement[],
+): LintFinding[] {
+  const findings: LintFinding[] = [];
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const contraction = contractTaskGroups(
+    tasks.map((task) => {
+      if (task.payload.kind !== "task") {
+        throw new Error(`Cannot contract non-task element ${task.id}.`);
+      }
+      return {
+        id: task.id,
+        handle: task.handle,
+        laneGroup: task.payload.laneGroup,
+        dependsOnTaskIds: task.payload.dependsOnTaskElementIds,
+      };
+    }),
+  );
+  const groupsById = new Map(
+    contraction.groups.map((group) => [group.id, group]),
+  );
+
+  if (contraction.groupCycle !== undefined) {
+    const cyclicGroups = contraction.groupCycle
+      .map((groupId) => groupsById.get(groupId))
+      .filter((group): group is ContractedTaskGroup => group !== undefined);
+    const cycleUsesLaneGrouping = cyclicGroups.some(
+      (group) => group.laneGroup !== undefined,
+    );
+    if (!cycleUsesLaneGrouping) {
+      return graphShapeAdvisoryFindings(findings, tasks, criteria, contraction);
+    }
+    const anchor = cyclicGroups[0];
+    const anchorTask =
+      anchor === undefined
+        ? undefined
+        : tasksById.get(anchor.memberTaskIds[0] ?? "");
+    findings.push({
+      ruleId: "9.11.lane-group-cycle",
+      severity: "blocks_propose",
+      elementHandle: anchorTask?.handle ?? tasks[0]?.handle ?? "unknown",
+      message: `Lane-group cycle: ${cyclicGroups
+        .map((group) => groupDisplayName(group, tasksById))
+        .join(" → ")}.`,
+    });
+  }
+
+  return graphShapeAdvisoryFindings(findings, tasks, criteria, contraction);
+}
+
+function graphShapeAdvisoryFindings(
+  findings: LintFinding[],
+  tasks: RevisionElement[],
+  criteria: RevisionElement[],
+  contraction: GroupContraction,
+): LintFinding[] {
+  if (tasks.length < GRAPH_SHAPE_MINIMUM_TASKS) return findings;
+
+  if (
+    contraction.groupCycle === undefined &&
+    contraction.intraGroupCycleTaskIds === undefined &&
+    contractedGraphIsSerialized(contraction)
+  ) {
+    findings.push({
+      ruleId: "9.12.serialized-plan",
+      severity: "advisory",
+      elementHandle: tasks[0]?.handle ?? "unknown",
+      message: `The ${tasks.length}-task plan contracts to ${contraction.groups.length} ${contraction.groups.length === 1 ? "context" : "contexts"} with no parallel execution path.`,
+    });
+  }
+
+  const criterionIds = new Set(criteria.map((criterion) => criterion.id));
+  for (const task of tasks) {
+    if (task.payload.kind !== "task" || criteria.length === 0) continue;
+    const coveredCount = new Set(
+      task.payload.coveredCriterionElementIds.filter((criterionId) =>
+        criterionIds.has(criterionId),
+      ),
+    ).size;
+    if (coveredCount / criteria.length <= OVERLOADED_TASK_CRITERION_SHARE) {
+      continue;
+    }
+    findings.push({
+      ruleId: "9.12.overloaded-task",
+      severity: "advisory",
+      elementHandle: task.handle,
+      message: `${task.handle} covers ${coveredCount} of ${criteria.length} criteria, more than half of the draft.`,
+    });
+  }
+
+  if (contraction.groupCycle !== undefined) return findings;
+  for (let leftIndex = 0; leftIndex < tasks.length; leftIndex += 1) {
+    const left = tasks[leftIndex];
+    if (left?.payload.kind !== "task") continue;
+    const leftGroupId = contraction.taskGroupIds.get(left.id);
+    if (leftGroupId === undefined) continue;
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < tasks.length;
+      rightIndex += 1
+    ) {
+      const right = tasks[rightIndex];
+      if (right?.payload.kind !== "task") continue;
+      const rightGroupId = contraction.taskGroupIds.get(right.id);
+      if (
+        rightGroupId === undefined ||
+        leftGroupId === rightGroupId ||
+        contractedGroupsHavePath(contraction, leftGroupId, rightGroupId) ||
+        contractedGroupsHavePath(contraction, rightGroupId, leftGroupId)
+      ) {
+        continue;
+      }
+      const overlap = firstTouchedPathOverlap(
+        left.payload.touchedPaths ?? [],
+        right.payload.touchedPaths ?? [],
+      );
+      if (overlap === undefined) continue;
+      findings.push({
+        ruleId: "9.12.conflicting-parallel-surfaces",
+        severity: "advisory",
+        elementHandle: left.handle,
+        message: `Independent tasks ${left.handle} and ${right.handle} declare overlapping touched paths ${overlap[0]} and ${overlap[1]}.`,
+      });
+    }
+  }
+
+  return findings;
+}
+
+function groupDisplayName(
+  group: ContractedTaskGroup,
+  tasksById: ReadonlyMap<string, RevisionElement>,
+): string {
+  if (group.laneGroup !== undefined) return group.laneGroup;
+  const task = tasksById.get(group.memberTaskIds[0] ?? "");
+  return task?.handle ?? group.id;
+}
+
+function contractedGraphIsSerialized(contraction: GroupContraction): boolean {
+  for (
+    let leftIndex = 0;
+    leftIndex < contraction.groups.length;
+    leftIndex += 1
+  ) {
+    const left = contraction.groups[leftIndex];
+    if (left === undefined) continue;
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < contraction.groups.length;
+      rightIndex += 1
+    ) {
+      const right = contraction.groups[rightIndex];
+      if (right === undefined) continue;
+      if (
+        !contractedGroupsHavePath(contraction, left.id, right.id) &&
+        !contractedGroupsHavePath(contraction, right.id, left.id)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function firstTouchedPathOverlap(
+  leftPaths: readonly string[],
+  rightPaths: readonly string[],
+): [string, string] | undefined {
+  const leftSorted = [...new Set(leftPaths)].sort(compareText);
+  const rightSorted = [...new Set(rightPaths)].sort(compareText);
+  for (const left of leftSorted) {
+    for (const right of rightSorted) {
+      if (
+        left === right ||
+        left.startsWith(`${right}/`) ||
+        right.startsWith(`${left}/`)
+      ) {
+        return [left, right];
+      }
+    }
+  }
+  return undefined;
+}
+
 function danglingTypedReferenceFinding(
   sourceElement: RevisionElement,
   targetId: string,
@@ -355,18 +556,34 @@ export function lint(
     });
   }
 
-  for (const criterionElement of criteria) {
-    const isCovered = tasks.some((taskElement) =>
-      taskScope(taskElement)?.coveredCriterionElementIds.includes(
-        criterionElement.id,
-      ),
-    );
-    if (!isCovered) {
+  if (draft.authoringStage === "plan") {
+    for (const criterionElement of criteria) {
+      const isCovered = tasks.some((taskElement) =>
+        taskScope(taskElement)?.coveredCriterionElementIds.includes(
+          criterionElement.id,
+        ),
+      );
+      if (!isCovered) {
+        findings.push({
+          ruleId: "9.3.uncovered-criterion",
+          severity: "blocks_propose",
+          elementHandle: criterionElement.handle,
+          message: `${criterionElement.handle} has no covering task.`,
+        });
+      }
+    }
+
+    for (const taskElement of tasks) {
+      const coveredCriterionElementIds =
+        taskScope(taskElement)?.coveredCriterionElementIds ?? [];
+      if (coveredCriterionElementIds.length > 0) {
+        continue;
+      }
       findings.push({
-        ruleId: "9.3.uncovered-criterion",
+        ruleId: "9.3.task-without-criterion",
         severity: "blocks_propose",
-        elementHandle: criterionElement.handle,
-        message: `${criterionElement.handle} has no covering task.`,
+        elementHandle: taskElement.handle,
+        message: `${taskElement.handle} covers no acceptance criterion.`,
       });
     }
   }
@@ -388,6 +605,7 @@ export function lint(
   }
 
   findings.push(...dependencyCycleFindings(tasks));
+  findings.push(...graphShapeFindings(tasks, criteria));
 
   const knownElementsById = new Map(
     (records.knownElements ?? []).map((element) => [

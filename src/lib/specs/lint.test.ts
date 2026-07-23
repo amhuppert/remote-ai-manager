@@ -48,6 +48,8 @@ const task = (
     tracedDecisionElementIds?: string[];
     coveredCriterionElementIds?: string[];
     dependsOnTaskElementIds?: string[];
+    laneGroup?: string;
+    touchedPaths?: string[];
     payloadHash?: string;
   } = {},
 ): RevisionElement => ({
@@ -66,6 +68,12 @@ const task = (
       "criterion-1",
     ],
     dependsOnTaskElementIds: options.dependsOnTaskElementIds ?? [],
+    ...(options.laneGroup === undefined
+      ? {}
+      : { laneGroup: options.laneGroup }),
+    ...(options.touchedPaths === undefined
+      ? {}
+      : { touchedPaths: options.touchedPaths }),
   },
 });
 
@@ -75,8 +83,12 @@ const cleanElements = (): RevisionElement[] => [
   task("task-1", "T1"),
 ];
 
-const snapshot = (elements: RevisionElement[]): RevisionSnapshot => ({
+const snapshot = (
+  elements: RevisionElement[],
+  authoringStage: RevisionSnapshot["authoringStage"] = "plan",
+): RevisionSnapshot => ({
   specHandle: "native-sdd",
+  authoringStage,
   elements,
 });
 
@@ -117,6 +129,50 @@ describe("lint", () => {
       },
     ]);
   });
+
+  it.each(["requirements", "design"] as const)(
+    "9.3 defers criterion coverage before the %s stage reaches plan",
+    (authoringStage) => {
+      const draft = snapshot(
+        [
+          requirement("requirement-1", "R1"),
+          criterion("criterion-1", "R1.1", "requirement-1"),
+        ],
+        authoringStage,
+      );
+
+      expect(lint(draft, records())).toEqual([]);
+    },
+  );
+
+  it("9.3 blocks a plan task that covers no criterion", () => {
+    const draft = snapshot([
+      ...cleanElements(),
+      task("task-2", "T2", { coveredCriterionElementIds: [] }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.3.task-without-criterion",
+      severity: "blocks_propose",
+      elementHandle: "T2",
+      message: "T2 covers no acceptance criterion.",
+    });
+  });
+
+  it.each(["requirements", "design"] as const)(
+    "9.3 defers task coverage before the %s stage reaches plan",
+    (authoringStage) => {
+      const draft = snapshot(
+        [
+          ...cleanElements(),
+          task("task-2", "T2", { coveredCriterionElementIds: [] }),
+        ],
+        authoringStage,
+      );
+
+      expect(lint(draft, records())).toEqual([]);
+    },
+  );
 
   it("9.4 names an untraced task", () => {
     const draft = snapshot([
@@ -487,6 +543,96 @@ describe("lint", () => {
       ]);
     },
   );
+
+  it("9.11 blocks a cycle introduced by lane-group contraction", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      task("task-1", "T1", { laneGroup: "api" }),
+      task("task-2", "T2", {
+        laneGroup: "ui",
+        dependsOnTaskElementIds: ["task-1"],
+      }),
+      task("task-3", "T3", { laneGroup: "ui" }),
+      task("task-4", "T4", {
+        laneGroup: "api",
+        dependsOnTaskElementIds: ["task-3"],
+      }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.11.lane-group-cycle",
+      severity: "blocks_propose",
+      elementHandle: "T1",
+      message: "Lane-group cycle: api → ui → api.",
+    });
+  });
+
+  it("9.12 advises when three or more tasks contract to a serialized plan", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      task("task-1", "T1", { laneGroup: "one-lane" }),
+      task("task-2", "T2", { laneGroup: "one-lane" }),
+      task("task-3", "T3", { laneGroup: "one-lane" }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.12.serialized-plan",
+      severity: "advisory",
+      elementHandle: "T1",
+      message:
+        "The 3-task plan contracts to 1 context with no parallel execution path.",
+    });
+  });
+
+  it("9.12 advises when one task covers more than half of draft criteria", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      criterion("criterion-2", "R1.2", "requirement-1"),
+      criterion("criterion-3", "R1.3", "requirement-1"),
+      task("task-1", "T1", {
+        coveredCriterionElementIds: ["criterion-1", "criterion-2"],
+      }),
+      task("task-2", "T2", {
+        coveredCriterionElementIds: ["criterion-3"],
+      }),
+      task("task-3", "T3", {
+        coveredCriterionElementIds: ["criterion-3"],
+      }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.12.overloaded-task",
+      severity: "advisory",
+      elementHandle: "T1",
+      message: "T1 covers 2 of 3 criteria, more than half of the draft.",
+    });
+  });
+
+  it("9.12 advises for whole-segment path overlap in independent contexts", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      task("task-1", "T1", { touchedPaths: ["src/lib"] }),
+      task("task-2", "T2", { touchedPaths: ["src/lib/specs"] }),
+      task("task-3", "T3", { touchedPaths: ["src/library"] }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.12.conflicting-parallel-surfaces",
+      severity: "advisory",
+      elementHandle: "T1",
+      message:
+        "Independent tasks T1 and T2 declare overlapping touched paths src/lib and src/lib/specs.",
+    });
+    expect(
+      lint(draft, records()).filter(
+        (finding) => finding.ruleId === "9.12.conflicting-parallel-surfaces",
+      ),
+    ).toHaveLength(1);
+  });
 
   it("orders findings deterministically regardless of input order", () => {
     const draft = snapshot([

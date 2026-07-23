@@ -401,6 +401,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>`
   - `cctl spec draft <slug> --file <element.json> --base-version <number|new>`
   - `cctl spec propose <slug>`
+  - `cctl spec advance <slug> --from <requirements|design>`
   - `cctl spec question <slug> --text <text> [--element <handle>]`
   - `cctl spec answer <slug>/Q2 --answer <text>`
   - `cctl spec assume <slug> --text <text> [--element <handle>]`
@@ -428,8 +429,10 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec create --slug <slug> --name <name> --preset <contract-bearing|exploratory|fast-path> --file <element.json>`
 - `cctl spec draft` — save a base-versioned draft element
   - `cctl spec draft <slug> --file <element.json> --base-version <number|new>`
-- `cctl spec propose` — propose the current draft for review
+- `cctl spec propose` — propose the current authoring stage for review
   - `cctl spec propose <slug>`
+- `cctl spec advance` — conclude a Notify/Off authoring stage explicitly
+  - `cctl spec advance <slug> --from <requirements|design>`
 - `cctl spec question` — open a visible spec question for human answer
   - `cctl spec question <slug> --text <text> [--element <handle>]`
 - `cctl spec answer` — answer an open spec question

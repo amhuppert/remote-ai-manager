@@ -38,6 +38,9 @@ import { loadProposalState } from "./review-state";
 import {
   approveElement,
   changePolicy as evaluatePolicyChange,
+  consultedAuthoringGates,
+  openDraftAuthoringStage,
+  resolveAuthoringDials,
   signOffRevision as evaluateSignOffRevision,
   type TransitionRefusal,
 } from "./transitions";
@@ -579,6 +582,16 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     actor: ActorProvenance,
   ): TransitionRefusal | null {
     if (subject.subjectKind === "plan") {
+      if (revision.authoringStage !== "plan") {
+        return {
+          code: "stage_blocked",
+          unmetConditions: [
+            "The execution plan can be approved only on a plan-stage revision.",
+          ],
+          instruction:
+            "Complete requirements and design authoring before approving the execution plan.",
+        };
+      }
       if (revision.state !== "proposed") {
         return {
           code: "gate_blocked",
@@ -1240,6 +1253,13 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             id: newId("revision"),
             specId: target.spec.id,
             baseRevisionId: withdrawn.id,
+            authoringStage: openDraftAuthoringStage({
+              policy: target.spec.gatePolicy,
+              baseRevision: {
+                state: "withdrawn",
+                authoringStage: withdrawn.authoringStage,
+              },
+            }),
             createdAt: occurredAt,
           });
           return {
@@ -1576,6 +1596,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           const decision = evaluateSignOffRevision({
             actor: parsed.actor,
             revisionState: target.revision.state,
+            authoringStage: target.revision.authoringStage,
             policy: target.spec.gatePolicy,
             draft: loaded.draft,
             records: loaded.records,
@@ -1589,8 +1610,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               }>,
               prepared: [],
             };
-          const resolvedGates = (
-            ["requirements", "design", "plan"] as const
+          const resolvedGates = consultedAuthoringGates(
+            target.revision.authoringStage,
+            loaded.reviewSnapshot.baseRevisionRows,
+            loaded.reviewSnapshot.revisionRows,
           ).map((gate) => ({
             gate,
             dial: resolveDial(target.spec.gatePolicy, gate),
@@ -1609,8 +1632,11 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 occurredAt,
               );
           if (approval !== null) deps.review.saveApproval(approval);
-          const allCombined = resolvedGates.every(
-            ({ dial }) => dial === COMBINED_APPROVAL_DIAL,
+          const globalAuthoringDials = resolveAuthoringDials(
+            target.spec.gatePolicy,
+          );
+          const allCombined = Object.values(globalAuthoringDials).every(
+            (dial) => dial === COMBINED_APPROVAL_DIAL,
           );
           // R11.5: under the fast-path policy this human sign-off IS the
           // combined approval — every per-element approval is recorded with
@@ -1627,7 +1653,9 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                       ]
                     : [],
                 ),
-                { subjectKind: "plan", elementId: null } as const,
+                ...(target.revision.authoringStage === "plan"
+                  ? [{ subjectKind: "plan", elementId: null } as const]
+                  : []),
               ]
             : [];
           for (const subject of combinedSubjects) {
@@ -1660,17 +1688,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             parsed.revisionId,
           );
           for (const { gate, dial } of resolvedGates) {
-            const basis = policyAdmitted
-              ? dial === "notify"
+            const basis =
+              dial === "notify"
                 ? ("notify_policy" as const)
-                : ("off_policy" as const)
-              : ("human_approval" as const);
-            if (
-              !policyAdmitted &&
-              dial !== "gate" &&
-              dial !== COMBINED_APPROVAL_DIAL
-            )
-              continue;
+                : dial === "off"
+                  ? ("off_policy" as const)
+                  : ("human_approval" as const);
             if (
               existingAdmissions.some(
                 (admission) =>
@@ -1709,7 +1732,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           }
           grantedNotice = grantNoticeFor(target.spec, {
             approvalId: approval?.id ?? null,
-            satisfiedGates: ["requirements", "design", "plan"],
+            satisfiedGates: resolvedGates.map(({ gate }) => gate),
             approvedSubjects: [
               ...combinedSubjects.map((subject) => subject.elementId ?? "plan"),
               "revision",

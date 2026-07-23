@@ -91,6 +91,18 @@ function firstElement(statement: string, elementId = "requirement-1") {
   };
 }
 
+function task(title: string) {
+  return {
+    kind: "task" as const,
+    title,
+    instructions: "Implement the task.",
+    tracedRequirementElementIds: [],
+    tracedDecisionElementIds: [],
+    coveredCriterionElementIds: [],
+    dependsOnTaskElementIds: [],
+  };
+}
+
 async function createDraft(
   initialElement = firstElement("Specs have stable identity."),
 ) {
@@ -122,6 +134,7 @@ describe("AuthoringService create and draft writes", () => {
       }),
     ]);
     expect(created.element.id).toBe("requirement-1");
+    expect(created.draft.authoringStage).toBe("requirements");
     expect(created.version.elementVersion).toBe(1);
     // The spec is born from the first draft save: one shared timestamp.
     expect(created.spec.createdAt).toBe(created.version.createdAt);
@@ -142,6 +155,156 @@ describe("AuthoringService create and draft writes", () => {
         elementIds: ["requirement-1"],
       }),
     ]);
+  });
+
+  it("refuses an out-of-stage first element without creating a spec or intervention", async () => {
+    await expect(
+      service.createSpec({
+        projectPath: PROJECT_PATH,
+        slug: "blocked-spec",
+        name: "Blocked spec",
+        gatePolicy: { preset: "contract-bearing" },
+        initialElement: {
+          elementId: "task-1",
+          kind: "task",
+          parentElementId: null,
+          position: 0,
+          payload: task("Premature task"),
+        },
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "stage_blocked" });
+
+    expect(db.prepare("SELECT COUNT(*) AS count FROM specs").get()).toEqual({
+      count: 0,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM spec_events").get(),
+    ).toEqual({ count: 0 });
+  });
+
+  it("preserves single-pass authoring when every authoring dial is combined", async () => {
+    const created = await service.createSpec({
+      projectPath: PROJECT_PATH,
+      slug: "fast-path-spec",
+      name: "Fast-path spec",
+      gatePolicy: { preset: "fast-path" },
+      initialElement: {
+        elementId: "task-fast",
+        kind: "task",
+        parentElementId: null,
+        position: 0,
+        payload: task("Single-pass task"),
+      },
+      actor: ACTOR,
+    });
+
+    expect(created.draft.authoringStage).toBe("plan");
+  });
+
+  it("records a durable intervention and checks stage before element CAS", async () => {
+    const created = await createDraft();
+    const direct = await specs.createDraftElement({
+      id: "task-1",
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      kind: "task",
+      parentElementId: null,
+      position: 1,
+      payload: task("Existing task"),
+      createdAt: "2026-07-18T12:10:00.000Z",
+      updatedAt: "2026-07-18T12:10:00.000Z",
+    });
+
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: direct.element.id,
+        kind: "task",
+        parentElementId: null,
+        position: 1,
+        payload: task("Stale task write"),
+        baseElementVersion: 99,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "stage_blocked" });
+
+    const interventions = db
+      .prepare(
+        "SELECT payload_json FROM spec_events WHERE spec_id = ? AND event_type = 'spec-intervention-recorded'",
+      )
+      .all(created.spec.id) as Array<{ payload_json: string }>;
+    expect(interventions).toHaveLength(1);
+    expect(JSON.parse(interventions[0]!.payload_json)).toMatchObject({
+      kind: "draft-write-refused",
+      revisionId: created.draft.id,
+      refusal: { code: "stage_blocked" },
+    });
+    expect(published).toHaveLength(1);
+  });
+
+  it("advances a Notify-governed stage with one admission and event", async () => {
+    const created = await service.createSpec({
+      projectPath: PROJECT_PATH,
+      slug: "exploratory-spec",
+      name: "Exploratory spec",
+      gatePolicy: { preset: "exploratory" },
+      initialElement: firstElement("Explore staged authoring."),
+      actor: ACTOR,
+    });
+
+    const advanced = await service.advanceAuthoringStage({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      expectedStage: "requirements",
+      actor: ACTOR,
+    });
+    const replay = await service.advanceAuthoringStage({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      expectedStage: "requirements",
+      actor: ACTOR,
+    });
+
+    expect(advanced).toMatchObject({
+      ok: true,
+      revision: { authoringStage: "design" },
+    });
+    expect(replay).toEqual(advanced);
+    expect(
+      db
+        .prepare(
+          "SELECT gate, basis FROM spec_gate_admissions WHERE revision_id = ?",
+        )
+        .all(created.draft.id),
+    ).toEqual([{ gate: "requirements", basis: "notify_policy" }]);
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM spec_events WHERE spec_id = ? AND payload_json LIKE '%authoring-stage-advanced%'",
+        )
+        .get(created.spec.id),
+    ).toEqual({ count: 1 });
+  });
+
+  it("refuses direct advance when the current stage is Gate-governed", async () => {
+    const created = await createDraft();
+
+    await expect(
+      service.advanceAuthoringStage({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedStage: "requirements",
+        actor: ACTOR,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "human_act_required" },
+    });
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      authoringStage: "requirements",
+    });
   });
 
   it("refuses a create for a slug that already has an editable draft, writing nothing", async () => {
@@ -185,6 +348,7 @@ describe("AuthoringService create and draft writes", () => {
     expect(amended.spec.id).toBe(created.spec.id);
     expect(amended.draft.id).not.toBe(created.draft.id);
     expect(amended.draft.basedOnRevisionId).toBe(created.draft.id);
+    expect(amended.draft.authoringStage).toBe("design");
     expect(snapshot?.elements.map(({ element }) => element.id).sort()).toEqual([
       "requirement-1",
       "requirement-2",
@@ -333,6 +497,7 @@ describe("AuthoringService create and draft writes", () => {
     const copied = await service.getRevisionSnapshot(amendment.id);
 
     expect(amendment.basedOnRevisionId).toBe(created.draft.id);
+    expect(amendment.authoringStage).toBe("design");
     expect(reused.id).toBe(amendment.id);
     expect(copied?.elements.map(({ version }) => version.payload)).toEqual(
       approved?.elements.map(({ version }) => version.payload),

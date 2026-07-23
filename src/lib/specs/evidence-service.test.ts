@@ -37,6 +37,7 @@ const UNRELATED_EXECUTION_ID = "execution-evidence-unrelated";
 
 const TASK_CLAIM_DRAFT: RevisionSnapshot = {
   specHandle: "evidence-service",
+  authoringStage: "plan",
   elements: [
     {
       id: CRITERION_ID,

@@ -40,6 +40,7 @@ const revision: SpecRevision = {
   specId: spec.id,
   number: 1,
   state: "draft",
+  authoringStage: "plan",
   basedOnRevisionId: null,
   contentHash: null,
   proposedAt: null,
@@ -120,8 +121,40 @@ const snapshot: SpecRevisionSnapshot = {
           tracedDecisionElementIds: [],
           coveredCriterionElementIds: ["criterion-1"],
           dependsOnTaskElementIds: [],
+          laneGroup: "cli",
+          touchedPaths: ["src/cli/commands/spec"],
         },
         payloadHash: "task-hash",
+        elementVersion: 1,
+        createdAt: CREATED_AT,
+        updatedAt: CREATED_AT,
+      },
+    },
+    {
+      element: {
+        id: "task-2",
+        specId: spec.id,
+        kind: "task",
+        number: 2,
+        parentElementId: null,
+        createdAt: CREATED_AT,
+      },
+      version: {
+        revisionId: revision.id,
+        elementId: "task-2",
+        position: 3,
+        payload: {
+          kind: "task",
+          title: "Verify the CLI reads",
+          instructions: "Exercise every graph fact through the read contract.",
+          tracedRequirementElementIds: ["requirement-1"],
+          tracedDecisionElementIds: [],
+          coveredCriterionElementIds: ["criterion-1"],
+          dependsOnTaskElementIds: ["task-1"],
+          laneGroup: "cli",
+          touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
+        },
+        payloadHash: "task-2-hash",
         elementVersion: 1,
         createdAt: CREATED_AT,
         updatedAt: CREATED_AT,
@@ -400,7 +433,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
     expect(JSON.parse(summary.stdout).spec).toMatchObject({
       spec: { slug: "native-sdd" },
-      counts: { requirements: 1, criteria: 1, tasks: 1 },
+      counts: { requirements: 1, criteria: 1, tasks: 2 },
     });
   });
 
@@ -434,7 +467,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     const status = JSON.parse(result.stdout).status;
 
-    expect(status.phase).toEqual({ primary: "draft" });
+    expect(status.phase).toEqual({ primary: "draft", authoringStage: "plan" });
     expect(status.gates).toHaveLength(5);
     expect(status.pendingApprovals.length).toBeGreaterThan(0);
     expect(status.openQuestions).toEqual([
@@ -445,6 +478,42 @@ describe("cctl spec read verbs against seeded read routes", () => {
       totalCriteria: 1,
       percentage: 100,
     });
+    expect(status.taskPlan).toEqual([
+      expect.objectContaining({
+        handle: "T1",
+        dependsOn: [],
+        laneGroup: "cli",
+        touchedPaths: ["src/cli/commands/spec"],
+        criterionCoverage: ["R1.1"],
+      }),
+      expect.objectContaining({
+        handle: "T2",
+        dependsOn: ["T1"],
+        laneGroup: "cli",
+        touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
+        criterionCoverage: ["R1.1"],
+      }),
+    ]);
+  });
+
+  it("renders plan graph facts in status text", async () => {
+    const result = await runCli(
+      ["spec", "status", "native-sdd"],
+      baseEnv,
+      makeHost(),
+    );
+
+    expect(result.stdout).toContain("plan tasks:");
+    expect(result.stdout).toContain(
+      "authoring stage: plan (concluding gate: plan)",
+    );
+    expect(result.stdout).toContain("T2: Verify the CLI reads");
+    expect(result.stdout).toContain("dependencies: T1");
+    expect(result.stdout).toContain("lane group: cli");
+    expect(result.stdout).toContain(
+      "touched surfaces: src/cli/commands/spec/read.contract.test.ts",
+    );
+    expect(result.stdout).toContain("criterion coverage: R1.1");
   });
 
   it("gets qualified and bare element handles", async () => {
@@ -462,6 +531,39 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
     expect(JSON.parse(qualified.stdout).element.handle).toBe("R1");
     expect(JSON.parse(bare.stdout).element.handle).toBe("R1");
+  });
+
+  it("preserves plan graph facts through show and get", async () => {
+    const host = makeHost();
+    const shown = await runCli(
+      ["spec", "show", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+    const fetched = await runCli(
+      ["spec", "get", "native-sdd/T2", "--json"],
+      baseEnv,
+      host,
+    );
+
+    const shownTasks = JSON.parse(shown.stdout)
+      .spec.currentRevision.elements.filter(
+        (entry: { version: { payload: { kind: string } } }) =>
+          entry.version.payload.kind === "task",
+      )
+      .map(
+        (entry: { version: { payload: Record<string, unknown> } }) =>
+          entry.version.payload,
+      );
+    expect(shownTasks[1]).toMatchObject({
+      dependsOnTaskElementIds: ["task-1"],
+      laneGroup: "cli",
+      touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
+      coveredCriterionElementIds: ["criterion-1"],
+    });
+    expect(
+      JSON.parse(fetched.stdout).element.element.version.payload,
+    ).toMatchObject(shownTasks[1]);
   });
 
   it("gets question and assumption handles as typed views", async () => {

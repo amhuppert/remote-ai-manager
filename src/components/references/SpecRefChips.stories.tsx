@@ -24,6 +24,7 @@ const summary: SpecSummaryView = {
     specId: "spec-native-sdd",
     number: 4,
     state: "proposed",
+    authoringStage: "plan",
     basedOnRevisionId: "revision-3",
     contentHash: "revision-4-hash",
     proposedAt: TIMESTAMP,

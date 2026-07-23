@@ -171,7 +171,84 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     _resetPublicationForTesting();
   });
 
-  it("refuses execution start pinning a revision not in Approved through route and CLI, landing intervention rows", async () => {
+  it("refuses an out-of-stage task write through the real authoring route", async () => {
+    const slug = "premature-plan";
+    const created = await postJson<{
+      spec: { id: string };
+      draft: { id: string; authoringStage: string };
+    }>(
+      world.postAction(
+        slug,
+        "create",
+        {
+          slug,
+          name: "Premature plan",
+          gatePolicy: { preset: "contract-bearing" },
+          initialElement: {
+            elementId: "requirement-premature",
+            kind: "requirement",
+            parentElementId: null,
+            position: 0,
+            payload: {
+              kind: "requirement",
+              statement: "Plan work follows requirements review.",
+              priority: "must",
+              risk: "high",
+            },
+          },
+        },
+        "agent",
+      ),
+    );
+    expect(created.draft.authoringStage).toBe("requirements");
+
+    const response = await world.postAction(
+      slug,
+      "draft-upsert",
+      {
+        revisionId: created.draft.id,
+        elementId: "task-premature",
+        kind: "task",
+        parentElementId: null,
+        position: 1,
+        payload: {
+          kind: "task",
+          title: "Premature plan task",
+          instructions: "This write must remain outside the draft.",
+          tracedRequirementElementIds: ["requirement-premature"],
+          tracedDecisionElementIds: [],
+          coveredCriterionElementIds: [],
+          dependsOnTaskElementIds: [],
+        },
+        baseElementVersion: null,
+      },
+      "agent",
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stage_blocked",
+      unmetConditions: [
+        "A task cannot be authored during the requirements stage.",
+      ],
+      instruction: expect.stringContaining("Propose the requirements stage"),
+    });
+    expect(
+      (
+        await world.repos.specs.getRevisionSnapshot(created.draft.id)
+      )?.elements.map(({ element }) => element.id),
+    ).toEqual(["requirement-premature"]);
+    expect(interventionRows(world, created.spec.id)).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          kind: "draft-write-refused",
+          refusal: expect.objectContaining({ code: "stage_blocked" }),
+        }),
+      }),
+    ]);
+  });
+
+  it("refuses execution start for a proposed plan and an approved non-plan revision through route and CLI", async () => {
     const authored = await authorSpineDraft(world, SLUG);
     await proposeSpineRevision(world, SLUG, authored);
     const scope = {
@@ -203,9 +280,8 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     ]);
     expect(refusal.instruction).toContain("sign-off");
 
-    // CLI surface: `cctl spec start` falls back to the current (proposed)
-    // revision when none is approved, so the server refusal is reachable and
-    // surfaces as exit 1 with the machine-readable code and instruction.
+    // CLI surface: while the plan is proposed, `cctl spec start` falls back to
+    // the latest approved design revision, which the stage gate also refuses.
     const cliResult = await runCli(
       ["spec", "start", SLUG, "--file", SCOPE_FILE, "--json"],
       cliEnv,
@@ -214,8 +290,9 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(cliResult.exitCode).toBe(1);
     expect(JSON.parse(cliResult.stdout)).toMatchObject({
       ok: false,
-      code: "revision_not_approved",
-      instruction: "Complete revision sign-off before starting execution.",
+      code: "gate_blocked",
+      instruction:
+        "Complete plan-stage authoring and sign off that revision before starting execution.",
     });
 
     // Durable event log: both refused attempts land as intervention rows
@@ -230,10 +307,12 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       expect(intervention.payload).toMatchObject({
         kind: "transition-refused",
         surface: "execution_start",
-        code: "revision_not_approved",
-        instruction: "Complete revision sign-off before starting execution.",
       });
     }
+    expect(interventions.map(({ payload }) => payload.code).sort()).toEqual([
+      "gate_blocked",
+      "revision_not_approved",
+    ]);
 
     // The refusal blocked the transition: no execution row exists.
     expect(

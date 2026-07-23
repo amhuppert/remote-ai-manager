@@ -146,6 +146,12 @@ function renderElement(row: SpecRevisionElement, handle: string): string {
         `- Requirements: ${payload.tracedRequirementElementIds.join(", ") || "None"}`,
         `- Criteria: ${payload.coveredCriterionElementIds.join(", ") || "None"}`,
         `- Dependencies: ${payload.dependsOnTaskElementIds.join(", ") || "None"}`,
+        ...(payload.laneGroup === undefined
+          ? []
+          : [`- Lane group: ${payload.laneGroup}`]),
+        ...(payload.touchedPaths === undefined
+          ? []
+          : [`- Touched paths: ${payload.touchedPaths.join(", ") || "None"}`]),
       ].join("\n\n");
   }
 }
@@ -165,6 +171,7 @@ function renderRevisionMarkdown(
     `- Spec: ${spec.slug}`,
     `- Revision: ${snapshot.revision.number}`,
     `- State: ${snapshot.revision.state}`,
+    `- Authoring stage: ${snapshot.revision.authoringStage}`,
     `- Content hash: ${snapshot.revision.contentHash ?? "editable"}`,
     ...snapshot.elements.map((row) =>
       renderElement(row, handles.get(row.element.id) ?? row.element.id),
@@ -188,6 +195,7 @@ function manifestFor(state: SpecExportState): unknown {
         id: snapshot.revision.id,
         number: snapshot.revision.number,
         state: snapshot.revision.state,
+        authoringStage: snapshot.revision.authoringStage,
         basedOnRevisionId: snapshot.revision.basedOnRevisionId,
         contentHash: snapshot.revision.contentHash,
         proposedAt: snapshot.revision.proposedAt,
@@ -240,7 +248,10 @@ export function verifyExportState(state: SpecExportState): IntegrityReport {
     const expectedContentHash = snapshot.revision.contentHash;
     if (expectedContentHash === null) continue;
     checkedRevisionIds.push(snapshot.revision.id);
-    const actualContentHash = computeSpecRevisionContentHash(snapshot.elements);
+    const actualContentHash = computeSpecRevisionContentHash(
+      snapshot.revision.authoringStage,
+      snapshot.elements,
+    );
     const mismatchedElementIds = snapshot.elements
       .filter(
         ({ version }) =>

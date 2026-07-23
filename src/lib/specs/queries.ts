@@ -20,7 +20,6 @@ import {
   specEvidenceRowSchema,
   specExecutionRowSchema,
   specGateAdmissionRowSchema,
-  specGateSchema,
   specProofVerdictRowSchema,
   specQuestionStatusSchema,
   specRevisionElementSchema,
@@ -29,63 +28,9 @@ import {
   specSchema,
   specWaiverRowSchema,
 } from "./schemas";
+import { specStatusViewSchema } from "./view-schemas";
 
-const specCoverageSchema = z
-  .object({
-    coveredCriteria: z.number().int().nonnegative(),
-    totalCriteria: z.number().int().nonnegative(),
-    percentage: z.number().int().min(0).max(100),
-  })
-  .strict();
-
-const specGateStatusSchema = z
-  .object({
-    gate: specGateSchema,
-    dial: z.enum(["gate", "notify", "off", "combined-approval"]),
-    state: z.enum(["pending", "admitted", "not_required"]),
-  })
-  .strict();
-
-const pendingApprovalSchema = z
-  .object({
-    gate: specGateSchema,
-    subject: z.string(),
-    elementId: z.string().nullable(),
-  })
-  .strict();
-
-const openQuestionSchema = z
-  .object({
-    id: z.string().min(1),
-    handle: z.string().min(1),
-    text: z.string(),
-    elementId: z.string().nullable(),
-  })
-  .strict();
-
-const statusAssumptionSchema = z
-  .object({
-    id: z.string().min(1),
-    handle: z.string().min(1),
-    text: z.string(),
-    disposition: specAssumptionDispositionSchema,
-    elementId: z.string().nullable(),
-  })
-  .strict();
-
-export const specStatusViewSchema = z
-  .object({
-    specId: z.string().min(1),
-    slug: z.string().min(1),
-    phase: specPhaseProjectionSchema,
-    gates: z.array(specGateStatusSchema),
-    pendingApprovals: z.array(pendingApprovalSchema),
-    openQuestions: z.array(openQuestionSchema),
-    assumptions: z.array(statusAssumptionSchema).default([]),
-    coverage: specCoverageSchema,
-    delivery: deliveryDisplaySchema,
-  })
-  .strict();
+export { specStatusViewSchema };
 
 export const specQuestionViewSchema = z
   .object({

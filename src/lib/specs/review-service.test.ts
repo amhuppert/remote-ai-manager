@@ -84,7 +84,7 @@ async function proposedSpec(
     projectPath: PROJECT_PATH,
     slug: `review-${preset}`,
     name: `Review ${preset}`,
-    gatePolicy: { preset },
+    gatePolicy: { preset: "fast-path" },
     initialElement: {
       elementId: "requirement-1",
       kind: "requirement" as const,
@@ -149,6 +149,13 @@ async function proposedSpec(
       actor: AGENT,
     });
   }
+  if (preset !== "fast-path") {
+    await specs.updateGatePolicy({
+      specId: created.spec.id,
+      gatePolicy: { preset },
+      updatedAt: "2026-07-18T14:00:00.500Z",
+    });
+  }
   await authoring.proposeRevision({
     specId: created.spec.id,
     revisionId: created.draft.id,
@@ -158,6 +165,93 @@ async function proposedSpec(
 }
 
 describe("ReviewService", () => {
+  it("signs off a requirements-stage revision without plan approval and records only its concluding gate", async () => {
+    const created = await authoring.createSpec({
+      projectPath: PROJECT_PATH,
+      slug: "requirements-stage-review",
+      name: "Requirements-stage review",
+      gatePolicy: { preset: "contract-bearing" },
+      initialElement: {
+        elementId: "requirements-stage-r1",
+        kind: "requirement",
+        parentElementId: null,
+        position: 0,
+        payload: {
+          kind: "requirement",
+          statement: "Requirements are reviewed before design.",
+          priority: "must",
+          risk: "high",
+        },
+      },
+      actor: AGENT,
+    });
+    await authoring.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "requirements-stage-c1",
+      kind: "criterion",
+      parentElementId: "requirements-stage-r1",
+      position: 1,
+      payload: {
+        kind: "criterion",
+        text: "The first review does not require a plan approval.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: null,
+      actor: AGENT,
+    });
+    await expect(
+      authoring.proposeRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({ ok: true, absorbedSignOff: false });
+    await expect(
+      reviewing.bulkApprove({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        subjects: [{ subjectKind: "plan", elementId: null }],
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "stage_blocked" },
+    });
+    await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirements-stage-r1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        revision: { state: "approved", authoringStage: "requirements" },
+      },
+    });
+    expect(
+      reviewRepo
+        .findGateAdmissionsByRevision(created.draft.id)
+        .map(({ gate, basis }) => ({ gate, basis })),
+    ).toEqual([{ gate: "requirements", basis: "human_approval" }]);
+
+    await expect(
+      authoring.openAmendment({ specId: created.spec.id, actor: AGENT }),
+    ).resolves.toMatchObject({ authoringStage: "design" });
+  });
+
   it("comments without unfreezing and request-changes preserves the withdrawn snapshot while opening a based-on draft", async () => {
     const created = await proposedSpec();
     const before = await specs.getRevisionSnapshot(created.draft.id);
@@ -187,7 +281,11 @@ describe("ReviewService", () => {
       ok: true,
       value: {
         withdrawn: { id: created.draft.id, state: "withdrawn" },
-        draft: { state: "draft", basedOnRevisionId: created.draft.id },
+        draft: {
+          state: "draft",
+          basedOnRevisionId: created.draft.id,
+          authoringStage: created.draft.authoringStage,
+        },
       },
     });
     const after = await specs.getRevisionSnapshot(created.draft.id);

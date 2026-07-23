@@ -43,7 +43,7 @@
   - _Boundary: RevisionDiff_
 
 - [x] 2.5 (P) Deterministic lint engine
-  - The authoritative R9 catalog as a pure function over structured spec state: blocking findings (empty spec, uncovered criterion, untraced task, dependency cycle or removed-task dependency, dangling handle, claim without evidence, rejected-cited assumption) and advisory findings (approval freshness, dependency change, open questions at propose, materialized task removed/re-scoped)
+  - The authoritative R9 catalog as a pure function over structured spec state: blocking findings (empty spec, uncovered criterion, task without a covered criterion, untraced task, dependency cycle or removed-task dependency, dangling handle, claim without evidence, rejected-cited assumption) and advisory findings (approval freshness, dependency change, open questions at propose, materialized task removed/re-scoped)
   - Findings carry rule id, severity class (blocks propose / blocks claim / blocks sign-off / advisory), element handle, and message; deterministic only, no agent judgment
   - Done when: each rule 9.2–9.9 has a fixture-graph unit test producing exactly the expected findings, and one output shape feeds both panel and refusal consumers
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9_
@@ -383,3 +383,43 @@
   - From captured state only, an independent-reviewer navigation reconstructs requirement → approved revision → task → changed code → valid proof → merge result for every delivered in-scope criterion of the golden-path feature, with no transcript access and no manual bookkeeping step
   - Done when: the navigation check passes over the golden-path run's captured events and the traceability-completeness measure reports full coverage
   - _Requirements: 20.2, 20.3, 21.2_
+
+- [x] 20. Staged authoring discipline (amendment approved 2026-07-22; design record: `design-staged-authoring.md`)
+- [x] 20.1 Stage persistence: `authoring_stage` column (floor DDL + migration, default `'plan'` for backfill only; mandatory parameter on the repo creation APIs), `specAuthoringStageSchema`, repo mapping, `spec_revisions` round-trip contract extension; stage in the canonical revision content hash and export/`verify`
+  - _Requirements: 2.5, 22.1, 22.9_
+- [x] 20.2 Pure predicates (TDD): `admitDraftWrite` stage-only admissibility matrix; open-draft stage rule (create / based_on approved / based_on withdrawn / combined-dial); advance predicate with expected-stage conditional update; stage-scoped dial resolution for propose/sign-off
+  - _Requirements: 22.2, 22.3, 22.4, 22.5, 22.6, 22.7, 10.11_
+- [x] 20.3 Transition integration: lint 9.3 keyed on plan stage; plan approval iff plan-stage at sign-off; stage-scoped dial consultation and gate admissions; `startExecution` plan-stage refusal
+  - _Requirements: 9.3, 10.10, 10.11, 22.5, 22.8_
+- [x] 20.4 AuthoringService enforcement and the stage service operation: `stage_blocked` refusal code, draft-write guard before CAS, intervention events; single-transaction stage stamp/advance + admission row + events across all ingress paths (create, amendment first-write, request-changes, links-service promotion/graduation routed through the same owner)
+  - _Requirements: 22.3, 22.5, 22.7, 6.5_
+- [x] 20.5 CLI: `cctl spec advance --from <stage>` verb, stage in `spec status`, help-registry updates including the `propose` reframing
+  - _Requirements: 6.3, 6.4, 22.5_
+- [x] 20.6 Projection and Studio: `authoringStage?` on the phase projection and view schemas; renderers (detail header, list badges, hover peek), stage-framed review header
+  - _Requirements: 3.12, 22.1_
+- [x] 20.7 `/spec` skill: staged authoring flow as the default under gated presets
+  - _Requirements: 22.5 (guidance surface)_
+- [x] 20.8 E2E: contract-bearing staged golden path (three reviews to an executable revision); refusal demonstrations (out-of-stage task write; execution start pinning a non-plan-stage revision); fast-path single-pass regression
+  - _Requirements: 22.3, 22.6, 22.8, 21.3_
+
+- [x] 21. Plan-stage execution planning (amendment approved 2026-07-22; design record: `design-plan-stage-execution-planning.md`)
+- [x] 21.1 Task payload fields `laneGroup` / `touchedPaths`: schema, maximal element-payload contract fixtures, export/verify additive coverage
+  - _Requirements: 2.11, 23.1_
+- [x] 21.2 Group-contraction primitive + graph-shape lint (TDD, pure): shared contraction (partition, intra-group topological order, deduplicated inter-group edges); `9.11.lane-group-cycle` blocking; `9.12.serialized-plan`, `9.12.overloaded-task`, `9.12.conflicting-parallel-surfaces` advisories on the contracted graph, with named constants and `touchedPaths` normalization
+  - _Requirements: 9.11, 9.12, 23.5_
+- [x] 21.3 Compiler grouping: laneGroup → shared contexts via the contraction primitive, content-derived context titles/descriptions, context criteria derived from member briefs, traced-decision content in task instructions, `touchedPaths` in task metadata; graph-shape parity regression (identical contexts/tasks/edges) for plans without the new fields
+  - _Requirements: 17.1, 23.2, 23.4, 23.7, 23.8_
+- [x] 21.4 Charter assembly from approved intent sections — constraints as active invariants with stable ids (deterministic concatenation, snapshot-tested)
+  - _Requirements: 17.1, 23.3_
+- [x] 21.5 Guidance: `/spec` skill plan-stage section (one text with 20.7) + `spec.help.ts` draft/task help carrying the execution-graph planning discipline
+  - _Requirements: 23.6_
+- [x] 21.6 E2E: grouped-plan compile golden path; execution-surface regrouping preserves every locked task contract; graph-shape advisories surface at plan-stage propose
+  - _Requirements: 23.2, 23.4, 23.5, 23.9_
+- [x] 21.7 Review surfaces: Spec Studio plan review and change list render dependencies, lane group, touched surfaces, and criterion coverage per task; `cctl spec show`/`get`/`status` expose the same fields
+  - _Requirements: 23.10_
+- [x] 21.8 Dependency-embedding validation (TDD, pure + wiring): locked task precedences must embed in the context graph and intra-context order; enforced at definition approval and execution start; regression covering the pre-existing unvalidated `move-task` hole
+  - _Requirements: 23.9_
+- [x] 21.9 Runtime guards behind registered composition seams (TDD): spec-origin executions refuse mid-run `move-task` live edits; `complete_task` refuses while a declared intra-context predecessor is incomplete; non-spec workflows byte-for-byte unchanged when unregistered
+  - _Requirements: 23.11, 23.12_
+- [x] 21.10 Edit-time context-criteria re-derivation from member brief metadata in definition-edit application (deterministic, spec-free)
+  - _Requirements: 23.9_

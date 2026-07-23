@@ -1144,17 +1144,20 @@ export function scenarioMachine(
 
 export interface AuthoredSpineSpec {
   specId: string;
+  requirementsRevisionId: string;
+  designRevisionId: string;
   draftRevisionId: string;
   requirementId: string;
   criterionOneId: string;
   criterionTwoId: string;
+  decisionId: string;
   taskOneId: string;
   taskTwoId: string;
 }
 
 /**
- * Drives the authoring path through the write routes: create on first save,
- * then a partial draft that grows into the full golden-path draft.
+ * Drives contract-bearing authoring through requirements and design review,
+ * then returns the plan-stage draft that completes the golden-path contract.
  */
 export async function authorSpineDraft(
   world: SpecSpineWorld,
@@ -1191,13 +1194,16 @@ export async function authorSpineDraft(
   );
 
   const specId = created.spec.id;
-  const draftRevisionId = created.draft.id;
+  const requirementsRevisionId = created.draft.id;
   const ids: AuthoredSpineSpec = {
     specId,
-    draftRevisionId,
+    requirementsRevisionId,
+    designRevisionId: "",
+    draftRevisionId: "",
     requirementId: "element-requirement-1",
     criterionOneId: "element-criterion-1",
     criterionTwoId: "element-criterion-2",
+    decisionId: "element-decision-1",
     taskOneId: "element-task-1",
     taskTwoId: "element-task-2",
   };
@@ -1212,7 +1218,7 @@ export async function authorSpineDraft(
         slug,
         "draft-upsert",
         {
-          revisionId: draftRevisionId,
+          revisionId: requirementsRevisionId,
           elementId,
           kind: "criterion",
           parentElementId: ids.requirementId,
@@ -1232,9 +1238,101 @@ export async function authorSpineDraft(
   await postJson(
     world.postAction(
       slug,
+      "propose",
+      { revisionId: requirementsRevisionId },
+      "agent",
+    ),
+  );
+  await postJson(
+    world.postAction(
+      slug,
+      "approve-item",
+      {
+        revisionId: requirementsRevisionId,
+        subjectKind: "requirement",
+        elementId: ids.requirementId,
+      },
+      "human",
+    ),
+  );
+  await postJson(
+    world.postAction(
+      slug,
+      "sign-off",
+      { revisionId: requirementsRevisionId },
+      "human",
+    ),
+  );
+
+  const designRevision = await postJson<{
+    id: string;
+    authoringStage: string;
+  }>(world.postAction(slug, "open-amendment", {}, "agent"));
+  ids.designRevisionId = designRevision.id;
+  await postJson(
+    world.postAction(
+      slug,
       "draft-upsert",
       {
-        revisionId: draftRevisionId,
+        revisionId: designRevision.id,
+        elementId: ids.decisionId,
+        kind: "decision",
+        parentElementId: null,
+        position: 3,
+        payload: {
+          kind: "decision",
+          title: "Execution boundary",
+          chosenApproach: "Compile the approved plan into a workflow.",
+          rejectedAlternatives: [],
+          reason: "The execution pin remains reviewable and durable.",
+          tracedRequirementElementIds: [ids.requirementId],
+        },
+        baseElementVersion: null,
+      },
+      "agent",
+    ),
+  );
+  await postJson(
+    world.postAction(
+      slug,
+      "propose",
+      { revisionId: designRevision.id },
+      "agent",
+    ),
+  );
+  await postJson(
+    world.postAction(
+      slug,
+      "approve-item",
+      {
+        revisionId: designRevision.id,
+        subjectKind: "decision",
+        elementId: ids.decisionId,
+      },
+      "human",
+    ),
+  );
+  await postJson(
+    world.postAction(
+      slug,
+      "sign-off",
+      { revisionId: designRevision.id },
+      "human",
+    ),
+  );
+
+  const planRevision = await postJson<{
+    id: string;
+    authoringStage: string;
+  }>(world.postAction(slug, "open-amendment", {}, "agent"));
+  ids.draftRevisionId = planRevision.id;
+
+  await postJson(
+    world.postAction(
+      slug,
+      "draft-upsert",
+      {
+        revisionId: planRevision.id,
         elementId: ids.taskOneId,
         kind: "task",
         parentElementId: null,
@@ -1258,7 +1356,7 @@ export async function authorSpineDraft(
       slug,
       "draft-upsert",
       {
-        revisionId: draftRevisionId,
+        revisionId: planRevision.id,
         elementId: ids.taskTwoId,
         kind: "task",
         parentElementId: null,
@@ -1315,18 +1413,6 @@ export async function approveAndSignOffSpine(
   slug: string,
   authored: AuthoredSpineSpec,
 ): Promise<void> {
-  await postJson(
-    world.postAction(
-      slug,
-      "approve-item",
-      {
-        revisionId: authored.draftRevisionId,
-        subjectKind: "requirement",
-        elementId: authored.requirementId,
-      },
-      "human",
-    ),
-  );
   await postJson(
     world.postAction(
       slug,

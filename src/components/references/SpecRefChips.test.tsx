@@ -42,12 +42,13 @@ function summary(phase: SpecSummaryView["phase"]["primary"]): SpecSummaryView {
       createdAt: "2026-07-18T00:00:00Z",
       updatedAt: "2026-07-18T00:00:00Z",
     },
-    phase: { primary: phase },
+    phase: { primary: phase, authoringStage: "design" },
     currentRevision: {
       id: "revision-3",
       specId: "spec-1",
       number: 3,
       state: "draft",
+      authoringStage: "design",
       basedOnRevisionId: "revision-2",
       contentHash: null,
       proposedAt: null,
@@ -80,6 +81,7 @@ function elementView(
       specId: "spec-1",
       number: latestContainingRevision,
       state: "draft",
+      authoringStage: "design",
       basedOnRevisionId: "revision-1",
       contentHash: null,
       proposedAt: null,
@@ -224,7 +226,11 @@ describe("spec reference chips", () => {
     });
     render(<SpecRefTranscriptChip attrs={specAttrs} />);
 
-    await user.hover(screen.getByRole("link", { name: /Native SDD/ }));
+    await user.hover(
+      screen.getByRole("link", {
+        name: /Native SDD Approved · design stage/,
+      }),
+    );
 
     expect(await screen.findByText("2 requirements")).toBeVisible();
     expect(screen.getByText("5 acceptance criteria")).toBeVisible();

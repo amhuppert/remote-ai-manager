@@ -10,6 +10,7 @@ import type {
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
+import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   implementer: { backend: "claude", model: "opus", reasoningEffort: "medium" },
@@ -403,6 +404,40 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     expect(
       result.execution.contextStates["context-verify"]?.totalTaskCount,
     ).toBe(2);
+  });
+
+  it("rejects move-task for a launched spec execution through the registered contract seam", () => {
+    const base = withTwoImplTasks({ status: "paused" });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        origin: {
+          sourceUri:
+            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
+        },
+      },
+    };
+    const result = apply(
+      execution,
+      [
+        {
+          type: "move-task",
+          taskId: "task-implement-2",
+          targetContextId: "context-verify",
+        },
+      ],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("spec_grouping_frozen");
+    expect(result.issues[0]).toMatchObject({
+      code: "spec-grouping-frozen",
+      operationIndex: 0,
+      taskId: "task-implement-2",
+    });
   });
 
   it("rejects a move-task while running unless both contexts are unstarted", () => {

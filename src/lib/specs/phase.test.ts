@@ -17,7 +17,7 @@ import {
 function phaseInput(overrides: Partial<SpecPhaseInput> = {}): SpecPhaseInput {
   return {
     abandoned: false,
-    revisionStates: ["approved"],
+    revisions: [revision("approved")],
     executionStates: [],
     deliveryCriteria: [{ state: "pending" }],
     deliveryPending: false,
@@ -25,24 +25,32 @@ function phaseInput(overrides: Partial<SpecPhaseInput> = {}): SpecPhaseInput {
   };
 }
 
+function revision(
+  state: SpecPhaseInput["revisions"][number]["state"],
+  authoringStage: SpecPhaseInput["revisions"][number]["authoringStage"] = "plan",
+): SpecPhaseInput["revisions"][number] {
+  return { state, authoringStage };
+}
+
 describe("spec phase projection", () => {
   it("3.1 derives the lifecycle phase instead of accepting a stored phase", () => {
     expect(
       projectSpecPhase(
         phaseInput({
-          revisionStates: ["draft"],
+          revisions: [revision("draft")],
           deliveryCriteria: [],
         }),
       ),
-    ).toEqual({ primary: "draft" });
+    ).toEqual({ primary: "draft", authoringStage: "plan" });
   });
 
   it("3.2 projects the ordinary Draft, In review, Approved, and Executing states", () => {
     expect(
-      projectSpecPhase(phaseInput({ revisionStates: ["draft"] })).primary,
+      projectSpecPhase(phaseInput({ revisions: [revision("draft")] })).primary,
     ).toBe("draft");
     expect(
-      projectSpecPhase(phaseInput({ revisionStates: ["proposed"] })).primary,
+      projectSpecPhase(phaseInput({ revisions: [revision("proposed")] }))
+        .primary,
     ).toBe("in_review");
     expect(projectSpecPhase(phaseInput()).primary).toBe("approved");
     expect(
@@ -53,8 +61,10 @@ describe("spec phase projection", () => {
 
   it("3.3 gives a proposed revision precedence over an editable draft", () => {
     expect(
-      projectSpecPhase(phaseInput({ revisionStates: ["draft", "proposed"] })),
-    ).toEqual({ primary: "in_review" });
+      projectSpecPhase(
+        phaseInput({ revisions: [revision("draft"), revision("proposed")] }),
+      ),
+    ).toEqual({ primary: "in_review", authoringStage: "plan" });
   });
 
   it("3.4 reports Approved from an approved revision when no higher state matches", () => {
@@ -80,7 +90,7 @@ describe("spec phase projection", () => {
     expect(
       projectSpecPhase(
         phaseInput({
-          revisionStates: ["approved", "proposed"],
+          revisions: [revision("approved"), revision("proposed")],
           executionStates: ["running"],
         }),
       ),
@@ -120,7 +130,7 @@ describe("spec phase projection", () => {
       expect(
         projectSpecPhase(
           phaseInput({
-            revisionStates: ["approved", "draft"],
+            revisions: [revision("approved"), revision("draft")],
             deliveryCriteria,
           }),
         ).primary,
@@ -128,7 +138,7 @@ describe("spec phase projection", () => {
       expect(
         projectSpecPhase(
           phaseInput({
-            revisionStates: ["approved", "proposed"],
+            revisions: [revision("approved"), revision("proposed")],
             deliveryCriteria,
           }),
         ).primary,
@@ -141,7 +151,11 @@ describe("spec phase projection", () => {
       projectSpecPhase(
         phaseInput({
           abandoned: true,
-          revisionStates: ["approved", "proposed", "draft"],
+          revisions: [
+            revision("approved"),
+            revision("proposed"),
+            revision("draft"),
+          ],
           executionStates: ["running"],
           deliveryCriteria: [{ state: "proven_and_merged" }],
         }),
@@ -157,6 +171,41 @@ describe("spec phase projection", () => {
         { state: "waived" },
       ]),
     ).toEqual({ allWaived: false, provenCount: 1, totalInScope: 3 });
+  });
+
+  it("3.12 projects the current authoring stage until a plan-stage approval exists", () => {
+    expect(
+      projectSpecPhase(
+        phaseInput({ revisions: [revision("approved", "requirements")] }),
+      ),
+    ).toEqual({ primary: "approved", authoringStage: "requirements" });
+    expect(
+      projectSpecPhase(
+        phaseInput({
+          revisions: [
+            revision("approved", "requirements"),
+            revision("draft", "design"),
+          ],
+        }),
+      ),
+    ).toEqual({ primary: "draft", authoringStage: "design" });
+    expect(
+      projectSpecPhase(
+        phaseInput({
+          revisions: [
+            revision("approved", "requirements"),
+            revision("approved", "design"),
+          ],
+        }),
+      ),
+    ).toEqual({ primary: "approved", authoringStage: "design" });
+    expect(
+      projectSpecPhase(
+        phaseInput({
+          revisions: [revision("approved", "plan"), revision("draft", "plan")],
+        }),
+      ),
+    ).toEqual({ primary: "draft" });
   });
 });
 

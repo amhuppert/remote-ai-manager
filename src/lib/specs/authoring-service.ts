@@ -4,17 +4,22 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
   actorProvenanceSchema,
+  specAuthoringStageSchema,
   specElementKindSchema,
   specElementPayloadSchema,
   specGatePolicySchema,
   type ActorProvenance,
   type Spec,
+  type SpecAuthoringStage,
+  type SpecElementKind,
+  type SpecElementPayload,
   type SpecElementVersion,
   type SpecRevision,
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
 import {
   StaleElementConflictError,
+  StaleStageConflictError,
   type CreateDraftElementResult,
   type RenameSpecResult,
   type SpecsRepo,
@@ -41,7 +46,16 @@ import type { SpecMeasureEventPayload } from "./measures";
 import { resolveDial } from "./policy";
 import { diffRevisions, type RevisionDiffResult } from "./revision-diff";
 import { loadProposalState, toDiffRows } from "./review-state";
-import { propose, type TransitionRefusal } from "./transitions";
+import {
+  admitDraftWrite,
+  advanceAuthoringStage as evaluateAdvanceAuthoringStage,
+  consultedAuthoringGates,
+  nextAuthoringStage,
+  openDraftAuthoringStage,
+  propose,
+  resolveAuthoringDials,
+  type TransitionRefusal,
+} from "./transitions";
 
 const logger = createLogger("specs.authoring-service");
 
@@ -167,6 +181,9 @@ export interface AuthoringService {
   ): Promise<SpecElementVersion>;
   removeDraftElement(input: RemoveDraftElementInput): Promise<void>;
   openAmendment(input: OpenAmendmentInput): Promise<SpecRevision>;
+  advanceAuthoringStage(
+    input: AdvanceAuthoringStageInput,
+  ): Promise<AdvanceAuthoringStageResult>;
   renameSpec(input: RenameAuthoringSpecInput): Promise<RenameSpecResult>;
   lintDraft(specId: string, revisionId: string): Promise<LintFinding[]>;
   proposeRevision(input: ProposeAuthoringRevisionInput): Promise<ProposeResult>;
@@ -208,6 +225,31 @@ export type ProposeResult =
       readonly absorbedSignOff: boolean;
     }
   | { readonly ok: false; readonly refusal: TransitionRefusal };
+
+export const advanceAuthoringStageInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    revisionId: z.string().min(1),
+    expectedStage: specAuthoringStageSchema,
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type AdvanceAuthoringStageInput = z.infer<
+  typeof advanceAuthoringStageInputSchema
+>;
+
+export type AdvanceAuthoringStageResult =
+  | { readonly ok: true; readonly revision: SpecRevision }
+  | { readonly ok: false; readonly refusal: TransitionRefusal };
+
+export class StageBlockedWriteError extends Error {
+  readonly code = "stage_blocked" as const;
+
+  constructor(readonly refusal: TransitionRefusal) {
+    super(refusal.unmetConditions.join(" "));
+    this.name = "StageBlockedWriteError";
+  }
+}
 
 export class SpecDraftUnavailableError extends Error {
   constructor(readonly specId: string) {
@@ -322,10 +364,63 @@ export function createAuthoringService(
     if (prepared !== null) deps.events.publishAfterCommit(prepared);
   }
 
+  function writeDecision(
+    spec: Spec,
+    revision: SpecRevision,
+    elementKind: SpecElementKind,
+    payload: SpecElementPayload,
+  ) {
+    return admitDraftWrite(
+      revision.authoringStage,
+      elementKind,
+      payload.kind === "section" ? payload.role : undefined,
+      resolveAuthoringDials(spec.gatePolicy),
+    );
+  }
+
+  function appendWriteIntervention(
+    spec: Spec,
+    revisionId: string,
+    elementId: string,
+    actor: ActorProvenance,
+    occurredAt: string,
+    refusal: TransitionRefusal,
+  ): void {
+    deps.events.appendDurableInTransaction({
+      specId: spec.id,
+      occurredAt,
+      actor,
+      durableEventType: "spec-intervention-recorded",
+      durablePayload: {
+        kind: "draft-write-refused",
+        revisionId,
+        elementId,
+        refusal,
+      },
+    });
+  }
+
+  const authoringStageOrder: Record<SpecAuthoringStage, number> = {
+    requirements: 0,
+    design: 1,
+    plan: 2,
+  };
+
   return {
     async createSpec(input) {
       const parsed = createAuthoringSpecInputSchema.parse(input);
       const occurredAt = now();
+      const initialStage = openDraftAuthoringStage({
+        policy: parsed.gatePolicy,
+      });
+      const initialDecision = admitDraftWrite(
+        initialStage,
+        parsed.initialElement.kind,
+        parsed.initialElement.payload.kind === "section"
+          ? parsed.initialElement.payload.role
+          : undefined,
+        resolveAuthoringDials(parsed.gatePolicy),
+      );
 
       function writeInitialElement(
         repo: SpecsRepoTransaction,
@@ -376,10 +471,40 @@ export function createAuthoringService(
             if (approved === null) {
               throw new SpecDraftUnavailableError(existing.id);
             }
+            const amendmentStage = openDraftAuthoringStage({
+              policy: existing.gatePolicy,
+              baseRevision: {
+                state: "approved",
+                authoringStage: approved.authoringStage,
+              },
+            });
+            const amendmentDecision = admitDraftWrite(
+              amendmentStage,
+              parsed.initialElement.kind,
+              parsed.initialElement.payload.kind === "section"
+                ? parsed.initialElement.payload.role
+                : undefined,
+              resolveAuthoringDials(existing.gatePolicy),
+            );
+            if (!amendmentDecision.ok) {
+              appendWriteIntervention(
+                existing,
+                approved.id,
+                parsed.initialElement.elementId,
+                parsed.actor,
+                occurredAt,
+                amendmentDecision.refusal,
+              );
+              return {
+                ok: false as const,
+                refusal: amendmentDecision.refusal,
+              };
+            }
             const amendment = repo.createDraftFromBase({
               id: newId("revision"),
               specId: existing.id,
               baseRevisionId: approved.id,
+              authoringStage: amendmentStage,
               createdAt: occurredAt,
             });
             const written = writeInitialElement(
@@ -388,6 +513,7 @@ export function createAuthoringService(
               amendment.id,
             );
             return {
+              ok: true as const,
               value: {
                 spec: existing,
                 draft: amendment,
@@ -405,6 +531,10 @@ export function createAuthoringService(
             };
           }
 
+          if (!initialDecision.ok) {
+            throw new StageBlockedWriteError(initialDecision.refusal);
+          }
+
           // Spec, draft revision, and first element share one transaction and
           // one timestamp: the durable object is born from this first save.
           const created = repo.create({
@@ -419,6 +549,7 @@ export function createAuthoringService(
             },
             initialRevision: {
               id: newId("revision"),
+              authoringStage: initialStage,
               createdAt: occurredAt,
             },
           });
@@ -428,6 +559,7 @@ export function createAuthoringService(
             created.revision.id,
           );
           return {
+            ok: true as const,
             value: {
               spec: created.spec,
               draft: created.revision,
@@ -445,6 +577,14 @@ export function createAuthoringService(
           };
         },
       );
+      if (!result.ok) {
+        logger.warn("specs.authoring.create.stage_refused", {
+          projectPath: parsed.projectPath,
+          slug: parsed.slug,
+          refusalCode: result.refusal.code,
+        });
+        throw new StageBlockedWriteError(result.refusal);
+      }
       publish(result.prepared);
       logger.info("specs.authoring.create.complete", {
         specId: result.value.spec.id,
@@ -504,6 +644,7 @@ export function createAuthoringService(
           );
           const decision = propose({
             revisionState: revision.state,
+            authoringStage: revision.authoringStage,
             policy: spec.gatePolicy,
             draft: loaded.draft,
             records: loaded.records,
@@ -597,7 +738,11 @@ export function createAuthoringService(
             revisionId: revision.id,
             proposedAt: occurredAt,
           });
-          const proposeGates = ["requirements", "design", "plan"] as const;
+          const proposeGates = consultedAuthoringGates(
+            revision.authoringStage,
+            loaded.reviewSnapshot.baseRevisionRows,
+            loaded.reviewSnapshot.revisionRows,
+          );
           const resolvedGates = proposeGates.map((gate) => ({
             gate,
             dial: resolveDial(spec.gatePolicy, gate),
@@ -757,7 +902,28 @@ export function createAuthoringService(
         "specs.authoring.upsert-element",
         (repo) => {
           const spec = requireSpec(repo, parsed.specId);
-          requireOwnedRevision(repo, parsed.specId, parsed.revisionId);
+          const revision = requireOwnedRevision(
+            repo,
+            parsed.specId,
+            parsed.revisionId,
+          );
+          const decision = writeDecision(
+            spec,
+            revision,
+            parsed.kind,
+            parsed.payload,
+          );
+          if (!decision.ok) {
+            appendWriteIntervention(
+              spec,
+              revision.id,
+              parsed.elementId,
+              parsed.actor,
+              occurredAt,
+              decision.refusal,
+            );
+            return { ok: false as const, refusal: decision.refusal };
+          }
           const current = repo.findElementVersion(
             parsed.revisionId,
             parsed.elementId,
@@ -805,6 +971,7 @@ export function createAuthoringService(
           }
 
           return {
+            ok: true as const,
             value: written,
             prepared: appendDraftEvent(
               spec,
@@ -819,6 +986,15 @@ export function createAuthoringService(
           };
         },
       );
+      if (!result.ok) {
+        logger.warn("specs.authoring.upsert_element.stage_refused", {
+          specId: parsed.specId,
+          revisionId: parsed.revisionId,
+          elementId: parsed.elementId,
+          elementKind: parsed.kind,
+        });
+        throw new StageBlockedWriteError(result.refusal);
+      }
       publish(result.prepared);
       logger.info("specs.authoring.upsert_element.complete", {
         specId: parsed.specId,
@@ -829,6 +1005,170 @@ export function createAuthoringService(
       return result.value;
     },
 
+    async advanceAuthoringStage(input) {
+      const parsed = advanceAuthoringStageInputSchema.parse(input);
+      const occurredAt = now();
+      const transaction = await deps.specs.transaction(
+        "specs.authoring.advance-stage",
+        (repo) => {
+          const spec = requireSpec(repo, parsed.specId);
+          const targetStage = nextAuthoringStage(parsed.expectedStage);
+          const current = repo.findDraft(spec.id);
+          if (
+            targetStage !== null &&
+            current?.id === parsed.revisionId &&
+            authoringStageOrder[current.authoringStage] >=
+              authoringStageOrder[targetStage]
+          ) {
+            return {
+              result: {
+                ok: true,
+                revision: current,
+              } satisfies AdvanceAuthoringStageResult,
+              prepared: null,
+              policyNotice: null,
+            };
+          }
+          if (
+            current === null ||
+            current.id !== parsed.revisionId ||
+            current.authoringStage !== parsed.expectedStage
+          ) {
+            if (targetStage === null) {
+              throw new StaleStageConflictError(
+                parsed.specId,
+                parsed.revisionId,
+                parsed.expectedStage,
+                current,
+              );
+            }
+            repo.advanceDraftAuthoringStage({
+              specId: parsed.specId,
+              revisionId: parsed.revisionId,
+              expectedStage: parsed.expectedStage,
+              targetStage,
+            });
+          }
+
+          const decision = evaluateAdvanceAuthoringStage(
+            parsed.expectedStage,
+            spec.gatePolicy,
+          );
+          if (!decision.ok || targetStage === null) {
+            const refusal = decision.ok
+              ? {
+                  code: "gate_blocked" as const,
+                  unmetConditions: ["Plan is the final authoring stage."],
+                  instruction:
+                    "Propose the plan stage when it is ready for review.",
+                }
+              : decision.refusal;
+            deps.events.appendDurableInTransaction({
+              specId: spec.id,
+              occurredAt,
+              actor: parsed.actor,
+              durableEventType: "spec-intervention-recorded",
+              durablePayload: {
+                kind: "authoring-stage-advance-refused",
+                revisionId: parsed.revisionId,
+                expectedStage: parsed.expectedStage,
+                refusal,
+              },
+            });
+            return {
+              result: {
+                ok: false,
+                refusal,
+              } satisfies AdvanceAuthoringStageResult,
+              prepared: null,
+              policyNotice: null,
+            };
+          }
+
+          const revision = repo.advanceDraftAuthoringStage({
+            specId: parsed.specId,
+            revisionId: parsed.revisionId,
+            expectedStage: parsed.expectedStage,
+            targetStage,
+          });
+          const dial = resolveDial(spec.gatePolicy, parsed.expectedStage);
+          const basis =
+            dial === "notify"
+              ? ("notify_policy" as const)
+              : ("off_policy" as const);
+          const admissionId = newId("admission");
+          deps.review.insertGateAdmission({
+            id: admissionId,
+            spec_id: spec.id,
+            gate: parsed.expectedStage,
+            basis,
+            approval_id: null,
+            revision_id: revision.id,
+            execution_id: null,
+            actor_json: stableStringify(parsed.actor),
+            created_at: occurredAt,
+          });
+          const prepared = deps.events.appendInTransaction({
+            actor: parsed.actor,
+            durableEventType: "spec-revision-changed",
+            durablePayload: {
+              kind: "authoring-stage-advanced",
+              revisionId: revision.id,
+              fromStage: parsed.expectedStage,
+              toStage: targetStage,
+              admissionId,
+            },
+            sseEvent: {
+              type: "spec-revision-changed",
+              kind: "authoring-stage-advanced",
+              projectPath: spec.projectPath,
+              specId: spec.id,
+              specSlug: spec.slug,
+              occurredAt,
+              revisionId: revision.id,
+            },
+          });
+          const policyNotice =
+            basis === "notify_policy"
+              ? ({
+                  specId: spec.id,
+                  specSlug: spec.slug,
+                  specName: spec.name,
+                  projectPath: spec.projectPath,
+                  gate: parsed.expectedStage,
+                  basis,
+                  admissionId,
+                  revisionId: revision.id,
+                  executionId: null,
+                  occurredAt,
+                } satisfies SpecPolicyAdmissionNotice)
+              : null;
+          return {
+            result: {
+              ok: true,
+              revision,
+            } satisfies AdvanceAuthoringStageResult,
+            prepared,
+            policyNotice,
+          };
+        },
+      );
+      publish(transaction.prepared);
+      if (transaction.policyNotice !== null) {
+        deps.policyNotifier?.policyAdmitted(transaction.policyNotice);
+      }
+      logger.info("specs.authoring.advance_stage.complete", {
+        specId: parsed.specId,
+        revisionId: parsed.revisionId,
+        expectedStage: parsed.expectedStage,
+        ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? { authoringStage: transaction.result.revision.authoringStage }
+          : { refusalCode: transaction.result.refusal.code }),
+      });
+      return transaction.result;
+    },
+
     async reorderDraftElement(input) {
       const parsed = reorderDraftElementInputSchema.parse(input);
       const occurredAt = now();
@@ -836,7 +1176,33 @@ export function createAuthoringService(
         "specs.authoring.reorder-element",
         (repo) => {
           const spec = requireSpec(repo, parsed.specId);
-          requireOwnedRevision(repo, parsed.specId, parsed.revisionId);
+          const revision = requireOwnedRevision(
+            repo,
+            parsed.specId,
+            parsed.revisionId,
+          );
+          const target = repo
+            .getRevisionSnapshot(revision.id)
+            ?.elements.find(({ element }) => element.id === parsed.elementId);
+          if (target !== undefined) {
+            const decision = writeDecision(
+              spec,
+              revision,
+              target.element.kind,
+              target.version.payload,
+            );
+            if (!decision.ok) {
+              appendWriteIntervention(
+                spec,
+                revision.id,
+                parsed.elementId,
+                parsed.actor,
+                occurredAt,
+                decision.refusal,
+              );
+              return { ok: false as const, refusal: decision.refusal };
+            }
+          }
           const version = repo.reorderDraftElement({
             revisionId: parsed.revisionId,
             elementId: parsed.elementId,
@@ -845,6 +1211,7 @@ export function createAuthoringService(
             updatedAt: occurredAt,
           });
           return {
+            ok: true as const,
             value: version,
             prepared: appendDraftEvent(
               spec,
@@ -857,6 +1224,7 @@ export function createAuthoringService(
           };
         },
       );
+      if (!result.ok) throw new StageBlockedWriteError(result.refusal);
       publish(result.prepared);
       logger.info("specs.authoring.reorder_element.complete", {
         specId: parsed.specId,
@@ -871,27 +1239,57 @@ export function createAuthoringService(
     async removeDraftElement(input) {
       const parsed = removeDraftElementInputSchema.parse(input);
       const occurredAt = now();
-      const prepared = await deps.specs.transaction(
+      const result = await deps.specs.transaction(
         "specs.authoring.remove-element",
         (repo) => {
           const spec = requireSpec(repo, parsed.specId);
-          requireOwnedRevision(repo, parsed.specId, parsed.revisionId);
+          const revision = requireOwnedRevision(
+            repo,
+            parsed.specId,
+            parsed.revisionId,
+          );
+          const target = repo
+            .getRevisionSnapshot(revision.id)
+            ?.elements.find(({ element }) => element.id === parsed.elementId);
+          if (target !== undefined) {
+            const decision = writeDecision(
+              spec,
+              revision,
+              target.element.kind,
+              target.version.payload,
+            );
+            if (!decision.ok) {
+              appendWriteIntervention(
+                spec,
+                revision.id,
+                parsed.elementId,
+                parsed.actor,
+                occurredAt,
+                decision.refusal,
+              );
+              return { ok: false as const, refusal: decision.refusal };
+            }
+          }
           repo.removeDraftElement({
             revisionId: parsed.revisionId,
             elementId: parsed.elementId,
             expectedElementVersion: parsed.baseElementVersion,
           });
-          return appendDraftEvent(
-            spec,
-            parsed.revisionId,
-            [parsed.elementId],
-            parsed.actor,
-            occurredAt,
-            "draft-element-removed",
-          );
+          return {
+            ok: true as const,
+            prepared: appendDraftEvent(
+              spec,
+              parsed.revisionId,
+              [parsed.elementId],
+              parsed.actor,
+              occurredAt,
+              "draft-element-removed",
+            ),
+          };
         },
       );
-      publish(prepared);
+      if (!result.ok) throw new StageBlockedWriteError(result.refusal);
+      publish(result.prepared);
       logger.info("specs.authoring.remove_element.complete", {
         specId: parsed.specId,
         revisionId: parsed.revisionId,
@@ -961,10 +1359,18 @@ export function createAuthoringService(
           if (approved === null) {
             throw new SpecDraftUnavailableError(spec.id);
           }
+          const authoringStage = openDraftAuthoringStage({
+            policy: spec.gatePolicy,
+            baseRevision: {
+              state: "approved",
+              authoringStage: approved.authoringStage,
+            },
+          });
           const revision = repo.createDraftFromBase({
             id: newId("revision"),
             specId: spec.id,
             baseRevisionId: approved.id,
+            authoringStage,
             createdAt: occurredAt,
           });
           return {

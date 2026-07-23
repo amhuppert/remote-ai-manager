@@ -122,6 +122,11 @@ import { createSoloContextCommitter } from "./solo-context-committer";
 import { createLaneCommitter } from "./lane-committer";
 import { createJoinRunner } from "./join-runner";
 import { getErrorMessage } from "@/lib/shared/errors";
+import {
+  assertGraphExecutionContractAccepted,
+  createRegisteredGraphExecutionContract,
+  GraphExecutionContractViolationError,
+} from "./execution-contract-port";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -809,6 +814,22 @@ function respondToManagerError(error: unknown): Response {
   const message =
     error instanceof Error ? error.message : "Graph workflow request failed";
 
+  if (error instanceof GraphExecutionContractViolationError) {
+    return NextResponse.json(
+      {
+        error: message,
+        code: error.code,
+        errors: error.issues,
+        instruction: error.instruction,
+      } satisfies ApiError & {
+        code: string;
+        errors: unknown;
+        instruction: string;
+      },
+      { status: 409 },
+    );
+  }
+
   if (
     error instanceof GraphWorkflowValidationError ||
     (typeof error === "object" &&
@@ -861,6 +882,7 @@ function respondToManagerError(error: unknown): Response {
 export function createGraphWorkflowExecutionRouteHandlers(
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ) {
+  const executionContract = createRegisteredGraphExecutionContract();
   async function markExecutionRunning(
     execution: GraphWorkflowExecution,
   ): Promise<void> {
@@ -1051,6 +1073,9 @@ export function createGraphWorkflowExecutionRouteHandlers(
         return NextResponse.json({ error: error.message } satisfies ApiError, {
           status: 400,
         });
+      }
+      if (error instanceof GraphExecutionContractViolationError) {
+        return respondToManagerError(error);
       }
       await reportExecutionLoopFailure({
         projectPath,
@@ -1559,6 +1584,21 @@ export function createGraphWorkflowExecutionRouteHandlers(
         input.sessionName,
       );
       if (executionAwaitsDefinitionApproval(active)) {
+        const contractDecision = executionContract.validateDefinition(
+          active.workingDefinition,
+        );
+        if (!contractDecision.ok) {
+          logger.warn(
+            "graph-workflow.definition_approval.execution_contract_rejected",
+            {
+              executionId: active.id,
+              definitionId: active.seedDefinitionId,
+              code: contractDecision.code,
+              issueCount: contractDecision.issues.length,
+            },
+          );
+        }
+        assertGraphExecutionContractAccepted(contractDecision);
         const admitted = await deps.admitDefinitionApproval(
           active.id,
           active.seedDefinitionId,

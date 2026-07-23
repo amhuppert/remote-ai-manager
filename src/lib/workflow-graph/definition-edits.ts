@@ -19,6 +19,10 @@ import {
   regionLockedMessage,
   type DefinitionPath,
 } from "./locked-regions";
+import {
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
 
 /**
  * Apply an ordered batch of targeted edits to a saved workflow definition
@@ -51,6 +55,7 @@ export type DefinitionEditIssue = WorkflowGraphValidationError & {
 export function applyDefinitionEdits(
   record: WorkflowDefinitionRecord,
   operations: DefinitionEditOperation[],
+  executionContract: GraphExecutionContract = createRegisteredGraphExecutionContract(),
 ): ApplyDefinitionEditsResult {
   const next = structuredClone(record);
   const definition = next.definition;
@@ -59,6 +64,27 @@ export function applyDefinitionEdits(
     const issue = applyOperation(next, operations[index]!, index);
     if (issue) {
       return { ok: false, issues: [issue] };
+    }
+  }
+
+  if (operations.some(changesTaskMembership)) {
+    const derived =
+      executionContract.deriveContextAcceptanceCriteria(definition);
+    if (!derived.ok) {
+      return {
+        ok: false,
+        issues: derived.issues.map((issue) => ({
+          ...issue,
+          instruction: derived.instruction,
+        })),
+      };
+    }
+    for (const context of definition.executionContexts) {
+      const acceptanceCriteria =
+        derived.acceptanceCriteriaByContextId[context.id];
+      if (acceptanceCriteria !== undefined) {
+        context.acceptanceCriteria = acceptanceCriteria;
+      }
     }
   }
 
@@ -85,6 +111,15 @@ export function applyDefinitionEdits(
   next.definition = parsed.data;
   next.layout = generateWorkflowLayout(parsed.data, record.layout);
   return { ok: true, record: next };
+}
+
+function changesTaskMembership(operation: DefinitionEditOperation): boolean {
+  return (
+    operation.type === "add-task" ||
+    operation.type === "remove-task" ||
+    operation.type === "move-task" ||
+    operation.type === "remove-context"
+  );
 }
 
 /**

@@ -18,7 +18,7 @@ import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
-import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import { createSpecsRepo, type SpecsRepo } from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
@@ -37,6 +37,7 @@ const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
 describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runtime wiring)", () => {
   let db: Db;
   let authoring: AuthoringService;
+  let specs: SpecsRepo;
   let reviewRepo: ReturnType<typeof createSpecReviewRepo>;
   let notificationsRepo: ReturnType<typeof createNotificationsRepo>;
   let pushed: Notification[];
@@ -67,8 +68,9 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       },
       getProjectDisplayName: () => PROJECT_NAME,
     });
+    specs = createSpecsRepo(db, writeQueue);
     authoring = createAuthoringService({
-      specs: createSpecsRepo(db, writeQueue),
+      specs,
       review: reviewRepo,
       links: createSpecLinksRepo(db),
       events: createSpecEventsPublisher({
@@ -95,7 +97,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       projectPath: PROJECT_PATH,
       slug,
       name: `Authoring admissions ${slug}`,
-      gatePolicy,
+      gatePolicy: { preset: "fast-path" },
       initialElement: {
         elementId: "requirement-1",
         kind: "requirement" as const,
@@ -109,6 +111,11 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
         },
       },
       actor: AGENT,
+    });
+    await specs.updateGatePolicy({
+      specId: created.spec.id,
+      gatePolicy,
+      updatedAt: "2026-07-19T11:00:00.500Z",
     });
     for (const element of [
       {
@@ -164,7 +171,6 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       .findGateAdmissionsByRevision(created.draft.id)
       .filter((admission) => admission.basis === "notify_policy");
     expect(admissions.map((admission) => admission.gate).sort()).toEqual([
-      "design",
       "plan",
       "requirements",
     ]);
@@ -172,13 +178,12 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
     const rows = notificationsRepo.findSpecNotificationsBySpecId(
       created.spec.id,
     );
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(2);
     expect(
       rows
         .map((row) => ({ type: row.type, gate: row.gate }))
         .sort((a, b) => a.gate.localeCompare(b.gate)),
     ).toEqual([
-      { type: "spec-policy-admitted", gate: "design" },
       { type: "spec-policy-admitted", gate: "plan" },
       { type: "spec-policy-admitted", gate: "requirements" },
     ]);
@@ -186,7 +191,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
     expect(new Set(rows.map((row) => row.gateRequestId))).toEqual(
       new Set(admissions.map((admission) => admission.id)),
     );
-    expect(pushed).toHaveLength(3);
+    expect(pushed).toHaveLength(2);
 
     // Post-hoc review notices never open a Needs You item (R11.2).
     const outcomes = deriveNotificationOutcomes(rows, []);
@@ -206,7 +211,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
     );
     expect(
       admissions.filter((admission) => admission.basis === "off_policy"),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     expect(
       notificationsRepo.findSpecNotificationsBySpecId(created.spec.id),
     ).toHaveLength(0);
@@ -227,7 +232,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
 
     expect(
       notificationsRepo.findSpecNotificationsBySpecId(created.spec.id),
-    ).toHaveLength(3);
-    expect(pushed).toHaveLength(3);
+    ).toHaveLength(2);
+    expect(pushed).toHaveLength(2);
   });
 });

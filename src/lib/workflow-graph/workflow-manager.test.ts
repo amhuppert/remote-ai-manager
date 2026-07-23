@@ -60,6 +60,9 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { applyDefinitionEdits } from "./definition-edits";
+import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
+import { GraphExecutionContractViolationError } from "./execution-contract-port";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -224,7 +227,111 @@ function createRepository(
   };
 }
 
+function invalidRegroupedSpecDefinition(approvalRequired = false) {
+  const base = createWorkflowDefinition({ approvalRequired });
+  const tasks = base.tasks.slice(0, 2).map((task, index) => ({
+    ...task,
+    metadata: {
+      specRevisionId: "revision-1",
+      specTaskElementId: `task-${index + 1}`,
+      specTaskHandle: `T${index + 1}`,
+      specDependsOnTaskElementIds: JSON.stringify(
+        index === 0 ? [] : ["task-1"],
+      ),
+      specCriterionElementIds: "[]",
+      specCriterionHandles: "[]",
+      specValidationStrategies: "{}",
+      specCriterionBriefs: "{}",
+    },
+  }));
+  const record = createWorkflowDefinitionRecord({
+    definition: createWorkflowDefinition({
+      approvalRequired,
+      origin: {
+        sourceUri:
+          "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
+      },
+      executionContexts: base.executionContexts.map((context) => ({
+        ...context,
+        origin: { sourceUri: "spec://native-sdd/revisions/revision-1" },
+      })),
+      tasks,
+      lockedRegions: tasks.map((task) => ({
+        paths: [`/tasks/${task.id}/metadata`],
+        sourceUri: "spec://native-sdd/revisions/revision-1",
+        reason: "Compiled task contract",
+      })),
+    }),
+  });
+  const edited = applyDefinitionEdits(record, [
+    {
+      type: "move-task",
+      taskId: "task-implement-1",
+      contextId: "context-plan",
+      position: { at: "start" },
+    },
+  ]);
+  if (!edited.ok) throw new Error(JSON.stringify(edited.issues));
+  return edited.record;
+}
+
 describe("graph workflow manager", () => {
+  it("rejects a spec dependency broken by move-task before execution seed", async () => {
+    const definition = invalidRegroupedSpecDefinition();
+    const repository = createRepository();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return definition;
+      },
+      executionContract: createSpecExecutionContract(),
+    });
+
+    await expect(
+      manager.start({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        definitionId: definition.id,
+      }),
+    ).rejects.toMatchObject({
+      code: "spec_dependency_embedding_invalid",
+    } satisfies Partial<GraphExecutionContractViolationError>);
+    expect(repository.createCalls).toHaveLength(0);
+  });
+
+  it("revalidates spec dependency embedding before recording definition approval", async () => {
+    const definition = invalidRegroupedSpecDefinition(true);
+    const pending = createWorkflowExecution({
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:00:00.000Z",
+        approvedAt: null,
+      },
+      workingDefinition: definition.definition as never,
+    });
+    const repository = createRepository(pending);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return definition;
+      },
+      executionContract: createSpecExecutionContract(),
+    });
+
+    await expect(
+      manager.recordDefinitionApproval({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      }),
+    ).rejects.toMatchObject({
+      code: "spec_dependency_embedding_invalid",
+    } satisfies Partial<GraphExecutionContractViolationError>);
+    expect(repository.read()).toMatchObject({
+      status: "pending",
+      definitionApproval: { approvedAt: null },
+    });
+  });
+
   it("refuses an approval-required definition until the first atomic approval starts its pending execution", async () => {
     const definition = createWorkflowDefinitionRecord({
       definition: createWorkflowDefinition({ approvalRequired: true }),

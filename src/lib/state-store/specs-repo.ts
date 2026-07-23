@@ -6,6 +6,7 @@ import { timed } from "@/lib/logging/timed";
 import {
   specAliasRowSchema,
   specAliasSchema,
+  specAuthoringStageSchema,
   specCounterRowSchema,
   specCounterSchema,
   specCounterScopeKeySchema,
@@ -23,6 +24,7 @@ import {
   specSchema,
   type Spec,
   type SpecAlias,
+  type SpecAuthoringStage,
   type SpecCounter,
   type SpecCounterScopeKey,
   type SpecElement,
@@ -50,6 +52,7 @@ const createSpecInputSchema = z
     initialRevision: z
       .object({
         id: z.string().min(1),
+        authoringStage: specAuthoringStageSchema,
         createdAt: z.string().min(1),
       })
       .strict(),
@@ -92,11 +95,24 @@ const createDraftFromBaseInputSchema = z
     id: z.string().min(1),
     specId: z.string().min(1),
     baseRevisionId: z.string().min(1),
+    authoringStage: specAuthoringStageSchema,
     createdAt: z.string().min(1),
   })
   .strict();
 export type CreateDraftFromBaseInput = z.infer<
   typeof createDraftFromBaseInputSchema
+>;
+
+const advanceDraftAuthoringStageInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    revisionId: z.string().min(1),
+    expectedStage: specAuthoringStageSchema,
+    targetStage: specAuthoringStageSchema,
+  })
+  .strict();
+export type AdvanceDraftAuthoringStageInput = z.infer<
+  typeof advanceDraftAuthoringStageInputSchema
 >;
 
 const proposeRevisionInputSchema = z
@@ -213,6 +229,20 @@ export interface RevisionVerification {
   readonly mismatchedElementIds: string[];
 }
 
+export class SpecElementIdTakenError extends Error {
+  readonly code = "element_id_taken" as const;
+
+  constructor(
+    readonly elementId: string,
+    readonly existingSpecId: string,
+  ) {
+    super(
+      `Spec element ID "${elementId}" is already used by spec "${existingSpecId}"; element IDs are globally unique.`,
+    );
+    this.name = "SpecElementIdTakenError";
+  }
+}
+
 export class StaleElementConflictError extends Error {
   readonly code = "stale_element" as const;
 
@@ -226,6 +256,24 @@ export class StaleElementConflictError extends Error {
       `spec element ${elementId} in revision ${revisionId} is at version ${current.elementVersion}, not ${expectedElementVersion}`,
     );
     this.name = "StaleElementConflictError";
+  }
+}
+
+export class StaleStageConflictError extends Error {
+  readonly code = "stale_stage" as const;
+
+  constructor(
+    readonly specId: string,
+    readonly expectedRevisionId: string,
+    readonly expectedStage: SpecAuthoringStage,
+    readonly currentRevision: SpecRevision | null,
+  ) {
+    super(
+      currentRevision === null
+        ? `spec ${specId} has no current draft; expected ${expectedRevisionId} at ${expectedStage}`
+        : `spec ${specId} current draft is ${currentRevision.id} at ${currentRevision.authoringStage}; expected ${expectedRevisionId} at ${expectedStage}`,
+    );
+    this.name = "StaleStageConflictError";
   }
 }
 
@@ -272,6 +320,9 @@ export interface SpecsRepo {
   findRevision(revisionId: string): Promise<SpecRevision | null>;
   findDraftRevisionBySpecId(specId: string): Promise<SpecRevision | null>;
   createDraftFromBase(input: CreateDraftFromBaseInput): Promise<SpecRevision>;
+  advanceDraftAuthoringStage(
+    input: AdvanceDraftAuthoringStageInput,
+  ): Promise<SpecRevision>;
   proposeRevision(input: ProposeRevisionInput): Promise<SpecRevision>;
   approveRevision(input: ApproveRevisionInput): Promise<SpecRevision>;
   withdrawRevision(input: WithdrawRevisionInput): Promise<SpecRevision>;
@@ -307,6 +358,9 @@ export interface SpecsRepoTransaction {
     elementId: string,
   ): SpecElementVersion | null;
   createDraftFromBase(input: CreateDraftFromBaseInput): SpecRevision;
+  advanceDraftAuthoringStage(
+    input: AdvanceDraftAuthoringStageInput,
+  ): SpecRevision;
   proposeRevision(input: ProposeRevisionInput): SpecRevision;
   approveRevision(input: ApproveRevisionInput): SpecRevision;
   withdrawRevision(input: WithdrawRevisionInput): SpecRevision;
@@ -375,7 +429,27 @@ export function computeSpecElementPayloadHash(
   return createHash("sha256").update(stableStringify(payload)).digest("hex");
 }
 
-function canonicalSnapshot(elements: readonly SpecRevisionElement[]): unknown {
+export interface CanonicalSpecRevisionElement {
+  readonly elementId: string;
+  readonly kind: SpecElementKind;
+  readonly number: number | null;
+  readonly parentElementId: string | null;
+  readonly position: number;
+  readonly payload: SpecElementPayload;
+}
+
+export function computeSpecRevisionContentHashFromCanonical(
+  authoringStage: SpecAuthoringStage,
+  elements: readonly CanonicalSpecRevisionElement[],
+): string {
+  return createHash("sha256")
+    .update(stableStringify({ authoringStage, elements }))
+    .digest("hex");
+}
+
+function canonicalElements(
+  elements: readonly SpecRevisionElement[],
+): CanonicalSpecRevisionElement[] {
   return elements.map(({ element, version }) => ({
     elementId: element.id,
     kind: element.kind,
@@ -387,11 +461,13 @@ function canonicalSnapshot(elements: readonly SpecRevisionElement[]): unknown {
 }
 
 export function computeSpecRevisionContentHash(
+  authoringStage: SpecAuthoringStage,
   elements: readonly SpecRevisionElement[],
 ): string {
-  return createHash("sha256")
-    .update(stableStringify(canonicalSnapshot(elements)))
-    .digest("hex");
+  return computeSpecRevisionContentHashFromCanonical(
+    authoringStage,
+    canonicalElements(elements),
+  );
 }
 
 function counterScopeFor(
@@ -502,11 +578,12 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
   );
   const insertRevisionStmt = db.prepare(
     `INSERT INTO spec_revisions
-       (id, spec_id, number, state, based_on_revision_id, content_hash,
-        proposed_at, approved_at, created_at)
+       (id, spec_id, number, state, authoring_stage, based_on_revision_id,
+        content_hash, proposed_at, approved_at, created_at)
      VALUES
-       (@id, @spec_id, @number, @state, @based_on_revision_id, @content_hash,
-        @proposed_at, @approved_at, @created_at)`,
+       (@id, @spec_id, @number, @state, @authoring_stage,
+        @based_on_revision_id, @content_hash, @proposed_at, @approved_at,
+        @created_at)`,
   );
   const findRevisionStmt = db.prepare(
     "SELECT * FROM spec_revisions WHERE id = ? LIMIT 1",
@@ -527,6 +604,14 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
      WHERE spec_id = ? AND state = 'approved'
      ORDER BY number DESC
      LIMIT 1`,
+  );
+  const advanceDraftAuthoringStageStmt = db.prepare(
+    `UPDATE spec_revisions
+     SET authoring_stage = @target_stage
+     WHERE id = @revision_id
+       AND spec_id = @spec_id
+       AND state = 'draft'
+       AND authoring_stage = @expected_stage`,
   );
   const nextRevisionNumberStmt = db
     .prepare(
@@ -725,6 +810,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         specId: row.spec_id,
         number: row.number,
         state: row.state,
+        authoringStage: row.authoring_stage,
         basedOnRevisionId: row.based_on_revision_id,
         contentHash: row.content_hash,
         proposedAt: row.proposed_at,
@@ -958,6 +1044,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         spec_id: input.spec.id,
         number: 1,
         state: "draft",
+        authoring_stage: input.initialRevision.authoringStage,
         based_on_revision_id: null,
         content_hash: null,
         proposed_at: null,
@@ -1094,6 +1181,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         spec_id: input.specId,
         number: nextNumber,
         state: "draft",
+        authoring_stage: input.authoringStage,
         based_on_revision_id: input.baseRevisionId,
         content_hash: null,
         proposed_at: null,
@@ -1106,6 +1194,53 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         created_at: input.createdAt,
       });
       return requireRevision(input.id);
+    },
+  );
+
+  const authoringStageOrder: Record<SpecAuthoringStage, number> = {
+    requirements: 0,
+    design: 1,
+    plan: 2,
+  };
+
+  const advanceDraftAuthoringStageTx = db.transaction(
+    (
+      input: z.output<typeof advanceDraftAuthoringStageInputSchema>,
+    ): SpecRevision => {
+      requireSpec(input.specId);
+      const current = readDraft(input.specId);
+      if (
+        current !== null &&
+        current.id === input.revisionId &&
+        authoringStageOrder[current.authoringStage] >=
+          authoringStageOrder[input.targetStage]
+      ) {
+        return current;
+      }
+      if (current === null || current.id !== input.revisionId) {
+        throw new StaleStageConflictError(
+          input.specId,
+          input.revisionId,
+          input.expectedStage,
+          current,
+        );
+      }
+
+      const result = advanceDraftAuthoringStageStmt.run({
+        spec_id: input.specId,
+        revision_id: input.revisionId,
+        expected_stage: input.expectedStage,
+        target_stage: input.targetStage,
+      });
+      if (result.changes === 0) {
+        throw new StaleStageConflictError(
+          input.specId,
+          input.revisionId,
+          input.expectedStage,
+          readDraft(input.specId),
+        );
+      }
+      return requireRevision(input.revisionId);
     },
   );
 
@@ -1127,7 +1262,10 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           identifier: input.revisionId,
         });
       }
-      const contentHash = computeSpecRevisionContentHash(snapshot.elements);
+      const contentHash = computeSpecRevisionContentHash(
+        snapshot.revision.authoringStage,
+        snapshot.elements,
+      );
       const result = proposeRevisionStmt.run({
         id: input.revisionId,
         content_hash: contentHash,
@@ -1207,6 +1345,10 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
             message: "revision belongs to a different spec",
           },
         ]);
+      }
+      const existingElement = readElement(input.id);
+      if (existingElement !== null) {
+        throw new SpecElementIdTakenError(input.id, existingElement.specId);
       }
       if (input.payload.kind !== input.kind) {
         return validationFailure("spec_element", input.id, [
@@ -1401,6 +1543,11 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     findElementVersion: readElementVersion,
     createDraftFromBase(input) {
       return createDraftFromBaseTx(createDraftFromBaseInputSchema.parse(input));
+    },
+    advanceDraftAuthoringStage(input) {
+      return advanceDraftAuthoringStageTx(
+        advanceDraftAuthoringStageInputSchema.parse(input),
+      );
     },
     proposeRevision(input) {
       return proposeRevisionTx(proposeRevisionInputSchema.parse(input));
@@ -1650,6 +1797,25 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
       );
     },
 
+    async advanceDraftAuthoringStage(input) {
+      const validated = advanceDraftAuthoringStageInputSchema.parse(input);
+      return timed(
+        logger,
+        "state-store.specs.advance_authoring_stage",
+        {
+          specId: validated.specId,
+          revisionId: validated.revisionId,
+          expectedStage: validated.expectedStage,
+          targetStage: validated.targetStage,
+        },
+        () =>
+          writeQueue.withWriteQueue(
+            "specs.advanceDraftAuthoringStage",
+            async () => advanceDraftAuthoringStageTx.immediate(validated),
+          ),
+      );
+    },
+
     async proposeRevision(input) {
       const validated = proposeRevisionInputSchema.parse(input);
       return timed(
@@ -1714,6 +1880,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
             )
             .map(({ element }) => element.id);
           const actualContentHash = computeSpecRevisionContentHash(
+            snapshot.revision.authoringStage,
             snapshot.elements,
           );
           return {

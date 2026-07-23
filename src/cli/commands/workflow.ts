@@ -895,6 +895,34 @@ async function runWorkflowStart(
       ...(parameters !== undefined ? { parameters } : {}),
     },
   });
+  if (
+    result.kind === "error" &&
+    result.status === 409 &&
+    result.code === "definition_approval_required"
+  ) {
+    const executionId = (
+      result.details as { executionId?: unknown } | undefined
+    )?.executionId;
+    if (typeof executionId === "string" && executionId.trim().length > 0) {
+      const instruction =
+        result.instruction ??
+        `Approve the pending workflow definition to resume execution ${executionId}.`;
+      return {
+        exitCode: EXIT_OK,
+        stdout: render(
+          json,
+          `parked ${id} (run ${executionId}) awaiting definition approval\ninstruction: ${instruction}\n`,
+          {
+            ok: true,
+            executionId,
+            status: "awaiting_definition_approval",
+            instruction,
+          },
+        ),
+        stderr: "",
+      };
+    }
+  }
   if (result.kind !== "ok") return workflowFailure(result, json);
 
   const parsed = startResponseSchema.safeParse(result.body);

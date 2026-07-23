@@ -300,13 +300,46 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
 
     render(<WorkflowEventLog execution={execution} events={events} />);
 
-    expect(screen.getByText(/Join conflicts · join-2/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Session publish conflicts · join-2/),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByText(/Join conflicts · join-2/));
+    await user.click(screen.getByText(/Session publish conflicts · join-2/));
 
     expect(
       screen.getByText("merge conflicts in src/foo.ts"),
     ).toBeInTheDocument();
+  });
+
+  it("describes a final-publish join as publishing to the session without exposing the internal enum", async () => {
+    const user = userEvent.setup();
+    const { execution, events } = executionWithHistory([
+      {
+        occurredAt: "2026-04-02T08:03:00.000Z",
+        event: {
+          type: "graph-workflow-join-status",
+          projectName: "repo",
+          sessionName: "session-1",
+          executionId: "exec-1",
+          joinId: "join-final",
+          kind: "final_publish",
+          contextId: null,
+          status: "running",
+          sourceLaneIds: ["lane-plan"],
+          mergedSourceLaneIds: [],
+          targetLaneId: "__session__",
+          errorMessage: null,
+          conflicts: null,
+        },
+      },
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    await user.click(screen.getByText(/Session publish running · join-final/));
+
+    expect(screen.getByText(/kind: session publish/)).toBeInTheDocument();
+    expect(screen.queryByText(/final_publish/)).not.toBeInTheDocument();
   });
 });
 

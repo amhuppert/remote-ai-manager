@@ -59,6 +59,7 @@ import {
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
+import { consultedAuthoringGates } from "@/lib/specs/transitions";
 
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
 
@@ -332,7 +333,8 @@ export default function SpecReviewMode({
               </Link>
               <div className="flex flex-wrap items-center gap-sm">
                 <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
-                  Review revision {currentSnapshot.revision.number}
+                  Review {currentSnapshot.revision.authoringStage}-stage
+                  revision {currentSnapshot.revision.number}
                 </h1>
                 <span className="font-mono text-[0.7rem] text-text-tertiary">
                   proposed
@@ -823,12 +825,16 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     const dial = resolveDial(detail.spec.gatePolicy, gate);
     return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
   };
+  const consulted = consultedReviewGates(detail);
   const subjects: BulkApprovalSubject[] = [];
   if (!combined) {
     for (const entry of snapshot.elements) {
       switch (entry.version.payload.kind) {
         case "requirement":
-          if (requiresApproval("requirements")) {
+          if (
+            consulted.has("requirements") &&
+            requiresApproval("requirements")
+          ) {
             subjects.push({
               subjectKind: "requirement",
               elementId: entry.element.id,
@@ -836,7 +842,7 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
           }
           break;
         case "decision":
-          if (requiresApproval("design")) {
+          if (consulted.has("design") && requiresApproval("design")) {
             subjects.push({
               subjectKind: "decision",
               elementId: entry.element.id,
@@ -847,7 +853,11 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
           break;
       }
     }
-    if (requiresApproval("plan")) {
+    if (
+      snapshot.revision.authoringStage === "plan" &&
+      consulted.has("plan") &&
+      requiresApproval("plan")
+    ) {
       subjects.push({ subjectKind: "plan", elementId: null });
     }
   }
@@ -917,12 +927,26 @@ export function bulkApprovalSubjects(
   const snapshot = detail.currentRevision;
   if (snapshot === null || snapshot.revision.state !== "proposed") return [];
 
+  const consulted = consultedReviewGates(detail);
+  const requiresApproval = (gate: "requirements" | "design" | "plan") => {
+    const dial = resolveDial(detail.spec.gatePolicy, gate);
+    return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
+  };
+
   const elementSubjects = snapshot.elements.flatMap(
     (entry): ApprovalTarget[] => {
-      if (entry.version.payload.kind === "requirement") {
+      if (
+        entry.version.payload.kind === "requirement" &&
+        consulted.has("requirements") &&
+        requiresApproval("requirements")
+      ) {
         return [{ subjectKind: "requirement", elementId: entry.element.id }];
       }
-      if (entry.version.payload.kind === "decision") {
+      if (
+        entry.version.payload.kind === "decision" &&
+        consulted.has("design") &&
+        requiresApproval("design")
+      ) {
         return [{ subjectKind: "decision", elementId: entry.element.id }];
       }
       return [];
@@ -940,11 +964,28 @@ export function bulkApprovalSubjects(
   );
   const planSubject = { subjectKind: "plan" as const, elementId: null };
   if (
+    snapshot.revision.authoringStage === "plan" &&
+    consulted.has("plan") &&
+    requiresApproval("plan") &&
     latestSubjectApproval(detail.approvals, planSubject)?.validity !== "valid"
   ) {
     remaining.push(planSubject);
   }
   return remaining;
+}
+
+function consultedReviewGates(
+  detail: SpecDetailView,
+): Set<"requirements" | "design" | "plan"> {
+  const snapshot = detail.currentRevision;
+  if (snapshot === null) return new Set();
+  return new Set(
+    consultedAuthoringGates(
+      snapshot.revision.authoringStage,
+      detail.baseRevision === null ? [] : toDiffRows(detail.baseRevision),
+      toDiffRows(snapshot),
+    ),
+  );
 }
 
 function latestSubjectApproval(
@@ -1455,7 +1496,7 @@ function viewForElement(
   return {
     entry,
     handle: handleFor(entry, snapshot),
-    body: bodyFor(entry),
+    body: bodyFor(entry, snapshot),
   };
 }
 
@@ -1487,7 +1528,10 @@ function handleFor(
   }
 }
 
-function bodyFor(entry: SpecRevisionElement): string {
+function bodyFor(
+  entry: SpecRevisionElement,
+  snapshot: SpecRevisionSnapshot,
+): string {
   const payload = entry.version.payload;
   switch (payload.kind) {
     case "section":
@@ -1498,9 +1542,38 @@ function bodyFor(entry: SpecRevisionElement): string {
       return payload.text;
     case "decision":
       return `${payload.title}\n${payload.chosenApproach}\n${payload.reason}`;
-    case "task":
-      return `${payload.title}\n${payload.instructions}`;
+    case "task": {
+      const dependencies = elementHandles(
+        payload.dependsOnTaskElementIds,
+        snapshot,
+      );
+      const criteria = elementHandles(
+        payload.coveredCriterionElementIds,
+        snapshot,
+      );
+      return [
+        payload.title,
+        payload.instructions,
+        "",
+        `- **Dependencies:** ${dependencies.length > 0 ? dependencies.join(", ") : "None"}`,
+        `- **Lane group:** ${payload.laneGroup ?? "One task per lane"}`,
+        `- **Touched surfaces:** ${payload.touchedPaths?.join(", ") ?? "Not declared"}`,
+        `- **Criterion coverage:** ${criteria.length > 0 ? criteria.join(", ") : "None"}`,
+      ].join("\n");
+    }
   }
+}
+
+function elementHandles(
+  elementIds: string[],
+  snapshot: SpecRevisionSnapshot,
+): string[] {
+  return elementIds.map((elementId) => {
+    const entry = snapshot.elements.find(
+      (candidate) => candidate.element.id === elementId,
+    );
+    return entry === undefined ? elementId : handleFor(entry, snapshot);
+  });
 }
 
 function bodyForElement(
@@ -1510,7 +1583,7 @@ function bodyForElement(
   const entry = snapshot.elements.find(
     (candidate) => candidate.element.id === elementId,
   );
-  return entry === undefined ? null : bodyFor(entry);
+  return entry === undefined ? null : bodyFor(entry, snapshot);
 }
 
 function approvalTargetFor(

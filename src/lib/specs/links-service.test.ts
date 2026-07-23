@@ -246,7 +246,7 @@ async function createApprovedTaskSpec() {
     projectPath: PROJECT_PATH,
     slug: "materialize-spec",
     name: "Materialize spec",
-    gatePolicy: { preset: "exploratory" },
+    gatePolicy: { preset: "fast-path" },
     initialElement: {
       elementId: "requirement-1",
       kind: "requirement" as const,
@@ -260,6 +260,11 @@ async function createApprovedTaskSpec() {
       },
     },
     actor: AGENT,
+  });
+  await specs.updateGatePolicy({
+    specId: created.spec.id,
+    gatePolicy: { preset: "exploratory" },
+    updatedAt: "2026-07-18T17:00:00.500Z",
   });
   for (const element of [
     {

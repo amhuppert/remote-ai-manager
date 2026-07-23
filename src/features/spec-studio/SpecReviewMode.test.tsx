@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,7 +9,7 @@ import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture } from "@/test/fetch-fixture";
 
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import SpecReviewMode from "./SpecReviewMode";
+import SpecReviewMode, { bulkApprovalSubjects } from "./SpecReviewMode";
 
 vi.mock(
   "next/link",
@@ -24,6 +24,35 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
   const detail = specControlsDetailFixture();
   const baseSnapshot = detail.currentRevision;
   if (baseSnapshot === null) throw new Error("Review fixture requires a base");
+
+  baseSnapshot.elements.push({
+    element: {
+      id: "task-prerequisite",
+      specId: detail.spec.id,
+      kind: "task",
+      number: 2,
+      parentElementId: null,
+      createdAt: NOW,
+    },
+    version: {
+      revisionId: baseSnapshot.revision.id,
+      elementId: "task-prerequisite",
+      position: 3,
+      payload: {
+        kind: "task",
+        title: "Prepare the persistence boundary",
+        instructions: "Expose the storage contract used by scope pinning.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [],
+        dependsOnTaskElementIds: [],
+      },
+      payloadHash: "task-prerequisite-hash",
+      elementVersion: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+  });
 
   const currentRevision = {
     ...baseSnapshot.revision,
@@ -60,7 +89,9 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
                 tracedRequirementElementIds: ["requirement-1"],
                 tracedDecisionElementIds: [],
                 coveredCriterionElementIds: ["criterion-1"],
-                dependsOnTaskElementIds: [],
+                dependsOnTaskElementIds: ["task-prerequisite"],
+                laneGroup: "persistence",
+                touchedPaths: ["src/lib/specs", "src/lib/state-store"],
               },
               payloadHash: "task-hash-2",
               elementVersion: 2,
@@ -80,7 +111,7 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
     version: {
       revisionId: currentRevision.id,
       elementId: "decision-1",
-      position: 3,
+      position: 4,
       payload: {
         kind: "decision",
         title: "Pin scope at execution start",
@@ -197,7 +228,7 @@ describe("SpecReviewMode", () => {
     renderReview();
 
     expect(
-      screen.getByRole("heading", { name: "Review revision 2" }),
+      screen.getByRole("heading", { name: "Review plan-stage revision 2" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "← native-sdd" })).toHaveAttribute(
       "href",
@@ -261,7 +292,7 @@ describe("SpecReviewMode", () => {
     ).not.toBeVisible();
 
     const unchanged = screen.getByRole("button", {
-      name: /1 unchanged element/i,
+      name: /2 unchanged elements/i,
     });
     expect(unchanged).toHaveAttribute("aria-expanded", "false");
 
@@ -270,6 +301,29 @@ describe("SpecReviewMode", () => {
       screen.getByText(/semantic change list is the review contract/i),
     ).toBeVisible();
     expect(screen.getByText(/--- revision-1/)).toBeVisible();
+  });
+
+  it("presents the approved execution graph metadata for each changed task", async () => {
+    const user = userEvent.setup();
+    renderReview();
+
+    const task = screen.getByTestId("review-change-task-1");
+    const currentRevision = within(task).getByText("Revision 2").parentElement;
+    if (currentRevision === null) throw new Error("Current revision missing");
+    await waitFor(() => {
+      expect(currentRevision).toHaveTextContent("Dependencies: T2");
+      expect(currentRevision).toHaveTextContent("Lane group: persistence");
+      expect(currentRevision).toHaveTextContent(
+        "Touched surfaces: src/lib/specs, src/lib/state-store",
+      );
+      expect(currentRevision).toHaveTextContent("Criterion coverage: R1.1");
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Raw diff" }));
+    expect(screen.getByText(/Dependencies:\*\* T2/)).toBeVisible();
+    expect(
+      screen.getByText(/Touched surfaces:\*\* src\/lib\/specs/),
+    ).toBeVisible();
   });
 
   it("orders acceptance criteria directly under their parent requirement", () => {
@@ -453,6 +507,36 @@ describe("SpecReviewMode", () => {
         name: "Sign off revision 2",
       }),
     ).toBeDisabled();
+  });
+
+  it("scopes review approvals to the proposed authoring stage", () => {
+    const detail = reviewDetailFixture();
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    current.revision.authoringStage = "requirements";
+    detail.comments = [];
+    detail.assumptions = [];
+
+    expect(bulkApprovalSubjects(detail, "remaining")).toEqual([
+      { subjectKind: "requirement", elementId: "requirement-1" },
+    ]);
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Review requirements-stage revision 2",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("review-readiness")).getByText("0/1 approved"),
+    ).toBeInTheDocument();
   });
 
   it("enables sign-off immediately under the fast-path combined policy", async () => {

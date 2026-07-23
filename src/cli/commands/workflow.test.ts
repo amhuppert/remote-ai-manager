@@ -318,6 +318,104 @@ describe("cctl workflow start", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("reports an approval-required execution as successfully parked instead of a failed start", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          error:
+            "Workflow definition approval is required before execution can start",
+          code: "definition_approval_required",
+          executionId: "exec-review-9",
+          instruction:
+            "Record approval for the pending workflow definition before starting execution.",
+        },
+        409,
+      ),
+    );
+
+    const result = await runCli(["workflow", "start", "wf-1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(
+      "parked wf-1 (run exec-review-9) awaiting definition approval",
+    );
+    expect(result.stdout).toContain(
+      "Record approval for the pending workflow definition",
+    );
+  });
+
+  it("returns a successful parked envelope for approval-required executions in JSON mode", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          error:
+            "Workflow definition approval is required before execution can start",
+          code: "definition_approval_required",
+          executionId: "exec-review-json",
+          instruction:
+            "Record approval for the pending workflow definition before starting execution.",
+        },
+        409,
+      ),
+    );
+
+    const result = await runCli(
+      ["workflow", "start", "wf-1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      executionId: "exec-review-json",
+      status: "awaiting_definition_approval",
+      instruction:
+        "Record approval for the pending workflow definition before starting execution.",
+    });
+  });
+
+  it("keeps approval-required responses without an execution id as failures", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          error:
+            "Workflow definition approval is required before execution can start",
+          code: "definition_approval_required",
+          instruction:
+            "Record approval for the pending workflow definition before starting execution.",
+        },
+        409,
+      ),
+    );
+
+    const result = await runCli(["workflow", "start", "wf-1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("approval is required");
+  });
+
+  it("keeps non-conflict responses with the approval code as failures", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          error: "Unexpected approval response",
+          code: "definition_approval_required",
+          executionId: "exec-not-parked",
+        },
+        500,
+      ),
+    );
+
+    const result = await runCli(["workflow", "start", "wf-1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Unexpected approval response");
+  });
+
   it("exits 2 when the --file cannot be read", async () => {
     const host = makeHost(() => jsonResponse({}));
     const result = await runCli(

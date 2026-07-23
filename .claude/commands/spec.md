@@ -48,7 +48,45 @@ for human disposition.
 Continue authoring with element-granular `cctl spec draft` writes, always using
 the last observed `--base-version`. Capture unresolved matters with the
 `question`, `answer`, and `assume` verbs — `cctl spec question` opens a durable
-Q record that stays visible in `spec status` until answered. Use `cctl spec status` to inspect coverage and gate state,
-and run `cctl spec propose <slug>` only when the draft is ready for Studio
-review. Never approve, sign off, change gate policy, or record proof verdicts on
-the user's behalf.
+Q record that stays visible in `spec status` until answered.
+
+## Staged authoring
+
+Treat the stage reported by `cctl spec status` as the server-enforced authoring
+boundary. Under gated presets, author and review one foundation at a time:
+
+1. Requirements stage: write intent/context sections, requirements, and
+   acceptance criteria. Propose the current stage, route the review when
+   needed, and end the turn for human review. Never pre-author decisions or
+   tasks while waiting.
+2. Design stage: after the requirements-stage revision is approved, open the
+   next draft by writing the first design element. Write decisions and
+   `design_narrative` sections, correcting earlier content when discovery
+   requires it. Propose and wait for design review.
+3. Plan stage: after design approval, author the execution plan, then propose
+   it for plan review. Only an approved plan-stage revision can execute.
+
+When the concluding dial is Notify or Off, cross the boundary explicitly with
+`cctl spec advance <slug> --from <stage>`; the expected stage prevents a stale
+command from advancing a replacement revision. When the dial is Gate, advance
+only through human sign-off. A pure combined-approval policy opens directly at
+plan stage and preserves single-pass authoring. Follow a `stage_blocked`
+refusal's instruction instead of changing downstream content early.
+
+## Plan-stage execution graph
+
+Apply the graph-workflow-planning discipline before saving tasks:
+
+- Size each task for one agent lane. Split work that one agent cannot complete
+  coherently; compilation can group tasks but never splits one.
+- Record `dependsOnTaskElementIds` as ordering truth. Two tasks without a
+  dependency path are an explicit claim that they may execute in parallel.
+- Use `laneGroup` only when several small tasks intentionally share one lane.
+  Intra-group dependencies determine their order.
+- Declare normalized repo-relative POSIX `touchedPaths` so conflicting
+  parallel surfaces are reviewable, and cover every applicable criterion.
+- Review `cctl spec status` for the resulting dependencies, grouping, touched
+  surfaces, criterion coverage, and graph-shape findings before proposing.
+
+Never approve, sign off, change gate policy, or record proof verdicts on the
+user's behalf.

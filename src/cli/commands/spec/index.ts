@@ -12,6 +12,7 @@ import {
 } from "./read";
 import {
   runSpecAbandon,
+  runSpecAdvance,
   runSpecAnswer,
   runSpecAssume,
   runSpecCapture,
@@ -49,6 +50,7 @@ export async function runSpec(
       create: (next) => runSpecCreate(next, flags, values, env, host),
       draft: (next) => runSpecDraft(next, flags, values, env, host),
       propose: (next) => runSpecPropose(next, flags, values, env, host),
+      advance: (next) => runSpecAdvance(next, flags, values, env, host),
       question: (next) => runSpecQuestion(next, flags, values, env, host),
       answer: (next) => runSpecAnswer(next, flags, values, env, host),
       assume: (next) => runSpecAssume(next, flags, values, env, host),

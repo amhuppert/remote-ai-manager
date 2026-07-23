@@ -50,7 +50,11 @@ beforeEach(async () => {
       createdAt: CREATED_AT,
       updatedAt: CREATED_AT,
     },
-    initialRevision: { id: revisionId, createdAt: CREATED_AT },
+    initialRevision: {
+      id: revisionId,
+      authoringStage: "plan",
+      createdAt: CREATED_AT,
+    },
   });
   await specs.createDraftElement({
     id: "section-1",
@@ -64,6 +68,27 @@ beforeEach(async () => {
       role: "intent_problem",
       title: "Problem",
       body: "Specs need a portable representation.",
+    },
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await specs.createDraftElement({
+    id: "task-1",
+    specId,
+    revisionId,
+    kind: "task",
+    parentElementId: null,
+    position: 2,
+    payload: {
+      kind: "task",
+      title: "Export the complete plan",
+      instructions: "Preserve every approved task field.",
+      tracedRequirementElementIds: ["requirement-1"],
+      tracedDecisionElementIds: [],
+      coveredCriterionElementIds: [],
+      dependsOnTaskElementIds: [],
+      laneGroup: "persistence",
+      touchedPaths: ["src/lib/specs", "src/lib/state-store"],
     },
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
@@ -156,15 +181,34 @@ describe("canonical spec export and verification", () => {
       revisions: [
         {
           id: revisionId,
+          authoringStage: "plan",
           contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
           elements: [
             { id: "section-1", position: 0 },
             { id: "requirement-1", handle: "R1", position: 1 },
+            {
+              id: "task-1",
+              handle: "T1",
+              position: 2,
+              payload: {
+                laneGroup: "persistence",
+                touchedPaths: ["src/lib/specs", "src/lib/state-store"],
+              },
+            },
           ],
         },
       ],
       approvals: [{ id: "approval-1" }],
     });
+    expect(first.markdownFiles[0]?.content).toContain(
+      "- Lane group: persistence",
+    );
+    expect(first.markdownFiles[0]?.content).toContain(
+      "- Authoring stage: plan",
+    );
+    expect(first.markdownFiles[0]?.content).toContain(
+      "- Touched paths: src/lib/specs, src/lib/state-store",
+    );
   });
 
   it("carries questions and assumptions in the canonical manifest (portable representation)", async () => {
@@ -197,6 +241,48 @@ describe("canonical spec export and verification", () => {
       ok: true,
       checkedRevisionIds: [revisionId],
       mismatches: [],
+    });
+  });
+
+  it("detects out-of-band mutation of lane grouping and touched surfaces", async () => {
+    db.prepare(
+      `UPDATE spec_element_versions
+       SET payload_json = ?
+       WHERE revision_id = ? AND element_id = ?`,
+    ).run(
+      JSON.stringify({
+        kind: "task",
+        title: "Export the complete plan",
+        instructions: "Preserve every approved task field.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [],
+        dependsOnTaskElementIds: [],
+        laneGroup: "tampered-lane",
+        touchedPaths: ["src/lib/other"],
+      }),
+      revisionId,
+      "task-1",
+    );
+
+    const state = await loadSpecExportState({ specs, review }, specId);
+    expect(verifyExportState(state)).toMatchObject({
+      ok: false,
+      checkedRevisionIds: [revisionId],
+      mismatches: [{ mismatchedElementIds: ["task-1"] }],
+    });
+  });
+
+  it("detects out-of-band mutation of a frozen revision's authoring stage", async () => {
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+    ).run(revisionId);
+
+    const state = await loadSpecExportState({ specs, review }, specId);
+    expect(verifyExportState(state)).toMatchObject({
+      ok: false,
+      checkedRevisionIds: [revisionId],
+      mismatches: [{ revisionId, mismatchedElementIds: [] }],
     });
   });
 

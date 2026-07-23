@@ -130,6 +130,20 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       },
       actor: AGENT,
     });
+    if (created.draft.authoringStage !== "plan") {
+      await specs.advanceDraftAuthoringStage({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedStage: "requirements",
+        targetStage: "design",
+      });
+      await specs.advanceDraftAuthoringStage({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedStage: "design",
+        targetStage: "plan",
+      });
+    }
     for (const element of [
       {
         elementId: "criterion-1",

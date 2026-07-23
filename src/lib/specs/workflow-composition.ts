@@ -6,12 +6,17 @@ import { registerMergeAssociationResolver } from "@/lib/workflows/merge/associat
 import type { MergeDeliveryLifecycle } from "@/lib/workflows/merge/delivery-lifecycle-port";
 import { registerMergeDeliveryLifecycle } from "@/lib/workflows/merge/delivery-lifecycle-port";
 import type { DeliveryGateEvaluator } from "@/lib/workflows/merge/types";
+import {
+  registerGraphExecutionContract,
+  type GraphExecutionContract,
+} from "@/lib/workflow-graph/execution-contract-port";
 
 export interface SpecWorkflowComposition {
   deliveryGate: DeliveryGateEvaluator;
   lifecycleCallbacks: GraphExecutionLifecycleCallbacks;
   mergeAssociation: MergeAssociationResolver;
   mergeDeliveryLifecycle: MergeDeliveryLifecycle;
+  executionContract?: GraphExecutionContract;
 }
 
 export function registerSpecWorkflowComposition(
@@ -21,4 +26,7 @@ export function registerSpecWorkflowComposition(
   registerGraphExecutionLifecycleCallbacks(composition.lifecycleCallbacks);
   registerMergeAssociationResolver(composition.mergeAssociation);
   registerMergeDeliveryLifecycle(composition.mergeDeliveryLifecycle);
+  if (composition.executionContract !== undefined) {
+    registerGraphExecutionContract(composition.executionContract);
+  }
 }

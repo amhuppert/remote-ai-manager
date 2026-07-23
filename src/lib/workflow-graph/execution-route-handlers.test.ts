@@ -26,6 +26,11 @@ import {
   WorkflowStartGuardError,
   WorkflowStartInputError,
 } from "./workflow-manager";
+import {
+  GraphExecutionContractViolationError,
+  registerGraphExecutionContract,
+  resetGraphExecutionContractForTesting,
+} from "./execution-contract-port";
 
 function makeRequest(url: string, method: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
@@ -159,6 +164,10 @@ describe("graph workflow execution route handlers", () => {
         return session?.graphWorkflowExecution ?? null;
       },
     );
+  });
+
+  afterEach(() => {
+    resetGraphExecutionContractForTesting();
   });
 
   it("delegates a zero-input start to the shared start path and returns 202", async () => {
@@ -326,10 +335,12 @@ describe("graph workflow execution route handlers", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
+      error:
+        "Workflow execution execution-review-1 was created and parked awaiting definition approval",
       code: "definition_approval_required",
       executionId: "execution-review-1",
       instruction:
-        "Record approval for the pending workflow definition before starting execution.",
+        "Approve the pending workflow definition to resume execution execution-review-1.",
     });
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
     expect(recordPendingHaltReason).not.toHaveBeenCalled();
@@ -399,6 +410,59 @@ describe("graph workflow execution route handlers", () => {
       "workflow-def-9",
     );
     // The refused approval records nothing and starts nothing.
+    expect(recordDefinitionApproval).not.toHaveBeenCalled();
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invalid execution contract before recording the spec-side approval admission", async () => {
+    const parkedExecution = createWorkflowExecution({
+      id: "execution-invalid-contract",
+      status: "pending",
+      seedDefinitionId: "workflow-def-9",
+      definitionApproval: {
+        requestedAt: "2026-03-27T12:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ graphWorkflowExecution: parkedExecution }),
+    );
+    registerGraphExecutionContract({
+      validateDefinition() {
+        return {
+          ok: false,
+          code: "spec_dependency_embedding_invalid",
+          issues: [
+            {
+              code: "spec-dependency-order-invalid",
+              message: "T1 must precede T2.",
+            },
+          ],
+          instruction: "Restore the declared task precedence.",
+        };
+      },
+      validateLiveEdit() {
+        return { ok: true };
+      },
+      validateTaskCompletion() {
+        return { ok: true };
+      },
+      deriveContextAcceptanceCriteria() {
+        return { ok: true, acceptanceCriteriaByContextId: {} };
+      },
+    });
+
+    await expect(
+      handlers.approveDefinition({
+        projectPath: "/repo",
+        projectName: "repo",
+        sessionName: "session-1",
+      }),
+    ).rejects.toMatchObject({
+      code: "spec_dependency_embedding_invalid",
+    });
+    expect(admitDefinitionApproval).not.toHaveBeenCalled();
     expect(recordDefinitionApproval).not.toHaveBeenCalled();
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
@@ -691,6 +755,42 @@ describe("graph workflow execution route handlers", () => {
       error:
         'Session "session-1" already has an active graph workflow execution',
     });
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("maps an execution-contract start refusal to a machine-readable 409", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new GraphExecutionContractViolationError({
+        ok: false,
+        code: "spec_dependency_embedding_invalid",
+        issues: [
+          {
+            code: "spec-dependency-order-invalid",
+            message: "T1 must precede T2.",
+          },
+        ],
+        instruction: "Restore the declared task precedence.",
+      }),
+    );
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "spec_dependency_embedding_invalid",
+      errors: [{ code: "spec-dependency-order-invalid" }],
+      instruction: "Restore the declared task precedence.",
+    });
+    expect(recordPendingHaltReason).not.toHaveBeenCalled();
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 

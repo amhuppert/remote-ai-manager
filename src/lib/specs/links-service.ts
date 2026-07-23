@@ -29,6 +29,7 @@ import type {
 import { compiledWorkflowTaskId } from "./compiler";
 import type { SpecEventsPublisher } from "./events";
 import { formatElementHandle, parseSpecSlug } from "./handles";
+import { openDraftAuthoringStage } from "./transitions";
 import {
   projectSpecPhase,
   projectTaskWorkStatus,
@@ -471,6 +472,9 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
             },
             initialRevision: {
               id: newId("revision"),
+              authoringStage: openDraftAuthoringStage({
+                policy: input.gatePolicy,
+              }),
               createdAt: occurredAt,
             },
           });
@@ -497,6 +501,13 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
               id: newId("revision"),
               specId: spec.id,
               baseRevisionId: approved.id,
+              authoringStage: openDraftAuthoringStage({
+                policy: spec.gatePolicy,
+                baseRevision: {
+                  state: "approved",
+                  authoringStage: approved.authoringStage,
+                },
+              }),
               createdAt: occurredAt,
             });
             reused = false;
@@ -1175,7 +1186,10 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
       revision: currentRevision?.number ?? 1,
       phase: projectSpecPhase({
         abandoned: spec.abandonedAt !== null,
-        revisionStates: revisions.map((revision) => revision.state),
+        revisions: revisions.map((revision) => ({
+          state: revision.state,
+          authoringStage: revision.authoringStage,
+        })),
         executionStates: executions.map((execution) => execution.state),
         deliveryCriteria,
         deliveryPending: executions.some(

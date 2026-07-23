@@ -39,8 +39,12 @@ export default function SpecPhaseFacets({
 }): React.JSX.Element {
   const phase = status.phase.primary;
   const authoringFacet = status.phase.authoringFacet;
+  const authoringStage = status.phase.authoringStage;
   const showDelivery = phase === "executing" || phase === "delivered";
-  const hasFacet = authoringFacet !== undefined || showDelivery;
+  const hasFacet =
+    authoringFacet !== undefined ||
+    authoringStage !== undefined ||
+    showDelivery;
 
   return (
     <div
@@ -66,7 +70,12 @@ export default function SpecPhaseFacets({
           {authoringFacet !== undefined && (
             <span>{phaseLabels[authoringFacet]}</span>
           )}
-          {authoringFacet !== undefined && showDelivery && (
+          {authoringFacet !== undefined &&
+            (authoringStage !== undefined || showDelivery) && (
+              <span aria-hidden="true">·</span>
+            )}
+          {authoringStage !== undefined && <span>{authoringStage} stage</span>}
+          {authoringStage !== undefined && showDelivery && (
             <span aria-hidden="true">·</span>
           )}
           {showDelivery && (

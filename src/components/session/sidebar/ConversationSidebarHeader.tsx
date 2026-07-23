@@ -49,6 +49,8 @@ export default function ConversationSidebarHeader({
         <SearchIcon />
         <input
           ref={searchInputRef}
+          id="conversation-sidebar-search"
+          name="conversation-search"
           type="text"
           placeholder="Filter conversations..."
           value={filter}

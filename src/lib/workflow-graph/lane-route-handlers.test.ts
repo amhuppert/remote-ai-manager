@@ -23,6 +23,7 @@ import type {
 import type { PendingToolBlock } from "./tool-dispatcher";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { LoadLaneToolContextResult } from "./lane-tool-context-loader";
+import { GraphExecutionContractViolationError } from "./execution-contract-port";
 
 /**
  * Route-handler unit tests for the lane tool endpoints. The tool context is the
@@ -364,6 +365,39 @@ describe("lane route handlers — complete task", () => {
       (state?.totalTaskCount ?? 0) - (state?.completedTaskCount ?? 0),
     );
     expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+  });
+
+  it("returns the execution-contract completion refusal as a machine-readable 409", async () => {
+    const { context } = buildContext();
+    const refusingContext: GraphWorkflowToolServerContext = {
+      ...context,
+      async completeTask() {
+        throw new GraphExecutionContractViolationError({
+          ok: false,
+          code: "spec_predecessor_incomplete",
+          issues: [
+            {
+              code: "spec-predecessor-incomplete",
+              message: "Complete T1 before T2.",
+            },
+          ],
+          instruction: "Complete T1 before retrying T2.",
+        });
+      },
+    };
+    const handlers = createLaneRouteHandlers(makeDeps(refusingContext));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "out of order" }),
+      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "spec_predecessor_incomplete",
+      issues: [{ code: "spec-predecessor-incomplete" }],
+      instruction: "Complete T1 before retrying T2.",
+    });
   });
 
   it("attaches lane reminders to the success body when the iteration budget is near the threshold", async () => {

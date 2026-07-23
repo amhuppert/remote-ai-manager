@@ -38,6 +38,7 @@ import {
   regionLockedMessage,
   type DefinitionPath,
 } from "./locked-regions";
+import type { GraphExecutionContract } from "./execution-contract-port";
 
 export interface AgentAddedTask {
   slug?: string;
@@ -310,12 +311,14 @@ export interface LiveEditDeps {
   createTaskId(): string;
   resolvedGlobalDefaults(): ResolvedContextConfig;
   hasPreMergeCommand(): boolean;
+  executionContract?: GraphExecutionContract;
 }
 
 export type LiveEditRejectionCode =
   | "frozen"
   | "requires_pause"
   | "region_locked"
+  | "spec_grouping_frozen"
   | "invalid_edit";
 
 export type ApplyLiveExecutionEditsResult =
@@ -549,6 +552,24 @@ export function applyLiveExecutionEdits(
           }),
         ],
         instruction: regionLockedInstruction(locked.sourceUri),
+      };
+    }
+    const contractDecision = deps.executionContract?.validateLiveEdit(
+      next,
+      operation,
+    );
+    if (contractDecision !== undefined && !contractDecision.ok) {
+      return {
+        ok: false,
+        code:
+          contractDecision.code === "spec_grouping_frozen"
+            ? "spec_grouping_frozen"
+            : "invalid_edit",
+        issues: contractDecision.issues.map((issue) => ({
+          ...issue,
+          operationIndex: issue.operationIndex ?? index,
+        })),
+        instruction: contractDecision.instruction,
       };
     }
     const rejection = applyLiveEditOperation(next, operation, index, opContext);

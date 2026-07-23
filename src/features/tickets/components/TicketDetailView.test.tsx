@@ -632,6 +632,7 @@ describe("TicketDetailView spec read-through", () => {
                     specId: "spec-graduated",
                     number: 1,
                     state: "draft",
+                    authoringStage: "requirements",
                     basedOnRevisionId: null,
                     contentHash: null,
                     proposedAt: null,

@@ -342,6 +342,11 @@ function SpecInventoryRow({
             {phaseLabels[phase.authoringFacet]}
           </span>
         )}
+        {phase.authoringStage !== undefined && (
+          <span className="max-w-full overflow-hidden text-[0.62rem] text-ellipsis whitespace-nowrap text-text-tertiary">
+            {phase.authoringStage} stage
+          </span>
+        )}
       </div>
 
       <div

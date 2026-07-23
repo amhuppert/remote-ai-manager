@@ -7,7 +7,7 @@ Command Center's spec-driven development today lives in external Kiro skills wri
 
 Native SDD makes spec-driven development a first-class Command Center domain. A spec becomes a durable product object — like a conversation, ticket, or workflow — that is addressable everywhere CC has an addressing surface, observable everywhere CC has a liveness surface, and enforceable at the server: gates are state transitions the server refuses, not prompt etiquette. The lifecycle spine is intent → review → enforced approval → reviewed execution plan → isolated execution → criterion-level evidence → controlled delivery, and V1 ships the whole loop.
 
-These requirements translate the closed product design (`docs/design/native-sdd/01-product-design.md`, rev 5 — authoritative for all product semantics) into verifiable acceptance criteria. The binary V1 release-acceptance test from that document's §6.1 is captured as Requirement 21.
+These requirements translate the closed product design (`docs/design/native-sdd/01-product-design.md`, rev 6 — authoritative for all product semantics) into verifiable acceptance criteria. The binary V1 release-acceptance test from that document's §6.1 is captured as Requirement 21.
 
 Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming is settled during the design phase.
 
@@ -44,7 +44,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 8. The spec system shall nest acceptance criteria under their requirement — approved and revised with it — while each criterion carries stable identity so coverage and evidence key on the criterion.
 9. The spec system shall require every acceptance criterion to carry a declared validation strategy — the evidence kinds and checks that satisfy it — approved and revised as part of its requirement's content.
 10. The spec system shall record for every decision its chosen approach, rejected alternatives, and reason.
-11. The spec system shall record for each task the requirements it traces to and the set of acceptance criteria it covers, supporting many-to-many task-to-criterion coverage.
+11. The spec system shall record for each task the requirements it traces to and the set of acceptance criteria it covers, supporting many-to-many task-to-criterion coverage, and optionally its declared lane group and touched file surfaces (Requirement 23).
 12. The spec system shall derive a task's work status from that task's own execution events and completion claim with its evidence, never from the dispositions of the criteria it covers.
 13. The spec system shall present requirement status as a derived projection of coverage, approval, and evidence state, never as an independently stored second truth.
 14. The spec system shall keep approval, review, evidence, and execution state worktree-neutral: the same state is observable regardless of which session or worktree reads it.
@@ -66,6 +66,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 9. When changes are proposed against an approved or delivered spec, the spec system shall open a new draft revision whose authoring state shows as Draft until proposed and In review once proposed — subject to the precedence rule of criterion 6 — while existing pins (running executions, merged deliveries) keep pointing at the revisions they used.
 10. The spec system shall treat Abandoned as terminal and shall record a reason whenever a spec is abandoned.
 11. The spec system shall present partial delivery progress as a roll-up or badge, never as a stored phase.
+12. Until a plan-stage revision is approved, spec surfaces shall present the current authoring stage alongside the phase wherever the phase renders.
 
 ### Requirement 4: Spec creation entry paths and source provenance
 **Objective:** As the operator, I want to start a spec from a prompt, an existing conversation, or a ticket, with exact source provenance, so that intent is captured without creating competing sources of truth.
@@ -100,8 +101,8 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 #### Acceptance Criteria
 1. The spec system shall accept agent reads and mutations of spec state only through the `cctl spec` command family; no supported agent path shall edit spec state directly.
 2. The `cctl spec` family shall follow the established CC CLI contract: progressive-disclosure help, a `--json` output envelope, hint/reminder/instruction tiers, typed exit codes, and deterministic local validation before contacting the server.
-3. The `cctl spec` family shall provide reads for: spec inventory, full and summary spec views, spec status (phase, gate states, pending approvals, open questions, coverage), single-element retrieval with its approval and evidence state, and text search over requirements and decisions.
-4. The `cctl spec` family shall provide writes for: draft-revision content updates, proposing a draft for review, answering open questions, recording assumptions, evidence-backed task completion claims, and routing approval requests to the human.
+3. The `cctl spec` family shall provide reads for: spec inventory, full and summary spec views, spec status (phase, the current authoring stage and its concluding gate, gate states, pending approvals, open questions, coverage), single-element retrieval with its approval and evidence state, and text search over requirements and decisions.
+4. The `cctl spec` family shall provide writes for: draft-revision content updates, proposing a draft for review, advancing the authoring stage where the governing dial admits it, answering open questions, recording assumptions, evidence-backed task completion claims, and routing approval requests to the human.
 5. When a mutation violates the current gate policy, the CLI shall fail with exit status 1, a machine-readable failure code, the specific unmet condition, and an instruction for the legitimate next step.
 6. If a task completion claim carries no evidence, or cites an evidence record that does not resolve or does not target a criterion the task covers at the pinned revision, the spec system shall reject the claim.
 7. The spec system shall record the actual actor on every mutation as provenance: agent-authored mutations shall record the agent and originating conversation, and human acts shall record the human actor without a fabricated agent or conversation.
@@ -136,7 +137,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 #### Acceptance Criteria
 1. The spec system shall compute lint findings deterministically from structured spec state, with no agent judgment in V1; semantic checks are excluded from V1.
 2. When a draft revision is proposed with no requirement containing at least one acceptance criterion, the spec system shall refuse the proposal with an empty-spec finding.
-3. When a draft revision is proposed while any acceptance criterion has no covering task, the spec system shall refuse the proposal with a finding naming the uncovered criterion.
+3. When a plan-stage draft revision is proposed while any acceptance criterion has no covering task or any task covers no acceptance criterion, the spec system shall refuse the proposal with a finding naming the uncovered criterion or task; a proposed revision at an earlier authoring stage shall not be refused for criterion-coverage defects.
 4. When a draft revision is proposed while any task traces to no requirement, the spec system shall refuse the proposal with a possible-scope-creep finding naming the task.
 5. When a draft revision is proposed while the task dependency graph contains a cycle or a dependency on a removed task, the spec system shall refuse the proposal with a finding naming the defect.
 6. When a draft revision is proposed while any internal handle cites a removed or unknown element, the spec system shall refuse the proposal with a finding naming the dangling citation.
@@ -144,6 +145,8 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 8. While a rejected assumption is still cited by spec content, the spec system shall raise a blocking finding that prevents revision sign-off (the sign-off precondition in Requirement 10).
 9. The spec system shall raise advisory, non-blocking findings for: an approved element changed in the current draft (approval freshness — feeding invalidation at propose per Requirement 10); a change to an element cited by an approved element (dependency change — the citing element's approval remains valid in V1); open questions still unresolved at propose; and a materialized task removed or re-scoped by an amendment (Requirement 15).
 10. The spec system shall present lint findings in a panel on the spec, each deep-linked to its element, updating as the draft changes; a refused propose shall return the same finding list the panel shows.
+11. When a draft revision is proposed while the declared lane grouping contracts the task dependency graph into a cycle, the spec system shall refuse the proposal with a finding naming the cyclic groups.
+12. The spec system shall raise advisory, non-blocking graph-shape findings, evaluated on the lane-group-contracted graph: a plan of three or more tasks contracting to a single chain of contexts (fully serialized, including a single all-task group); a task covering more than half of the draft's criteria in a plan of three or more tasks; and two tasks in mutually independent contexts declaring overlapping touched file surfaces.
 
 ### Requirement 10: Approvals — granular, durable, explicitly signed off
 **Objective:** As the operator, I want per-element approvals with an explicit revision sign-off and amendment-scoped invalidation, so that approval always has a clear subject, moment, and author — and survives exactly the changes that don't touch it.
@@ -158,6 +161,8 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 7. When any task is added, removed, or re-scoped in a proposed revision, the spec system shall mark the plan approval stale.
 8. The spec system shall invalidate approvals only on direct change in V1: a change to an element another element cites shall not invalidate the citing element's approval, raising the dependency-change advisory finding (Requirement 9) instead.
 9. When a gate approval is requested, the system shall surface it in Needs You / Active Work with a deep link to the exact decision and fire notifications per the user's settings; granting it shall unblock the waiting agent (observable on its next status read or via a queued-turn nudge).
+10. The spec system shall require the plan approval as a sign-off precondition only for a plan-stage proposed revision; requirement and decision approvals shall be required only for the requirements and decisions the proposed revision contains.
+11. The gating dials consulted by a proposed revision's propose and sign-off transitions shall be those of the revision's authoring stage and of any earlier stage whose elements the revision modified.
 
 ### Requirement 11: Configurable autonomy — presets, per-gate dials, and the floor
 **Objective:** As the operator, I want gating to be per-spec policy — a preset plus per-gate dials over a hard floor — so that autonomy matches the work without ever compromising delivery integrity.
@@ -174,6 +179,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 9. The spec system shall allow the delivery/merge dial to be lowered to Notify but never to Off.
 10. When a preset switch or any gate loosening is requested — including on an in-flight spec — the system shall require a hard, non-bypassable human confirmation, applied prospectively only and never retroactively creating approvals.
 11. The elicitation layer shall keep question batches and checklists skippable, visible, and prunable.
+12. The three authoring gates (requirements, design, plan) shall additionally govern the staged-authoring advance of Requirement 22, under the same dials and overrides, with no separate policy surface.
 
 ### Requirement 12: Open questions and assumptions
 **Objective:** As the operator, I want open questions and agent assumptions to be first-class records with human disposition, so that unresolved intent is visible and never silently baked into approved content.
@@ -283,3 +289,36 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 2. The release evidence shall demonstrate an independent reviewer navigating every in-scope criterion of that feature from requirement → approved revision → task → changed code → valid proof → merge result, using the capture required by Requirement 20.
 3. The release shall include demonstrations of the server refusing each illegal transition: execution start pinning a revision not in the Approved state, a task completion claim without acceptable evidence, and a merge with a selected criterion in no acceptable state.
 4. If any illegal transition succeeds, or any out-of-band repair of spec state occurs during the release-acceptance feature, the release test shall fail.
+
+### Requirement 22: Staged authoring discipline
+**Objective:** As the operator, I want authoring to progress requirements → design → plan under the same dials that gate approval, so that each stage is authored from reviewed foundations and agents cannot pre-build downstream artifacts on unvalidated intent.
+
+#### Acceptance Criteria
+
+1. The spec system shall record an authoring stage — requirements, design, or plan — on every draft revision at open, visible in Spec Studio, CLI status, and review surfaces.
+2. While a draft revision is at the requirements stage, the spec system shall admit writes of intent/context sections, requirements, and criteria; while at the design stage, additionally decisions and design-narrative sections; while at the plan stage, additionally tasks. Question and assumption records shall be admissible at every stage.
+3. When a write targets an element kind of a later stage than the draft's current stage, the spec system shall refuse it with a typed refusal (machine-readable code, the unmet condition, and the legitimate next step — proposing for review where the concluding dial is Gate, advancing where it is Notify or Off) and record the intervention.
+4. The spec system shall always admit writes to elements of the current or an earlier stage; consequences of editing approved earlier-stage content are governed by the approval-staleness rules of Requirement 10.
+5. Where the concluding gate dial is Gate, the stage shall advance only through sign-off of a revision at the current stage; where it is Notify or Off, the agent shall advance the stage through an explicit act — identifying the draft revision and the stage it expects to conclude, refused with a typed conflict when either expectation is stale — recorded as a gate admission naming the admitting policy, never as an approval.
+6. Where all three authoring gates resolve to the fast-path combined approval (Requirement 11.5), draft revisions shall open at the plan stage and single-pass authoring shall be preserved unchanged; a policy mixing the combined approval with other dials shall treat combined as Gate for staging purposes.
+7. A draft opened from an approved revision shall open at the stage after its base (capped at plan); a draft opened by request-changes shall retain the withdrawn revision's stage.
+8. If execution start is requested pinning a revision that is not a plan-stage revision, the spec system shall refuse the transition.
+9. Revisions created before this discipline exists shall be treated as plan-stage revisions.
+
+### Requirement 23: The plan stage plans the execution graph
+**Objective:** As the operator, I want the approved task plan to be the execution-graph plan — authored with lane sizing, ordering truth, parallelism claims, and conflict surfaces in view, and compiled without judgment — so that one reviewed planning act produces workflows that execute well, with no lossy translation step.
+
+#### Acceptance Criteria
+
+1. The spec system shall let each task optionally declare a lane group and the file surfaces it expects to touch, as reviewable plan content whose change stales the plan approval per Requirement 10.
+2. When an execution is compiled, tasks sharing a declared lane group shall compile into one shared execution context; tasks without a group shall compile to their own context; compiled contexts shall be titled from their task content, not generic labels; and each context's acceptance criteria shall derive from the union of its member tasks' locked criterion briefs.
+3. The compiled definition's charter shall be assembled deterministically from the pinned revision's approved intent sections; compilation shall apply no agent judgment and perform no summarization.
+4. Declared lane grouping shall compile as the definition's initial grouping while remaining an execution-only choice per Requirement 17.4, editable in the workflow surface before execution starts without weakening any task's locked contract.
+5. The spec system shall evaluate the graph-shape lint findings of Requirement 9 (criteria 11–12) so the plan review presents the execution-graph consequences of the plan.
+6. Agent guidance surfaces for plan-stage authoring shall present execution-graph planning explicitly: tasks sized for one agent lane, dependencies as ordering truth, absent cross-lane precedence paths as parallelism claims, and splitting oversized tasks at authoring time (compilation groups tasks but never splits one).
+7. Declared touched surfaces shall be carried into the compiled task metadata for use by the workflow surface.
+8. Compiled task instructions shall include the approved content of each decision the task traces to.
+9. Definition approval and execution start shall validate that the definition's task placement and intra-context order embed every approved task dependency, refusing the transition otherwise; definition editing shall re-derive each affected context's acceptance criteria from its members' locked briefs whenever membership changes.
+10. Plan review surfaces — Spec Studio and the CLI reads — shall present each task's dependencies, lane group, touched surfaces, and criterion coverage.
+11. Once a spec-origin execution is running, task-to-context placement shall be immutable: a live edit moving a task shall be refused.
+12. A task completion claim shall be refused while any of the task's declared intra-context predecessors is incomplete.

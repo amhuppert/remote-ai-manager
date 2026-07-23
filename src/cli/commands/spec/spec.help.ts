@@ -18,6 +18,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>",
       "cctl spec draft <slug> --file <element.json> --base-version <number|new>",
       "cctl spec propose <slug>",
+      "cctl spec advance <slug> --from <requirements|design>",
       "cctl spec question <slug> --text <text> [--element <handle>]",
       "cctl spec answer <slug>/Q2 --answer <text>",
       "cctl spec assume <slug> --text <text> [--element <handle>]",
@@ -116,7 +117,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "status"],
     summary: "inspect a spec's phase and gate readiness",
     description:
-      "Show phase, every gate state, pending approvals, open questions, and criterion coverage for one spec.",
+      "Show phase, current authoring stage and its concluding gate, every gate state, pending approvals, open questions, criterion coverage, and the task execution graph for one spec.",
     usage: ["cctl spec status <slug>"],
     flags: [],
     examples: [
@@ -129,6 +130,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
       { command: "spec show", oneLiner: "read the full current spec" },
       { command: "spec get", oneLiner: "inspect one pending element" },
       { command: "spec verify", oneLiner: "recompute revision integrity" },
+      {
+        command: "spec advance",
+        oneLiner: "explicitly conclude a Notify/Off authoring stage",
+      },
     ],
   },
   {
@@ -283,7 +288,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "draft"],
     summary: "save a base-versioned draft element",
     description:
-      "Upsert one element into the current editable revision. Use the version last read, or new when creating the element; stale writes return the winning content and version.",
+      "Upsert one element admitted by the current authoring stage into the editable revision. Use the version last read, or new when creating the element; stale writes return the winning content and version.",
     usage: [
       "cctl spec draft <slug> --file <element.json> --base-version <number|new>",
     ],
@@ -309,9 +314,14 @@ export const specHelpEntries: CommandHelpEntry[] = [
           "save an edited element only if version 3 is still current",
       },
     ],
+    domainContext:
+      "Requirements stage admits intent/context prose, requirements, and criteria; design additionally admits decisions and design narrative; plan additionally admits tasks. Plan each task for one agent lane, treat dependencies as ordering truth and missing paths as parallelism claims, split oversized work before saving, and declare laneGroup/touchedPaths where they communicate reviewed execution intent.",
     related: [
       { command: "spec get", oneLiner: "read the current element version" },
-      { command: "spec propose", oneLiner: "propose the completed draft" },
+      {
+        command: "spec propose",
+        oneLiner: "propose the current authoring stage",
+      },
       {
         command: "spec create",
         oneLiner: "create the spec with its first element",
@@ -320,9 +330,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["spec", "propose"],
-    summary: "propose the current draft for review",
+    summary: "propose the current authoring stage for review",
     description:
-      "Freeze the editable revision and enter review. Blocking lint findings are returned as structured issues with an immediate instruction.",
+      "Freeze the editable revision and enter review for its current authoring stage. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending.",
     usage: ["cctl spec propose <slug>"],
     flags: [],
     examples: [
@@ -337,6 +347,40 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec request-approval",
         oneLiner: "route the proposed gate to the user",
+      },
+    ],
+  },
+  {
+    path: ["spec", "advance"],
+    summary: "conclude a Notify/Off authoring stage explicitly",
+    description:
+      "Advance the current draft from the expected requirements or design stage when that stage's concluding dial is Notify or Off. Gate requires human review and sign-off instead; stale revision or stage expectations are refused without changing content.",
+    usage: ["cctl spec advance <slug> --from <requirements|design>"],
+    flags: [
+      {
+        name: "from",
+        kind: "value",
+        valuePlaceholder: "<requirements|design>",
+        description:
+          "authoring stage observed on the current draft and expected to conclude",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec advance audit-log --from requirements --json",
+        explanation:
+          "record the policy admission and advance the same draft to design",
+      },
+    ],
+    related: [
+      { command: "spec status", oneLiner: "read the current stage and dial" },
+      {
+        command: "spec propose",
+        oneLiner: "enter review when the concluding dial is Gate",
+      },
+      {
+        command: "spec draft",
+        oneLiner: "author content admitted by the stage",
       },
     ],
   },
@@ -440,6 +484,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
     flags: [],
     examples: [],
+    domainContext:
+      "Author each plan-stage task for one agent lane and split work that cannot be completed or reviewed independently. Treat dependencies as ordering truth and independent tasks as explicit parallelism claims. Declare normalized touchedPaths so conflicting surfaces are visible, and use laneGroup only when several small tasks intentionally share one execution context.",
     related: [
       {
         command: "spec task complete",
@@ -568,7 +614,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<task.json>",
         description:
-          "discovered task document: title, instructions, and the four trace id arrays",
+          "discovered task document: title, instructions, four trace id arrays, and optional laneGroup/touchedPaths",
       },
       {
         name: "blocking-reason",
@@ -583,7 +629,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         invocation:
           "cctl spec capture audit-log --execution exec-1 --file .cc/temp/discovered-task.json --json",
         explanation:
-          'task.json shape: {"title": "...", "instructions": "...", "tracedRequirementElementIds": [], "tracedDecisionElementIds": [], "coveredCriterionElementIds": [], "dependsOnTaskElementIds": []} — the id arrays may be empty at capture time',
+          'task.json shape: {"title": "...", "instructions": "...", "tracedRequirementElementIds": [], "tracedDecisionElementIds": [], "coveredCriterionElementIds": [], "dependsOnTaskElementIds": [], "laneGroup": "optional", "touchedPaths": ["src/lib"]} — the id arrays may be empty at capture time',
       },
     ],
     domainContext:

@@ -72,6 +72,7 @@ const detailRevision = {
   specId: executingSpec.id,
   number: 4,
   state: "proposed",
+  authoringStage: "plan",
   basedOnRevisionId: "revision-3",
   contentHash: "revision-4-hash",
   proposedAt: NOW,
@@ -294,7 +295,11 @@ function detailPayload(
     status: {
       specId: executingSpec.id,
       slug: "native-sdd",
-      phase: { primary: "executing", authoringFacet: "in_review" },
+      phase: {
+        primary: "executing",
+        authoringFacet: "in_review",
+        authoringStage: "plan",
+      },
       gates: [
         { gate: "requirements", dial: "gate", state: "admitted" },
         { gate: "design", dial: "gate", state: "pending" },
@@ -699,6 +704,7 @@ describe("Spec Studio routes and inventory", () => {
     const header = screen.getByTestId("spec-phase-facets");
     expect(within(header).getByText("Executing")).toBeInTheDocument();
     expect(within(header).getByText("In review")).toBeInTheDocument();
+    expect(within(header).getByText("plan stage")).toBeInTheDocument();
     expect(within(header).getByText("7/12 delivered")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export" })).toHaveAttribute(
       "href",
@@ -1184,7 +1190,9 @@ describe("Spec Studio routes and inventory", () => {
     renderWithQuery(<SpecDetailPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "Review revision 4" }),
+      await screen.findByRole("heading", {
+        name: "Review plan-stage revision 4",
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/proposed 2026-07-18 · over revision 3/i),
@@ -1246,7 +1254,9 @@ describe("Spec Studio routes and inventory", () => {
     renderWithQuery(<SpecDetailPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "Review revision 1" }),
+      await screen.findByRole("heading", {
+        name: "Review plan-stage revision 1",
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText(/initial proposal/i)).toBeInTheDocument();
     const requirement = screen.getByTestId("review-change-requirement-1");
@@ -1554,7 +1564,6 @@ describe("Spec Studio routes and inventory", () => {
         revisionId: detailRevision.id,
         subjects: [
           { subjectKind: "requirement", elementId: "requirement-1" },
-          { subjectKind: "decision", elementId: "decision-1" },
           { subjectKind: "plan", elementId: null },
         ],
       }),

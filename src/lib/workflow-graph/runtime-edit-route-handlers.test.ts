@@ -12,6 +12,7 @@ import {
   createGraphWorkflowRuntimeEditRouteHandlers,
   type GraphWorkflowRuntimeEditRouteDeps,
 } from "./runtime-edit-route-handlers";
+import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 
 const PROJECT_PATH = "/repo";
 const SESSION_NAME = "session-1";
@@ -316,6 +317,54 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     const body = await response.json();
     expect(body.code).toBe("requires_pause");
     expect(Array.isArray(body.issues)).toBe(true);
+  });
+
+  it("returns a machine-readable 409 when a launched spec execution is regrouped", async () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    await seedExecution({
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        origin: {
+          sourceUri:
+            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
+        },
+      },
+    });
+    buildLiveEditDeps.mockResolvedValue({
+      ...TEST_LIVE_EDIT_DEPS,
+      executionContract: createSpecExecutionContract(),
+    });
+
+    const response = await handlers.POST(
+      makeRequest("POST", {
+        executionId: "execution-1",
+        baseLiveRevision: 1,
+        source: "cli",
+        operations: [
+          {
+            type: "move-task",
+            taskId: "task-implement-1",
+            targetContextId: "context-verify",
+          },
+        ],
+      }),
+      routeParams,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "spec_grouping_frozen",
+      issues: [
+        {
+          path: "operations[0]",
+          message: expect.stringContaining("spec-grouping-frozen"),
+        },
+      ],
+      instruction:
+        "Start a new spec execution to use a different task grouping.",
+    });
+    expect((await reload())?.liveRevision).toBe(1);
   });
 
   it("returns 400 frozen when editing a completed context", async () => {

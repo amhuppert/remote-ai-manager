@@ -20,6 +20,7 @@ import {
   type RequirementElementPayload,
   type Spec,
   type SpecElementPayload,
+  type TaskElementPayload,
 } from "@/lib/specs/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import {
@@ -27,8 +28,10 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import {
+  SpecElementIdTakenError,
   SpecRevisionImmutableError,
   StaleElementConflictError,
+  StaleStageConflictError,
   type SpecsRepo,
 } from "./specs-repo";
 
@@ -82,6 +85,7 @@ async function createSpec(
     },
     initialRevision: {
       id: `${id}-revision-1`,
+      authoringStage: "requirements",
       createdAt: CREATED_AT,
     },
   });
@@ -104,6 +108,20 @@ function criterionPayload(text: string): CriterionElementPayload {
       kinds: ["test_run", "validator_verdict"],
       note: "Run the repository contract tests.",
     },
+  };
+}
+
+function maximalTaskPayload(): TaskElementPayload {
+  return {
+    kind: "task",
+    title: "Persist the complete task contract",
+    instructions: "Round-trip every task payload field.",
+    tracedRequirementElementIds: ["requirement-maximal"],
+    tracedDecisionElementIds: ["decision-maximal"],
+    coveredCriterionElementIds: ["criterion-maximal"],
+    dependsOnTaskElementIds: ["task-prerequisite"],
+    laneGroup: "persistence",
+    touchedPaths: ["src/lib/specs", "src/lib/state-store"],
   };
 }
 
@@ -181,6 +199,7 @@ describe("maximal persistence contracts", () => {
           },
           initialRevision: {
             id: "revision-for-maximal-spec",
+            authoringStage: "requirements",
             createdAt: maximal.createdAt,
           },
         });
@@ -318,6 +337,7 @@ describe("maximal persistence contracts", () => {
           specId: created.spec.id,
           number: 2,
           state: "approved",
+          authoringStage: "design",
           basedOnRevisionId: created.revision.id,
           contentHash: "derived-by-propose",
           proposedAt: PROPOSED_AT,
@@ -332,6 +352,7 @@ describe("maximal persistence contracts", () => {
             maximal.basedOnRevisionId,
             "basedOnRevisionId",
           ),
+          authoringStage: maximal.authoringStage,
           createdAt: maximal.createdAt,
         });
         await repo.proposeRevision({
@@ -350,7 +371,6 @@ describe("maximal persistence contracts", () => {
 
   it("round-trips every persisted element-version field", async () => {
     const created = await createSpec({ id: "spec-version-maximal" });
-    const parent = await addRequirement(created.spec.id, created.revision.id);
 
     await assertRoundTripDurability({
       label: "spec-element-versions",
@@ -358,9 +378,9 @@ describe("maximal persistence contracts", () => {
       buildMaximalFixture: () =>
         specElementVersionSchema.parse({
           revisionId: created.revision.id,
-          elementId: "criterion-version-maximal",
+          elementId: "task-version-maximal",
           position: 7,
-          payload: criterionPayload("The maximal version payload."),
+          payload: maximalTaskPayload(),
           payloadHash: "derived-from-payload",
           elementVersion: 1,
           createdAt: PROPOSED_AT,
@@ -371,8 +391,8 @@ describe("maximal persistence contracts", () => {
           id: maximal.elementId,
           specId: created.spec.id,
           revisionId: maximal.revisionId,
-          kind: "criterion",
-          parentElementId: parent.element.id,
+          kind: "task",
+          parentElementId: null,
           position: maximal.position,
           payload: maximal.payload,
           createdAt: maximal.createdAt,
@@ -388,6 +408,56 @@ describe("maximal persistence contracts", () => {
 });
 
 describe("revision snapshots and aliases", () => {
+  it("advances the identified draft stage conditionally and is idempotent", async () => {
+    const created = await createSpec();
+
+    const advanced = await repo.advanceDraftAuthoringStage({
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      expectedStage: "requirements",
+      targetStage: "design",
+    });
+    const replay = await repo.advanceDraftAuthoringStage({
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      expectedStage: "requirements",
+      targetStage: "design",
+    });
+
+    expect(advanced.authoringStage).toBe("design");
+    expect(replay).toEqual(advanced);
+  });
+
+  it("returns a typed stale-stage conflict when the current draft was replaced", async () => {
+    const created = await createSpec();
+    await repo.proposeRevision({
+      revisionId: created.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    await repo.withdrawRevision({ revisionId: created.revision.id });
+    const replacement = await repo.createDraftFromBase({
+      id: "replacement-revision",
+      specId: created.spec.id,
+      baseRevisionId: created.revision.id,
+      authoringStage: "requirements",
+      createdAt: UPDATED_AT,
+    });
+
+    await expect(
+      repo.advanceDraftAuthoringStage({
+        specId: created.spec.id,
+        revisionId: created.revision.id,
+        expectedStage: "requirements",
+        targetStage: "design",
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<StaleStageConflictError>>({
+        code: "stale_stage",
+        currentRevision: replacement,
+      }),
+    );
+  });
+
   it("copies a complete base row-set into one new draft snapshot", async () => {
     const created = await createSpec();
     const requirement = await addRequirement(
@@ -412,6 +482,7 @@ describe("revision snapshots and aliases", () => {
       id: "revision-amendment",
       specId: created.spec.id,
       baseRevisionId: created.revision.id,
+      authoringStage: "design",
       createdAt: UPDATED_AT,
     });
     const snapshot = await repo.getRevisionSnapshot(draft.id);
@@ -447,6 +518,27 @@ describe("revision snapshots and aliases", () => {
       expectedContentHash: proposed.contentHash,
       actualContentHash: proposed.contentHash,
       mismatchedElementIds: [],
+    });
+  });
+
+  it("includes the declared authoring stage in the canonical content hash", async () => {
+    const created = await createSpec();
+    await addRequirement(created.spec.id, created.revision.id);
+    await repo.proposeRevision({
+      revisionId: created.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+
+    fixture.db
+      .prepare(
+        "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+      )
+      .run(created.revision.id);
+
+    await expect(
+      repo.verifyRevision(created.revision.id),
+    ).resolves.toMatchObject({
+      ok: false,
     });
   });
 
@@ -748,6 +840,51 @@ describe("draft compare-and-swap", () => {
     ).rejects.toMatchObject({
       failure: { kind: "validation", entity: "spec_element" },
     });
+  });
+
+  it("reports the owning spec when an element ID is reused across specs", async () => {
+    const firstSpec = await createSpec();
+    await repo.createDraftElement({
+      id: "sec-problem",
+      specId: firstSpec.spec.id,
+      revisionId: firstSpec.revision.id,
+      kind: "section",
+      parentElementId: null,
+      position: 0,
+      payload: {
+        kind: "section",
+        role: "intent_problem",
+        title: "Problem",
+        body: "First spec problem.",
+      },
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    const secondSpec = await createSpec();
+
+    await expect(
+      repo.createDraftElement({
+        id: "sec-problem",
+        specId: secondSpec.spec.id,
+        revisionId: secondSpec.revision.id,
+        kind: "section",
+        parentElementId: null,
+        position: 0,
+        payload: {
+          kind: "section",
+          role: "intent_problem",
+          title: "Problem",
+          body: "Second spec problem.",
+        },
+        createdAt: CREATED_AT,
+        updatedAt: UPDATED_AT,
+      }),
+    ).rejects.toMatchObject({
+      name: "SpecElementIdTakenError",
+      code: "element_id_taken",
+      elementId: "sec-problem",
+      existingSpecId: firstSpec.spec.id,
+    } satisfies Partial<SpecElementIdTakenError>);
   });
 
   it.each([

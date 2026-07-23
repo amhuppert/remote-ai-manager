@@ -126,6 +126,11 @@ async function requestTyped<T>(
 function statusText(status: SpecStatusView): string {
   const lines = [
     `${status.slug}  phase: ${status.phase.primary}`,
+    ...(status.phase.authoringStage === undefined
+      ? []
+      : [
+          `authoring stage: ${status.phase.authoringStage} (concluding gate: ${status.phase.authoringStage})`,
+        ]),
     `coverage: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} (${status.coverage.percentage}%)`,
     "gates:",
     ...status.gates.map(
@@ -150,6 +155,16 @@ function statusText(status: SpecStatusView): string {
           (assumption) =>
             `  ${assumption.handle} [${assumption.disposition}]: ${assumption.text}`,
         )),
+    "plan tasks:",
+    ...(status.taskPlan.length === 0
+      ? ["  none"]
+      : status.taskPlan.flatMap((task) => [
+          `  ${task.handle}: ${task.title}`,
+          `    dependencies: ${task.dependsOn.join(", ") || "none"}`,
+          `    lane group: ${task.laneGroup ?? "one task per lane"}`,
+          `    touched surfaces: ${task.touchedPaths.join(", ") || "not declared"}`,
+          `    criterion coverage: ${task.criterionCoverage.join(", ") || "none"}`,
+        ])),
   ];
   return `${lines.join("\n")}\n`;
 }

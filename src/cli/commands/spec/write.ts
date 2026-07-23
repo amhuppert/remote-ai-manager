@@ -70,6 +70,10 @@ const proposeResponseSchema = z
     absorbedSignOff: z.boolean(),
   })
   .strict();
+const advanceStageSchema = z.enum(["requirements", "design"]);
+const advanceResponseSchema = z
+  .object({ revision: specRevisionSchema })
+  .strict();
 const startResponseSchema = z
   .object({
     execution: specExecutionRowSchema,
@@ -529,6 +533,65 @@ export async function runSpecPropose(
     `proposed revision ${response.value.revision.number}`,
     "proposal",
     response.value,
+  );
+}
+
+export async function runSpecAdvance(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec advance"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "advance", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "advance", json);
+  if (!slug.ok) return slug.result;
+  const expectedStage = advanceStageSchema.safeParse(values["from"]);
+  if (!expectedStage.success) {
+    return usageFailure(
+      "spec advance requires --from requirements or design",
+      json,
+    );
+  }
+  const resolved = await resolveConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const detail = await readDetail(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "advance",
+    json,
+  );
+  if (!detail.ok) return detail.result;
+  const revisionId = currentRevisionId(detail.value, "advance", json);
+  if (!revisionId.ok) return revisionId.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "advance"),
+      body: {
+        revisionId: revisionId.value,
+        expectedStage: expectedStage.data,
+      },
+      schema: advanceResponseSchema,
+      command: "advance",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  return success(
+    json,
+    `advanced revision ${response.value.revision.number} to ${response.value.revision.authoringStage} stage`,
+    "revision",
+    response.value.revision,
   );
 }
 

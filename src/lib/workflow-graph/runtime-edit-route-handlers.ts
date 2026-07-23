@@ -45,6 +45,7 @@ import {
   type LiveEditRejectionCode,
   type ResolvedContextConfig,
 } from "./runtime-edits";
+import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
 
 const logger = createLogger("workflow.live-edit");
 
@@ -104,6 +105,7 @@ async function defaultBuildLiveEditDeps(
     createTaskId: () => `task-${randomUUID()}`,
     resolvedGlobalDefaults: () => resolvedGlobalDefaults,
     hasPreMergeCommand: () => hasPreMergeCommand,
+    executionContract: createRegisteredGraphExecutionContract(),
   };
 }
 
@@ -227,7 +229,11 @@ function evaluateLiveEditRequest(
     return {
       ok: false,
       failure: {
-        status: applied.code === "region_locked" ? 409 : 400,
+        status:
+          applied.code === "region_locked" ||
+          applied.code === "spec_grouping_frozen"
+            ? 409
+            : 400,
         code: applied.code,
         error: "live edit was rejected",
         issues: applied.issues,

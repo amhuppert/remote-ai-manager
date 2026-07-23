@@ -432,10 +432,16 @@ const PHASE_LABELS: Record<SpecPhaseProjection["primary"], string> = {
 
 export function formatSpecPhase(phase: SpecPhaseProjection): string {
   const primary = PHASE_LABELS[phase.primary];
-  if (!phase.authoringFacet || phase.authoringFacet === phase.primary) {
-    return primary;
-  }
-  return `${primary} · ${PHASE_LABELS[phase.authoringFacet]}`;
+  const phaseLabel =
+    !phase.authoringFacet || phase.authoringFacet === phase.primary
+      ? primary
+      : `${primary} · ${PHASE_LABELS[phase.authoringFacet]}`;
+  if (phase.authoringStage === undefined) return phaseLabel;
+  const stageSuffix =
+    phase.primary === "approved"
+      ? `${phase.authoringStage} stage`
+      : phase.authoringStage;
+  return `${phaseLabel} · ${stageSuffix}`;
 }
 
 export function specPhaseTone(

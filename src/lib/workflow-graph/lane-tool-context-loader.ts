@@ -15,6 +15,7 @@ import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
+import { createRegisteredGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { buildImplementerCollaborationContext } from "@/lib/workflow-graph/implementer-collaboration-context";
 import { resolveLaneToolCollaborationConfig } from "@/lib/workflow-graph/lane-collaboration-resolver";
 import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
@@ -146,6 +147,7 @@ const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
   sharedDocumentRegistry,
   publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
   readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
+  executionContract: createRegisteredGraphExecutionContract(),
 });
 
 /**

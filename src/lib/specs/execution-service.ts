@@ -47,6 +47,7 @@ import {
   type ScopePlan,
 } from "./scope-validation";
 import {
+  openDraftAuthoringStage,
   startExecution as decideStartExecution,
   type TransitionRefusal,
 } from "./transitions";
@@ -1189,6 +1190,8 @@ async function captureScopeAmendment(
   }
   const spec = await deps.specsRepo.findById(execution.spec_id);
   if (spec === null) return lifecycleNotFound(execution.spec_id);
+  const baseRevision = await deps.specsRepo.findRevision(execution.revision_id);
+  if (baseRevision === null) return lifecycleNotFound(execution.revision_id);
   const existingDraft = await deps.specsRepo.findDraftRevisionBySpecId(
     execution.spec_id,
   );
@@ -1208,6 +1211,13 @@ async function captureScopeAmendment(
       id: deps.nextId("revision"),
       specId: execution.spec_id,
       baseRevisionId: execution.revision_id,
+      authoringStage: openDraftAuthoringStage({
+        policy: spec.gatePolicy,
+        baseRevision: {
+          state: "approved",
+          authoringStage: baseRevision.authoringStage,
+        },
+      }),
       createdAt: deps.now(),
     }));
   const task = await deps.specsRepo.createDraftElement({
@@ -1289,6 +1299,7 @@ async function startWithinQueue(
     specAbandoned: spec.abandonedAt !== null,
     revisionId: input.revisionId,
     revisionState: snapshot.revision.state,
+    authoringStage: snapshot.revision.authoringStage,
     scope: input.scope,
     plan,
     activeExecution:
@@ -1342,6 +1353,7 @@ async function startWithinQueue(
         specAbandoned: spec.abandonedAt !== null,
         revisionId: input.revisionId,
         revisionState: snapshot.revision.state,
+        authoringStage: snapshot.revision.authoringStage,
         scope: input.scope,
         plan,
         activeExecution:

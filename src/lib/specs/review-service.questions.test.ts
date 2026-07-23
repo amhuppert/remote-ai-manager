@@ -95,6 +95,18 @@ async function createPopulatedSpec() {
     },
     actor: AGENT,
   });
+  await specs.advanceDraftAuthoringStage({
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    expectedStage: "requirements",
+    targetStage: "design",
+  });
+  await specs.advanceDraftAuthoringStage({
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    expectedStage: "design",
+    targetStage: "plan",
+  });
   for (const element of [
     {
       elementId: "criterion-1",

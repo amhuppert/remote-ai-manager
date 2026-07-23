@@ -35,6 +35,7 @@ import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import { createMergeAssociationResolver } from "./merge-association";
 import type { SpecWorkflowComposition } from "./workflow-composition";
 import { registerSpecWorkflowComposition } from "./workflow-composition";
+import { createSpecExecutionContract } from "./execution-contract";
 
 export interface ProductionSpecWorkflowCompositionDeps {
   gitClient: GitClient;
@@ -335,6 +336,7 @@ export function createProductionSpecWorkflowComposition(
     lifecycleCallbacks,
     mergeAssociation,
     mergeDeliveryLifecycle,
+    executionContract: createSpecExecutionContract(),
   };
 }
 

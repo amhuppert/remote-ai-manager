@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Status | Rev 5 — collaboration-review package applied 2026-07-17 (approved; V1 thinning option declined — full scope retained); V1 success test defined (§6.1); no open items |
-| Date | 2026-07-17 |
+| Status | Rev 6 — staged-authoring and plan-stage-execution-planning amendments applied 2026-07-22 (approved; decision records: `.kiro/specs/native-sdd/design-staged-authoring.md`, `design-plan-stage-execution-planning.md`). Prior: Rev 5 collaboration-review package 2026-07-17; no open items |
+| Date | 2026-07-22 |
 | Stage | Product behavior + domain model (pre-technical-design) |
-| Inputs | `docs/reports/native-sdd-collaboration-proposals.md`, session charter, decision batches 2026-07-16/17, collaboration review 2026-07-17 (run bd6c3062) |
+| Inputs | `docs/reports/native-sdd-collaboration-proposals.md`, session charter, decision batches 2026-07-16/17, collaboration review 2026-07-17 (run bd6c3062), workflow design review + two Codex review rounds 2026-07-22 |
 
 This document makes the native SDD proposal concrete at the product level: the behaviors users
 and agents experience, and what those behaviors demand of the domain model. It deliberately stops
@@ -149,6 +149,15 @@ annotation never thaws the review target; **Request changes** ends the review at
 a draft revision; **Approve item** records an element approval; **Sign off revision** is allowed
 only when the configured approvals are in place, blocking comment threads are resolved, and no
 rejected assumption is still cited (B6 lint).
+
+**Authoring stage** (decided 2026-07-22): every draft revision carries an authoring stage —
+requirements → design → plan. Under gated presets each stage concludes with its own
+propose → review → sign-off cycle, so a spec reaches its executable plan through successive
+small reviews rather than one large one; later-stage elements cannot be authored before the
+current stage concludes, while earlier-stage content stays editable (approval staleness prices
+it). Amendment drafts against a plan-stage base open unstaged — staging governs initial
+authoring progression, not post-approval amendments. Until a plan-stage revision is approved,
+the stage renders beside the phase everywhere the phase appears.
 
 **Execution state**: Definition review (generated workflow definition awaiting approval per the
 execution-start dial) → Running (the existing graph-workflow lifecycle, including halts and
@@ -327,9 +336,13 @@ computations:
 | Check | Finding | Severity |
 |---|---|---|
 | Spec has ≥ 1 requirement with ≥ 1 criterion | "Empty spec — nothing to review" | Blocks `propose` |
-| Every criterion is covered by ≥ 1 task | "R3.2 has no covering task" | Blocks `propose` |
+| Every criterion is covered by ≥ 1 task | "R3.2 has no covering task" | Blocks `propose` of a plan-stage revision |
 | Every task traces to ≥ 1 requirement | "T9 traces to no requirement — possible scope creep" | Blocks `propose` |
 | Task dependency graph is acyclic and complete | "T4 → T7 → T4 cycle", "T5 depends on removed T2" | Blocks `propose` |
+| Declared lane grouping contracts acyclically | "Lane groups A → B → A — grouping cannot compile" | Blocks `propose` |
+| Plan is not fully serialized (contracted graph) | "No two contexts can ever run concurrently" | Advisory |
+| No task covers more than half of all criteria (plans ≥ 3 tasks) | "T7 covers 8 of 12 criteria — lane overload" | Advisory |
+| Independent contexts declare disjoint touched surfaces | "T4 and T9 are parallel but both touch src/lib/specs" | Advisory |
 | Internal handles resolve | "D2 cites R9, which was removed in this draft" | Blocks `propose` |
 | Approval freshness | "R3 changed since its approval" (feeds B7 invalidation) | Advisory |
 | Status consistency | "T7 marked complete but R3.2 has no evidence" | Blocks completion claim |
@@ -422,6 +435,18 @@ hard, non-bypassable human confirmation: prospective-only, and never retroactive
 approvals. The elicitation layer obeys the same dial philosophy: question batches and checklists
 are skippable, visible, and prunable — the complexity budget from the proposal.
 
+**Staged authoring (decided 2026-07-22).** The three authoring dials additionally govern
+authoring-stage advance (§4): where the concluding dial is Gate, a stage concludes only through
+its propose → review → sign-off cycle; where it is Notify or Off, the agent advances through an
+explicit, recorded gate admission — never silently. Where all three authoring dials resolve to
+the fast-path combined approval, drafts open at plan and single-pass authoring is preserved; a
+mixed policy treats combined as Gate for staging. Draft-write admissibility depends only on the
+stage, never on the dials — a premature later-stage write is refused identically under every
+policy. Rationale: requirements authored as a standalone deliverable resist solution
+contamination, human corrections compound into fresh downstream authoring instead of patches,
+and small stage reviews resist bulk-approval anchoring. The five-gate matrix itself is
+unchanged; there is no separate staging policy surface.
+
 **Domain-model implications:** gate policy is data attached to the spec (preset + sparse
 overrides, resolved the way workflow cascades resolve), consulted by the same transition
 predicates B5 enforces; every transition records *which* policy admitted it (human approval vs.
@@ -468,10 +493,19 @@ Execution compilation ships in V1 (decided 2026-07-16):
   dependency-closed; every selected criterion has selected task coverage; every excluded
   criterion carries an explicit disposition (deferred, delivered-elsewhere, waived); partial
   task selection is rejected unless the plan defines a valid smaller unit.
+- **The plan stage is the execution-graph planning act (decided 2026-07-22).** Tasks are
+  authored as lanes — sized for one agent, dependencies as ordering truth, absent cross-lane
+  precedence paths as reviewed parallelism claims, with optional lane groups and touched
+  surfaces — so compilation stays judgment-free and the definition review stays execution-only.
+  For spec-origin executions, regrouping is a pre-start freedom: task placement freezes once the
+  run starts, per the same pin philosophy as revision and scope.
 - **The execution plan is a graph workflow definition — not a new artifact.** "Projection" means
   generation: the spec's approved plan (tasks, dependencies, criteria) is compiled into a
-  standard workflow definition (task groups → contexts, dependencies → edges, acceptance
-  criteria → validator briefs, narrow per-lane context packs). It is reviewed and edited in the
+  standard workflow definition (plan-declared lane groups → contexts, 1:1 default for ungrouped
+  tasks, titled from task content; dependencies → edges; acceptance criteria → validator briefs,
+  each context's criteria derived from its member tasks' briefs; narrow per-lane context packs;
+  the charter assembled deterministically from the approved intent sections, constraints carried
+  as active charter invariants). It is reviewed and edited in the
   existing graph-workflow UI and validated by the existing machinery; native SDD adds an
   approval state on the definition before start and provenance links from each context back to
   the spec tasks/criteria it implements. The definition carries two kinds of content (rev 5):

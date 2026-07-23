@@ -6,8 +6,11 @@ import {
   refusalCodeSchema,
   refusalSchema,
   specElementPayloadSchema,
+  specAuthoringStageSchema,
   specEventTypeSchema,
   specGatePolicySchema,
+  specRevisionRowSchema,
+  specRevisionSchema,
 } from "./schemas";
 
 const validPayloads = {
@@ -52,6 +55,8 @@ const validPayloads = {
     tracedDecisionElementIds: ["decision-1"],
     coveredCriterionElementIds: ["criterion-1", "criterion-2"],
     dependsOnTaskElementIds: ["task-1"],
+    laneGroup: "persistence",
+    touchedPaths: ["src/lib/specs", "src/lib/state-store/specs-repo.ts"],
   },
 } as const;
 
@@ -86,8 +91,52 @@ describe("spec element payload schemas", () => {
       { ...validPayloads.task, coveredCriterionElementIds: "criterion-1" },
     ],
     ["task", { ...validPayloads.task, tracedDecisionElementIds: undefined }],
+    ["task", { ...validPayloads.task, touchedPaths: ["/src/lib/specs"] }],
+    ["task", { ...validPayloads.task, touchedPaths: ["src/lib/specs/"] }],
+    ["task", { ...validPayloads.task, touchedPaths: ["src/../specs"] }],
+    ["task", { ...validPayloads.task, touchedPaths: ["src\\lib\\specs"] }],
   ])("rejects a malformed %s payload", (_kind, payload) => {
     expect(specElementPayloadSchema.safeParse(payload).success).toBe(false);
+  });
+});
+
+describe("spec authoring stage schema", () => {
+  it.each(["requirements", "design", "plan"])(
+    "accepts the %s authoring stage",
+    (stage) => {
+      expect(specAuthoringStageSchema.parse(stage)).toBe(stage);
+    },
+  );
+
+  it("persists the stage in revision row and domain schemas", () => {
+    expect(
+      specRevisionRowSchema.parse({
+        id: "revision-1",
+        spec_id: "spec-1",
+        number: 1,
+        state: "draft",
+        authoring_stage: "design",
+        based_on_revision_id: null,
+        content_hash: null,
+        proposed_at: null,
+        approved_at: null,
+        created_at: "2026-07-22T12:00:00.000Z",
+      }).authoring_stage,
+    ).toBe("design");
+    expect(
+      specRevisionSchema.parse({
+        id: "revision-1",
+        specId: "spec-1",
+        number: 1,
+        state: "draft",
+        authoringStage: "design",
+        basedOnRevisionId: null,
+        contentHash: null,
+        proposedAt: null,
+        approvedAt: null,
+        createdAt: "2026-07-22T12:00:00.000Z",
+      }).authoringStage,
+    ).toBe("design");
   });
 });
 

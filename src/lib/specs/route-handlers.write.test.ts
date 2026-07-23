@@ -2,8 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { PersistenceError } from "@/lib/shared/errors";
+import {
+  SpecElementIdTakenError,
+  StaleStageConflictError,
+} from "@/lib/state-store/specs-repo";
 
-import { SpecSlugTakenError } from "./authoring-service";
+import {
+  SpecSlugTakenError,
+  StageBlockedWriteError,
+} from "./authoring-service";
 import type { Spec } from "./schemas";
 import {
   createSpecWriteRouteHandlers,
@@ -105,6 +112,21 @@ function createServices() {
         revision: { id: "revision-1" },
         diff: { changes: [] },
         absorbedSignOff: false,
+      })),
+      advanceAuthoringStage: vi.fn(async () => ({
+        ok: true as const,
+        revision: {
+          id: "revision-1",
+          specId: spec.id,
+          number: 1,
+          state: "draft" as const,
+          authoringStage: "design" as const,
+          basedOnRevisionId: null,
+          contentHash: null,
+          proposedAt: null,
+          approvedAt: null,
+          createdAt: "2026-07-18T00:00:00.000Z",
+        },
       })),
     },
     review: {
@@ -267,6 +289,63 @@ describe("spec write route handlers", () => {
     });
   });
 
+  it("identifies a globally reused element ID and tells the caller how to recover", async () => {
+    const services = createServices();
+    vi.mocked(services.authoring.createSpec).mockRejectedValueOnce(
+      new SpecElementIdTakenError("sec-problem", "spec-existing"),
+    );
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.projectActionPOST(
+      postRequest(createBody, {
+        authorization: "Bearer valid",
+        "x-cc-conversation-id": "conversation-agent",
+      }),
+      projectRouteContext("create"),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      code: "element_id_taken",
+      unmetConditions: [
+        'Spec element ID "sec-problem" is already used by spec "spec-existing"; element IDs are globally unique.',
+      ],
+      instruction:
+        'Choose a globally unique element ID, preferably prefixed with the spec slug (for example, "<spec-slug>-sec-problem"), then retry.',
+      details: {
+        elementId: "sec-problem",
+        existingSpecId: "spec-existing",
+      },
+    });
+  });
+
+  it("preserves a stage-blocked write refusal at the HTTP boundary", async () => {
+    const services = createServices();
+    const refusal = {
+      code: "stage_blocked" as const,
+      unmetConditions: [
+        "A task cannot be authored during the requirements stage.",
+      ],
+      instruction:
+        "Propose the requirements stage and obtain sign-off before authoring task content.",
+    };
+    vi.mocked(services.authoring.createSpec).mockRejectedValueOnce(
+      new StageBlockedWriteError(refusal),
+    );
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.projectActionPOST(
+      postRequest(createBody, {
+        authorization: "Bearer valid",
+        "x-cc-conversation-id": "conversation-agent",
+      }),
+      projectRouteContext("create"),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual(refusal);
+  });
+
   it.each([
     ["gate_blocked", 409],
     ["lint_blocked", 409],
@@ -303,6 +382,84 @@ describe("spec write route handlers", () => {
       await expect(response.json()).resolves.toEqual(refusal);
     },
   );
+
+  it("forwards an expected-stage advance with transport provenance", async () => {
+    const services = createServices();
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.specActionPOST(
+      postRequest(
+        { revisionId: "revision-1", expectedStage: "requirements" },
+        {
+          authorization: "Bearer valid",
+          "x-cc-conversation-id": "conversation-agent",
+          "x-cc-agent-backend": "codex",
+        },
+      ),
+      routeContext("advance"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      revision: { id: "revision-1", authoringStage: "design" },
+    });
+    expect(services.authoring.advanceAuthoringStage).toHaveBeenCalledWith({
+      specId: spec.id,
+      revisionId: "revision-1",
+      expectedStage: "requirements",
+      actor: {
+        kind: "agent",
+        conversationId: "conversation-agent",
+        backend: "codex",
+      },
+    });
+  });
+
+  it("returns the winning draft on a stale-stage advance conflict", async () => {
+    const services = createServices();
+    const currentRevision = {
+      id: "revision-2",
+      specId: spec.id,
+      number: 2,
+      state: "draft" as const,
+      authoringStage: "design" as const,
+      basedOnRevisionId: "revision-1",
+      contentHash: null,
+      proposedAt: null,
+      approvedAt: null,
+      createdAt: "2026-07-18T00:00:00.000Z",
+    };
+    vi.mocked(services.authoring.advanceAuthoringStage).mockRejectedValueOnce(
+      new StaleStageConflictError(
+        spec.id,
+        "revision-1",
+        "requirements",
+        currentRevision,
+      ),
+    );
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.specActionPOST(
+      postRequest(
+        { revisionId: "revision-1", expectedStage: "requirements" },
+        {
+          authorization: "Bearer valid",
+          "x-cc-conversation-id": "conversation-agent",
+        },
+      ),
+      routeContext("advance"),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stale_stage",
+      details: {
+        expectedRevisionId: "revision-1",
+        expectedStage: "requirements",
+        currentRevision: { id: "revision-2", authoringStage: "design" },
+      },
+    });
+  });
 
   it("derives and records actor provenance from both transports", async () => {
     const services = createServices();

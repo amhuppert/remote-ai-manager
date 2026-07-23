@@ -14,6 +14,7 @@ import type {
   WorkflowScope,
 } from "@/lib/workflow-graph/storage";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { WorkflowDefinitionApprovalRequiredError } from "@/lib/workflow-graph/workflow-manager";
 import type { SessionState } from "@/lib/sessions/schemas";
 import {
   createWorkflowDefinition,
@@ -113,6 +114,7 @@ function makeExecutionDeps(
 function routeHost(
   execution: GraphWorkflowExecution | null,
   files: Record<string, string> = {},
+  startError?: Error,
 ): CliHost {
   const definitionHandlers = createWorkflowDefinitionRouteHandlers({
     resolveProjectPath: async () => PROJECT_PATH,
@@ -160,6 +162,7 @@ function routeHost(
     makeExecutionDeps({
       getActiveExecution: async () => execution,
       startExecution: async () => {
+        if (startError) throw startError;
         if (!execution) throw new Error("no execution fixture");
         return execution;
       },
@@ -382,6 +385,25 @@ describe("cctl workflow against the real workflow route handlers", () => {
         .trimEnd()
         .endsWith("track progress with 'cctl workflow status'"),
     ).toBe(true);
+  });
+
+  it("start treats the real approval-required route response as a successfully parked execution", async () => {
+    const result = await runCli(
+      ["workflow", "start", "wf-1", "--json"],
+      env,
+      routeHost(
+        null,
+        {},
+        new WorkflowDefinitionApprovalRequiredError("execution-review"),
+      ),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      executionId: "execution-review",
+      status: "awaiting_definition_approval",
+    });
   });
 
   it("get prints the compact outline by default (sizes, not bodies)", async () => {

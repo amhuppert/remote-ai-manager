@@ -21,6 +21,11 @@ import type {
   SharedDocumentUpsertInput,
 } from "./shared-documents";
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
+import {
+  assertGraphExecutionContractAccepted,
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
 
 const logger = createLogger("graph-workflow-execution-tool-context");
 
@@ -82,6 +87,7 @@ export interface GraphWorkflowExecutionToolContextDeps {
     input: PublishLiveEditAppliedInput,
   ): GraphWorkflowEventDelivery;
   readLiveOccupancy(conversationId: string): LiveOccupancySnapshot | null;
+  executionContract?: GraphExecutionContract;
   now?(): string;
 }
 
@@ -153,6 +159,8 @@ export function createGraphWorkflowExecutionToolContext(
   deps: GraphWorkflowExecutionToolContextDeps,
 ): GraphWorkflowExecutionToolContextFactory {
   const now = deps.now ?? (() => new Date().toISOString());
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
 
   function create(
     input: CreateGraphWorkflowExecutionToolContextInput,
@@ -333,6 +341,10 @@ export function createGraphWorkflowExecutionToolContext(
             );
             return draft;
           }
+
+          assertGraphExecutionContractAccepted(
+            executionContract.validateTaskCompletion(draft, taskId),
+          );
 
           const completedAt = now();
           taskState.status = "completed";

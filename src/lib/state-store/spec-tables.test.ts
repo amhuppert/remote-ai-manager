@@ -115,6 +115,40 @@ describe("native SDD schema floor", () => {
     ]);
   });
 
+  it("stores revision authoring stage with a plan-only backfill default", () => {
+    const db = _createTestDb({ inMemory: true });
+    openDbs.push(db);
+    const columns = db.pragma("table_info(spec_revisions)") as Array<{
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }>;
+
+    expect(
+      columns.find(({ name }) => name === "authoring_stage"),
+    ).toMatchObject({
+      notnull: 1,
+      dflt_value: "'plan'",
+    });
+    expect(() =>
+      db.exec(`
+        INSERT INTO projects (root_path) VALUES ('/repo');
+        INSERT INTO specs (
+          id, project_path, slug, name, gate_policy_json, created_at, updated_at
+        ) VALUES (
+          'spec-1', '/repo', 'spec', 'Spec', '{"preset":"contract-bearing"}',
+          '2026-07-22T12:00:00.000Z', '2026-07-22T12:00:00.000Z'
+        );
+        INSERT INTO spec_revisions (
+          id, spec_id, number, state, authoring_stage, created_at
+        ) VALUES (
+          'revision-1', 'spec-1', 1, 'draft', 'invalid',
+          '2026-07-22T12:00:00.000Z'
+        );
+      `),
+    ).toThrow(/check constraint/i);
+  });
+
   it("is a no-op across concurrent and repeated opens of an existing database", () => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), "cc-spec-floor-test-"));
     const dbPath = path.join(tempDir, "command-center.db");

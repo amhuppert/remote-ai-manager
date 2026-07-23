@@ -298,7 +298,7 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
 
     const rows = specRows();
     expect(rows.every((row) => row.type === "spec-policy-admitted")).toBe(true);
-    expect(rows.map((row) => row.gate).sort()).toEqual(["design", "plan"]);
+    expect(rows.map((row) => row.gate)).toEqual(["plan"]);
     const insertedAdmissionIds = reviewRepo
       .findGateAdmissionsByRevision(PROPOSED_REVISION_ID)
       .filter(
@@ -319,7 +319,7 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
       approver: "operator",
       actor: { kind: "human" },
     });
-    expect(specRows()).toHaveLength(2);
+    expect(specRows()).toHaveLength(1);
   });
 
   it("11.2 policyAdmitted notifies the human post hoc without opening a Needs You item, once per admission", () => {

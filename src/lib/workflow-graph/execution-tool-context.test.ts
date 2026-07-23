@@ -13,6 +13,7 @@ import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,
 } from "./execution-tool-context";
+import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
@@ -141,6 +142,7 @@ function withRunningContext(
 interface FactoryOptions {
   initialExecution?: GraphWorkflowExecution;
   readLiveOccupancy?: GraphWorkflowExecutionToolContextDeps["readLiveOccupancy"];
+  executionContract?: GraphWorkflowExecutionToolContextDeps["executionContract"];
 }
 
 interface FactoryResult {
@@ -195,6 +197,7 @@ function buildToolContext(
     sharedDocumentRegistry,
     publishLiveEditApplied,
     readLiveOccupancy: factoryOptions.readLiveOccupancy ?? (() => null),
+    executionContract: factoryOptions.executionContract,
     now: () => "2026-03-27T12:00:00.000Z",
   };
   const factory = createGraphWorkflowExecutionToolContext(deps);
@@ -227,6 +230,63 @@ describe("GraphWorkflowExecutionToolContext", () => {
     expect(
       store.current.contextStates["context-plan"]?.completedTaskCount,
     ).toBe(1);
+  });
+
+  it("refuses completion while a declared same-context spec predecessor is incomplete", async () => {
+    const base = withRunningContext(createWorkflowExecution(), [
+      "context-plan",
+    ]);
+    const tasks = base.workingDefinition.tasks.map((task, index) => ({
+      ...task,
+      ...(index < 2
+        ? {
+            contextId: "context-plan",
+            order: index + 1,
+            metadata: {
+              specRevisionId: "revision-1",
+              specTaskElementId: `task-${index + 1}`,
+              specTaskHandle: `T${index + 1}`,
+              specDependsOnTaskElementIds: JSON.stringify(
+                index === 0 ? [] : ["task-1"],
+              ),
+              specCriterionElementIds: "[]",
+              specCriterionHandles: "[]",
+              specValidationStrategies: "{}",
+              specCriterionBriefs: "{}",
+            },
+          }
+        : {}),
+    }));
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        origin: {
+          sourceUri:
+            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
+        },
+        tasks,
+      },
+      taskStates: {
+        ...base.taskStates,
+        "task-implement-1": {
+          ...base.taskStates["task-implement-1"]!,
+          contextId: "context-plan",
+          order: 2,
+        },
+      },
+    };
+    const { store, toolContext } = buildToolContext({
+      initialExecution: execution,
+      executionContract: createSpecExecutionContract(),
+    });
+
+    await expect(
+      toolContext.completeTask("task-implement-1", "out of order"),
+    ).rejects.toMatchObject({ code: "spec_predecessor_incomplete" });
+    expect(store.current.taskStates["task-implement-1"]?.status).toBe(
+      "pending",
+    );
   });
 
   it("prefers the addressed task's lastConversationId when present", async () => {

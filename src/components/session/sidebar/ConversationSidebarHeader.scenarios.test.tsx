@@ -44,6 +44,8 @@ describe("ConversationSidebarHeader", () => {
     const input = screen.getByLabelText("Search conversations");
     expect(input).toHaveValue("");
     expect(input).toHaveAttribute("type", "text");
+    expect(input).toHaveAttribute("id", "conversation-sidebar-search");
+    expect(input).toHaveAttribute("name", "conversation-search");
     expect(screen.queryByText("⌘K")).toBeNull();
     expect(screen.queryByRole("button", { name: "Comfortable" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Compact" })).toBeNull();

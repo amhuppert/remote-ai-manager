@@ -38,6 +38,7 @@ const revision: SpecRevision = {
   specId: spec.id,
   number: 1,
   state: "draft",
+  authoringStage: "plan",
   basedOnRevisionId: null,
   contentHash: null,
   proposedAt: null,
@@ -1009,7 +1010,7 @@ describe("spec read route handlers", () => {
     await expect(response.json()).resolves.toEqual({
       specId: spec.id,
       slug: spec.slug,
-      phase: { primary: "draft" },
+      phase: { primary: "draft", authoringStage: "plan" },
       gates: [
         { gate: "requirements", dial: "gate", state: "pending" },
         { gate: "design", dial: "gate", state: "pending" },
@@ -1045,6 +1046,17 @@ describe("spec read route handlers", () => {
           elementId: assumption.element_id,
         },
       ],
+      taskPlan: [
+        {
+          elementId: "task-1",
+          handle: "T1",
+          title: "Build read routes",
+          dependsOn: [],
+          laneGroup: null,
+          touchedPaths: [],
+          criterionCoverage: ["R1.1"],
+        },
+      ],
       coverage: {
         coveredCriteria: 1,
         totalCriteria: 1,
@@ -1056,6 +1068,50 @@ describe("spec read route handlers", () => {
         totalInScope: 0,
       },
     });
+  });
+
+  it("reports pending approvals only for the current authoring-stage review", async () => {
+    const requirementsRevision: SpecRevision = {
+      ...revision,
+      authoringStage: "requirements",
+      state: "proposed",
+      proposedAt: revision.createdAt,
+      contentHash: "requirements-review-hash",
+    };
+    const requirementsSnapshot: SpecRevisionSnapshot = {
+      revision: requirementsRevision,
+      elements: snapshot.elements.map((entry) => ({
+        ...entry,
+        version: { ...entry.version, revisionId: requirementsRevision.id },
+      })),
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [requirementsRevision],
+        getRevisionSnapshot: async () => requirementsSnapshot,
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.phase).toEqual({
+      primary: "in_review",
+      authoringStage: "requirements",
+    });
+    expect(body.pendingApprovals).toEqual([
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+      {
+        gate: "execution_start",
+        subject: "execution_start",
+        elementId: null,
+      },
+      { gate: "delivery", subject: "delivery", elementId: null },
+    ]);
   });
 
   it("14.1 rolls delivery up over the active execution's pinned in-scope criteria", async () => {

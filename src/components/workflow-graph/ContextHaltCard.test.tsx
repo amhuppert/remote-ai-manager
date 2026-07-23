@@ -36,7 +36,7 @@ describe("ContextHaltCard detail bounding", () => {
     render(<ContextHaltCard primary={joinFailureWithManyConflicts} />);
 
     expect(
-      screen.getByText(/Final publish failed — 2 source lane\(s\)/),
+      screen.getByText(/Publish to session failed — 2 source lane\(s\)/),
     ).toBeInTheDocument();
     const action = screen.getByText(/Resolve conflicts in the target worktree/);
     expect(screen.getByTestId("halt-detail")).not.toContainElement(action);

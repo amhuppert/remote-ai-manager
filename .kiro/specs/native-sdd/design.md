@@ -197,7 +197,7 @@ All tables are additive floor DDL (`CREATE TABLE IF NOT EXISTS` in `state-db.ts`
 | `spec_aliases` | PK(`project_path`, `slug`) → `spec_id` | Written on rename; resolution checks specs then aliases (1.6) |
 | `spec_counters` | PK(`spec_id`, `scope_key`) → `last_number` | scope_key ∈ `R,D,T,Q,A` or `C:<requirementElementId>` — sections carry no handle (R1.2 defines no section grammar; ordering via `position`); atomic upsert-returning (ticket precedent) |
 | `spec_elements` | `id` PK, `spec_id`, `kind` (section, requirement, criterion, decision, task), `number`, `parent_element_id` | Identity registry; stable across revisions (2.6); criterion parent = requirement (2.8) |
-| `spec_revisions` | `id` PK, `spec_id`, `number`, `state` (draft, proposed, approved, withdrawn), `based_on_revision_id`, `content_hash`, `proposed_at`, `approved_at` | UNIQUE(spec_id, number); hash set at propose (freeze) |
+| `spec_revisions` | `id` PK, `spec_id`, `number`, `state` (draft, proposed, approved, withdrawn), `authoring_stage` (requirements, design, plan), `based_on_revision_id`, `content_hash`, `proposed_at`, `approved_at` | UNIQUE(spec_id, number); hash set at propose (freeze) and covers `authoring_stage` (stage gates authorization — R2.5 tamper evidence, in export/`verify`); stage is a mandatory parameter on the repo creation APIs — the column default `'plan'` backfills pre-migration rows only (22.9) |
 | `spec_element_versions` | PK(`revision_id`, `element_id`), `position`, `payload_json`, `payload_hash`, `element_version` | Full row-set per revision; CAS on `element_version` for draft rows only; removal = row absent in draft |
 | `spec_approvals` | `id` PK, `spec_id`, `subject_kind` (requirement, decision, revision, plan), `element_id?`, `revision_id`, `approver`, `granted_at`, `validity` (valid, stale, closed) | Human-only rows (10.1, 10.2) |
 | `spec_gate_admissions` | `id` PK, `spec_id`, `gate` (requirements, design, plan, execution_start, delivery), `basis` (human_approval, notify_policy, off_policy), `approval_id?`, `revision_id?`, `execution_id?`, `actor_json` | Every admitted gated transition (10.2) |
@@ -219,7 +219,7 @@ All tables are additive floor DDL (`CREATE TABLE IF NOT EXISTS` in `state-db.ts`
 - `requirement`: `{statement, priority: must | should | could, risk: high | medium | low}` — criteria are child elements — 2.7.
 - `criterion`: `{text, validationStrategy: {kinds: EvidenceKind[], note?}}` — strategy approved with the requirement — 2.9.
 - `decision`: `{title, chosenApproach, rejectedAlternatives: {label, reason}[], reason}` — 2.10.
-- `task`: `{title, instructions, tracedRequirementElementIds[], coveredCriterionElementIds[], dependsOnTaskElementIds[]}` — 2.11.
+- `task`: `{title, instructions, tracedRequirementElementIds[], coveredCriterionElementIds[], dependsOnTaskElementIds[], laneGroup?, touchedPaths?[]}` — 2.11, 23.1. `touchedPaths` are normalized repo-relative POSIX prefixes (absolute, `..`, and trailing separators rejected at write; overlap compares whole path segments); `laneGroup` keys are opaque, compared exactly.
 
 ### State Machines
 
@@ -240,7 +240,7 @@ stateDiagram-v2
     }
 ```
 
-Transitions are validated exclusively by `transitions.ts` predicates (3.3, 3.5); every transition appends `spec_events` rows and publishes SSE. Proposing freezes content (hash stored); sign-off is the only entry to Approved (3.4); **request-changes ends the review attempt by marking the proposed revision `withdrawn`** — content and hash preserved immutably — **and opening a new draft revision `based_on` it** (3.3, 8.5): the reviewed snapshot survives for comment-thread anchors (8.6), the 10.5 side-by-side re-approval diff, and the 20.1 re-approval-loop measure, and RevisionDiff shows exactly what changed since the last review attempt. Delivered is entered only from the merge success callback (18.6); Abandoned records a reason and is terminal (3.10).
+Transitions are validated exclusively by `transitions.ts` predicates (3.3, 3.5); every transition appends `spec_events` rows and publishes SSE. Proposing freezes content (hash stored); sign-off is the only entry to Approved (3.4); **request-changes ends the review attempt by marking the proposed revision `withdrawn`** — content and hash preserved immutably — **and opening a new draft revision `based_on` it** (3.3, 8.5): the reviewed snapshot survives for comment-thread anchors (8.6), the 10.5 side-by-side re-approval diff, and the 20.1 re-approval-loop measure, and RevisionDiff shows exactly what changed since the last review attempt. Delivered is entered only from the merge success callback (18.6); Abandoned records a reason and is terminal (3.10). Draft revisions carry an **authoring stage** — requirements → design → plan (R22): draft-write admissibility is stage-only (later-stage element kinds refuse with `stage_blocked`; dials never gate writes, only phrase the instruction), and the stage advances through a recorded transition — sign-off of a stage's revision under a Gate dial, or an explicit revision-scoped `advance` under Notify/Off recorded as a gate admission. Open-draft stage rule: no base → requirements (plan when all three authoring dials resolve combined); based_on approved → next stage capped at plan; based_on withdrawn (request-changes) → the withdrawn revision's stage.
 
 ### Transition Ownership
 
@@ -248,14 +248,15 @@ Every transition names its initiator, authorization, predicate, transaction, and
 
 | Transition | Initiator (surface) | Authorization | Predicate | Transaction / records | Idempotency |
 |---|---|---|---|---|---|
-| Open draft revision (create / amendment) | agent — `cctl spec create --file <first-element>` | agent (actor recorded) | editable-phase check | spec + draft revision + first element in one transaction (amendments copy base + carry the element) + events | slug unique per project; a slug with an editable draft refuses with `slug_taken` (continue via `cctl spec draft`) |
-| Draft element write | agent — `cctl spec draft` | agent | element CAS (7.1) | CAS row update + events | retry with refreshed base version (7.3) |
-| Propose | agent — `cctl spec propose` | agent | `propose` (9.2–9.6) + 10.4 preconditions when absorbing sign-off | freeze + hash + classification + approval-validity updates + propose-time gate admissions; **when every propose-time dial (requirements/design/plan) is Notify/Off, the same transaction records the policy-admitted sign-off** — sign-off admission, zero approval rows; a 10.4 precondition failure leaves the revision Proposed with the refusal surfaced | proposing a non-draft refused |
+| Open draft revision (create / amendment) | agent — `cctl spec create --file <first-element>`; links-service promotion/graduation routes through the same stage owner | agent (actor recorded) | editable-phase check + R22 stage rule (stage mandatory at the repo API) | spec + draft revision (authoring stage stamped) + first element in one transaction (amendments copy base + carry the element) + events | slug unique per project; a slug with an editable draft refuses with `slug_taken` (continue via `cctl spec draft`) |
+| Draft element write | agent — `cctl spec draft` | agent | stage admissibility (`admitDraftWrite`, 22.2–22.4 — refuses later-stage kinds with `stage_blocked`) + element CAS (7.1) | CAS row update + events (stage refusals record interventions; a refused first element on create returns without an intervention row — no spec exists yet) | retry with refreshed base version (7.3) |
+| Advance stage | agent — `cctl spec advance <slug> --from <stage>` | agent; refused where the concluding dial is Gate (propose and obtain sign-off instead) | draft exists; next stage exists; dial Notify/Off; conditional update on (current draft revision id, `--from` stage) | in-place stage bump + gate admission (basis `notify_policy`/`off_policy`) + events, one transaction | identified revision at/past target ⇒ no-op success; any other mismatch ⇒ typed stale-stage conflict carrying current revision and stage |
+| Propose | agent — `cctl spec propose` | agent | `propose` (9.2–9.6, 9.3/9.11–9.12 stage-keyed) + 10.4/10.10–10.11 stage-scoped preconditions when absorbing sign-off | freeze + hash + classification + approval-validity updates + propose-time gate admissions; **when every stage-scoped dial (the revision's stage plus modified earlier stages, 10.11) is Notify/Off, the same transaction records the policy-admitted sign-off** — sign-off admission, zero approval rows; a 10.4 precondition failure leaves the revision Proposed with the refusal surfaced | proposing a non-draft refused |
 | Approve element | human — Studio | **human-only, always** | `approveElement` | approval row + events | same-subject re-approval refreshes the record |
-| Sign off revision | human — Studio, required whenever **any** propose-time dial is Gate (all-Notify/Off case is absorbed into propose) | human when Gate; policy admission otherwise | `signOffRevision` (10.4) | revision → approved + sign-off approval/admission + events | already-approved ⇒ no-op |
+| Sign off revision | human — Studio, required whenever any **stage-scoped** dial is Gate (all-Notify/Off case is absorbed into propose) | human when Gate; policy admission otherwise | `signOffRevision` (10.4, 10.10–10.11: plan approval iff plan-stage; dials stage-scoped) | revision → approved + sign-off approval/admission for the revision's stage (re-recorded for modified earlier-stage gates) + events | already-approved ⇒ no-op |
 | Request changes | human — Studio | human review action | revision Proposed | proposed → withdrawn (content + hash intact) + new draft `based_on` + events | already-withdrawn refused |
 | Withdraw | human — Studio | human review action | revision Proposed | withdrawn + events | already-withdrawn refused |
-| Execution start | agent — `cctl spec start <slug> --file <scope>` — or human — Studio execution panel | either (actor recorded); the execution-start dial governs **definition approval**, not who initiates (17.3) | `startExecution` (16.2–16.7) | two-step: definition write (origin idempotency key) → SQLite commit of execution + dispositions + links + events | orphan definition found and reused/replaced by origin key |
+| Execution start | agent — `cctl spec start <slug> --file <scope>` — or human — Studio execution panel | either (actor recorded); the execution-start dial governs **definition approval**, not who initiates (17.3) | `startExecution` (16.2–16.7, 22.8 plan-stage pin, 23.9 dependency embedding) | two-step: definition write (origin idempotency key) → SQLite commit of execution + dispositions + links + events | orphan definition found and reused/replaced by origin key |
 | Definition approval | human — workflow surface when dial is Gate; policy admission when Notify/Off | human when Gate | workflow-side approval state (17.3) | admission row + events (spec side) | first-decision-wins (approval-gate precedent) |
 | definition_review → running | composition-injected `markRunning(workflowExecutionId)` after workflow start | system (recorded) | execution in definition_review | state advance + events | idempotent; read-path reconciliation covers callback loss |
 | Delivered | composition-injected `markDelivered(specExecutionId, mergeHash)` on publish success | system (recorded) | execution running + gate-passed merge | state + proven-and-merged disposition updates + events | idempotent by (specExecutionId, mergeHash); read-path reconciliation covers publish-then-crash |
@@ -270,6 +271,7 @@ Every transition names its initiator, authorization, predicate, transaction, and
 | Spec phase — primary (3.1, 3.2) | Explicit precedence, first match wins: `Abandoned` (stored) → `Executing` (an execution in definition_review/running — 16.2's "active") → `In review` (a proposed revision exists) → `Draft` (an editable draft revision exists) → `Delivered` (every non-removed criterion of the current approved revision proven-and-merged or waived, no delivery pending — 3.7) → `Approved`. Authoring states outrank Delivered/Approved — proposing changes against an approved or delivered spec returns the primary to Draft/In review (3.9), symmetric across both cases |
 | Composite return shape (3.6) | The projection returns `{primary, authoringFacet?}`; `authoringFacet` carries the concurrent authoring state whenever it differs from the primary (e.g. Executing with a revision in review) and is **mandated wherever phase renders** — Studio detail header, list badges (8.1), chip hover peek (5.6). A pending review or active run is never hidden; delivery standing under an authoring primary stays visible via the 3.8/3.11 badge |
 | Delivery display (3.8, 3.11) | All-waived delivery flagged explicitly; partial progress = `provenCount/totalInScope` roll-up badge, never stored |
+| Authoring stage (3.12, 22.1) | `authoringStage?` — a separate optional projection field (not an overload of the `draft \| in_review` facet, which cannot express "Approved · requirements stage"): populated until a plan-stage revision is approved, from the current draft/proposed revision's stage, else the latest approved revision's stage; rendered beside the phase everywhere phase renders |
 | Requirement status (2.13) | Projection of (approval validity, criteria coverage, criteria proof states) — computed per render/read |
 | Task work status (2.12) | Projection of (execution task events for the pinned run, latest claim + its evidence) — never derived from criterion dispositions |
 
@@ -301,7 +303,7 @@ sequenceDiagram
     S-->>U: approved revision immutable
 ```
 
-Gating conditions: propose refusals return the same finding list the lint panel shows (9.10); sign-off requires resolved blocking threads, no rejected-cited assumptions, and dial-configured approvals (10.4); fast-path records the combined approval atomically (11.5); Notify/Off admissions write `spec_gate_admissions`, never approvals (10.2).
+Gating conditions: propose refusals return the same finding list the lint panel shows (9.10); sign-off requires resolved blocking threads, no rejected-cited assumptions, and dial-configured approvals (10.4) — with the plan approval demanded only for plan-stage revisions and dials consulted stage-scoped (10.10–10.11, R22); fast-path records the combined approval atomically (11.5); Notify/Off admissions write `spec_gate_admissions`, never approvals (10.2).
 
 ### Execution → Evidence → Delivery
 
@@ -376,12 +378,13 @@ Detailed blocks for boundary-bearing components follow. Presentational component
 | Field | Detail |
 |-------|--------|
 | Intent | Single validity authority for every gated spec transition |
-| Requirements | 3.3, 3.4, 3.5, 6.5, 9.2–9.8, 10.3, 10.4, 11.2–11.9, 14.3, 16.2–16.7, 18.3, 18.4 |
+| Requirements | 3.3, 3.4, 3.5, 6.5, 9.2–9.8, 9.11–9.12, 10.3, 10.4, 10.10–10.11, 11.2–11.9, 14.3, 16.2–16.7, 18.3, 18.4, 22.2–22.8 |
 
 **Responsibilities & Constraints**
 
 - Pure decision functions over loaded state; no I/O. Services load state, call the predicate, and commit effect + events in one transaction.
 - Encodes the floor directly: exploratory preset refuses claims/merges outright (11.4); delivery dial cannot resolve to Off (11.9); waiver grants require a human actor (14.3); every execution pins (revision, scope) (11.6, 16.1); every in-scope criterion needs proof/waiver at merge (11.7).
+- Staged authoring (R22, folded 2026-07-22): `admitDraftWrite` is stage-only admissibility — dials phrase the refusal instruction, never gate writes; `advanceStage` requires Notify/Off on the concluding dial plus a (revision id, expected stage) match; propose/sign-off consult stage-scoped dials (the revision's stage plus modified earlier stages, 10.11) and demand the plan approval only for plan-stage revisions (10.10); `startExecution` refuses a non-plan-stage pin (22.8) and validates dependency embedding of the edited definition (23.9).
 
 ##### Service Interface
 
@@ -395,6 +398,8 @@ type Refusal = {
 type TransitionDecision = { ok: true } | { ok: false; refusal: Refusal };
 
 interface TransitionPredicates {
+  admitDraftWrite(input: DraftWriteContext): TransitionDecision;
+  advanceStage(input: AdvanceStageContext): TransitionDecision;
   propose(input: ProposeContext): TransitionDecision;
   approveElement(input: ElementApprovalContext): TransitionDecision;
   signOffRevision(input: SignOffContext): TransitionDecision;
@@ -425,10 +430,10 @@ interface TransitionPredicates {
 | Field | Detail |
 |-------|--------|
 | Intent | Deterministic findings catalog — the authoritative R9 set |
-| Requirements | 9.1–9.10 |
+| Requirements | 9.1–9.12 |
 
 - Pure function `lint(draft: RevisionSnapshot, records: SpecRecords): LintFinding[]`; finding = `{ruleId, severity: blocks_propose | blocks_claim | blocks_signoff | advisory, elementHandle, message}`.
-- Blocking sets consumed by predicates: propose (9.2 empty-spec, 9.3 uncovered criterion, 9.4 untraced task, 9.5 dependency cycle/removed-task, 9.6 dangling handle), claim (9.7 criterion without evidence), sign-off (9.8 rejected-cited assumption). Advisories (9.9): approval freshness, dependency change, open questions at propose, materialized-task removed/re-scoped. Panel query and refusals share the same output (9.10).
+- Blocking sets consumed by predicates: propose (9.2 empty-spec, 9.3 uncovered criterion or task without a covered criterion — **plan-stage revisions only**, which also blocks the zero-task plan since every criterion is then uncovered, 9.4 untraced task, 9.5 dependency cycle/removed-task, 9.6 dangling handle, 9.11 lane-group contraction cycle), claim (9.7 criterion without evidence), sign-off (9.8 rejected-cited assumption). Advisories (9.9): approval freshness, dependency change, open questions at propose, materialized-task removed/re-scoped. Graph-shape advisories (9.12, evaluated on the lane-group-contracted graph via the shared contraction primitive the compiler also uses): serialized plan (≥ 3 tasks contracting to a single chain, including one all-task group), overloaded task (covers more than half the draft's criteria, plans ≥ 3 tasks), conflicting parallel surfaces (independent contexts with segment-overlapping `touchedPaths`). Panel query and refusals share the same output (9.10).
 
 ### Authoring & Review
 
@@ -456,12 +461,13 @@ interface TransitionPredicates {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Entry paths, draft mutation API, propose |
-| Requirements | 4.1–4.7, 7.1–7.4, 3.9 |
+| Intent | Entry paths, draft mutation API, stage ownership, propose |
+| Requirements | 4.1–4.7, 7.1–7.4, 3.9, 22.1–22.7 |
 
 - `/spec` (composer + CLI slash command, native SDK path) instructs the agent; one `cctl spec create --file <first-element>` call IS the first draft save — no durable spec exists before it, and the spec, draft revision, and first element are created in one transaction, visible in Spec Studio from that moment while incomplete (4.1, 4.2). Promotion/graduation create the spec + a `source` link whose `snapshot_json` captures exact message ids/content hashes and attachment versions via content-store (4.3, 4.5); exactly one spec object regardless of path (4.6); conversations author, Studio reviews (4.7).
 - Draft writes are element-granular upserts/removes/reorders with base versions; changes stream to viewers via SSE (7.2). Amendment against approved/delivered specs = new draft revision copied from the approved snapshot (3.9).
-- Propose: runs blocking lint, freezes content (hash), classifies elements via RevisionDiff, updates approval validity (carry-forward/stale/closed), and records propose-time gate admissions — and when **every** propose-time governing dial (requirements/design/plan) resolves Notify/Off, the same transaction atomically performs the policy-admitted revision sign-off (sign-off admission recorded, zero approval rows, 10.4 preconditions still checked; a precondition failure leaves the revision Proposed with the refusal surfaced). Any Gate dial ⇒ sign-off remains the human Studio action; there is no cctl sign-off verb either way. One transaction (3.4, 9.2–9.6, 10.3, 10.5).
+- Stage ownership (R22): AuthoringService is the single stage owner — every ingress (create, amendment first-write, server-opened request-changes, and links-service promotion/graduation, which must route through it rather than calling the repo directly) obtains the stage from the one open-draft rule; the repo creation APIs take the stage as a mandatory parameter. Draft writes pass `admitDraftWrite` before CAS, refusing later-stage element kinds with `stage_blocked` and recording interventions (a refused first element on create returns without an intervention row — no spec exists yet). Stage stamp/advance, its gate-admission row, and durable events commit in one transaction; SSE publishes after commit.
+- Propose: runs blocking lint, freezes content (hash), classifies elements via RevisionDiff, updates approval validity (carry-forward/stale/closed), and records propose-time gate admissions — and when **every stage-scoped** governing dial (the revision's stage plus modified earlier stages, 10.11) resolves Notify/Off, the same transaction atomically performs the policy-admitted revision sign-off (sign-off admission recorded, zero approval rows, 10.4 preconditions still checked; a precondition failure leaves the revision Proposed with the refusal surfaced). Any Gate dial ⇒ sign-off remains the human Studio action; there is no cctl sign-off verb either way. One transaction (3.4, 9.2–9.6, 10.3, 10.5).
 
 #### ReviewService
 
@@ -513,7 +519,8 @@ interface EvidenceService {
 | Requirements | 16.1–16.9, 17.1–17.3 |
 
 - Start (definition-first, idempotent): predicate checks — revision Approved (16.3), no active execution where definition_review counts as active (16.2), scope dependency-closed (16.4), every selected criterion covered by selected tasks (16.5), every excluded criterion explicitly dispositioned (16.6); a partial selection failing these is exactly the "not a valid smaller unit" rejection (16.7 — the validity predicate *is* the plan's definition of valid units, via task dependencies + coverage). Then a two-step protocol across the two stores (spec state is SQLite; workflow definitions are JSON files — no transaction spans both): **step 1** compiles and writes the definition through the general workflow services (approvalRequired per dial, origin links, locked regions), carrying an idempotency key in `origin.sourceUri` (specId + revisionId + scope hash); **step 2** commits one SQLite transaction — execution + dispositions + links + events, referencing the definition id — as the **authoritative commit point**. A crash between steps leaves an inert, never-started orphan definition; a retried start finds it by origin key and reuses or replaces it. The one-active check (16.2) is enforced inside the step-2 transaction. Owned by ExecutionService composing general workflow services — workflow storage stays spec-free.
-- Compiler (17.1): pure transform — task dependency-chain grouping → contexts (1:1 default), dependencies → edges, criteria → context acceptance criteria + validator briefs, narrow per-lane context packs; contract-derived content marked as locked regions with `sourceLink` handles; execution-only choices left editable (17.4). Definition reviewed/edited/validated in the existing workflow surface (17.2, 17.3).
+- Compiler (17.1, R23): pure transform through the shared group-contraction primitive (also used by lint 9.11–9.12) — plan-declared lane groups → contexts (1:1 default for ungrouped tasks; intra-group dependencies → intra-context topological order, ties by handle; inter-group dependencies → deduplicated edges), context titles/descriptions from task content, context acceptance criteria derived from the union of member tasks' locked criterion briefs, traced-decision content embedded in task instructions (23.8), `touchedPaths` in task metadata (23.7), and the charter assembled deterministically from approved intent sections — constraints as active invariants keyed by section element id (23.3); contract-derived content marked as locked regions with `sourceLink` handles; execution-only choices left editable **pre-start** (17.4, 23.4). Definition reviewed/edited/validated in the existing workflow surface (17.2, 17.3); definition editing re-derives affected contexts' criteria from member briefs (23.9).
+- Runtime guards (R23, via registered composition seams — the delivery-gate-port precedent; unregistered ⇒ non-spec workflows byte-for-byte unchanged): spec-origin executions refuse mid-run `move-task` live edits (23.11 — the static compiled origin map makes a mid-run move mis-attribute evidence in the false-proof direction); `complete_task` refuses while a declared intra-context predecessor is incomplete (23.12); definition approval and execution start validate that placement and intra-context order embed every locked task precedence (23.9).
 - Pin immutability (16.8): no mutation path exists post-start; discovered work → amendment draft on the spec, queued for a future execution; blocking discovery → abandon-and-restart (16.9). Start is initiated by an agent (`cctl spec start`) or the human (Studio execution panel); the execution-start dial governs definition approval, not who initiates (17.3).
 - Lifecycle callbacks (named owners; id domains explicit): workflow/merge infrastructure passes `workflowExecutionId`; the spec side resolves `specExecutionId` via `spec_executions.workflow_execution_id` and no-ops when unlinked. Composition injects idempotent `markRunning(workflowExecutionId)` after workflow start (definition_review → running) and idempotent `markDelivered(specExecutionId, mergeHash)` on publish success (18.6) — both replay-safe, with **read-path reconciliation** (status reads compare spec execution state against the linked workflow execution and merge job, advancing a stale definition_review/Running) covering callback loss such as publish-then-crash. Abandon records its reason.
 
@@ -579,11 +586,12 @@ Verb map (all follow the established contract: progressive-disclosure help regis
 
 | Verb | Kind | Notes |
 |---|---|---|
-| `list`, `show <slug>`, `status <slug>` | read | inventory; full/summary; phase + gates + pending approvals + open questions + coverage (6.3) |
+| `list`, `show <slug>`, `status <slug>` | read | inventory; full/summary; phase + authoring stage and its concluding gate + gate states + pending approvals + open questions + coverage; task graph facts (dependencies, lane group, touched surfaces, criterion coverage) in show/get (6.3, 23.10) |
 | `get <slug>/R3`, `search <slug> <query>` | read | element with approval + evidence state; text search over requirements/decisions; bare handles accepted where a slug is already present (1.3) |
 | `export <slug> [--out]`, `verify <slug> [--against]` | read | canonical markdown + manifest bundle; integrity recompute (6.8, 2.5) |
 | `create`, `draft …` | write | create-on-first-save; element upserts carrying `--base-version` (4.1, 7.1) |
-| `propose <slug>` | write | refusal returns the lint finding list (9.10) |
+| `propose <slug>` | write | proposes the current authoring stage for review; refusal returns the lint finding list (9.10) |
+| `advance <slug> --from <stage>` | write | stage advance where the concluding dial is Notify/Off; revision-scoped conditional update; records a gate admission, never an approval (22.5) |
 | `answer`, `assume` | write | question/assumption records (6.4, 12.1, 12.2) |
 | `task complete <slug>/T7 --evidence …` | write | evidence-backed claims only (6.4, 6.6) |
 | `request-approval <slug> …` | write | routes gates to the human; agents request, never approve (6.4, 10.9) |
@@ -807,6 +815,16 @@ src/app/api/specs/**/route.ts                   # thin re-exports of route-handl
 | 19.1, 19.2, 19.3 | Typed events day one; live surfaces; attention | SpecEventsPublisher + sse-reactions + adapters |
 | 20.1, 20.2, 20.3, 20.4 | Measure capture; reviewer navigation; computable; frozen definitions | `spec_events` + MeasuresEngine + `cctl spec measures` |
 | 21.1, 21.2, 21.3, 21.4 | Release acceptance + refusal demos | Testing Strategy (release-acceptance procedure); enforcement points 16.3, 6.6, 18.4 |
+| 22.1, 22.9 | Persisted authoring stage; legacy = plan | SpecsRepo (`spec_revisions.authoring_stage`, mandatory at creation, in content hash), PhaseProjection `authoringStage?` |
+| 22.2, 22.3, 22.4 | Stage-only admissibility; `stage_blocked` refusals; backward edits free | TransitionPredicates.admitDraftWrite + AuthoringService draft-write guard |
+| 22.5, 22.6, 22.7 | Dial-governed advance (revision-scoped); combined-dial precedence; open-draft stage rule | TransitionPredicates.advanceStage + AuthoringService stage ownership + CctlSpecFamily `advance` |
+| 22.8 | Execution pins plan-stage revisions only | TransitionPredicates.startExecution |
+| 23.1 | Task lane group + touched surfaces as plan content | Element payload schema (task), lint normalization rules |
+| 23.2, 23.3, 23.4, 23.7, 23.8 | Grouped compilation, derived context criteria, charter from intent sections, metadata, decision packs | Compiler (group-contraction primitive, charter assembly) |
+| 23.5 | Graph-shape lint at plan review | LintEngine 9.11–9.12 on the contracted graph |
+| 23.6 | Execution-graph planning guidance | `/spec` skill plan-stage section + `spec.help.ts` |
+| 23.9, 23.11, 23.12 | Dependency embedding; mid-run placement freeze; predecessor-ordered completion | Compiler validation at approval/start + runtime guards via registered composition seams |
+| 23.10 | Graph facts in plan review surfaces | SpecStudio review mode + CctlSpecFamily reads |
 
 ## Error Handling
 

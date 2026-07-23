@@ -48,7 +48,11 @@ const inventory = [
   summary(
     "native-sdd",
     "Native spec-driven development",
-    { primary: "executing", authoringFacet: "in_review" },
+    {
+      primary: "executing",
+      authoringFacet: "in_review",
+      authoringStage: "design",
+    },
     {
       pendingApprovalCount: 2,
       approvalState: "pending",
@@ -131,6 +135,7 @@ describe("SpecsInventory", () => {
 
     const row = screen.getByTestId("spec-row-native-sdd");
     expect(within(row).getByText("In review")).toBeInTheDocument();
+    expect(within(row).getByText("design stage")).toBeInTheDocument();
     expect(within(row).getByText("2 pending")).toBeInTheDocument();
     expect(within(row).getByText("7/12 delivered")).toBeInTheDocument();
     expect(within(row).getByText("2 tickets")).toBeInTheDocument();

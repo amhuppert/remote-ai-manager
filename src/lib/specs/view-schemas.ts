@@ -69,6 +69,18 @@ const statusAssumptionSchema = z
   })
   .strict();
 
+const specTaskPlanStatusSchema = z
+  .object({
+    elementId: z.string().min(1),
+    handle: z.string().min(1),
+    title: z.string().min(1),
+    dependsOn: z.array(z.string().min(1)),
+    laneGroup: z.string().min(1).nullable(),
+    touchedPaths: z.array(z.string().min(1)),
+    criterionCoverage: z.array(z.string().min(1)),
+  })
+  .strict();
+
 export const specStatusViewSchema = z
   .object({
     specId: z.string().min(1),
@@ -78,6 +90,7 @@ export const specStatusViewSchema = z
     pendingApprovals: z.array(pendingApprovalSchema),
     openQuestions: z.array(openQuestionSchema),
     assumptions: z.array(statusAssumptionSchema).default([]),
+    taskPlan: z.array(specTaskPlanStatusSchema).default([]),
     coverage: specCoverageSchema,
     delivery: deliveryDisplaySchema,
   })

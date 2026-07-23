@@ -11,11 +11,15 @@ import type {
 } from "./schemas";
 import type { ExecutionScope, ScopePlan } from "./scope-validation";
 import {
+  admitDraftWrite,
+  advanceAuthoringStage,
   approveElement,
   changePolicy,
   claimTaskComplete,
+  consultedAuthoringGates,
   evaluateDeliveryGate,
   grantWaiver,
+  openDraftAuthoringStage,
   propose,
   signOffRevision,
   startExecution,
@@ -159,11 +163,17 @@ function reviewSnapshot(): SignOffReviewSnapshot {
 function signOffContext(
   overrides: Partial<Parameters<typeof signOffRevision>[0]> = {},
 ): Parameters<typeof signOffRevision>[0] {
+  const authoringStage = overrides.authoringStage ?? "plan";
   return {
     actor: human,
     revisionState: "proposed",
+    authoringStage,
     policy: contractPolicy,
-    draft: { specHandle: "native-sdd", elements: lintElements() },
+    draft: {
+      specHandle: "native-sdd",
+      authoringStage,
+      elements: lintElements(),
+    },
     records: {},
     review: reviewSnapshot(),
     ...overrides,
@@ -179,6 +189,7 @@ function startContext(
     specAbandoned: false,
     revisionId: "revision-2",
     revisionState: "approved",
+    authoringStage: "plan",
     scope,
     plan,
     activeExecution: false,
@@ -192,7 +203,11 @@ function claimContext(
 ): Parameters<typeof claimTaskComplete>[0] {
   return {
     policy,
-    draft: { specHandle: "native-sdd", elements: lintElements() },
+    draft: {
+      specHandle: "native-sdd",
+      authoringStage: "plan",
+      elements: lintElements(),
+    },
     records: {
       pendingTaskClaims: [{ taskElementId: "task-1" }],
       evidence: hasEvidence
@@ -279,12 +294,151 @@ function allPolicies(): SpecGatePolicy[] {
 const policyCases = allPolicies();
 
 describe("transition predicates", () => {
+  describe("staged authoring", () => {
+    it.each([
+      ["requirements", "requirement", undefined],
+      ["requirements", "section", "context"],
+      ["design", "decision", undefined],
+      ["design", "section", "design_narrative"],
+      ["plan", "task", undefined],
+      ["plan", "requirement", undefined],
+    ] as const)(
+      "admits %s-stage writes of %s",
+      (stage, elementKind, sectionRole) => {
+        expect(
+          admitDraftWrite(stage, elementKind, sectionRole, {
+            requirements: "gate",
+            design: "gate",
+            plan: "gate",
+          }),
+        ).toEqual({ ok: true });
+      },
+    );
+
+    it("refuses a downstream write and phrases the next step from the current dial", () => {
+      expect(
+        admitDraftWrite("requirements", "task", undefined, {
+          requirements: "gate",
+          design: "gate",
+          plan: "gate",
+        }),
+      ).toEqual({
+        ok: false,
+        refusal: {
+          code: "stage_blocked",
+          unmetConditions: [
+            "A task cannot be authored during the requirements stage.",
+          ],
+          instruction:
+            "Propose the requirements stage and obtain sign-off before authoring task content.",
+        },
+      });
+      expect(
+        admitDraftWrite("design", "task", undefined, {
+          requirements: "notify",
+          design: "notify",
+          plan: "notify",
+        }),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          instruction: expect.stringContaining("Advance"),
+        },
+      });
+    });
+
+    it("opens stages from policy and base revision state", () => {
+      expect(
+        openDraftAuthoringStage({ policy: { preset: "contract-bearing" } }),
+      ).toBe("requirements");
+      expect(openDraftAuthoringStage({ policy: { preset: "fast-path" } })).toBe(
+        "plan",
+      );
+      expect(
+        openDraftAuthoringStage({
+          policy: {
+            preset: "fast-path",
+            overrides: { design: "notify" },
+          },
+        }),
+      ).toBe("requirements");
+      expect(
+        openDraftAuthoringStage({
+          policy: contractPolicy,
+          baseRevision: { state: "approved", authoringStage: "requirements" },
+        }),
+      ).toBe("design");
+      expect(
+        openDraftAuthoringStage({
+          policy: contractPolicy,
+          baseRevision: { state: "approved", authoringStage: "plan" },
+        }),
+      ).toBe("plan");
+      expect(
+        openDraftAuthoringStage({
+          policy: contractPolicy,
+          baseRevision: { state: "withdrawn", authoringStage: "design" },
+        }),
+      ).toBe("design");
+    });
+
+    it("advances only under Notify or Off and refuses advancing past plan", () => {
+      expect(
+        advanceAuthoringStage("requirements", contractPolicy),
+      ).toMatchObject({
+        ok: false,
+        refusal: { code: "human_act_required" },
+      });
+      expect(
+        advanceAuthoringStage("requirements", { preset: "exploratory" }),
+      ).toEqual({ ok: true });
+      expect(
+        advanceAuthoringStage("plan", { preset: "exploratory" }),
+      ).toMatchObject({
+        ok: false,
+        refusal: { code: "gate_blocked" },
+      });
+    });
+
+    it("consults the revision stage plus every modified earlier stage", () => {
+      const base = revisionRows();
+      const draft = revisionRows();
+      draft[0] = { ...draft[0]!, payloadHash: "requirement-changed" };
+
+      expect(consultedAuthoringGates("plan", base, draft)).toEqual([
+        "requirements",
+        "plan",
+      ]);
+      expect(consultedAuthoringGates("design", base, base)).toEqual(["design"]);
+    });
+
+    it("counts added and removed earlier-stage elements as modifications", () => {
+      const base = revisionRows();
+      const withoutDecision = base.filter(
+        (row) => row.elementId !== "decision-1",
+      );
+      const withAddedRequirement = [
+        ...withoutDecision,
+        diffElement("requirement-2", requirementPayload),
+      ];
+
+      expect(
+        consultedAuthoringGates("plan", base, withAddedRequirement),
+      ).toEqual(["requirements", "design", "plan"]);
+    });
+  });
+
   describe("propose", () => {
     it("returns the lint panel findings when blocking lint refuses a draft", () => {
       const decision = propose({
         revisionState: "draft",
+        authoringStage: "plan",
         policy: contractPolicy,
-        draft: { specHandle: "native-sdd", elements: [] },
+        draft: {
+          specHandle: "native-sdd",
+          authoringStage: "plan",
+          elements: [],
+        },
         records: {},
         review: reviewSnapshot(),
       });
@@ -311,8 +465,13 @@ describe("transition predicates", () => {
       expect(
         propose({
           revisionState: "proposed",
+          authoringStage: "plan",
           policy: contractPolicy,
-          draft: { specHandle: "native-sdd", elements: lintElements() },
+          draft: {
+            specHandle: "native-sdd",
+            authoringStage: "plan",
+            elements: lintElements(),
+          },
           records: {},
           review: reviewSnapshot(),
         }),
@@ -338,8 +497,13 @@ describe("transition predicates", () => {
       expect(
         propose({
           revisionState: "draft",
+          authoringStage: "plan",
           policy,
-          draft: { specHandle: "native-sdd", elements: lintElements() },
+          draft: {
+            specHandle: "native-sdd",
+            authoringStage: "plan",
+            elements: lintElements(),
+          },
           records: {},
           review: reviewSnapshot(),
         }),
@@ -353,6 +517,7 @@ describe("transition predicates", () => {
       expect(
         propose({
           revisionState: "draft",
+          authoringStage: "plan",
           policy: {
             preset: "fast-path",
             overrides: {
@@ -361,7 +526,11 @@ describe("transition predicates", () => {
               plan: "notify",
             },
           },
-          draft: { specHandle: "native-sdd", elements: lintElements() },
+          draft: {
+            specHandle: "native-sdd",
+            authoringStage: "plan",
+            elements: lintElements(),
+          },
           records: {},
           review,
         }),
@@ -433,7 +602,11 @@ describe("transition predicates", () => {
       expect(
         signOffRevision(
           signOffContext({
-            draft: { specHandle: "native-sdd", elements },
+            draft: {
+              specHandle: "native-sdd",
+              authoringStage: "plan",
+              elements,
+            },
             records: {
               assumptions: [
                 {
@@ -465,13 +638,15 @@ describe("transition predicates", () => {
       ["plan", "plan"],
     ] as const)(
       "refuses missing %s approvals configured as Gate",
-      (_, subjectKind) => {
+      (authoringStage, subjectKind) => {
         const review = reviewSnapshot();
         review.approvals = review.approvals.filter(
           (approval) => approval.subjectKind !== subjectKind,
         );
 
-        expect(signOffRevision(signOffContext({ review }))).toMatchObject({
+        expect(
+          signOffRevision(signOffContext({ authoringStage, review })),
+        ).toMatchObject({
           ok: false,
           refusal: { code: "gate_blocked" },
         });
@@ -517,6 +692,49 @@ describe("transition predicates", () => {
         },
       });
     });
+
+    it("requires plan approval only for a plan-stage revision", () => {
+      const review = reviewSnapshot();
+      review.approvals = review.approvals.filter(
+        (approval) => approval.subjectKind !== "plan",
+      );
+
+      expect(
+        signOffRevision(signOffContext({ authoringStage: "design", review })),
+      ).toEqual({ ok: true });
+      expect(
+        signOffRevision(signOffContext({ authoringStage: "plan", review })),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          unmetConditions: [
+            "Execution plan needs a valid approval for revision-2.",
+          ],
+        },
+      });
+    });
+
+    it("re-consults an earlier gate when that stage's content changed", () => {
+      const review = reviewSnapshot();
+      review.revisionRows[0] = {
+        ...review.revisionRows[0]!,
+        payloadHash: "requirement-changed",
+      };
+      review.approvals = review.approvals.filter(
+        (approval) => approval.subjectKind !== "requirement",
+      );
+
+      expect(
+        signOffRevision(signOffContext({ authoringStage: "design", review })),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          unmetConditions: [
+            "Requirement R1 needs a valid approval for revision-2.",
+          ],
+        },
+      });
+    });
   });
 
   describe("startExecution", () => {
@@ -537,6 +755,24 @@ describe("transition predicates", () => {
       ).toMatchObject({
         ok: false,
         refusal: { code: "revision_not_approved" },
+      });
+    });
+
+    it("refuses an approved revision that has not completed plan authoring", () => {
+      expect(
+        startExecution(
+          startContext(contractPolicy, { authoringStage: "design" }),
+        ),
+      ).toEqual({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: [
+            "The pinned revision has not completed plan-stage authoring.",
+          ],
+          instruction:
+            "Complete plan-stage authoring and sign off that revision before starting execution.",
+        },
       });
     });
 

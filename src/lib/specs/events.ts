@@ -36,10 +36,19 @@ export interface PreparedSpecEventPublication {
   sseEvent: SpecSseEvent;
 }
 
+export interface AppendDurableSpecEventInput {
+  specId: string;
+  occurredAt: string;
+  actor: ActorProvenance | { kind: "system" };
+  durableEventType: SpecEventType;
+  durablePayload: unknown;
+}
+
 export interface SpecEventsPublisher {
   appendInTransaction(
     input: AppendSpecEventInput,
   ): PreparedSpecEventPublication;
+  appendDurableInTransaction(input: AppendDurableSpecEventInput): SpecEventRow;
   publishAfterCommit(prepared: PreparedSpecEventPublication): void;
 }
 
@@ -80,5 +89,21 @@ export function createSpecEventsPublisher(
     });
   }
 
-  return { appendInTransaction, publishAfterCommit };
+  function appendDurableInTransaction(
+    input: AppendDurableSpecEventInput,
+  ): SpecEventRow {
+    return deps.appendInTransaction({
+      spec_id: input.specId,
+      occurred_at: input.occurredAt,
+      event_type: input.durableEventType,
+      actor_json: stableStringify(input.actor),
+      payload_json: stableStringify(input.durablePayload),
+    });
+  }
+
+  return {
+    appendInTransaction,
+    appendDurableInTransaction,
+    publishAfterCommit,
+  };
 }

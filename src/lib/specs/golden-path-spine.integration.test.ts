@@ -34,7 +34,7 @@ import {
 
 const SLUG = "spec-spine";
 
-describe("golden-path spine (kiro 19.1): authoring -> review -> execution -> delivery", () => {
+describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> execution -> delivery", () => {
   let world: SpecSpineWorld;
 
   beforeEach(() => {
@@ -56,12 +56,15 @@ describe("golden-path spine (kiro 19.1): authoring -> review -> execution -> del
     const detailAfterDraft = await postJson<{
       spec: { id: string };
       currentRevision: {
-        revision: { state: string };
+        revision: { state: string; authoringStage: string };
         elements: Array<{ element: { id: string; kind: string } }>;
       };
     }>(world.getRoute("getSpecGET", { slug: SLUG }));
     expect(detailAfterDraft.spec.id).toBe(authored.specId);
     expect(detailAfterDraft.currentRevision.revision.state).toBe("draft");
+    expect(detailAfterDraft.currentRevision.revision.authoringStage).toBe(
+      "plan",
+    );
     expect(
       detailAfterDraft.currentRevision.elements.map((item) => item.element.id),
     ).toEqual(
@@ -81,14 +84,7 @@ describe("golden-path spine (kiro 19.1): authoring -> review -> execution -> del
     const changedElementIds = proposed.proposeResponse.diff.changeList.map(
       (change) => change.elementId,
     );
-    expect(changedElementIds).toEqual(
-      expect.arrayContaining([
-        authored.requirementId,
-        authored.criterionOneId,
-        authored.taskOneId,
-        authored.taskTwoId,
-      ]),
-    );
+    expect(changedElementIds).toEqual([authored.taskOneId, authored.taskTwoId]);
     expect(
       proposed.proposeResponse.diff.changeList.every(
         (change) => change.change === "added",
@@ -101,6 +97,21 @@ describe("golden-path spine (kiro 19.1): authoring -> review -> execution -> del
       phase: { primary: string };
     }>(world.getRoute("getSpecStatusGET", { slug: SLUG }));
     expect(statusAfterSignOff.phase.primary).toBe("approved");
+    expect(
+      [
+        authored.requirementsRevisionId,
+        authored.designRevisionId,
+        authored.draftRevisionId,
+      ].map((revisionId) =>
+        world.repos.review
+          .findGateAdmissionsByRevision(revisionId)
+          .map(({ gate, basis }) => ({ gate, basis })),
+      ),
+    ).toEqual([
+      [{ gate: "requirements", basis: "human_approval" }],
+      [{ gate: "design", basis: "human_approval" }],
+      [{ gate: "plan", basis: "human_approval" }],
+    ]);
     // Every granting act reached the notifier port through the route surface —
     // the runtime seam that creates spec approval notification rows
     // (remediation: spec-attention-runtime-wiring).
@@ -424,6 +435,161 @@ describe("golden-path spine (kiro 19.1): authoring -> review -> execution -> del
     );
     expect(durableTypes.has("spec-execution-changed")).toBe(true);
     expect(durableTypes.has("spec-evidence-changed")).toBe(true);
+  });
+
+  it("refuses execution pinned to an approved non-plan-stage revision before preparing a definition", async () => {
+    const slug = "non-plan-execution";
+    const authored = await authorSpineDraft(world, slug);
+
+    const response = await world.postAction(
+      slug,
+      "start-execution",
+      {
+        revisionId: authored.requirementsRevisionId,
+        scope: {
+          selectedTaskIds: [],
+          selectedCriterionIds: [],
+          exclusionDispositions: [],
+        },
+        sessionName: "non-plan-session",
+      },
+      "agent",
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      code: "gate_blocked",
+      unmetConditions: [
+        "The pinned revision has not completed plan-stage authoring.",
+      ],
+      instruction:
+        "Complete plan-stage authoring and sign off that revision before starting execution.",
+    });
+    expect(world.definitions.records).toHaveLength(0);
+  });
+
+  it("preserves fast-path single-pass plan authoring through sign-off and execution start", async () => {
+    const slug = "fast-path-single-pass";
+    const created = await postJson<{
+      spec: { id: string };
+      draft: { id: string; authoringStage: string };
+    }>(
+      world.postAction(
+        slug,
+        "create",
+        {
+          slug,
+          name: "Fast-path single pass",
+          gatePolicy: { preset: "fast-path" },
+          initialElement: {
+            elementId: "fast-requirement",
+            kind: "requirement",
+            parentElementId: null,
+            position: 0,
+            payload: {
+              kind: "requirement",
+              statement: "Fast-path authoring remains a single pass.",
+              priority: "must",
+              risk: "high",
+            },
+          },
+        },
+        "agent",
+      ),
+    );
+    expect(created.draft.authoringStage).toBe("plan");
+
+    await postJson(
+      world.postAction(
+        slug,
+        "draft-upsert",
+        {
+          revisionId: created.draft.id,
+          elementId: "fast-criterion",
+          kind: "criterion",
+          parentElementId: "fast-requirement",
+          position: 1,
+          payload: {
+            kind: "criterion",
+            text: "The approved plan starts a workflow without staged amendments.",
+            validationStrategy: { kinds: ["test_run"] },
+          },
+          baseElementVersion: null,
+        },
+        "agent",
+      ),
+    );
+    await postJson(
+      world.postAction(
+        slug,
+        "draft-upsert",
+        {
+          revisionId: created.draft.id,
+          elementId: "fast-task",
+          kind: "task",
+          parentElementId: null,
+          position: 2,
+          payload: {
+            kind: "task",
+            title: "Ship the single-pass plan",
+            instructions: "Implement and validate the fast-path contract.",
+            tracedRequirementElementIds: ["fast-requirement"],
+            tracedDecisionElementIds: [],
+            coveredCriterionElementIds: ["fast-criterion"],
+            dependsOnTaskElementIds: [],
+          },
+          baseElementVersion: null,
+        },
+        "agent",
+      ),
+    );
+    await postJson(
+      world.postAction(
+        slug,
+        "propose",
+        { revisionId: created.draft.id },
+        "agent",
+      ),
+    );
+    const signedOff = await postJson<{
+      revision: { state: string; authoringStage: string };
+    }>(
+      world.postAction(
+        slug,
+        "sign-off",
+        { revisionId: created.draft.id },
+        "human",
+      ),
+    );
+    expect(signedOff.revision).toMatchObject({
+      state: "approved",
+      authoringStage: "plan",
+    });
+
+    const started = await postJson<{
+      execution: { revision_id: string; state: string };
+      definition: { definition: { approvalRequired: boolean } };
+    }>(
+      world.postAction(
+        slug,
+        "start-execution",
+        {
+          revisionId: created.draft.id,
+          scope: {
+            selectedTaskIds: ["fast-task"],
+            selectedCriterionIds: ["fast-criterion"],
+            exclusionDispositions: [],
+          },
+          sessionName: "fast-path-session",
+        },
+        "agent",
+      ),
+    );
+    expect(started.execution).toMatchObject({
+      revision_id: created.draft.id,
+      state: "definition_review",
+    });
+    expect(started.definition.definition.approvalRequired).toBe(false);
   });
 
   it("records the execution-scoped spec admission when a human approves the definition from the workflow route", async () => {

@@ -33,6 +33,29 @@ async function classify(status: number, body: unknown) {
 }
 
 describe("shared CLI refusal-envelope contract", () => {
+  it("uses the first unmet condition as the message when a refusal omits error", async () => {
+    const message =
+      'Spec element ID "sec-problem" is already used by spec "spec-existing"; element IDs are globally unique.';
+    const result = await classify(409, {
+      code: "element_id_taken",
+      unmetConditions: [message],
+      instruction:
+        "Choose a globally unique element ID prefixed with the spec slug, then retry.",
+    });
+
+    expect(result).toMatchObject({
+      kind: "error",
+      error: message,
+      code: "element_id_taken",
+    });
+    if (result.kind !== "error") throw new Error("expected error result");
+
+    const rendered = failureFromRequest(result, false);
+    expect(rendered.exitCode).toBe(1);
+    expect(rendered.stderr.startsWith(message)).toBe(true);
+    expect(rendered.stderr.split(message)).toHaveLength(2);
+  });
+
   it.each([
     [400, "validation", 2],
     [422, "validation", 2],

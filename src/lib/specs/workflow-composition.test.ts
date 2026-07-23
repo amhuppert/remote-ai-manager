@@ -12,6 +12,11 @@ import {
   _resetMergeDeliveryLifecycleForTesting,
 } from "@/lib/workflows/merge/delivery-lifecycle-port";
 import { registerSpecWorkflowComposition } from "./workflow-composition";
+import {
+  createRegisteredGraphExecutionContract,
+  resetGraphExecutionContractForTesting,
+} from "@/lib/workflow-graph/execution-contract-port";
+import { createWorkflowDefinition } from "@/lib/workflow-graph/test-fixtures";
 
 describe("spec workflow composition", () => {
   afterEach(() => {
@@ -19,6 +24,7 @@ describe("spec workflow composition", () => {
     resetGraphExecutionLifecycleCallbacksForTesting();
     _resetMergeAssociationResolverForTesting();
     _resetMergeDeliveryLifecycleForTesting();
+    resetGraphExecutionContractForTesting();
   });
 
   it("injects the spec delivery gate, lifecycle callbacks, association resolver, and delivery lifecycle through generic ports", async () => {
@@ -35,12 +41,22 @@ describe("spec workflow composition", () => {
       finalPublish: true,
     }));
     const mergeMarkDelivered = vi.fn(async () => {});
+    const validateDefinition = vi.fn(() => ({ ok: true as const }));
 
     registerSpecWorkflowComposition({
       deliveryGate: { evaluate },
       lifecycleCallbacks: { markRunning, markDelivered },
       mergeAssociation: { resolve },
       mergeDeliveryLifecycle: { markDelivered: mergeMarkDelivered },
+      executionContract: {
+        validateDefinition,
+        validateLiveEdit: () => ({ ok: true }),
+        validateTaskCompletion: () => ({ ok: true }),
+        deriveContextAcceptanceCriteria: () => ({
+          ok: true,
+          acceptanceCriteriaByContextId: {},
+        }),
+      },
     });
 
     await createRegisteredDeliveryGateEvaluator().evaluate({
@@ -58,6 +74,9 @@ describe("spec workflow composition", () => {
       sessionName: "session-1",
     });
     notifyRegisteredMergeDelivered("workflow-execution-1", "merge-sha");
+    createRegisteredGraphExecutionContract().validateDefinition(
+      createWorkflowDefinition(),
+    );
 
     expect(evaluate).toHaveBeenCalledOnce();
     expect(markRunning).toHaveBeenCalledWith(
@@ -77,5 +96,6 @@ describe("spec workflow composition", () => {
       "workflow-execution-1",
       "merge-sha",
     );
+    expect(validateDefinition).toHaveBeenCalledOnce();
   });
 });

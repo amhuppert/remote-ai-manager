@@ -270,6 +270,9 @@ const SPEC_SCHEMA_DDL = `
     state                 TEXT NOT NULL CHECK (state IN (
       'draft', 'proposed', 'approved', 'withdrawn'
     )),
+    authoring_stage       TEXT NOT NULL DEFAULT 'plan' CHECK (
+      authoring_stage IN ('requirements', 'design', 'plan')
+    ),
     based_on_revision_id  TEXT,
     content_hash          TEXT,
     proposed_at           TEXT,
@@ -653,6 +656,9 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
     state                 TEXT NOT NULL CHECK (state IN (
       'draft', 'proposed', 'approved', 'withdrawn'
     )),
+    authoring_stage       TEXT NOT NULL DEFAULT 'plan' CHECK (
+      authoring_stage IN ('requirements', 'design', 'plan')
+    ),
     based_on_revision_id  TEXT,
     content_hash          TEXT,
     proposed_at           TEXT,
@@ -1579,6 +1585,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "project_conversations",
     column: "pending_agent_notices",
     type: "TEXT",
+  },
+  {
+    table: "spec_revisions",
+    column: "authoring_stage",
+    type: "TEXT NOT NULL DEFAULT 'plan' CHECK (authoring_stage IN ('requirements', 'design', 'plan'))",
   },
 ];
 

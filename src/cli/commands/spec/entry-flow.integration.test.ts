@@ -285,6 +285,52 @@ describe("native /spec first-save visibility", () => {
     });
   });
 
+  it("names the globally reused element ID and its owning spec", async () => {
+    const first = await runCli(createArgs(["--file", ELEMENT_FILE]), env, host);
+    expect(first.exitCode).toBe(0);
+
+    const second = await runCli(
+      [
+        "spec",
+        "create",
+        "--slug",
+        "billing-log",
+        "--name",
+        "Billing Log",
+        "--preset",
+        "contract-bearing",
+        "--file",
+        ELEMENT_FILE,
+        "--json",
+      ],
+      env,
+      host,
+    );
+
+    expect(second.exitCode).toBe(1);
+    expect(JSON.parse(second.stdout)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        'Spec element ID "requirement-1" is already used by spec',
+      ),
+      code: "element_id_taken",
+      issues: [
+        {
+          path: "unmetConditions[0]",
+          message: expect.stringContaining("element IDs are globally unique"),
+        },
+      ],
+      details: {
+        elementId: "requirement-1",
+        existingSpecId: expect.any(String),
+      },
+      instruction: expect.stringContaining("<spec-slug>-requirement-1"),
+    });
+    expect(await listedSpecs()).toMatchObject({
+      specs: [{ spec: { slug: "audit-log" } }],
+    });
+  });
+
   it("keeps subsequent element-granular draft saves landing in the created spec", async () => {
     const created = await runCli(
       createArgs(["--file", ELEMENT_FILE]),

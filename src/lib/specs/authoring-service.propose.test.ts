@@ -72,11 +72,11 @@ async function createSpec(
 ) {
   // The first requirement travels inside the create call — the durable spec
   // is born from its first draft save.
-  return service.createSpec({
+  const created = await service.createSpec({
     projectPath: PROJECT_PATH,
     slug: `spec-${preset}`,
     name: `Spec ${preset}`,
-    gatePolicy: { preset },
+    gatePolicy: { preset: "fast-path" },
     initialElement: {
       elementId: "requirement-1",
       kind: "requirement",
@@ -91,6 +91,12 @@ async function createSpec(
     },
     actor: ACTOR,
   });
+  await specs.updateGatePolicy({
+    specId: created.spec.id,
+    gatePolicy: { preset },
+    updatedAt: "2026-07-18T13:00:00.500Z",
+  });
+  return created;
 }
 
 async function addCleanContent(specId: string, revisionId: string) {
@@ -217,6 +223,53 @@ describe("AuthoringService propose transaction", () => {
     ).toBeNull();
   });
 
+  it("refuses a plan containing a task that covers no criterion", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "task-2",
+      kind: "task",
+      parentElementId: null,
+      position: 3,
+      payload: {
+        kind: "task",
+        title: "Prepare implementation",
+        instructions: "Prepare the implementation surface.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [],
+        dependsOnTaskElementIds: [],
+      },
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+
+    const panel = await service.lintDraft(created.spec.id, created.draft.id);
+    expect(panel).toContainEqual({
+      ruleId: "9.3.task-without-criterion",
+      severity: "blocks_propose",
+      elementHandle: "T2",
+      message: "T2 covers no acceptance criterion.",
+    });
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      refusal: expect.objectContaining({
+        code: "lint_blocked",
+        findings: panel,
+      }),
+    });
+    expect((await specs.findRevision(created.draft.id))?.state).toBe("draft");
+  });
+
   it("absorbs all Notify/Off propose gates into policy sign-off with admissions and zero approvals", async () => {
     const created = await createSpec("exploratory");
     await addCleanContent(created.spec.id, created.draft.id);
@@ -242,7 +295,6 @@ describe("AuthoringService propose transaction", () => {
         )
         .all(),
     ).toEqual([
-      { gate: "design", basis: "notify_policy" },
       { gate: "plan", basis: "notify_policy" },
       { gate: "requirements", basis: "notify_policy" },
     ]);
