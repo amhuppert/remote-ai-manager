@@ -1870,12 +1870,10 @@ export async function executePromptForMachine(
   }
 
   // Persist a typed `debug_structured` block when a debug-mode turn produced
-  // a structured output. Backend-agnostic — both Claude (SDK-validated) and
-  // Codex (parsed JSON) reach here with structuredOutput populated. The block
-  // merges with the preceding assistant text via readConversationMessages,
-  // letting the renderer dispatch on `phase`. The value is the completed
-  // outcome's structuredOutput — the shared gate may have parsed it from
-  // `text`, else it is the backend's natively-populated payload.
+  // a structured output. Backend-agnostic — the shared gate populates the
+  // value from accepted final-response text or a backend-native payload. The
+  // block merges with the preceding assistant text via
+  // readConversationMessages, letting the renderer dispatch on `phase`.
   if (
     input.debugMode?.active === true &&
     effectiveStructuredOutput != null &&

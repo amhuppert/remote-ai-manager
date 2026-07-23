@@ -12,12 +12,11 @@
  * run state is a durable SQLite record (agent-runs repo), inserted `running`
  * at start and updated to its terminal state with results when it settles.
  * The only thing that cannot serialize — the live AbortController — lives in
- * the shared abort registry under `agent-run:<runId>`. Structured results are
- * read through the backend's native `outputSchema` payload with the shared
- * extraction fallback (`@/lib/agent-backends/structured-output`) — no prompt
- * wrapping, no bespoke parser. Execution, filesystem, and artifact-registry
- * side effects are injected so the bookkeeping is exercised without running a
- * real backend.
+ * the shared abort registry under `agent-run:<runId>`. Structured results flow
+ * through the neutral `outputSchema` request and shared extraction fallback
+ * (`@/lib/agent-backends/structured-output`) — no bespoke parser. Execution,
+ * filesystem, and artifact-registry side effects are injected so the
+ * bookkeeping is exercised without running a real backend.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -55,8 +54,8 @@ const AGENT_RUN_OUTPUT_DIR = "memory-bank/agent-runs";
  * The run contract the sub-agent works under: detail goes to files under the
  * output directory, the response is the summary + referenceDocuments shape.
  * This is domain instruction (where to write, what the fields mean) — the
- * response SHAPE itself is enforced by the backend-native `outputSchema`, not
- * by this text.
+ * response shape is carried by the neutral `outputSchema` contract and checked
+ * after extraction; this text owns the domain-specific file and summary rules.
  */
 const AGENT_RUN_PROMPT_PREAMBLE = `You MUST write all detailed output as files in the \`${AGENT_RUN_OUTPUT_DIR}/\` directory (relative to the workspace root). Use markdown files primarily, but other formats are acceptable when appropriate.
 

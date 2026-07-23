@@ -17,7 +17,7 @@ import type {
 } from "../task";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
-import { projectSchemaForClaude } from "./structured-output-projection";
+import { appendStructuredOutputInstruction } from "../structured-output-prompt";
 import {
   toRawTranscriptEntries,
   type AgentTranscriptEntry,
@@ -31,6 +31,7 @@ import "@/lib/shared/sdk-env";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createClaudeFailureClassifier } from "./failure-classifier";
 import { createStallWatchdog } from "../stall-watchdog";
+import { mapErrorSubtype } from "./process-message";
 
 const logger = createLogger("claude:task-runner");
 const claudeFailureClassifier = createClaudeFailureClassifier();
@@ -84,6 +85,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       hasResume: !!input.resumeRef,
       timeoutMs: input.timeoutMs,
       executionProfile: input.executionProfile ?? "standard",
+      hasOutputSchema: input.outputSchema !== undefined,
     });
 
     let validatedReasoningEffort: ClaudeEffortLevel | undefined;
@@ -181,16 +183,9 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       ? input.systemInstructions.join("\n\n")
       : undefined;
 
-    // Project the schema at the SDK handoff: Claude's native enforcement
-    // validates but cannot steer minLength/minItems/numeric-range keywords,
-    // so they are stripped here and enforced post-parse by the caller's Zod
-    // schema instead.
-    const outputFormat = input.outputSchema
-      ? {
-          type: "json_schema" as const,
-          schema: projectSchemaForClaude(input.outputSchema),
-        }
-      : undefined;
+    const prompt = input.outputSchema
+      ? appendStructuredOutputInstruction(input.prompt, input.outputSchema)
+      : input.prompt;
 
     // Set up timeout via AbortController
     const abortController = new AbortController();
@@ -236,13 +231,13 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     let sessionId: string | null = null;
     const textBlocks: string[] = [];
     const rawMessages: unknown[] = [];
-    let structuredOutput: unknown;
+    let finalResponseText: string | undefined;
     let usageResult: AgentTaskResult["usage"] = null;
     let error: string | null = null;
 
     try {
       const stream = this.deps.runQuery({
-        prompt: input.prompt,
+        prompt,
         options: {
           cwd: input.workingDirectory,
           systemPrompt: {
@@ -262,7 +257,6 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
             : {}),
           resume: resumeSessionId,
           persistSession: !isolatedOneShot,
-          ...(outputFormat ? { outputFormat } : {}),
           mcpServers: mcpServers as Record<string, never>,
           abortController,
           // Task subprocesses get no session-env contract, so ambient CC_*
@@ -303,14 +297,13 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           };
 
           if (resultMsg.subtype === "success") {
-            structuredOutput = (resultMsg as SDKResultSuccess)
-              .structured_output;
+            finalResponseText =
+              typeof resultMsg.result === "string"
+                ? resultMsg.result
+                : undefined;
           } else {
             const errMsg = resultMsg as SDKResultError;
-            error =
-              errMsg.errors?.length > 0
-                ? errMsg.errors.join("; ")
-                : "Task execution failed";
+            error = mapErrorSubtype(errMsg);
           }
         }
       }
@@ -357,12 +350,17 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       timedOut,
       hasError: !!error,
       executionProfile: input.executionProfile ?? "standard",
+      usedFinalResponseText:
+        input.outputSchema !== undefined && finalResponseText !== undefined,
     });
 
+    const assistantText = textBlocks.length > 0 ? textBlocks.join("") : null;
     return {
       ...continuation,
-      text: textBlocks.length > 0 ? textBlocks.join("") : null,
-      structuredOutput,
+      text:
+        input.outputSchema !== undefined && finalResponseText !== undefined
+          ? finalResponseText
+          : assistantText,
       usage: usageResult,
       ...(transcript ? { transcript } : {}),
       error: finalError,

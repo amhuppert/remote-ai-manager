@@ -68,7 +68,7 @@ describe("section 7.1 — capability view canonical identity", () => {
     expect(CLAUDE_CAPABILITY_VIEW).toEqual({
       backend: "claude",
       continuationStrength: "precise_session",
-      structuredOutputEnforcement: "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary: "between_turns",
       contextMetricsAvailable: true,
       nativeMidTurnAskUser: true,
@@ -100,6 +100,9 @@ describe("section 7.1 — capability view canonical identity", () => {
     );
     expect(CLAUDE_CAPABILITY_VIEW.continuationStrength).not.toBe(
       CODEX_CAPABILITY_VIEW.continuationStrength,
+    );
+    expect(CLAUDE_CAPABILITY_VIEW.structuredOutputEnforcement).not.toBe(
+      CODEX_CAPABILITY_VIEW.structuredOutputEnforcement,
     );
     expect(CLAUDE_CAPABILITY_VIEW.mcpApplicationBoundary).not.toBe(
       CODEX_CAPABILITY_VIEW.mcpApplicationBoundary,
@@ -192,6 +195,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         backend: "codex",
         prompt: "anything",
         outputSchema: { type: "object", required: ["summary"] },
+        structuredOutputRepair: { maxAttempts: 0 },
       },
       deps,
     );
@@ -204,7 +208,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
     }
   });
 
-  it("Claude's backend_native enforcement also flows through the shared gate", async () => {
+  it("Claude's post_validation enforcement also flows through the shared gate", async () => {
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
@@ -223,8 +227,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
           numTurns: 1,
           contextTokens: 5,
           contextWindowMax: 200_000,
-          contentBlocks: [{ type: "text", text: "ok" }],
-          structuredOutput: { wrong: "shape" },
+          contentBlocks: [{ type: "text", text: '{"wrong":"shape"}' }],
           aborted: false,
           compacted: false,
           failure: null,
@@ -251,6 +254,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         backend: "claude",
         prompt: "hi",
         outputSchema: { type: "object" },
+        structuredOutputRepair: { maxAttempts: 0 },
       },
       deps,
     );

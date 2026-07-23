@@ -31,7 +31,6 @@ import {
   COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA,
   COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
 } from "./types";
-import { unsupportedStructuredOutputKeywordPaths } from "@/lib/agent-backends/structured-output";
 
 function strictRequiredGaps(schema: unknown, path = "$"): string[] {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
@@ -498,10 +497,10 @@ describe("Collaboration Mode asymmetric artifact schemas", () => {
   });
 
   it("accepts long inline strings (length bounds are advisory, not schema-enforced)", () => {
-    // The manifest schema no longer hard-bounds inline string length: Claude's
-    // native json_schema enforcement cannot honor maxLength, so carrying it makes
-    // the claude_code backend loop and fail. The "full prose stays in generated
-    // files" contract is carried by the prompt and the artifact-file validator.
+    // The manifest schema leaves inline length advisory so an otherwise usable
+    // artifact reference is not discarded over prose length. The "full prose
+    // stays in generated files" contract is carried by the prompt and the
+    // artifact-file validator.
     const longClaim = {
       ...initialDraft,
       key_claims: [{ id: "A-long", claim: "x".repeat(501) }],
@@ -592,10 +591,6 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   for (const { label, fixture, schema } of cases) {
     it(`exposes a strict-required JSON Schema for ${label}`, () => {
       expect(strictRequiredGaps(schema)).toEqual([]);
-    });
-
-    it(`omits json_schema keywords Claude cannot enforce in ${label}`, () => {
-      expect(unsupportedStructuredOutputKeywordPaths(schema)).toEqual([]);
     });
 
     it(`accepts the ${label} fixture against its JSON Schema projection`, () => {

@@ -66,6 +66,31 @@ describe("agentCallRequestSchema", () => {
     }
   });
 
+  it("accepts an explicit structured-output repair budget including opt-out", () => {
+    const parsed = agentCallRequestSchema.parse({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "do the thing",
+      outputSchema: { type: "object" },
+      structuredOutputRepair: { maxAttempts: 0 },
+    });
+
+    expect(parsed.structuredOutputRepair).toEqual({ maxAttempts: 0 });
+  });
+
+  it("rejects a structured-output repair budget outside the single-attempt contract", () => {
+    for (const maxAttempts of [-1, 1.5, 2]) {
+      expect(
+        agentCallRequestSchema.safeParse({
+          kind: "conversation_turn",
+          prompt: "do the thing",
+          outputSchema: { type: "object" },
+          structuredOutputRepair: { maxAttempts },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
   it("rejects a task_run that omits the backend", () => {
     const result = agentCallRequestSchema.safeParse({
       kind: "task_run",
@@ -382,6 +407,35 @@ describe("agentCallResultSchema — widened turn fields", () => {
     }
     expect(result.continuationDisposition).toBe("retain");
     expect(result.compacted).toBe(true);
+  });
+
+  it("accepts repaired structured-output parse metadata", () => {
+    const result = agentCallResultSchema.parse({
+      backend: "claude",
+      backendRef: { backend: "claude", ref: "sess-1" },
+      capabilities: MIN_VIEW,
+      usage: {},
+      artifacts: [],
+      outcome: {
+        kind: "completed",
+        text: '{"ok":true}',
+        structuredOutput: { ok: true },
+        parse: {
+          source: "raw_json",
+          repaired: true,
+          repairAttempts: 1,
+        },
+      },
+    });
+
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.parse).toEqual({
+        source: "raw_json",
+        repaired: true,
+        repairAttempts: 1,
+      });
+    }
   });
 
   it("accepts partial contentBlocks and the extended failure kinds on a failed outcome", () => {

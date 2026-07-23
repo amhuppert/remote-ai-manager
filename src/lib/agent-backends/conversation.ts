@@ -109,6 +109,8 @@ export interface ConversationBackendTurnResult {
   contextTokens: number | null;
   contextWindowMax: number | null;
   contentBlocks: MessageContentBlock[];
+  /** Canonical final-response text when the backend exposes it separately. */
+  finalText?: string | null;
   structuredOutput?: unknown;
   aborted: boolean;
   /** True when the SDK auto-compacted the context at least once this turn. */

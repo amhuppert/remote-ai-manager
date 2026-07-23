@@ -66,13 +66,47 @@ import {
   createClaudeExternalTurnInterpreter,
   type ClaudeMessageInterpreter,
 } from "./process-message";
-import { projectSchemaForClaude } from "./structured-output-projection";
+import {
+  appendStructuredOutputInstruction,
+  renderStructuredOutputInstruction,
+} from "../structured-output-prompt";
 import { createClaudeFailureClassifier } from "./failure-classifier";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("claude:conversation-runtime");
 
 const claudeFailureClassifier = createClaudeFailureClassifier();
+
+function appendStructuredOutputContract(
+  blocks: MessageContentBlock[],
+  schema: Record<string, unknown> | undefined,
+): MessageContentBlock[] {
+  if (!schema) return blocks;
+
+  const instruction = renderStructuredOutputInstruction(schema);
+  if (
+    blocks.some(
+      (block) => block.type === "text" && block.text.includes(instruction),
+    )
+  ) {
+    return blocks;
+  }
+  const lastBlock = blocks.at(-1);
+  if (!lastBlock) {
+    return [{ type: "text", text: instruction }];
+  }
+  if (lastBlock.type !== "text") {
+    return [...blocks, { type: "text", text: instruction }];
+  }
+
+  return [
+    ...blocks.slice(0, -1),
+    {
+      ...lastBlock,
+      text: appendStructuredOutputInstruction(lastBlock.text, schema),
+    },
+  ];
+}
 
 /**
  * Default hard ceiling for the background-task wait barrier. Decoupled from the
@@ -265,15 +299,19 @@ class ClaudeConversationRuntime
     logger.info("claude-runtime.turn_start", {
       conversationId: this.querySession.conversationId,
       autonomous: input.autonomous,
+      hasOutputSchema: this.outputFormat !== undefined,
     });
 
     const startTime = Date.now();
 
-    const promptBlocks: MessageContentBlock[] = buildClaudePromptBlocks({
-      promptText: input.promptText,
-      imageRefs: input.imageRefs,
-      syntheticForkSeed: input.syntheticForkSeed ?? null,
-    });
+    const promptBlocks = appendStructuredOutputContract(
+      buildClaudePromptBlocks({
+        promptText: input.promptText,
+        imageRefs: input.imageRefs,
+        syntheticForkSeed: input.syntheticForkSeed ?? null,
+      }),
+      this.outputFormat?.schema,
+    );
 
     const prompt: string | MessageContentBlock[] =
       promptBlocks.length === 1 && promptBlocks[0]!.type === "text"
@@ -357,6 +395,9 @@ class ClaudeConversationRuntime
         contextTokens: turnResult.contextTokens,
         contextWindowMax: turnResult.contextWindow,
         contentBlocks: turnResult.contentBlocks,
+        ...(turnResult.finalText !== undefined
+          ? { finalText: turnResult.finalText }
+          : {}),
         structuredOutput: turnResult.structuredOutput,
         aborted: turnResult.aborted,
         compacted: turnResult.compacted,
@@ -367,6 +408,7 @@ class ClaudeConversationRuntime
         conversationId: this.querySession.conversationId,
         costUsd: result.costUsd,
         numTurns: result.numTurns,
+        hasFinalText: result.finalText !== undefined,
         error: result.failure?.message ?? null,
         failureKind: result.failure?.kind ?? null,
       });
@@ -777,19 +819,6 @@ const claudeConversationBackendFactory = {
 
     const idleTtlMs = resolveIdleTtlMs(input.workflowExecutionId);
 
-    // Project the output schema at the SDK handoff so Claude's native
-    // enforcement never sees keywords it cannot steer (minLength, minItems,
-    // numeric ranges, …). Zod remains the post-parse arbiter above the seam.
-    // The runtime's own `outputFormat` keeps the caller's object untouched:
-    // `shouldRecreateRuntime` compares it by reference, so replacing it with
-    // a fresh projected object would churn the runtime every turn.
-    const projectedOutputFormat = input.outputFormat
-      ? {
-          type: "json_schema" as const,
-          schema: projectSchemaForClaude(input.outputFormat.schema),
-        }
-      : undefined;
-
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
       cwd: input.worktreePath,
@@ -826,7 +855,6 @@ const claudeConversationBackendFactory = {
       plugins: [],
       settingSources: ["user", "project", "local"],
       disallowedTools: ["AskUserQuestion"],
-      outputFormat: projectedOutputFormat,
       externalTurnHandler,
       onBackgroundTasksLost: input.onBackgroundTasksLost,
       ...(idleTtlMs !== undefined ? { idleTtlMs } : {}),

@@ -60,7 +60,7 @@ export const claudeConversationCapabilities: BackendConversationCapabilities = {
   queue: { acceptsWhileRunning: true, deliveryTiming: "in_turn" },
   continuationStrength: "precise_session",
   fork: "native",
-  structuredOutput: "backend_native",
+  structuredOutput: "post_validation",
   contextWindowMetrics: true,
   nativeMidTurnAskUser: true,
   externalTurns: true,
@@ -112,7 +112,7 @@ export function createClaudeBackendDescriptor(
     },
     tasks: {
       runner: deps.taskRunner,
-      structuredOutput: "backend_native",
+      structuredOutput: "post_validation",
       transcript: claudeTaskTranscriptProjection,
     },
     mcp: deps.mcp,

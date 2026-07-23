@@ -1398,12 +1398,10 @@ describe("executePromptForMachine", () => {
   });
 
   it("passes outputFormat to factory.createRuntime for debug phases", async () => {
-    // The Claude backend natively validates the schema and returns a
-    // populated structuredOutput; mirror that here so the shared
-    // structured-output gate pass-through path runs cleanly.
     mockSendTurn.mockResolvedValueOnce({
       ...defaultTurnResult,
-      structuredOutput: {},
+      contentBlocks: [{ type: "text", text: "{}" }],
+      structuredOutput: undefined,
     });
 
     const input = makeExecutePromptInput({

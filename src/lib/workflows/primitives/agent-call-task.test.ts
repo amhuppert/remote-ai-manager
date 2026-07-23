@@ -200,6 +200,26 @@ describe("dispatchTaskRun", () => {
     }
   });
 
+  it("forwards the isolated-one-shot execution profile to the runner", async () => {
+    const { runner, capturedInput } = makeStubRunner("codex");
+
+    await dispatchTaskRun(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "repair",
+      },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+        executionProfile: "isolated-one-shot",
+      },
+    );
+
+    expect(capturedInput.value?.executionProfile).toBe("isolated-one-shot");
+  });
+
   it("normalizes a timeout result to the timeout failure kind", async () => {
     const { runner } = makeStubRunner("codex", {
       result: { error: null, timedOut: true, text: null },
@@ -401,6 +421,7 @@ describe("dispatchTaskRun", () => {
           inputTokens: 50,
           outputTokens: 75,
           cachedInputTokens: 10,
+          costUsd: 0.25,
         },
       },
     });
@@ -416,6 +437,7 @@ describe("dispatchTaskRun", () => {
       inputTokens: 50,
       outputTokens: 75,
       cachedInputTokens: 10,
+      costUsd: 0.25,
     });
   });
 

@@ -361,6 +361,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           backend: "claude",
           prompt: "p",
           outputSchema: { type: "object" },
+          structuredOutputRepair: { maxAttempts: 0 },
         },
         {
           resolveTaskRunner: () => ({

@@ -32,9 +32,10 @@ import type { DebugCleanupResultOutput } from "./debug-schemas";
 // Context
 // ============================================================
 
-/** Structured-output contract attached to a turn (JSON Schema enforced by the
- *  agent SDK). Shared by both ActiveTurn variants so callers don't have to
- *  branch on `kind` when only the output format matters. */
+/** Structured-output contract attached to a turn (JSON Schema transported by
+ *  the backend adapter and enforced by the shared post-turn gate). Shared by
+ *  both ActiveTurn variants so callers don't have to branch on `kind` when only
+ *  the output format matters. */
 export interface StructuredOutputFormat {
   type: "json_schema";
   schema: Record<string, unknown>;

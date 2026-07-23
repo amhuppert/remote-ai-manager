@@ -205,14 +205,11 @@ export type GraphWorkflowCollaborationContinuation = z.infer<
 // schemas themselves remain here next to the per-artifact JSON-Schema
 // projections in `collaboration/types.ts`.
 
-// Length, item-count, numeric, and pattern bounds are intentionally omitted
-// from these artifact schemas: the per-artifact JSON-Schema projections in
-// `collaboration/types.ts` are handed to Claude's native structured-output
-// enforcement, which cannot satisfy those keywords and fails the whole turn if
-// they are present (see that file's header and
-// docs/structured-data-responses.md). The bounds live in the prompt + field
-// descriptions instead; this `safeParse` only checks shape, required fields,
-// enums, and the cross-field `.refine()` invariants.
+// Length, item-count, numeric, and pattern bounds are advisory for these small
+// manifests. The prompt and artifact-file validator own content placement and
+// size policy; this `safeParse` checks shape, required fields, enums, and the
+// cross-field `.refine()` invariants without discarding otherwise usable
+// artifact references over an inline-length violation.
 const collaborationShortIdSchema = z.string();
 const collaborationShortTextSchema = z.string();
 const collaborationSummarySchema = z.string();

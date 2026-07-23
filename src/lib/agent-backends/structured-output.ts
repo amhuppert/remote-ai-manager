@@ -7,22 +7,14 @@
  * and accepts the first one that passes the Zod schema (fall-through), so a
  * backend-native payload that fails the contract does not mask a valid
  * self-corrected fenced payload later in the same turn. Zod remains the
- * authoritative acceptance schema; model-facing wire projection is
- * backend-owned (see `claude/structured-output-projection.ts`).
+ * authoritative acceptance schema; each backend adapter owns how the request's
+ * JSON Schema is transported to its provider.
  */
 
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("agent-backends.structured-output");
-
-// Guardrail tests outside the backend seam import Claude's keyword-hazard
-// helpers through this neutral surface; deep agent-backends/claude/** imports
-// are fenced by the backend-deep-imports seam rule.
-export {
-  UNSUPPORTED_CLAUDE_STRUCTURED_OUTPUT_KEYWORDS,
-  unsupportedStructuredOutputKeywordPaths,
-} from "./claude/structured-output-projection";
 
 export type StructuredOutputSource = "native" | "raw_json" | "fenced";
 

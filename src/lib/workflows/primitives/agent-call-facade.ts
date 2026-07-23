@@ -40,10 +40,24 @@ import {
   type AgentFailureWithContinuation,
   type ContinuationDisposition,
 } from "@/lib/agent-backends/errors";
-import { extractStructuredOutputCandidates } from "@/lib/agent-backends/structured-output";
+import {
+  extractStructuredOutputCandidates,
+  type StructuredOutputCandidate,
+  type StructuredOutputSource,
+} from "@/lib/agent-backends/structured-output";
+import {
+  buildStructuredOutputRepairPrompt,
+  STRUCTURED_OUTPUT_REPAIR_MAX_ISSUES,
+  STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_CHARS,
+  STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS,
+  STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS,
+} from "@/lib/agent-backends/structured-output-repair";
 import { capabilityViewForBackend } from "./backend-capabilities";
-import { dispatchConversationTurn } from "./agent-call-conversation";
-import { dispatchTaskRun } from "./agent-call-task";
+import {
+  dispatchConversationTurn,
+  type DispatchConversationTurnDeps,
+} from "./agent-call-conversation";
+import { dispatchTaskRun, type DispatchTaskRunDeps } from "./agent-call-task";
 import {
   agentCallRequestSchema,
   buildAgentCallLogFields,
@@ -310,7 +324,7 @@ async function executeConversationTurn(
     resolution.capabilityView.backend,
     deps,
   );
-  const dispatchResult = await dispatchConversationTurn(effectiveRequest, {
+  const dispatchDeps: DispatchConversationTurnDeps = {
     runtime: resolution.runtime,
     capabilityView: resolution.capabilityView,
     signal: resolution.signal,
@@ -344,9 +358,50 @@ async function executeConversationTurn(
     ...(resolution.syntheticForkSeed !== undefined
       ? { syntheticForkSeed: resolution.syntheticForkSeed }
       : {}),
-  });
+  };
+  const dispatchResult = await dispatchConversationTurn(
+    effectiveRequest,
+    dispatchDeps,
+  );
 
-  return applyStructuredOutputGate(effectiveRequest, dispatchResult, deps);
+  return applyStructuredOutputGate(
+    effectiveRequest,
+    dispatchResult,
+    deps,
+    async (prompt) => {
+      const repairRequest: Extract<
+        AgentCallRequest,
+        { kind: "conversation_turn" }
+      > = {
+        kind: "conversation_turn",
+        backend: resolution.capabilityView.backend,
+        prompt,
+        outputSchema: effectiveRequest.outputSchema,
+        ...(effectiveRequest.laneRef !== undefined
+          ? { laneRef: effectiveRequest.laneRef }
+          : {}),
+        ...(effectiveRequest.writeCapability !== undefined
+          ? { writeCapability: effectiveRequest.writeCapability }
+          : {}),
+        ...(effectiveRequest.timeoutMs !== undefined
+          ? { timeoutMs: effectiveRequest.timeoutMs }
+          : {}),
+        ...(effectiveRequest.modelId !== undefined
+          ? { modelId: effectiveRequest.modelId }
+          : {}),
+        ...(effectiveRequest.reasoningEffort !== undefined
+          ? { reasoningEffort: effectiveRequest.reasoningEffort }
+          : {}),
+      };
+      return dispatchConversationTurn(repairRequest, {
+        ...dispatchDeps,
+        waitForBackgroundTasks: false,
+        sessionInstructions: [],
+        imageRefs: [],
+        syntheticForkSeed: null,
+      });
+    },
+  );
 }
 
 async function resolveTaskRunnerResolution(
@@ -418,7 +473,7 @@ async function executeTaskRun(
   if (mcpFailure) return mcpFailure;
 
   const classifyFailure = resolveClassifier(request.backend, deps);
-  const dispatchResult = await dispatchTaskRun(request, {
+  const dispatchDeps: DispatchTaskRunDeps = {
     runner: resolution.runner,
     capabilityView: resolution.capabilityView,
     workingDirectory: resolution.workingDirectory,
@@ -466,9 +521,39 @@ async function executeTaskRun(
     ...(request.imageRefs !== undefined
       ? { imagePaths: request.imageRefs.map((ref) => ref.path) }
       : {}),
-  });
+  };
+  const dispatchResult = await dispatchTaskRun(request, dispatchDeps);
 
-  return applyStructuredOutputGate(request, dispatchResult, deps);
+  return applyStructuredOutputGate(
+    request,
+    dispatchResult,
+    deps,
+    async (prompt) => {
+      const repairRequest: Extract<AgentCallRequest, { kind: "task_run" }> = {
+        kind: "task_run",
+        backend: request.backend,
+        prompt,
+        outputSchema: request.outputSchema,
+        ...(request.laneRef !== undefined ? { laneRef: request.laneRef } : {}),
+        ...(request.writeCapability !== undefined
+          ? { writeCapability: request.writeCapability }
+          : {}),
+        ...(request.timeoutMs !== undefined
+          ? { timeoutMs: request.timeoutMs }
+          : {}),
+        ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
+        ...(request.reasoningEffort !== undefined
+          ? { reasoningEffort: request.reasoningEffort }
+          : {}),
+      };
+      return dispatchTaskRun(repairRequest, {
+        ...dispatchDeps,
+        resumeRef: null,
+        executionProfile: "isolated-one-shot",
+        imagePaths: undefined,
+      });
+    },
+  );
 }
 
 /** Continuity recording + final logging, shared by both dispatch paths. */
@@ -494,11 +579,37 @@ async function finalizeAgentCall(
   return result;
 }
 
-function applyStructuredOutputGate(
+type StructuredOutputRepairDispatch = (
+  prompt: string,
+) => Promise<AgentCallResult>;
+
+type StructuredOutputGateEvaluation =
+  | {
+      status: "pass";
+      candidate: StructuredOutputCandidate | null;
+    }
+  | {
+      status: "fail";
+      failure: GateFailResult;
+      candidates: StructuredOutputCandidate[];
+    };
+
+interface StructuredOutputRepairAggregate {
+  usage: AgentCallResult["usage"];
+  numTurns?: number;
+  compacted?: boolean;
+  backgroundWait?: AgentCallResult["backgroundWait"];
+}
+
+const MAX_DIAGNOSTIC_TOP_LEVEL_KEYS = 25;
+const MAX_DIAGNOSTIC_KEY_CHARS = 80;
+
+async function applyStructuredOutputGate(
   request: AgentCallRequest,
   dispatchResult: AgentCallResult,
   deps: AgentCallFacadeDeps,
-): AgentCallResult {
+  dispatchRepair: StructuredOutputRepairDispatch,
+): Promise<AgentCallResult> {
   if (request.outputSchema === undefined) return dispatchResult;
   if (dispatchResult.outcome.kind !== "completed") return dispatchResult;
 
@@ -512,9 +623,158 @@ function applyStructuredOutputGate(
     ...(artifactKinds !== undefined ? { artifactKinds } : {}),
   });
 
-  const completed = dispatchResult.outcome;
   const validateStructuredOutput =
     deps.validateStructuredOutput ?? validateJsonSchemaSubset;
+  let evaluated = evaluateStructuredOutput(
+    dispatchResult.outcome,
+    request.outputSchema,
+    validateStructuredOutput,
+  );
+  if (evaluated.status === "pass") {
+    return acceptStructuredOutputCandidate(dispatchResult, evaluated.candidate);
+  }
+
+  const candidateSources: StructuredOutputSource[] = [];
+  const observedSources = new Set<StructuredOutputSource>();
+  let currentCandidateTopLevelKeys = topLevelKeys(
+    evaluated.candidates[0]?.value,
+  );
+  let bestCandidateTopLevelKeys = currentCandidateTopLevelKeys;
+  collectCandidateSources(
+    evaluated.candidates,
+    observedSources,
+    candidateSources,
+  );
+
+  const maxAttempts = request.structuredOutputRepair?.maxAttempts ?? 1;
+  let repairAttempts = 0;
+  let failedResult = dispatchResult;
+  let latestRepairResult: AgentCallResult | null = null;
+  let aggregate = createRepairAggregate(dispatchResult);
+
+  while (repairAttempts < maxAttempts) {
+    const attempt = repairAttempts + 1;
+    const issues = failureIssues(
+      evaluated.failure,
+      currentCandidateTopLevelKeys,
+    );
+    const issuePaths = extractIssuePaths(issues);
+    const priorOutputText = priorOutputForRepair(
+      failedResult.outcome.kind === "completed"
+        ? failedResult.outcome.text
+        : null,
+      evaluated.candidates[0],
+    );
+
+    log.info("agent_call.facade.structured_output_repair_attempted", {
+      ...sharedFields,
+      attempt,
+      issuePaths,
+    });
+
+    const repairResult = await dispatchRepair(
+      buildStructuredOutputRepairPrompt({
+        schema: request.outputSchema,
+        priorOutputText,
+        issues,
+      }),
+    );
+    repairAttempts = attempt;
+    latestRepairResult = repairResult;
+    aggregate = appendRepairAggregate(aggregate, repairResult);
+
+    if (repairResult.outcome.kind !== "completed") {
+      log.warn("agent_call.facade.structured_output_repair_failed", {
+        ...sharedFields,
+        attempt,
+        issuePaths,
+      });
+      return buildNonCompletedRepairResult({
+        requestKind: request.kind,
+        initialResult: dispatchResult,
+        repairResult,
+        aggregate,
+      });
+    }
+
+    const repairedEvaluation = evaluateStructuredOutput(
+      repairResult.outcome,
+      request.outputSchema,
+      validateStructuredOutput,
+    );
+    if (repairedEvaluation.status === "pass") {
+      log.info("agent_call.facade.structured_output_repair_succeeded", {
+        ...sharedFields,
+        attempt,
+        issuePaths,
+      });
+      return buildRepairedSuccess({
+        requestKind: request.kind,
+        initialResult: dispatchResult,
+        repairResult,
+        candidate: repairedEvaluation.candidate,
+        repairAttempts,
+        aggregate,
+      });
+    }
+
+    collectCandidateSources(
+      repairedEvaluation.candidates,
+      observedSources,
+      candidateSources,
+    );
+    currentCandidateTopLevelKeys = topLevelKeys(
+      repairedEvaluation.candidates[0]?.value,
+    );
+    if (
+      currentCandidateTopLevelKeys.length > bestCandidateTopLevelKeys.length
+    ) {
+      bestCandidateTopLevelKeys = currentCandidateTopLevelKeys;
+    }
+    evaluated = repairedEvaluation;
+    failedResult = repairResult;
+    log.warn("agent_call.facade.structured_output_repair_failed", {
+      ...sharedFields,
+      attempt,
+      issuePaths: extractIssuePaths(
+        failureIssues(evaluated.failure, currentCandidateTopLevelKeys),
+      ),
+    });
+  }
+
+  const backendDetails = {
+    ...(evaluated.failure.details ?? {}),
+    candidateSources,
+    candidateTopLevelKeys: bestCandidateTopLevelKeys,
+    repairAttempts,
+  };
+
+  log.warn("agent_call.facade.structured_output_failed", {
+    ...sharedFields,
+    outcome: "failed",
+    reason: evaluated.failure.reason,
+    candidateSources,
+    candidateTopLevelKeys: bestCandidateTopLevelKeys,
+    repairAttempts,
+  });
+
+  return failWithSchemaValidation(
+    buildInitialEvidenceResult({
+      requestKind: request.kind,
+      initialResult: dispatchResult,
+      latestRepairResult,
+      aggregate,
+    }),
+    evaluated.failure.reason,
+    backendDetails,
+  );
+}
+
+function evaluateStructuredOutput(
+  completed: Extract<AgentCallResult["outcome"], { kind: "completed" }>,
+  schema: Record<string, unknown>,
+  validator: StructuredOutputValidator,
+): StructuredOutputGateEvaluation {
   const candidates = extractStructuredOutputCandidates({
     ...(completed.structuredOutput !== undefined
       ? { native: completed.structuredOutput }
@@ -528,47 +788,333 @@ function applyStructuredOutputGate(
   // candidate's — that is the payload the backend intended as the answer.
   let firstFailure: GateFailResult | null = null;
   for (const candidate of candidates) {
-    const gate = runStructuredOutputGate(
-      request.outputSchema,
-      candidate.value,
-      validateStructuredOutput,
-    );
+    const gate = runStructuredOutputGate(schema, candidate.value, validator);
     if (gate.status === "pass") {
-      const parse: AgentCallStructuredOutputParse = {
-        source: candidate.source,
-      };
-      return {
-        ...dispatchResult,
-        outcome: {
-          ...completed,
-          structuredOutput: candidate.value,
-          parse,
-        },
-      };
+      return { status: "pass", candidate };
     }
     firstFailure ??= gate;
   }
 
-  if (firstFailure === null) {
-    const gate = runStructuredOutputGate(
-      request.outputSchema,
-      undefined,
-      validateStructuredOutput,
-    );
-    if (gate.status === "pass") return dispatchResult;
-    firstFailure = gate;
+  if (firstFailure !== null) {
+    return { status: "fail", failure: firstFailure, candidates };
   }
 
-  log.warn("agent_call.facade.structured_output_failed", {
-    ...sharedFields,
-    outcome: "failed",
-    reason: firstFailure.reason,
-  });
+  const gate = runStructuredOutputGate(schema, undefined, validator);
+  return gate.status === "pass"
+    ? { status: "pass", candidate: null }
+    : { status: "fail", failure: gate, candidates };
+}
 
-  return failWithSchemaValidation(
-    dispatchResult,
-    firstFailure.reason,
-    firstFailure.details,
+function acceptStructuredOutputCandidate(
+  result: AgentCallResult,
+  candidate: StructuredOutputCandidate | null,
+): AgentCallResult {
+  if (candidate === null || result.outcome.kind !== "completed") return result;
+  const parse: AgentCallStructuredOutputParse = {
+    source: candidate.source,
+  };
+  return {
+    ...result,
+    outcome: {
+      ...result.outcome,
+      structuredOutput: candidate.value,
+      parse,
+    },
+  };
+}
+
+function topLevelKeys(value: unknown): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return [];
+  }
+  return Object.keys(value)
+    .sort()
+    .slice(0, MAX_DIAGNOSTIC_TOP_LEVEL_KEYS)
+    .map((key) => key.slice(0, MAX_DIAGNOSTIC_KEY_CHARS));
+}
+
+function collectCandidateSources(
+  candidates: readonly StructuredOutputCandidate[],
+  observed: Set<StructuredOutputSource>,
+  destination: StructuredOutputSource[],
+): void {
+  for (const candidate of candidates) {
+    if (observed.has(candidate.source)) continue;
+    observed.add(candidate.source);
+    destination.push(candidate.source);
+  }
+}
+
+function failureIssues(
+  failure: GateFailResult,
+  candidateTopLevelKeys: readonly string[],
+): string[] {
+  const detailErrors = failure.details?.["errors"];
+  const rawIssues =
+    Array.isArray(detailErrors) &&
+    detailErrors.every((error): error is string => typeof error === "string") &&
+    detailErrors.length > 0
+      ? [...detailErrors]
+      : [failure.reason];
+  const hasDecodedKeys = candidateTopLevelKeys.length > 0;
+  const issueBudget =
+    STRUCTURED_OUTPUT_REPAIR_MAX_ISSUES - (hasDecodedKeys ? 1 : 0);
+  const issues = rawIssues
+    .slice(0, issueBudget)
+    .map((issue) => issue.slice(0, STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_CHARS));
+  if (hasDecodedKeys) {
+    issues.push(
+      `Decoded top-level keys were ${JSON.stringify(
+        candidateTopLevelKeys,
+      )}`.slice(0, STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_CHARS),
+    );
+  }
+  return issues;
+}
+
+function extractIssuePaths(issues: readonly string[]): string[] {
+  const paths = new Set<string>();
+  for (const issue of issues) {
+    const match = issue.match(/(\$(?:\.[A-Za-z0-9_-]+|\[[0-9]+\])*)/);
+    if (match?.[1]) {
+      paths.add(
+        match[1].slice(0, STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS),
+      );
+    }
+    if (paths.size >= STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS) break;
+  }
+  return paths.size > 0 ? [...paths] : ["$"];
+}
+
+function priorOutputForRepair(
+  text: string | null,
+  candidate: StructuredOutputCandidate | undefined,
+): string {
+  if (text !== null && text.length > 0) return text;
+  if (candidate === undefined) return "";
+  try {
+    return JSON.stringify(candidate.value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function sumOptionalNumber(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  if (left === undefined) return right;
+  if (right === undefined) return left;
+  return left + right;
+}
+
+function mergeUsage(
+  initial: AgentCallResult["usage"],
+  repair: AgentCallResult["usage"],
+): AgentCallResult["usage"] {
+  const inputTokens = sumOptionalNumber(
+    initial.inputTokens,
+    repair.inputTokens,
+  );
+  const outputTokens = sumOptionalNumber(
+    initial.outputTokens,
+    repair.outputTokens,
+  );
+  const cachedInputTokens = sumOptionalNumber(
+    initial.cachedInputTokens,
+    repair.cachedInputTokens,
+  );
+  const costUsd = sumOptionalNumber(initial.costUsd, repair.costUsd);
+  const durationMs = sumOptionalNumber(initial.durationMs, repair.durationMs);
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(repair.contextTokens !== undefined
+      ? { contextTokens: repair.contextTokens }
+      : initial.contextTokens !== undefined
+        ? { contextTokens: initial.contextTokens }
+        : {}),
+    ...(repair.contextWindowMax !== undefined
+      ? { contextWindowMax: repair.contextWindowMax }
+      : initial.contextWindowMax !== undefined
+        ? { contextWindowMax: initial.contextWindowMax }
+        : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+}
+
+function outcomeNumTurns(result: AgentCallResult): number | undefined {
+  return result.outcome.kind === "completed" || result.outcome.kind === "failed"
+    ? result.outcome.numTurns
+    : undefined;
+}
+
+function createRepairAggregate(
+  result: AgentCallResult,
+): StructuredOutputRepairAggregate {
+  const numTurns = outcomeNumTurns(result);
+  return {
+    usage: result.usage,
+    ...(numTurns !== undefined ? { numTurns } : {}),
+    ...(result.compacted !== undefined ? { compacted: result.compacted } : {}),
+    ...(result.backgroundWait !== undefined
+      ? { backgroundWait: result.backgroundWait }
+      : {}),
+  };
+}
+
+function appendRepairAggregate(
+  aggregate: StructuredOutputRepairAggregate,
+  result: AgentCallResult,
+): StructuredOutputRepairAggregate {
+  const numTurns = sumOptionalNumber(
+    aggregate.numTurns,
+    outcomeNumTurns(result),
+  );
+  const hasCompactionSignal =
+    aggregate.compacted !== undefined || result.compacted !== undefined;
+  return {
+    usage: mergeUsage(aggregate.usage, result.usage),
+    ...(numTurns !== undefined ? { numTurns } : {}),
+    ...(hasCompactionSignal
+      ? { compacted: aggregate.compacted === true || result.compacted === true }
+      : {}),
+    ...(result.backgroundWait !== undefined
+      ? { backgroundWait: result.backgroundWait }
+      : aggregate.backgroundWait !== undefined
+        ? { backgroundWait: aggregate.backgroundWait }
+        : {}),
+  };
+}
+
+function applyRepairAggregate(
+  result: AgentCallResult,
+  aggregate: StructuredOutputRepairAggregate,
+): AgentCallResult {
+  const outcome =
+    aggregate.numTurns !== undefined &&
+    (result.outcome.kind === "completed" || result.outcome.kind === "failed")
+      ? { ...result.outcome, numTurns: aggregate.numTurns }
+      : result.outcome;
+  return {
+    ...result,
+    usage: aggregate.usage,
+    outcome,
+    ...(aggregate.compacted !== undefined
+      ? { compacted: aggregate.compacted }
+      : {}),
+    ...(aggregate.backgroundWait !== undefined
+      ? { backgroundWait: aggregate.backgroundWait }
+      : {}),
+  };
+}
+
+function buildInitialEvidenceResult(input: {
+  requestKind: AgentCallRequest["kind"];
+  initialResult: AgentCallResult;
+  latestRepairResult: AgentCallResult | null;
+  aggregate: StructuredOutputRepairAggregate;
+}): AgentCallResult {
+  const accountedInitial = applyRepairAggregate(
+    input.initialResult,
+    input.aggregate,
+  );
+  if (input.requestKind === "task_run" || input.latestRepairResult === null) {
+    return accountedInitial;
+  }
+  const continuationDisposition =
+    input.latestRepairResult.continuationDisposition;
+  const backendRef =
+    continuationDisposition === "clear"
+      ? null
+      : (input.latestRepairResult.backendRef ?? input.initialResult.backendRef);
+  return {
+    ...accountedInitial,
+    backendRef,
+    continuationDisposition,
+  };
+}
+
+function buildNonCompletedRepairResult(input: {
+  requestKind: AgentCallRequest["kind"];
+  initialResult: AgentCallResult;
+  repairResult: AgentCallResult;
+  aggregate: StructuredOutputRepairAggregate;
+}): AgentCallResult {
+  const base = buildInitialEvidenceResult({
+    requestKind: input.requestKind,
+    initialResult: input.initialResult,
+    latestRepairResult: input.repairResult,
+    aggregate: input.aggregate,
+  });
+  if (
+    input.initialResult.outcome.kind !== "completed" ||
+    input.repairResult.outcome.kind !== "failed"
+  ) {
+    return { ...base, outcome: input.repairResult.outcome };
+  }
+
+  const initialOutcome = input.initialResult.outcome;
+  const repairOutcome = input.repairResult.outcome;
+  const transcript = initialOutcome.transcript ?? repairOutcome.transcript;
+  const contentBlocks =
+    initialOutcome.contentBlocks ?? repairOutcome.contentBlocks;
+  return {
+    ...base,
+    outcome: {
+      kind: "failed",
+      ...(transcript !== undefined ? { transcript } : {}),
+      ...(contentBlocks !== undefined ? { contentBlocks } : {}),
+      ...(input.aggregate.numTurns !== undefined
+        ? { numTurns: input.aggregate.numTurns }
+        : {}),
+      error: repairOutcome.error,
+    },
+  };
+}
+
+function buildRepairedSuccess(input: {
+  requestKind: AgentCallRequest["kind"];
+  initialResult: AgentCallResult;
+  repairResult: AgentCallResult;
+  candidate: StructuredOutputCandidate | null;
+  repairAttempts: number;
+  aggregate: StructuredOutputRepairAggregate;
+}): AgentCallResult {
+  if (input.repairResult.outcome.kind !== "completed") {
+    return input.initialResult;
+  }
+  const repairedOutcome =
+    input.candidate === null
+      ? input.repairResult.outcome
+      : {
+          ...input.repairResult.outcome,
+          structuredOutput: input.candidate.value,
+          parse: {
+            source: input.candidate.source,
+            repaired: true,
+            repairAttempts: input.repairAttempts,
+          } satisfies AgentCallStructuredOutputParse,
+        };
+  if (input.requestKind === "conversation_turn") {
+    return applyRepairAggregate(
+      {
+        ...input.repairResult,
+        artifacts: [...input.initialResult.artifacts],
+        outcome: repairedOutcome,
+      },
+      input.aggregate,
+    );
+  }
+
+  return applyRepairAggregate(
+    {
+      ...input.initialResult,
+      outcome: repairedOutcome,
+    },
+    input.aggregate,
   );
 }
 

@@ -17,6 +17,7 @@ import {
   checkApplyTimingBehavior,
   checkCancellation,
   checkContextMetricsCoherence,
+  checkConversationStructuredOutputPostValidation,
   checkConversationStructuredOutputForwarding,
   checkExternalTurnCoherence,
   checkQueueCoherence,
@@ -143,6 +144,15 @@ const claudeDescriptor = createClaudeBackendDescriptor({
   failureClassifier: createClaudeFailureClassifier(),
 });
 
+describe("Claude structured output capability declaration", () => {
+  it("declares post-validation enforcement on both execution facets", () => {
+    expect(claudeDescriptor.conversation?.capabilities.structuredOutput).toBe(
+      "post_validation",
+    );
+    expect(claudeDescriptor.tasks?.structuredOutput).toBe("post_validation");
+  });
+});
+
 describeBackendConformance(claudeDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
@@ -154,6 +164,7 @@ describeBackendConformance(claudeDescriptor, {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
       readForwardedSchema: () => claudeSdk.lastOptions?.outputFormat,
+      readDispatchedPrompt: () => claudeSdk.lastPromptText,
     },
   },
   task: {
@@ -162,6 +173,7 @@ describeBackendConformance(claudeDescriptor, {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
       readForwardedSchema: () => claudeTaskPort.lastOptions?.outputFormat,
+      readDispatchedPrompt: () => claudeTaskPort.lastPrompt,
     },
   },
 });
@@ -293,6 +305,47 @@ describe("conformance behavior checks reject lying descriptors", () => {
             schema: STRUCTURED_OUTPUT_SCHEMA,
             expected: STRUCTURED_OUTPUT_VALUE,
             readForwardedSchema: () => undefined,
+          },
+        },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("fails a post_validation descriptor that still forwards a native schema", async () => {
+    const lying = createTestFakeBackend({
+      capabilities: { structuredOutput: "post_validation" },
+    });
+    await expect(
+      checkConversationStructuredOutputPostValidation(
+        lying.descriptor.conversation!,
+        {
+          ...testfakeTurnHarness,
+          structuredOutput: {
+            schema: STRUCTURED_OUTPUT_SCHEMA,
+            expected: STRUCTURED_OUTPUT_VALUE,
+            readForwardedSchema: () => STRUCTURED_OUTPUT_SCHEMA,
+            readDispatchedPrompt: () =>
+              'contract contains schema property "ok"',
+          },
+        },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("fails a post_validation descriptor that omits the schema contract from its prompt", async () => {
+    const lying = createTestFakeBackend({
+      capabilities: { structuredOutput: "post_validation" },
+    });
+    await expect(
+      checkConversationStructuredOutputPostValidation(
+        lying.descriptor.conversation!,
+        {
+          ...testfakeTurnHarness,
+          structuredOutput: {
+            schema: STRUCTURED_OUTPUT_SCHEMA,
+            expected: STRUCTURED_OUTPUT_VALUE,
+            readForwardedSchema: () => undefined,
+            readDispatchedPrompt: () => "plain prompt without a contract",
           },
         },
       ),

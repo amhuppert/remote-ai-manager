@@ -47,11 +47,14 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(notifications).not.toContain("Internal SSE broadcasts");
   });
 
-  it("keeps Claude schema compatibility adapter-owned", () => {
+  it("keeps structured-output transport and recovery guidance current", () => {
     const structured = read("docs/structured-data-responses.md");
 
-    expect(structured).toContain("projectSchemaForClaude");
-    expect(structured).toContain("Codex receives the unmodified schema");
+    expect(structured).toContain('structuredOutput: "post_validation"');
+    expect(structured).toContain('structuredOutput: "backend_native"');
+    expect(structured).toContain("bounded repair turn");
+    expect(structured).not.toContain("projectSchemaForClaude");
+    expect(structured).not.toContain("schema inventory");
     expect(structured).not.toContain(
       "src/lib/workflows/collaboration/schemas.test.ts",
     );

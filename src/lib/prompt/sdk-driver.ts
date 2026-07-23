@@ -64,16 +64,17 @@ export const TDD_INSTRUCTIONS =
  *      instrumented app at runtime. Validated per-request by
  *      `debugLogEntrySchema.safeParse` in `src/app/api/debug-logs/route.ts`.
  *
- * Neither contract uses SDK `outputFormat` because neither artifact travels
- * through the agent's text response — the manifest is a file the agent
+ * Neither contract uses the turn's `outputFormat` because neither artifact
+ * travels through the agent's text response — the manifest is a file the agent
  * writes during the same turn, and the log entries are HTTP requests the
- * instrumented code makes at user-reproduction time. SDK structured output
- * cannot constrain side effects of tool calls; instead, both contracts are
- * enforced at consumption via Zod schemas in `@/lib/debug-log/schemas`.
+ * instrumented code makes at user-reproduction time. Structured-output
+ * transport cannot constrain side effects of tool calls; instead, both
+ * contracts are enforced at consumption via Zod schemas in
+ * `@/lib/debug-log/schemas`.
  *
- * The agent's actual *text* response is constrained per debug phase by
- * `outputFormat` derived from `debug-schemas.ts` (see
- * the conversation lifecycle module).
+ * The agent's actual *text* response carries the per-phase `outputFormat`
+ * derived from `debug-schemas.ts` through the shared backend pipeline (see the
+ * conversation lifecycle module).
  */
 export const DEBUG_MODE_INSTRUCTIONS = `<debug-mode>
 You are in Debug Mode. Debug with runtime evidence, not static guesswork.
@@ -470,10 +471,10 @@ export interface PromptStreamOptions {
   workflowContext?: { executionId: string; contextId: string };
   skipConversationLock?: boolean;
   // `outputFormat` is intentionally opt-in. Regular user-facing chat is
-  // free-form markdown by design — forcing a JSON schema would prevent the
+  // free-form markdown by design — requiring a JSON schema would prevent the
   // streaming chat response the UI renders. Workflow callers (debug mode,
-  // validator, collaboration round responses) opt in explicitly so the SDK
-  // enforces their schema; everyone else gets unconstrained text.
+  // validator, collaboration round responses) opt into the backend-neutral
+  // structured-output pipeline; everyone else gets unconstrained text.
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   collab?: CollabPromptConfig;
   /**

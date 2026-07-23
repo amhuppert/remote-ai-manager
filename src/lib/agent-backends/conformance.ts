@@ -15,12 +15,11 @@
  * reject a foreign ref before touching any port.
  *
  * Conversation-turn behavior checks assert each DECLARED capability against
- * OBSERVED runtime behavior (queue delivery, external-turn emission, native
- * structured-output forwarding, per-kind apply timing, cancellation, context
+ * OBSERVED runtime behavior (queue delivery, external-turn emission,
+ * structured-output transport, per-kind apply timing, cancellation, context
  * metrics), driven through the real factories/runners against fake provider
- * ports. The per-behavior check functions are exported so a suite can prove
- * a deliberately lying descriptor FAILS them, not just that truthful ones
- * pass.
+ * ports. The per-behavior check functions are exported so a suite can prove a
+ * deliberately lying descriptor FAILS them, not just that truthful ones pass.
  */
 
 import { describe, expect, it } from "vitest";
@@ -51,6 +50,7 @@ import type {
 import type { AgentTaskRequest } from "./task";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { sleep } from "@/lib/shared/sleep";
+import { renderStructuredOutputInstruction } from "./structured-output-prompt";
 
 export interface ContinuityConformanceHarness {
   /** Inputs the adapter's fake ports can satisfy on the happy path. */
@@ -62,13 +62,14 @@ export interface ContinuityConformanceHarness {
 /**
  * Structured-output drive shared by the conversation and task facets: the
  * schema handed to the backend, the value the fake provider returns natively,
- * and a reader for the provider-port capture proving the schema was actually
- * forwarded to the provider (not just held above the seam).
+ * and provider-port readers proving whether the schema crossed the native wire
+ * or was rendered into the dispatched prompt.
  */
 export interface StructuredOutputConformanceDrive {
   schema: Record<string, unknown>;
   expected: unknown;
   readForwardedSchema(): unknown;
+  readDispatchedPrompt?(): string | undefined;
 }
 
 /**
@@ -96,15 +97,15 @@ export interface ConversationTurnConformanceHarness {
   /** Required when `externalTurns` is declared: makes the fake provider emit
    * one unsolicited out-of-turn provider turn. */
   triggerExternalTurn?(): void | Promise<void>;
-  /** Required when conversation `structuredOutput === "backend_native"`. */
+  /** Drives native forwarding or prompted post-validation when supplied. */
   structuredOutput?: StructuredOutputConformanceDrive;
 }
 
 /** Drives the real task runner through a fake provider port. */
 export interface TaskConformanceHarness {
   buildRequest(): AgentTaskRequest;
-  /** Required when `tasks.structuredOutput === "backend_native"`; the built
-   * request must then carry `structuredOutput.schema` as its outputSchema. */
+  /** Drives native forwarding or prompted post-validation when supplied; the
+   * built request must carry `structuredOutput.schema` as its outputSchema. */
   structuredOutput?: StructuredOutputConformanceDrive;
 }
 
@@ -312,6 +313,45 @@ export async function checkConversationStructuredOutputForwarding(
 }
 
 /**
+ * Conversation-facet post-validation structured output: the provider wire must
+ * receive no native schema, while the dispatched prompt carries the neutral
+ * rendered contract and the provider surfaces no native structured value.
+ */
+export async function checkConversationStructuredOutputPostValidation(
+  facet: AgentBackendConversationFacet,
+  harness: ConversationTurnConformanceHarness,
+): Promise<void> {
+  const drive = harness.structuredOutput;
+  if (!drive) {
+    throw new Error(
+      "conversation structuredOutput is 'post_validation' but the harness provides no structuredOutput drive",
+    );
+  }
+  if (!drive.readDispatchedPrompt) {
+    throw new Error(
+      "conversation post-validation structured output drive provides no dispatched-prompt reader",
+    );
+  }
+
+  const runtime = await createRuntimeFor(facet, harness, {
+    outputFormat: { type: "json_schema", schema: drive.schema },
+  });
+  try {
+    const result = await runtime.sendTurn(
+      buildTurnInput("conformance structured-output turn"),
+    );
+    expect(result.failure).toBeNull();
+    expect(drive.readForwardedSchema()).toBeUndefined();
+    expect(result.structuredOutput).toBeUndefined();
+    expect(drive.readDispatchedPrompt()).toContain(
+      renderStructuredOutputInstruction(drive.schema),
+    );
+  } finally {
+    runtime.close();
+  }
+}
+
+/**
  * Cancellation: aborting an in-flight turn (production sequence — abort the
  * signal, then close the runtime) must resolve the turn as a clean
  * `aborted: true` result, never a classified failure.
@@ -408,9 +448,9 @@ export async function checkApplyTimingBehavior(
 
 /**
  * Task-facet behavior: the real runner completes a scripted run with a ref
- * owned by the descriptor, text, and usage; when the facet declares
- * `backend_native` structured output, the request's schema must reach the
- * provider port and the provider's structured value must surface.
+ * owned by the descriptor, text, and usage. Native facets forward a schema and
+ * surface a provider value; post-validation facets keep the native wire empty
+ * and carry the rendered schema contract in the prompt.
  */
 export async function checkTaskFacetBehavior(
   descriptor: AgentBackendDescriptor,
@@ -438,6 +478,22 @@ export async function checkTaskFacetBehavior(
     }
     expect(result.structuredOutput).toEqual(drive.expected);
     expect(drive.readForwardedSchema()).toBeDefined();
+    return;
+  }
+
+  if (tasks.structuredOutput === "post_validation") {
+    const drive = harness.structuredOutput;
+    if (!drive) return;
+    if (!drive.readDispatchedPrompt) {
+      throw new Error(
+        "tasks post-validation structured output drive provides no dispatched-prompt reader",
+      );
+    }
+    expect(drive.readForwardedSchema()).toBeUndefined();
+    expect(result.structuredOutput).toBeUndefined();
+    expect(drive.readDispatchedPrompt()).toContain(
+      renderStructuredOutputInstruction(drive.schema),
+    );
   }
 }
 
@@ -642,6 +698,15 @@ export function describeBackendConformance(
       ) {
         it("structured-output forwarding: the schema reaches the provider and the native value surfaces", () =>
           checkConversationStructuredOutputForwarding(
+            conversationFacet,
+            turnHarness,
+          ));
+      } else if (
+        conversationFacet.capabilities.structuredOutput === "post_validation" &&
+        turnHarness.structuredOutput
+      ) {
+        it("structured-output post-validation: no native schema is forwarded and the prompt carries the rendered contract", () =>
+          checkConversationStructuredOutputPostValidation(
             conversationFacet,
             turnHarness,
           ));

@@ -548,7 +548,7 @@ export function countStateStoreConstructions(source: string): number {
 }
 
 /**
- * Seam 8 unit (heuristic): hand-written structured-output projections —
+ * Seam 8 unit (heuristic): hand-written structured-output schemas —
  *   1. `const *_JSON_SCHEMA … = {` / `const *_OUTPUT_SCHEMA … = {`
  *      declarations whose initializer is an object literal, and
  *   2. inline object literals flowing directly into an `outputSchema:` value
@@ -849,11 +849,11 @@ export const SEAMS: readonly SeamDefinition[] = [
   },
   {
     id: "structured-output-schema-literals",
-    title: "Hand-written structured-output projections",
+    title: "Hand-written structured-output schemas",
     reviewedCeiling: 25,
     unit: "const *_JSON_SCHEMA/*_OUTPUT_SCHEMA = { … } declarations + inline object literals flowing into outputSchema / outputFormat.schema",
     corpus:
-      "src/**/*.{ts,tsx} minus tests. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Survivor floor with a bounded, NON-ZERO target (§3.1.6, plan line 312): the completion target is 'duplicate schema knowledge to zero while preserving backend-compatible projections', NOT hand-written literals to zero at any cost. Callers may derive the complete schema from Zod because the Claude adapter's projectSchemaForClaude implementation removes unsupported minLength/maxLength/minItems/maxItems, numeric-range, and pattern keywords before the SDK sees them; Codex receives the unmodified schema. Two populations share this count: (1) duplicate schema KNOWLEDGE — a literal that restates a Zod schema the canonical generator could own — which is real debt that must reach 0; and (2) compatibility projections that intentionally diverge from generator output and have parity evidence, which are permitted survivors. Deletion condition (per site): a literal drops when its schema knowledge is folded onto the canonical z.toJSONSchema generator or an adapter-owned generated projection with recursive guardrail and parity tests. The floor reaches 0 only for the duplicate-knowledge population; the residual is the set of intentional projections whose generated equivalent has not yet proven parity, ratcheted down as each proof lands. Empty allowlist by design (per-site classification is by generator derivation, not file path), so any NEW hand-written schema literal outside a proven projection still fails the ratchet.",
+      "src/**/*.{ts,tsx} minus tests. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. Empty allowlist by design, so any new hand-written schema literal still fails the ratchet until the reviewed ceiling is intentionally updated.",
     allowlist: [],
     inCorpus(relPath) {
       return isTsSource(relPath) && !isTestPath(relPath);

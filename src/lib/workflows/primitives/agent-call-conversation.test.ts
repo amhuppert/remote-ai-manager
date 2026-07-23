@@ -516,6 +516,38 @@ describe("dispatchConversationTurn", () => {
 });
 
 describe("dispatchConversationTurn — widened result mapping", () => {
+  it("uses the backend's canonical final text instead of intermediate content blocks", async () => {
+    const finalText = '{"summary":"done"}';
+    const { runtime } = makeStubRuntime({
+      result: {
+        finalText,
+        contentBlocks: [
+          { type: "text", text: "Intermediate analysis" },
+          { type: "tool_use", id: "tool-1", name: "Read", input: {} },
+          { type: "text", text: finalText },
+        ],
+      },
+    });
+
+    const result = await dispatchConversationTurn(
+      {
+        kind: "conversation_turn",
+        prompt: "format",
+        outputSchema: { type: "object" },
+      },
+      {
+        runtime,
+        capabilityView: CAPABILITY_VIEW,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.text).toBe(finalText);
+    }
+  });
+
   it("carries numTurns, contentBlocks, compacted, backgroundWait, and the adapter disposition on a completed turn", async () => {
     const { runtime } = makeStubRuntime({
       result: {

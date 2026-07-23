@@ -281,7 +281,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
   });
 
-  it("passes the lane outputSchema to the Claude runtime factory as SDK outputFormat on the format turn, leaving the prose work turn unconstrained", async () => {
+  it("passes the lane outputSchema to the Claude runtime contract on the format turn, leaving the prose work turn unconstrained", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-output-format",
@@ -365,8 +365,8 @@ describe("createCollaborationProductionCallAgent", () => {
       outputSchema: schema,
     });
 
-    // The prose work turn runs without schema enforcement; the format turn
-    // carries the json_schema outputFormat.
+    // The prose work turn runs without a schema contract; the format turn
+    // carries the provider-neutral json_schema outputFormat.
     expect(outputFormats[0]).toBeUndefined();
     expect(outputFormats[1]).toEqual({
       type: "json_schema",

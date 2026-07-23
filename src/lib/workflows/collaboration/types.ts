@@ -6,18 +6,9 @@
  * `src/lib/workflow-graph/collaboration-schemas.ts` and are documented in
  * `memory-bank/COLLABORATION_MODE_FLOW.md`. This module re-exports them so
  * feature code keeps a stable import site, adds the lane-identity enum that is
- * internal to the orchestrator, and projects each artifact schema to a JSON
- * Schema constant for backends that enforce structured output natively.
- *
- * IMPORTANT: these JSON Schema constants are handed to Claude's native
- * structured-output enforcement (`outputFormat: { type: "json_schema" }`),
- * which does NOT support `minLength`/`maxLength`/`minItems`/`maxItems`/
- * `minimum`/`maximum`/`pattern`. It validates output against such keywords but
- * cannot steer generation to satisfy them, so including them makes the
- * claude_code backend loop and fail ("Failed to provide valid structured
- * output after N attempts"). Keep these projections to the supported subset
- * (types, `enum`, `anyOf`, `required`, `additionalProperties: false`); express
- * bounds in field descriptions and enforce them in the Zod `safeParse` instead.
+ * internal to the orchestrator, and derives provider-neutral JSON Schema
+ * constants for `AgentCallRequest.outputSchema`. Backend adapters choose how to
+ * transport the complete contract; the shared gate owns normalized acceptance.
  * See docs/structured-data-responses.md.
  */
 

@@ -1,13 +1,14 @@
 /**
  * JSON Schema definitions for structured debug mode output.
  *
- * These schemas are passed to the Claude Agent SDK via the `outputFormat`
- * option to enforce structured JSON responses during debug workflow phases.
+ * These schemas travel through the neutral `outputFormat` contract during
+ * structured debug workflow phases. Backend adapters choose their transport,
+ * and the shared AgentCall gate validates the completed response.
  *
  * Each shape has a sibling Zod schema (named `*ZodSchema`) used to
- * `safeParse` the agent's `structuredOutput` at trust boundaries inside
- * the conversation machine. The JSON Schemas are the SDK enforcement
- * contract; the Zod schemas are the runtime validation contract.
+ * `safeParse` the agent's `structuredOutput` at trust boundaries inside the
+ * conversation machine. The JSON Schemas are the model-facing contracts; the
+ * Zod schemas are the authoritative runtime validation contracts.
  */
 
 import { z } from "zod";
@@ -80,14 +81,12 @@ const sharedEvidenceFields = {
 };
 
 /**
- * JSON Schema for the evidence analysis phase, sent to the SDK as the
- * structured output contract.
+ * Provider-neutral JSON Schema for the evidence analysis phase.
  *
- * Anthropic's tool input_schema rejects `oneOf`/`allOf`/`anyOf` at the root,
- * so the discriminated union is expressed as a single flat object: the
- * `outcome` enum acts as the discriminator, and per-branch fields appear as
+ * The discriminated union is expressed as a simple flat model-facing object:
+ * the `outcome` enum acts as the discriminator, and per-branch fields appear as
  * optional properties. The matching Zod schema (`debugEvidenceAnalysisSchema`)
- * enforces the per-outcome required fields downstream at the trust boundary.
+ * enforces the per-outcome required fields at the trust boundary.
  */
 export const debugEvidenceAnalysisOutputSchema = {
   type: "object",

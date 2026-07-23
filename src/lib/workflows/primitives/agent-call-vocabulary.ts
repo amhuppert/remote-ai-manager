@@ -72,12 +72,16 @@ const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(
 );
 
 const outputSchemaInputSchema = z.record(z.string(), z.unknown());
+const structuredOutputRepairInputSchema = z.object({
+  maxAttempts: z.number().int().min(0).max(1),
+});
 
 const baseRequestFields = {
   laneRef: laneRefSchema.optional(),
   prompt: z.string().min(1),
   tooling: portableMcpConfigInputSchema.optional(),
   outputSchema: outputSchemaInputSchema.optional(),
+  structuredOutputRepair: structuredOutputRepairInputSchema.optional(),
   writeCapability: laneWriteCapabilitySchema.optional(),
   // 0 is the project-wide "no timeout" sentinel; positive values cap the
   // turn. Both task runners (`claude/task-runner`, `codex/task-runner`) and
@@ -159,6 +163,7 @@ export type ArtifactRef = z.infer<typeof artifactRefSchema>;
 export const normalizedAgentCallFailureKindSchema = z.enum([
   "timeout",
   "schema_validation",
+  "structured_output_exhausted",
   "backend_error",
   "aborted",
   "capability_unavailable",
@@ -185,6 +190,8 @@ export type PauseKind = z.infer<typeof pauseKindSchema>;
  */
 export const agentCallStructuredOutputParseSchema = z.object({
   source: z.enum(["native", "raw_json", "fenced"]),
+  repaired: z.boolean().optional(),
+  repairAttempts: z.number().int().positive().optional(),
 });
 export type AgentCallStructuredOutputParse = z.infer<
   typeof agentCallStructuredOutputParseSchema

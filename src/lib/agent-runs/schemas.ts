@@ -52,7 +52,7 @@ export const agentRunOutputSchema = z.object({
 });
 export type AgentRunOutput = z.infer<typeof agentRunOutputSchema>;
 
-/** JSON-schema projection of {@link agentRunOutputSchema} for backend-native `outputSchema`. */
+/** Provider-neutral JSON Schema contract derived from {@link agentRunOutputSchema}. */
 export const AGENT_RUN_OUTPUT_SCHEMA = {
   type: "object",
   properties: {

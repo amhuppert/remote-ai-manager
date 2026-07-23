@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentFailureClassificationSchema,
   continuationDispositionSchema,
   isLikelyStaleResumeMessage,
   isPromptNotDeliveredFailure,
   markPromptNotDelivered,
   turnContinuationSchema,
 } from "./errors";
+
+describe("agentFailureClassificationSchema", () => {
+  it("accepts the dedicated structured-output exhaustion classification", () => {
+    expect(
+      agentFailureClassificationSchema.parse({
+        kind: "structured_output_exhausted",
+        message: "Agent exceeded structured output retry limit",
+        retryable: false,
+      }),
+    ).toEqual({
+      kind: "structured_output_exhausted",
+      message: "Agent exceeded structured output retry limit",
+      retryable: false,
+    });
+  });
+});
 
 describe("isLikelyStaleResumeMessage", () => {
   it("matches provider stale-resume shapes", () => {

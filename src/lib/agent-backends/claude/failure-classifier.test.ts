@@ -28,6 +28,28 @@ describe("createClaudeFailureClassifier", () => {
     expect(classifier.classify(named).kind).toBe("timeout");
   });
 
+  it("classifies native structured-output retry exhaustion distinctly and non-retryably", () => {
+    for (const message of [
+      "Agent exceeded structured output retry limit",
+      "Failed to produce valid structured output after maximum retries",
+      "Failed to provide valid structured output after 5 attempts",
+    ]) {
+      expect(classifier.classify(message)).toEqual({
+        kind: "structured_output_exhausted",
+        message,
+        retryable: false,
+      });
+      expect(classifier.classifyWithContinuation(message)).toEqual({
+        failure: {
+          kind: "structured_output_exhausted",
+          message,
+          retryable: false,
+        },
+        continuationDisposition: "retain",
+      });
+    }
+  });
+
   it("classifies an undelivered-prompt query-session error as retryable session_died", () => {
     const err = tagQuerySessionError(
       new Error("QuerySession ended before the turn completed"),

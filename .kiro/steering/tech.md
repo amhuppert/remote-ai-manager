@@ -9,7 +9,7 @@ Server-rendered Next.js + API routes as backend. **Persistence**: a single SQLit
 - **TypeScript** — `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `allowJs: false`
 - **Next.js 16** (App Router) + **React 19** + **Node.js**
 - **Tailwind CSS v4** (`@tailwindcss/postcss`, CSS-first `@theme`) — the styling system: utility-first classNames + React primitives in `src/components/ui/` + the `cn()` helper (`src/lib/ui/cn.ts`). Custom tokens are defined in `src/features/_root/styles/theme.css` (`@theme`) — the single source of truth for which utilities exist. Which built-ins may/may not be used: `docs/tailwind-conventions.md`. Preflight is intentionally OFF (`reset.css` is the canonical base reset).
-- **Zod v4** — schema-first; types derived via `z.infer`; `safeParse` external/untrusted, `parse` internal/trusted. Backend wire-schema compatibility is adapter-owned; see `agent-backends.md`.
+- **Zod v4** — schema-first; types derived via `z.infer`; `safeParse` external/untrusted, `parse` internal/trusted. Backend structured-output transport is adapter-owned; see `agent-backends.md`.
 - **Zustand + Immer** — client state (`src/stores/`)
 - **@tanstack/react-query** — server state; per-domain factories in `src/lib/<domain>/{queries,mutations,query-keys}.ts`
 - **react-virtuoso** — virtualized message lists
@@ -66,7 +66,7 @@ bun run seams:check  # architecture seam ratchet only
 
 - **Git worktrees** for session isolation
 - **Scoped single-flight locking** — conversation turns key on `projectPath::sessionName::conversationId`; session-level locks remain for git/worktree operations
-- **Registered agent backends** — neutral consumers resolve descriptor facets/capabilities; provider SDK options, native frames, schema projection, and failure semantics stay inside `agent-backends/{claude,codex}/`
+- **Registered agent backends** — neutral consumers resolve descriptor facets/capabilities; provider SDK options, native frames, structured-output transport, and failure semantics stay inside `agent-backends/{claude,codex}/`
 - **Own transcript storage** — CC writes lossless backend envelopes and conversation JSONL; no dependency on a provider's private transcript directory
 - **Typed SSE publication** — domain code publishes through `src/lib/events/publication.ts`; the raw broadcaster is private transport
 - **Responsiveness contract** — every mutable action gives immediate visual feedback: optimistic update by default, pending indicator (`mutation.isPending` + visible in-progress state) as the floor. `invalidateQueries` alone is never user feedback. Full strategy: `.kiro/steering/data-fetching-and-sse.md` §Perceived Responsiveness

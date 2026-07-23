@@ -551,9 +551,10 @@ export function createCollaborationProductionCallAgent(
 
     // Two-step structured output. The work turn answers in prose (schema
     // stripped, the JSON reminder swapped for a prose directive); the format
-    // follow-up restates that answer as schema-conforming JSON under backend
-    // enforcement. Both turns run inside ONE scheduled critical section — the
-    // format turn resumes the work turn's session via the lane's continuity
+    // follow-up restates that answer as schema-conforming JSON through the
+    // backend transport and shared gate. Both turns run inside ONE scheduled
+    // critical section: the format turn resumes the work turn's session via the
+    // lane's continuity
     // ref, so the model formats an answer it has already produced instead of
     // reasoning and conforming to the schema in a single pass (which fails when
     // the task is large enough that the agent is still mid-reasoning at

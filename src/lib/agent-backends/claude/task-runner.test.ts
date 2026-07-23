@@ -26,6 +26,7 @@ vi.mock("@/lib/shared/child-env", () => ({
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeTaskRunner } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
+import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 
 const mockQuery = vi.mocked(query);
 
@@ -389,6 +390,33 @@ describe("ClaudeTaskRunner", () => {
     expect(result.continuationDisposition).toBe("retain");
   });
 
+  it("classifies the typed structured-output retry exhaustion when errors are empty", async () => {
+    mockQuery.mockReturnValue(
+      makeStream([
+        {
+          type: "result",
+          subtype: "error_max_structured_output_retries",
+          session_id: "session-structured-output",
+          total_cost_usd: 0,
+          num_turns: 5,
+          duration_ms: 200,
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 0,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+          },
+          errors: [],
+        },
+      ]) as ReturnType<typeof query>,
+    );
+
+    const result = await runner.run(makeRequest());
+
+    expect(result.error).toBe("Agent exceeded structured output retry limit");
+    expect(result.failure?.kind).toBe("structured_output_exhausted");
+  });
+
   it("clears a stale Claude resume ref from a failed result message", async () => {
     mockQuery.mockReturnValue(
       makeStream([
@@ -421,67 +449,123 @@ describe("ClaudeTaskRunner", () => {
     expect(result.backendRef).toBeNull();
   });
 
-  it("passes outputFormat when outputSchema is provided", async () => {
+  it("renders the full output schema into the prompt without using SDK outputFormat", async () => {
+    const responseText = '{"answer":42}';
     mockQuery.mockReturnValue(
       makeStream([
         {
+          type: "assistant",
+          session_id: "session-abc",
+          message: {
+            content: [{ type: "text", text: responseText }],
+          },
+        },
+        {
           ...successResultMessage(),
-          structured_output: { answer: 42 },
+          structured_output: { shouldNotSurface: true },
         },
       ]) as ReturnType<typeof query>,
     );
 
     const schema = {
       type: "object",
-      properties: { answer: { type: "number" } },
+      properties: {
+        answer: { type: "number", minimum: 1, maximum: 100 },
+        label: { type: "string", minLength: 1 },
+      },
+      required: ["answer"],
     };
     const result = await runner.run(makeRequest({ outputSchema: schema }));
 
     const callArg = mockQuery.mock.calls[0]?.[0] as {
+      prompt: string;
       options: { outputFormat?: { type: string; schema: unknown } };
     };
-    expect(callArg.options.outputFormat).toEqual({
-      type: "json_schema",
-      schema,
-    });
-    expect(result.structuredOutput).toEqual({ answer: 42 });
+    expect(callArg.options).not.toHaveProperty("outputFormat");
+    expect(callArg.prompt).toBe(
+      `Do the thing\n\n${renderStructuredOutputInstruction(schema)}`,
+    );
+    expect(callArg.prompt).toContain('"minLength": 1');
+    expect(callArg.prompt).toContain('"maximum": 100');
+    expect(result.text).toBe(responseText);
+    expect(result).not.toHaveProperty("structuredOutput");
   });
 
-  it("projects the outputSchema for Claude: unsupported keywords are stripped at the SDK boundary, everything else preserved (T3.1)", async () => {
+  it("uses the canonical final response text for structured output", async () => {
+    const responseText = '{"answer":42}';
+    mockQuery.mockReturnValue(
+      makeStream([
+        {
+          type: "assistant",
+          session_id: "session-abc",
+          message: {
+            content: [
+              {
+                type: "text",
+                text: "I will inspect the inputs before formatting the answer.",
+              },
+            ],
+          },
+        },
+        {
+          type: "assistant",
+          session_id: "session-abc",
+          message: {
+            content: [{ type: "text", text: responseText }],
+          },
+        },
+        {
+          ...successResultMessage(),
+          result: responseText,
+        },
+      ]) as ReturnType<typeof query>,
+    );
+
+    const result = await runner.run(
+      makeRequest({
+        outputSchema: {
+          type: "object",
+          properties: { answer: { type: "number" } },
+          required: ["answer"],
+        },
+      }),
+    );
+
+    expect(result.text).toBe(responseText);
+  });
+
+  it("does not append a duplicate schema contract when the prompt already contains it", async () => {
+    mockQuery.mockReturnValue(
+      makeStream([successResultMessage()]) as ReturnType<typeof query>,
+    );
+    const schema = {
+      type: "object",
+      properties: { answer: { type: "number" } },
+      required: ["answer"],
+    };
+    const instruction = renderStructuredOutputInstruction(schema);
+    const prompt = `Correct the prior response.\n\n${instruction}\n\nReturn only the corrected JSON object.`;
+
+    await runner.run(makeRequest({ prompt, outputSchema: schema }));
+
+    const callArg = mockQuery.mock.calls[0]?.[0] as { prompt: string };
+    expect(callArg.prompt).toBe(prompt);
+    expect(callArg.prompt.split(instruction)).toHaveLength(2);
+  });
+
+  it("leaves the prompt unchanged when no output schema is provided", async () => {
     mockQuery.mockReturnValue(
       makeStream([successResultMessage()]) as ReturnType<typeof query>,
     );
 
-    const schema = {
-      type: "object",
-      properties: {
-        items: {
-          type: "array",
-          minItems: 1,
-          items: { type: "string", minLength: 2 },
-        },
-        count: { type: "integer", minimum: 0, description: "non-negative" },
-      },
-      required: ["items", "count"],
-      additionalProperties: false,
-    };
-    await runner.run(makeRequest({ outputSchema: schema }));
+    await runner.run(makeRequest({ prompt: "Unchanged task prompt" }));
 
     const callArg = mockQuery.mock.calls[0]?.[0] as {
-      options: { outputFormat?: { type: string; schema: unknown } };
+      prompt: string;
+      options: { outputFormat?: unknown };
     };
-    expect(callArg.options.outputFormat).toEqual({
-      type: "json_schema",
-      schema: {
-        type: "object",
-        properties: {
-          items: { type: "array", items: { type: "string" } },
-          count: { type: "integer", description: "non-negative" },
-        },
-        required: ["items", "count"],
-        additionalProperties: false,
-      },
-    });
+    expect(callArg.prompt).toBe("Unchanged task prompt");
+    expect(callArg.options).not.toHaveProperty("outputFormat");
   });
 
   it("logs dropped Codex-only fields when non-default values are supplied", async () => {

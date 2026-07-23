@@ -483,14 +483,7 @@ describe("structured output extraction", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const session = createQuerySession(
-      makeDefaultOptions({
-        outputFormat: {
-          type: "json_schema",
-          schema: { type: "object", properties: { name: { type: "string" } } },
-        },
-      }),
-    );
+    const session = createQuerySession(makeDefaultOptions());
     const emit = vi.fn();
 
     const turnPromise = session.sendPrompt("Hello", emit);
@@ -547,14 +540,7 @@ describe("structured output error handling", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const session = createQuerySession(
-      makeDefaultOptions({
-        outputFormat: {
-          type: "json_schema",
-          schema: { type: "object", properties: { name: { type: "string" } } },
-        },
-      }),
-    );
+    const session = createQuerySession(makeDefaultOptions());
     const emit = vi.fn();
 
     const turnPromise = session.sendPrompt("Hello", emit);
@@ -569,13 +555,11 @@ describe("structured output error handling", () => {
       num_turns: 5,
       result: "",
       is_error: true,
-      errors: [
-        "Failed to produce valid structured output after maximum retries",
-      ],
+      errors: [],
     } as unknown as SDKMessage);
 
     const result = await turnPromise;
-    expect(result.error).toContain("structured output");
+    expect(result.error).toBe("Agent exceeded structured output retry limit");
     expect(result.structuredOutput).toBeUndefined();
 
     session.close();
@@ -585,14 +569,7 @@ describe("structured output error handling", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const session = createQuerySession(
-      makeDefaultOptions({
-        outputFormat: {
-          type: "json_schema",
-          schema: { type: "object", properties: { name: { type: "string" } } },
-        },
-      }),
-    );
+    const session = createQuerySession(makeDefaultOptions());
     const emit = vi.fn();
 
     const turnPromise = session.sendPrompt("Hello", emit);
@@ -1133,35 +1110,8 @@ describe("QuerySession.sendPrompt on dead session", () => {
   });
 });
 
-describe("outputFormat passthrough", () => {
-  it("passes outputFormat to SDK Options when provided", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const schema = {
-      type: "object",
-      properties: { result: { type: "string" } },
-      required: ["result"],
-    };
-
-    const session = createQuerySession(
-      makeDefaultOptions({
-        outputFormat: { type: "json_schema", schema },
-      }),
-    );
-
-    // Check that the SDK query() was called with outputFormat in options
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
-    expect(sdkOptions.outputFormat).toEqual({
-      type: "json_schema",
-      schema,
-    });
-
-    session.close();
-  });
-
-  it("does not include outputFormat in SDK Options when not provided", () => {
+describe("structured output SDK boundary", () => {
+  it("does not include outputFormat in SDK Options", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1170,40 +1120,6 @@ describe("outputFormat passthrough", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
     expect(sdkOptions.outputFormat).toBeUndefined();
-
-    session.close();
-  });
-
-  it("exposes outputFormat as a readonly property", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const schema = {
-      type: "object",
-      properties: { name: { type: "string" } },
-    };
-
-    const session = createQuerySession(
-      makeDefaultOptions({
-        outputFormat: { type: "json_schema", schema },
-      }),
-    );
-
-    expect(session.outputFormat).toEqual({
-      type: "json_schema",
-      schema,
-    });
-
-    session.close();
-  });
-
-  it("exposes undefined outputFormat when not provided", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-
-    expect(session.outputFormat).toBeUndefined();
 
     session.close();
   });

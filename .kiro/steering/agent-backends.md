@@ -18,7 +18,7 @@ Provider adapters own:
 - native frame interpretation and lossless transcript envelopes
 - continuity validation, resume/recovery/fork behavior, and stale-reference classification
 - provider-specific failure classification and `ContinuationDisposition`
-- wire-schema compatibility for native structured output
+- structured-output transport and provider-native enforcement
 
 Neutral callers own:
 
@@ -30,14 +30,15 @@ Raw provider payloads may cross the seam only inside the lossless transcript env
 
 ## Structured output
 
-The caller supplies its authoritative JSON Schema through the neutral conversation/task request. It may be generated from Zod or authored independently; callers do not maintain a second Claude-safe copy.
+The caller supplies its authoritative JSON Schema through the neutral conversation/task request. It may be generated from Zod or authored independently; callers do not maintain provider-specific copies.
 
-- Claude's adapter calls `projectSchemaForClaude` immediately before both native SDK handoffs, removing only keywords Claude cannot enforce safely.
-- Codex receives the unmodified schema.
+- Claude declares `structuredOutput: "post_validation"`. Its adapters render the complete schema into a deterministic final-message contract appended to the prompt. No schema reaches the Claude SDK's `outputFormat` wire.
+- Codex declares `structuredOutput: "backend_native"` and receives the unmodified schema through its native final-response enforcement.
+- The shared extractor tries native output, raw response JSON, then the last fenced JSON block. The AgentCall facade validates every candidate through the same post-turn gate regardless of backend capability.
+- A failed facade gate gets one bounded repair turn by default. Task runs repair in a fresh isolated one-shot; conversation turns use one corrective turn on the resolved runtime. Callers may explicitly set the repair budget to zero.
 - Domain Zod schemas remain authoritative for post-parse acceptance with `safeParse`.
-- New Claude-bound schemas must be added to the inventory in `src/lib/agent-backends/claude/structured-output-projection.test.ts`.
 
-Never call a Claude SDK directly with an unprojected application schema, and never move Claude's projection into shared/caller code. The asymmetry is provider knowledge and belongs below the backend seam.
+Keep this transport asymmetry below the backend seam. Neutral callers select behavior from declared capabilities and must not branch on provider identity.
 
 ## Adding or extending a backend
 
@@ -45,7 +46,7 @@ Never call a Claude SDK directly with an unprojected application schema, and nev
 2. Declare capability and application-timing differences in descriptor data.
 3. Normalize failures and continuation disposition inside the adapter.
 4. Preserve native transcript bytes in the lossless envelope; expose only neutral operational events/results above it.
-5. Extend the parameterized conformance, consumer-locality, transcript-boundary, and structured-output projection tests.
+5. Extend the parameterized conformance, consumer-locality, transcript-boundary, and capability-specific structured-output transport tests.
 6. Run `bun run seams:check`; a new provider must not require identity branches or deep provider imports in neutral consumers.
 
 Product policy may intentionally name a provider only at an explicit selection/pairing site. Mark such a survivor in the seam catalog with its policy reason and deletion condition; do not use it as precedent for domain branching.

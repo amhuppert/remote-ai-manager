@@ -93,8 +93,8 @@ export type TicketCommandOutput = z.infer<typeof ticketCommandOutputSchema>;
 
 /**
  * `outputFormat.schema` derived from the validation contract. The dialect
- * marker is not part of the established provider payload; Claude-specific
- * unsupported-keyword projection remains owned by its backend adapter.
+ * marker is transport metadata rather than part of the application contract,
+ * so backend adapters receive the complete provider-neutral schema.
  */
 const ticketCommandJsonSchema = z.toJSONSchema(ticketCommandOutputSchema);
 delete ticketCommandJsonSchema.$schema;

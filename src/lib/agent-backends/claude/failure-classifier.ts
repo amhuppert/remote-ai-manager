@@ -26,6 +26,15 @@ function isQuerySessionDeathMessage(message: string): boolean {
   return /^querysession (closed|ended|died)\b/i.test(message);
 }
 
+function isStructuredOutputRetryExhaustion(message: string): boolean {
+  return (
+    /\bexceeded structured output retry limit\b/i.test(message) ||
+    /\bfailed to (?:produce|provide) valid structured output after (?:maximum retries|\d+ attempts?)\b/i.test(
+      message,
+    )
+  );
+}
+
 /**
  * Claude failure classifier: normalizes QuerySession lifecycle errors, abort
  * and timeout shapes, and stale-`resume:` provider messages into the neutral
@@ -45,6 +54,13 @@ export function createClaudeFailureClassifier(): AgentFailureClassifier {
     }
     if (isTimeoutFailure(error)) {
       return { kind: "timeout", message, retryable: false };
+    }
+    if (isStructuredOutputRetryExhaustion(message)) {
+      return {
+        kind: "structured_output_exhausted",
+        message,
+        retryable: false,
+      };
     }
     // Provider evidence that the resumed session no longer exists is more
     // specific than the QuerySession transport tag added while the pump

@@ -21,6 +21,7 @@ import type {
   ConversationBackendEvent,
   ConversationBackendRuntime,
 } from "../conversation";
+import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type { ClaudeCapabilityApplyTarget } from "./runtime-config/adapter";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
 
@@ -157,7 +158,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     runtime.close();
   });
 
-  it("projects a keyword-carrying outputFormat before the SDK sees it (T3.2)", async () => {
+  it("renders the stored full schema into each turn without using SDK outputFormat", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -170,16 +171,6 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       required: ["summary", "refs"],
       additionalProperties: false,
     };
-    const projected = {
-      type: "object",
-      properties: {
-        summary: { type: "string" },
-        refs: { type: "array", items: { type: "string" } },
-      },
-      required: ["summary", "refs"],
-      additionalProperties: false,
-    };
-
     const outputFormat = {
       type: "json_schema" as const,
       schema,
@@ -197,24 +188,226 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     });
 
     const callArg = queryMock.mock.calls[0]![0]! as {
-      options: { outputFormat?: { type: string; schema: unknown } };
+      prompt: AsyncGenerator<SDKUserMessage>;
+      options: { outputFormat?: unknown };
     };
-    expect(callArg.options.outputFormat).toEqual({
-      type: "json_schema",
-      schema: projected,
-    });
-    // The runtime-held copy keeps the caller's object BY REFERENCE: the
-    // actor's recreate gate compares `runtime.outputFormat` by identity, so
-    // substituting a fresh projected object would churn the runtime every
-    // turn (see debug-adapter's per-phase wrapper cache).
+    expect(callArg.options).not.toHaveProperty("outputFormat");
     expect(runtime.outputFormat).toBe(outputFormat);
-    // T3.2 amendment pin (slice designs §1.5): `runtime.outputFormat` is an
-    // opaque source-identity token — no SDK path reads it. The object that
-    // crosses the `query()` boundary is a distinct projected copy, never the
-    // runtime-held source or its schema.
-    expect(callArg.options.outputFormat).not.toBe(runtime.outputFormat);
-    expect(callArg.options.outputFormat!.schema).not.toBe(outputFormat.schema);
 
+    const turnPromise = runtime.sendTurn({
+      promptText: "Format the result",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    const delivered = await callArg.prompt.next();
+    expect(delivered.value!.message.content).toEqual([
+      {
+        type: "text",
+        text: `Format the result\n\n${renderStructuredOutputInstruction(schema)}`,
+      },
+    ]);
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-structured",
+      uuid: "assistant-intermediate",
+      message: {
+        content: [
+          {
+            type: "text",
+            text: "I will now format the inspected result.",
+          },
+        ],
+      },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-structured",
+      uuid: "assistant-structured",
+      message: {
+        content: [
+          {
+            type: "text",
+            text: '{"summary":"done","refs":["src/file.ts"]}',
+          },
+        ],
+      },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-structured",
+      uuid: "result-structured",
+      total_cost_usd: 0.01,
+      duration_ms: 10,
+      num_turns: 1,
+      result: '{"summary":"done","refs":["src/file.ts"]}',
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+    expect(result.structuredOutput).toBeUndefined();
+    expect(result.finalText).toBe('{"summary":"done","refs":["src/file.ts"]}');
+
+    runtime.close();
+  });
+
+  it("does not append a duplicate schema contract when a repair prompt already contains it", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const schema = {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+    };
+    const instruction = renderStructuredOutputInstruction(schema);
+    const promptText = `Correct the prior response.\n\n${instruction}\n\nReturn only the corrected JSON object.`;
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-structured-repair",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+      outputFormat: { type: "json_schema", schema },
+    });
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+
+    const turnPromise = runtime.sendTurn({
+      promptText,
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    const delivered = await channel.next();
+    expect(delivered.value!.message.content).toEqual([
+      { type: "text", text: promptText },
+    ]);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-structured-repair",
+      uuid: "result-structured-repair",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      result: '{"summary":"done"}',
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+    runtime.close();
+  });
+
+  it("keeps the rendered schema contract after strip-only image blocks", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const schema = {
+      type: "object",
+      properties: { summary: { type: "string", minLength: 1 } },
+      required: ["summary"],
+    };
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-structured-image",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+      outputFormat: { type: "json_schema", schema },
+    });
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "Inspect the attachment",
+      imageRefs: [
+        {
+          index: 1,
+          path: "/project/screenshot.png",
+          mediaType: "image/png",
+          base64Data: "IMAGE",
+        },
+      ],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    const delivered = await channel.next();
+    const content = delivered.value!.message.content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.at(-1)).toEqual({
+      type: "text",
+      text: renderStructuredOutputInstruction(schema),
+    });
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-structured-image",
+      uuid: "result-structured-image",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+    runtime.close();
+  });
+
+  it("leaves turn prompts unchanged when the runtime has no output schema", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-unstructured",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "Unchanged conversation prompt",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    const delivered = await channel.next();
+    expect(delivered.value!.message.content).toEqual([
+      { type: "text", text: "Unchanged conversation prompt" },
+    ]);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-unstructured",
+      uuid: "result-unstructured",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
     runtime.close();
   });
 });
@@ -950,6 +1143,53 @@ describe("ClaudeConversationRuntime — static external MCP passthrough", () => 
 });
 
 describe("ClaudeConversationRuntime — error result classification", () => {
+  it("classifies the typed structured-output retry exhaustion when errors are empty", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-structured-output-exhausted",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "error_max_structured_output_retries",
+      session_id: "session-structured-output",
+      uuid: "u-structured-output",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 5,
+      is_error: true,
+      errors: [],
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+
+    expect(result.failure?.message).toBe(
+      "Agent exceeded structured output retry limit",
+    );
+    expect(result.failure?.kind).toBe("structured_output_exhausted");
+    expect(result.continuationDisposition).toBe("retain");
+
+    runtime.close();
+  });
+
   it("clears a persisted ref when the provider reports that session as stale", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

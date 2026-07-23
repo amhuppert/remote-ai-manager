@@ -22,13 +22,21 @@ import type {
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
+import { createStubFailureClassifier } from "@/lib/agent-backends/errors";
+import {
+  STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS,
+  STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS,
+} from "@/lib/agent-backends/structured-output-repair";
 import {
   executeAgentCall,
   resolveSchedulingHint,
   type AgentCallFacadeDeps,
 } from "./agent-call-facade";
 import { runStructuredOutputGate } from "./structured-output-gate";
-import type { BackendCapabilityView } from "./agent-call-vocabulary";
+import type {
+  ArtifactRef,
+  BackendCapabilityView,
+} from "./agent-call-vocabulary";
 
 const CLAUDE_VIEW: BackendCapabilityView = {
   backend: "claude",
@@ -253,6 +261,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
+        structuredOutputRepair: { maxAttempts: 0 },
       },
       buildDepsForConversation({
         runtime,
@@ -436,6 +445,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
+        structuredOutputRepair: { maxAttempts: 0 },
       },
       buildDepsForConversation({
         runtime,
@@ -890,6 +900,7 @@ describe("resolveSchedulingHint — write-capable defaults", () => {
 interface ConversationDepsHelperInput {
   runtime: ConversationBackendRuntime;
   view: BackendCapabilityView;
+  artifacts?: readonly ArtifactRef[];
   validate?: (
     schema: Record<string, unknown>,
     value: unknown,
@@ -904,6 +915,7 @@ function buildDepsForConversation(
       runtime: input.runtime,
       capabilityView: input.view,
       signal: new AbortController().signal,
+      ...(input.artifacts !== undefined ? { artifacts: input.artifacts } : {}),
     }),
     resolveTaskRunner: () => {
       throw new Error("conversation deps used a task runner");
@@ -915,6 +927,7 @@ function buildDepsForConversation(
 interface TaskDepsHelperInput {
   runner: AgentTaskRunner;
   view: BackendCapabilityView;
+  artifacts?: readonly ArtifactRef[];
   validate?: (
     schema: Record<string, unknown>,
     value: unknown,
@@ -927,6 +940,7 @@ function buildDepsForTask(input: TaskDepsHelperInput): AgentCallFacadeDeps {
       runner: input.runner,
       capabilityView: input.view,
       workingDirectory: "/tmp/wt",
+      ...(input.artifacts !== undefined ? { artifacts: input.artifacts } : {}),
     }),
     resolveConversationRuntime: () => {
       throw new Error("task deps used a conversation runtime");
@@ -1222,5 +1236,783 @@ describe("executeAgentCall — widened result fields", () => {
       ]);
     }
     expect(result.continuationDisposition).toBe("retain");
+  });
+});
+
+describe("executeAgentCall — structured-output repair", () => {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      artifacts: { type: "array" },
+      summary: { type: "string" },
+    },
+    required: ["summary", "artifacts"],
+  };
+
+  it("repairs a task_run in one fresh isolated call while preserving the original continuation", async () => {
+    const requests: AgentTaskRequest[] = [];
+    const resolveTaskRunner = vi.fn();
+    const recordContinuity = vi.fn();
+    const info = vi.fn();
+    const initialTranscript = [
+      {
+        seq: 0,
+        backend: "codex" as const,
+        type: "agent_message",
+        raw: { type: "agent_message", text: "malformed manifest" },
+      },
+    ];
+    const repairedTranscript = [
+      {
+        seq: 0,
+        backend: "codex" as const,
+        type: "agent_message",
+        raw: { type: "agent_message", text: "repaired manifest" },
+      },
+    ];
+    const validOutput = { summary: "repaired", artifacts: [] };
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(input) {
+        requests.push(input);
+        if (requests.length === 1) {
+          return {
+            backendRef: { backend: "codex", ref: "thread-original" },
+            text: JSON.stringify({
+              summary: "all artifact content was trapped in this single field",
+            }),
+            usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.1 },
+            error: null,
+            timedOut: false,
+            failure: null,
+            continuationDisposition: "retain",
+            transcript: initialTranscript,
+          };
+        }
+        return {
+          backendRef: null,
+          text: JSON.stringify(validOutput),
+          usage: { inputTokens: 3, outputTokens: 2, costUsd: 0.2 },
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+          transcript: repairedTranscript,
+        };
+      },
+    };
+    resolveTaskRunner.mockReturnValue({
+      runner,
+      capabilityView: CODEX_VIEW,
+      workingDirectory: "/tmp/wt",
+      autonomous: true,
+      resumeRef: { backend: "codex", ref: "thread-before-call" },
+      artifacts: [
+        { kind: "design_doc", relativePath: "memory-bank/already-written.md" },
+      ],
+    });
+
+    const result = await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        systemInstructions: "use the project tools",
+        tooling: { servers: [] },
+        imageRefs: [
+          {
+            index: 1,
+            mediaType: "image/png",
+            path: "/tmp/reference.png",
+            base64Data: "image-data",
+          },
+        ],
+        outputSchema: schema,
+      },
+      {
+        resolveTaskRunner,
+        recordContinuity,
+        logger: {
+          debug: vi.fn(),
+          info,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      },
+    );
+
+    expect(resolveTaskRunner).toHaveBeenCalledTimes(1);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({
+      executionProfile: "isolated-one-shot",
+      resumeRef: null,
+      outputSchema: schema,
+    });
+    expect(requests[1]?.systemInstructions).toBeUndefined();
+    expect(requests[1]?.tooling).toBeUndefined();
+    expect(requests[1]?.imagePaths).toBeUndefined();
+    expect(result.backendRef).toEqual({
+      backend: "codex",
+      ref: "thread-original",
+    });
+    expect(result.usage.costUsd).toBeCloseTo(0.3);
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.text).toBe(JSON.stringify(validOutput));
+      expect(result.outcome.structuredOutput).toEqual(validOutput);
+      expect(result.outcome.transcript).toEqual(repairedTranscript);
+      expect(result.outcome.parse).toEqual({
+        source: "raw_json",
+        repaired: true,
+        repairAttempts: 1,
+      });
+    }
+    expect(recordContinuity).toHaveBeenCalledTimes(1);
+    expect(recordContinuity).toHaveBeenCalledWith({
+      backend: "codex",
+      backendRef: { backend: "codex", ref: "thread-original" },
+      continuationDisposition: "retain",
+    });
+    expect(info).toHaveBeenCalledWith(
+      "agent_call.facade.structured_output_repair_attempted",
+      expect.objectContaining({
+        backend: "codex",
+        requestKind: "task_run",
+        attempt: 1,
+        issuePaths: ["$.artifacts"],
+      }),
+    );
+    expect(info).toHaveBeenCalledWith(
+      "agent_call.facade.structured_output_repair_succeeded",
+      expect.objectContaining({
+        backend: "codex",
+        requestKind: "task_run",
+        attempt: 1,
+      }),
+    );
+  });
+
+  it("repairs a conversation_turn on the same runtime and returns the accepted turn content", async () => {
+    const turnInputs: ConversationBackendTurnInput[] = [];
+    const resolveConversationRuntime = vi.fn();
+    const applyMcp = vi.fn(() => ({ ok: true as const }));
+    const recordContinuity = vi.fn();
+    const validOutput = { summary: "repaired", artifacts: [] };
+    const backgroundWait = {
+      waitedTaskIds: ["task-1"],
+      settledTaskIds: ["task-1"],
+      timedOut: false,
+      durationMs: 20,
+    };
+    const runtime: ConversationBackendRuntime = {
+      backend: "claude",
+      status: "alive",
+      modelId: undefined,
+      reasoningEffort: undefined,
+      outputFormat: undefined,
+      alignmentVersion: null,
+      async sendTurn(input) {
+        turnInputs.push(input);
+        const text =
+          turnInputs.length === 1
+            ? JSON.stringify({
+                summary:
+                  "all artifact content was trapped in this single field",
+              })
+            : JSON.stringify(validOutput);
+        return {
+          backendRef: {
+            backend: "claude",
+            ref: turnInputs.length === 1 ? "session-initial" : "session-repair",
+          },
+          costUsd: null,
+          durationMs: 10,
+          numTurns: turnInputs.length === 1 ? 2 : 3,
+          contextTokens: 100,
+          contextWindowMax: 200_000,
+          contentBlocks: [{ type: "text", text }],
+          structuredOutput: undefined,
+          aborted: false,
+          compacted: turnInputs.length === 1,
+          failure: null,
+          continuationDisposition: "retain",
+          ...(turnInputs.length === 1 ? { backgroundWait } : {}),
+        };
+      },
+      close() {},
+    };
+    resolveConversationRuntime.mockReturnValue({
+      runtime,
+      capabilityView: CLAUDE_VIEW,
+      signal: new AbortController().signal,
+      imageRefs: [
+        {
+          index: 1,
+          mediaType: "image/png",
+          path: "/tmp/reference.png",
+          base64Data: "image-data",
+        },
+      ],
+    });
+
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      {
+        resolveConversationRuntime,
+        applyMcp,
+        recordContinuity,
+      },
+    );
+
+    expect(resolveConversationRuntime).toHaveBeenCalledTimes(1);
+    expect(applyMcp).toHaveBeenCalledTimes(1);
+    expect(turnInputs).toHaveLength(2);
+    expect(turnInputs[1]?.imageRefs).toEqual([]);
+    expect(turnInputs[1]?.promptText).toContain("$.artifacts is required");
+    expect(turnInputs[1]?.promptText).toContain(
+      'Decoded top-level keys were ["summary"]',
+    );
+    expect(turnInputs[1]?.outputFormat).toEqual({
+      type: "json_schema",
+      schema,
+    });
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      ref: "session-repair",
+    });
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.text).toBe(JSON.stringify(validOutput));
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: JSON.stringify(validOutput) },
+      ]);
+      expect(result.outcome.structuredOutput).toEqual(validOutput);
+      expect(result.outcome.parse).toEqual({
+        source: "raw_json",
+        repaired: true,
+        repairAttempts: 1,
+      });
+      expect(result.outcome.numTurns).toBe(5);
+    }
+    expect(result.compacted).toBe(true);
+    expect(result.backgroundWait).toEqual(backgroundWait);
+    expect(recordContinuity).toHaveBeenCalledTimes(1);
+    expect(recordContinuity).toHaveBeenCalledWith({
+      backend: "claude",
+      backendRef: { backend: "claude", ref: "session-repair" },
+      continuationDisposition: "retain",
+    });
+  });
+
+  it("logs the schema root when a validation issue has no explicit path", async () => {
+    const info = vi.fn();
+    let calls = 0;
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run() {
+        calls += 1;
+        return {
+          backendRef: { backend: "codex", ref: "thread-original" },
+          text: JSON.stringify({ ok: calls > 1 }),
+          usage: null,
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      },
+    };
+
+    await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        outputSchema: { type: "object" },
+      },
+      {
+        ...buildDepsForTask({ runner, view: CODEX_VIEW }),
+        validateStructuredOutput: (_schema, value) =>
+          (value as { ok?: unknown }).ok === true
+            ? { valid: true }
+            : { valid: false, errors: ["manifest shape is invalid"] },
+        logger: {
+          debug: vi.fn(),
+          info,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      },
+    );
+
+    expect(info).toHaveBeenCalledWith(
+      "agent_call.facade.structured_output_repair_attempted",
+      expect.objectContaining({ issuePaths: ["$"] }),
+    );
+  });
+
+  it("bounds the count and length of logged validation issue paths", async () => {
+    const info = vi.fn();
+    let calls = 0;
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run() {
+        calls += 1;
+        return {
+          backendRef: { backend: "codex", ref: "thread-original" },
+          text: JSON.stringify({ ok: calls > 1 }),
+          usage: null,
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      },
+    };
+    const issues = Array.from(
+      { length: STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS + 1 },
+      (_, index) =>
+        `$.key${index}${"x".repeat(
+          STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS,
+        )} is invalid`,
+    );
+
+    await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        outputSchema: { type: "object" },
+      },
+      {
+        ...buildDepsForTask({ runner, view: CODEX_VIEW }),
+        validateStructuredOutput: (_schema, value) =>
+          (value as { ok?: unknown }).ok === true
+            ? { valid: true }
+            : { valid: false, errors: issues },
+        logger: {
+          debug: vi.fn(),
+          info,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      },
+    );
+
+    const attempted = info.mock.calls.find(
+      ([event]) =>
+        event === "agent_call.facade.structured_output_repair_attempted",
+    );
+    const issuePaths = (attempted?.[1] as { issuePaths?: string[] })
+      ?.issuePaths;
+    expect(issuePaths?.length).toBeLessThanOrEqual(
+      STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS,
+    );
+    expect(
+      issuePaths?.every(
+        (path) => path.length <= STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns enriched schema_validation details while preserving original task evidence after repair fails", async () => {
+    const requests: AgentTaskRequest[] = [];
+    const warn = vi.fn();
+    const initialTranscript = [
+      {
+        seq: 0,
+        backend: "codex" as const,
+        type: "agent_message",
+        raw: { type: "agent_message", text: "original evidence" },
+      },
+    ];
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(input) {
+        requests.push(input);
+        return {
+          backendRef:
+            requests.length === 1
+              ? { backend: "codex", ref: "thread-original" }
+              : null,
+          text: JSON.stringify({ summary: `invalid-${requests.length}` }),
+          usage: null,
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+          transcript:
+            requests.length === 1
+              ? initialTranscript
+              : [
+                  {
+                    seq: 0,
+                    backend: "codex" as const,
+                    type: "agent_message",
+                    raw: { type: "agent_message", text: "repair evidence" },
+                  },
+                ],
+        };
+      },
+    };
+
+    const result = await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      {
+        resolveTaskRunner: () => ({
+          runner,
+          capabilityView: CODEX_VIEW,
+          workingDirectory: "/tmp/wt",
+          artifacts: [
+            {
+              kind: "design_doc",
+              relativePath: "memory-bank/already-written.md",
+            },
+          ],
+        }),
+        logger: {
+          debug: vi.fn(),
+          info: vi.fn(),
+          warn,
+          error: vi.fn(),
+        },
+      },
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(result.backendRef).toEqual({
+      backend: "codex",
+      ref: "thread-original",
+    });
+    expect(result.artifacts).toEqual([
+      {
+        kind: "design_doc",
+        relativePath: "memory-bank/already-written.md",
+      },
+    ]);
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("schema_validation");
+      expect(result.outcome.transcript).toEqual(initialTranscript);
+      expect(result.outcome.error.backendDetails).toMatchObject({
+        errors: ["$.artifacts is required"],
+        candidateSources: ["raw_json"],
+        candidateTopLevelKeys: ["summary"],
+        repairAttempts: 1,
+      });
+    }
+    expect(warn).toHaveBeenCalledWith(
+      "agent_call.facade.structured_output_repair_failed",
+      expect.objectContaining({
+        backend: "codex",
+        requestKind: "task_run",
+        attempt: 1,
+      }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "agent_call.facade.structured_output_failed",
+      expect.objectContaining({
+        candidateSources: ["raw_json"],
+        candidateTopLevelKeys: ["summary"],
+        repairAttempts: 1,
+      }),
+    );
+  });
+
+  it("preserves original conversation content blocks after a failed repair", async () => {
+    let turns = 0;
+    const originalBlocks = [
+      { type: "text" as const, text: JSON.stringify({ summary: "original" }) },
+    ];
+    const backgroundWait = {
+      waitedTaskIds: ["task-1"],
+      settledTaskIds: ["task-1"],
+      timedOut: false,
+      durationMs: 20,
+    };
+    const runtime = makeConversationRuntime("claude");
+    runtime.sendTurn = async () => {
+      turns += 1;
+      return {
+        backendRef: {
+          backend: "claude",
+          ref: turns === 1 ? "session-initial" : "session-repair",
+        },
+        costUsd: null,
+        durationMs: 10,
+        numTurns: turns === 1 ? 2 : 3,
+        contextTokens: 100,
+        contextWindowMax: 200_000,
+        contentBlocks:
+          turns === 1
+            ? originalBlocks
+            : [{ type: "text", text: JSON.stringify({ summary: "repair" }) }],
+        structuredOutput: undefined,
+        aborted: false,
+        compacted: turns === 1,
+        failure: null,
+        continuationDisposition: "retain",
+        ...(turns === 1 ? { backgroundWait } : {}),
+      };
+    };
+
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
+    );
+
+    expect(turns).toBe(2);
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      ref: "session-repair",
+    });
+    expect(result.continuationDisposition).toBe("retain");
+    expect(result.compacted).toBe(true);
+    expect(result.backgroundWait).toEqual(backgroundWait);
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.contentBlocks).toEqual(originalBlocks);
+      expect(result.outcome.numTurns).toBe(5);
+    }
+  });
+
+  it("propagates an aborted conversation repair with latest continuity and original evidence", async () => {
+    let turns = 0;
+    const originalBlocks = [
+      { type: "text" as const, text: JSON.stringify({ summary: "original" }) },
+    ];
+    const artifacts = [
+      { kind: "design_doc", relativePath: "memory-bank/already-written.md" },
+    ];
+    const runtime = makeConversationRuntime("claude");
+    runtime.sendTurn = async () => {
+      turns += 1;
+      if (turns === 1) {
+        return {
+          backendRef: { backend: "claude", ref: "session-initial" },
+          costUsd: 0.01,
+          durationMs: 10,
+          numTurns: 2,
+          contextTokens: 100,
+          contextWindowMax: 200_000,
+          contentBlocks: originalBlocks,
+          structuredOutput: undefined,
+          aborted: false,
+          compacted: true,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      }
+      return {
+        backendRef: { backend: "claude", ref: "session-repair" },
+        costUsd: 0.02,
+        durationMs: 20,
+        numTurns: 1,
+        contextTokens: 200,
+        contextWindowMax: 200_000,
+        contentBlocks: [{ type: "text", text: "repair cancelled" }],
+        structuredOutput: undefined,
+        aborted: true,
+        compacted: false,
+        failure: null,
+        continuationDisposition: "clear",
+      };
+    };
+
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      buildDepsForConversation({
+        runtime,
+        view: CLAUDE_VIEW,
+        artifacts,
+      }),
+    );
+
+    expect(turns).toBe(2);
+    expect(result.backendRef).toBeNull();
+    expect(result.continuationDisposition).toBe("clear");
+    expect(result.artifacts).toEqual(artifacts);
+    expect(result.usage).toMatchObject({
+      contextTokens: 200,
+      costUsd: 0.03,
+      durationMs: 30,
+    });
+    expect(result.compacted).toBe(true);
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("aborted");
+      expect(result.outcome.contentBlocks).toEqual(originalBlocks);
+      expect(result.outcome.numTurns).toBe(3);
+    }
+  });
+
+  it("keeps the known conversation ref when a turnless repair failure retains continuity", async () => {
+    let turns = 0;
+    const originalBlocks = [
+      { type: "text" as const, text: JSON.stringify({ summary: "original" }) },
+    ];
+    const runtime = makeConversationRuntime("claude");
+    runtime.sendTurn = async () => {
+      turns += 1;
+      if (turns > 1) throw new Error("repair transport failed");
+      return {
+        backendRef: { backend: "claude", ref: "session-initial" },
+        costUsd: null,
+        durationMs: 10,
+        numTurns: 1,
+        contextTokens: 100,
+        contextWindowMax: 200_000,
+        contentBlocks: originalBlocks,
+        structuredOutput: undefined,
+        aborted: false,
+        compacted: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+    };
+
+    const result = await executeAgentCall(
+      {
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      {
+        ...buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
+        getFailureClassifier: () => createStubFailureClassifier(),
+      },
+    );
+
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      ref: "session-initial",
+    });
+    expect(result.continuationDisposition).toBe("retain");
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("backend_error");
+      expect(result.outcome.contentBlocks).toEqual(originalBlocks);
+    }
+  });
+
+  it("propagates a timed-out task repair while retaining the original continuation and transcript", async () => {
+    const requests: AgentTaskRequest[] = [];
+    const initialTranscript = [
+      {
+        seq: 0,
+        backend: "codex" as const,
+        type: "agent_message",
+        raw: { type: "agent_message", text: "original evidence" },
+      },
+    ];
+    const artifacts = [
+      { kind: "design_doc", relativePath: "memory-bank/already-written.md" },
+    ];
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(input) {
+        requests.push(input);
+        if (requests.length === 1) {
+          return {
+            backendRef: { backend: "codex", ref: "thread-original" },
+            text: JSON.stringify({ summary: "invalid" }),
+            usage: { inputTokens: 2 },
+            error: null,
+            timedOut: false,
+            failure: null,
+            continuationDisposition: "retain",
+            transcript: initialTranscript,
+          };
+        }
+        return {
+          backendRef: null,
+          text: null,
+          usage: { inputTokens: 3 },
+          error: null,
+          timedOut: true,
+          failure: { kind: "timeout", message: "timed out", retryable: false },
+          continuationDisposition: "clear",
+        };
+      },
+    };
+
+    const result = await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      buildDepsForTask({ runner, view: CODEX_VIEW, artifacts }),
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(result.backendRef).toEqual({
+      backend: "codex",
+      ref: "thread-original",
+    });
+    expect(result.continuationDisposition).toBe("retain");
+    expect(result.artifacts).toEqual(artifacts);
+    expect(result.usage.inputTokens).toBe(5);
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.failureKind).toBe("timeout");
+      expect(result.outcome.transcript).toEqual(initialTranscript);
+    }
+  });
+
+  it("does not dispatch a repair when maxAttempts is zero", async () => {
+    let calls = 0;
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run() {
+        calls += 1;
+        return {
+          backendRef: { backend: "codex", ref: "thread-1" },
+          text: JSON.stringify({ summary: "invalid" }),
+          usage: null,
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      },
+    };
+
+    const result = await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+        structuredOutputRepair: { maxAttempts: 0 },
+      },
+      buildDepsForTask({ runner, view: CODEX_VIEW }),
+    );
+
+    expect(calls).toBe(1);
+    expect(result.outcome.kind).toBe("failed");
   });
 });

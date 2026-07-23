@@ -321,6 +321,7 @@ function deriveArtifactKinds(
 }
 
 function extractText(result: ConversationBackendTurnResult): string | null {
+  if (result.finalText !== undefined) return result.finalText;
   for (const block of result.contentBlocks) {
     if (block.type === "text" && typeof block.text === "string") {
       return block.text;

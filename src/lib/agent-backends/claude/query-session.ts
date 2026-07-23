@@ -57,6 +57,7 @@ import {
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/shared/sdk-env";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { mapErrorSubtype } from "./process-message";
 
 const logger = createLogger("query-session");
 
@@ -77,6 +78,7 @@ export interface TurnResult {
   contextTokens: number | null;
   contextWindow: number | null;
   contentBlocks: MessageContentBlock[];
+  finalText?: string;
   structuredOutput?: unknown;
   aborted: boolean;
   /** True when the SDK auto-compacted the context at least once this turn. */
@@ -169,11 +171,6 @@ export interface QuerySession {
   /** Effort level this session was created with */
   readonly effort: string | undefined;
 
-  /** Output format this session was created with (for structured output) */
-  readonly outputFormat:
-    | { type: "json_schema"; schema: Record<string, unknown> }
-    | undefined;
-
   /**
    * Live in-flight background-task state, derived from the SDK `task_*`
    * lifecycle messages (and their originating tool results). Passively tracked;
@@ -249,11 +246,6 @@ export interface QuerySessionOptions {
   disallowedTools: string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
   idleTtlMs?: number;
-  /** Structured output format — enforced by the SDK at generation time */
-  outputFormat?: {
-    type: "json_schema";
-    schema: Record<string, unknown>;
-  };
   /**
    * Initial SDK Settings object passed to `Options.settings`. The Claude
    * factory builds this from the translated capability config so the SDK
@@ -440,7 +432,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     disallowedTools: options.disallowedTools,
     ...(options.plugins.length > 0 ? { plugins: options.plugins } : {}),
     ...(options.settings ? { settings: options.settings } : {}),
-    ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
     maxTurns: options.maxTurns,
     resume: options.resume,
     forkSession: options.forkSession,
@@ -482,9 +473,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
     get effort() {
       return options.effort;
-    },
-    get outputFormat() {
-      return options.outputFormat;
     },
     get backgroundTaskState() {
       return backgroundTaskState;
@@ -1120,10 +1108,13 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         }
 
         let error: string | null = null;
+        let finalText: string | undefined;
         if (resultMsg.subtype === "success" && !resultMsg.is_error) {
           turn.structuredOutput = (
             resultMsg as SDKResultSuccess
           ).structured_output;
+          finalText =
+            typeof resultMsg.result === "string" ? resultMsg.result : undefined;
         } else {
           error = extractResultMessageError(resultMsg);
         }
@@ -1132,6 +1123,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const result: TurnResult = buildTurnResult(turn, {
           error,
           aborted: false,
+          ...(finalText !== undefined ? { finalText } : {}),
         });
 
         const resolve = turn.resolve;
@@ -1143,6 +1135,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           conversationId: options.conversationId,
           costUsd: result.costUsd,
           numTurns: result.numTurns,
+          hasFinalText: result.finalText !== undefined,
         });
 
         resolve(result);
@@ -1187,8 +1180,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
  * `result` and omitting `structured_output`. Treating those as successful
  * turns surfaces the absent structured output downstream as a misleading
  * schema-validation failure ("$ must be object"), so the caller classifies
- * them as errors and recovers the real message from `result` here. Genuine
- * error subtypes carry their detail in `errors`.
+ * them as errors and recovers the real message from `result` here. Error
+ * subtypes are mapped from their typed cause so optional detail cannot erase
+ * the provider's failure classification.
  */
 function extractResultMessageError(
   resultMsg: SDKResultSuccess | SDKResultError,
@@ -1197,9 +1191,7 @@ function extractResultMessageError(
     const text = resultMsg.result?.trim();
     return text && text.length > 0 ? text : "Error during execution";
   }
-  return resultMsg.errors?.length > 0
-    ? resultMsg.errors.join("; ")
-    : "Error during execution";
+  return mapErrorSubtype(resultMsg);
 }
 
 /**
@@ -1209,7 +1201,7 @@ function extractResultMessageError(
  */
 function buildTurnResult(
   turn: PendingTurn,
-  outcome: { error: string | null; aborted: boolean },
+  outcome: { error: string | null; aborted: boolean; finalText?: string },
 ): TurnResult {
   return {
     sessionId: turn.sessionId,
@@ -1219,6 +1211,9 @@ function buildTurnResult(
     contextTokens: turn.contextTokens,
     contextWindow: turn.contextWindow,
     contentBlocks: turn.contentBlocks,
+    ...(outcome.finalText !== undefined
+      ? { finalText: outcome.finalText }
+      : {}),
     structuredOutput: turn.structuredOutput,
     aborted: outcome.aborted,
     compacted: turn.compacted,

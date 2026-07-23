@@ -4,6 +4,7 @@ export const agentFailureKindSchema = z.enum([
   "timeout",
   "aborted",
   "schema_validation",
+  "structured_output_exhausted",
   "stale_resume_ref",
   "session_died",
   "capability_unavailable",

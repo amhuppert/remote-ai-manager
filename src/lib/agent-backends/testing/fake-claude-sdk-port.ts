@@ -135,10 +135,11 @@ function buildResultSuccess(structuredOutput: unknown): SDKResultSuccess {
   };
 }
 
-/** First text-block content of a user message from the input channel. */
+/** Concatenated text-block content of a user message from the input channel. */
 function extractUserText(msg: SDKUserMessage): string {
   const content = msg.message.content;
   if (typeof content === "string") return content;
+  const textBlocks: string[] = [];
   for (const block of content) {
     if (
       block != null &&
@@ -146,10 +147,10 @@ function extractUserText(msg: SDKUserMessage): string {
       block.type === "text" &&
       typeof block.text === "string"
     ) {
-      return block.text;
+      textBlocks.push(block.text);
     }
   }
-  return "";
+  return textBlocks.join("\n");
 }
 
 export interface FakeClaudeSdkController {
@@ -157,6 +158,8 @@ export interface FakeClaudeSdkController {
   createSdkQuery: CreateSdkQuery;
   /** Options captured from the most recent `QuerySession` creation. */
   readonly lastOptions: Options | null;
+  /** Full text content captured from the most recent dispatched user prompt. */
+  readonly lastPromptText: string | undefined;
   /**
    * Emit one unsolicited provider turn (assistant + result) through the most
    * recently created port while no caller turn is pending — the real SDK's
@@ -179,6 +182,7 @@ export function createFakeClaudeSdkController(
   config: { structuredOutput?: unknown } = {},
 ): FakeClaudeSdkController {
   let lastOptions: Options | null = null;
+  let lastPromptText: string | undefined;
   let lastPort: FakePortState | null = null;
 
   const createSdkQuery: CreateSdkQuery = (args) => {
@@ -206,6 +210,7 @@ export function createFakeClaudeSdkController(
 
     const handleUserMessage = (msg: SDKUserMessage): void => {
       const text = extractUserText(msg);
+      lastPromptText = text;
       if (text.includes(FAKE_CLAUDE_HANGING_PROMPT)) {
         return;
       }
@@ -276,6 +281,9 @@ export function createFakeClaudeSdkController(
     get lastOptions() {
       return lastOptions;
     },
+    get lastPromptText() {
+      return lastPromptText;
+    },
     pushExternalTurn() {
       if (!lastPort) {
         throw new Error(
@@ -298,6 +306,8 @@ export interface FakeClaudeTaskPort {
   deps: ClaudeTaskRunnerDeps;
   /** Options captured from the most recent `runQuery` call. */
   readonly lastOptions: Options | null;
+  /** Prompt captured from the most recent `runQuery` call. */
+  readonly lastPrompt: string | undefined;
 }
 
 /**
@@ -308,10 +318,12 @@ export function createFakeClaudeTaskPort(
   config: { structuredOutput?: unknown } = {},
 ): FakeClaudeTaskPort {
   let lastOptions: Options | null = null;
+  let lastPrompt: string | undefined;
 
   const deps: ClaudeTaskRunnerDeps = {
     runQuery(args) {
       lastOptions = args.options;
+      lastPrompt = args.prompt;
       const structuredOutput =
         args.options.outputFormat !== undefined
           ? config.structuredOutput
@@ -327,6 +339,9 @@ export function createFakeClaudeTaskPort(
     deps,
     get lastOptions() {
       return lastOptions;
+    },
+    get lastPrompt() {
+      return lastPrompt;
     },
   };
 }

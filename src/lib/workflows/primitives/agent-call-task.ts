@@ -46,6 +46,7 @@ export interface DispatchTaskRunDeps {
   imagePaths?: readonly string[];
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
+  executionProfile?: AgentTaskRequest["executionProfile"];
   defaultTimeoutMs?: number;
   /** Per-run inactivity bound forwarded to the runner (see AgentTaskRequest). */
   stallTimeoutMs?: number;
@@ -117,6 +118,9 @@ export async function dispatchTaskRun(
       ? { reasoningEffort: deps.reasoningEffort }
       : {}),
     ...(deps.resumeRef !== undefined ? { resumeRef: deps.resumeRef } : {}),
+    ...(deps.executionProfile !== undefined
+      ? { executionProfile: deps.executionProfile }
+      : {}),
     ...(request.outputSchema !== undefined
       ? { outputSchema: request.outputSchema }
       : {}),
@@ -315,6 +319,9 @@ function buildUsageMetrics(result: AgentTaskResult): AgentCallUsageMetrics {
     }
     if (runnerUsage.cachedInputTokens != null) {
       usage.cachedInputTokens = runnerUsage.cachedInputTokens;
+    }
+    if (runnerUsage.costUsd != null) {
+      usage.costUsd = runnerUsage.costUsd;
     }
   }
   return usage;

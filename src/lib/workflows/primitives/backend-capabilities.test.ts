@@ -16,7 +16,7 @@ describe("capabilityViewForBackend (descriptor-derived)", () => {
     expect(view).toEqual({
       backend: "claude",
       continuationStrength: "precise_session",
-      structuredOutputEnforcement: "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary: "between_turns",
       contextMetricsAvailable: true,
       nativeMidTurnAskUser: true,
