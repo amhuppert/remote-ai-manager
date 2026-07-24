@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { expect, userEvent } from "storybook/test";
 import SpawnCard, { ValidSpawnCard } from "./SpawnCard";
 import { validateProposal } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
@@ -59,6 +60,19 @@ const multi = asProposal({
   ],
 });
 
+const longTitles = asProposal({
+  sessions: [
+    {
+      name: "VOGUE-4982 Fix location table sorting",
+      target: "main",
+      agent: "claude",
+      mode: "optimistic",
+      initialPrompt:
+        "Implement VOGUE-4982 end to end and visually verify the behavior.",
+    },
+  ],
+});
+
 const TARGET_OPTIONS = ["main", "develop", "feat/structured-json"];
 
 /** Single proposed session — switch, name, auto-named branch, agent + mode. */
@@ -84,6 +98,33 @@ export const MultiSession: Story = {
     branchPrefix: "csm",
     targetOptions: TARGET_OPTIONS,
     backendDefaults: BACKEND_DEFAULTS,
+  },
+};
+
+/** Editable session names use the full row width instead of a fixed-width field. */
+export const LongSessionTitle: Story = {
+  args: {
+    proposal: longTitles,
+    projectName: "command-center",
+    conversationId: "plc-1",
+    spawnedStatuses: undefined,
+    branchPrefix: "csm",
+    targetOptions: TARGET_OPTIONS,
+    backendDefaults: BACKEND_DEFAULTS,
+  },
+  play: async ({ canvas }) => {
+    await userEvent.click(canvas.getByRole("button", { name: "Edit" }));
+
+    const input = canvas.getByRole("textbox", {
+      name: "Session 1 name",
+    });
+    const header = input.parentElement;
+    if (!header) throw new Error("session title header not rendered");
+
+    await expect(input.getBoundingClientRect().right).toBeCloseTo(
+      header.getBoundingClientRect().right,
+      0,
+    );
   },
 };
 

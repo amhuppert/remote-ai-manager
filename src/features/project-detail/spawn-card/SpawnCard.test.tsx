@@ -113,6 +113,27 @@ describe("SpawnCard", () => {
     expect(screen.getByText("main")).toBeTruthy();
   });
 
+  it("lets an editable proposed-session title use the remaining row width", () => {
+    const longTitle = asProposal({
+      sessions: [
+        {
+          name: "VOGUE-4982 Fix location table sorting",
+          agent: "claude",
+          mode: "optimistic",
+        },
+      ],
+    });
+    renderValid(longTitle);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const input = screen.getByRole("textbox", {
+      name: "Session 1 name",
+    });
+
+    expect(input).toHaveClass("min-w-0", "flex-1");
+    expect(input).not.toHaveClass("w-[200px]");
+  });
+
   it("exposes always-editable agent and mode segmented controls", () => {
     renderValid(single);
     expect(

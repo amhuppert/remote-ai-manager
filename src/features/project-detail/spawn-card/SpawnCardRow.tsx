@@ -65,7 +65,7 @@ const EDITOR_BASE =
 
 const NAME_INPUT_CLASS = cn(
   EDITOR_BASE,
-  "w-[200px] max-w-full px-[9px] py-[4px] font-mono text-[15px] leading-[1.4] font-semibold",
+  "min-w-0 flex-1 px-[9px] py-[4px] font-mono text-[15px] leading-[1.4] font-semibold",
 );
 
 // The "auto" affordance: this branch is name-derived, not user-authored.
