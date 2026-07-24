@@ -37,6 +37,25 @@ describe("ConfigPillGroup", () => {
     expect(onChange).toHaveBeenCalledWith("b");
   });
 
+  it("can render a display label while reporting the option value", () => {
+    const onChange = vi.fn();
+    render(
+      <ConfigPillGroup
+        value="opus"
+        options={["opus", "sonnet"] as const}
+        getOptionLabel={(option) => (option === "opus" ? "Opus 5" : "Sonnet")}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Sonnet" }));
+    expect(screen.getByRole("button", { name: "Opus 5" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(onChange).toHaveBeenCalledWith("sonnet");
+  });
+
   it("does not call onChange when disabled", () => {
     const onChange = vi.fn();
     render(

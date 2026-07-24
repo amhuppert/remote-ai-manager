@@ -3,6 +3,7 @@ import { fn } from "storybook/test";
 import BackendToggle from "./BackendToggle";
 import ModelSelector from "./ModelSelector";
 import ReasoningLevelSelector from "./ReasoningLevelSelector";
+import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
 
 const meta = {
   title: "Components/BackendToggle",
@@ -82,7 +83,11 @@ export const InPromptArea = {
               <div className="prompt-toolbar-start">
                 <Story />
                 <ModelSelector value="opus" backend="claude" onChange={fn()} />
-                <ReasoningLevelSelector value="high" onChange={fn()} />
+                <ReasoningLevelSelector
+                  value="high"
+                  availableLevels={getEffortLevelsForBackend("claude", "opus")}
+                  onChange={fn()}
+                />
               </div>
               <div className="prompt-toolbar-end">
                 <button className="send-btn" style={{ cursor: "default" }}>

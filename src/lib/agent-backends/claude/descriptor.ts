@@ -32,8 +32,8 @@ export const claudeBackendMetadata: AgentBackendMetadata = {
     },
     {
       id: "opus",
-      label: "Opus",
-      description: "Highly capable",
+      label: "Opus 5",
+      description: "Complex reasoning",
       effortLevels: getEffortLevelsForModel("opus"),
     },
     {

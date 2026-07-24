@@ -146,7 +146,7 @@ describe("ContextConfigTab — display", () => {
     );
 
     const impl = screen.getByTestId("config-block-implementer");
-    expect(within(impl).getByText("Opus")).toBeInTheDocument();
+    expect(within(impl).getByText("Opus 5")).toBeInTheDocument();
     expect(within(impl).getByText("High")).toBeInTheDocument();
     expect(
       within(impl).getByRole("button", { name: "Claude" }),

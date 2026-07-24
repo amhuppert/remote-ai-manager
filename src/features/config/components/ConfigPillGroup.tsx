@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { cn } from "@/lib/ui/cn";
 
 // `appearance-none` plus an explicit transparent border neutralizes the UA button
@@ -10,6 +12,7 @@ export function ConfigPillGroup<T extends string>({
   value,
   options,
   onChange,
+  getOptionLabel,
   disabled,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
@@ -17,6 +20,7 @@ export function ConfigPillGroup<T extends string>({
   value: T;
   options: readonly T[];
   onChange: (v: T) => void;
+  getOptionLabel?: (option: T) => ReactNode;
   disabled?: boolean;
   "aria-label"?: string;
   "aria-labelledby"?: string;
@@ -42,7 +46,7 @@ export function ConfigPillGroup<T extends string>({
           onClick={() => !disabled && onChange(opt)}
           disabled={disabled}
         >
-          {opt}
+          {getOptionLabel ? getOptionLabel(opt) : opt}
         </button>
       ))}
     </div>

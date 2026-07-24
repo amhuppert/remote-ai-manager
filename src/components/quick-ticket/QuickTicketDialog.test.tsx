@@ -939,7 +939,7 @@ describe("QuickTicketDialog", () => {
 
     await user.click(autoStart);
     expect(await screen.findByTestId("model-selector-label")).toHaveTextContent(
-      /^Opus$/,
+      /^Opus 5$/,
     );
     expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
       /^Medium$/,

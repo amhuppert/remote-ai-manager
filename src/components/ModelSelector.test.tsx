@@ -39,6 +39,20 @@ describe("getModelsForBackend (catalog)", () => {
 });
 
 describe("ModelSelector", () => {
+  it("identifies the opus alias as Opus 5", () => {
+    renderSelector(
+      <ModelSelector value="opus" backend="claude" onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "Opus 5",
+    );
+    expect(screen.getByTestId("model-selector-trigger")).toHaveAttribute(
+      "title",
+      expect.stringContaining("Opus 5"),
+    );
+  });
+
   it("shows the selected model label + descriptive title in the trigger", () => {
     renderSelector(
       <ModelSelector value="sonnet" backend="claude" onChange={vi.fn()} />,

@@ -32,8 +32,8 @@ describe("CompactionSection", () => {
     renderWithQuery(<CompactionSection controller={controller} />);
 
     // The claude model pills are present (sonnet is the compaction default).
-    expect(pillIn("compaction.conversationModel", "sonnet")).toBeTruthy();
-    expect(pillIn("compaction.messageModel", "sonnet")).toBeTruthy();
+    expect(pillIn("compaction.conversationModel", "Sonnet")).toBeTruthy();
+    expect(pillIn("compaction.messageModel", "Sonnet")).toBeTruthy();
   });
 
   it("switching to the codex backend sets codex models and clears effort", () => {
@@ -53,7 +53,7 @@ describe("CompactionSection", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
-    fireEvent.click(pillIn("compaction.conversationModel", "opus"));
+    fireEvent.click(pillIn("compaction.conversationModel", "Opus 5"));
 
     expect(getState().compaction?.conversationModel).toBe("opus");
     // Message model is untouched (defaults to sonnet, not yet materialized).

@@ -81,7 +81,11 @@ describe("Claude sub-agent suppression strategy verification", () => {
       const result = await composed(
         "Task",
         { subagent_type: "code-reviewer" },
-        { toolUseID: "u1", signal: new AbortController().signal },
+        {
+          toolUseID: "u1",
+          requestId: "request-u1",
+          signal: new AbortController().signal,
+        },
       );
 
       expect(result).toEqual({ behavior: "allow" });
@@ -101,10 +105,14 @@ describe("Claude sub-agent suppression strategy verification", () => {
       const result = await composed(
         "Task",
         { subagent_type: "code-reviewer" },
-        { toolUseID: "u2", signal: new AbortController().signal },
+        {
+          toolUseID: "u2",
+          requestId: "request-u2",
+          signal: new AbortController().signal,
+        },
       );
 
-      expect(result.behavior).toBe("deny");
+      expect(result?.behavior).toBe("deny");
       expect(innerCalled).toBe(false);
     });
 
@@ -116,10 +124,14 @@ describe("Claude sub-agent suppression strategy verification", () => {
       const result = await composed(
         "Read",
         { file_path: "/tmp/x" },
-        { toolUseID: "u3", signal: new AbortController().signal },
+        {
+          toolUseID: "u3",
+          requestId: "request-u3",
+          signal: new AbortController().signal,
+        },
       );
 
-      expect(result.behavior).toBe("allow");
+      expect(result?.behavior).toBe("allow");
     });
   });
 });
