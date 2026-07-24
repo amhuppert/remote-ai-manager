@@ -340,13 +340,26 @@ describe("Topbar", () => {
     );
   });
 
+  it("does not expose the workflow atlas as a global destination", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,
+    );
+
+    expect(screen.queryByTitle("Workflow Atlas")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "More destinations" }));
+    expect(
+      screen.queryByRole("menuitem", { name: "Workflow Atlas" }),
+    ).toBeNull();
+  });
+
   it("keeps every global destination reachable without overflowing a 320px topbar", async () => {
     renderWithQuery(
       <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,
     );
     const user = userEvent.setup();
 
-    expect(screen.getByTitle("Workflow Atlas")).toHaveClass("max-768:hidden");
     expect(screen.getByTitle("Global Workflow Templates")).toHaveClass(
       "max-768:hidden",
     );
@@ -362,9 +375,6 @@ describe("Topbar", () => {
       screen.getByRole("menuitem", { name: /Quick ticket/ }),
     ).toBeInTheDocument();
 
-    expect(
-      screen.getByRole("menuitem", { name: "Workflow Atlas" }),
-    ).toHaveAttribute("href", "/workflows");
     expect(
       screen.getByRole("menuitem", { name: "Workflow Templates" }),
     ).toHaveAttribute("href", "/templates");

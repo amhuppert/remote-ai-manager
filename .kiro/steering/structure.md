@@ -34,10 +34,9 @@ No other code in `src/app/` (two grandfathered exceptions below). CSS imports in
 
 ### Grandfathered exceptions
 
-Two files predate the thin re-export rule and still hold real logic. Relocating them into `src/features/` is scheduled program work; until then they are the complete exception list — the rule applies to every new file under `src/app/`, and these are not precedent:
+One file predates the thin re-export rule and still holds real logic. Relocating it into `src/features/` is scheduled program work; until then it is the complete exception list — the rule applies to every new file under `src/app/`, and it is not precedent:
 
 - `src/app/projects/[name]/[session]/conflicts/page.tsx` — a full client page (queries, mutations, local state, rendering).
-- `src/app/workflows/[machine]/page.tsx` — param validation (`isMachineId` → `notFound()`) and derived sibling props.
 
 ## Schemas
 

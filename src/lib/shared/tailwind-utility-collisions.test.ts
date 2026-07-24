@@ -50,7 +50,6 @@ const UTILITY_FIRST_PATHS = [
   // project-detail shell stays under the guard.
   `${path.sep}features${path.sep}config${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}spawn-card${path.sep}`,
-  `${path.sep}features${path.sep}workflows-catalog${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}composer${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}cockpit${path.sep}`,
   // Stage B-2 migrated feature surfaces + shared components. The src/components

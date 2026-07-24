@@ -241,7 +241,7 @@ describe("architecture-seams", () => {
       // An allowlisted edge exempts ONLY that (importer, target feature)
       // pair: a new edge into a different feature from the same file fails.
       {
-        code: `import DiffPanel from "@/features/session/git/DiffPanel";\nimport { spec } from "@/features/workflows-catalog/machine-specs";`,
+        code: `import DiffPanel from "@/features/session/git/DiffPanel";\nimport WorkflowsBuilderPage from "@/features/workflows-builder/WorkflowsBuilderPage";`,
         filename: "src/features/project-detail/cockpit/MainDiffSurface.tsx",
         options: [
           {
@@ -257,9 +257,9 @@ describe("architecture-seams", () => {
           {
             messageId: "crossFeature",
             data: {
-              spec: "@/features/workflows-catalog/machine-specs",
+              spec: "@/features/workflows-builder/WorkflowsBuilderPage",
               from: "project-detail",
-              to: "workflows-catalog",
+              to: "workflows-builder",
             },
           },
         ],

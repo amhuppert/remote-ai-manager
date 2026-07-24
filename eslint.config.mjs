@@ -29,7 +29,6 @@ const MIGRATED_UTILITY_FIRST = [
   // Stage B-1 migrated feature surfaces.
   "src/features/config/**/*.{ts,tsx}",
   "src/features/_root/spawn-card/**/*.{ts,tsx}",
-  "src/features/workflows-catalog/**/*.{ts,tsx}",
   "src/features/project-detail/composer/**/*.{ts,tsx}",
   "src/features/project-detail/cockpit/**/*.{ts,tsx}",
   // Stage B-2 migrated feature surfaces + shared components.
@@ -215,7 +214,6 @@ const GRANDFATHERED_LEGACY_CSS = [
   "/features/session-workflow/styles/session-workflow.css",
   "/components/session/sidebar/styles/PeekPopover.css",
   "/features/workflows-builder/styles/workflows-builder.css",
-  "/features/workflows-catalog/styles/workflows-catalog.css",
 ];
 
 // Whole-state escape hatches. `readState`/`mutateState`/`writeState` were

@@ -234,13 +234,6 @@ const OWNERS: readonly OwnerSpec[] = [
       "None preserved (`.project-card*`). This is the Stage-A pilot surface (ProjectCard + a leaf control).",
   },
   {
-    path: "src/features/workflows-catalog/styles/workflows-catalog.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual:
-      "None preserved (`.workflow-*` catalog + `.mc-*` machine-canvas primitives).",
-  },
-  {
     path: "src/features/session-diff/styles/session-diff.css",
     taxonomy: "feature-layout",
     alsoContains: [],

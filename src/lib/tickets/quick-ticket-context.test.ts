@@ -33,7 +33,7 @@ describe("isQuickTicketAvailable", () => {
     "/projects/command-center",
     "/conversations",
     "/tickets",
-    "/workflows",
+    "/templates",
   ])("allows quick-ticket creation at %s", (pathname) => {
     expect(isQuickTicketAvailable(pathname)).toBe(true);
   });
@@ -128,7 +128,7 @@ describe("inferQuickTicketRouteContext", () => {
     },
     { pathname: "/projects", search: "", expected: {} },
     { pathname: "/conversations", search: "", expected: {} },
-    { pathname: "/workflows", search: "", expected: {} },
+    { pathname: "/templates", search: "", expected: {} },
   ])("infers $pathname explicitly", ({ pathname, search, expected }) => {
     expect(
       inferQuickTicketRouteContext({

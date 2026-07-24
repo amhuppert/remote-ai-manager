@@ -9,7 +9,6 @@
         "src/features/projects-index/ProjectsIndexPage.tsx",
         "src/features/config/**/*.{ts,tsx}",
         "src/features/_root/spawn-card/**/*.{ts,tsx}",
-        "src/features/workflows-catalog/**/*.{ts,tsx}",
         "src/features/project-detail/composer/**/*.{ts,tsx}",
         "src/features/project-detail/cockpit/**/*.{ts,tsx}",
         "src/features/session/tabs/**/*.{ts,tsx}",

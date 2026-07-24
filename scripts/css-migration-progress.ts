@@ -248,12 +248,6 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
     note: "`.config-*` — fully migratable.",
   },
   {
-    path: "src/features/workflows-catalog/styles/workflows-catalog.css",
-    preserved: false,
-    floor: 0,
-    note: "`.workflow-*` catalog + `.mc-*` machine-canvas — fully migratable.",
-  },
-  {
     path: "src/features/workflows-builder/styles/workflows-builder.css",
     preserved: false,
     floor: 0,

@@ -39,7 +39,7 @@ type OpenSwitcher = "project" | "session" | null;
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
   /** Controls which right-side content to show */
-  page: "projects" | "sessions" | "detail" | "workflows" | "tickets" | "specs";
+  page: "projects" | "sessions" | "detail" | "tickets" | "specs";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
   /** Global status indicators — rendered when page !== "detail" */
@@ -135,7 +135,6 @@ export default function Topbar({
     activeProjectName !== null
       ? `/tickets?project=${encodeURIComponent(activeProjectName)}`
       : "/tickets";
-  const workflowsActive = pathname?.startsWith("/workflows") ?? false;
   const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
 
@@ -294,53 +293,6 @@ export default function Topbar({
           <span className="leading-none max-768:hidden">Tickets</span>
         </Link>
         <Link
-          href="/workflows"
-          className={cn(
-            "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
-            workflowsActive
-              ? "border-cyan text-text-primary!"
-              : "border-border-default text-text-secondary!",
-          )}
-          title="Workflow Atlas"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <circle
-              cx="3.5"
-              cy="3.5"
-              r="2.1"
-              stroke="currentColor"
-              strokeWidth="1.2"
-            />
-            <circle
-              cx="12.5"
-              cy="3.5"
-              r="2.1"
-              stroke="currentColor"
-              strokeWidth="1.2"
-            />
-            <circle
-              cx="8"
-              cy="12.5"
-              r="2.1"
-              stroke="currentColor"
-              strokeWidth="1.2"
-            />
-            <path
-              d="M5 4.5 L11 4.5 M4.5 5.2 L7.4 11 M11.5 5.2 L8.6 11"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className="leading-none max-768:hidden">Workflows</span>
-        </Link>
-        <Link
           href="/templates"
           className={cn(
             "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
@@ -422,9 +374,6 @@ export default function Topbar({
             <QuickTicketButton pathname={pathname} presentation="menu-item" />
             <DropdownMenuItem asChild>
               <Link href={specsHref}>Specs</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/workflows">Workflow Atlas</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/templates">Workflow Templates</Link>
