@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseConversationCommand } from "./parse";
+import {
+  hasCollabPrefix,
+  parseConversationCommand,
+  stripCollabPrefix,
+} from "./parse";
 
 describe("parseConversationCommand", () => {
   it("parses exact /commit with empty hint", () => {
@@ -103,5 +107,54 @@ describe("parseConversationCommand", () => {
     expect(parseConversationCommand("/collab do a thing")).toBeNull();
     expect(parseConversationCommand("")).toBeNull();
     expect(parseConversationCommand("   ")).toBeNull();
+  });
+});
+
+describe("hasCollabPrefix", () => {
+  it("returns true for exact /collab", () => {
+    expect(hasCollabPrefix("/collab")).toBe(true);
+  });
+
+  it("returns true for /collab with a trailing space and brief", () => {
+    expect(hasCollabPrefix("/collab fix the bug")).toBe(true);
+  });
+
+  it("returns true when the brief starts on the next line", () => {
+    expect(hasCollabPrefix("/collab\nfix the bug")).toBe(true);
+    expect(hasCollabPrefix("/collab\r\nfix the bug")).toBe(true);
+    expect(hasCollabPrefix("/collab\tfix the bug")).toBe(true);
+  });
+
+  it("returns true with leading whitespace before /collab", () => {
+    expect(hasCollabPrefix("  /collab brief")).toBe(true);
+  });
+
+  it("returns false for prompts not starting with /collab", () => {
+    expect(hasCollabPrefix("hello /collab")).toBe(false);
+    expect(hasCollabPrefix("/collaborate")).toBe(false);
+    expect(hasCollabPrefix("/collab-mode go")).toBe(false);
+  });
+});
+
+describe("stripCollabPrefix", () => {
+  it("returns empty string for exact /collab", () => {
+    expect(stripCollabPrefix("/collab")).toBe("");
+  });
+
+  it("strips /collab and the following space", () => {
+    expect(stripCollabPrefix("/collab fix the bug")).toBe("fix the bug");
+  });
+
+  it("strips /collab and the following newline", () => {
+    expect(stripCollabPrefix("/collab\nfix the bug")).toBe("fix the bug");
+    expect(stripCollabPrefix("/collab\n\nfix the bug")).toBe("\nfix the bug");
+  });
+
+  it("preserves whitespace within the brief", () => {
+    expect(stripCollabPrefix("/collab  multi  word")).toBe(" multi  word");
+  });
+
+  it("returns the input when it is not a /collab invocation", () => {
+    expect(stripCollabPrefix("just a prompt")).toBe("just a prompt");
   });
 });

@@ -37,8 +37,6 @@ import {
   ASK_QUESTION_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
   selectAskQuestionInstructions,
-  hasCollabPrefix,
-  stripCollabPrefix,
   type PromptDeps,
 } from "./sdk-driver";
 import {
@@ -1509,39 +1507,8 @@ describe("executePromptStream (facade)", () => {
 });
 
 describe("/collab prompt interception", () => {
-  describe("hasCollabPrefix", () => {
-    it("returns true for exact /collab", () => {
-      expect(hasCollabPrefix("/collab")).toBe(true);
-    });
-
-    it("returns true for /collab with trailing space and brief", () => {
-      expect(hasCollabPrefix("/collab fix the bug")).toBe(true);
-    });
-
-    it("returns true with leading whitespace before /collab", () => {
-      expect(hasCollabPrefix("  /collab brief")).toBe(true);
-    });
-
-    it("returns false for prompts not starting with /collab", () => {
-      expect(hasCollabPrefix("hello /collab")).toBe(false);
-      expect(hasCollabPrefix("/collaborate")).toBe(false);
-    });
-  });
-
-  describe("stripCollabPrefix", () => {
-    it("returns empty string for exact /collab", () => {
-      expect(stripCollabPrefix("/collab")).toBe("");
-    });
-
-    it("strips /collab and the following space", () => {
-      expect(stripCollabPrefix("/collab fix the bug")).toBe("fix the bug");
-    });
-
-    it("preserves whitespace within the brief", () => {
-      expect(stripCollabPrefix("/collab  multi  word")).toBe(" multi  word");
-    });
-  });
-
+  // `hasCollabPrefix` / `stripCollabPrefix` unit coverage lives with their
+  // owner in `@/lib/conversation-commands/parse`.
   describe("executePromptStream dispatch", () => {
     it("dispatches /collab to dispatchCollabStart instead of submitting a prompt", async () => {
       const dispatchCollabStart = vi
@@ -1569,6 +1536,28 @@ describe("/collab prompt interception", () => {
       );
       expect(deps.sendConversationEvent).not.toHaveBeenCalled();
       expect(result.conversationId).toBe("conv-123");
+    });
+
+    it("dispatches /collab when the brief begins on the next line", async () => {
+      const dispatchCollabStart = vi
+        .fn()
+        .mockResolvedValue({ workflowId: "wf-newline" });
+      deps = createTestDeps({ dispatchCollabStart });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab\nbuild the migration plan",
+        vi.fn(),
+        "conv-123",
+      );
+
+      expect(dispatchCollabStart).toHaveBeenCalledWith(
+        expect.objectContaining({ brief: "build the migration plan" }),
+      );
+      expect(deps.sendConversationEvent).not.toHaveBeenCalled();
     });
 
     it("forwards ordered images through the session-level /collab dispatcher", async () => {

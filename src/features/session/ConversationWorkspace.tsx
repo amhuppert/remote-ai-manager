@@ -12,6 +12,7 @@ import { useSessionPageHandlers } from "@/features/session/hooks/use-session-pag
 import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecycle";
 import { canStopTurn } from "@/features/session/hooks/turn-activity";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
+import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import { isWorkflowLaneRole } from "@/lib/conversations/schemas";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
@@ -58,10 +59,6 @@ export interface ConversationWorkspaceProps {
    * panes grid; absent on the per-conversation route, which has no working set.
    */
   openTabs?: OpenTabsApi;
-}
-
-function hasCollabPrefix(text: string): boolean {
-  return text === "/collab" || text.startsWith("/collab ");
 }
 
 function WorkspaceFallback({ title }: { title: string }): React.JSX.Element {

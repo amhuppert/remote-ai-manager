@@ -26,9 +26,11 @@ import {
   ModelEffortValidationError,
   CollabBriefRequiredError,
   CollabDispatcherUnavailableError,
+} from "@/lib/prompt/sdk-driver";
+import {
   hasCollabPrefix,
   stripCollabPrefix,
-} from "@/lib/prompt/sdk-driver";
+} from "@/lib/conversation-commands/parse";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
 import {
   runPromptRequestSchema,

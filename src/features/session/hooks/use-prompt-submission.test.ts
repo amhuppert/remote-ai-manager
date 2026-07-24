@@ -139,6 +139,53 @@ describe("usePromptSubmission", () => {
     expect(sendPrompt).not.toHaveBeenCalled();
   });
 
+  it("dispatches /collab as a collaboration start when the brief begins on the next line", async () => {
+    const collabMutate = vi.fn();
+    const sendPrompt = vi.fn(async () => {});
+
+    const { result } = renderHook(() => {
+      const promptTextRef = useRef("/collab\nAnalyze the parity gaps.");
+      const editorRef = useRef(null);
+      return usePromptSubmission({
+        projectName: "p",
+        sessionName: "s",
+        conversationId: "c",
+        conversations: [],
+        sending: false,
+        pendingImages: [],
+        promptTextRef,
+        editorRef,
+        setPromptText: () => {},
+        clearImages: () => {},
+        suppressPendingPromptAutosaveAfterSubmit: () => {},
+        effectiveCollabConfig: {
+          negotiationRounds: 2,
+          autonomousResolutionThreshold: "minor",
+        },
+        clearCollabConfigDraft: () => {},
+        messagesLength: 0,
+        selectedModel: "sonnet",
+        selectedEffort: "medium",
+        effortSupported: true,
+        selectedBackend: "claude",
+        sendPrompt,
+        queueMessage: vi.fn(async () => {}),
+        collaborationStartMutation: { mutate: collabMutate },
+        enqueuePromptErrorToast: vi.fn(),
+      });
+    });
+
+    await act(async () => {
+      await result.current.handleSendPrompt();
+    });
+
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(collabMutate).toHaveBeenCalledTimes(1);
+    expect(collabMutate.mock.calls[0]![0]).toMatchObject({
+      brief: "Analyze the parity gaps.",
+    });
+  });
+
   it("omits effort from the /collab start when the backend does not support it", async () => {
     const collabMutate = vi.fn();
 
