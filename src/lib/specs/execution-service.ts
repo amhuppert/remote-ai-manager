@@ -249,6 +249,7 @@ export type ExecutionLifecycleDeps = Pick<
   | "getPublishedMerge"
   | "runInImmediateTransaction"
   | "policyNotifier"
+  | "attentionNotifier"
 > & {
   lifecycleGate?: ExecutionLifecycleGatePort;
 };
@@ -267,6 +268,12 @@ export interface ExecutionLifecycleCallbacks {
     workflowExecutionId: string,
     definitionId: string,
   ): Promise<{ ok: true } | ({ ok: false } & DefinitionGateRefusal)>;
+  /**
+   * An aborted workflow can never deliver the immutable pin, so the linked
+   * active spec execution abandons immediately on the system's authority —
+   * the spec leaves "executing" without waiting for a read-path reconcile.
+   */
+  executionAborted(workflowExecutionId: string): Promise<void>;
 }
 
 export interface StartSpecExecutionInput {
@@ -330,6 +337,15 @@ export interface AbandonExecutionInput {
   reason: string;
   actor: ActorProvenance;
 }
+
+/**
+ * Reconciliation abandons on the system's own authority (no human or agent
+ * initiated the transition), so the internal path admits the system actor the
+ * public API never accepts from callers.
+ */
+type AbandonExecutionInternalInput = Omit<AbandonExecutionInput, "actor"> & {
+  actor: ActorProvenance | { kind: "system" };
+};
 
 export interface AbandonSpecInput {
   specId: string;
@@ -523,6 +539,33 @@ export function createExecutionLifecycleCallbacks(
       });
       if (!grant.ok) return definitionGateRefusal(grant.refusal);
       return { ok: true };
+    },
+    async executionAborted(workflowExecutionId) {
+      const execution =
+        deps.deliveryRepo.findExecutionByWorkflowExecutionId(
+          workflowExecutionId,
+        );
+      if (
+        execution === null ||
+        execution.state === "abandoned" ||
+        execution.state === "delivered"
+      ) {
+        return;
+      }
+      const abandoned = await abandonExecution(deps, {
+        executionId: execution.id,
+        reason: "The linked graph workflow execution was aborted.",
+        actor: { kind: "system" },
+      });
+      if (!abandoned.ok) {
+        // A concurrent terminal transition is the only sanctioned refusal;
+        // the row is already out of the active set either way.
+        logger.warn("specs.execution.abort-report-refused", {
+          specExecutionId: execution.id,
+          workflowExecutionId,
+          code: abandoned.refusal.code,
+        });
+      }
     },
   };
 }
@@ -1000,6 +1043,33 @@ async function reconcileStatus(
     deps.getWorkflowExecutionStatus(workflowExecutionId),
     deps.getPublishedMerge(workflowExecutionId),
   ]);
+  // An aborted workflow — or one whose active and archived records are both
+  // gone — can never deliver this immutable pin, so the execution abandons on
+  // system authority and the spec leaves "executing" for a future run. A
+  // gate-passed published merge still wins: delivery is the truthful record
+  // when the workflow vanished after publishing.
+  if (workflowStatus === "aborted" || workflowStatus === null) {
+    if (
+      publishedMerge?.deliveryGatePassed === true &&
+      current.state === "running"
+    ) {
+      return markDelivered(deps, specExecutionId, publishedMerge.mergeHash);
+    }
+    const abandoned = await abandonExecution(deps, {
+      executionId: specExecutionId,
+      reason:
+        workflowStatus === "aborted"
+          ? "The linked graph workflow execution was aborted."
+          : "The linked graph workflow execution no longer exists.",
+      actor: { kind: "system" },
+    });
+    if (abandoned.ok) return abandoned;
+    // A concurrent transition beat the abandon; the fresh row is the truth.
+    const fresh = deps.deliveryRepo.findExecutionById(specExecutionId);
+    return fresh === null
+      ? lifecycleNotFound(specExecutionId)
+      : { ok: true, value: fresh };
+  }
   if (
     current.state === "definition_review" &&
     ((workflowStatus !== null && workflowStatus !== "pending") ||
@@ -1027,8 +1097,8 @@ async function reconcileStatus(
 }
 
 async function abandonExecution(
-  deps: ExecutionServiceDeps,
-  input: AbandonExecutionInput,
+  deps: ExecutionLifecycleDeps,
+  input: AbandonExecutionInternalInput,
 ): Promise<LifecycleResult<SpecExecutionRow>> {
   const reason = input.reason.trim();
   if (reason.length === 0) return abandonReasonRefusal();

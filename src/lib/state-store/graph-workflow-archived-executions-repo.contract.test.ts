@@ -104,6 +104,24 @@ describe("graph-workflow-archived-executions-repo insert + read", () => {
     ).toBeNull();
   });
 
+  it("findStatusByExecutionId reads the archived status without session context", () => {
+    repo.insert(
+      makeRow({
+        executionId: "wf-aborted",
+        execution: makeExecution({
+          id: "wf-aborted",
+          status: "aborted",
+          completedAt: null,
+        }),
+        status: "aborted",
+        completedAt: null,
+      }),
+    );
+
+    expect(repo.findStatusByExecutionId("wf-aborted")).toBe("aborted");
+    expect(repo.findStatusByExecutionId("never-archived")).toBeNull();
+  });
+
   it("listSummariesBySession returns metadata only, newest archived first", () => {
     repo.insert(
       makeRow({

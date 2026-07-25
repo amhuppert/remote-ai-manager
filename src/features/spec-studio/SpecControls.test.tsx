@@ -188,6 +188,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -269,6 +270,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -296,6 +298,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={onApproveExecutionStart}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -345,6 +348,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={onGrantGateApproval}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -391,6 +395,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -427,6 +432,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -487,6 +493,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
     await user.click(screen.getByRole("button", { name: "Start execution" }));
@@ -547,6 +554,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -571,6 +579,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -662,6 +671,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -687,6 +697,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={onApproveExecutionStart}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -729,6 +740,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -757,6 +769,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -783,6 +796,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={onGrantGateApproval}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -823,6 +837,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -857,6 +872,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -880,6 +896,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={onCaptureScopeAmendment}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -928,6 +945,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={onCaptureScopeAmendment}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -965,6 +983,70 @@ describe("ExecutionPanel", () => {
     });
   });
 
+  it("abandons the running execution only after a durable reason is provided", async () => {
+    const onAbandonExecution = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detailFixture("running")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={onAbandonExecution}
+      />,
+    );
+
+    const abandon = screen.getByRole("button", { name: "Abandon execution" });
+    expect(abandon).toBeDisabled();
+    await user.type(
+      screen.getByRole("textbox", { name: "Abandonment reason" }),
+      "The plan needs revision before this run can deliver.",
+    );
+    await user.click(abandon);
+
+    expect(onAbandonExecution).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      reason: "The plan needs revision before this run can deliver.",
+    });
+  });
+
+  it("offers abandonment during definition review so a stuck run can always be stopped", async () => {
+    const onAbandonExecution = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detailFixture("definition_review")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={onAbandonExecution}
+      />,
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Abandonment reason" }),
+      "Compiled from a superseded revision.",
+    );
+    await user.click(screen.getByRole("button", { name: "Abandon execution" }));
+
+    expect(onAbandonExecution).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      reason: "Compiled from a superseded revision.",
+    });
+  });
+
   it("does not offer capture during definition review, mirroring the server's running-only refusal", () => {
     render(
       <ExecutionPanel
@@ -978,6 +1060,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -1013,6 +1096,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 

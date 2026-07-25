@@ -52,6 +52,12 @@ export interface GraphWorkflowArchivedExecutionsRepo {
     sessionName: string,
     executionId: string,
   ): GraphWorkflowExecution | null;
+  /**
+   * Terminal status of an archived execution by its globally-unique id, for
+   * callers that hold only the execution id (e.g. a spec execution's linked
+   * workflow) and need to know how a cleared run ended.
+   */
+  findStatusByExecutionId(executionId: string): GraphWorkflowStatus | null;
 }
 
 interface SummaryStorageRow {
@@ -173,6 +179,13 @@ export function createGraphWorkflowArchivedExecutionsRepo(
       WHERE project_path = ? AND session_name = ? AND execution_id = ?
       LIMIT 1`,
   );
+  const findStatusStmt = db.prepare(
+    `SELECT status
+       FROM graph_workflow_archived_executions
+      WHERE execution_id = ?
+      ORDER BY archived_at DESC
+      LIMIT 1`,
+  );
 
   return {
     insert(row) {
@@ -262,6 +275,18 @@ export function createGraphWorkflowArchivedExecutionsRepo(
           return result.data;
         },
       );
+    },
+    findStatusByExecutionId(executionId) {
+      return timed("findStatusByExecutionId", { executionId }, () => {
+        const row: unknown = findStatusStmt.get(executionId);
+        if (row === undefined) return null;
+        const status = (row as { status?: unknown }).status;
+        const result = graphWorkflowStatusSchema.safeParse(status);
+        if (!result.success) {
+          return logAndThrowValidationFailure(executionId, result.error.issues);
+        }
+        return result.data;
+      });
     },
   };
 }

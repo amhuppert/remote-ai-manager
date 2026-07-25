@@ -505,6 +505,11 @@ export interface GraphWorkflowExecutionRouteDeps {
     workflowExecutionId: string,
     definitionId: string,
   ): Promise<DefinitionApprovalGateDecision>;
+  /**
+   * Reports a successful abort so the registered lifecycle consumer can
+   * terminalize work pinned to the run. Defaults to the registered port.
+   */
+  executionAborted?(workflowExecutionId: string): Promise<void>;
   pauseExecution(
     projectPath: string,
     sessionName: string,
@@ -602,6 +607,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
       .awaitingDefinitionApproval,
   admitDefinitionApproval:
     createRegisteredGraphExecutionLifecycleCallbacks().admitDefinitionApproval,
+  executionAborted:
+    createRegisteredGraphExecutionLifecycleCallbacks().executionAborted,
   recordDefinitionApproval: (input) =>
     workflowManager.recordDefinitionApproval(input),
   pauseExecution: (projectPath, sessionName) =>
@@ -1401,6 +1408,17 @@ export function createGraphWorkflowExecutionRouteHandlers(
         resolved.projectPath,
         resolved.sessionName,
       );
+      // Best-effort: a consumer failure must not mask the successful abort.
+      if (deps.executionAborted !== undefined) {
+        try {
+          await deps.executionAborted(execution.id);
+        } catch (error) {
+          logger.warn("graph-workflow.execution_abort_report_failed", {
+            workflowExecutionId: execution.id,
+            error: getErrorMessage(error),
+          });
+        }
+      }
       return NextResponse.json({
         execution: summarizeExecution(execution, false),
       });

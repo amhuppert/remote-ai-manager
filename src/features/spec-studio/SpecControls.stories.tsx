@@ -60,6 +60,7 @@ export const ScopeSelection: Story = {
       onGrantGateApproval={fn()}
       onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
+      onAbandonExecution={fn()}
     />
   ),
 };
@@ -77,6 +78,7 @@ export const DefinitionReview: Story = {
       onGrantGateApproval={fn()}
       onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
+      onAbandonExecution={fn()}
     />
   ),
 };
@@ -94,6 +96,7 @@ export const RunningExecution: Story = {
       onGrantGateApproval={fn()}
       onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
+      onAbandonExecution={fn()}
     />
   ),
 };

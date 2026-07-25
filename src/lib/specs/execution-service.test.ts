@@ -767,6 +767,116 @@ describe("ExecutionService start", () => {
     });
   });
 
+  it("abandons the linked active execution when the workflow reports an abort", async () => {
+    const running = await startRunning();
+    const callbacks = createExecutionLifecycleCallbacks(deps);
+
+    await callbacks.executionAborted(`workflow-${running.id}`);
+
+    expect(deps.deliveryRepo.findExecutionById(running.id)).toMatchObject({
+      state: "abandoned",
+      abandoned_reason: "The linked graph workflow execution was aborted.",
+    });
+  });
+
+  it("ignores abort reports for unlinked or already-terminal executions", async () => {
+    const callbacks = createExecutionLifecycleCallbacks(deps);
+    await expect(
+      callbacks.executionAborted("workflow-unknown"),
+    ).resolves.toBeUndefined();
+
+    const running = await startRunning();
+    await service.abandonExecution({
+      executionId: running.id,
+      reason: "Stopped by hand.",
+      actor: { kind: "human" },
+    });
+    await callbacks.executionAborted(`workflow-${running.id}`);
+
+    expect(deps.deliveryRepo.findExecutionById(running.id)).toMatchObject({
+      state: "abandoned",
+      abandoned_reason: "Stopped by hand.",
+    });
+  });
+
+  it("abandons the execution on status reads when the linked workflow was aborted", async () => {
+    const running = await startRunning();
+    deps.getWorkflowExecutionStatus = vi.fn(async () => "aborted" as const);
+    service = createExecutionService(deps);
+
+    const result = await service.getStatus(running.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        state: "abandoned",
+        abandoned_reason: "The linked graph workflow execution was aborted.",
+      },
+    });
+    const abandonEvents = deps.eventsRepo
+      .findBySpecId(specId)
+      .filter(
+        (event) =>
+          event.event_type === "spec-execution-changed" &&
+          event.payload_json.includes('"kind":"execution_abandoned"'),
+      );
+    expect(abandonEvents).toHaveLength(1);
+    expect(JSON.parse(abandonEvents[0]?.actor_json ?? "{}")).toEqual({
+      kind: "system",
+    });
+  });
+
+  it("abandons a definition_review execution whose linked workflow was aborted without promoting it", async () => {
+    const started = await service.start(startInput());
+    if (!started.ok) throw new Error("start was refused");
+    await service.linkWorkflowExecution(
+      started.execution.id,
+      "workflow-aborted-in-review",
+    );
+    deps.getWorkflowExecutionStatus = vi.fn(async () => "aborted" as const);
+    service = createExecutionService(deps);
+
+    const result = await service.getStatus(started.execution.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { state: "abandoned" },
+    });
+    const runningEvents = deps.eventsRepo
+      .findBySpecId(specId)
+      .filter((event) =>
+        event.payload_json.includes('"kind":"execution_running"'),
+      );
+    expect(runningEvents).toHaveLength(0);
+  });
+
+  it("abandons the execution on status reads when the linked workflow no longer exists", async () => {
+    const running = await startRunning();
+    deps.getWorkflowExecutionStatus = vi.fn(async () => null);
+    service = createExecutionService(deps);
+
+    const result = await service.getStatus(running.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        state: "abandoned",
+        abandoned_reason:
+          "The linked graph workflow execution no longer exists.",
+      },
+    });
+  });
+
+  it("keeps the execution active while the linked workflow is halted", async () => {
+    const running = await startRunning();
+    deps.getWorkflowExecutionStatus = vi.fn(async () => "halted" as const);
+    service = createExecutionService(deps);
+
+    const result = await service.getStatus(running.id);
+
+    expect(result).toMatchObject({ ok: true, value: { state: "running" } });
+  });
+
   it("3.10 requires an abandon reason and keeps execution abandonment terminal", async () => {
     const running = await startRunning();
 

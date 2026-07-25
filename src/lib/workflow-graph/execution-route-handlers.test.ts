@@ -104,6 +104,7 @@ describe("graph workflow execution route handlers", () => {
   const recordDefinitionApproval = vi.fn();
   const markRunning = vi.fn(async () => {});
   const awaitingDefinitionApproval = vi.fn(async () => {});
+  const executionAborted = vi.fn(async () => {});
   const admitDefinitionApproval = vi.fn<
     (
       workflowExecutionId: string,
@@ -138,6 +139,7 @@ describe("graph workflow execution route handlers", () => {
     markRunning,
     awaitingDefinitionApproval,
     admitDefinitionApproval,
+    executionAborted,
     stopExecutionLaneDevServers,
     listArchivedExecutions,
     auth: {
@@ -1627,6 +1629,51 @@ describe("graph workflow execution route handlers", () => {
       undefined,
     );
     expect(abortExecution).toHaveBeenCalledWith("/repo", "session-1");
+  });
+
+  it("reports a successful abort to the execution lifecycle port", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    const abortedExecution = createWorkflowExecution({
+      status: "aborted",
+      completedAt: "2026-03-27T12:10:00.000Z",
+      haltReason: { type: "aborted" },
+    });
+    abortExecution.mockResolvedValue(abortedExecution);
+
+    const response = await handlers.ABORT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/abort",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(executionAborted).toHaveBeenCalledWith(abortedExecution.id);
+  });
+
+  it("keeps a successful abort response when the lifecycle report fails", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    abortExecution.mockResolvedValue(
+      createWorkflowExecution({
+        status: "aborted",
+        completedAt: "2026-03-27T12:10:00.000Z",
+        haltReason: { type: "aborted" },
+      }),
+    );
+    executionAborted.mockRejectedValue(new Error("consumer offline"));
+
+    const response = await handlers.ABORT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/abort",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it("threads conflict guidance from the resume body to the workflow manager", async () => {
