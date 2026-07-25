@@ -18,7 +18,11 @@
  */
 
 import { NextResponse } from "next/server";
-import { jsonError, resolveProjectOr404 } from "@/lib/shared/route-resolution";
+import {
+  jsonError,
+  refuseProjectSentinelSessionParam,
+  resolveProjectOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { resolveProjectPath } from "@/lib/projects/resolver";
@@ -123,6 +127,14 @@ async function prepareContext(
   executionId: string,
   contextId: string,
 ): Promise<PreparedContext> {
+  // The lane endpoints resolve the project themselves rather than going through
+  // the session resolution seam, so the seam's refusal never runs for them.
+  // Without this guard the sentinel reaches the lane tool context loader as a
+  // session key — graph workflow execution is session-only, so the refusal names
+  // that rather than a project route (R1.2).
+  const refusal = refuseProjectSentinelSessionParam(sessionName, projectName);
+  if (refusal) return { ok: false, response: refusal };
+
   const project = await resolveProjectOr404(deps, projectName);
   if (!project.ok) return project;
   const projectPath = project.value;

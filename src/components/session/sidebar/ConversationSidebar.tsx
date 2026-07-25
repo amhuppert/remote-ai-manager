@@ -39,6 +39,10 @@ import { useNotificationJobs } from "@/stores/notification.store";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { copyConversationContextToClipboard } from "@/lib/conversations/copy-context-client";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
+import {
+  scopeRefFromStoreSessionName,
+  scopeRefSessionName,
+} from "@/lib/conversations/conversation-target";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   useSidebarCollapsed,
@@ -521,7 +525,16 @@ function ConversationSidebar({
     return conversation?.scope === "session" ? conversation : null;
   }, [activeConvoList, peek]);
   const peekProjectName = peekConversation?.projectName ?? projectName;
-  const peekSessionName = peekConversation?.sessionName ?? sessionName;
+  // Only a SESSION-scope row is peekable, so every peek hook below is inert
+  // until one is peeked (the popover and each peek mutation are gated on
+  // `peekConversation`) and this fallback only ever shapes a disabled query
+  // key. It still may not carry the store sentinel the project page passes as
+  // `sessionName`: a query key is a public identity surface (R1.3), and the
+  // messages query builds its key eagerly whether or not it is enabled.
+  const peekSessionName =
+    peekConversation?.sessionName ??
+    scopeRefSessionName(scopeRefFromStoreSessionName(sessionName)) ??
+    "";
   const peekConversationId = peek?.conversationId ?? "";
   const peekMessagesQuery = useConversationMessagesQuery(
     peekProjectName,

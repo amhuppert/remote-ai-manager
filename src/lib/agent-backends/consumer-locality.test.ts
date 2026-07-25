@@ -25,6 +25,7 @@
  * of being absorbed.
  */
 
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -122,6 +123,7 @@ import { createLaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
 import { createWorkflowAgentCaller } from "@/lib/workflows/primitives/workflow-agent-caller";
 import { createGraphWorkflowImplementerRunner } from "@/lib/workflow-graph/implementer-runner";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -140,7 +142,11 @@ function makeCreateInput(
     conversationId,
     projectPath: PROJECT_PATH,
     projectName: PROJECT_NAME,
-    sessionName: SESSION_NAME,
+    conversationTarget: sessionConversationTarget(
+      PROJECT_NAME,
+      SESSION_NAME,
+      conversationId,
+    ),
     worktreePath: WORKTREE_PATH,
     persistedRef: null,
     sessionInstructions: [],
@@ -238,6 +244,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
   );
 
   const deps: ActorImplementationDeps = {
+    log: createCapturingLogger(),
     acquireConversationLock: () => () => {},
     acquireQuerySlot: async () => () => {},
     getTranscriptPath: async (id) => `/inmemory/${id}.jsonl`,

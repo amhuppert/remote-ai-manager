@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -45,11 +46,12 @@ beforeEach(() => {
 });
 
 function conversation(
-  overrides: Partial<ConversationListItem> & { conversationId: string },
+  overrides: Partial<SessionConversationListItem> & { conversationId: string },
 ): ConversationListItem {
   return {
     projectName: overrides.projectName ?? "alpha",
     projectPath: overrides.projectPath ?? "/repos/alpha",
+    scope: "session" as const,
     sessionName: overrides.sessionName ?? "main",
     worktreePath: overrides.worktreePath ?? "/repos/alpha/.worktrees/main",
     conversationId: overrides.conversationId,
@@ -323,6 +325,7 @@ describe("UnifiedMention extension", () => {
       attrs: {
         projectName: "alpha",
         projectPath: "/repos/alpha",
+        scope: "session" as const,
         sessionName: "main",
         worktreePath: "/repos/alpha/.worktrees/main",
         conversationId: "conv-auth",

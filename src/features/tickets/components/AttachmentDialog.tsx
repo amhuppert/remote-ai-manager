@@ -1,5 +1,6 @@
 "use client";
 
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { useId, useRef, useState } from "react";
 
 import {
@@ -540,8 +541,13 @@ function ConversationTargetSelect({
     includeArchived: false,
   });
   const projectConversationsQuery = useProjectConversationsQuery(projectName);
+  // Session-scoped rows only: project conversations come from
+  // `projectConversationsQuery` below, so taking them from the all-list too would
+  // both duplicate them and require a session name they do not have.
   const sessionConversations = (conversationsQuery.data?.items ?? []).filter(
-    (conversation) => conversation.projectName === projectName,
+    (conversation): conversation is SessionConversationListItem =>
+      conversation.scope === "session" &&
+      conversation.projectName === projectName,
   );
   const conversations = [
     ...sessionConversations.map((conversation) => ({

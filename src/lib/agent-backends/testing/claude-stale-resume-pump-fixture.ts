@@ -5,6 +5,7 @@
  * adapter must still return the provider-specific clear verdict.
  */
 
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationBackendTurnResult } from "../conversation";
@@ -82,6 +83,11 @@ export async function runStaleClaudePumpResumeTurn(identity: {
   try {
     runtime = await claudeConversationBackendFactory.createRuntime({
       ...identity,
+      conversationTarget: sessionConversationTarget(
+        identity.projectName,
+        identity.sessionName,
+        identity.conversationId,
+      ),
       persistedRef: STALE_CLAUDE_RESUME_REF,
       sessionInstructions: [],
       tooling: {},

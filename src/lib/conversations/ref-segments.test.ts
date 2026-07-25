@@ -5,6 +5,7 @@ import { buildTicketRefXml } from "@/lib/tickets/references";
 
 const CONVERSATION_REF =
   '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+  'scope="session" ' +
   'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
   'conversation-id="conv-1" conversation-name="Refactor parser" ' +
   'backend="claude" backend-ref="sess-abc" debug-log-path="" status="running" ' +

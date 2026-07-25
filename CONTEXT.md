@@ -26,6 +26,141 @@ locality); domain terms name the concepts the code is about.
   `src/lib/project-conversations/route-resolution.ts`), plus
   `resolveTicketProjectOr404` (ticket-scoped,
   `src/lib/tickets/route-resolution.ts`). All compose `resolveProjectOr404`.
+  A scope pair (session adapter + project adapter) resolves into the SAME shared
+  domain operation; the operation takes a `ConversationTarget` (or a
+  `ConversationScopeRef`) and never forks by scope. Ask and answer are the shape
+  to copy: `registerAskBatchAfterRoleGate` and `deliverAnswers` are the scope-
+  invariant cores, and only the session adapter carries the graph-lane divert,
+  which is session-only by spec non-goal.
+
+- **Conversation scope contract (agent environment)** — a spawned agent is told
+  its scope EXPLICITLY. `buildSessionEnvContract`
+  (`src/lib/agent-gateway/session-env.ts`) takes a `ConversationTarget` and
+  exports `CC_CONVERSATION_SCOPE` (`session` | `project`); for a project
+  conversation it exports `CC_SESSION` as an explicitly neutralized `""` — present,
+  because the contract is merged OVER `process.env` and a deleted key resurrects
+  the ambient value. A session target carrying the sentinel is REFUSED rather than
+  exported, the way `conversationTargetApiBase` refuses it for URLs — the agent env
+  is a public surface because the agent routes with what it reads. Scope reaches
+  both backend runtimes as
+  `ConversationBackendCreateInput.conversationTarget`, never re-derived from a
+  session name or worktree path. In `cctl`, `readSessionEnv` is the one sanctioned
+  env session read (a falsy check — `?? null` would pass `""` through and build
+  `/sessions//conversations/…`), `readConversationScope` reads the discriminator,
+  and `src/cli/session-env-inventory.ts` classifies every command that reads the
+  session env as project-supported or intentionally session-only, enforced by
+  `session-env-inventory.arch.test.ts`.
+
+- **ConversationTarget** — the conversation addressing vocabulary for every
+  public boundary (`src/lib/conversations/conversation-target.ts`): a
+  discriminated union whose `session` variant carries project + session +
+  conversation and whose `project` variant carries project + conversation only.
+  It is what URL builders, API payloads, React Query keys, diagnostic identity,
+  and user-visible labels address a conversation with, so the internal
+  `__project__` sentinel has no public field to occupy.
+  `conversationTargetStoreSessionName` / `targetFromStoreSessionName` are the
+  only sanctioned crossings into and out of the sentinel, for the session-keyed
+  state-store / runtime / lock / actor APIs that serve both scopes through one
+  storage key. `refuseProjectSentinelSessionParam` (in
+  `src/lib/shared/route-resolution.ts`) refuses the sentinel in a public session
+  route position with a 400 naming the project route, and
+  `src/lib/conversations/sentinel-public-surface.arch.test.ts` classifies every
+  module allowed to reach the sentinel.
+
+  Every public session route refuses through ONE contract: status 400, code
+  `PROJECT_SENTINEL_REFUSAL_CODE`, and a message built by
+  `projectSentinelRefusalMessage` naming the concrete project-shaped route for
+  THAT endpoint. A route family with its own error envelope joins the contract
+  by mapping to the same code — `CapabilityRouteScopeRefusalError` is the
+  agent-capabilities case. Session-LEVEL routes are in the contract too: an
+  operation with no project counterpart is refused as session-only rather than
+  pointed at a route that would 404. A route that resolves the project itself
+  instead of composing the session seam silently opts out of the refusal, so
+  `src/lib/shared/session-route-refusal.arch.test.ts` requires every route under
+  `/api/projects/[name]/sessions/[session]` to reach a refusal entry point.
+
+- **Project route equivalent** — which project-shaped route a refusal names
+  (`src/lib/conversations/project-route-equivalent.ts`). The equivalence is
+  structural: the project router mirrors the session router with the
+  `/sessions/<session>` pair removed, so the leaf and its dynamic segments carry
+  over verbatim. `projectRouteForSessionRequestPath` reads the request path off
+  the trace context (`TraceContext.requestPath`, stamped by `withTracing`),
+  because route params identify the conversation but not WHICH of its endpoints
+  was called. Which leaves the project router actually serves is not structural,
+  so `PROJECT_CONVERSATION_ROUTE_OPERATIONS` pins them and its test compares that
+  set against the App Router directory listing; an operation outside the
+  inventory is refused as session-only rather than named as a route that would
+  404. `resolveProjectSentinelRefusalTarget` is the shared entry point, with a
+  caller-supplied fallback for untraced calls.
+
+  A session-LEVEL operation (outside the `conversations/<id>` subtree) is not
+  automatically session-only, and the mapping is wrong in both directions if it
+  is treated that way. Three inventories decide, each pinned against the App
+  Router tree: `PROJECT_LEVEL_ROUTE_OPERATIONS` mirrors to
+  `/api/projects/<p>/<op>` (`commands`, `files`, `diff`, `prompt`,
+  `conversations`, `agent-capabilities`, `mcp-config`);
+  `PROJECT_CONVERSATION_SCOPED_SESSION_OPERATIONS` mirrors to a
+  conversation-scoped project route the session path has no id for, so the name
+  carries `CONVERSATION_ID_PLACEHOLDER` (`notifications`); and
+  `SAME_NAME_DIFFERENT_OPERATION` records a name both routers serve while doing
+  different things (`archive` archives a session vs the whole project), which is
+  session-only despite the matching directory. The classification test fails on
+  any operation both routers serve that is in none of the three, so a new shared
+  operation has to be decided rather than defaulted.
+
+- **ConversationScopeRef** — the scope union for surfaces that know their
+  project but may have no conversation id yet (the composer's file and
+  slash-command popups). `scopeRefFromStoreSessionName` is the single conversion
+  from a stored session name into public scope, applied once in `PromptEditor`;
+  every popup downstream branches on `scope` alone. An optional `sessionName`
+  where `undefined` meant "project" is what let the sentinel build
+  `/sessions/__project__/files` and session-keyed query keys.
+
+  Server-side, the same ref is the DIAGNOSTIC identity of a turn. Structured-log
+  fields are a public identity surface, and the project turn path is handed the
+  store key at every stage (`sdk-driver` → conversation `manager` → turn
+  resource acquisition → `actor-implementations` →
+  `with-runtime-replacement-retry`, plus `transcript` and the message queue), so
+  each derives one `scopeRef` and spreads it instead of logging a session name.
+  Startup rehydration, the workflow task-run entrypoint, and state-store read
+  timing are the project-reachable stages outside the turn. Modules under this
+  rule take their `Logger` through deps so a test can read what they emitted;
+  `.kiro/steering/logs.md` holds the rule and the stage tables.
+
+  The GUARANTEE, though, is at the sink: `buildEntry` drops a sentinel-valued
+  `sessionName` and substitutes `scope: "project"`. That belongs in the logger
+  because the request trace context stamps `sessionName` onto every entry emitted
+  inside a request, so a project request can leak from call sites that never
+  mention a session and no per-site audit can be complete. Carriers that must
+  transport the store key past a
+  logging site name it `storeSessionName` (`TranscriptBroadcastMeta`,
+  `AppendNoticeInput`, `acquireConversationLock`) so it cannot be spread onto a
+  public surface by accident, and free-form diagnostic labels are built from the
+  ref too — the query semaphore echoes its label into both its events and its
+  queue-timeout error text.
+
+  The log FILE PATH is a diagnostic identity too, and it is resolved from the raw
+  trace context rather than from the sanitized entry, so the field guard cannot
+  reach it. A project conversation therefore routes to
+  `logs/projects/<projectSlug>/…` instead of
+  `logs/sessions/<projectSlug>__<sentinel>/…`; `discoverScopedLogPaths` walks
+  both trees so moving the destination does not hide project logs from readers.
+
+- **Project-scope command refusals** — a slash command that needs a session
+  branch or worktree is refused BY the project boundary, not by whatever
+  session lookup it would otherwise reach. `ProjectCollaborationUnsupportedError`
+  (`src/lib/project-conversations/prompt-entry.ts`) is the case in place:
+  `/collab` is rejected before any get-or-create, so a refused command leaves no
+  conversation behind, and the project prompt route maps it to a coded SSE
+  `error` frame. Delegating instead produced `Session "__project__" not found` —
+  a scope decision disguised as a missing record, publishing the sentinel.
+
+- **Cross-scope conversation lookup** — `GET /api/conversations/<id>` resolves a
+  conversation of EITHER scope by id alone (`findConversationById` queries the
+  session repo, then `getProjectConversationById`) and answers with the
+  scope-discriminated list item. `cctl conversation <verb> <id>` parses that
+  discriminator and retries on the project route, so a cross-scope read of a
+  project conversation never depends on guessing a session name.
 
 - **SSE publication** — the typed seam for every server-to-client event.
   `publishEvent` returns a delivery outcome without throwing, `PublishFn` is the

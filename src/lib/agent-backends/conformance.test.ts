@@ -12,6 +12,7 @@
  * check functions rather than registering green.
  */
 
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   checkApplyTimingBehavior,
@@ -85,7 +86,11 @@ function buildCreateInput(
     conversationId,
     projectPath: "/conformance",
     projectName: "conformance",
-    sessionName: "conformance",
+    conversationTarget: sessionConversationTarget(
+      "conformance",
+      "conformance",
+      conversationId,
+    ),
     worktreePath: "/conformance",
     persistedRef: null,
     sessionInstructions: [],

@@ -46,7 +46,10 @@ import {
 } from "./schemas";
 import { createProjectConversationService } from "./service";
 import { buildProjectConversationCreatedEvent } from "./events";
-import { executeProjectPromptStream as defaultExecuteProjectPromptStream } from "./prompt-entry";
+import {
+  executeProjectPromptStream as defaultExecuteProjectPromptStream,
+  ProjectCollaborationUnsupportedError,
+} from "./prompt-entry";
 import type {
   ConversationState,
   TranscriptMessage,
@@ -188,6 +191,11 @@ export function createProjectConversationRouteHandlers(
           }
           if (err instanceof ModelEffortValidationError) {
             emit("error", { message: err.message, code: "VALIDATION_ERROR" });
+            emit("done", {});
+            return;
+          }
+          if (err instanceof ProjectCollaborationUnsupportedError) {
+            emit("error", { message: err.message, code: err.code });
             emit("done", {});
             return;
           }

@@ -83,6 +83,9 @@ function makeHandlers(
     async getSession() {
       return { sessionName: "sess" };
     },
+    async getProjectConversation(_projectPath, conversationId) {
+      return { id: conversationId };
+    },
     dispatchAgentNotification: dispatch,
   });
 }
@@ -101,8 +104,7 @@ describe("cctl notify against the real notification handler", () => {
     expect(result.exitCode).toBe(0);
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        projectName: "cc",
-        sessionName: "sess",
+        target: { scope: "session", projectName: "cc", sessionName: "sess" },
         title: "Heads up",
         message: "Build done",
       }),

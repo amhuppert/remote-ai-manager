@@ -1,16 +1,16 @@
 import { z } from "zod";
+import { conversationTargetApiBase } from "@/lib/conversations/conversation-target";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
   checkFlags,
   cliRequest,
-  encodePathSegment,
   failure,
   failureFromRequestNotFoundAsUsage,
   readJsonObjectFile,
   render,
-  resolveConversationContext,
+  resolveConversationTargetContext,
   usageFailure,
   type CliEnv,
   type CliHost,
@@ -94,7 +94,7 @@ export async function runAsk(
     );
   }
 
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveConversationTargetContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
 
@@ -103,10 +103,7 @@ export async function runAsk(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "POST",
-    path:
-      `/api/projects/${encodePathSegment(context.project)}` +
-      `/sessions/${encodePathSegment(context.session)}` +
-      `/conversations/${encodePathSegment(context.conversation)}/ask`,
+    path: `${conversationTargetApiBase(context.target)}/ask`,
     body,
   });
   if (result.kind !== "ok") {

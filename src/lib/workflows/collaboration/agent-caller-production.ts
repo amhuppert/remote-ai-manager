@@ -28,6 +28,7 @@
  */
 
 import path from "node:path";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import {
   getBackendDescriptor,
@@ -301,7 +302,14 @@ function buildInnerCallAgent(
       mcpScopeConversationId: input.originatingConversationId,
       projectPath: input.projectPath,
       projectName,
-      sessionName: input.sessionName,
+      // The lane's session key lifted into the public scope vocabulary at this
+      // boundary, so a sentinel-keyed origin can never reach the agent env as a
+      // session identity.
+      conversationTarget: targetFromStoreSessionName(
+        projectName,
+        input.sessionName,
+        conversationId,
+      ),
       worktreePath: input.worktreePath,
       persistedRef: claudeResumeRef,
       ...(effectiveModelId !== undefined ? { modelId: effectiveModelId } : {}),

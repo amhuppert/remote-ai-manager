@@ -2,6 +2,12 @@ import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
 import { dispatchGroup } from "../dispatch";
+import {
+  conversationTargetApiBase,
+  projectConversationTarget,
+  sessionConversationTarget,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
@@ -15,6 +21,8 @@ import {
   failureFromRequest,
   failureFromRequestNotFoundAsUsage,
   render,
+  readConversationScope,
+  readSessionEnv,
   resolveProjectContext,
   structuredErrorFields,
   usageFailure,
@@ -81,14 +89,12 @@ const artifactEnvelopeResponseSchema = z.object({
   hint: z.string().optional(),
 });
 
-interface ConversationTarget {
+interface ConversationCommandTarget {
   server: string;
-  project: string;
-  /** Null → project-scoped conversation (project-pathed endpoints). */
-  session: string | null;
   token: string | null;
   tokenSource: TokenSource | null;
-  conversationId: string;
+  /** Scope-discriminated addressing; the only source of endpoint paths below. */
+  target: ConversationTarget;
   /** The invoking conversation's own id (env identity), for audit provenance. */
   callerConversationId: string | null;
 }
@@ -96,17 +102,22 @@ interface ConversationTarget {
 /**
  * Resolve the target conversation: positional `<conversation-id>` first, then
  * `--conversation`, then `CC_CONVERSATION_ID` (reading your own history is
- * valid). Scope: an explicit `--project` without `--session` targets the
- * project-scoped paths; otherwise `--session`/`CC_SESSION` selects the
- * session-scoped paths.
+ * valid).
+ *
+ * Scope: an explicit `--session` wins, then an explicit `--project` alone means
+ * project scope, then the environment's declared `CC_CONVERSATION_SCOPE`, then a
+ * non-empty env session. The env session read is deliberately a falsy check —
+ * `env["CC_SESSION"] ?? null` yields the neutralized `""` for a project
+ * conversation and builds `/sessions//conversations/…`.
  */
-async function resolveConversationTarget(
+async function resolveConversationCommandTarget(
   positional: string | undefined,
   flags: GlobalFlags,
   env: CliEnv,
   host: CliHost,
 ): Promise<
-  { ok: true; target: ConversationTarget } | { ok: false; result: CliResult }
+  | { ok: true; target: ConversationCommandTarget }
+  | { ok: false; result: CliResult }
 > {
   const base = await resolveProjectContext(flags, env, host);
   if (!base.ok) return base;
@@ -125,34 +136,41 @@ async function resolveConversationTarget(
     };
   }
 
-  const session =
-    flags.session ?? (flags.project ? undefined : env["CC_SESSION"]) ?? null;
+  const sessionName =
+    flags.session ??
+    (flags.project || readConversationScope(env) === "project"
+      ? null
+      : readSessionEnv(env));
 
   return {
     ok: true,
     target: {
-      ...base.context,
-      session,
-      conversationId,
+      server: base.context.server,
+      token: base.context.token,
+      tokenSource: base.context.tokenSource,
+      target:
+        sessionName === null
+          ? projectConversationTarget(base.context.project, conversationId)
+          : sessionConversationTarget(
+              base.context.project,
+              sessionName,
+              conversationId,
+            ),
       callerConversationId: env["CC_CONVERSATION_ID"] ?? null,
     },
   };
 }
 
-function conversationBasePath(target: ConversationTarget): string {
-  const project = encodePathSegment(target.project);
-  const conversation = encodePathSegment(target.conversationId);
-  return target.session === null
-    ? `/api/projects/${project}/conversations/${conversation}`
-    : `/api/projects/${project}/sessions/${encodePathSegment(target.session)}/conversations/${conversation}`;
+function conversationBasePath(target: ConversationCommandTarget): string {
+  return conversationTargetApiBase(target.target);
 }
 
-function artifactsPath(target: ConversationTarget): string {
+function artifactsPath(target: ConversationCommandTarget): string {
   return `${conversationBasePath(target)}/context-artifacts`;
 }
 
 function callerHeaders(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
 ): Record<string, string> | undefined {
   return target.callerConversationId === null
     ? undefined
@@ -160,12 +178,12 @@ function callerHeaders(
 }
 
 function compactCommand(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   messageIndex?: number,
 ): string {
   const message =
     messageIndex === undefined ? "" : ` --message ${messageIndex}`;
-  return `cctl conversation compact ${target.conversationId}${message}`;
+  return `cctl conversation compact ${target.target.conversationId}${message}`;
 }
 
 /**
@@ -238,21 +256,33 @@ function isWrongScope404(
  * scope).
  */
 function shouldAutoResolveScope(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   flags: GlobalFlags,
 ): boolean {
   if (flags.session !== undefined || flags.project !== undefined) return false;
-  return target.conversationId !== target.callerConversationId;
+  return target.target.conversationId !== target.callerConversationId;
 }
 
-/** Subset of the global-lookup ConversationListItem the CLI needs to re-scope. */
-const conversationScopeSchema = z.object({
-  projectName: z.string().min(1),
-  sessionName: z.string().min(1),
-});
+/**
+ * Subset of the global-lookup ConversationListItem the CLI needs to re-scope.
+ * Scope-discriminated, mirroring the payload: a project conversation carries no
+ * `sessionName`, so requiring one here would reject every project conversation
+ * and strand the cross-scope read (R2.4).
+ */
+const conversationScopeSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("session"),
+    projectName: z.string().min(1),
+    sessionName: z.string().min(1),
+  }),
+  z.object({
+    scope: z.literal("project"),
+    projectName: z.string().min(1),
+  }),
+]);
 
 type ScopeResolution =
-  | { kind: "resolved"; projectName: string; sessionName: string }
+  | { kind: "resolved"; target: ConversationTarget }
   | { kind: "not-found" }
   | { kind: "error"; result: CliResult };
 
@@ -263,7 +293,7 @@ type ScopeResolution =
  */
 async function resolveOwningScope(
   host: CliHost,
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   json: boolean,
 ): Promise<ScopeResolution> {
   const result = await cliRequest(host, {
@@ -271,7 +301,7 @@ async function resolveOwningScope(
     token: target.token,
     tokenSource: target.tokenSource,
     method: "GET",
-    path: `/api/conversations/${encodePathSegment(target.conversationId)}`,
+    path: `/api/conversations/${encodePathSegment(target.target.conversationId)}`,
   });
   if (result.kind === "ok") {
     const parsed = conversationScopeSchema.safeParse(result.body);
@@ -288,8 +318,17 @@ async function resolveOwningScope(
     }
     return {
       kind: "resolved",
-      projectName: parsed.data.projectName,
-      sessionName: parsed.data.sessionName,
+      target:
+        parsed.data.scope === "project"
+          ? projectConversationTarget(
+              parsed.data.projectName,
+              target.target.conversationId,
+            )
+          : sessionConversationTarget(
+              parsed.data.projectName,
+              parsed.data.sessionName,
+              target.target.conversationId,
+            ),
     };
   }
   if (result.kind === "error" && result.status === 404) {
@@ -307,10 +346,10 @@ async function resolveOwningScope(
  */
 async function withScopeResolution(
   host: CliHost,
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   flags: GlobalFlags,
   json: boolean,
-  body: (t: ConversationTarget) => Promise<CliResult | ScopeMiss>,
+  body: (t: ConversationCommandTarget) => Promise<CliResult | ScopeMiss>,
 ): Promise<CliResult> {
   const first = await body(target);
   if (!isScopeMiss(first)) return first;
@@ -320,11 +359,9 @@ async function withScopeResolution(
   if (scope.kind === "not-found") return first.fallback;
   if (scope.kind === "error") return scope.result;
 
-  const retried = await body({
-    ...target,
-    project: scope.projectName,
-    session: scope.sessionName,
-  });
+  // The lookup reports scope explicitly, so the retry addresses the project
+  // route for a project conversation rather than inferring scope from a name.
+  const retried = await body({ ...target, target: scope.target });
   return isScopeMiss(retried) ? retried.fallback : retried;
 }
 
@@ -391,7 +428,7 @@ async function runConversationRead(
     return usageFailure("--format must be json or markdown", json);
   }
 
-  const resolved = await resolveConversationTarget(id, flags, env, host);
+  const resolved = await resolveConversationCommandTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
 
   return withScopeResolution(host, resolved.target, flags, json, (target) =>
@@ -400,7 +437,7 @@ async function runConversationRead(
 }
 
 async function readBody(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   values: Record<string, string>,
   format: "json" | "markdown",
   host: CliHost,
@@ -497,10 +534,10 @@ const OUTLINE_WINDOW_SYNTAX =
  * agents into a guaranteed exit-1.
  */
 async function outlineEscalationHint(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   host: CliHost,
 ): Promise<string> {
-  const fetchHint = `${OUTLINE_WINDOW_SYNTAX}, or fetch the compaction: cctl conversation compaction get ${target.conversationId}`;
+  const fetchHint = `${OUTLINE_WINDOW_SYNTAX}, or fetch the compaction: cctl conversation compaction get ${target.target.conversationId}`;
 
   const result = await cliRequest(host, {
     server: target.server,
@@ -520,7 +557,7 @@ async function outlineEscalationHint(
   );
   if (compactions.some((row) => row.status === "complete")) return fetchHint;
   if (compactions.some((row) => row.status === "pending")) {
-    return `${OUTLINE_WINDOW_SYNTAX}; a compaction is generating — check it with: cctl conversation compaction get ${target.conversationId}`;
+    return `${OUTLINE_WINDOW_SYNTAX}; a compaction is generating — check it with: cctl conversation compaction get ${target.target.conversationId}`;
   }
   return `${OUTLINE_WINDOW_SYNTAX}; no compaction exists — create one (background LLM generation) with: ${compactCommand(target)}`;
 }
@@ -574,7 +611,7 @@ async function runConversationCompact(
   const messageIndex =
     rawMessage === undefined ? undefined : Number(rawMessage);
 
-  const resolved = await resolveConversationTarget(id, flags, env, host);
+  const resolved = await resolveConversationCommandTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
 
   return withScopeResolution(host, resolved.target, flags, json, (target) =>
@@ -583,7 +620,7 @@ async function runConversationCompact(
 }
 
 async function compactBody(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   values: Record<string, string>,
   messageIndex: number | undefined,
   host: CliHost,
@@ -651,7 +688,7 @@ async function compactBody(
           ok: true,
           artifactId: pending.data.artifactId,
           status: "pending",
-          hint: `check status with: cctl conversation compaction get ${target.conversationId}${messageIndex === undefined ? "" : ` --message ${messageIndex}`}`,
+          hint: `check status with: cctl conversation compaction get ${target.target.conversationId}${messageIndex === undefined ? "" : ` --message ${messageIndex}`}`,
         },
       ),
       stderr: "",
@@ -670,7 +707,7 @@ async function compactBody(
 /** Poll the artifact until it leaves `pending` (bounded; instant in tests via host.sleep). */
 async function awaitArtifact(
   host: CliHost,
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   artifactId: string,
   json: boolean,
   messageIndex: number | undefined,
@@ -723,7 +760,7 @@ async function awaitArtifact(
   return failure({
     exitCode: EXIT_OPERATION_FAILED,
     message: `timed out waiting for compaction (artifact ${artifactId})`,
-    hint: `check later with: cctl conversation compaction get ${target.conversationId}${messageIndex === undefined ? "" : ` --message ${messageIndex}`}`,
+    hint: `check later with: cctl conversation compaction get ${target.target.conversationId}${messageIndex === undefined ? "" : ` --message ${messageIndex}`}`,
     json,
   });
 }
@@ -736,7 +773,7 @@ function extractArtifactBody(body: unknown): unknown {
 
 function artifactSummaryLine(
   artifact: z.infer<typeof artifactSchema>,
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
 ): string {
   const freshness = artifact.outdated
     ? "outdated"
@@ -745,7 +782,7 @@ function artifactSummaryLine(
       : "fresh";
   const message =
     artifact.messageIndex === null ? "" : ` message=${artifact.messageIndex}`;
-  return `artifact ${artifact.id} ${artifact.kind}${message} status=${artifact.status} covered=${artifact.coveredStartSeq}..${artifact.coveredEndSeq} ${freshness} (conversation ${target.conversationId})\n`;
+  return `artifact ${artifact.id} ${artifact.kind}${message} status=${artifact.status} covered=${artifact.coveredStartSeq}..${artifact.coveredEndSeq} ${freshness} (conversation ${target.target.conversationId})\n`;
 }
 
 async function runCompactionGet(
@@ -784,7 +821,7 @@ async function runCompactionGet(
     return usageFailure("--format must be json or markdown", json);
   }
 
-  const resolved = await resolveConversationTarget(id, flags, env, host);
+  const resolved = await resolveConversationCommandTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
 
   return withScopeResolution(host, resolved.target, flags, json, (target) =>
@@ -793,7 +830,7 @@ async function runCompactionGet(
 }
 
 async function compactionGetBody(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   messageIndex: number | undefined,
   format: "json" | "markdown",
   host: CliHost,
@@ -835,7 +872,7 @@ async function compactionGetBody(
         : `no compaction for message ${messageIndex}`;
     return failure({
       exitCode: EXIT_OPERATION_FAILED,
-      message: `${what} for conversation ${target.conversationId}`,
+      message: `${what} for conversation ${target.target.conversationId}`,
       hint: absentHint,
       json,
     });
@@ -927,7 +964,7 @@ async function runCompactionList(
     );
   }
 
-  const resolved = await resolveConversationTarget(id, flags, env, host);
+  const resolved = await resolveConversationCommandTarget(id, flags, env, host);
   if (!resolved.ok) return resolved.result;
 
   return withScopeResolution(host, resolved.target, flags, json, (target) =>
@@ -936,7 +973,7 @@ async function runCompactionList(
 }
 
 async function compactionListBody(
-  target: ConversationTarget,
+  target: ConversationCommandTarget,
   host: CliHost,
   json: boolean,
 ): Promise<CliResult | ScopeMiss> {
@@ -957,7 +994,7 @@ async function compactionListBody(
   const rows = parsed.success ? parsed.data : [];
   const humanBody =
     rows.length === 0
-      ? `no compaction artifacts for conversation ${target.conversationId}\n`
+      ? `no compaction artifacts for conversation ${target.target.conversationId}\n`
       : `${rows.map((row) => artifactSummaryLine(row, target).trimEnd()).join("\n")}\n`;
 
   return {
@@ -965,7 +1002,7 @@ async function compactionListBody(
     stdout: render(json, humanBody, {
       ok: true,
       artifacts: result.body,
-      hint: `fetch the full envelope with: cctl conversation compaction get ${target.conversationId}; create one with: ${compactCommand(target)}`,
+      hint: `fetch the full envelope with: cctl conversation compaction get ${target.target.conversationId}; create one with: ${compactCommand(target)}`,
     }),
     stderr: "",
   };

@@ -12,7 +12,11 @@ export default function ConversationLinkChip({
   attrs,
 }: ConversationLinkChipProps): React.JSX.Element {
   const projectName = attrs["project-name"];
-  const sessionName = attrs["session-name"];
+  // The scope's user-visible name: the session name, or "project" for a
+  // session-less project conversation — the project variant has no session-name
+  // attribute to render (R1.3).
+  const scopeLabel =
+    attrs.scope === "session" ? attrs["session-name"] : "project";
   const conversationId = attrs["conversation-id"];
   const conversationName = attrs["conversation-name"];
   const backend = attrs["backend"];
@@ -26,7 +30,7 @@ export default function ConversationLinkChip({
     <Link
       href={href}
       className="inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised px-[6px] py-[2px] align-baseline font-mono text-[0.78rem] leading-none text-inherit no-underline transition-[border-color,background,box-shadow] duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:shadow-[0_0_0_2px_var(--cyan-glow)] data-[backend=codex]:border-violet-dim"
-      title={`${projectName} · ${sessionName}`}
+      title={`${projectName} · ${scopeLabel}`}
       data-backend={backend}
     >
       <span className="font-semibold text-cyan">#</span>

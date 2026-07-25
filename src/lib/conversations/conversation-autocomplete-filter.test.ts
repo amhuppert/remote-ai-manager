@@ -1,3 +1,4 @@
+import type { SessionConversationListItem } from "./schemas";
 import { describe, it, expect } from "vitest";
 import {
   filterAndScoreConversations,
@@ -6,11 +7,12 @@ import {
 import type { ConversationListItem } from "./schemas";
 
 function makeItem(
-  overrides: Partial<ConversationListItem> & { conversationId: string },
+  overrides: Partial<SessionConversationListItem> & { conversationId: string },
 ): ConversationListItem {
   return {
     projectName: "proj",
     projectPath: "/projects/proj",
+    scope: "session" as const,
     sessionName: "main",
     worktreePath: "/projects/proj/.worktrees/main",
     conversationName: null,

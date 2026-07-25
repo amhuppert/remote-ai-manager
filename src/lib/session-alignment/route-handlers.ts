@@ -21,6 +21,7 @@ import { NextResponse } from "next/server";
 import {
   jsonError,
   notFound,
+  refuseProjectSentinelSessionParam,
   resolveProjectOr404,
 } from "@/lib/shared/route-resolution";
 import { z } from "zod";
@@ -135,6 +136,13 @@ async function resolveSessionParams(
       error: jsonError("Project and session names are required", 400),
     };
   }
+
+  // Alignment resolves the project itself rather than going through the session
+  // resolution seam, so the seam's refusal never runs for it. Without this guard
+  // the sentinel is carried into the service as a session name and answered as
+  // an alignment domain outcome instead of a malformed address (R1.2).
+  const refusal = refuseProjectSentinelSessionParam(sessionName, name);
+  if (refusal) return { error: refusal };
 
   const project = await resolveProjectOr404(deps, name);
   if (!project.ok) return { error: project.response };

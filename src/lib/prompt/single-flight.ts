@@ -17,6 +17,7 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 
 /* ------------------------------------------------------------------ */
@@ -33,14 +34,23 @@ export interface LockManager {
     projectPath: string;
     sessionName: string;
   }>;
+  /** `storeSessionName` is the session-keyed storage name, which is the project
+   *  sentinel for a project conversation — see {@link acquireConversationLock}. */
   isConversationBusy(
     projectPath: string,
-    sessionName: string,
+    storeSessionName: string,
     conversationId: string,
   ): boolean;
+  /**
+   * The conversation lock serves BOTH scopes through one session-keyed name, so
+   * `storeSessionName` is the project sentinel for a project conversation. It
+   * keys the in-memory Map (an internal runtime concern, A5) and is deliberately
+   * never logged: the lock's structured events carry the discriminated scope
+   * instead, so a project turn cannot report the sentinel as a session (R1.3).
+   */
   acquireConversationLock(
     projectPath: string,
-    sessionName: string,
+    storeSessionName: string,
     conversationId: string,
   ): () => void;
 }
@@ -59,10 +69,24 @@ export function createLockManager(
 
   function conversationLockKey(
     projectPath: string,
-    sessionName: string,
+    storeSessionName: string,
     conversationId: string,
   ): string {
-    return `${projectPath}::${sessionName}::${conversationId}`;
+    return `${projectPath}::${storeSessionName}::${conversationId}`;
+  }
+
+  /** Diagnostic identity for a conversation lock event: scope-discriminated, so
+   *  the project variant has no `sessionName` key for the sentinel to occupy. */
+  function conversationLockFields(
+    projectPath: string,
+    storeSessionName: string,
+    conversationId: string,
+  ): Record<string, unknown> {
+    return {
+      projectPath,
+      ...scopeRefFromStoreSessionName(storeSessionName),
+      conversationId,
+    };
   }
 
   return {
@@ -137,27 +161,32 @@ export function createLockManager(
 
     isConversationBusy(
       projectPath: string,
-      sessionName: string,
+      storeSessionName: string,
       conversationId: string,
     ): boolean {
       return conversationLocks.has(
-        conversationLockKey(projectPath, sessionName, conversationId),
+        conversationLockKey(projectPath, storeSessionName, conversationId),
       );
     },
 
     acquireConversationLock(
       projectPath: string,
-      sessionName: string,
+      storeSessionName: string,
       conversationId: string,
     ): () => void {
-      const key = conversationLockKey(projectPath, sessionName, conversationId);
+      const key = conversationLockKey(
+        projectPath,
+        storeSessionName,
+        conversationId,
+      );
+      const fields = conversationLockFields(
+        projectPath,
+        storeSessionName,
+        conversationId,
+      );
 
       if (conversationLocks.has(key)) {
-        log.warn("conversation-lock.rejected", {
-          projectPath,
-          sessionName,
-          conversationId,
-        });
+        log.warn("conversation-lock.rejected", fields);
         throw new Error(
           "Conversation is busy — a prompt is already running for this conversation",
         );
@@ -169,20 +198,12 @@ export function createLockManager(
       });
 
       conversationLocks.set(key, promise);
-      log.debug("conversation-lock.acquired", {
-        projectPath,
-        sessionName,
-        conversationId,
-      });
+      log.debug("conversation-lock.acquired", fields);
 
       return () => {
         conversationLocks.delete(key);
         releaseFn?.();
-        log.debug("conversation-lock.released", {
-          projectPath,
-          sessionName,
-          conversationId,
-        });
+        log.debug("conversation-lock.released", fields);
       };
     },
   };
@@ -257,12 +278,12 @@ export function getHeldSessionLocks(): Array<{
 /** Check whether a specific conversation currently has a running prompt. */
 export function isConversationBusy(
   projectPath: string,
-  sessionName: string,
+  storeSessionName: string,
   conversationId: string,
 ): boolean {
   return getDefaultLockManager().isConversationBusy(
     projectPath,
-    sessionName,
+    storeSessionName,
     conversationId,
   );
 }
@@ -274,15 +295,18 @@ export function isConversationBusy(
  *
  * Multiple conversations within the same session may hold their locks
  * simultaneously — concurrency is restricted only at the conversation level.
+ *
+ * `storeSessionName` is the session-keyed storage name (the project sentinel for
+ * a project conversation); it keys the lock and is never logged.
  */
 export function acquireConversationLock(
   projectPath: string,
-  sessionName: string,
+  storeSessionName: string,
   conversationId: string,
 ): () => void {
   return getDefaultLockManager().acquireConversationLock(
     projectPath,
-    sessionName,
+    storeSessionName,
     conversationId,
   );
 }

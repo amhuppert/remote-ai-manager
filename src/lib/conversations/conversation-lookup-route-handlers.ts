@@ -4,6 +4,8 @@
  * project/session without carrying them in the URL.
  */
 
+import { conversationTargetLogFields } from "./conversation-target";
+import { conversationListItemTarget } from "./schemas";
 import { NextResponse } from "next/server";
 import { notFound } from "@/lib/shared/route-resolution";
 import { findConversationById as defaultFindConversationById } from "./cross-project-list";
@@ -42,9 +44,7 @@ export function createConversationLookupRouteHandlers(
         return notFound("conversation_not_found");
       }
       log.info("conversation.lookup.hit", {
-        conversationId,
-        projectName: item.projectName,
-        sessionName: item.sessionName,
+        ...conversationTargetLogFields(conversationListItemTarget(item)),
         archived: item.archived,
       });
       return NextResponse.json(item);

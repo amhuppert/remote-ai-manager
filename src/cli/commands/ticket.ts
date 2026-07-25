@@ -37,6 +37,7 @@ import {
   failure,
   failureFromRequest,
   render,
+  readSessionEnv,
   resolveProjectContext,
   resolveToken,
   usageFailure,
@@ -1073,7 +1074,7 @@ async function buildJsonAttachPayload(
   const sessionName =
     explicitId !== undefined
       ? (flags.session ?? null)
-      : (flags.session ?? env["CC_SESSION"] ?? null);
+      : (flags.session ?? readSessionEnv(env));
   return {
     ok: true,
     value: { kind: "conversation", projectName, sessionName, conversationId },

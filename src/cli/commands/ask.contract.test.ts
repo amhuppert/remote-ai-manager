@@ -13,6 +13,7 @@ import {
   conversationStateSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 import { runCli } from "../core";
 import type { CliEnv, CliHost } from "../shared";
@@ -77,6 +78,7 @@ function makeHost(
       return { allowed: false };
     },
     generateQuestionBatchId: () => "q_contract1",
+    log: createCapturingLogger(),
   };
   const handlers = createAskQuestionHandlers(deps);
 

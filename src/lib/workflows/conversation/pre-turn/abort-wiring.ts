@@ -15,6 +15,7 @@ import {
   type StallWatchdog,
 } from "@/lib/agent-backends/stall-watchdog";
 import type { ConversationRuntimeState } from "../runtime-state";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
 const logger = createLogger("conversation-actor");
 
@@ -66,7 +67,7 @@ export function wireTurnAbort(
 
   if (runtimeState.abortController.signal.aborted) {
     logger.info("prompt.abort_controller_refreshed", {
-      sessionName: input.sessionName,
+      ...scopeRefFromStoreSessionName(input.sessionName),
       backend: input.backend,
       conversationId: input.conversationId,
     });
@@ -77,7 +78,7 @@ export function wireTurnAbort(
 
   let timeoutFired = false;
   logger.debug("prompt.timeout.resolved", {
-    sessionName: input.sessionName,
+    ...scopeRefFromStoreSessionName(input.sessionName),
     backend: input.backend,
     timeoutMs: input.timeoutMs,
     timeoutEnabled: input.timeoutMs > 0,
@@ -86,7 +87,7 @@ export function wireTurnAbort(
     runtimeState.timeoutHandle = setTimeout(() => {
       timeoutFired = true;
       logger.warn("prompt.timeout", {
-        sessionName: input.sessionName,
+        ...scopeRefFromStoreSessionName(input.sessionName),
         timeoutMs: input.timeoutMs,
       });
       abortController.abort();
@@ -99,7 +100,7 @@ export function wireTurnAbort(
     stallTimeoutMs,
     onStall: () => {
       logger.warn("prompt.stalled", {
-        sessionName: input.sessionName,
+        ...scopeRefFromStoreSessionName(input.sessionName),
         backend: input.backend,
         conversationId: input.conversationId,
         stallTimeoutMs,

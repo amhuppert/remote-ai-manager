@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import {
+  PROJECT_SENTINEL_REFUSAL_CODE,
+  projectSentinelRefusalMessage,
+  resolveProjectSentinelRefusalTarget,
+  type ResolvedRefusalTarget,
+} from "@/lib/shared/route-resolution";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
@@ -87,6 +93,18 @@ export class CapabilityRouteNotFoundError extends Error {
   }
 }
 
+/**
+ * The sentinel arrived in a public session position (D2/R1.2). A malformed
+ * request, not a missing resource — so it maps to 400 with the shared refusal
+ * code, and carries the concrete project-shaped route for THIS endpoint.
+ */
+export class CapabilityRouteScopeRefusalError extends Error {
+  constructor(readonly target: ResolvedRefusalTarget) {
+    super(projectSentinelRefusalMessage(target));
+    this.name = "CapabilityRouteScopeRefusalError";
+  }
+}
+
 export class CapabilityRoutePersistenceError extends Error {
   constructor(message: string) {
     super(message);
@@ -118,7 +136,12 @@ export function createSessionCapabilityHandlers(deps: CapabilityRouteDeps) {
   return createHandlers(deps, async (ctx) => {
     const params = await ctx.params;
     const projectName = requireParam(params, "name");
-    const sessionName = requirePublicSessionParam(params, "session");
+    // A session-level route, so the conversation-shaped request-path derivation
+    // cannot see its counterpart: the project's own capability route is it.
+    const sessionName = requirePublicSessionParam(params, "session", (project) => ({
+      kind: "project-route",
+      route: `/api/projects/${project}/agent-capabilities`,
+    }));
     const projectPath = await resolveProjectPathOrThrow(deps, projectName);
     return { level: "session", projectName, projectPath, sessionName };
   });
@@ -130,8 +153,17 @@ export function createConversationCapabilityHandlers(
   return createHandlers(deps, async (ctx) => {
     const params = await ctx.params;
     const projectName = requireParam(params, "name");
-    const sessionName = requirePublicSessionParam(params, "session");
     const conversationId = requireParam(params, "conversationId");
+    const sessionName = requirePublicSessionParam(params, "session", (project) =>
+      // Prefers the in-flight request path, so `/agent-capabilities/refresh`
+      // is named as itself rather than as its parent resource.
+      resolveProjectSentinelRefusalTarget(() => ({
+        kind: "project-route",
+        route: `/api/projects/${project}/conversations/${encodeURIComponent(
+          conversationId,
+        )}/agent-capabilities`,
+      })),
+    );
     const projectPath = await resolveProjectPathOrThrow(deps, projectName);
     return {
       level: "conversation",
@@ -338,11 +370,12 @@ function requireParam(params: Record<string, string>, key: string): string {
 function requirePublicSessionParam(
   params: Record<string, string>,
   key: string,
+  resolveTarget: (projectName: string) => ResolvedRefusalTarget,
 ): string {
   const value = requireParam(params, key);
   if (isProjectSentinel(value)) {
-    throw new CapabilityRouteNotFoundError(
-      "Project conversation capability routes use the project conversation route shape",
+    throw new CapabilityRouteScopeRefusalError(
+      resolveTarget(encodeURIComponent(requireParam(params, "name"))),
     );
   }
   return value;
@@ -577,6 +610,13 @@ function scopeLogContext(scope: CapabilityRouteScope): Record<string, string> {
 }
 
 function handleRouteError(operation: string, err: unknown): Response {
+  if (err instanceof CapabilityRouteScopeRefusalError) {
+    return structuredError(
+      PROJECT_SENTINEL_REFUSAL_CODE,
+      redactAgentCapabilityText(err.message),
+      400,
+    );
+  }
   if (err instanceof CapabilityRouteNotFoundError) {
     return structuredError(
       "not_found",
@@ -632,7 +672,8 @@ function structuredError(
     | "not_found"
     | "conflict"
     | "persistence_error"
-    | "discovery_error",
+    | "discovery_error"
+    | typeof PROJECT_SENTINEL_REFUSAL_CODE,
   message: string,
   status: number,
   issues?: ZodError["issues"],

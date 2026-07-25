@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { act, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -136,11 +137,12 @@ function specDetail(revisionNumber: number, statement: string): SpecDetailView {
 }
 
 function conversation(
-  overrides: Partial<ConversationListItem> & { conversationId: string },
+  overrides: Partial<SessionConversationListItem> & { conversationId: string },
 ): ConversationListItem {
   return {
     projectName: overrides.projectName ?? "alpha",
     projectPath: overrides.projectPath ?? "/repos/alpha",
+    scope: "session" as const,
     sessionName: overrides.sessionName ?? "main",
     worktreePath: overrides.worktreePath ?? "/repos/alpha/.worktrees/main",
     conversationId: overrides.conversationId,

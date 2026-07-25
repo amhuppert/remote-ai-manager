@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config/loader";
+import { withTracing } from "@/lib/logging";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createStateStore as createStateManager } from "@/lib/state-store";
 import { getStateDb } from "@/lib/state-store/store";
 import type { ManagerState } from "@/lib/projects/schemas";
@@ -226,6 +228,47 @@ describe("GET /api/projects/[name]/sessions/[session]/workflow-envelopes", () =>
         (e) => e.workflowId,
       ),
     ).toEqual(["wf-encoded"]);
+  });
+
+  /**
+   * R1.2: this route resolves the project itself instead of going through the
+   * session resolution seam, so the sentinel used to reach the envelope
+   * repository as if it named a real session — a successful 200 for a session
+   * that does not exist. Run through `withTracing` because that is what puts the
+   * request path on the trace context the refusal names its replacement from.
+   */
+  it("refuses the internal project sentinel in the public session position", async () => {
+    let builtRepository = false;
+    const handlers = createWorkflowEnvelopesRouteHandlers({
+      resolveProjectPath: async (name) =>
+        name === PROJECT_NAME ? PROJECT_PATH : null,
+      createRepository: () => {
+        builtRepository = true;
+        throw new Error("repository must not be reached for a refused request");
+      },
+    });
+    const traced = withTracing(handlers.GET);
+
+    const response = await traced(
+      new Request(
+        `http://localhost/api/projects/${PROJECT_NAME}/sessions/${PROJECT_CONVERSATION_SESSION_SENTINEL}/workflow-envelopes`,
+      ),
+      {
+        params: Promise.resolve({
+          name: PROJECT_NAME,
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    // Workflow envelopes are session-only by spec non-goal, so the refusal says
+    // so rather than naming a project route that would 404.
+    expect(body.error).toContain("workflow-envelopes");
+    expect(body.error).toContain("session-only");
+    expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(builtRepository).toBe(false);
   });
 });
 

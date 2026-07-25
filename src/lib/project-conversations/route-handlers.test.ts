@@ -4,6 +4,8 @@ import {
   type ProjectConversationRouteDeps,
 } from "./route-handlers";
 import { BackendMismatchError } from "@/lib/prompt/sdk-driver";
+import { ProjectCollaborationUnsupportedError } from "./prompt-entry";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 
@@ -300,6 +302,27 @@ describe("project conversation route handlers", () => {
     );
     const text = await readStream(res);
     expect(text).toContain('"code":"BACKEND_MISMATCH"');
+  });
+
+  // The boundary's `/collab` refusal has to reach the client as an explicit,
+  // coded error. Before the refusal existed the turn was delegated and failed
+  // deep in the collaboration manager, so the SSE frame carried the raw
+  // `Session "__project__" not found` message (R1.2, R1.3).
+  it("promptPOST maps a project /collab refusal to a coded SSE frame", async () => {
+    const h = harness({
+      executeProjectPromptStream: async () => {
+        throw new ProjectCollaborationUnsupportedError();
+      },
+    });
+    h.store.set("c1", makeConv({ id: "c1", promptCount: 1 }));
+    const res = await h.handlers.promptPOST(
+      jsonRequest({ prompt: "/collab redesign the sidebar" }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+    const text = await readStream(res);
+    expect(text).toContain('"code":"PROJECT_COLLABORATION_UNSUPPORTED"');
+    expect(text).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(text).toContain("event: done");
   });
 
   it("promptPOST returns 404 for an unknown conversation", async () => {

@@ -1,3 +1,4 @@
+import type { SessionConversationListItem } from "./schemas";
 import { describe, it, expect } from "vitest";
 import { findConversationRefs } from "./ref-parser";
 import {
@@ -9,11 +10,12 @@ import { conversationRefAttrsSchema } from "./schemas";
 import type { ConversationListItem } from "./schemas";
 
 function listItem(
-  overrides: Partial<ConversationListItem> = {},
+  overrides: Partial<SessionConversationListItem> = {},
 ): ConversationListItem {
   return {
     projectName: "my-app",
     projectPath: "/repos/my-app",
+    scope: "session" as const,
     sessionName: "main",
     worktreePath: "/repos/my-app/.worktrees/main",
     conversationId: "conv-123",
@@ -31,10 +33,132 @@ function listItem(
   };
 }
 
+describe("project-scoped conversation refs (R1.3)", () => {
+  const projectItem: ConversationListItem = {
+    projectName: "my-app",
+    projectPath: "/repos/my-app",
+    scope: "project",
+    worktreePath: "/repos/my-app",
+    conversationId: "conv-p1",
+    conversationName: "Project chat",
+    summary: null,
+    firstPromptSnippet: null,
+    backend: "claude",
+    backendRef: null,
+    transcriptPath: null,
+    debugLogPath: null,
+    status: "running",
+    lastActivityAt: "2024-06-01T12:00:00Z",
+    archived: false,
+  };
+
+  it("declares scope explicitly and carries no session-name attribute at all", () => {
+    const xml = buildConversationRefXmlFromListItem(projectItem);
+
+    expect(xml).toContain('scope="project"');
+    // Not `session-name=""` — the project variant has no field for a session
+    // name, so there is nowhere for the sentinel (or a stale name) to sit.
+    expect(xml).not.toContain("session-name");
+    expect(xml).not.toContain("__project__");
+  });
+
+  it("round-trips through the wire schema, which a bare session name could not", () => {
+    const xml = buildConversationRefXmlFromListItem(projectItem);
+    const [found] = findConversationRefs(xml);
+    expect(found).toBeDefined();
+
+    const parsed = conversationRefAttrsSchema.parse(found?.attrs);
+    expect(parsed.scope).toBe("project");
+    expect(parsed).not.toHaveProperty("session-name");
+  });
+
+  it("rejects a project ref that also carries a session name", () => {
+    // An inconsistent combination: scope says the conversation has no owning
+    // session while the payload names one. A flat object with an
+    // always-present `session-name` accepted this.
+    const result = conversationRefAttrsSchema.safeParse({
+      "project-name": "my-app",
+      "project-path": "/repos/my-app",
+      scope: "project",
+      "session-name": "main",
+      "worktree-path": "/repos/my-app",
+      "conversation-id": "conv-p1",
+      "conversation-name": "Project chat",
+      backend: "claude",
+      "backend-ref": "",
+      "debug-log-path": "",
+      status: "running",
+      "last-activity-at": "2024-06-01T12:00:00Z",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a session ref whose session name is the internal sentinel", () => {
+    const result = conversationRefAttrsSchema.safeParse({
+      "project-name": "my-app",
+      "project-path": "/repos/my-app",
+      scope: "session",
+      "session-name": "__project__",
+      "worktree-path": "/repos/my-app",
+      "conversation-id": "conv-1",
+      "conversation-name": "",
+      backend: "claude",
+      "backend-ref": "",
+      "debug-log-path": "",
+      status: "running",
+      "last-activity-at": "2024-06-01T12:00:00Z",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a session ref with an empty session name", () => {
+    const result = conversationRefAttrsSchema.safeParse({
+      "project-name": "my-app",
+      "project-path": "/repos/my-app",
+      scope: "session",
+      "session-name": "",
+      "worktree-path": "/repos/my-app",
+      "conversation-id": "conv-1",
+      "conversation-name": "",
+      backend: "claude",
+      "backend-ref": "",
+      "debug-log-path": "",
+      status: "running",
+      "last-activity-at": "2024-06-01T12:00:00Z",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a ref with no scope attribute rather than assuming session scope", () => {
+    // Tolerating the omission would be an unapproved compatibility shim, and
+    // would reintroduce exactly the defect D1 closes: an absent discriminator
+    // silently read as session scope.
+    const result = conversationRefAttrsSchema.safeParse({
+      "project-name": "my-app",
+      "project-path": "/repos/my-app",
+      "session-name": "main",
+      "worktree-path": "/repos/my-app/.worktrees/main",
+      "conversation-id": "conv-123",
+      "conversation-name": "Refactor parser",
+      backend: "claude",
+      "backend-ref": "",
+      "debug-log-path": "",
+      status: "running",
+      "last-activity-at": "2024-06-01T12:00:00Z",
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("buildConversationRefXmlFromListItem", () => {
   it("emits the canonical conversation-ref XML without compaction", () => {
     expect(buildConversationRefXmlFromListItem(listItem())).toBe(
       '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+        'scope="session" ' +
         'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
         'conversation-id="conv-123" conversation-name="Refactor parser" ' +
         'backend="claude" backend-ref="claude-sess-abc" debug-log-path="" ' +
@@ -91,6 +215,7 @@ describe("conversationListItemToMentionAttrs", () => {
     expect(conversationListItemToMentionAttrs(listItem())).toEqual({
       projectName: "my-app",
       projectPath: "/repos/my-app",
+      scope: "session" as const,
       sessionName: "main",
       worktreePath: "/repos/my-app/.worktrees/main",
       conversationId: "conv-123",
@@ -106,6 +231,29 @@ describe("conversationListItemToMentionAttrs", () => {
       compactCoveredSeq: "",
       compactCreatedAt: "",
     });
+  });
+
+  it("maps a project list item onto the project variant, with no sessionName key", () => {
+    const attrs = conversationListItemToMentionAttrs({
+      projectName: "my-app",
+      projectPath: "/repos/my-app",
+      scope: "project",
+      worktreePath: "/repos/my-app",
+      conversationId: "conv-p1",
+      conversationName: "Project chat",
+      summary: null,
+      firstPromptSnippet: null,
+      backend: "claude",
+      backendRef: null,
+      transcriptPath: null,
+      debugLogPath: null,
+      status: "running",
+      lastActivityAt: "2024-06-01T12:00:00Z",
+      archived: false,
+    });
+
+    expect(attrs.scope).toBe("project");
+    expect(attrs).not.toHaveProperty("sessionName");
   });
 
   it("nulls become empty strings and compaction fields pass through", () => {

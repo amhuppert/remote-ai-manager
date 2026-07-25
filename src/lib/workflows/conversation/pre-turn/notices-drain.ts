@@ -15,6 +15,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
 const logger = createLogger("conversation-actor");
 
@@ -98,7 +99,7 @@ export async function drainConsumedAgentNotices(
     },
   );
   logger.info("prompt.agent_notices_drained", {
-    sessionName: identity.sessionName,
+    ...scopeRefFromStoreSessionName(identity.sessionName),
     conversationId: identity.conversationId,
     noticeCount: consumed.length,
   });
@@ -126,7 +127,7 @@ export function createBackgroundTasksLostHandler(
       .map((t) => (t.description ? `${t.taskId} (${t.description})` : t.taskId))
       .join(", ");
     logger.warn("prompt.background_tasks_lost_surfaced", {
-      sessionName: input.sessionName,
+      ...scopeRefFromStoreSessionName(input.sessionName),
       conversationId: input.conversationId,
       reason: info.reason,
       taskCount: info.tasks.length,
@@ -159,7 +160,7 @@ export function createBackgroundTasksLostHandler(
       )
       .catch((err) => {
         logger.warn("prompt.background_tasks_lost_persist_failed", {
-          sessionName: input.sessionName,
+          ...scopeRefFromStoreSessionName(input.sessionName),
           conversationId: input.conversationId,
           error: getErrorMessage(err),
         });

@@ -85,6 +85,7 @@ import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble
 import {
   appendTranscriptEntryOnce,
   getTranscriptPath,
+  type TranscriptBroadcastMeta,
 } from "@/lib/prompt/transcript";
 import { buildCollaborationUserTranscriptEntry } from "./transcript";
 
@@ -275,10 +276,7 @@ interface CollaborationStartPersisterDeps {
     entry: ReturnType<typeof buildCollaborationUserTranscriptEntry> & {
       id: string;
     },
-    projectContext?: {
-      projectName: string;
-      sessionName: string;
-    },
+    projectContext?: TranscriptBroadcastMeta,
   ): Promise<void>;
   mutateConversation<T>(
     projectPath: string,
@@ -347,7 +345,7 @@ export function createCollaborationStartPersister(
         },
         {
           projectName: path.basename(input.projectPath),
-          sessionName: input.sessionName,
+          storeSessionName: input.sessionName,
         },
       );
     } catch (error) {

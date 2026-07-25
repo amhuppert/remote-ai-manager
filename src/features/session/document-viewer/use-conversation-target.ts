@@ -6,6 +6,7 @@ import { OPEN_TABS_STORAGE_KEY } from "../tabs/use-open-tabs";
 import type {
   AllConversationsResponse,
   ConversationListItem,
+  SessionConversationListItem,
 } from "@/lib/conversations/schemas";
 import type { DocumentFeedbackTarget } from "@/lib/document-comments/schemas";
 
@@ -17,7 +18,7 @@ import type { DocumentFeedbackTarget } from "@/lib/document-comments/schemas";
  * status (Requirement 9.4).
  */
 export function targetFromConversation(
-  item: ConversationListItem,
+  item: SessionConversationListItem,
 ): DocumentFeedbackTarget {
   return {
     projectName: item.projectName,
@@ -40,20 +41,28 @@ export function pickDefaultTarget(
   items: readonly ConversationListItem[],
   lru: readonly string[],
 ): DocumentFeedbackTarget | null {
-  if (items.length === 0) return null;
+  // Document feedback is a SESSION capability (its target is keyed by
+  // project/session/doc path), so project conversations are not targetable and
+  // are filtered out here rather than being projected into a session shape.
+  const targetable = items.filter(
+    (item): item is SessionConversationListItem => item.scope === "session",
+  );
+  if (targetable.length === 0) return null;
 
-  const byId = new Map(items.map((item) => [item.conversationId, item]));
+  const byId = new Map(targetable.map((item) => [item.conversationId, item]));
   for (let i = lru.length - 1; i >= 0; i -= 1) {
     const candidate = byId.get(lru[i] ?? "");
     if (candidate) return targetFromConversation(candidate);
   }
 
   // Activity fallback: ISO 8601 timestamps sort lexicographically.
-  let mostRecent = items[0]!;
-  for (const item of items) {
-    if (item.lastActivityAt > mostRecent.lastActivityAt) mostRecent = item;
+  let mostRecent: SessionConversationListItem | null = null;
+  for (const item of targetable) {
+    if (mostRecent === null || item.lastActivityAt > mostRecent.lastActivityAt) {
+      mostRecent = item;
+    }
   }
-  return targetFromConversation(mostRecent);
+  return mostRecent === null ? null : targetFromConversation(mostRecent);
 }
 
 /**

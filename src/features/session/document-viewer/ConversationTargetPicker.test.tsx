@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   render,
@@ -26,11 +27,12 @@ Element.prototype.releasePointerCapture = () => {};
 afterEach(cleanup);
 
 function conv(
-  overrides: Partial<ConversationListItem> & { conversationId: string },
-): ConversationListItem {
+  overrides: Partial<SessionConversationListItem> & { conversationId: string },
+): SessionConversationListItem {
   return {
     projectName: overrides.projectName ?? "proj-a",
     projectPath: overrides.projectPath ?? "/abs/proj-a",
+    scope: "session" as const,
     sessionName: overrides.sessionName ?? "sess-1",
     worktreePath: overrides.worktreePath ?? "/abs/proj-a/.worktrees/sess-1",
     conversationId: overrides.conversationId,
@@ -47,13 +49,14 @@ function conv(
   };
 }
 
-const ITEMS: ConversationListItem[] = [
+const ITEMS: SessionConversationListItem[] = [
   conv({ conversationId: "alpha", conversationName: "Alpha review" }),
   conv({
     conversationId: "beta",
     conversationName: "Beta planning",
     projectName: "proj-b",
     projectPath: "/abs/proj-b",
+    scope: "session" as const,
     sessionName: "sess-2",
     backend: "codex",
     status: "running",

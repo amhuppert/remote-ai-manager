@@ -1,3 +1,5 @@
+import { conversationTargetScopeLabel } from "@/lib/conversations/conversation-target";
+import { conversationListItemTarget } from "@/lib/conversations/schemas";
 import { createElement, type ComponentType } from "react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import type { ZodType } from "zod";
@@ -306,7 +308,10 @@ export const REFERENCE_REGISTRY = [
             firstPromptSnippet: item.firstPromptSnippet,
             conversationId: item.conversationId,
           }),
-          description: [item.projectName, item.sessionName].join(" · "),
+          description: [
+            item.projectName,
+            conversationTargetScopeLabel(conversationListItemTarget(item)),
+          ].join(" · "),
           matchIndices: indices,
           attrs: { ...conversationListItemToMentionAttrs(item) },
         })),

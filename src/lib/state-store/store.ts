@@ -541,7 +541,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
-  const accessors = createAccessors(core);
+  const accessors = createAccessors(core, storeLogger);
   const setters = createSetters(core, { mutateSession }, storeLogger);
 
   return {
@@ -559,6 +559,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getConversationById: accessors.getConversationById,
     getSessionConversations: accessors.getSessionConversations,
     getProjectConversation: accessors.getProjectConversation,
+    getProjectConversationById: accessors.getProjectConversationById,
     getProjectConversations: accessors.getProjectConversations,
     listAllProjectConversations: accessors.listAllProjectConversations,
     listConversationIdentities: accessors.listConversationIdentities,
