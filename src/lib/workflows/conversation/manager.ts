@@ -39,6 +39,7 @@ import {
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
@@ -466,7 +467,7 @@ export function startConversationActor(
 
   logger.info("conversation-manager.actor_started", {
     conversationId: input.conversationId,
-    sessionName: input.sessionName,
+    ...scopeRefFromStoreSessionName(input.sessionName),
   });
 
   return actor;
@@ -594,6 +595,9 @@ export async function ensureConversationActor(
     conversationId,
   );
 
+  // Diagnostic identity (R1.3): the actor registry is session-keyed, so
+  // `sessionName` is the sentinel for a project conversation.
+  const scopeRef = scopeRefFromStoreSessionName(sessionName);
   const requestedWorktreePath = options?.executionTarget?.worktreePath;
 
   if (existing) {
@@ -607,7 +611,7 @@ export async function ensureConversationActor(
     if (!isActorSettled(existing)) {
       logger.error("conversation-manager.execution_target_mismatch_running", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         currentWorktreePath,
         requestedWorktreePath,
       });
@@ -617,7 +621,7 @@ export async function ensureConversationActor(
     }
     logger.info("conversation-manager.execution_target_mismatch_idle_rebind", {
       conversationId,
-      sessionName,
+      ...scopeRef,
       previousWorktreePath: currentWorktreePath,
       requestedWorktreePath,
     });
@@ -703,6 +707,9 @@ export async function executeConversationTurn(
     input.emit,
   );
 
+  // Diagnostic identity (R1.3) — see `ensureConversationActor`.
+  const scopeRef = scopeRefFromStoreSessionName(input.sessionName);
+
   try {
     const event: Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }> = {
       type: "SUBMIT_PROMPT",
@@ -728,7 +735,7 @@ export async function executeConversationTurn(
     if (!actor.getSnapshot().can(event)) {
       logger.error("conversation-manager.turn_rejected", {
         conversationId: input.conversationId,
-        sessionName: input.sessionName,
+        ...scopeRef,
         lifecycleState: actor.getSnapshot().value,
       });
       return {
@@ -747,7 +754,7 @@ export async function executeConversationTurn(
       const error = getErrorMessage(err);
       logger.error("conversation-manager.turn_failed", {
         conversationId: input.conversationId,
-        sessionName: input.sessionName,
+        ...scopeRef,
         error,
       });
       return { status: "failed", error, result: projectTurnResult(actor) };
@@ -792,7 +799,7 @@ export async function ensureConversationActorAndDrain(
   );
   const explicitDrain = Boolean(existing) && isActorSettled(actor);
   logger.info("conversation-manager.ensure_and_drain", {
-    sessionName,
+    ...scopeRefFromStoreSessionName(sessionName),
     conversationId,
     hadExistingActor: Boolean(existing),
     explicitDrain,

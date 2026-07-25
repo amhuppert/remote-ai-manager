@@ -44,6 +44,12 @@ const PROJECT_CONVERSATION_JSON_COLUMNS = [
  */
 export interface ProjectConversationsRepo {
   findById(id: string): ConversationState | null;
+  /** Like `findById`, but also reports the owning project — the id alone does
+   * not say where a project conversation lives, and a cross-scope lookup needs
+   * both. */
+  findByIdWithProject(
+    id: string,
+  ): { projectPath: string; conversation: ConversationState } | null;
   findByKey(projectPath: string, id: string): ConversationState | null;
   findByProject(projectPath: string): ConversationState[];
   findAll(): { projectPath: string; conversation: ConversationState }[];
@@ -436,6 +442,13 @@ export function createProjectConversationsRepo(
         const row: unknown = findByIdStmt.get(id);
         if (row === undefined) return null;
         return rowToProjectDomain(row).conversation;
+      });
+    },
+    findByIdWithProject(id) {
+      return timed("findByIdWithProject", { id }, () => {
+        const row: unknown = findByIdStmt.get(id);
+        if (row === undefined) return null;
+        return rowToProjectDomain(row);
       });
     },
     findByKey(projectPath, id) {

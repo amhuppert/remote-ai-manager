@@ -175,7 +175,7 @@ export function createCollaborationDeps(
     appendTranscriptEntry: (conversationId, entry) =>
       safeAppendTranscriptEntry(conversationId, entry, undefined, undefined, {
         projectName,
-        sessionName,
+        storeSessionName: sessionName,
       }),
     markConversationAwaiting: async (conversationId) => {
       // `unread = true` mirrors the regular conversation finish path

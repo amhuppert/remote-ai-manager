@@ -32,8 +32,11 @@ export function validateSessionName(name: string): string | null {
   if (name.length > 100) {
     return "Session name must be 100 characters or less";
   }
+  // The message is returned verbatim in the session-creation route's public JSON
+  // body, so it must not echo the internal sentinel back (R1.3) — the caller
+  // supplied the name and does not need it repeated.
   if (name === PROJECT_CONVERSATION_SESSION_SENTINEL) {
-    return `"${PROJECT_CONVERSATION_SESSION_SENTINEL}" is reserved for project conversations and cannot be used as a session name`;
+    return "That name is reserved for project conversations and cannot be used as a session name";
   }
   if (sanitizeBranchName(name).length === 0) {
     return "Session name must contain at least one letter or number";

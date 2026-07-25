@@ -9,6 +9,7 @@ const conversations: AllConversationsResponse = {
     {
       projectName: "command-center",
       projectPath: "/repos/command-center",
+      scope: "session" as const,
       sessionName: "native-sdd",
       worktreePath: "/repos/command-center/.worktrees/native-sdd",
       conversationId: "conv-native-sdd",
@@ -30,6 +31,7 @@ const conversations: AllConversationsResponse = {
     {
       projectName: "command-center",
       projectPath: "/repos/command-center",
+      scope: "session" as const,
       sessionName: "main",
       worktreePath: "/repos/command-center",
       conversationId: "conv-auth",

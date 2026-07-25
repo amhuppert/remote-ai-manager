@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import { withTracing } from "@/lib/logging";
+import {
+  conversationStateSchema,
+  type ConversationState,
+} from "@/lib/conversations/schemas";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { AgentNotificationOutcome } from "./dispatcher";
 import {
   createSessionNotificationHandlers,
@@ -45,6 +52,18 @@ function authDenies(): AgentAuth {
   };
 }
 
+function projectConversation(): ConversationState {
+  return conversationStateSchema.parse({
+    id: "conv-1",
+    scope: "project",
+    transcriptPath: null,
+    status: "running",
+    promptCount: 1,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastActivityAt: "2026-01-01T00:00:00.000Z",
+  });
+}
+
 function makeDeps(overrides: Partial<SessionNotificationRouteDeps> = {}): {
   deps: SessionNotificationRouteDeps;
   dispatch: ReturnType<typeof vi.fn>;
@@ -59,6 +78,9 @@ function makeDeps(overrides: Partial<SessionNotificationRouteDeps> = {}): {
     },
     async getSession() {
       return { sessionName: "sess" };
+    },
+    async getProjectConversation() {
+      return projectConversation();
     },
     dispatchAgentNotification: dispatch,
     ...overrides,
@@ -79,8 +101,7 @@ describe("POST session notifications", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ ok: true });
     expect(dispatch).toHaveBeenCalledWith({
-      projectName: "cc",
-      sessionName: "sess",
+      target: { scope: "session", projectName: "cc", sessionName: "sess" },
       title: "Done",
       message: "Build finished",
     });
@@ -150,5 +171,152 @@ describe("POST session notifications", () => {
     const res = await POST(makeRequest({ message: "hi" }), { params });
 
     expect(res.status).toBe(404);
+  });
+
+  it("refuses the internal project sentinel in the public session position", async () => {
+    const { deps, dispatch } = makeDeps();
+    const lookedUpSession = vi.fn(deps.getSession);
+    const { POST } = createSessionNotificationHandlers({
+      ...deps,
+      getSession: lookedUpSession,
+    });
+
+    const res = await POST(makeRequest({ message: "hi" }), {
+      params: Promise.resolve({
+        name: "cc",
+        session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("/api/projects/cc/conversations/");
+    expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(lookedUpSession).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The refusal above exercises the factory directly, where no request path is
+   * on the trace context and the caller's fallback supplies the route. In
+   * production the handler runs inside `withTracing`, the path IS available, and
+   * the derived mapping wins — so this is the only place the message a real
+   * client receives is observable. `notifications` is a session-LEVEL path whose
+   * project counterpart is conversation-scoped; calling it session-only would
+   * deny a route that exists.
+   */
+  it("names the conversation-scoped project route when it runs inside the tracing wrapper", async () => {
+    const { deps } = makeDeps();
+    const { POST } = createSessionNotificationHandlers(deps);
+    const traced = withTracing(POST);
+
+    const res = await traced(
+      new Request(
+        `http://cc.local/api/projects/cc/sessions/${PROJECT_CONVERSATION_SESSION_SENTINEL}/notifications`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message: "hi" }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "cc",
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        }),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain(
+      "/api/projects/cc/conversations/<conversationId>/notifications",
+    );
+    expect(body.error).not.toContain("session-only");
+    expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+  });
+});
+
+describe("POST project-conversation notifications", () => {
+  const projectParams = Promise.resolve({
+    name: "cc",
+    conversationId: "conv-1",
+  });
+
+  function makeProjectRequest(body: unknown): Request {
+    return new Request(
+      "http://127.0.0.1/api/projects/cc/conversations/conv-1/notifications",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+  }
+
+  it("reaches the shared dispatch with a project target and no session record", async () => {
+    const { deps, dispatch } = makeDeps({
+      async getSession() {
+        throw new Error("a project conversation must not require a session");
+      },
+    });
+    const { PROJECT_POST } = createSessionNotificationHandlers(deps);
+
+    const res = await PROJECT_POST(
+      makeProjectRequest({ title: "Done", message: "Build finished" }),
+      { params: projectParams },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true });
+    expect(dispatch).toHaveBeenCalledWith({
+      target: projectConversationTarget("cc", "conv-1"),
+      title: "Done",
+      message: "Build finished",
+    });
+  });
+
+  it("404s when the addressed project conversation does not exist", async () => {
+    const { deps, dispatch } = makeDeps({
+      async getProjectConversation() {
+        return null;
+      },
+    });
+    const { PROJECT_POST } = createSessionNotificationHandlers(deps);
+
+    const res = await PROJECT_POST(makeProjectRequest({ message: "hi" }), {
+      params: projectParams,
+    });
+
+    expect(res.status).toBe(404);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing/invalid token with 401 and never dispatches", async () => {
+    const { deps, dispatch } = makeDeps({ auth: authDenies() });
+    const { PROJECT_POST } = createSessionNotificationHandlers(deps);
+
+    const res = await PROJECT_POST(makeProjectRequest({ message: "hi" }), {
+      params: projectParams,
+    });
+
+    expect(res.status).toBe(401);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("returns a clean 409 when push is unconfigured", async () => {
+    const { deps } = makeDeps({
+      dispatchAgentNotification: vi.fn(async () => ({
+        delivered: false as const,
+        reason: "Push notifications are not configured",
+      })),
+    });
+    const { PROJECT_POST } = createSessionNotificationHandlers(deps);
+
+    const res = await PROJECT_POST(makeProjectRequest({ message: "hi" }), {
+      params: projectParams,
+    });
+
+    expect(res.status).toBe(409);
   });
 });

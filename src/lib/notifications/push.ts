@@ -1,7 +1,18 @@
 import { createLogger } from "@/lib/logging";
+import type { ProjectConversationTarget } from "@/lib/conversations/conversation-target";
 import type { PushNotificationConfig } from "@/lib/notifications/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 const logger = createLogger("push-notification");
+
+/**
+ * Who an agent-initiated push came from, discriminated on conversation scope.
+ * The project arm IS the canonical `ConversationTarget` project variant — a
+ * project conversation is addressed by project + conversation and has no session
+ * name — while a session agent notifies from its session-level route.
+ */
+export type AgentNotificationTarget =
+  | { scope: "session"; projectName: string; sessionName: string }
+  | ProjectConversationTarget;
 
 // ============================================================
 // Types
@@ -156,11 +167,13 @@ export async function sendAgentNotification(
   title: string,
   message: string,
   tags: string,
-  projectName: string,
-  sessionName: string,
+  target: AgentNotificationTarget,
 ): Promise<void> {
   const url = pushPublishUrl(config.serverUrl);
-  const formattedTitle = `[${projectName}] ${title}`;
+  const formattedTitle = `[${target.projectName}] ${title}`;
+  // Scope-discriminated identity: the project variant has no sessionName key,
+  // so the internal sentinel can never surface as a session in the logs.
+  const identity = target;
 
   try {
     const response = await fetch(url, {
@@ -177,21 +190,15 @@ export async function sendAgentNotification(
     if (!response.ok) {
       logger.warn("agent-notification.send_failed", {
         status: response.status,
-        projectName,
-        sessionName,
+        ...identity,
       });
     } else {
-      logger.debug("agent-notification.sent", {
-        title,
-        projectName,
-        sessionName,
-      });
+      logger.debug("agent-notification.sent", { title, ...identity });
     }
   } catch (error) {
     logger.warn("agent-notification.send_error", {
       error: getErrorMessage(error),
-      projectName,
-      sessionName,
+      ...identity,
     });
   }
 }

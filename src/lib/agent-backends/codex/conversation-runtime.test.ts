@@ -40,6 +40,10 @@ import type {
   ConversationBackendRuntime,
 } from "../conversation";
 import type { PortableMcpConfig } from "../portable-mcp";
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
 import { turnContinuationSchema } from "../errors";
 
@@ -48,18 +52,26 @@ import { turnContinuationSchema } from "../errors";
 // ============================================================
 
 function makeCreateInput(
-  overrides?: Partial<ConversationBackendCreateInput>,
+  overrides?: Partial<ConversationBackendCreateInput> & { sessionName?: string },
 ): ConversationBackendCreateInput {
+  const { sessionName, ...rest } = overrides ?? {};
+  const conversationId = rest.conversationId ?? "conv-123";
+  const projectName = rest.projectName ?? "test-project";
   return {
-    conversationId: "conv-123",
+    conversationId,
     projectPath: "/test/project",
-    projectName: "test-project",
-    sessionName: "test-session",
+    projectName,
+    // Scope is DECLARED create-input; session is the default for these tests.
+    conversationTarget: sessionConversationTarget(
+      projectName,
+      sessionName ?? "test-session",
+      conversationId,
+    ),
     worktreePath: "/test/worktree",
     persistedRef: null,
     sessionInstructions: ["Be helpful"],
     tooling: {},
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -517,6 +529,7 @@ describe("CodexConversationRuntime", () => {
       const env = envOfFirstTurn();
       expect(env.CC_PROJECT).toBe("command-center");
       expect(env.CC_SESSION).toBe("my-session");
+      expect(env.CC_CONVERSATION_SCOPE).toBe("session");
       expect(env.CC_CONVERSATION_ID).toBe("conv-123");
       expect(env.CC_SERVER_URL).toBe("http://127.0.0.1:3000");
       expect(env.CC_API_TOKEN).toBe("tok-abc");
@@ -525,6 +538,34 @@ describe("CodexConversationRuntime", () => {
       // Non-lane conversation carries neither workflow identity var.
       expect("CC_WORKFLOW_EXECUTION_ID" in env).toBe(false);
       expect("CC_WORKFLOW_CONTEXT_ID" in env).toBe(false);
+    });
+
+    it("exports the project scope discriminator and a neutralized CC_SESSION for a project conversation", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          projectName: "command-center",
+          conversationId: "conv-plc",
+          // Scope arrives as declared input; the runtime never infers it.
+          conversationTarget: projectConversationTarget(
+            "command-center",
+            "conv-plc",
+          ),
+        }),
+        deps,
+      );
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const env = envOfFirstTurn();
+      expect(env.CC_CONVERSATION_SCOPE).toBe("project");
+      expect("CC_SESSION" in env).toBe(true);
+      expect(env.CC_SESSION).toBe("");
+      for (const [key, value] of Object.entries(env)) {
+        expect(value, `${key} must not carry the sentinel`).not.toContain(
+          "__project__",
+        );
+      }
     });
 
     it("injects both lane identity vars for a graph-workflow lane conversation", async () => {
@@ -2096,7 +2137,7 @@ describe("codexConversationBackendFactory", () => {
         conversationId: "conv-1",
         projectPath: "/p",
         projectName: "proj",
-        sessionName: "sess",
+        conversationTarget: sessionConversationTarget("proj", "sess", "conv-1"),
         worktreePath: "/w",
         persistedRef: null,
         modelId: "o3-pro",

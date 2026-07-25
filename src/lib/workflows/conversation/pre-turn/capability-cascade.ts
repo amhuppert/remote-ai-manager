@@ -20,6 +20,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { backendHasIdleLiveCapability } from "@/lib/agent-backends/conversation-policy";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
 const logger = createLogger("conversation-actor");
 
@@ -121,7 +122,7 @@ function emitProjectCapabilityDiagnostics(
 
   for (const diagnostic of diagnostics) {
     logger.warn("prompt.project_conversation_capability_diagnostic", {
-      sessionName: ctx.sessionName,
+      ...scopeRefFromStoreSessionName(ctx.sessionName),
       conversationScope: "project",
       backend: diagnostic.backend ?? ctx.backend,
       cascadeKind: diagnostic.cascadeKind,
@@ -152,7 +153,7 @@ async function composeProjectConversationCapabilitySeed(
   } catch (err) {
     const error = getErrorMessage(err);
     logger.warn("prompt.project_conversation_capability_compose_failed", {
-      sessionName: ctx.sessionName,
+      ...scopeRefFromStoreSessionName(ctx.sessionName),
       conversationScope: "project",
       backend: ctx.backend,
       conversationId: ctx.conversationId,
@@ -206,7 +207,7 @@ export async function resolveCapabilitySeedForNewRuntime(
 
   if (projectCapabilitySeed && projectCapabilitySeed.backend !== ctx.backend) {
     logger.warn("prompt.project_conversation_capability_backend_mismatch", {
-      sessionName: ctx.sessionName,
+      ...scopeRefFromStoreSessionName(ctx.sessionName),
       conversationScope: "project",
       conversationId: ctx.conversationId,
       actorBackend: ctx.backend,
@@ -239,7 +240,7 @@ export async function seedRuntimeCapabilityState(
     },
   );
   logger.info("prompt.capability_runtime_seeded", {
-    sessionName: ctx.sessionName,
+    ...scopeRefFromStoreSessionName(ctx.sessionName),
     backend: ctx.backend,
     conversationId: ctx.conversationId,
     seededCascadeKinds: Object.keys(seed.cascades),
@@ -257,7 +258,7 @@ export async function applyCapabilityCascadeAtTurnStart(
 ): Promise<void> {
   try {
     logger.info("prompt.capability_turn_start_apply", {
-      sessionName: ctx.sessionName,
+      ...scopeRefFromStoreSessionName(ctx.sessionName),
       backend: ctx.backend,
       conversationId: ctx.conversationId,
       isNewRuntime: extra.isNewRuntime,
@@ -265,7 +266,7 @@ export async function applyCapabilityCascadeAtTurnStart(
     await deps.applyCapabilityAtTurnStart(buildCapabilityApplyInput(ctx));
   } catch (err) {
     logger.error("prompt.capability_turn_start_failed", {
-      sessionName: ctx.sessionName,
+      ...scopeRefFromStoreSessionName(ctx.sessionName),
       backend: ctx.backend,
       conversationId: ctx.conversationId,
       error: getErrorMessage(err),
@@ -288,7 +289,7 @@ export async function drainCapabilityWhenIdle(
     await deps.applyCapabilityWhenIdle(buildCapabilityApplyInput(ctx));
   } catch (err) {
     logger.error("prompt.capability_idle_drain_failed", {
-      sessionName: ctx.sessionName,
+      ...scopeRefFromStoreSessionName(ctx.sessionName),
       conversationId: ctx.conversationId,
       error: getErrorMessage(err),
     });

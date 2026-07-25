@@ -22,7 +22,8 @@ import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { TranscriptMessageOrigin } from "@/lib/conversations/schemas";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 import type { ConversationActorRef } from "./machine";
 import { ensureConversationActor, type EnsureActorInputData } from "./manager";
@@ -139,20 +140,36 @@ export function _getExecuteWorkflowTaskRunInFlightCountForTesting(): number {
   return dispatchMutex.activeKeyCount();
 }
 
+/**
+ * Diagnostic sinks for one task run. Injectable because log FIELDS are a public
+ * identity surface (R1.3): project compaction and ticket generation address this
+ * entrypoint with the project store key, and a test can only prove the emitted
+ * identity is scope-discriminated if the sink is a dependency.
+ */
+export interface ExecuteWorkflowTaskRunDeps {
+  log?: Logger;
+}
+
 export function executeWorkflowTaskRun(
   input: ExecuteWorkflowTaskRunInput,
+  deps: ExecuteWorkflowTaskRunDeps = {},
 ): Promise<TaskRunResult> {
   const key = conversationRuntimeKey(
     input.projectPath,
     input.sessionName,
     input.conversationId,
   );
-  return dispatchMutex.run(key, () => runOnce(input));
+  return dispatchMutex.run(key, () => runOnce(input, deps.log ?? logger));
 }
 
 async function runOnce(
   input: ExecuteWorkflowTaskRunInput,
+  log: Logger,
 ): Promise<TaskRunResult> {
+  // `input.sessionName` is the session-keyed store/runtime name — the sentinel
+  // for a project conversation. It addresses the actor below but never names a
+  // session in a log field.
+  const scopeRef = scopeRefFromStoreSessionName(input.sessionName);
   const actor = await ensureConversationActor(
     input.projectPath,
     input.sessionName,
@@ -167,9 +184,9 @@ async function runOnce(
     },
   );
 
-  logger.info("conversation.execute_workflow_task_run.dispatch", {
+  log.info("conversation.execute_workflow_task_run.dispatch", {
     projectPath: input.projectPath,
-    sessionName: input.sessionName,
+    ...scopeRef,
     conversationId: input.conversationId,
     kind: input.kind,
     hasOutputFormat: input.outputFormat !== undefined,
@@ -201,9 +218,9 @@ async function runOnce(
 
   const { result, error, timedOut } = await completion;
 
-  logger.info("conversation.execute_workflow_task_run.finalized", {
+  log.info("conversation.execute_workflow_task_run.finalized", {
     projectPath: input.projectPath,
-    sessionName: input.sessionName,
+    ...scopeRef,
     conversationId: input.conversationId,
     kind: input.kind,
     hadError: error !== null || result?.error != null,

@@ -1,3 +1,4 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationToolingOverrides } from "./types";
@@ -223,7 +224,16 @@ export interface ConversationBackendCreateInput {
   mcpScopeConversationId?: string;
   projectPath: string;
   projectName: string;
-  sessionName: string;
+  /**
+   * Declared conversation scope (D4). The caller knows authoritatively whether
+   * this is a session or a project conversation, so it passes the discriminated
+   * target forward; a runtime must never re-derive scope from a session name or
+   * a worktree path. `projectName`/`conversationId` above restate the target's
+   * scope-INVARIANT identity for the many call sites that need only those two —
+   * `sessionName` was the one scope-varying field, and it lives here now so a
+   * project conversation structurally has no session name to leak.
+   */
+  conversationTarget: ConversationTarget;
   worktreePath: string;
   persistedRef: AgentSessionRef | null;
   modelId?: string;

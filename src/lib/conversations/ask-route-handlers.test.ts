@@ -20,10 +20,14 @@ import type {
   PrepareTurnOutput,
   PromptActorResult,
 } from "@/lib/workflows/conversation/types";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import {
   createAskQuestionHandlers,
+  createProjectAskQuestionHandlers,
   type AskRouteDeps,
+  type ProjectAskRouteDeps,
 } from "./ask-route-handlers";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 
 const ts = "2025-01-01T00:00:00.000Z";
 
@@ -100,6 +104,7 @@ function makeDeps(overrides: Partial<AskRouteDeps> = {}): {
     sendConversationEvent: send,
     resolveLaneAskPermission,
     generateQuestionBatchId: () => "q_test1234",
+    log: createCapturingLogger(),
     ...overrides,
   };
   return {
@@ -419,5 +424,230 @@ describe("POST conversation ask", () => {
       "named",
     ]);
     expect(snap.context.status).toBe("waiting_for_input");
+  });
+});
+
+describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
+  function projectDeps(conversation: ConversationState = conv({ scope: "project" })) {
+    const send = vi.fn(() => true);
+    const getProjectConversation = vi.fn(async () => conversation);
+    const log = createCapturingLogger();
+    return {
+      send,
+      getProjectConversation,
+      log,
+      deps: {
+        auth: authAllows(),
+        async resolveProjectPath() {
+          return "/repos/cc";
+        },
+        getProjectConversation,
+        sendConversationEvent: send,
+        generateQuestionBatchId: () => "q_proj1234",
+        log,
+      },
+    };
+  }
+
+  function projectRequest(body: unknown): Request {
+    return new Request(
+      "http://127.0.0.1/api/projects/cc/conversations/conv-1/ask",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+  }
+
+  const projectParams = Promise.resolve({
+    name: "cc",
+    conversationId: "conv-1",
+  });
+
+  it("registers a batch without any session record existing", async () => {
+    const { deps, send, getProjectConversation } = projectDeps();
+    const handlers = createProjectAskQuestionHandlers(deps);
+
+    const res = await handlers.POST(
+      projectRequest({
+        questions: [{ question: "Ship it?", options: [{ label: "Yes" }] }],
+      }),
+      { params: projectParams },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      questionBatchId: "q_proj1234",
+    });
+    // Resolved through the project conversation repo — no getSession dep exists.
+    expect(getProjectConversation).toHaveBeenCalledWith("/repos/cc", "conv-1");
+    // Reaches the same shared registration core the session adapter uses.
+    expect(send).toHaveBeenCalledWith(
+      "/repos/cc",
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+      "conv-1",
+      expect.objectContaining({
+        type: "ASK_QUESTION",
+        questionId: "q_proj1234",
+      }),
+    );
+  });
+
+  it("applies the same single-batch gate as the session adapter", async () => {
+    const { deps, send } = projectDeps(
+      conv({ scope: "project", pendingQuestionId: "q_existing" }),
+    );
+    const handlers = createProjectAskQuestionHandlers(deps);
+
+    const res = await handlers.POST(
+      projectRequest({
+        questions: [{ question: "Again?", options: [{ label: "Yes" }] }],
+      }),
+      { params: projectParams },
+    );
+
+    expect(res.status).toBe(409);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("404s an unknown project conversation instead of reporting a missing session", async () => {
+    const { deps } = projectDeps();
+    const handlers = createProjectAskQuestionHandlers({
+      ...deps,
+      getProjectConversation: async () => null,
+    });
+
+    const res = await handlers.POST(
+      projectRequest({
+        questions: [{ question: "Hi?", options: [{ label: "Yes" }] }],
+      }),
+      { params: projectParams },
+    );
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Conversation not found",
+    });
+  });
+
+  // R1.3: structured-log fields are a public identity surface. The project
+  // adapter hands the shared core a scope ref, so no log line can report the
+  // sentinel as a `sessionName` — previously every one of these sites did.
+  describe("diagnostics never carry the sentinel (R1.3)", () => {
+    /** Drive a project ask and return what the handler actually logged. */
+    async function logsFor(
+      conversation: ConversationState,
+      body: unknown,
+      depsOverrides: Partial<ProjectAskRouteDeps> = {},
+    ) {
+      const { deps, log } = projectDeps(conversation);
+      const handlers = createProjectAskQuestionHandlers({
+        ...deps,
+        ...depsOverrides,
+      });
+      const res = await handlers.POST(projectRequest(body), {
+        params: projectParams,
+      });
+      return { log, status: res.status };
+    }
+
+    const questions = [{ question: "Ship it?", options: [{ label: "Yes" }] }];
+
+    it("emits scope:project and no sessionName key on successful registration", async () => {
+      const { log, status } = await logsFor(conv({ scope: "project" }), {
+        questions,
+      });
+
+      expect(status).toBe(200);
+      const registered = log.entries.find((e) => e.message === "ask.registered");
+      expect(registered?.fields).toMatchObject({
+        scope: "project",
+        conversationId: "conv-1",
+        questionBatchId: "q_proj1234",
+      });
+      // Absent, not merely non-sentinel: a `sessionName` key at project scope
+      // has no correct value to hold.
+      expect(registered?.fields).not.toHaveProperty("sessionName");
+    });
+
+    it.each([
+      {
+        name: "no running turn",
+        conversation: conv({ scope: "project", status: "awaiting" }),
+        overrides: {},
+        event: "ask.no_running_turn",
+      },
+      {
+        name: "batch already pending",
+        conversation: conv({ scope: "project", pendingQuestionId: "q_existing" }),
+        overrides: {},
+        event: "ask.batch_already_pending",
+      },
+      {
+        name: "event rejected",
+        conversation: conv({ scope: "project" }),
+        overrides: { sendConversationEvent: () => false },
+        event: "ask.event_rejected",
+      },
+      {
+        name: "autonomous denial",
+        conversation: conv({ scope: "project", role: "validator" }),
+        overrides: {},
+        event: "ask.denied_autonomous",
+      },
+    ])("emits no sentinel on the $name path", async ({
+      conversation,
+      overrides,
+      event,
+    }) => {
+      const { log } = await logsFor(conversation, { questions }, overrides);
+
+      const entry = log.entries.find((e) => e.message === event);
+      expect(entry?.fields).toMatchObject({ scope: "project" });
+      expect(entry?.fields).not.toHaveProperty("sessionName");
+    });
+
+    it("emits the sentinel in no field of any entry, whatever the path", async () => {
+      for (const { conversation, overrides } of [
+        { conversation: conv({ scope: "project" }), overrides: {} },
+        {
+          conversation: conv({ scope: "project", status: "awaiting" }),
+          overrides: {},
+        },
+        {
+          conversation: conv({ scope: "project" }),
+          overrides: { sendConversationEvent: () => false },
+        },
+        {
+          conversation: conv({ scope: "project", role: "validator" }),
+          overrides: {},
+        },
+      ]) {
+        const { log } = await logsFor(conversation, { questions }, overrides);
+
+        expect(log.entries.length).toBeGreaterThan(0);
+        expect(log.allFieldValues()).not.toContain(
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+        );
+      }
+    });
+
+    it("still reports the real session name at session scope (not over-scrubbed)", async () => {
+      // The fix must remove the sentinel, not the diagnostic itself: a session
+      // ask still has to be attributable to its session.
+      const log = createCapturingLogger();
+      const { deps } = makeDeps({ log });
+      const handlers = createAskQuestionHandlers(deps);
+
+      await handlers.POST(makeRequest({ questions }), { params });
+
+      const registered = log.entries.find((e) => e.message === "ask.registered");
+      expect(registered?.fields).toMatchObject({
+        scope: "session",
+        sessionName: "sess",
+      });
+    });
   });
 });

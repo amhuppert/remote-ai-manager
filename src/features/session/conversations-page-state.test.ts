@@ -16,6 +16,7 @@ import {
 const item: ConversationListItem = {
   projectName: "repo",
   projectPath: "/projects/repo",
+  scope: "session" as const,
   sessionName: "fix-bug",
   worktreePath: "/projects/repo/.worktrees/fix-bug",
   conversationId: "conv-1",
@@ -186,6 +187,7 @@ describe("selectAutoOpenCandidate", () => {
     const rows = [
       sessionRow({
         id: "other-session",
+        scope: "session" as const,
         sessionName: "other",
         lastActivityAt: "2026-06-09T00:00:00Z",
       }),
@@ -233,6 +235,7 @@ describe("selectInitialConversation", () => {
       conversations: [
         sessionRow({
           id: "other-session",
+          scope: "session" as const,
           sessionName: "other",
           lastActivityAt: "2026-06-09T00:00:00Z",
         }),

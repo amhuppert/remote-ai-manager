@@ -37,6 +37,7 @@ import {
   failure,
   parseArgv,
   render,
+  readSessionEnv,
   resolveToken,
   usageFailure,
   type CliEnv,
@@ -119,7 +120,7 @@ async function maybeFetchHelpContext(
     token,
     command: pathKey(entry.path),
     project: flags.project ?? env["CC_PROJECT"] ?? null,
-    session: flags.session ?? env["CC_SESSION"] ?? null,
+    session: flags.session ?? readSessionEnv(env),
     conversation: flags.conversation ?? env["CC_CONVERSATION_ID"] ?? null,
     executionId: env["CC_WORKFLOW_EXECUTION_ID"] ?? null,
     contextId: env["CC_WORKFLOW_CONTEXT_ID"] ?? null,
@@ -222,9 +223,11 @@ async function runDoctor(
   }
 
   const { token, source: tokenSource } = await resolveToken(flags, env, host);
+  // A project conversation's neutralized session must report as absent here, not
+  // as an empty `?session=` query param the handshake would treat as a name.
   const identity = {
     project: flags.project ?? env["CC_PROJECT"] ?? null,
-    session: flags.session ?? env["CC_SESSION"] ?? null,
+    session: flags.session ?? readSessionEnv(env),
     conversation: flags.conversation ?? env["CC_CONVERSATION_ID"] ?? null,
   };
 

@@ -990,10 +990,51 @@ describe("agent capability route handlers", () => {
       },
     );
 
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: "not_found" },
-    });
+    // R1.2: an explicit client error naming the project-shaped route, not a
+    // 404 that says the resource is missing when it exists.
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("project_conversation_route_required");
+    expect(body.error.message).toContain(
+      "/api/projects/proj/agent-capabilities",
+    );
+    expect(body.error.message).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+    expect(resolveView).not.toHaveBeenCalled();
+  });
+
+  it("refuses the sentinel on the session-conversation capability route, naming the project conversation route", async () => {
+    const resolveView = vi.fn();
+    const handlers = createConversationCapabilityHandlers(
+      baseDeps({
+        resolveView: resolveView as CapabilityRouteDeps["resolveView"],
+      }),
+    );
+
+    const response = await handlers.GET(
+      request(
+        `http://cc.test/api/projects/proj/sessions/${PROJECT_CONVERSATION_SESSION_SENTINEL}/conversations/c1/agent-capabilities?cascadeKind=codex-skills`,
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          conversationId: "c1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("project_conversation_route_required");
+    expect(body.error.message).toContain(
+      "/api/projects/proj/conversations/c1/agent-capabilities",
+    );
     expect(resolveView).not.toHaveBeenCalled();
   });
 

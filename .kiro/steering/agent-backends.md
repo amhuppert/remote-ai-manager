@@ -23,6 +23,11 @@ Provider adapters own:
 Neutral callers own:
 
 - domain intent, semantic task profile, timeout, cancellation, and portable inputs
+- **declaring conversation scope**: `ConversationBackendCreateInput.conversationTarget`
+  is a `ConversationTarget`, so the caller states whether this is a session or a
+  project conversation. A runtime passes it to `buildSessionEnvContract` and never
+  re-derives scope from a session name, the `__project__` sentinel, or a worktree
+  path — see the conversation scope contract in `CONTEXT.md`.
 - post-parse domain validation and state transitions
 - behavior selected from declared capabilities rather than provider identity
 

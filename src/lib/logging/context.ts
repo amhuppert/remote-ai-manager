@@ -16,6 +16,13 @@ export interface TraceContext {
   projectName?: string;
   sessionName?: string;
   conversationId?: string;
+  /**
+   * The request's URL pathname. Route params identify WHAT was addressed but
+   * not WHICH endpoint of it, and the sentinel refusal has to name the
+   * project-shaped route for the endpoint the caller actually called
+   * (project-conversation-parity R1.2). Absent outside a traced HTTP request.
+   */
+  requestPath?: string;
 }
 
 const traceStore = new AsyncLocalStorage<TraceContext>();

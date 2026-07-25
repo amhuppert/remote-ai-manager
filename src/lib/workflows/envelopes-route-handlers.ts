@@ -12,7 +12,10 @@
  * work" requirement.
  */
 import { NextResponse } from "next/server";
-import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
+import {
+  refuseProjectSentinelSessionParam,
+  resolveProjectOr404,
+} from "@/lib/shared/route-resolution";
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
@@ -56,6 +59,13 @@ export function createWorkflowEnvelopesRouteHandlers(
         { status: 400 },
       );
     }
+
+    // This route resolves the project itself rather than going through the
+    // session resolution seam, so the seam's refusal never runs for it. Without
+    // this guard the sentinel reaches the envelope repository as a session key
+    // and the request succeeds for a session that does not exist (R1.2).
+    const refusal = refuseProjectSentinelSessionParam(session, name);
+    if (refusal) return refusal;
 
     const project = await resolveProjectOr404(deps, name);
     if (!project.ok) return project.response;

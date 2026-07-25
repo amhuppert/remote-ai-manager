@@ -5,7 +5,7 @@ export {
   runAsTrace,
   type TraceContext,
 } from "./context";
-export { createLogger, type Logger } from "./logger";
+export { createLogger, type Logger, type LogLevel } from "./logger";
 export {
   withTracing,
   isWithTracingWrapped,

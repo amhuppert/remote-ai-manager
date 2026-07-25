@@ -37,6 +37,7 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
 const logger = createLogger("message-queue");
 
@@ -232,6 +233,10 @@ export async function queueMessage(
 
   const deps: QueueMessageDeps = { ...defaultDeps, ...depsOverride };
 
+  // Diagnostic identity (R1.3): the queue is session-keyed storage, so
+  // `sessionName` is the sentinel for a project conversation.
+  const scopeRef = scopeRefFromStoreSessionName(sessionName);
+
   // Durable content carries the structured `document_feedback` block (the drain
   // re-derives its prose) and omits the redundant feedback prose text — so the
   // pending display and the drained submit do not double-render the feedback.
@@ -283,7 +288,7 @@ export async function queueMessage(
       command: parsedCommand.command,
       hintLength: parsedCommand.hint.length,
       projectName: deps.getProjectDisplayName(projectPath),
-      sessionName,
+      ...scopeRef,
       conversationId,
       messageIds: [entry.id],
       status: "pending",
@@ -319,7 +324,7 @@ export async function queueMessage(
     // reclaim it rather than us inventing a bogus attempt id.
     logger.error("queue.live_delivery", {
       projectName: deps.getProjectDisplayName(projectPath),
-      sessionName,
+      ...scopeRef,
       conversationId,
       messageIds: [entry.id],
       status: "delivering",
@@ -333,7 +338,7 @@ export async function queueMessage(
     const error = "no live runtime for in-turn delivery";
     logger.warn("queue.live_delivery", {
       projectName: deps.getProjectDisplayName(projectPath),
-      sessionName,
+      ...scopeRef,
       conversationId,
       messageIds: [entry.id],
       deliveryAttemptId,
@@ -355,7 +360,7 @@ export async function queueMessage(
     if (text && agentFacingText !== text) {
       logger.info("queue.native_spec_command_expanded", {
         projectName: deps.getProjectDisplayName(projectPath),
-        sessionName,
+        ...scopeRef,
         conversationId,
         messageIds: [entry.id],
         deliveryAttemptId,
@@ -367,7 +372,7 @@ export async function queueMessage(
     const error = getErrorMessage(err);
     logger.warn("queue.failed", {
       projectName: deps.getProjectDisplayName(projectPath),
-      sessionName,
+      ...scopeRef,
       conversationId,
       messageIds: [entry.id],
       deliveryAttemptId,
@@ -408,7 +413,7 @@ export async function queueMessage(
     undefined,
     {
       projectName: deps.getProjectDisplayName(projectPath),
-      sessionName,
+      storeSessionName: sessionName,
     },
   );
 
@@ -422,7 +427,7 @@ export async function queueMessage(
 
   logger.info("queue.accepted", {
     projectName: deps.getProjectDisplayName(projectPath),
-    sessionName,
+    ...scopeRef,
     conversationId,
     messageIds: [entry.id],
     deliveryAttemptId,

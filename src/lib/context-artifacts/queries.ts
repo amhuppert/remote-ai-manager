@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { apiFetch } from "@/lib/api/fetcher";
+import { conversationTargetApiBase } from "@/lib/conversations/conversation-target";
 import { contextArtifactRowSchema } from "./schemas";
 import { contextArtifactKeys, type ContextArtifactTarget } from "./query-keys";
 
@@ -33,13 +34,7 @@ export const contextArtifactDetailSchema =
 export type ContextArtifactDetail = z.infer<typeof contextArtifactDetailSchema>;
 
 export function contextArtifactsBaseUrl(target: ContextArtifactTarget): string {
-  const project = encodeURIComponent(target.projectName);
-  const conversation = encodeURIComponent(target.conversationId);
-  if (target.scope === "session") {
-    const session = encodeURIComponent(target.sessionName);
-    return `/api/projects/${project}/sessions/${session}/conversations/${conversation}/context-artifacts`;
-  }
-  return `/api/projects/${project}/conversations/${conversation}/context-artifacts`;
+  return `${conversationTargetApiBase(target)}/context-artifacts`;
 }
 
 /** List cache tolerance; SSE `context_artifact_status` patches keep it fresh. */

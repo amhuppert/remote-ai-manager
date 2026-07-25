@@ -1,11 +1,18 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { buildSessionEnvContract } from "./session-env";
 
 const IDENTITY = {
-  project: "command-center",
-  session: "my-session",
-  conversationId: "conv-123",
+  target: sessionConversationTarget("command-center", "my-session", "conv-123"),
+  configDir: "/cfg",
+};
+
+const PROJECT_IDENTITY = {
+  target: projectConversationTarget("command-center", "conv-123"),
   configDir: "/cfg",
 };
 
@@ -210,5 +217,69 @@ describe("buildSessionEnvContract", () => {
     expect(env["BASH_MAX_TIMEOUT_MS"]).toBe("3600000");
     expect(env["PATH"]).toContain("/usr/bin");
     expect(env["CC_ENV"]).toBe("");
+  });
+  it("exports the session scope discriminator for a session conversation", () => {
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {},
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect(env["CC_CONVERSATION_SCOPE"]).toBe("session");
+    expect(env["CC_SESSION"]).toBe("my-session");
+  });
+
+  it("exports the project scope discriminator for a project conversation", () => {
+    const env = buildSessionEnvContract({
+      ...PROJECT_IDENTITY,
+      baseEnv: {},
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect(env["CC_CONVERSATION_SCOPE"]).toBe("project");
+    expect(env["CC_PROJECT"]).toBe("command-center");
+    expect(env["CC_CONVERSATION_ID"]).toBe("conv-123");
+  });
+
+  it("exports CC_SESSION as an explicitly neutralized empty value for a project conversation", () => {
+    // Presence, not omission: the contract is merged OVER process.env, so a
+    // deleted CC_SESSION resurrects the ambient value.
+    const env = buildSessionEnvContract({
+      ...PROJECT_IDENTITY,
+      baseEnv: {},
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect("CC_SESSION" in env).toBe(true);
+    expect(env["CC_SESSION"]).toBe("");
+  });
+
+  it("never leaks the project sentinel into the agent environment", () => {
+    const env = buildSessionEnvContract({
+      ...PROJECT_IDENTITY,
+      baseEnv: {},
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    for (const [key, value] of Object.entries(env)) {
+      expect(value, `${key} must not carry the sentinel`).not.toContain(
+        "__project__",
+      );
+    }
+  });
+
+  it("neutralizes an ambient CC_SESSION rather than letting it survive for a project conversation", () => {
+    const env = buildSessionEnvContract({
+      ...PROJECT_IDENTITY,
+      baseEnv: { CC_SESSION: "outer-session" },
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect(env["CC_SESSION"]).toBe("");
   });
 });

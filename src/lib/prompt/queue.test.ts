@@ -322,7 +322,7 @@ describe("queueMessage in_turn", () => {
         content: [{ type: "text", text: "live message" }],
       }),
       undefined,
-      { projectName: "my-project", sessionName: "my-session" },
+      { projectName: "my-project", storeSessionName: "my-session" },
     );
   });
 
@@ -356,7 +356,7 @@ describe("queueMessage in_turn", () => {
         content: [{ type: "text", text: rawPrompt }],
       }),
       undefined,
-      { projectName: "my-project", sessionName: "my-session" },
+      { projectName: "my-project", storeSessionName: "my-session" },
     );
   });
 

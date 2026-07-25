@@ -272,7 +272,7 @@ describe("createConversationCommandService eligibility matrix", () => {
       expect.objectContaining({
         conversationId: "conv-1",
         projectName: "demo",
-        sessionName: "my-session",
+        storeSessionName: "my-session",
       }),
     );
   });
@@ -646,7 +646,7 @@ describe("rejection notice SSE scoping", () => {
     );
 
     expect(deps.appendNotice).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.sessionName).toBe(
+    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.storeSessionName).toBe(
       "__project__",
     );
   });
@@ -659,7 +659,7 @@ describe("rejection notice SSE scoping", () => {
       makeInput({ sessionName: null, parsed: { command: "merge", hint: "" } }),
     );
 
-    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.sessionName).toBe(
+    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.storeSessionName).toBe(
       "",
     );
   });

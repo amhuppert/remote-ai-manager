@@ -4,6 +4,14 @@ import {
   dispatchAgentNotification,
   type AgentNotificationDispatchDeps,
 } from "./dispatcher";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
+import type { AgentNotificationTarget } from "@/lib/notifications/push";
+
+const sessionTarget: AgentNotificationTarget = {
+  scope: "session",
+  projectName: "cc",
+  sessionName: "sess",
+};
 
 const enabledConfig: PushNotificationConfig = {
   enabled: true,
@@ -43,8 +51,7 @@ describe("dispatchAgentNotification", () => {
 
     const outcome = await dispatchAgentNotification(
       {
-        projectName: "cc",
-        sessionName: "sess",
+        target: sessionTarget,
         title: "Build done",
         message: "The build finished",
       },
@@ -58,8 +65,7 @@ describe("dispatchAgentNotification", () => {
       "Build done",
       "The build finished",
       "robot",
-      "cc",
-      "sess",
+      sessionTarget,
     );
   });
 
@@ -68,8 +74,7 @@ describe("dispatchAgentNotification", () => {
 
     await dispatchAgentNotification(
       {
-        projectName: "cc",
-        sessionName: "sess",
+        target: sessionTarget,
         title: "Heads up",
         message: "Needs attention",
         urgency: "attention",
@@ -82,9 +87,30 @@ describe("dispatchAgentNotification", () => {
       "Heads up",
       "Needs attention",
       "warning",
-      "cc",
-      "sess",
+      sessionTarget,
     );
+  });
+
+  it("delivers a project-conversation notification through the same sender", async () => {
+    const { deps, send } = makeDeps();
+    const target = projectConversationTarget("cc", "conv-1");
+
+    const outcome = await dispatchAgentNotification(
+      { target, title: "PLC done", message: "Repo chat finished" },
+      deps,
+    );
+
+    expect(outcome).toEqual({ delivered: true });
+    expect(send).toHaveBeenCalledWith(
+      enabledConfig,
+      "PLC done",
+      "Repo chat finished",
+      "robot",
+      target,
+    );
+    // The project target has no sessionName key at all — nothing downstream can
+    // report the internal sentinel as a session identity.
+    expect(JSON.stringify(send.mock.calls[0])).not.toContain("sessionName");
   });
 
   it("reports not-delivered without sending when push config is absent", async () => {
@@ -95,7 +121,7 @@ describe("dispatchAgentNotification", () => {
     });
 
     const outcome = await dispatchAgentNotification(
-      { projectName: "cc", sessionName: "sess", title: "t", message: "m" },
+      { target: sessionTarget, title: "t", message: "m" },
       deps,
     );
 
@@ -114,7 +140,7 @@ describe("dispatchAgentNotification", () => {
     });
 
     const outcome = await dispatchAgentNotification(
-      { projectName: "cc", sessionName: "sess", title: "t", message: "m" },
+      { target: sessionTarget, title: "t", message: "m" },
       deps,
     );
 
@@ -130,7 +156,7 @@ describe("dispatchAgentNotification", () => {
     });
 
     const outcome = await dispatchAgentNotification(
-      { projectName: "cc", sessionName: "sess", title: "t", message: "m" },
+      { target: sessionTarget, title: "t", message: "m" },
       deps,
     );
 

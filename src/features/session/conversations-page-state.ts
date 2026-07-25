@@ -4,7 +4,10 @@
  * rewrite is unit-testable without mocking.
  */
 
-import type { ConversationListItem } from "@/lib/conversations/schemas";
+import type {
+  ConversationListItem,
+  SessionConversationListItem,
+} from "@/lib/conversations/schemas";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 
 /**
@@ -35,7 +38,7 @@ export type ConversationsRenderState =
   | { kind: "loading" }
   | { kind: "not-found" }
   | { kind: "error" }
-  | { kind: "workspace"; conversation: ConversationListItem }
+  | { kind: "workspace"; conversation: SessionConversationListItem }
   | { kind: "empty" };
 
 export function resolveConversationsRenderState(args: {
@@ -51,7 +54,13 @@ export function resolveConversationsRenderState(args: {
     return { kind: "empty" };
   }
   if (lookup.data !== undefined && lookup.data !== null) {
-    return { kind: "workspace", conversation: lookup.data };
+    // This route is the SESSION conversations workspace — its chrome and its
+    // child workspace address the conversation by project + session. A project
+    // conversation is reached through the project route, so it is not-found here
+    // rather than rendered with a fabricated session name.
+    return lookup.data.scope === "session"
+      ? { kind: "workspace", conversation: lookup.data }
+      : { kind: "not-found" };
   }
   if (lookup.data === null) return { kind: "not-found" };
   if (lookup.isError) return { kind: "error" };

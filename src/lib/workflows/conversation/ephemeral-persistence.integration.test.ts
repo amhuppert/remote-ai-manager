@@ -80,6 +80,7 @@ import type {
   PrepareTurnOutput,
   RunTaskRunInput,
 } from "./types";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 // ============================================================
 // Fake backend actors — no real agent, no filesystem, no DB
@@ -394,6 +395,7 @@ function makeFakeBackendActorDeps(
     throw new Error(`fake backend: ${name} is not used on the task_run path`);
   };
   return {
+    log: createCapturingLogger(),
     acquireConversationLock: () => () => {},
     acquireQuerySlot: async () => () => {},
     getTranscriptPath: async (id) => `/tmp/cc-ephemeral-test/${id}.jsonl`,

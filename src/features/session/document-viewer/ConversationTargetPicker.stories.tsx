@@ -1,16 +1,17 @@
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { createConversationTargetPicker } from "./ConversationTargetPicker";
 import { targetFromConversation } from "./use-conversation-target";
-import type { ConversationListItem } from "@/lib/conversations/schemas";
 import type { DocumentFeedbackTarget } from "@/lib/document-comments/schemas";
 
 function conv(
-  overrides: Partial<ConversationListItem> & { conversationId: string },
-): ConversationListItem {
+  overrides: Partial<SessionConversationListItem> & { conversationId: string },
+): SessionConversationListItem {
   return {
     projectName: overrides.projectName ?? "command-center",
     projectPath: overrides.projectPath ?? "/abs/command-center",
+    scope: "session" as const,
     sessionName: overrides.sessionName ?? "main",
     worktreePath: overrides.worktreePath ?? "/abs/command-center",
     conversationId: overrides.conversationId,
@@ -27,7 +28,7 @@ function conv(
   };
 }
 
-const ITEMS: ConversationListItem[] = [
+const ITEMS: SessionConversationListItem[] = [
   conv({
     conversationId: "c-review",
     conversationName: "Markdown viewer review",
@@ -36,6 +37,7 @@ const ITEMS: ConversationListItem[] = [
   conv({
     conversationId: "c-plan",
     conversationName: "Anchoring design",
+    scope: "session" as const,
     sessionName: "anchoring",
   }),
   conv({
@@ -43,6 +45,7 @@ const ITEMS: ConversationListItem[] = [
     conversationName: "Sidebar refactor",
     projectName: "design-system",
     projectPath: "/abs/design-system",
+    scope: "session" as const,
     sessionName: "sidebar",
     backend: "codex",
   }),

@@ -14,6 +14,13 @@
  */
 
 import { NextResponse } from "next/server";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import {
+  CONVERSATION_ID_PLACEHOLDER,
+  projectRouteForSessionRequestPath,
+  type ProjectRouteEquivalent,
+} from "@/lib/conversations/project-route-equivalent";
+import { getTraceContext } from "@/lib/logging/context";
 import type { ApiError } from "@/lib/api/errors";
 
 /**
@@ -57,6 +64,118 @@ export function notFound(
   return jsonError(message, 404, code, details);
 }
 
+/**
+ * Refuse the internal project-conversation sentinel when it arrives in a PUBLIC
+ * session route position, naming the project-shaped route to use instead (D2).
+ *
+ * This is a malformed request, not a missing resource: returning the seam's
+ * "Session not found" 404 would tell a caller the conversation does not exist
+ * when it does, and silently accepting the sentinel (as the answer route did)
+ * would keep a second, undocumented addressing contract alive. The message never
+ * echoes the sentinel — it is an internal value, not a public one.
+ *
+ * The named replacement is resolved from the REQUEST PATH (via the trace context
+ * `withTracing` establishes), not from the route params: params say which
+ * conversation was addressed but not which of its endpoints, and a `/prompt`
+ * request answered with the conversation base has been pointed at a route that
+ * does not run its turn. The path is also the only input that can tell a
+ * session-LEVEL operation with a project counterpart (`/commands`) from one
+ * without (`/merge`), so the derivation decides in every traced request — which
+ * every production handler is. The fallback below covers the untraced direct
+ * call, where the addressed endpoint is simply unknowable and the conversation
+ * shape is the most the caller's own params can say.
+ *
+ * Takes the session route param as received, decoded or not: the session
+ * resolution seam decodes before calling, while a route that resolves its own
+ * project generally passes the raw param, and a refusal that depended on which
+ * is which would be a refusal a caller can spell its way around.
+ *
+ * Returns `null` when the session position is legitimate, so callers guard with
+ * `const refusal = refuseProjectSentinelSessionParam(...); if (refusal) return refusal;`.
+ */
+export function refuseProjectSentinelSessionParam(
+  sessionName: string,
+  projectName: string,
+  conversationId?: string,
+): Response | null {
+  if (
+    !isProjectSentinel(sessionName) &&
+    !isProjectSentinel(decodeParam(sessionName))
+  ) {
+    return null;
+  }
+  return jsonError(
+    projectSentinelRefusalMessage(
+      resolveProjectSentinelRefusalTarget(() => {
+        const project = encodeURIComponent(projectName);
+        const conversation =
+          conversationId === undefined || conversationId === ""
+            ? CONVERSATION_ID_PLACEHOLDER
+            : encodeURIComponent(conversationId);
+        return {
+          kind: "project-route",
+          route: `/api/projects/${project}/conversations/${conversation}`,
+        };
+      }),
+    ),
+    400,
+    PROJECT_SENTINEL_REFUSAL_CODE,
+  );
+}
+
+/** Percent-decode a route param, treating a malformed sequence as literal text. */
+function decodeParam(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * The refusal's replacement route, derived from the in-flight request path when
+ * one is available and from `fallback` otherwise (background work, a direct
+ * call outside `withTracing`). Shared so every public session route — including
+ * the ones that refuse by throwing a domain error rather than returning a
+ * Response — names the same endpoint for the same request.
+ */
+export function resolveProjectSentinelRefusalTarget(
+  fallback: () => ResolvedRefusalTarget,
+): ResolvedRefusalTarget {
+  const requestPath = getTraceContext()?.requestPath;
+  if (requestPath === undefined) return fallback();
+  const derived = projectRouteForSessionRequestPath(requestPath);
+  return derived.kind === "unknown" ? fallback() : derived;
+}
+
+/** The one error code every public session route uses to refuse the sentinel. */
+export const PROJECT_SENTINEL_REFUSAL_CODE =
+  "project_conversation_route_required";
+
+const REFUSAL_PREAMBLE =
+  "Project conversations are not addressable through a session route";
+
+/**
+ * The refusal text, shared so every public session route refuses identically.
+ * Names the concrete project-shaped path for THAT endpoint when one exists, and
+ * says so plainly when the operation has no project-scoped route — naming a
+ * route that would 404 is the same misdirection R1.2 exists to prevent. Never
+ * echoes the sentinel itself.
+ */
+export type ResolvedRefusalTarget = Exclude<
+  ProjectRouteEquivalent,
+  { kind: "unknown" }
+>;
+
+export function projectSentinelRefusalMessage(
+  target: ResolvedRefusalTarget,
+): string {
+  if (target.kind === "project-route") {
+    return `${REFUSAL_PREAMBLE} — use ${target.route} instead`;
+  }
+  return `${REFUSAL_PREAMBLE} — the "${target.operation}" operation is session-only and has no project-scoped route`;
+}
+
 export interface ResolveProjectDeps {
   resolveProjectPath(name: string): Promise<string | null>;
 }
@@ -91,6 +210,9 @@ export async function resolveProjectSessionOr404<S>(
   projectName: string,
   sessionName: string,
 ): Promise<RouteResolution<{ projectPath: string; session: S }>> {
+  const refusal = refuseProjectSentinelSessionParam(sessionName, projectName);
+  if (refusal) return { ok: false, response: refusal };
+
   const project = await resolveProjectOr404(deps, projectName);
   if (!project.ok) return project;
 

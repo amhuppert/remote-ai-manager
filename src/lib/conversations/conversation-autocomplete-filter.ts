@@ -10,8 +10,10 @@ import type { ConversationListItem, ConversationStatus } from "./schemas";
 
 export const MAX_DISPLAY_CONVERSATIONS = 50;
 
-export interface ScoredConversationItem {
-  item: ConversationListItem;
+export interface ScoredConversationItem<
+  T extends ConversationListItem = ConversationListItem,
+> {
+  item: T;
   tier: MatchTier;
   coverage: number;
   /** Match indices on the display label used for matching. */
@@ -27,19 +29,25 @@ export interface ConversationFilterOptions {
   maxDisplayItems?: number;
 }
 
-export interface ConversationFilterResult {
-  items: ScoredConversationItem[];
+export interface ConversationFilterResult<
+  T extends ConversationListItem = ConversationListItem,
+> {
+  items: ScoredConversationItem<T>[];
   totalCount: number;
 }
 
-export function filterAndScoreConversations(
+/**
+ * Generic over the item type so a caller that pre-narrowed its input (e.g. to
+ * session-scoped conversations only) keeps that narrowing in the result.
+ */
+export function filterAndScoreConversations<T extends ConversationListItem>(
   query: string,
-  items: readonly ConversationListItem[],
+  items: readonly T[],
   context: ConversationFilterContext,
   options?: ConversationFilterOptions,
-): ConversationFilterResult {
+): ConversationFilterResult<T> {
   const cap = options?.maxDisplayItems ?? MAX_DISPLAY_CONVERSATIONS;
-  const scored: ScoredConversationItem[] = [];
+  const scored: ScoredConversationItem<T>[] = [];
 
   for (const item of items) {
     if (item.conversationId === context.currentConversationId) continue;

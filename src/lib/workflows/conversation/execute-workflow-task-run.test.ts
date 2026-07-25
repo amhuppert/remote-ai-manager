@@ -28,6 +28,11 @@ import {
   _getExecuteWorkflowTaskRunInFlightCountForTesting,
   _resetExecuteWorkflowTaskRunForTesting,
 } from "./execute-workflow-task-run";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  createCapturingLogger,
+  type CapturingLogger,
+} from "@/lib/shared/testing/capturing-logger";
 
 // Infrastructure mock — createLogger is called at module load.
 vi.mock("@/lib/logging", () => ({
@@ -639,5 +644,85 @@ describe("executeWorkflowTaskRun", () => {
     if (secondResult.kind === "text") {
       expect(secondResult.text).toBe("B");
     }
+  });
+
+  // Project compaction and ticket generation both address this entrypoint with
+  // the project store key (there is no session to name), and its two lifecycle
+  // events reported that key as a session identity (R1.3).
+  describe("project-scope diagnostics", () => {
+    async function runProjectTaskRun(log: CapturingLogger) {
+      setEnsureConversationActorDeps({
+        loadActorInput: async () =>
+          makeActorInputData({
+            conversationScope: "project",
+            sessionWorktreePath: PROJECT_PATH,
+          }),
+      });
+
+      const call = executeWorkflowTaskRun(
+        {
+          projectPath: PROJECT_PATH,
+          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          conversationId: CONVERSATION_ID,
+          kind: "task_run",
+          prompt: "summarize",
+          timeoutMs: 5000,
+        },
+        { log },
+      );
+      const invocation = await nextPendingInvocation();
+      invocation.resolve(defaultResult());
+      return call;
+    }
+
+    it("emits scope:project from the dispatch and finalized events", async () => {
+      const log = createCapturingLogger();
+      const result = await runProjectTaskRun(log);
+
+      expect(result.kind).toBe("text");
+      const lifecycle = log.entries.filter((e) =>
+        e.message.startsWith("conversation.execute_workflow_task_run."),
+      );
+      expect(lifecycle.map((e) => e.message)).toEqual([
+        "conversation.execute_workflow_task_run.dispatch",
+        "conversation.execute_workflow_task_run.finalized",
+      ]);
+      for (const entry of lifecycle) {
+        expect(entry.fields).toMatchObject({
+          scope: "project",
+          conversationId: CONVERSATION_ID,
+        });
+        expect(entry.fields).not.toHaveProperty("sessionName");
+      }
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    it("still names the real session for a session-scoped task run", async () => {
+      const log = createCapturingLogger();
+      const call = executeWorkflowTaskRun(
+        {
+          projectPath: PROJECT_PATH,
+          sessionName: SESSION_NAME,
+          conversationId: CONVERSATION_ID,
+          kind: "task_run",
+          prompt: "summarize",
+          timeoutMs: 5000,
+        },
+        { log },
+      );
+      const invocation = await nextPendingInvocation();
+      invocation.resolve(defaultResult());
+      await call;
+
+      const dispatch = log.entries.find(
+        (e) => e.message === "conversation.execute_workflow_task_run.dispatch",
+      );
+      expect(dispatch?.fields).toMatchObject({
+        scope: "session",
+        sessionName: SESSION_NAME,
+      });
+    });
   });
 });

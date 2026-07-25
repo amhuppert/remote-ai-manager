@@ -28,6 +28,10 @@ import type {
   PromptActorResult,
 } from "./types";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  createCapturingLogger,
+  type CapturingLogger,
+} from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import {
@@ -120,11 +124,13 @@ describe("collectRehydrationCandidates", () => {
     ]);
 
     const session = candidates.find((c) => c.conversation.id === "s1");
-    expect(session?.sessionName).toBe("feat");
+    expect(session?.storeSessionName).toBe("feat");
     expect(session?.worktreePath).toBe("/repo/.worktrees/feat");
 
     const project = candidates.find((c) => c.conversation.id === "p1");
-    expect(project?.sessionName).toBe(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(project?.storeSessionName).toBe(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
     expect(project?.worktreePath).toBe("/repo");
     expect(project?.projectPath).toBe("/repo");
   });
@@ -613,7 +619,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
       key: KEY,
       projectPath: DEFAULT_INPUT.projectPath,
       projectName: DEFAULT_INPUT.projectName,
-      sessionName: DEFAULT_INPUT.sessionName,
+      storeSessionName: DEFAULT_INPUT.sessionName,
       worktreePath: DEFAULT_INPUT.worktreePath,
       conversation: {
         id: CONV_ID,
@@ -702,5 +708,164 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         CONV_ID,
       )?.getSnapshot().status,
     ).toBe("active");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Project-scope rehydration diagnostics (R1.3)
+// ---------------------------------------------------------------------------
+
+// Startup rehydration is a project path that never runs a prompt: it restores a
+// project conversation's actor from its persisted snapshot. The candidate for a
+// project conversation carries the sentinel as its store session name, and both
+// of this stage's structured events reported it as a session identity.
+describe("project-scope rehydration diagnostics", () => {
+  const PROJECT_CONV_ID = "conv-project-rehydrate";
+  const PROJECT_PATH = "/test/project";
+  const PROJECT_KEY = `${PROJECT_PATH}::${PROJECT_CONVERSATION_SESSION_SENTINEL}::${PROJECT_CONV_ID}`;
+
+  afterEach(() => {
+    _resetForTesting();
+    _resetMachineFactoryForTesting();
+    _resetConversationQueueDepsForTesting();
+    resetRuntime();
+  });
+
+  function makeProjectSnapshot(): Snapshot<unknown> {
+    const input: ConversationInput = {
+      projectPath: PROJECT_PATH,
+      projectName: "test-project",
+      // The runtime/state-store key for a project conversation (A5).
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      worktreePath: PROJECT_PATH,
+      conversationId: PROJECT_CONV_ID,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      forkedFrom: null,
+      role: null,
+      transcriptPath: "/t.jsonl",
+      agentBackend: "claude",
+      backendRef: null,
+      promptCount: 1,
+      persistence: "durable",
+    };
+    const actor = createActor(createTestMachine(), { input });
+    actor.start();
+    const snapshot = actor.getPersistedSnapshot();
+    actor.stop();
+    return snapshot;
+  }
+
+  function projectRehydrateArgs(log: CapturingLogger) {
+    return {
+      key: PROJECT_KEY,
+      projectPath: PROJECT_PATH,
+      projectName: "test-project",
+      storeSessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      worktreePath: PROJECT_PATH,
+      conversation: {
+        id: PROJECT_CONV_ID,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        forkedFrom: null,
+        role: null,
+        transcriptPath: "/t.jsonl",
+        agentBackend: "claude" as const,
+        backendRef: null,
+        promptCount: 1,
+      },
+      snapshot: makeProjectSnapshot(),
+      log,
+    };
+  }
+
+  it("reports scope:project on the rehydrated event", async () => {
+    setMachineFactory(createTestMachine);
+    setConversationQueueDeps(makeQueueDeps());
+    const log = createCapturingLogger();
+
+    const started = await rehydrateOneConversationActor(
+      projectRehydrateArgs(log),
+    );
+
+    expect(started).toBe(true);
+    const rehydrated = log.entries.find(
+      (e) => e.message === "conversation-manager.rehydrated",
+    );
+    expect(rehydrated?.fields).toMatchObject({
+      scope: "project",
+      conversationId: PROJECT_CONV_ID,
+    });
+    expect(rehydrated?.fields).not.toHaveProperty("sessionName");
+    expect(log.allFieldValues()).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+  });
+
+  it("reports scope:project when abandoned-delivery recovery fails", async () => {
+    setMachineFactory(createTestMachine);
+    setConversationQueueDeps(
+      makeQueueDeps({
+        recoverAbandonedDeliveries: vi.fn(async () => {
+          throw new Error("recover boom");
+        }),
+      }),
+    );
+    const log = createCapturingLogger();
+
+    const started = await rehydrateOneConversationActor(
+      projectRehydrateArgs(log),
+    );
+
+    expect(started).toBe(true);
+    const failed = log.entries.find(
+      (e) => e.message === "queue.recover_failed",
+    );
+    expect(failed?.fields).toMatchObject({ scope: "project" });
+    expect(failed?.fields).not.toHaveProperty("sessionName");
+    expect(log.allFieldValues()).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+  });
+
+  it("still reports the real session name for a session conversation", async () => {
+    setMachineFactory(createTestMachine);
+    setConversationQueueDeps(makeQueueDeps());
+    const log = createCapturingLogger();
+
+    const args = projectRehydrateArgs(log);
+    const sessionInput: ConversationInput = {
+      projectPath: PROJECT_PATH,
+      projectName: "test-project",
+      sessionName: "feat",
+      worktreePath: `${PROJECT_PATH}/.worktrees/feat`,
+      conversationId: PROJECT_CONV_ID,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      forkedFrom: null,
+      role: null,
+      transcriptPath: "/t.jsonl",
+      agentBackend: "claude",
+      backendRef: null,
+      promptCount: 1,
+      persistence: "durable",
+    };
+    const seedActor = createActor(createTestMachine(), { input: sessionInput });
+    seedActor.start();
+    const snapshot = seedActor.getPersistedSnapshot();
+    seedActor.stop();
+
+    await rehydrateOneConversationActor({
+      ...args,
+      key: `${PROJECT_PATH}::feat::${PROJECT_CONV_ID}`,
+      storeSessionName: "feat",
+      worktreePath: `${PROJECT_PATH}/.worktrees/feat`,
+      snapshot,
+    });
+
+    const rehydrated = log.entries.find(
+      (e) => e.message === "conversation-manager.rehydrated",
+    );
+    expect(rehydrated?.fields).toMatchObject({
+      scope: "session",
+      sessionName: "feat",
+    });
   });
 });

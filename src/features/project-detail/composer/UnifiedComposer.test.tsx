@@ -15,6 +15,7 @@ import UnifiedComposer, {
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
@@ -106,6 +107,7 @@ function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
   );
   return {
     props,
+    client,
     rerender(nextOverrides: Partial<UnifiedComposerProps>) {
       rendered.rerender(
         <QueryClientProvider client={client}>
@@ -176,6 +178,31 @@ describe("UnifiedComposer shared prompt input", () => {
     expect(
       document.querySelector('textarea[placeholder^="Message the"]'),
     ).toBeNull();
+  });
+
+  it("registers no query key carrying the store sentinel", async () => {
+    // The composer hands the session-shaped `PromptComposer` subtree the store
+    // sentinel as `sessionName`. A React Query key is a public identity surface
+    // (R1.3) and hooks build their keys eagerly — a disabled query still
+    // registers one — so no descendant may key by that value.
+    const { client } = renderComposer();
+    await waitFor(
+      () =>
+        expect(
+          document.querySelector(".prompt-editor__content .ProseMirror"),
+        ).not.toBeNull(),
+      { timeout: 5000 },
+    );
+
+    const keys = client
+      .getQueryCache()
+      .getAll()
+      .map((query) => JSON.stringify(query.queryKey));
+    expect(
+      keys.filter((key) =>
+        key.includes(PROJECT_CONVERSATION_SESSION_SENTINEL),
+      ),
+    ).toEqual([]);
   });
 });
 

@@ -28,6 +28,12 @@ import {
 } from "@/lib/conversations/transcript-render";
 import { resolveSessionRoute } from "@/lib/conversations/route-resolution";
 import {
+  conversationTargetLogFields,
+  projectConversationTarget,
+  sessionConversationTarget,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
+import {
   jsonError,
   notFound,
   resolveProjectOr404,
@@ -216,8 +222,8 @@ function windowFields(options: RenderOptions) {
 
 interface ReadTarget {
   projectPath: string;
-  sessionName: string | null;
-  conversationId: string;
+  /** Public addressing identity — never carries the project sentinel. */
+  target: ConversationTarget;
   conversation: ConversationState;
 }
 
@@ -239,7 +245,7 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
       const message =
         err instanceof Error ? err.message : "Failed to read transcript";
       readLogger.error("read.failed", {
-        targetConversationId: target.conversationId,
+        targetConversationId: target.target.conversationId,
         error: message,
       });
       return NextResponse.json({ error: message } satisfies ApiError, {
@@ -249,7 +255,7 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
 
     const rendered = renderCompactTranscript(
       {
-        conversationId: target.conversationId,
+        conversationId: target.target.conversationId,
         entries: result.entries,
         maxSeq: result.maxSeq,
       },
@@ -267,15 +273,15 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
 
     auditLogger.info("audit.conversation_read", {
       callerConversationId,
-      targetConversationId: target.conversationId,
+      targetConversationId: target.target.conversationId,
       projectPath: target.projectPath,
-      sessionName: target.sessionName,
+      ...conversationTargetLogFields(target.target),
       window,
       bytes,
       truncated: rendered.truncated,
     });
     readLogger.info("read.served", {
-      targetConversationId: target.conversationId,
+      targetConversationId: target.target.conversationId,
       format: options.format,
       window,
       bytes,
@@ -325,8 +331,11 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
 
     return serveRead(request, {
       projectPath: base.value.projectPath,
-      sessionName: base.value.sessionName,
-      conversationId,
+      target: sessionConversationTarget(
+        params["name"] ?? "",
+        base.value.sessionName,
+        conversationId,
+      ),
       conversation,
     });
   }
@@ -351,8 +360,7 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
 
     return serveRead(request, {
       projectPath: project.value,
-      sessionName: null,
-      conversationId,
+      target: projectConversationTarget(params["name"] ?? "", conversationId),
       conversation,
     });
   }

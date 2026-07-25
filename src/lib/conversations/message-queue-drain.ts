@@ -25,6 +25,7 @@ import type { ConversationCommandDispatchInput } from "@/lib/conversation-comman
 import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 // The `conversation-manager` module key is a stable log-query key: queue.*
@@ -218,10 +219,13 @@ async function runQueuedCommand(
   const { projectPath, projectName, sessionName, conversationId } = context;
   const { promptText } = queuedBatchToSubmitPrompt(batch.content);
   const hasSessionWorktree = !isProjectSentinel(sessionName);
+  // Diagnostic identity (R1.3): `sessionName` here is the session-keyed store
+  // key and is the sentinel for a project conversation's queue.
+  const scopeRef = scopeRefFromStoreSessionName(sessionName);
 
   logger.info("queue.drain_command_dispatched", {
     conversationId,
-    sessionName,
+    ...scopeRef,
     command: command.command,
     hintLength: command.hint.length,
     messageIds: batch.messageIds,
@@ -250,7 +254,7 @@ async function runQueuedCommand(
       });
       logger.warn("queue.drain_command_ticket_fallback", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         command: command.command,
         status: outcome.status,
         messageIds: batch.messageIds,
@@ -267,7 +271,7 @@ async function runQueuedCommand(
     });
     logger.info("queue.drain_command_complete", {
       conversationId,
-      sessionName,
+      ...scopeRef,
       command: command.command,
       status: outcome.status,
       messageIds: batch.messageIds,
@@ -277,7 +281,7 @@ async function runQueuedCommand(
     const error = getErrorMessage(err);
     logger.error("queue.drain_command_failed", {
       conversationId,
-      sessionName,
+      ...scopeRef,
       command: command.command,
       messageIds: batch.messageIds,
       deliveryAttemptId: batch.deliveryAttemptId,
@@ -295,7 +299,7 @@ async function runQueuedCommand(
     } catch (markErr) {
       logger.error("queue.drain_command_failed", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         phase: "mark_failed",
         error: getErrorMessage(markErr),
       });
@@ -326,12 +330,13 @@ export async function drainConversationQueue(
   deps: ConversationQueueDeps,
 ): Promise<void> {
   const { projectPath, sessionName, conversationId } = context;
+  const scopeRef = scopeRefFromStoreSessionName(sessionName);
   // Transient lanes have no message-queue rows; claiming against the absent
   // conversation record would throw and log `queue.drain_failed`.
   if (context.transient === true) {
     logger.debug("queue.drain_skipped_transient", {
       conversationId,
-      sessionName,
+      ...scopeRef,
     });
     return;
   }
@@ -369,7 +374,7 @@ export async function drainConversationQueue(
       self.send(event);
       logger.info("queue.drain_dispatched", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         messageIds: batch.messageIds,
         deliveryAttemptId: batch.deliveryAttemptId,
       });
@@ -386,14 +391,14 @@ export async function drainConversationQueue(
     });
     logger.warn("queue.drain_returned_pending", {
       conversationId,
-      sessionName,
+      ...scopeRef,
       messageIds: batch.messageIds,
       deliveryAttemptId: batch.deliveryAttemptId,
     });
   } catch (err) {
     logger.error("queue.drain_failed", {
       conversationId,
-      sessionName,
+      ...scopeRef,
       error: getErrorMessage(err),
     });
     if (batch) {
@@ -409,7 +414,7 @@ export async function drainConversationQueue(
       } catch (markErr) {
         logger.error("queue.drain_failed", {
           conversationId,
-          sessionName,
+          ...scopeRef,
           phase: "mark_pending",
           error: getErrorMessage(markErr),
         });

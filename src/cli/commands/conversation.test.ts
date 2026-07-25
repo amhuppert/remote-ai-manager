@@ -860,12 +860,50 @@ describe("cctl conversation compaction list", () => {
   });
 });
 
-describe("cctl conversation auto-resolve (cross-session by id)", () => {
+describe("cctl conversation auto-resolve (cross-scope by id)", () => {
+  // R2.4: a session agent reading a PROJECT conversation by id. The lookup
+  // declares project scope and carries no sessionName, so the retry must select
+  // the project route — inferring scope from a session name could not work here.
+  it("retries on the project route when the lookup reports project scope", async () => {
+    const host = makeHost((req) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/api/conversations/plc-1")
+        return jsonResponse({
+          scope: "project",
+          projectName: "other-proj",
+          conversationId: "plc-1",
+        });
+      if (pathname === "/api/projects/other-proj/conversations/plc-1/read")
+        return jsonResponse(sampleTranscript);
+      return jsonResponse(
+        { error: "Conversation not found", code: "conversation_not_found" },
+        404,
+      );
+    });
+
+    const result = await runCli(
+      ["conversation", "read", "plc-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(new URL(host.requests[2]?.url ?? "").pathname).toBe(
+      "/api/projects/other-proj/conversations/plc-1/read",
+    );
+    for (const request of host.requests) {
+      expect(request.url).not.toContain("__project__");
+    }
+    expect(result.stdout).toContain("[s0] fix the bug");
+  });
+
+
   it("resolves the owning project/session by id after a scope miss, then reads that scope", async () => {
     const host = makeHost((req) => {
       const { pathname } = new URL(req.url);
       if (pathname === "/api/conversations/conv-x")
         return jsonResponse({
+          scope: "session",
           projectName: "other-proj",
           sessionName: "other-sess",
           conversationId: "conv-x",
@@ -904,6 +942,7 @@ describe("cctl conversation auto-resolve (cross-session by id)", () => {
       const { pathname } = new URL(req.url);
       if (pathname === "/api/conversations/conv-x")
         return jsonResponse({
+          scope: "session",
           projectName: "other-proj",
           sessionName: "other-sess",
         });

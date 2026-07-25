@@ -53,6 +53,7 @@ import {
 import { Codex } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
@@ -144,8 +145,7 @@ export class CodexConversationRuntime
   private readonly sessionInstructions: string[];
   private readonly worktreePath: string;
   private readonly conversationId: string;
-  private readonly projectName: string;
-  private readonly sessionName: string;
+  private readonly conversationTarget: ConversationTarget;
   /**
    * Graph-workflow lane identity, present only for implementer-lane
    * conversations so the injected env carries CC_WORKFLOW_EXECUTION_ID /
@@ -170,8 +170,7 @@ export class CodexConversationRuntime
     this.sessionInstructions = input.sessionInstructions;
     this.worktreePath = input.worktreePath;
     this.conversationId = input.conversationId;
-    this.projectName = input.projectName;
-    this.sessionName = input.sessionName;
+    this.conversationTarget = input.conversationTarget;
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
     this.modelId = input.modelId;
@@ -538,9 +537,7 @@ export class CodexConversationRuntime
         baseEnv: { ...this.deps.buildChildEnv(), CLAUDECODE: "" },
         serverUrl: this.deps.getServerUrl(),
         apiToken: this.deps.getApiToken(),
-        project: this.projectName,
-        session: this.sessionName,
-        conversationId: this.conversationId,
+        target: this.conversationTarget,
         configDir: this.deps.getConfigDir(),
         ...(this.workflowExecutionId !== undefined
           ? { workflowExecutionId: this.workflowExecutionId }

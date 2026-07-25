@@ -47,7 +47,7 @@ import {
   conversationRuntimeKey,
   getConversationRuntime,
 } from "./runtime-state";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import {
   DEBUG_MODE_INSTRUCTIONS,
   DEBUG_PHASE_CONTEXT,
@@ -67,6 +67,12 @@ import {
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import {
+  projectConversationTarget,
+  scopeRefFromStoreSessionName,
+  sessionConversationTarget,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
 import {
   PROJECT_CC_CONTEXT,
   PROJECT_SPAWN_INSTRUCTIONS,
@@ -403,6 +409,12 @@ export interface QueueDeliveryDeps {
 /** Debug-mode support surfaces. */
 export interface DebugDeps {
   getDebugLogUrl(conversationId: string): string;
+  /**
+   * The turn's structured-log sink. Injected because log FIELDS are a public
+   * identity surface (R1.3) — a turn must never emit the project sentinel as a
+   * session identity, and that is only assertable if the sink is a dependency.
+   */
+  log: Logger;
 }
 
 export type ActorImplementationDeps = TurnExecutionDeps &
@@ -589,6 +601,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     markQueuedDelivered: messageQueueMod.messageQueueService.markDelivered,
     markQueuedPending: messageQueueMod.messageQueueService.markPending,
     markQueuedFailed: messageQueueMod.messageQueueService.markFailed,
+    log: logger,
   } satisfies ActorImplementationDeps;
 }
 
@@ -773,7 +786,14 @@ interface DispatchTurnViaAgentCallInput {
   applyMcp: (() => Promise<McpApplyHookResult>) | undefined;
   signal: AbortSignal;
   conversationId: string;
-  sessionName: string;
+  /**
+   * Diagnostic scope for the retry policy's structured events (R1.3). The turn's
+   * store session name stays behind: it is the sentinel at project scope, and
+   * `prompt.runtime_retry` / `prompt.continuation_pair_contradiction` would
+   * otherwise report it as a session identity.
+   */
+  scopeRef: ConversationScopeRef;
+  log: Logger;
   backend: AgentBackendId;
   promptText: string;
   imageRefs: ConversationBackendTurnInput["imageRefs"] | undefined;
@@ -806,9 +826,10 @@ async function dispatchTurnViaAgentCall(
     signal: input.signal,
     meta: {
       conversationId: input.conversationId,
-      sessionName: input.sessionName,
+      scopeRef: input.scopeRef,
       backend: input.backend,
     },
+    log: input.log,
   });
 
   const request: AgentCallRequest = {
@@ -858,6 +879,52 @@ async function dispatchTurnViaAgentCall(
 // ============================================================
 
 /**
+ * The query semaphore's diagnostic identity for this turn. The label is the only
+ * turn-derived value that module emits — it appears in every `semaphore.*` event
+ * and is interpolated into the queue-timeout Error message a client can see — so
+ * it is built from the discriminated scope, never from the storage name (R1.3).
+ * A project conversation has no owning session to attribute the slot to, so the
+ * conversation itself is the identity.
+ */
+function querySlotLabel(
+  scope: ConversationScopeRef,
+  conversationId: string,
+): string {
+  return scope.scope === "session"
+    ? `prompt:${scope.sessionName}`
+    : `prompt:project:${conversationId}`;
+}
+
+/**
+ * How a turn NAMES its conversation when reporting a missing runtime. The
+ * runtime key itself cannot be used: it embeds the store session name, and this
+ * message propagates out of the turn into a published SSE `error` frame (R1.3).
+ */
+function conversationRuntimeDescriptor(
+  scope: ConversationScopeRef,
+  projectPath: string,
+  conversationId: string,
+): string {
+  const scopeSegment =
+    scope.scope === "session" ? scope.sessionName : "project";
+  return `${projectPath}::${scopeSegment}::${conversationId}`;
+}
+
+function missingRuntimeError(
+  projectPath: string,
+  storeSessionName: string,
+  conversationId: string,
+): Error {
+  return new Error(
+    `No runtime state registered for conversation ${conversationRuntimeDescriptor(
+      scopeRefFromStoreSessionName(storeSessionName),
+      projectPath,
+      conversationId,
+    )}. Was the actor started via the conversation manager?`,
+  );
+}
+
+/**
  * Acquire session lock, query slot, and initialize transcript path.
  */
 export async function prepareTurnForMachine(
@@ -876,8 +943,10 @@ export async function prepareTurnForMachine(
   );
   const runtime = getConversationRuntime(key);
   if (!runtime) {
-    throw new Error(
-      `No runtime state registered for conversation ${key}. Was the actor started via the conversation manager?`,
+    throw missingRuntimeError(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
     );
   }
 
@@ -894,7 +963,10 @@ export async function prepareTurnForMachine(
 
   // Acquire concurrency slot (waits if at capacity)
   const releaseQuerySlot = await deps.acquireQuerySlot(
-    `prompt:${input.sessionName}`,
+    querySlotLabel(
+      scopeRefFromStoreSessionName(input.sessionName),
+      input.conversationId,
+    ),
   );
   runtime.releaseQuerySlot = releaseQuerySlot;
 
@@ -933,8 +1005,10 @@ export async function executePromptForMachine(
   );
   const runtime = getConversationRuntime(key);
   if (!runtime) {
-    throw new Error(
-      `No runtime state registered for conversation ${key}. Was the actor started via the conversation manager?`,
+    throw missingRuntimeError(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
     );
   }
   const runtimeState = runtime;
@@ -947,9 +1021,18 @@ export async function executePromptForMachine(
     input.conversationScope === "project" ||
     isProjectSentinel(input.sessionName);
 
+  // Diagnostic identity for this turn (R1.3). `input.sessionName` is the
+  // session-keyed STORE name — the sentinel for a project conversation — so it
+  // may be handed to runtime/state-store adapters below but must never be
+  // logged. Prefers the scope threaded through the backend-create contract (D4)
+  // and falls back to the sentinel check only for callers predating it.
+  const scopeRef: ConversationScopeRef = isProjectConversation
+    ? { scope: "project" }
+    : { scope: "session", sessionName: input.sessionName };
+
   const broadcastMeta: TranscriptBroadcastMeta = {
     projectName,
-    sessionName: input.sessionName,
+    storeSessionName: input.sessionName,
   };
   const safeAppendWithMeta = (
     conversationId: string,
@@ -985,8 +1068,8 @@ export async function executePromptForMachine(
       });
     } catch (err) {
       const errorMessage = getErrorMessage(err);
-      logger.warn("prompt.model_effort_validation_failed_actor", {
-        sessionName: input.sessionName,
+      deps.log.warn("prompt.model_effort_validation_failed_actor", {
+        ...scopeRef,
         backend: input.agentBackend,
         modelId: effectiveModel,
         reasoningEffort: effectiveEffort,
@@ -1088,8 +1171,8 @@ export async function executePromptForMachine(
         conversation.mcpRuntime = next;
       },
     );
-    logger.info("prompt.mcp_seeded", {
-      sessionName: input.sessionName,
+    deps.log.info("prompt.mcp_seeded", {
+      ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
     });
@@ -1154,8 +1237,8 @@ export async function executePromptForMachine(
           : input.outputFormat !== backendRuntime.outputFormat
             ? "output_format_changed"
             : "alignment_changed";
-    logger.info("prompt.runtime_recreate", {
-      sessionName: input.sessionName,
+    deps.log.info("prompt.runtime_recreate", {
+      ...scopeRef,
       reason,
     });
     backendRuntime.close();
@@ -1274,8 +1357,8 @@ export async function executePromptForMachine(
     const capabilityCascadeSeed = capabilitySeed?.capabilities;
     const capabilityRuntimeStateSeed = capabilitySeed?.runtimeState;
 
-    logger.info("prompt.runtime_create", {
-      sessionName: input.sessionName,
+    deps.log.info("prompt.runtime_create", {
+      ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
       hasResumeRef: input.backendRef !== null,
@@ -1288,8 +1371,8 @@ export async function executePromptForMachine(
     // the transcript. Reachable after a mid-turn server death that outran
     // BACKEND_INIT persistence, or a Codex thread cleared by a failed turn.
     if (input.promptCount > 0 && input.backendRef === null) {
-      logger.warn("prompt.resume_ref_missing", {
-        sessionName: input.sessionName,
+      deps.log.warn("prompt.resume_ref_missing", {
+        ...scopeRef,
         backend: input.agentBackend,
         conversationId: input.conversationId,
         promptCount: input.promptCount,
@@ -1337,7 +1420,15 @@ export async function executePromptForMachine(
       conversationId: input.conversationId,
       projectPath: input.projectPath,
       projectName,
-      sessionName: input.sessionName,
+      // Scope is decided here, where it is known authoritatively, and passed
+      // forward as declared input (D4) — the runtimes never re-derive it.
+      conversationTarget: isProjectConversation
+        ? projectConversationTarget(projectName, input.conversationId)
+        : sessionConversationTarget(
+            projectName,
+            input.sessionName,
+            input.conversationId,
+          ),
       worktreePath: input.worktreePath,
       persistedRef: input.backendRef,
       modelId: effectiveModel,
@@ -1461,8 +1552,8 @@ export async function executePromptForMachine(
             content: [event.block],
           });
           persistedContentEventCount += 1;
-          logger.debug("prompt.content_event_persisted", {
-            sessionName: input.sessionName,
+          deps.log.debug("prompt.content_event_persisted", {
+            ...scopeRef,
             conversationId: input.conversationId,
             backend: input.agentBackend,
             blockType: event.block.type,
@@ -1498,8 +1589,8 @@ export async function executePromptForMachine(
         input.sessionName,
       );
     } catch (err) {
-      logger.warn("prompt.live_ticket_block_failed", {
-        sessionName: input.sessionName,
+      deps.log.warn("prompt.live_ticket_block_failed", {
+        ...scopeRef,
         conversationId: input.conversationId,
         error: getErrorMessage(err),
       });
@@ -1513,8 +1604,8 @@ export async function executePromptForMachine(
     assembled.rewrittenPromptText,
   );
   if (agentFacingPromptText !== assembled.rewrittenPromptText) {
-    logger.info("prompt.native_spec_command_expanded", {
-      sessionName: input.sessionName,
+    deps.log.info("prompt.native_spec_command_expanded", {
+      ...scopeRef,
       conversationId: input.conversationId,
       requestLength: assembled.rewrittenPromptText.length,
     });
@@ -1556,8 +1647,8 @@ export async function executePromptForMachine(
   const applyMcpHook = isNewRuntime
     ? undefined
     : async (): Promise<McpApplyHookResult> => {
-        logger.info("prompt.mcp_turn_start_apply", {
-          sessionName: input.sessionName,
+        deps.log.info("prompt.mcp_turn_start_apply", {
+          ...scopeRef,
           backend: input.agentBackend,
           conversationId: input.conversationId,
         });
@@ -1568,16 +1659,16 @@ export async function executePromptForMachine(
           backend: input.agentBackend,
         });
 
-        logger.info("prompt.mcp_turn_start_result", {
-          sessionName: input.sessionName,
+        deps.log.info("prompt.mcp_turn_start_result", {
+          ...scopeRef,
           backend: input.agentBackend,
           conversationId: input.conversationId,
           disposition: mcpApplyResult.disposition,
         });
 
         if (mcpApplyResult.disposition === "rejected") {
-          logger.warn("prompt.mcp_turn_start_failed", {
-            sessionName: input.sessionName,
+          deps.log.warn("prompt.mcp_turn_start_failed", {
+            ...scopeRef,
             backend: input.agentBackend,
             conversationId: input.conversationId,
             disposition: mcpApplyResult.disposition,
@@ -1618,8 +1709,8 @@ export async function executePromptForMachine(
       status: "ready" as const,
     };
     if (ready.status === "recreate-runtime") {
-      logger.warn("prompt.runtime_recreated_after_session_tools_failure", {
-        sessionName: input.sessionName,
+      deps.log.warn("prompt.runtime_recreated_after_session_tools_failure", {
+        ...scopeRef,
         conversationId: input.conversationId,
         reason: ready.reason,
       });
@@ -1628,8 +1719,8 @@ export async function executePromptForMachine(
         status: "ready" as const,
       };
       if (retry.status === "recreate-runtime") {
-        logger.error("prompt.session_tools_unrecoverable", {
-          sessionName: input.sessionName,
+        deps.log.error("prompt.session_tools_unrecoverable", {
+          ...scopeRef,
           conversationId: input.conversationId,
           reason: retry.reason,
         });
@@ -1653,7 +1744,8 @@ export async function executePromptForMachine(
       applyMcp: applyMcpHook,
       signal: abortController.signal,
       conversationId: input.conversationId,
-      sessionName: input.sessionName,
+      scopeRef,
+      log: deps.log,
       backend: input.agentBackend,
       promptText,
       imageRefs: imageRefs.length > 0 ? imageRefs : undefined,
@@ -1680,8 +1772,8 @@ export async function executePromptForMachine(
     if (turnlessFailure && abortController.signal.aborted) {
       const timeoutFired = abortWiring.timeoutFired();
       const stallFired = abortWiring.stallFired();
-      logger.info("prompt.aborted", {
-        sessionName: input.sessionName,
+      deps.log.info("prompt.aborted", {
+        ...scopeRef,
         ...(timeoutFired
           ? { abortReason: "timeout", timeoutMs }
           : stallFired
@@ -1711,8 +1803,8 @@ export async function executePromptForMachine(
       if (turnlessFailure.error.failureKind === "capability_unavailable") {
         runtimeState.streamEmit?.("error", { message: errorMsg });
       } else {
-        logger.error("prompt.sdk_error", {
-          sessionName: input.sessionName,
+        deps.log.error("prompt.sdk_error", {
+          ...scopeRef,
           failureKind: turnlessFailure.error.failureKind,
           error: errorMsg,
         });
@@ -1737,8 +1829,8 @@ export async function executePromptForMachine(
     if (abortController.signal.aborted) {
       const timeoutFired = abortWiring.timeoutFired();
       const stallFired = abortWiring.stallFired();
-      logger.info("prompt.aborted", {
-        sessionName: input.sessionName,
+      deps.log.info("prompt.aborted", {
+        ...scopeRef,
         ...(timeoutFired
           ? { abortReason: "timeout", timeoutMs }
           : stallFired
@@ -1762,8 +1854,8 @@ export async function executePromptForMachine(
     }
 
     const errorMsg = getErrorMessage(err);
-    logger.error("prompt.sdk_error", {
-      sessionName: input.sessionName,
+    deps.log.error("prompt.sdk_error", {
+      ...scopeRef,
       error: errorMsg,
     });
     await drainCapabilityWhenIdle(deps, capabilityCtx);
@@ -1817,8 +1909,8 @@ export async function executePromptForMachine(
     callResult.continuationDisposition ?? "retain";
 
   if (effectiveError && !turnAborted && !sawErrorEvent) {
-    logger.warn("prompt.turn_error_fallback_emitted", {
-      sessionName: input.sessionName,
+    deps.log.warn("prompt.turn_error_fallback_emitted", {
+      ...scopeRef,
       backend: input.agentBackend,
       message: effectiveError,
       ...(gateSchemaValidationFailure
@@ -1838,8 +1930,8 @@ export async function executePromptForMachine(
         persistedContentEventCount,
       );
       if (missingContent.length > 0) {
-        logger.warn("prompt.content_event_fallback", {
-          sessionName: input.sessionName,
+        deps.log.warn("prompt.content_event_fallback", {
+          ...scopeRef,
           conversationId: input.conversationId,
           backend: backendRuntime!.backend,
           missingContentBlockCount: missingContent.length,
@@ -1937,8 +2029,8 @@ export async function executePromptForMachine(
   // Emit done on the SSE stream
   runtime.streamEmit?.("done", {});
 
-  logger.info("prompt.complete", {
-    sessionName: input.sessionName,
+  deps.log.info("prompt.complete", {
+    ...scopeRef,
     costUsd: result.costUsd,
     numTurns: result.numTurns,
   });
@@ -1968,12 +2060,17 @@ export async function runTaskRunTurnForMachine(
   ).gateActorDurableWrites(await getDeps());
   const transcriptProjection = getTaskTranscriptProjection(input.agentBackend);
 
+  // Diagnostic identity (R1.3) — see the note in `executePromptForMachine`. A
+  // task run carries no explicit scope on its input, so the store name is lifted
+  // through the sanctioned internal-adapter boundary.
+  const scopeRef = scopeRefFromStoreSessionName(input.sessionName);
+
   const projectName =
     input.projectName || deps.getProjectDisplayName(input.projectPath);
 
   const broadcastMeta: TranscriptBroadcastMeta = {
     projectName,
-    sessionName: input.sessionName,
+    storeSessionName: input.sessionName,
   };
 
   let effectivePrompt = input.promptText;
@@ -1987,8 +2084,8 @@ export async function runTaskRunTurnForMachine(
         effectivePrompt = `${activeTicketBlock}\n\n${effectivePrompt}`;
       }
     } catch (err) {
-      logger.warn("task_run.live_ticket_block_failed", {
-        sessionName: input.sessionName,
+      deps.log.warn("task_run.live_ticket_block_failed", {
+        ...scopeRef,
         conversationId: input.conversationId,
         error: getErrorMessage(err),
       });
@@ -2013,8 +2110,8 @@ export async function runTaskRunTurnForMachine(
     effectiveTimeoutMs = input.timeoutMs ?? defaults.timeoutMs;
     taskStallTimeoutMs = defaults.stallTimeoutMs;
   } catch (err) {
-    logger.warn("task_run.defaults_resolution_failed", {
-      sessionName: input.sessionName,
+    deps.log.warn("task_run.defaults_resolution_failed", {
+      ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
       error: getErrorMessage(err),
@@ -2073,8 +2170,8 @@ export async function runTaskRunTurnForMachine(
     getFailureClassifier: resolveFailureClassifierForBackend,
   };
 
-  logger.info("task_run.dispatch", {
-    sessionName: input.sessionName,
+  deps.log.info("task_run.dispatch", {
+    ...scopeRef,
     backend: input.agentBackend,
     conversationId: input.conversationId,
     hasOutputSchema: request.outputSchema !== undefined,
@@ -2086,8 +2183,8 @@ export async function runTaskRunTurnForMachine(
     result = await deps.executeAgentCall(request, facadeDeps);
   } catch (err) {
     const errorMsg = getErrorMessage(err);
-    logger.error("task_run.execute_threw", {
-      sessionName: input.sessionName,
+    deps.log.error("task_run.execute_threw", {
+      ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
       error: errorMsg,
@@ -2116,8 +2213,8 @@ export async function runTaskRunTurnForMachine(
         text = presentedValue;
       } else {
         text = null;
-        logger.warn("task_run.structured_output_text_field_missing", {
-          sessionName: input.sessionName,
+        deps.log.warn("task_run.structured_output_text_field_missing", {
+          ...scopeRef,
           backend: input.agentBackend,
           conversationId: input.conversationId,
           structuredOutputTextField: input.structuredOutputTextField,
@@ -2145,8 +2242,8 @@ export async function runTaskRunTurnForMachine(
       );
     }
 
-    logger.info("task_run.complete", {
-      sessionName: input.sessionName,
+    deps.log.info("task_run.complete", {
+      ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
       hasStructuredOutput: result.outcome.structuredOutput !== undefined,
@@ -2179,8 +2276,8 @@ export async function runTaskRunTurnForMachine(
   if (result.outcome.kind === "failed") {
     const failureKind = result.outcome.error.failureKind;
     const errorMsg = result.outcome.error.message;
-    logger.warn("task_run.failed", {
-      sessionName: input.sessionName,
+    deps.log.warn("task_run.failed", {
+      ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
       failureKind,
@@ -2209,8 +2306,8 @@ export async function runTaskRunTurnForMachine(
 
   // outcome.kind === "paused": task_run path produces no pauses today.
   // Surface as an error so callers see a deterministic outcome.
-  logger.warn("task_run.unexpected_paused_outcome", {
-    sessionName: input.sessionName,
+  deps.log.warn("task_run.unexpected_paused_outcome", {
+    ...scopeRef,
     backend: input.agentBackend,
     conversationId: input.conversationId,
   });

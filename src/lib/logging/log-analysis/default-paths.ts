@@ -28,28 +28,48 @@ async function safeReaddir(dir: string): Promise<string[]> {
 }
 
 /**
- * Discover all scoped session/conversation logs under `<configDir>/logs/sessions/`.
+ * One scope tree: a root holding per-scope directories, each with a top-level
+ * log named `rootLog` plus a `conversations/` directory.
+ */
+interface ScopeTree {
+  root: string;
+  rootLog: string;
+}
+
+/**
+ * Discover every scoped log under `<configDir>/logs/`.
  *
  * Layout:
  *   <configDir>/logs/sessions/<projectSlug>__<sessionSlug>/session.log
  *   <configDir>/logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log
+ *   <configDir>/logs/projects/<projectSlug>/project.log
+ *   <configDir>/logs/projects/<projectSlug>/conversations/<conversationSlug>.log
+ *
+ * The `projects/` tree holds project conversations, which have no owning
+ * session — their session-keyed store value is the internal sentinel, which
+ * never appears in a path (project-conversation-parity R1.3).
  */
-async function discoverScopedLogPaths(configDir: string): Promise<string[]> {
-  const sessionsRoot = path.join(configDir, "logs", "sessions");
-  const sessionDirs = await safeReaddir(sessionsRoot);
+export async function discoverScopedLogPaths(
+  configDir: string,
+): Promise<string[]> {
+  const trees: ScopeTree[] = [
+    { root: path.join(configDir, "logs", "sessions"), rootLog: "session.log" },
+    { root: path.join(configDir, "logs", "projects"), rootLog: "project.log" },
+  ];
   const results: string[] = [];
 
-  for (const sessionDir of sessionDirs) {
-    const sessionPath = path.join(sessionsRoot, sessionDir);
-    const sessionLog = path.join(sessionPath, "session.log");
-    if (await isReadable(sessionLog)) results.push(sessionLog);
+  for (const tree of trees) {
+    for (const scopeDir of await safeReaddir(tree.root)) {
+      const scopePath = path.join(tree.root, scopeDir);
+      const rootLog = path.join(scopePath, tree.rootLog);
+      if (await isReadable(rootLog)) results.push(rootLog);
 
-    const conversationsDir = path.join(sessionPath, "conversations");
-    const conversationFiles = await safeReaddir(conversationsDir);
-    for (const conversationFile of conversationFiles) {
-      if (!conversationFile.endsWith(".log")) continue;
-      const conversationLog = path.join(conversationsDir, conversationFile);
-      if (await isReadable(conversationLog)) results.push(conversationLog);
+      const conversationsDir = path.join(scopePath, "conversations");
+      for (const conversationFile of await safeReaddir(conversationsDir)) {
+        if (!conversationFile.endsWith(".log")) continue;
+        const conversationLog = path.join(conversationsDir, conversationFile);
+        if (await isReadable(conversationLog)) results.push(conversationLog);
+      }
     }
   }
 

@@ -60,6 +60,7 @@ const Component = createMessageTextWithRefs({
 const REF_ATTRS_BASE = {
   "project-name": "my-app",
   "project-path": "/repos/my-app",
+  scope: "session",
   "session-name": "main",
   "worktree-path": "/repos/my-app/.worktrees/main",
   "conversation-id": "conv-1",

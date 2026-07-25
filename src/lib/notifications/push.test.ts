@@ -308,6 +308,12 @@ describe("sendPushNotification", () => {
   });
 });
 
+const sessionTarget = {
+  scope: "session" as const,
+  projectName: "proj",
+  sessionName: "sess",
+};
+
 describe("sendAgentNotification", () => {
   beforeEach(() => {
     mockFetch.mockReset();
@@ -322,8 +328,11 @@ describe("sendAgentNotification", () => {
       "Build Done",
       "All tests passed",
       "white_check_mark",
-      "my-project",
-      "my-session",
+      {
+        scope: "session",
+        projectName: "my-project",
+        sessionName: "my-session",
+      },
     );
 
     expect(mockFetch).toHaveBeenCalledOnce();
@@ -346,14 +355,11 @@ describe("sendAgentNotification", () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
     const config = makeConfig();
 
-    await sendAgentNotification(
-      config,
-      "Task Complete",
-      "Done",
-      "robot",
-      "cool-project",
-      "sess",
-    );
+    await sendAgentNotification(config, "Task Complete", "Done", "robot", {
+      scope: "session",
+      projectName: "cool-project",
+      sessionName: "sess",
+    });
 
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(options.body as string) as Record<string, unknown>;
@@ -366,7 +372,7 @@ describe("sendAgentNotification", () => {
 
     // Should not throw
     await expect(
-      sendAgentNotification(config, "Test", "Body", "robot", "proj", "sess"),
+      sendAgentNotification(config, "Test", "Body", "robot", sessionTarget),
     ).resolves.toBeUndefined();
   });
 
@@ -376,7 +382,7 @@ describe("sendAgentNotification", () => {
 
     // Should not throw
     await expect(
-      sendAgentNotification(config, "Test", "Body", "robot", "proj", "sess"),
+      sendAgentNotification(config, "Test", "Body", "robot", sessionTarget),
     ).resolves.toBeUndefined();
   });
 
@@ -389,14 +395,7 @@ describe("sendAgentNotification", () => {
     delete (config as Partial<PushNotificationConfig>).serverUrl;
 
     await expect(
-      sendAgentNotification(
-        config,
-        "Build Done",
-        "ok",
-        "robot",
-        "proj",
-        "sess",
-      ),
+      sendAgentNotification(config, "Build Done", "ok", "robot", sessionTarget),
     ).resolves.toBeUndefined();
 
     expect(mockFetch).toHaveBeenCalledOnce();
