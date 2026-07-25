@@ -1589,6 +1589,44 @@ describe("useSendProjectPrompt: provisional conversation identity", () => {
     expect(inFlightKeys()).toEqual([retryKey.provisionalId]);
   });
 
+  it("releases the provisional key of a turn the user dismissed before it settled unnamed (R3.8)", async () => {
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const submission = startTurn(() => result.current, {
+      target: CREATE,
+      text: "hello",
+    });
+    const key = provisionalKeyOf(submission);
+
+    await stream.push(errorFrame("mid-turn failure"));
+    await waitFor(() =>
+      expect(result.current.errorFor(key)?.message).toBe("mid-turn failure"),
+    );
+
+    // Dismissed while the turn is still running: the key keeps holding the
+    // running turn, so it is not released yet.
+    await act(async () => {
+      result.current.clearError(key);
+    });
+    expect(result.current.errorFor(key)).toBeNull();
+    expect(result.current.provisionalKeys).toEqual([key]);
+
+    // The turn then ends without ever being named. The dismissal was the last
+    // word on its failure, so the key holds nothing and is released rather than
+    // left behind holding an idle turn no surface can reach or dismiss again.
+    await stream.push(DONE_FRAME);
+    await act(async () => {
+      await submission.settled;
+    });
+
+    expect(result.current.provisionalKeys).toEqual([]);
+    expect(result.current.isSending(key)).toBe(false);
+    expect(result.current.errorFor(key)).toBeNull();
+    expect(inFlightKeys()).toEqual([]);
+  });
+
   it("leaves no provisional key and no busy state when a create-and-send aborts before any conversation id (R3.8)", async () => {
     const stream = scriptedStream();
     serveStreams(stream);

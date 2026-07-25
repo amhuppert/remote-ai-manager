@@ -257,6 +257,7 @@ function allocateTurn(target: ProjectPromptTarget): {
       key,
       creationRequestId: `${CLIENT_TOKEN_PREFIX}-${provisionalSequence}`,
       adopted: null,
+      error: null,
     },
   };
 }
@@ -461,6 +462,13 @@ interface UnnamedTurn {
    */
   readonly creationRequestId: string;
   adopted: string | null;
+  /**
+   * The failure this turn currently holds under its provisional key. Kept here
+   * rather than in the running turn's closure so dismissing it reaches the turn:
+   * a dismissal that only cleared the rendered error would leave the key held by
+   * a settled turn holding nothing, unreachable and never dismissible again.
+   */
+  error: ProjectPromptError | null;
 }
 
 function buildUserContent(
@@ -621,12 +629,16 @@ export function useSendProjectPrompt(
   const clearError = useCallback(
     (key: ProjectTurnKey | null) => {
       if (key === null) return;
-      if (
-        key.kind === "provisional" &&
-        failedProvisionals.current.has(key.provisionalId)
-      ) {
-        releaseProvisional(key.provisionalId);
-        return;
+      if (key.kind === "provisional") {
+        if (failedProvisionals.current.has(key.provisionalId)) {
+          releaseProvisional(key.provisionalId);
+          return;
+        }
+        // A turn still awaiting its conversation keeps its key — it is still
+        // running — but the dismissal reaches the turn, so the key is not held
+        // past the turn if this failure turns out to be its last.
+        const running = unnamed.current.get(key.provisionalId);
+        if (running !== undefined) running.error = null;
       }
       setTurns((prev) => withPatchedTurn(prev, key, { error: null }));
     },
@@ -645,9 +657,8 @@ export function useSendProjectPrompt(
         unnamedTurn !== null && unnamedTurn.adopted !== null
           ? conversationTurnKey(unnamedTurn.adopted)
           : key;
-      const failure: { error: ProjectPromptError | null } = { error: null };
       const failTurn = (error: ProjectPromptError): void => {
-        failure.error = error;
+        if (unnamedTurn !== null) unnamedTurn.error = error;
         const target = currentKey();
         setTurns((prev) => withPatchedTurn(prev, target, { error }));
       };
@@ -733,9 +744,12 @@ export function useSendProjectPrompt(
         const settledId = turnStorageId(settledKey);
         inFlight.current.delete(settledId);
 
-        if (settledKey.kind === "provisional" && failure.error === null) {
-          // The stream ran to its end and reported nothing, so the key holds no
-          // error to show and is released rather than left holding an idle turn.
+        // Read at settle time, not captured when the failure arrived: a failure
+        // the user has already dismissed is no longer this turn's to hold.
+        const unsettledFailure = unnamedTurn?.error ?? null;
+        if (settledKey.kind === "provisional" && unsettledFailure === null) {
+          // The turn ended holding no error to show, so its key is released
+          // rather than left behind holding an idle turn.
           releaseProvisional(settledKey.provisionalId);
         } else {
           setTurns((prev) =>
