@@ -275,6 +275,65 @@ describe("session-detail.store — in-flight state is keyed per conversation", (
   });
 });
 
+describe("session-detail.store — reassignInFlight / discardInFlight", () => {
+  beforeEach(resetStore);
+
+  /** Whether the in-flight map holds an entry at all (not merely an idle one). */
+  function hasEntry(conversationId: string): boolean {
+    return conversationId in useSessionDetailStore.getState().inFlight;
+  }
+
+  it("reassignInFlight moves a turn's state to another key and leaves nothing behind", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 4);
+    s.receiveStreamContent(A, textBlock("a"), textBlock("partial"));
+
+    s.reassignInFlight(A, B);
+
+    expect(hasEntry(A)).toBe(false);
+    expect(inFlightFor(A)).toBe(EMPTY_IN_FLIGHT);
+    expect(inFlightFor(B).sending).toBe(true);
+    expect(inFlightFor(B).messageCountBeforeSubmit).toBe(4);
+    expect(inFlightFor(B).optimisticMessages).toHaveLength(2);
+  });
+
+  it("reassignInFlight leaves every other key untouched", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 0);
+    s.submitPrompt(B, textBlock("b"), 7);
+
+    s.reassignInFlight(A, "conv-c");
+
+    expect(inFlightFor(B).sending).toBe(true);
+    expect(inFlightFor(B).messageCountBeforeSubmit).toBe(7);
+    expect(inFlightFor("conv-c").optimisticMessages).toHaveLength(1);
+  });
+
+  it("reassignInFlight from a key with no state is a no-op", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(B, textBlock("b"), 0);
+
+    s.reassignInFlight(A, B);
+
+    expect(hasEntry(A)).toBe(false);
+    expect(inFlightFor(B).optimisticMessages).toHaveLength(1);
+  });
+
+  it("discardInFlight removes the entry entirely rather than emptying it", () => {
+    const s = useSessionDetailStore.getState();
+    s.submitPrompt(A, textBlock("a"), 0);
+    s.failPrompt(A, "boom");
+    s.submitPrompt(B, textBlock("b"), 0);
+
+    s.discardInFlight(A);
+
+    expect(hasEntry(A)).toBe(false);
+    expect(inFlightFor(A)).toBe(EMPTY_IN_FLIGHT);
+    expect(hasEntry(B)).toBe(true);
+    expect(inFlightFor(B).sending).toBe(true);
+  });
+});
+
 describe("session-detail.store — markCancelled per conversation", () => {
   beforeEach(() => {
     resetStore();

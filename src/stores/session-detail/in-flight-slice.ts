@@ -209,4 +209,17 @@ export const createInFlightSlice: SessionDetailSliceCreator<InFlightSlice> = (
       entry.optimisticMessages = [];
       entry.messageCountBeforeSubmit = 0;
     }),
+
+  reassignInFlight: (fromConversationId, toConversationId) =>
+    set((state) => {
+      const entry = state.inFlight[fromConversationId];
+      if (!entry) return;
+      state.inFlight[toConversationId] = entry;
+      delete state.inFlight[fromConversationId];
+    }),
+
+  discardInFlight: (conversationId) =>
+    set((state) => {
+      delete state.inFlight[conversationId];
+    }),
 });

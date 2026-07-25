@@ -1232,13 +1232,24 @@ describe("NotificationListener", () => {
       type: "conversation-created",
       scope: "project",
       projectName: "proj",
-      conversation: makeProjectConversation({ id: "pc-2" }),
+      conversation: makeProjectConversation({
+        id: "pc-2",
+        creationRequestId: "req-9",
+      }),
     });
 
     await waitFor(() => {
       const cached = client.getQueryData<Array<{ id: string }>>(listKey);
       expect(cached?.map((c) => c.id)).toEqual(["pc-1", "pc-2"]);
     });
+    // The creating submission rides the event into the list cache, so a
+    // create-and-send turn can recognise its own conversation the moment the
+    // creation is broadcast — no refetch in between.
+    expect(
+      client.getQueryData<Array<{ id: string; creationRequestId?: string }>>(
+        listKey,
+      )?.[1]?.creationRequestId,
+    ).toBe("req-9");
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: listKey });
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: conversationKeys.active(),

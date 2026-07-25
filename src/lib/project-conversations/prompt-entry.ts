@@ -32,7 +32,7 @@ export interface ExecuteProjectPromptStreamDeps {
   getProjectDisplayName(projectPath: string): string;
   createProjectConversation(
     projectPath: string,
-    opts?: { agentBackend?: AgentBackendId },
+    opts?: { agentBackend?: AgentBackendId; creationRequestId?: string },
   ): Promise<ConversationState>;
   getProjectConversation(
     projectPath: string,
@@ -86,6 +86,14 @@ export interface ExecuteProjectPromptStreamInput {
   images?: ImagePayload[];
   backend?: AgentBackendId;
   effort?: string;
+  /**
+   * Opaque token the posting client generated for this submission. Recorded on
+   * the conversation this entry creates, so the client can identify its own
+   * conversation from the project conversation list — which reports what exists,
+   * not which submission caused it. Ignored when the turn targets an existing
+   * conversation: the client already named that one.
+   */
+  creationRequestId?: string;
 }
 
 function defaultDeps(): ExecuteProjectPromptStreamDeps {
@@ -163,14 +171,23 @@ export function createProjectPromptExecutor(
       }
       conversation = existing;
     } else {
-      conversation = await deps.createProjectConversation(
-        projectPath,
-        input.backend ? { agentBackend: input.backend } : undefined,
-      );
+      conversation = await deps.createProjectConversation(projectPath, {
+        ...(input.backend ? { agentBackend: input.backend } : {}),
+        ...(input.creationRequestId !== undefined
+          ? { creationRequestId: input.creationRequestId }
+          : {}),
+      });
       logger.info("project-conversation.first_turn_created", {
         projectPath,
         conversationId: conversation.id,
       });
+      // The client that posted this turn had no conversation id to attribute
+      // its turn state to, so the entry that created one names it on that
+      // client's own stream, ahead of any turn output. Without this the client
+      // could only guess which conversation its turn belongs to from whichever
+      // one surfaces first in the list — a guess that misattributes the turn
+      // whenever two are created close together.
+      input.emit("conversation", { conversationId: conversation.id });
       // First-prompt creation emits the same real-time creation event the
       // explicit create route emits, so downstream surfaces learn of the new
       // project conversation immediately.

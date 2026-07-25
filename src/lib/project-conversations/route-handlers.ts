@@ -42,6 +42,7 @@ import { createLogger, withTracing } from "@/lib/logging";
 import {
   createProjectConversationRequestSchema,
   projectConversationOpenRequestSchema,
+  projectFirstPromptRequestSchema,
 } from "./schemas";
 import { createProjectConversationService } from "./service";
 import { buildProjectConversationCreatedEvent } from "./events";
@@ -142,6 +143,12 @@ export function createProjectConversationRouteHandlers(
       effort?: string;
       backend?: ConversationState["agentBackend"];
       images?: ExecuteProjectPromptStreamInput["images"];
+      /**
+       * Only the create-and-send entry can use this: it is the token the created
+       * conversation records, and a turn in an existing conversation creates
+       * nothing to stamp.
+       */
+      creationRequestId?: string;
     },
   ): Response {
     const encoder = new TextEncoder();
@@ -169,6 +176,12 @@ export function createProjectConversationRouteHandlers(
             ...(body.images !== undefined ? { images: body.images } : {}),
             ...(body.backend !== undefined ? { backend: body.backend } : {}),
             ...(body.effort !== undefined ? { effort: body.effort } : {}),
+            // Dropped when this turn targets an existing conversation: that
+            // conversation was not created for this submission.
+            ...(conversationId === undefined &&
+            body.creationRequestId !== undefined
+              ? { creationRequestId: body.creationRequestId }
+              : {}),
           });
         } catch (err) {
           if (err instanceof BackendMismatchError) {
@@ -286,7 +299,7 @@ export function createProjectConversationRouteHandlers(
 
     const parsed = await parseJsonBody(
       request,
-      runPromptRequestSchema,
+      projectFirstPromptRequestSchema,
       "prompt or images required",
     );
     if (!parsed.ok) return parsed.response;

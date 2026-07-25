@@ -133,6 +133,23 @@ export interface InFlightSlice {
   dismissCancelled: (conversationId: string) => void;
   reconcileMessages: (conversationId: string, serverCount: number) => void;
   clearConversationMessages: (conversationId: string) => void;
+  /**
+   * Move a turn's in-flight state to another key, leaving nothing under the old
+   * one. A create-and-send turn starts under a provisional key and adopts into
+   * the conversation the server names for it, so the optimistic prompt and the
+   * streamed reply already produced surface on that conversation's transcript
+   * and no state stays reachable under the key it came from.
+   */
+  reassignInFlight: (
+    fromConversationId: string,
+    toConversationId: string,
+  ) => void;
+  /**
+   * Drop a key's in-flight state entirely. Distinct from
+   * `clearConversationMessages`, which empties a surviving entry: this removes
+   * the entry, so a released key is not reachable at all.
+   */
+  discardInFlight: (conversationId: string) => void;
 }
 
 export interface SidebarSlice {

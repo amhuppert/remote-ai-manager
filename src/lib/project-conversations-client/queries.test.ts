@@ -5,6 +5,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   useProjectConversationsQuery,
+  useProjectConversationCreationsQuery,
   useProjectConversationMessagesQuery,
   isOpenProjectConversation,
 } from "./queries";
@@ -119,6 +120,54 @@ describe("useProjectConversationsQuery", () => {
       wrapper: wrapperFor(makeClient()),
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+});
+
+describe("useProjectConversationCreationsQuery", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports every conversation with the submission that created it, closed and archived included", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse([
+        conv("from-a-submission", { creationRequestId: "req-1" }),
+        conv("closed", { open: false }),
+        conv("archived", { archived: true }),
+      ]),
+    );
+    const { result } = renderHook(
+      () => useProjectConversationCreationsQuery("proj"),
+      { wrapper: wrapperFor(makeClient()) },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // The complete set, because a pending create-and-send turn's conversation is
+    // not necessarily open by the time the client reads it — and each entry
+    // carries the creating submission, which is what makes a match causal.
+    expect(result.current.data).toEqual([
+      { conversationId: "from-a-submission", creationRequestId: "req-1" },
+      { conversationId: "closed", creationRequestId: null },
+      { conversationId: "archived", creationRequestId: null },
+    ]);
+  });
+
+  it("keeps the selected array's identity across renders", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse([conv("c1")]));
+    const { result, rerender } = renderHook(
+      () => useProjectConversationCreationsQuery("proj"),
+      { wrapper: wrapperFor(makeClient()) },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const first = result.current.data;
+    rerender();
+
+    // Consumers drive an effect off this array; a new identity per render would
+    // re-report the same conversations on every render.
+    expect(result.current.data).toBe(first);
   });
 });
 
