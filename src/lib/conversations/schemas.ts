@@ -345,7 +345,7 @@ export const conversationListItemSchema = z.discriminatedUnion("scope", [
       .min(1)
       .refine((name) => !isProjectSentinel(name), {
         message:
-          "a project conversation is listed with scope \"project\", not a sentinel session name",
+          'a project conversation is listed with scope "project", not a sentinel session name',
       }),
   }),
   conversationListItemFieldsSchema.extend({ scope: z.literal("project") }),
@@ -433,7 +433,7 @@ export const conversationRefAttrsSchema = z.discriminatedUnion("scope", [
       .min(1)
       .refine((name) => !isProjectSentinel(name), {
         message:
-          "project conversations are referenced with scope=\"project\", not a session name",
+          'project conversations are referenced with scope="project", not a session name',
       }),
   }),
   conversationRefWireFieldsSchema.extend({

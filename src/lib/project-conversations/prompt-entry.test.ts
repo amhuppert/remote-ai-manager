@@ -424,7 +424,11 @@ describe("executeProjectPromptStream", () => {
   // lookup, which failed with `Session "__project__" not found` — a public SSE
   // error message naming the internal sentinel (R1.2, R1.3).
   describe("/collab refusal at the project boundary", () => {
-    const collabPrompts = ["/collab redesign the sidebar", "/collab", "  /collab "];
+    const collabPrompts = [
+      "/collab redesign the sidebar",
+      "/collab",
+      "  /collab ",
+    ];
 
     for (const promptText of collabPrompts) {
       it(`refuses ${JSON.stringify(promptText)} before any delegation`, async () => {
