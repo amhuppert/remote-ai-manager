@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,19 +8,35 @@ import { describe, expect, it } from "vitest";
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
 import SpecDetailViews, { type DetailView } from "./SpecDetailViews";
 
+/**
+ * Stands in for the address bar that owns the active surface in production, so
+ * these tests exercise tab and back-control selection without a router.
+ */
+function AddressBarHarness({
+  initialView,
+}: {
+  initialView: DetailView;
+}): React.JSX.Element {
+  const [view, setView] = useState(initialView);
+  return (
+    <SpecDetailViews
+      detail={specControlsDetailFixture()}
+      projectName="command-center"
+      view={view}
+      onViewChange={setView}
+    >
+      <div>Overview document</div>
+    </SpecDetailViews>
+  );
+}
+
 function renderDetailViews(initialView: DetailView = "overview"): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <SpecDetailViews
-        detail={specControlsDetailFixture()}
-        projectName="command-center"
-        initialView={initialView}
-      >
-        <div>Overview document</div>
-      </SpecDetailViews>
+      <AddressBarHarness initialView={initialView} />
     </QueryClientProvider>,
   );
 }
@@ -127,16 +144,18 @@ describe("SpecDetailViews", () => {
     expect(screen.getByText("Overview document")).toBeVisible();
   });
 
-  it("opens an inspected trace node in the overview document", async () => {
+  it("deep-links an inspected trace node to its element", async () => {
     const user = userEvent.setup();
     renderDetailViews("traceability");
 
     await user.click(
       screen.getByRole("button", { name: "Select requirement R1" }),
     );
-    await user.click(screen.getByRole("link", { name: "Open R1" }));
 
-    expect(screen.getByText("Overview document")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open R1" })).toHaveAttribute(
+      "href",
+      "/specs/command-center/native-sdd?el=R1",
+    );
   });
 
   it("lets the controls workflow own its heading without a generic wrapper", () => {

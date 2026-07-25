@@ -720,11 +720,9 @@ export function SpecLintPanel({
 export function TraceabilityGraph({
   input,
   showHeading = true,
-  onOpenElement,
 }: {
   input: TraceabilityInput;
   showHeading?: boolean;
-  onOpenElement?: (handle: string) => void;
 }): React.JSX.Element {
   const [focus, setFocus] = useState<string>("all");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -784,7 +782,6 @@ export function TraceabilityGraph({
       handle,
       slug: input.slug,
     });
-    onOpenElement?.(handle);
   }
 
   return (

@@ -300,7 +300,8 @@ describe("Spec detail questions and assumptions rail", () => {
           detail={detail}
           projectName="command-center"
           requestedSlug="native-sdd"
-          initialView="overview"
+          view="overview"
+          onViewChange={() => undefined}
         />
       </QueryClientProvider>,
     );

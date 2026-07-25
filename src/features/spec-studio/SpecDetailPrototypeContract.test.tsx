@@ -109,7 +109,8 @@ function renderPrototypeDetail(): void {
       detail={prototypeDetailFixture()}
       projectName="command-center"
       requestedSlug="native-sdd"
-      initialView="overview"
+      view="overview"
+      onViewChange={() => undefined}
     />,
   );
 }
