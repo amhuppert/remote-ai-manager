@@ -508,6 +508,43 @@ describe("project cockpit: concurrent conversation turns", () => {
     await stream.push(DONE_FRAME);
     await stream.close();
   });
+
+  it("keeps each conversation's optimistic prompt on its own transcript (R3.1, R3.2)", async () => {
+    const held = deferredResponse();
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) => {
+        if (!url.endsWith("/prompt")) return null;
+        return url.includes("/conversations/c1/prompt")
+          ? held.promise
+          : Promise.resolve(sseResponse([DONE_FRAME]));
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1", "c2"])}>
+        <PageHarness
+          openConversations={[makeConversation("c1"), makeConversation("c2")]}
+        />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    selectTab("c1");
+    await typeAndSend("first prompt");
+    await waitFor(() => expect(userText("c1")).toEqual(["first prompt"]));
+    expect(userText("c2")).toEqual([]);
+
+    // The prompt a user submits is attributed to the conversation they aimed it
+    // at, so a second submission neither lands on the first conversation's
+    // transcript nor displaces the prompt of the turn still running there.
+    selectTab("c2");
+    await typeAndSend("second prompt");
+    await waitFor(() => expect(userText("c2")).toEqual(["second prompt"]));
+    expect(userText("c1")).toEqual(["first prompt"]);
+
+    held.resolve(sseResponse([DONE_FRAME]));
+  });
 });
 
 /**
