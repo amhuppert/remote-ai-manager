@@ -29,7 +29,7 @@ import {
   type CriterionProofView,
   type TraceabilityInput,
 } from "./SpecEvidenceLintTrace";
-import SpecControlsPanel from "./SpecControls";
+import SpecControlsPanel, { SpecIntegrityPanel } from "./SpecControls";
 import SpecHistoryPanel from "./SpecHistoryPanel";
 import SpecQuestionsAssumptionsPanel from "./SpecQuestionsAssumptions";
 
@@ -40,6 +40,7 @@ export type DetailView =
   | "lint"
   | "traceability"
   | "questions"
+  | "integrity"
   | "controls";
 
 interface CriterionDescriptor {
@@ -194,6 +195,9 @@ export default function SpecDetailViews({
             projectName={projectName}
           />
         )}
+        {view === "integrity" && (
+          <SpecIntegrityPanel detail={detail} projectName={projectName} />
+        )}
       </section>
     );
   }
@@ -339,25 +343,31 @@ export function initialDetailViewForDeepLink(
   }
 }
 
-function isFocusedView(view: DetailView): view is "lint" | "questions" {
-  return view === "lint" || view === "questions";
+type FocusedView = "lint" | "questions" | "integrity";
+
+function isFocusedView(view: DetailView): view is FocusedView {
+  return view === "lint" || view === "questions" || view === "integrity";
 }
 
-function focusedViewTitle(view: "lint" | "questions"): string {
+function focusedViewTitle(view: FocusedView): string {
   switch (view) {
     case "lint":
       return "Deterministic lint";
     case "questions":
       return "Questions and assumptions";
+    case "integrity":
+      return "Spec integrity";
   }
 }
 
-function focusedViewDescription(view: "lint" | "questions"): string {
+function focusedViewDescription(view: FocusedView): string {
   switch (view) {
     case "lint":
       return "Inspect the exact findings that gate proposal and sign-off.";
     case "questions":
       return "Resolve the human decisions that keep the contract explicit.";
+    case "integrity":
+      return "Approved revisions are re-hashed and compared against the immutable hashes recorded at approval.";
   }
 }
 

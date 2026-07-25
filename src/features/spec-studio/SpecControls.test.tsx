@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import type {
   SpecRevisionSnapshot,
@@ -15,6 +18,7 @@ import {
   PolicyAdmissionNotices,
   PolicyDialog,
   RenameSpecDialog,
+  SpecIntegrityPanel,
 } from "./SpecControls";
 import {
   denseSpecControlsDetailFixture as denseExecutionFixture,
@@ -1158,5 +1162,64 @@ describe("IntegrityBanner", () => {
     expect(banner).toHaveTextContent("Integrity mismatch");
     expect(banner).toHaveTextContent("revision-1");
     expect(banner).toHaveTextContent("requirement-1");
+  });
+});
+
+describe("SpecIntegrityPanel", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  // React remounts every effect once under StrictMode, so a verification whose
+  // result lands after that remount — the normal case over a real network — is
+  // dropped unless the report survives independently of the requesting mount.
+  it("reports a verification that resolves after React's double mount", async () => {
+    const detail = detailFixture();
+    let release = (): void => {};
+    const inFlight = new Promise<void>((resolve) => {
+      release = () => {
+        resolve();
+      };
+    });
+    api.reply(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+      async () => {
+        await inFlight;
+        return {
+          json: {
+            ok: true,
+            checkedRevisionIds: ["revision-1"],
+            mismatches: [],
+          },
+        };
+      },
+    );
+
+    renderWithQuery(
+      <StrictMode>
+        <SpecIntegrityPanel detail={detail} projectName="command-center" />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(
+        api.requestsTo(
+          "POST",
+          `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+        ).length,
+      ).toBeGreaterThan(0);
+    });
+    release();
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Integrity intact",
+    );
   });
 });

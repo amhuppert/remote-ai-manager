@@ -166,4 +166,13 @@ describe("SpecDetailViews", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Gate policy" })).toBeVisible();
   });
+
+  it("gives spec integrity a focused surface separate from gate policy", () => {
+    renderDetailViews("integrity");
+
+    expect(
+      screen.getByRole("heading", { name: "Spec integrity" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Gate policy" })).toBeNull();
+  });
 });

@@ -792,7 +792,7 @@ describe("Spec Studio routes and inventory", () => {
     );
     expect(screen.getByRole("link", { name: "Verify" })).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=controls#spec-integrity",
+      "/specs/command-center/native-sdd?view=integrity",
     );
     expect(screen.getByRole("link", { name: "Gate policy" })).toHaveAttribute(
       "href",
@@ -924,6 +924,81 @@ describe("Spec Studio routes and inventory", () => {
 
     expect(
       await screen.findByRole("heading", { name: "Gate policy" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lands the header Verify action on integrity rather than the gate policy surface", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState({}, "", "/specs/command-center/native-sdd");
+    api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
+    api.json("POST", "/api/specs/command-center/native-sdd/actions/verify", {
+      ok: true,
+      checkedRevisionIds: [detailRevision.id],
+      mismatches: [],
+    });
+
+    const queryClient = createTestQueryClient();
+    const detailView = renderWithQuery(<SpecDetailPage />, queryClient);
+
+    const verify = await screen.findByRole("link", { name: "Verify" });
+    expect(verify).toHaveAttribute(
+      "href",
+      "/specs/command-center/native-sdd?view=integrity",
+    );
+
+    act(() => {
+      window.history.pushState(
+        {},
+        "",
+        "/specs/command-center/native-sdd?view=integrity",
+      );
+    });
+    detailView.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SpecDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Spec integrity" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Integrity intact")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Gate policy" })).toBeNull();
+  });
+
+  it("keeps the review surface reachable while an execution runs against a proposed revision", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState({}, "", "/specs/command-center/native-sdd");
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd",
+      reviewDetailPayload(),
+    );
+
+    const queryClient = createTestQueryClient();
+    const detailView = renderWithQuery(<SpecDetailPage />, queryClient);
+
+    expect(
+      await screen.findByRole("link", { name: "Review revision" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=review");
+
+    act(() => {
+      window.history.pushState(
+        {},
+        "",
+        "/specs/command-center/native-sdd?view=review",
+      );
+    });
+    detailView.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SpecDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Review plan-stage revision 4",
+      }),
     ).toBeInTheDocument();
   });
 

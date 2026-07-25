@@ -270,12 +270,19 @@ export function SpecDetailContent({
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const controlsHref = `${detailHref}?view=controls`;
+  const reviewHref = `${detailHref}?view=review`;
   const primaryActionHref =
     statePresentation.view === null
       ? null
       : statePresentation.view === "review"
-        ? `${detailHref}?view=review`
+        ? reviewHref
         : `${detailHref}?view=${statePresentation.view}`;
+  // An execution running over a proposed revision projects as `executing` with
+  // an `in_review` authoring facet, so the state-driven primary action points at
+  // evidence and would otherwise leave review mode with no entry point at all.
+  const showSecondaryReviewLink =
+    statePresentation.view !== "review" &&
+    detail.status.phase.authoringFacet === "in_review";
   const lintQuery = useSpecLintQuery(projectName, detail.spec.slug);
   const specReferenceAttrs: SpecMentionAttrs = {
     projectName,
@@ -334,12 +341,21 @@ export function SpecDetailContent({
                   Export
                 </a>
                 <Link
-                  href={`${controlsHref}#spec-integrity`}
+                  href={`${detailHref}?view=integrity`}
                   title="Verify approved revision integrity"
                   className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
                 >
                   Verify
                 </Link>
+                {showSecondaryReviewLink && (
+                  <Link
+                    href={reviewHref}
+                    title="Review the proposed revision"
+                    className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                  >
+                    Review revision
+                  </Link>
+                )}
                 <Link
                   href={`${controlsHref}#gate-policy`}
                   className="inline-flex h-[28px] items-center rounded-sm border border-solid border-border-default bg-bg-raised px-md font-mono text-[0.72rem] font-medium text-text-secondary no-underline transition-colors hover:border-border-strong hover:bg-bg-elevated hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
@@ -912,6 +928,7 @@ function resolveRequestedDetailView(
     rawView === "evidence" ||
     rawView === "lint" ||
     rawView === "questions" ||
+    rawView === "integrity" ||
     rawView === "controls"
   ) {
     return rawView;

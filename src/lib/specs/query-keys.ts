@@ -32,6 +32,8 @@ export const specKeys = {
     ] as const,
   lint: (projectName: string, slug: string) =>
     [...specKeys.detail(projectName, slug), "lint"] as const,
+  integrity: (projectName: string, slug: string) =>
+    [...specKeys.detail(projectName, slug), "integrity"] as const,
   search: (projectName: string, slug: string, query: string) =>
     [...specKeys.detail(projectName, slug), "search", query] as const,
 } as const;
