@@ -14,6 +14,7 @@ import {
 } from "@/lib/conversations/schemas";
 import {
   useSubmitPrompt,
+  useReceiveStreamContent,
   useCompletePrompt,
 } from "@/stores/session-detail.store";
 import type {
@@ -187,9 +188,57 @@ export interface ProjectPromptError {
 
 export interface UseSendProjectPromptResult {
   send(input: SendProjectPromptInput): Promise<void>;
+  /**
+   * Turn state is read per conversation, so a turn in one project conversation
+   * never renders on another's tab. `null` reads the create-and-send turn,
+   * which has no conversation id to key on until the foundation creates one.
+   */
+  isSending(conversationId: string | null): boolean;
+  errorFor(conversationId: string | null): ProjectPromptError | null;
+  clearError(conversationId: string | null): void;
+}
+
+/** Busy flag and error envelope for one target's turn. */
+interface ProjectTurnState {
   sending: boolean;
   error: ProjectPromptError | null;
-  clearError(): void;
+}
+
+const IDLE_TURN: ProjectTurnState = { sending: false, error: null };
+
+interface ProjectTurnStates {
+  /**
+   * The create-and-send turn. It has no conversation id to key on, so its
+   * state waits here; adopting it into `byConversation` once the foundation
+   * reports the conversation it created is the provisional-identity work
+   * (R3.4–R3.8), which this keyed store is shaped to receive.
+   */
+  create: ProjectTurnState;
+  byConversation: Readonly<Record<string, ProjectTurnState>>;
+}
+
+const NO_TURNS: ProjectTurnStates = { create: IDLE_TURN, byConversation: {} };
+
+function readTurn(
+  turns: ProjectTurnStates,
+  conversationId: string | null,
+): ProjectTurnState {
+  if (conversationId === null) return turns.create;
+  return turns.byConversation[conversationId] ?? IDLE_TURN;
+}
+
+function buildUserContent(
+  text: string,
+  images: ImagePayload[] | undefined,
+): MessageContentBlock[] {
+  return [
+    ...(text.trim() ? [{ type: "text" as const, text: text.trim() }] : []),
+    ...(images ?? []).map((img) => ({
+      type: "image" as const,
+      mediaType: img.mediaType,
+      base64Data: img.base64Data,
+    })),
+  ];
 }
 
 /**
@@ -201,45 +250,79 @@ export interface UseSendProjectPromptResult {
  * and the global SSE→invalidation path (NotificationListener handles
  * `scope:"project"` events). Prompt errors (busy / backend-mismatch / validation) are
  * surfaced through the error envelope without redefining the foundation's codes.
+ *
+ * Every piece of turn state — the in-flight guard, the busy flag, the error,
+ * and the optimistic/streamed messages mirrored into the keyed in-flight store —
+ * is per conversation. The foundation's busy check is already per conversation,
+ * so a project-wide guard would discard a prompt aimed at an idle conversation
+ * with no error at all, and project-wide busy/error state would render a turn on
+ * whichever tab happened to be active.
  */
 export function useSendProjectPrompt(
   projectName: string,
 ): UseSendProjectPromptResult {
   const queryClient = useQueryClient();
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<ProjectPromptError | null>(null);
-  const inFlight = useRef(false);
+  const [turns, setTurns] = useState<ProjectTurnStates>(NO_TURNS);
+  // One entry per target with a request in flight; `null` is the create-and-send
+  // turn, which has no conversation id to key on yet.
+  const inFlight = useRef<Set<string | null>>(new Set());
   const submitPrompt = useSubmitPrompt();
+  const receiveStreamContent = useReceiveStreamContent();
   const completePrompt = useCompletePrompt();
 
-  const clearError = useCallback(() => setError(null), []);
+  const patchTurn = useCallback(
+    (conversationId: string | null, patch: Partial<ProjectTurnState>) => {
+      setTurns((prev) =>
+        conversationId === null
+          ? { ...prev, create: { ...prev.create, ...patch } }
+          : {
+              ...prev,
+              byConversation: {
+                ...prev.byConversation,
+                [conversationId]: {
+                  ...readTurn(prev, conversationId),
+                  ...patch,
+                },
+              },
+            },
+      );
+    },
+    [],
+  );
+
+  const isSending = useCallback(
+    (conversationId: string | null) => readTurn(turns, conversationId).sending,
+    [turns],
+  );
+  const errorFor = useCallback(
+    (conversationId: string | null) => readTurn(turns, conversationId).error,
+    [turns],
+  );
+  const clearError = useCallback(
+    (conversationId: string | null) =>
+      patchTurn(conversationId, { error: null }),
+    [patchTurn],
+  );
 
   const send = useCallback(
     async (input: SendProjectPromptInput): Promise<void> => {
-      if (inFlight.current) return;
-      inFlight.current = true;
-      setSending(true);
-      setError(null);
-
       const { conversationId } = input;
+      // Guarded per target, not project-wide: the foundation's busy check is
+      // already per conversation, so a shared guard would drop a prompt aimed
+      // at an idle conversation without reporting anything to the user.
+      if (inFlight.current.has(conversationId)) return;
+      inFlight.current.add(conversationId);
+      patchTurn(conversationId, { sending: true, error: null });
+
+      const userContent = buildUserContent(input.text, input.images);
       // Mark the target conversation's keyed in-flight state so its transcript
-      // surfaces (typing indicator) react to this send. The create-and-send
-      // path has no conversation id yet — the first-run view has no transcript
-      // to indicate on, so it rides the local `sending` flag alone.
+      // surfaces (typing indicator, optimistic prompt) react to this send. The
+      // create-and-send path has no conversation id yet — the first-run view
+      // has no transcript to indicate on, so it rides the create slot alone.
       if (conversationId !== null) {
         const cached = queryClient.getQueryData(
           projectConversationKeys.messages(projectName, conversationId),
         );
-        const userContent: MessageContentBlock[] = [
-          ...(input.text.trim()
-            ? [{ type: "text" as const, text: input.text.trim() }]
-            : []),
-          ...(input.images ?? []).map((img) => ({
-            type: "image" as const,
-            mediaType: img.mediaType,
-            base64Data: img.base64Data,
-          })),
-        ];
         submitPrompt(
           conversationId,
           userContent,
@@ -270,26 +353,53 @@ export function useSendProjectPrompt(
             error?: string;
             code?: string;
           } | null;
-          setError({
-            message: errBody?.error ?? `Prompt failed (${res.status})`,
-            ...(errBody?.code !== undefined ? { code: errBody.code } : {}),
+          patchTurn(conversationId, {
+            error: {
+              message: errBody?.error ?? `Prompt failed (${res.status})`,
+              ...(errBody?.code !== undefined ? { code: errBody.code } : {}),
+            },
           });
           return;
         }
 
+        const streamBlocks: MessageContentBlock[] = [];
         await consumePromptStream(res.body, (event) => {
-          if (event.type === "error") {
-            setError({
-              message: event.message ?? "Prompt failed",
-              ...(event.code !== undefined ? { code: event.code } : {}),
-            });
+          switch (event.type) {
+            case "content": {
+              streamBlocks.push(event.block);
+              // Streamed output belongs to the conversation that asked for it,
+              // so it is mirrored onto that conversation's keyed transcript
+              // state rather than onto whichever tab is active.
+              if (conversationId !== null) {
+                receiveStreamContent(conversationId, userContent, [
+                  ...streamBlocks,
+                ]);
+              }
+              break;
+            }
+            case "error":
+              patchTurn(conversationId, {
+                error: {
+                  message: event.message ?? "Prompt failed",
+                  ...(event.code !== undefined ? { code: event.code } : {}),
+                },
+              });
+              break;
+            // Project conversations answer questions through the durable
+            // pending-question record, not this per-request stream.
+            case "ask-question":
+            case "aborted":
+            case "done":
+              break;
           }
         });
       } catch {
-        setError({ message: "Failed to send prompt" });
+        patchTurn(conversationId, {
+          error: { message: "Failed to send prompt" },
+        });
       } finally {
-        inFlight.current = false;
-        setSending(false);
+        inFlight.current.delete(conversationId);
+        patchTurn(conversationId, { sending: false });
         if (conversationId !== null) completePrompt(conversationId);
         invalidateProjectLifecycle(queryClient, projectName);
         if (conversationId !== null) {
@@ -302,8 +412,15 @@ export function useSendProjectPrompt(
         }
       }
     },
-    [projectName, queryClient, submitPrompt, completePrompt],
+    [
+      projectName,
+      queryClient,
+      patchTurn,
+      submitPrompt,
+      receiveStreamContent,
+      completePrompt,
+    ],
   );
 
-  return { send, sending, error, clearError };
+  return { send, isSending, errorFor, clearError };
 }

@@ -326,6 +326,11 @@ export default function ProjectCockpit({
     [closeConversation],
   );
 
+  const clearPromptError = sender.clearError;
+  const handleDismissError = useCallback(() => {
+    clearPromptError(activeTabId);
+  }, [clearPromptError, activeTabId]);
+
   const transcript = activeTabId ? (
     <ProjectTranscriptHost
       projectName={projectName}
@@ -349,9 +354,9 @@ export default function ProjectCockpit({
       onTokensChange={onTokensChange}
       sessions={sessions}
       archivedCount={archivedCount}
-      busy={sender.sending}
-      error={sender.error}
-      onDismissError={sender.clearError}
+      busy={sender.isSending(activeTabId)}
+      error={sender.errorFor(activeTabId)}
+      onDismissError={handleDismissError}
       lastUsedModelId={lastUserTurnAgentSettings.modelId}
       lastUsedEffort={lastUserTurnAgentSettings.effort}
       onRunCommand={onRunCommand}

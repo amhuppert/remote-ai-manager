@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
 import {
   useCreateProjectConversation,
   useCloseProjectConversation,
@@ -345,8 +346,8 @@ describe("useSendProjectPrompt", () => {
     expect(url).toBe("/api/projects/proj/prompt");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(init?.body as string)).toMatchObject({ prompt: "hello" });
-    expect(result.current.sending).toBe(false);
-    expect(result.current.error).toBeNull();
+    expect(result.current.isSending(null)).toBe(false);
+    expect(result.current.errorFor(null)).toBeNull();
   });
 
   it("posts to the per-conversation prompt route when a conversation id is provided", async () => {
@@ -386,7 +387,7 @@ describe("useSendProjectPrompt", () => {
     await act(async () => {
       await result.current.send({ conversationId: "c1", text: "go" });
     });
-    expect(result.current.error).toEqual({
+    expect(result.current.errorFor("c1")).toEqual({
       message: "Backend is locked",
       code: "BACKEND_MISMATCH",
     });
@@ -402,6 +403,178 @@ describe("useSendProjectPrompt", () => {
     await act(async () => {
       await result.current.send({ conversationId: "c1", text: "go" });
     });
-    expect(result.current.error?.message).toBe("Conversation is busy");
+    expect(result.current.errorFor("c1")?.message).toBe("Conversation is busy");
+  });
+});
+
+/**
+ * Start an async action inside `act` without awaiting it, so the test can
+ * assert on the in-flight state and settle the action later.
+ */
+function startPending(action: () => Promise<void>): Promise<void> {
+  const started: Promise<void>[] = [];
+  act(() => {
+    started.push(action());
+  });
+  const pending = started[0];
+  if (pending === undefined) throw new Error("action did not start");
+  return pending;
+}
+
+describe("useSendProjectPrompt: turn state keyed by conversation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    useSessionDetailStore.getState().resetStore();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useSessionDetailStore.getState().resetStore();
+  });
+
+  const doneStream = () => sseResponse(["event: done\ndata: {}\n\n"]);
+
+  /** Holds `c1`'s turn open until the test resolves it; `c2` settles at once. */
+  function streamingFirstConversation() {
+    const held = deferredResponse();
+    fetchSpy.mockImplementation((input) =>
+      String(input).includes("/conversations/c1/prompt")
+        ? held.promise
+        : Promise.resolve(doneStream()),
+    );
+    return held;
+  }
+
+  it("starts a turn in a second conversation while the first is still streaming (R3.1)", async () => {
+    const held = streamingFirstConversation();
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+
+    const firstSend = startPending(() =>
+      result.current.send({ conversationId: "c1", text: "one" }),
+    );
+    await act(async () => {
+      await result.current.send({ conversationId: "c2", text: "two" });
+    });
+
+    expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toContain(
+      "/api/projects/proj/conversations/c2/prompt",
+    );
+
+    await act(async () => {
+      held.resolve(doneStream());
+      await firstSend;
+    });
+  });
+
+  it("still ignores a duplicate send into a conversation whose own turn is in flight", async () => {
+    const held = streamingFirstConversation();
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+
+    const firstSend = startPending(() =>
+      result.current.send({ conversationId: "c1", text: "one" }),
+    );
+    await act(async () => {
+      await result.current.send({ conversationId: "c1", text: "again" });
+    });
+
+    expect(
+      fetchSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("/conversations/c1/prompt"),
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      held.resolve(doneStream());
+      await firstSend;
+    });
+  });
+
+  it("reports busy only for the conversation whose turn is running (R3.2)", async () => {
+    const held = streamingFirstConversation();
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+
+    const firstSend = startPending(() =>
+      result.current.send({ conversationId: "c1", text: "one" }),
+    );
+    await waitFor(() => expect(result.current.isSending("c1")).toBe(true));
+    expect(result.current.isSending("c2")).toBe(false);
+    expect(result.current.isSending(null)).toBe(false);
+
+    await act(async () => {
+      held.resolve(doneStream());
+      await firstSend;
+    });
+    await waitFor(() => expect(result.current.isSending("c1")).toBe(false));
+  });
+
+  it("keeps a failed turn's error on its own conversation, and clears only that one (R3.2)", async () => {
+    fetchSpy.mockImplementation((input) =>
+      Promise.resolve(
+        String(input).includes("/conversations/c1/prompt")
+          ? jsonResponse({ error: "Conversation is busy" }, 409)
+          : doneStream(),
+      ),
+    );
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+
+    await act(async () => {
+      await result.current.send({ conversationId: "c1", text: "one" });
+    });
+    await act(async () => {
+      await result.current.send({ conversationId: "c2", text: "two" });
+    });
+
+    // A later successful turn elsewhere must not wipe the failure the user
+    // still has to read on `c1`.
+    expect(result.current.errorFor("c1")?.message).toBe("Conversation is busy");
+    expect(result.current.errorFor("c2")).toBeNull();
+
+    await act(async () => {
+      result.current.clearError("c2");
+    });
+    expect(result.current.errorFor("c1")?.message).toBe("Conversation is busy");
+
+    await act(async () => {
+      result.current.clearError("c1");
+    });
+    expect(result.current.errorFor("c1")).toBeNull();
+  });
+
+  it("mirrors streamed content onto the conversation that asked for it (R3.2)", async () => {
+    fetchSpy.mockImplementation((input) =>
+      Promise.resolve(
+        String(input).includes("/conversations/c1/prompt")
+          ? sseResponse([
+              'event: content\ndata: {"type":"text","text":"partial answer"}\n\n',
+              "event: done\ndata: {}\n\n",
+            ])
+          : doneStream(),
+      ),
+    );
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+
+    await act(async () => {
+      await result.current.send({ conversationId: "c1", text: "one" });
+    });
+
+    const assistantTextFor = (id: string) =>
+      (useSessionDetailStore.getState().inFlight[id]?.optimisticMessages ?? [])
+        .filter((m) => m.role === "assistant")
+        .flatMap((m) =>
+          m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])),
+        );
+    expect(assistantTextFor("c1")).toEqual(["partial answer"]);
+    expect(assistantTextFor("c2")).toEqual([]);
   });
 });
