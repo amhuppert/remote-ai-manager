@@ -52,6 +52,7 @@ function buildMaximalProjectConversation(): ConversationState {
     archived: true,
     open: false,
     spawnedSessionIds: ["spawned-session-1", "spawned-session-2"],
+    creationRequestId: "create-request-9f3c",
     totalCostUsd: 12.34,
     totalDurationMs: 56_789,
     totalTurns: 11,

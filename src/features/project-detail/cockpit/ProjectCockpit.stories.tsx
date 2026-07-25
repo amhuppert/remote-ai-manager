@@ -122,6 +122,10 @@ function Harness() {
       <ProjectCockpit
         projectName={PROJECT}
         openConversations={openConversations}
+        conversationCreations={openConversations.map((c) => ({
+          conversationId: c.id,
+          creationRequestId: null,
+        }))}
         sessions={sessions}
         archivedCount={4}
         tokens={tokens}

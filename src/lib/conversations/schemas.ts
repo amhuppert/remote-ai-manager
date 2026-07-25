@@ -231,6 +231,15 @@ export const conversationStateSchema = z.object({
   // conversations never carry it, and the project-conversations repo provides
   // an explicit `[]` on decode so a populated/legacy PLC always reads an array.
   spawnedSessionIds: z.array(z.string()).optional(),
+  // Opaque token the client generated for the create-and-send submission this
+  // conversation was created for. Creation provenance, and the only evidence
+  // tying a conversation to the request that caused it: the conversation list
+  // says which conversations exist, never which submission created one, so a
+  // client whose prompt stream has not delivered the id can recognise its own
+  // conversation here instead of guessing which unaccounted-for conversation is
+  // its. Optional+PLC-only (like `open`): only the project create-and-send entry
+  // creates a conversation the requesting client cannot yet name.
+  creationRequestId: z.string().optional(),
   totalCostUsd: z.number().nullable().default(null),
   totalDurationMs: z.number().nullable().default(null),
   totalTurns: z.number().nullable().default(null),

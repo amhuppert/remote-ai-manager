@@ -1122,6 +1122,7 @@ const SCHEMA_DDL = `
     pending_queue         TEXT,
     last_seen_alignment_version INTEGER,
     pending_agent_notices TEXT,
+    creation_request_id   TEXT,
     FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
   );
 
@@ -1584,6 +1585,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   {
     table: "project_conversations",
     column: "pending_agent_notices",
+    type: "TEXT",
+  },
+  {
+    table: "project_conversations",
+    column: "creation_request_id",
     type: "TEXT",
   },
   {

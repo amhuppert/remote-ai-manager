@@ -73,3 +73,23 @@ locality); domain terms name the concepts the code is about.
   addressed by `project → session → conversation`.
 - **Project conversation** — a session-less, project-scoped conversation;
   addressed by `project → conversation`.
+- **Provisional conversation key** — the client-side slot a create-and-send
+  submission allocates for itself before the server names the conversation it
+  creates. Every piece of that turn's state is attributed to the key, so two
+  concurrent creations can never reach each other's turn.
+- **Creation request id** — the opaque token a create-and-send submission
+  generates for itself and sends with its request. The project conversation it
+  creates records the token, so the conversation carries the provenance of the
+  submission that caused it. Persisted on project conversations only; no other
+  creation path needs it, because every other path hands the conversation
+  straight back to its caller.
+- **Adoption** — moving a turn's state from its provisional key onto the
+  conversation the server named for it, and releasing the provisional key. The
+  name arrives from either the turn's own prompt request stream or the project
+  conversation list; whichever arrives first adopts, and the other is a no-op.
+  Both sources are causal: the stream frame arrives on the very request that
+  created the conversation, and a listed conversation names a turn by recording
+  that turn's creation request id. List membership alone never names a turn — an
+  id is equally new to a client whether it was created for a pending submission,
+  created by another tab, reopened after being closed, or simply absent from a
+  first fetch that had not resolved.

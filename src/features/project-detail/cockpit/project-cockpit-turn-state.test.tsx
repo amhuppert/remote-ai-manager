@@ -19,6 +19,7 @@ import ProjectCockpit from "./ProjectCockpit";
 import { _useCockpitViewStore } from "./use-cockpit-view-state";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
+import type { ProjectConversationCreation } from "@/lib/project-conversations-client/mutations";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -29,6 +30,12 @@ vi.mock(
   "next/link",
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
+
+/** A closed conversation the list reports, recording no creating submission. */
+const CREATED_BY_NOBODY_CLOSED: ProjectConversationCreation = {
+  conversationId: "c-closed",
+  creationRequestId: null,
+};
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
@@ -175,6 +182,8 @@ function scriptedStream(): {
 const DONE_FRAME = "event: done\ndata: {}\n\n";
 const textFrame = (text: string) =>
   `event: content\ndata: {"type":"text","text":"${text}"}\n\n`;
+const conversationFrame = (id: string) =>
+  `event: conversation\ndata: {"conversationId":"${id}"}\n\n`;
 
 /** The assistant text the transcript row renderer would read for a tab. */
 function assistantText(conversationId: string): string[] {
@@ -190,16 +199,43 @@ function assistantText(conversationId: string): string[] {
   );
 }
 
+/** The optimistic user prompt the transcript row renderer would read for a tab. */
+function userText(conversationId: string): string[] {
+  return (
+    useSessionDetailStore
+      .getState()
+      .inFlight[conversationId]?.optimisticMessages.filter(
+        (m) => m.role === "user",
+      )
+      .flatMap((m) =>
+        m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])),
+      ) ?? []
+  );
+}
+
 /** Fetch stub: prompt POSTs are routed per test; everything else is inert. */
 function promptFetch(
-  route: (url: string) => Promise<Response> | null,
+  route: (url: string, init?: RequestInit) => Promise<Response> | null,
 ): typeof fetch {
-  return (async (input: RequestInfo | URL) => {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    const routed = route(url);
+    const routed = route(url, init);
     if (routed) return routed;
     return jsonResponse({ available: false });
   }) as typeof fetch;
+}
+
+/** The submission token a create-and-send request body carries. */
+function creationRequestIdOf(init?: RequestInit): string {
+  const parsed: unknown = JSON.parse(String(init?.body ?? "null"));
+  const token =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as { creationRequestId?: unknown }).creationRequestId
+      : undefined;
+  if (typeof token !== "string" || token === "") {
+    throw new Error("create-and-send request carried no creationRequestId");
+  }
+  return token;
 }
 
 function seededClient(conversationIds: string[]): QueryClient {
@@ -214,13 +250,25 @@ function seededClient(conversationIds: string[]): QueryClient {
 
 function PageHarness({
   openConversations,
+  // Defaults to the open conversations, each recording no creating submission —
+  // the ordinary case for conversations that already existed. Tests about the
+  // create-and-send id source pass the creations explicitly.
+  conversationCreations,
 }: {
   openConversations: ConversationState[];
+  conversationCreations?: ProjectConversationCreation[];
 }) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);
   const [backend, setBackend] = useState<AgentBackendId>("claude");
   return (
     <ProjectCockpit
+      conversationCreations={
+        conversationCreations ??
+        openConversations.map((c) => ({
+          conversationId: c.id,
+          creationRequestId: null,
+        }))
+      }
       projectName="proj"
       sessions={[runningSession]}
       archivedCount={0}
@@ -459,5 +507,269 @@ describe("project cockpit: concurrent conversation turns", () => {
 
     await stream.push(DONE_FRAME);
     await stream.close();
+  });
+});
+
+/**
+ * The create-and-send path through the real cockpit: with no tab to report on,
+ * a submission's turn state lives under the provisional key it allocated, and
+ * moves onto the conversation the server names for it (R3.4, R3.7, R3.8).
+ */
+describe("project cockpit: create-and-send provisional identity", () => {
+  it("carries the turn from its provisional key onto the conversation the server names (R3.4, R3.7)", async () => {
+    const stream = scriptedStream();
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) => {
+        if (!url.endsWith("/prompt")) return null;
+        calls.push(url);
+        return Promise.resolve(stream.response);
+      }),
+    );
+
+    const client = seededClient(["c9"]);
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <PageHarness openConversations={[]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    await typeAndSend("start a new chat");
+    await waitFor(() => expect(calls).toEqual(["/api/projects/proj/prompt"]));
+    // There is no tab yet, so the only thing this turn can be attributed to is
+    // the key its submission allocated — and the composer reports from there.
+    await waitFor(() => expect(composerBusy()).toBe(true));
+
+    await stream.push(conversationFrame("c9"));
+    await stream.push(textFrame("streamed reply"));
+
+    // The turn moved onto the conversation named for it: the prompt the user
+    // submitted and the reply streamed so far are on that conversation's
+    // transcript, and the composer never stopped reporting the running turn.
+    await waitFor(() =>
+      expect(assistantText("c9")).toEqual(["streamed reply"]),
+    );
+    expect(userText("c9")).toEqual(["start a new chat"]);
+    expect(composerBusy()).toBe(true);
+
+    // The list catches up and the conversation gets its tab.
+    rerender(
+      <QueryClientProvider client={client}>
+        <PageHarness openConversations={[makeConversation("c9")]} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      const tabs = screen.getByRole("tablist", { name: "Conversations" });
+      expect(within(tabs).getByRole("tab", { name: /c9/ })).toBeTruthy();
+    });
+    expect(composerBusy()).toBe(true);
+
+    await stream.push(DONE_FRAME);
+    await stream.close();
+    await waitFor(() => expect(composerBusy()).toBe(false));
+  });
+
+  it("carries the turn onto the conversation the list reports for its submission, with no stream frame (R3.5, R3.7)", async () => {
+    // The fallback source, through the real cockpit: the `conversation` frame
+    // never arrives, and the list names the turn because the conversation the
+    // server created records this submission's token.
+    const stream = scriptedStream();
+    let sentToken: string | null = null;
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url, init) => {
+        if (!url.endsWith("/proj/prompt")) return null;
+        sentToken = creationRequestIdOf(init);
+        return Promise.resolve(stream.response);
+      }),
+    );
+
+    const client = seededClient(["c-listed"]);
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <PageHarness openConversations={[]} conversationCreations={[]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    await typeAndSend("start a new chat");
+    await waitFor(() => expect(composerBusy()).toBe(true));
+    await stream.push(textFrame("streamed reply"));
+    const token = sentToken;
+    if (token === null) throw new Error("no create-and-send request was made");
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <PageHarness
+          openConversations={[makeConversation("c-listed")]}
+          conversationCreations={[
+            { conversationId: "c-listed", creationRequestId: token },
+          ]}
+        />
+      </QueryClientProvider>,
+    );
+
+    // The turn moved onto its conversation: the tab is there, the prompt and the
+    // reply streamed before the name are on its transcript, and the composer
+    // never stopped reporting the running turn.
+    await waitFor(() =>
+      expect(userText("c-listed")).toEqual(["start a new chat"]),
+    );
+    expect(assistantText("c-listed")).toEqual(["streamed reply"]);
+    const tabs = screen.getByRole("tablist", { name: "Conversations" });
+    expect(within(tabs).getByRole("tab", { name: /c-listed/ })).toBeTruthy();
+    expect(composerBusy()).toBe(true);
+
+    await stream.push(DONE_FRAME);
+    await stream.close();
+    await waitFor(() => expect(composerBusy()).toBe(false));
+  });
+
+  it("does not hand the turn a conversation that was merely reopened while the send is pending (R3.5, R3.6, R3.7)", async () => {
+    // Reopening a closed conversation adds it to the open list without creating
+    // anything, so it records no creating submission — and a conversation that
+    // records none can never name a pending turn, however new it looks to this
+    // client.
+    const stream = scriptedStream();
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) =>
+        url.endsWith("/proj/prompt") ? Promise.resolve(stream.response) : null,
+      ),
+    );
+
+    const client = seededClient(["c-closed", "c-new"]);
+    // `c-closed` exists but is closed: absent from the open list, present in the
+    // project's complete set.
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <PageHarness
+          openConversations={[]}
+          conversationCreations={[CREATED_BY_NOBODY_CLOSED]}
+        />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    await typeAndSend("start a new chat");
+    await waitFor(() => expect(composerBusy()).toBe(true));
+    await stream.push(textFrame("streamed reply"));
+
+    // The user reopens it from the rail while the send is still unnamed.
+    rerender(
+      <QueryClientProvider client={client}>
+        <PageHarness
+          openConversations={[makeConversation("c-closed")]}
+          conversationCreations={[CREATED_BY_NOBODY_CLOSED]}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      const tabs = screen.getByRole("tablist", { name: "Conversations" });
+      expect(within(tabs).getByRole("tab", { name: /c-closed/ })).toBeTruthy();
+    });
+    expect(userText("c-closed")).toEqual([]);
+    expect(assistantText("c-closed")).toEqual([]);
+
+    // The turn's own stream still names the conversation actually created for it.
+    await stream.push(conversationFrame("c-new"));
+    await waitFor(() =>
+      expect(userText("c-new")).toEqual(["start a new chat"]),
+    );
+    expect(assistantText("c-new")).toEqual(["streamed reply"]);
+    expect(userText("c-closed")).toEqual([]);
+
+    await stream.push(DONE_FRAME);
+    await stream.close();
+  });
+
+  it("does not hand the turn a conversation revealed when the list finishes loading (R3.5, R3.6)", async () => {
+    // The cockpit reports `[]` while the conversation list query is pending, so
+    // everything the resolved list then reveals is new to this client. None of it
+    // records this submission, so none of it can name the turn — no baseline
+    // bookkeeping required.
+    const stream = scriptedStream();
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) =>
+        url.endsWith("/proj/prompt") ? Promise.resolve(stream.response) : null,
+      ),
+    );
+
+    const client = seededClient(["c-existing", "c-new"]);
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <PageHarness openConversations={[]} conversationCreations={[]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    await typeAndSend("start a new chat");
+    await waitFor(() => expect(composerBusy()).toBe(true));
+    await stream.push(textFrame("streamed reply"));
+
+    // The list resolves, revealing a conversation that existed all along.
+    rerender(
+      <QueryClientProvider client={client}>
+        <PageHarness
+          openConversations={[makeConversation("c-existing")]}
+          conversationCreations={[
+            { conversationId: "c-existing", creationRequestId: null },
+          ]}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      const tabs = screen.getByRole("tablist", { name: "Conversations" });
+      expect(
+        within(tabs).getByRole("tab", { name: /c-existing/ }),
+      ).toBeTruthy();
+    });
+    expect(userText("c-existing")).toEqual([]);
+    expect(assistantText("c-existing")).toEqual([]);
+
+    // The turn's own stream names the conversation actually created for it.
+    await stream.push(conversationFrame("c-new"));
+    await waitFor(() =>
+      expect(userText("c-new")).toEqual(["start a new chat"]),
+    );
+    expect(assistantText("c-new")).toEqual(["streamed reply"]);
+    expect(userText("c-existing")).toEqual([]);
+
+    await stream.push(DONE_FRAME);
+    await stream.close();
+  });
+
+  it("shows a failure that arrived before any conversation id on the create composer, and dismissing it releases the key (R3.8)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) =>
+        url.endsWith("/proj/prompt")
+          ? Promise.resolve(jsonResponse({ error: "Project is busy" }, 409))
+          : null,
+      ),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient([])}>
+        <PageHarness openConversations={[]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    await typeAndSend("start a new chat");
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Project is busy"),
+    );
+    expect(composerBusy()).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    // The key held nothing but that failure, so dismissing it leaves the
+    // composer with no turn to report at all.
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(composerBusy()).toBe(false);
   });
 });

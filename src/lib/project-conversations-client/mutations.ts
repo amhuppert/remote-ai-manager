@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useMutation,
   useQueryClient,
@@ -16,6 +16,8 @@ import {
   useSubmitPrompt,
   useReceiveStreamContent,
   useCompletePrompt,
+  useReassignInFlight,
+  useDiscardInFlight,
 } from "@/stores/session-detail.store";
 import type {
   ActiveConversation,
@@ -170,9 +172,97 @@ export function useMarkProjectConversationReadMutation(): UseMutationResult<
   );
 }
 
+/** A turn addressed by the conversation it runs in. */
+export interface ConversationTurnKey {
+  readonly kind: "conversation";
+  readonly conversationId: string;
+}
+
+/**
+ * A turn addressed by the slot allocated for it before the server named its
+ * conversation. A create-and-send submission allocates one before issuing its
+ * request, every piece of state that turn produces is attributed to it, and it
+ * is released the moment the turn adopts a real conversation.
+ */
+export interface ProvisionalTurnKey {
+  readonly kind: "provisional";
+  readonly provisionalId: string;
+}
+
+/** Where one turn's client state lives while that turn is addressable. */
+export type ProjectTurnKey = ConversationTurnKey | ProvisionalTurnKey;
+
+/** Where a submission is aimed: an open conversation, or a new one to create. */
+export type ProjectPromptTarget =
+  | ConversationTurnKey
+  | { readonly kind: "create" };
+
+export function conversationTurnKey(
+  conversationId: string,
+): ConversationTurnKey {
+  return { kind: "conversation", conversationId };
+}
+
+/** The id a key's state is stored under, here and in the in-flight store. */
+function turnStorageId(key: ProjectTurnKey): string {
+  return key.kind === "conversation" ? key.conversationId : key.provisionalId;
+}
+
+/**
+ * Random per-page-load prefix for this client's submission tokens. A token must
+ * be unique across every client of the project, not just within this one: it is
+ * matched against conversations the server reports, and two browser tabs sharing
+ * a token would let each adopt the other's conversation.
+ *
+ * `crypto.randomUUID` is unavailable outside a secure context, which a Command
+ * Center reached over plain http from another machine is not, so the fallback is
+ * reachable in normal use. Uniqueness is all that is needed — the token is
+ * correlation, never authorization.
+ */
+const CLIENT_TOKEN_PREFIX = ((): string => {
+  const webCrypto = globalThis.crypto;
+  return typeof webCrypto?.randomUUID === "function"
+    ? webCrypto.randomUUID()
+    : `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+})();
+
+/**
+ * Where a submission's state lives, and — for a create-and-send — the record of
+ * a turn awaiting its conversation, carrying the token the request will send.
+ *
+ * Both counters are monotonic and module-scoped, so two create-and-send
+ * submissions are never handed the same slot or the same token, including across
+ * cockpit mounts. The `provisional:` prefix keeps these ids out of the
+ * conversation-id namespace they share with the in-flight store.
+ */
+let provisionalSequence = 0;
+function allocateTurn(target: ProjectPromptTarget): {
+  key: ProjectTurnKey;
+  unnamedTurn: UnnamedTurn | null;
+} {
+  if (target.kind === "conversation") {
+    return {
+      key: conversationTurnKey(target.conversationId),
+      unnamedTurn: null,
+    };
+  }
+  provisionalSequence += 1;
+  const key: ProvisionalTurnKey = {
+    kind: "provisional",
+    provisionalId: `provisional:${provisionalSequence}`,
+  };
+  return {
+    key,
+    unnamedTurn: {
+      key,
+      creationRequestId: `${CLIENT_TOKEN_PREFIX}-${provisionalSequence}`,
+      adopted: null,
+    },
+  };
+}
+
 export interface SendProjectPromptInput {
-  /** `null` ⇒ create-and-send the first project conversation (PLC-5). */
-  conversationId: string | null;
+  target: ProjectPromptTarget;
   text: string;
   images?: ImagePayload[];
   backend?: AgentBackendId;
@@ -186,19 +276,71 @@ export interface ProjectPromptError {
   code?: string;
 }
 
-export interface UseSendProjectPromptResult {
-  send(input: SendProjectPromptInput): Promise<void>;
+/** What a submission hands back: the key it owns, and when the turn settles. */
+export interface ProjectTurnSubmission {
   /**
-   * Turn state is read per conversation, so a turn in one project conversation
-   * never renders on another's tab. `null` reads the create-and-send turn,
-   * which has no conversation id to key on until the foundation creates one.
+   * The key this turn's state is attributed to. Allocated before the request is
+   * issued, so the caller can address the turn from the moment it submits.
    */
-  isSending(conversationId: string | null): boolean;
-  errorFor(conversationId: string | null): ProjectPromptError | null;
-  clearError(conversationId: string | null): void;
+  readonly key: ProjectTurnKey;
+  /** Resolves when the turn has streamed to completion, failed, or aborted. */
+  readonly settled: Promise<void>;
 }
 
-/** Busy flag and error envelope for one target's turn. */
+export interface UseSendProjectPromptOptions {
+  /**
+   * Called once per create-and-send turn, with the conversation the server
+   * named for it. The cockpit opens that conversation's tab, which is what
+   * makes releasing the provisional key seamless rather than a gap.
+   */
+  onConversationAdopted?(conversationId: string): void;
+}
+
+export interface UseSendProjectPromptResult {
+  send(input: SendProjectPromptInput): ProjectTurnSubmission;
+  /**
+   * Turn state is read per key, so a turn in one project conversation never
+   * renders on another's tab, and an unnamed create-and-send turn renders on
+   * neither. `null` reads no turn at all.
+   */
+  isSending(key: ProjectTurnKey | null): boolean;
+  errorFor(key: ProjectTurnKey | null): ProjectPromptError | null;
+  /**
+   * Dismiss a turn's error. Dismissing the error of a create-and-send turn that
+   * failed before it was ever named releases its key: the failure was the only
+   * thing it still held.
+   */
+  clearError(key: ProjectTurnKey | null): void;
+  /** Provisional keys still holding turn state, in allocation order. */
+  provisionalKeys: readonly ProvisionalTurnKey[];
+  /** The key the create composer reports on: the newest such key. */
+  pendingCreateKey: ProvisionalTurnKey | null;
+  /**
+   * Report the project's conversations with the creation each one records. The
+   * second of the two id sources, and the only one available if a turn's request
+   * stream never delivers its `conversation` frame.
+   *
+   * A conversation names a turn when it records that turn's submission token and
+   * only then. Membership proves nothing on its own — an id is equally new to
+   * this client whether the server created it for a pending submission, another
+   * tab created it, a closed conversation was reopened, or the first fetch just
+   * resolved — so the token is what makes this source causal rather than a guess
+   * at which conversation is unaccounted for.
+   */
+  noticeConversations(creations: readonly ProjectConversationCreation[]): void;
+}
+
+/**
+ * What the conversation list reports about one conversation's creation:
+ * the submission token the server recorded for it, or `null` when it records
+ * none (created by any path other than a create-and-send submission).
+ */
+export interface ProjectConversationCreation {
+  readonly conversationId: string;
+  readonly creationRequestId: string | null;
+}
+
+/** Busy flag and error envelope for one key's turn. */
 interface ProjectTurnState {
   sending: boolean;
   error: ProjectPromptError | null;
@@ -207,24 +349,118 @@ interface ProjectTurnState {
 const IDLE_TURN: ProjectTurnState = { sending: false, error: null };
 
 interface ProjectTurnStates {
-  /**
-   * The create-and-send turn. It has no conversation id to key on, so its
-   * state waits here; adopting it into `byConversation` once the foundation
-   * reports the conversation it created is the provisional-identity work
-   * (R3.4–R3.8), which this keyed store is shaped to receive.
-   */
-  create: ProjectTurnState;
   byConversation: Readonly<Record<string, ProjectTurnState>>;
+  /**
+   * Turns whose conversation the server has not named yet, in allocation order
+   * (the ids are non-numeric, so object key order is insertion order).
+   */
+  byProvisional: Readonly<Record<string, ProjectTurnState>>;
 }
 
-const NO_TURNS: ProjectTurnStates = { create: IDLE_TURN, byConversation: {} };
+const NO_TURNS: ProjectTurnStates = { byConversation: {}, byProvisional: {} };
 
 function readTurn(
   turns: ProjectTurnStates,
-  conversationId: string | null,
+  key: ProjectTurnKey,
 ): ProjectTurnState {
-  if (conversationId === null) return turns.create;
-  return turns.byConversation[conversationId] ?? IDLE_TURN;
+  const state =
+    key.kind === "conversation"
+      ? turns.byConversation[key.conversationId]
+      : turns.byProvisional[key.provisionalId];
+  return state ?? IDLE_TURN;
+}
+
+/** Seed a turn's state at submission time. */
+function withStartedTurn(
+  turns: ProjectTurnStates,
+  key: ProjectTurnKey,
+): ProjectTurnStates {
+  const started: ProjectTurnState = { sending: true, error: null };
+  return key.kind === "conversation"
+    ? {
+        ...turns,
+        byConversation: {
+          ...turns.byConversation,
+          [key.conversationId]: started,
+        },
+      }
+    : {
+        ...turns,
+        byProvisional: { ...turns.byProvisional, [key.provisionalId]: started },
+      };
+}
+
+/**
+ * Patch a turn's state. A released provisional key is never resurrected: no
+ * late stream frame or dismissal can make it reachable again.
+ */
+function withPatchedTurn(
+  turns: ProjectTurnStates,
+  key: ProjectTurnKey,
+  patch: Partial<ProjectTurnState>,
+): ProjectTurnStates {
+  if (key.kind === "conversation") {
+    const existing = turns.byConversation[key.conversationId] ?? IDLE_TURN;
+    return {
+      ...turns,
+      byConversation: {
+        ...turns.byConversation,
+        [key.conversationId]: { ...existing, ...patch },
+      },
+    };
+  }
+  const existing = turns.byProvisional[key.provisionalId];
+  if (existing === undefined) return turns;
+  return {
+    ...turns,
+    byProvisional: {
+      ...turns.byProvisional,
+      [key.provisionalId]: { ...existing, ...patch },
+    },
+  };
+}
+
+function withoutProvisional(
+  turns: ProjectTurnStates,
+  provisionalId: string,
+): ProjectTurnStates {
+  if (!(provisionalId in turns.byProvisional)) return turns;
+  const remaining = { ...turns.byProvisional };
+  delete remaining[provisionalId];
+  return { ...turns, byProvisional: remaining };
+}
+
+/** Move a provisional turn's state onto the conversation the server named. */
+function withAdoptedProvisional(
+  turns: ProjectTurnStates,
+  provisionalId: string,
+  conversationId: string,
+): ProjectTurnStates {
+  const state = turns.byProvisional[provisionalId];
+  if (state === undefined) return turns;
+  const remaining = { ...turns.byProvisional };
+  delete remaining[provisionalId];
+  return {
+    byProvisional: remaining,
+    byConversation: { ...turns.byConversation, [conversationId]: state },
+  };
+}
+
+/**
+ * A create-and-send turn's identity while it is still unnamed. `adopted` is set
+ * exactly once, by whichever id source arrives first; the running turn reads it
+ * to know where the rest of its state belongs.
+ */
+interface UnnamedTurn {
+  readonly key: ProvisionalTurnKey;
+  /**
+   * Token this submission sent with its request. The conversation the server
+   * created for it records the same token, so a conversation reported by the
+   * list identifies this turn by carrying it — and identifies no other turn,
+   * because no other submission sent it.
+   */
+  readonly creationRequestId: string;
+  adopted: string | null;
 }
 
 function buildUserContent(
@@ -242,99 +478,191 @@ function buildUserContent(
 }
 
 /**
- * Send a turn to the foundation's project prompt route. With `conversationId:
- * null` it posts to the create-and-send entry (`POST /api/projects/[name]/prompt`)
- * so the foundation creates the first conversation; otherwise it posts to the
- * per-conversation prompt route. The SSE stream is read to completion so we know
- * when to invalidate; transcript/list updates ride React Query invalidation
- * and the global SSE→invalidation path (NotificationListener handles
- * `scope:"project"` events). Prompt errors (busy / backend-mismatch / validation) are
- * surfaced through the error envelope without redefining the foundation's codes.
+ * Send a turn to the foundation's project prompt route. A `create` target posts
+ * to the create-and-send entry (`POST /api/projects/[name]/prompt`) so the
+ * foundation creates a conversation; a conversation target posts to the
+ * per-conversation prompt route. The SSE stream is read to completion so we
+ * know when to invalidate; transcript/list updates ride React Query
+ * invalidation and the global SSE→invalidation path (NotificationListener
+ * handles `scope:"project"` events). Prompt errors (busy / backend-mismatch /
+ * validation) are surfaced through the error envelope without redefining the
+ * foundation's codes.
  *
  * Every piece of turn state — the in-flight guard, the busy flag, the error,
  * and the optimistic/streamed messages mirrored into the keyed in-flight store —
- * is per conversation. The foundation's busy check is already per conversation,
- * so a project-wide guard would discard a prompt aimed at an idle conversation
- * with no error at all, and project-wide busy/error state would render a turn on
+ * is per key. The foundation's busy check is already per conversation, so a
+ * project-wide guard would discard a prompt aimed at an idle conversation with
+ * no error at all, and project-wide busy/error state would render a turn on
  * whichever tab happened to be active.
+ *
+ * A create-and-send turn has no conversation to key on, so it allocates a
+ * provisional key before issuing its request and owns that key until the server
+ * names its conversation. The name arrives from either the turn's own request
+ * stream (a `conversation` frame, which names that turn's conversation exactly)
+ * or the project conversation list; whichever arrives first adopts, moving the
+ * turn's state onto the conversation key and releasing the provisional one, and
+ * the other finds nothing left to adopt. A turn that fails before it was ever
+ * named keeps its failure under its own key until the user dismisses it or
+ * retries, and nothing else can reach that key in the meantime.
+ *
+ * Both sources are causal, and neither infers. The stream frame arrives on the
+ * very request that created the conversation. The list is causal because the
+ * submission sends a token the server records on the conversation it creates for
+ * it: a reported conversation names a turn by carrying that turn's token. What
+ * the list can never do is say which submission caused a conversation to exist by
+ * membership alone — an id is equally new to this client whether it was created
+ * for a pending submission, created by another tab, reopened after being closed,
+ * or merely absent from a first fetch that had not resolved yet. So a conversation
+ * with no token, or with another submission's token, names nothing here, and a
+ * turn whose token has not been reported stays provisional.
  */
 export function useSendProjectPrompt(
   projectName: string,
+  options: UseSendProjectPromptOptions = {},
 ): UseSendProjectPromptResult {
   const queryClient = useQueryClient();
   const [turns, setTurns] = useState<ProjectTurnStates>(NO_TURNS);
-  // One entry per target with a request in flight; `null` is the create-and-send
-  // turn, which has no conversation id to key on yet.
-  const inFlight = useRef<Set<string | null>>(new Set());
+  /** Storage ids with a request in flight — one guard per addressable target. */
+  const inFlight = useRef<Set<string>>(new Set());
+  /** Create-and-send turns still awaiting a conversation, by provisional id. */
+  const unnamed = useRef<Map<string, UnnamedTurn>>(new Map());
+  /** Provisional keys whose turn failed before it was ever named. */
+  const failedProvisionals = useRef<Set<string>>(new Set());
+
   const submitPrompt = useSubmitPrompt();
   const receiveStreamContent = useReceiveStreamContent();
   const completePrompt = useCompletePrompt();
+  const reassignInFlight = useReassignInFlight();
+  const discardInFlight = useDiscardInFlight();
 
-  const patchTurn = useCallback(
-    (conversationId: string | null, patch: Partial<ProjectTurnState>) => {
-      setTurns((prev) =>
-        conversationId === null
-          ? { ...prev, create: { ...prev.create, ...patch } }
-          : {
-              ...prev,
-              byConversation: {
-                ...prev.byConversation,
-                [conversationId]: {
-                  ...readTurn(prev, conversationId),
-                  ...patch,
-                },
-              },
-            },
+  const adoptedCallback = useRef(options.onConversationAdopted);
+  useEffect(() => {
+    adoptedCallback.current = options.onConversationAdopted;
+  }, [options.onConversationAdopted]);
+
+  const cachedMessageCount = useCallback(
+    (key: ProjectTurnKey): number => {
+      if (key.kind !== "conversation") return 0;
+      const cached = queryClient.getQueryData(
+        projectConversationKeys.messages(projectName, key.conversationId),
       );
+      return Array.isArray(cached) ? cached.length : 0;
     },
-    [],
+    [queryClient, projectName],
+  );
+
+  /** Move one turn onto the conversation created for it. */
+  const adopt = useCallback(
+    (provisionalId: string, conversationId: string) => {
+      const turn = unnamed.current.get(provisionalId);
+      // Exactly-once: whichever id source arrives first takes the turn out of
+      // the unnamed set, so the other finds nothing left to adopt. Both sources
+      // report the same conversation for a given turn — the stream frame comes
+      // from the request that created it, the list entry from the record that
+      // request wrote — so the second arrival has nothing to add either.
+      if (turn === undefined) return;
+
+      unnamed.current.delete(provisionalId);
+      turn.adopted = conversationId;
+
+      inFlight.current.delete(provisionalId);
+      inFlight.current.add(conversationId);
+      // The optimistic prompt and whatever has streamed so far move with the
+      // turn, so the conversation's transcript opens on the turn in progress
+      // rather than on an empty tab.
+      reassignInFlight(provisionalId, conversationId);
+      setTurns((prev) =>
+        withAdoptedProvisional(prev, provisionalId, conversationId),
+      );
+      adoptedCallback.current?.(conversationId);
+    },
+    [reassignInFlight],
+  );
+
+  /** Drop a provisional key everywhere it is held, leaving it unreachable. */
+  const releaseProvisional = useCallback(
+    (provisionalId: string) => {
+      unnamed.current.delete(provisionalId);
+      failedProvisionals.current.delete(provisionalId);
+      inFlight.current.delete(provisionalId);
+      discardInFlight(provisionalId);
+      setTurns((prev) => withoutProvisional(prev, provisionalId));
+    },
+    [discardInFlight],
+  );
+
+  const noticeConversations = useCallback(
+    (creations: readonly ProjectConversationCreation[]) => {
+      for (const creation of creations) {
+        if (creation.creationRequestId === null) continue;
+        // The turn that sent this token, if it is still waiting to be named.
+        // Every other reported conversation — including one this client's own
+        // settled submission created — matches nothing and is left alone.
+        const turn = [...unnamed.current.values()].find(
+          (t) => t.creationRequestId === creation.creationRequestId,
+        );
+        if (turn === undefined) continue;
+        adopt(turn.key.provisionalId, creation.conversationId);
+      }
+    },
+    [adopt],
   );
 
   const isSending = useCallback(
-    (conversationId: string | null) => readTurn(turns, conversationId).sending,
+    (key: ProjectTurnKey | null) =>
+      key === null ? false : readTurn(turns, key).sending,
     [turns],
   );
   const errorFor = useCallback(
-    (conversationId: string | null) => readTurn(turns, conversationId).error,
+    (key: ProjectTurnKey | null) =>
+      key === null ? null : readTurn(turns, key).error,
     [turns],
   );
   const clearError = useCallback(
-    (conversationId: string | null) =>
-      patchTurn(conversationId, { error: null }),
-    [patchTurn],
+    (key: ProjectTurnKey | null) => {
+      if (key === null) return;
+      if (
+        key.kind === "provisional" &&
+        failedProvisionals.current.has(key.provisionalId)
+      ) {
+        releaseProvisional(key.provisionalId);
+        return;
+      }
+      setTurns((prev) => withPatchedTurn(prev, key, { error: null }));
+    },
+    [releaseProvisional],
   );
 
-  const send = useCallback(
-    async (input: SendProjectPromptInput): Promise<void> => {
-      const { conversationId } = input;
-      // Guarded per target, not project-wide: the foundation's busy check is
-      // already per conversation, so a shared guard would drop a prompt aimed
-      // at an idle conversation without reporting anything to the user.
-      if (inFlight.current.has(conversationId)) return;
-      inFlight.current.add(conversationId);
-      patchTurn(conversationId, { sending: true, error: null });
+  const runTurn = useCallback(
+    async (
+      key: ProjectTurnKey,
+      unnamedTurn: UnnamedTurn | null,
+      input: SendProjectPromptInput,
+      userContent: MessageContentBlock[],
+    ): Promise<void> => {
+      /** The key this turn's state is attributed to right now. */
+      const currentKey = (): ProjectTurnKey =>
+        unnamedTurn !== null && unnamedTurn.adopted !== null
+          ? conversationTurnKey(unnamedTurn.adopted)
+          : key;
+      const failure: { error: ProjectPromptError | null } = { error: null };
+      const failTurn = (error: ProjectPromptError): void => {
+        failure.error = error;
+        const target = currentKey();
+        setTurns((prev) => withPatchedTurn(prev, target, { error }));
+      };
 
-      const userContent = buildUserContent(input.text, input.images);
-      // Mark the target conversation's keyed in-flight state so its transcript
-      // surfaces (typing indicator, optimistic prompt) react to this send. The
-      // create-and-send path has no conversation id yet — the first-run view
-      // has no transcript to indicate on, so it rides the create slot alone.
-      if (conversationId !== null) {
-        const cached = queryClient.getQueryData(
-          projectConversationKeys.messages(projectName, conversationId),
-        );
-        submitPrompt(
-          conversationId,
-          userContent,
-          Array.isArray(cached) ? cached.length : 0,
-        );
-      }
       const url =
-        conversationId === null
+        key.kind === "provisional"
           ? `/api/projects/${encodeURIComponent(projectName)}/prompt`
-          : `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/prompt`;
+          : `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(key.conversationId)}/prompt`;
 
       const body: Record<string, unknown> = { prompt: input.text };
+      // Sent only on the create-and-send entry, which is the only request that
+      // creates a conversation this client cannot yet name.
+      if (unnamedTurn !== null) {
+        body.creationRequestId = unnamedTurn.creationRequestId;
+      }
       if (input.modelId !== undefined) body.modelId = input.modelId;
       if (input.effort !== undefined) body.effort = input.effort;
       if (input.images !== undefined && input.images.length > 0)
@@ -353,11 +681,9 @@ export function useSendProjectPrompt(
             error?: string;
             code?: string;
           } | null;
-          patchTurn(conversationId, {
-            error: {
-              message: errBody?.error ?? `Prompt failed (${res.status})`,
-              ...(errBody?.code !== undefined ? { code: errBody.code } : {}),
-            },
+          failTurn({
+            message: errBody?.error ?? `Prompt failed (${res.status})`,
+            ...(errBody?.code !== undefined ? { code: errBody.code } : {}),
           });
           return;
         }
@@ -365,28 +691,35 @@ export function useSendProjectPrompt(
         const streamBlocks: MessageContentBlock[] = [];
         await consumePromptStream(res.body, (event) => {
           switch (event.type) {
+            // Only the create-and-send entry emits this, and only for the
+            // conversation it created for this very turn.
+            case "conversation":
+              if (unnamedTurn !== null) {
+                adopt(unnamedTurn.key.provisionalId, event.conversationId);
+              }
+              break;
             case "content": {
               streamBlocks.push(event.block);
-              // Streamed output belongs to the conversation that asked for it,
-              // so it is mirrored onto that conversation's keyed transcript
-              // state rather than onto whichever tab is active.
-              if (conversationId !== null) {
-                receiveStreamContent(conversationId, userContent, [
-                  ...streamBlocks,
-                ]);
-              }
+              // Streamed output belongs to the turn that asked for it, so it is
+              // mirrored onto that turn's current key rather than onto whichever
+              // tab is active.
+              receiveStreamContent(turnStorageId(currentKey()), userContent, [
+                ...streamBlocks,
+              ]);
               break;
             }
             case "error":
-              patchTurn(conversationId, {
-                error: {
-                  message: event.message ?? "Prompt failed",
-                  ...(event.code !== undefined ? { code: event.code } : {}),
-                },
+              failTurn({
+                message: event.message ?? "Prompt failed",
+                ...(event.code !== undefined ? { code: event.code } : {}),
               });
               break;
             // Project conversations answer questions through the durable
-            // pending-question record, not this per-request stream.
+            // pending-question record on the conversation, not this per-request
+            // stream — so a pending question cannot exist before the
+            // conversation does, and is reachable only through it. The
+            // create-and-send entry names its conversation ahead of running the
+            // turn, so any question this stream carries arrives after adoption.
             case "ask-question":
             case "aborted":
             case "done":
@@ -394,19 +727,40 @@ export function useSendProjectPrompt(
           }
         });
       } catch {
-        patchTurn(conversationId, {
-          error: { message: "Failed to send prompt" },
-        });
+        failTurn({ message: "Failed to send prompt" });
       } finally {
-        inFlight.current.delete(conversationId);
-        patchTurn(conversationId, { sending: false });
-        if (conversationId !== null) completePrompt(conversationId);
+        const settledKey = currentKey();
+        const settledId = turnStorageId(settledKey);
+        inFlight.current.delete(settledId);
+
+        if (settledKey.kind === "provisional" && failure.error === null) {
+          // The stream ran to its end and reported nothing, so the key holds no
+          // error to show and is released rather than left holding an idle turn.
+          releaseProvisional(settledKey.provisionalId);
+        } else {
+          setTurns((prev) =>
+            withPatchedTurn(prev, settledKey, { sending: false }),
+          );
+          completePrompt(settledId);
+          if (settledKey.kind === "provisional") {
+            // The failure stays readable under the key that owns it until the
+            // user dismisses it or retries, and the turn stops awaiting a name:
+            // this request will not deliver one. If the server did create a
+            // conversation before the connection broke, the list will report it
+            // carrying this turn's token and match nothing — which is right. The
+            // conversation exists as its own tab; this turn's error belongs to
+            // the submission, not to it (R3.8).
+            unnamed.current.delete(settledKey.provisionalId);
+            failedProvisionals.current.add(settledKey.provisionalId);
+          }
+        }
+
         invalidateProjectLifecycle(queryClient, projectName);
-        if (conversationId !== null) {
+        if (settledKey.kind === "conversation") {
           void queryClient.invalidateQueries({
             queryKey: projectConversationKeys.messages(
               projectName,
-              conversationId,
+              settledKey.conversationId,
             ),
           });
         }
@@ -415,12 +769,73 @@ export function useSendProjectPrompt(
     [
       projectName,
       queryClient,
-      patchTurn,
-      submitPrompt,
+      adopt,
+      releaseProvisional,
       receiveStreamContent,
       completePrompt,
     ],
   );
 
-  return { send, isSending, errorFor, clearError };
+  const send = useCallback(
+    (input: SendProjectPromptInput): ProjectTurnSubmission => {
+      // Allocated before the request is issued — including the token that
+      // request carries — so this turn is addressable, and the conversation the
+      // server creates for it identifiable, from the moment it submits.
+      const { key, unnamedTurn } = allocateTurn(input.target);
+      const storageId = turnStorageId(key);
+
+      // Guarded per target, not project-wide: the foundation's busy check is
+      // already per conversation, so a shared guard would drop a prompt aimed at
+      // an idle conversation without reporting anything to the user. A freshly
+      // allocated provisional key is never in flight, so a create-and-send is
+      // never blocked by another one.
+      if (inFlight.current.has(storageId)) {
+        return { key, settled: Promise.resolve() };
+      }
+      inFlight.current.add(storageId);
+
+      // Retrying a create-and-send releases the keys of create-and-send turns
+      // that already failed — this attempt supersedes their errors. Turns still
+      // awaiting a conversation are untouched.
+      if (key.kind === "provisional") {
+        for (const failed of [...failedProvisionals.current]) {
+          releaseProvisional(failed);
+        }
+      }
+
+      const userContent = buildUserContent(input.text, input.images);
+      setTurns((prev) => withStartedTurn(prev, key));
+      // The optimistic prompt is attributed to this turn's key before the
+      // request goes out, so no state this turn produces ever exists without a
+      // key that owns it.
+      submitPrompt(storageId, userContent, cachedMessageCount(key));
+
+      if (unnamedTurn !== null) {
+        unnamed.current.set(unnamedTurn.key.provisionalId, unnamedTurn);
+      }
+
+      return { key, settled: runTurn(key, unnamedTurn, input, userContent) };
+    },
+    [runTurn, releaseProvisional, submitPrompt, cachedMessageCount],
+  );
+
+  const provisionalKeys = useMemo<readonly ProvisionalTurnKey[]>(
+    () =>
+      Object.keys(turns.byProvisional).map((provisionalId) => ({
+        kind: "provisional",
+        provisionalId,
+      })),
+    [turns],
+  );
+  const pendingCreateKey = provisionalKeys.at(-1) ?? null;
+
+  return {
+    send,
+    isSending,
+    errorFor,
+    clearError,
+    provisionalKeys,
+    pendingCreateKey,
+    noticeConversations,
+  };
 }
