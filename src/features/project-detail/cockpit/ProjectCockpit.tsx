@@ -22,10 +22,12 @@ import {
   useCreateProjectConversation,
   useCloseProjectConversation,
   conversationTurnKey,
+  type ConversationTurnKey,
   type ProjectConversationCreation,
   type ProjectTurnKey,
 } from "@/lib/project-conversations-client/mutations";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
+import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/useConversationSpawnCards";
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
@@ -374,6 +376,28 @@ export default function ProjectCockpit({
     clearPromptError(composerTurnKey);
   }, [clearPromptError, composerTurnKey]);
 
+  // Stop is offered for the conversation on screen and stops that conversation,
+  // so a turn running in a background tab is never what the button reaches. The
+  // same gate the session header uses: this tab's own keyed sending flag, or a
+  // server-running turn this client did not start (another tab, or a reload).
+  const activeTurnKey = useMemo<ConversationTurnKey | null>(
+    () => (activeTabId !== null ? conversationTurnKey(activeTabId) : null),
+    [activeTabId],
+  );
+  const canStop = canStopTurn({
+    sending: sender.isSending(activeTurnKey),
+    status: activeConversation?.status,
+    // Graph workflow execution at project scope is a spec non-goal, so no
+    // project turn is workflow-driven; reading the field keeps the gate shared
+    // rather than forking a project-only rule.
+    drivenByWorkflow: activeConversation?.activeTurnSource === "workflow",
+  });
+  const abortTurn = sender.abort;
+  const handleStop = useCallback(() => {
+    if (activeTurnKey === null) return;
+    void abortTurn(activeTurnKey);
+  }, [abortTurn, activeTurnKey]);
+
   const transcript = activeTabId ? (
     <ProjectTranscriptHost
       projectName={projectName}
@@ -424,6 +448,8 @@ export default function ProjectCockpit({
       <ConversationPane
         agentBackend={agentBackend}
         projectName={projectName}
+        canStop={canStop}
+        onStop={handleStop}
         {...(activeConversation ? { status: activeConversation.status } : {})}
         tabs={
           <ConversationTabs

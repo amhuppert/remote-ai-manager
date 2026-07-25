@@ -16,6 +16,7 @@ import {
   useSubmitPrompt,
   useReceiveStreamContent,
   useCompletePrompt,
+  useMarkCancelled,
   useReassignInFlight,
   useDiscardInFlight,
 } from "@/stores/session-detail.store";
@@ -312,6 +313,15 @@ export interface UseSendProjectPromptResult {
    * thing it still held.
    */
   clearError(key: ProjectTurnKey | null): void;
+  /**
+   * Stop the turn running in one conversation: halts backend execution through
+   * the project abort route and settles that conversation's local turn state.
+   *
+   * Keyed by conversation, never provisional — a create-and-send turn the server
+   * has not named yet has no conversation to stop, and the moment it is named it
+   * becomes stoppable under that conversation's key.
+   */
+  abort(key: ConversationTurnKey): Promise<void>;
   /** Provisional keys still holding turn state, in allocation order. */
   provisionalKeys: readonly ProvisionalTurnKey[];
   /** The key the create composer reports on: the newest such key. */
@@ -536,10 +546,18 @@ export function useSendProjectPrompt(
   const unnamed = useRef<Map<string, UnnamedTurn>>(new Map());
   /** Provisional keys whose turn failed before it was ever named. */
   const failedProvisionals = useRef<Set<string>>(new Set());
+  /**
+   * The cancellation handle of each running turn, under the storage id its
+   * state is keyed by. Keyed rather than single-slot (as the session sender's
+   * is) because project conversations run concurrently: one handle would let a
+   * stop aimed at one tab cancel whichever turn started last.
+   */
+  const streams = useRef<Map<string, AbortController>>(new Map());
 
   const submitPrompt = useSubmitPrompt();
   const receiveStreamContent = useReceiveStreamContent();
   const completePrompt = useCompletePrompt();
+  const markCancelled = useMarkCancelled();
   const reassignInFlight = useReassignInFlight();
   const discardInFlight = useDiscardInFlight();
 
@@ -575,6 +593,13 @@ export function useSendProjectPrompt(
 
       inFlight.current.delete(provisionalId);
       inFlight.current.add(conversationId);
+      // The cancellation handle moves too: a turn becomes stoppable exactly
+      // when it becomes addressable by conversation.
+      const stream = streams.current.get(provisionalId);
+      if (stream !== undefined) {
+        streams.current.delete(provisionalId);
+        streams.current.set(conversationId, stream);
+      }
       // The optimistic prompt and whatever has streamed so far move with the
       // turn, so the conversation's transcript opens on the turn in progress
       // rather than on an empty tab.
@@ -593,6 +618,7 @@ export function useSendProjectPrompt(
       unnamed.current.delete(provisionalId);
       failedProvisionals.current.delete(provisionalId);
       inFlight.current.delete(provisionalId);
+      streams.current.delete(provisionalId);
       discardInFlight(provisionalId);
       setTurns((prev) => withoutProvisional(prev, provisionalId));
     },
@@ -645,6 +671,52 @@ export function useSendProjectPrompt(
     [releaseProvisional],
   );
 
+  /**
+   * Release a finished turn's state and refresh what it changed. Called only by
+   * the turn that still owns its key — a superseded turn settles nothing.
+   */
+  const settleTurn = useCallback(
+    (settledKey: ProjectTurnKey, unnamedTurn: UnnamedTurn | null): void => {
+      const settledId = turnStorageId(settledKey);
+
+      // Read at settle time, not captured when the failure arrived: a failure
+      // the user has already dismissed is no longer this turn's to hold.
+      const unsettledFailure = unnamedTurn?.error ?? null;
+      if (settledKey.kind === "provisional" && unsettledFailure === null) {
+        // The turn ended holding no error to show, so its key is released
+        // rather than left behind holding an idle turn.
+        releaseProvisional(settledKey.provisionalId);
+      } else {
+        setTurns((prev) =>
+          withPatchedTurn(prev, settledKey, { sending: false }),
+        );
+        completePrompt(settledId);
+        if (settledKey.kind === "provisional") {
+          // The failure stays readable under the key that owns it until the
+          // user dismisses it or retries, and the turn stops awaiting a name:
+          // this request will not deliver one. If the server did create a
+          // conversation before the connection broke, the list will report it
+          // carrying this turn's token and match nothing — which is right. The
+          // conversation exists as its own tab; this turn's error belongs to
+          // the submission, not to it (R3.8).
+          unnamed.current.delete(settledKey.provisionalId);
+          failedProvisionals.current.add(settledKey.provisionalId);
+        }
+      }
+
+      invalidateProjectLifecycle(queryClient, projectName);
+      if (settledKey.kind === "conversation") {
+        void queryClient.invalidateQueries({
+          queryKey: projectConversationKeys.messages(
+            projectName,
+            settledKey.conversationId,
+          ),
+        });
+      }
+    },
+    [projectName, queryClient, releaseProvisional, completePrompt],
+  );
+
   const runTurn = useCallback(
     async (
       key: ProjectTurnKey,
@@ -668,6 +740,11 @@ export function useSendProjectPrompt(
           ? `/api/projects/${encodeURIComponent(projectName)}/prompt`
           : `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(key.conversationId)}/prompt`;
 
+      // Registered before the request goes out, so a Stop pressed the instant
+      // the turn starts still finds a handle to cancel.
+      const controller = new AbortController();
+      streams.current.set(turnStorageId(key), controller);
+
       const body: Record<string, unknown> = { prompt: input.text };
       // Sent only on the create-and-send entry, which is the only request that
       // creates a conversation this client cannot yet name.
@@ -685,6 +762,7 @@ export function useSendProjectPrompt(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -701,6 +779,10 @@ export function useSendProjectPrompt(
 
         const streamBlocks: MessageContentBlock[] = [];
         await consumePromptStream(res.body, (event) => {
+          // A stopped turn produces nothing more for this client: whatever the
+          // connection is still holding belongs to a turn the user ended, so it
+          // must not re-enter the transcript or resurrect an error.
+          if (controller.signal.aborted) return;
           switch (event.type) {
             // Only the create-and-send entry emits this, and only for the
             // conversation it created for this very turn.
@@ -738,56 +820,26 @@ export function useSendProjectPrompt(
           }
         });
       } catch {
-        failTurn({ message: "Failed to send prompt" });
+        // A stop is the user ending the turn, not the turn failing.
+        if (!controller.signal.aborted) {
+          failTurn({ message: "Failed to send prompt" });
+        }
       } finally {
         const settledKey = currentKey();
         const settledId = turnStorageId(settledKey);
-        inFlight.current.delete(settledId);
-
-        // Read at settle time, not captured when the failure arrived: a failure
-        // the user has already dismissed is no longer this turn's to hold.
-        const unsettledFailure = unnamedTurn?.error ?? null;
-        if (settledKey.kind === "provisional" && unsettledFailure === null) {
-          // The turn ended holding no error to show, so its key is released
-          // rather than left behind holding an idle turn.
-          releaseProvisional(settledKey.provisionalId);
-        } else {
-          setTurns((prev) =>
-            withPatchedTurn(prev, settledKey, { sending: false }),
-          );
-          completePrompt(settledId);
-          if (settledKey.kind === "provisional") {
-            // The failure stays readable under the key that owns it until the
-            // user dismisses it or retries, and the turn stops awaiting a name:
-            // this request will not deliver one. If the server did create a
-            // conversation before the connection broke, the list will report it
-            // carrying this turn's token and match nothing — which is right. The
-            // conversation exists as its own tab; this turn's error belongs to
-            // the submission, not to it (R3.8).
-            unnamed.current.delete(settledKey.provisionalId);
-            failedProvisionals.current.add(settledKey.provisionalId);
-          }
-        }
-
-        invalidateProjectLifecycle(queryClient, projectName);
-        if (settledKey.kind === "conversation") {
-          void queryClient.invalidateQueries({
-            queryKey: projectConversationKeys.messages(
-              projectName,
-              settledKey.conversationId,
-            ),
-          });
+        // Compare-and-settle. A stop followed by an immediate resend registers
+        // the replacement turn under the same id while this one is still
+        // unwinding, and a superseded turn settling would clear the LIVE turn's
+        // guard, its busy flag, and its cancellation handle — leaving a running
+        // turn shown as idle and unstoppable.
+        if (streams.current.get(settledId) === controller) {
+          streams.current.delete(settledId);
+          inFlight.current.delete(settledId);
+          settleTurn(settledKey, unnamedTurn);
         }
       }
     },
-    [
-      projectName,
-      queryClient,
-      adopt,
-      releaseProvisional,
-      receiveStreamContent,
-      completePrompt,
-    ],
+    [projectName, adopt, receiveStreamContent, settleTurn],
   );
 
   const send = useCallback(
@@ -833,6 +885,47 @@ export function useSendProjectPrompt(
     [runTurn, releaseProvisional, submitPrompt, cachedMessageCount],
   );
 
+  const abort = useCallback(
+    async (key: ConversationTurnKey): Promise<void> => {
+      const { conversationId } = key;
+
+      // Local first, and unconditionally: the user ended this turn, so its
+      // indicator must not outlive the request — a stopped backend closes its
+      // stream, but a wedged connection would otherwise leave the tab busy
+      // forever. Every step below addresses this conversation's key alone, so a
+      // turn running in another project conversation is untouched.
+      streams.current.get(conversationId)?.abort();
+      inFlight.current.delete(conversationId);
+      setTurns((prev) => withPatchedTurn(prev, key, { sending: false }));
+      completePrompt(conversationId);
+
+      let stopped = false;
+      try {
+        const res = await fetch(
+          `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/abort`,
+          { method: "POST" },
+        );
+        // 409 means the server had nothing left to stop — the same settled
+        // outcome the user asked for, so it is not a failure to report.
+        stopped = res.ok || res.status === 409;
+      } catch {
+        // Network failure: the local turn is already settled, and the server
+        // state the invalidations below would re-read is unknown.
+        return;
+      }
+      if (!stopped) return;
+
+      markCancelled(conversationId);
+      invalidateProjectLifecycle(queryClient, projectName);
+      // Refetches this conversation's transcript and its record — the record is
+      // what carries the pending question the abort transition cleared.
+      void queryClient.invalidateQueries({
+        queryKey: projectConversationKeys.messages(projectName, conversationId),
+      });
+    },
+    [projectName, queryClient, completePrompt, markCancelled],
+  );
+
   const provisionalKeys = useMemo<readonly ProvisionalTurnKey[]>(
     () =>
       Object.keys(turns.byProvisional).map((provisionalId) => ({
@@ -848,6 +941,7 @@ export function useSendProjectPrompt(
     isSending,
     errorFor,
     clearError,
+    abort,
     provisionalKeys,
     pendingCreateKey,
     noticeConversations,

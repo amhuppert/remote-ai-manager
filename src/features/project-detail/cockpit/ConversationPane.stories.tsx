@@ -82,3 +82,16 @@ export const Codex: Story = {
     diffSurface: <FakeDiff />,
   },
 };
+
+/** A turn is running, so the header offers the Stop control (R5.1). */
+export const RunningTurn: Story = {
+  args: {
+    agentBackend: "claude",
+    projectName: "cc-app",
+    status: "running",
+    canStop: true,
+    transcript: <FakeTranscript />,
+    composer: <FakeComposer />,
+    diffSurface: <FakeDiff />,
+  },
+};

@@ -28,10 +28,10 @@ locality); domain terms name the concepts the code is about.
   `src/lib/tickets/route-resolution.ts`). All compose `resolveProjectOr404`.
   A scope pair (session adapter + project adapter) resolves into the SAME shared
   domain operation; the operation takes a `ConversationTarget` (or a
-  `ConversationScopeRef`) and never forks by scope. Ask and answer are the shape
-  to copy: `registerAskBatchAfterRoleGate` and `deliverAnswers` are the scope-
-  invariant cores, and only the session adapter carries the graph-lane divert,
-  which is session-only by spec non-goal.
+  `ConversationScopeRef`) and never forks by scope. Ask, answer and abort are the
+  shape to copy: `registerAskBatchAfterRoleGate`, `deliverAnswers` and `abortTurn`
+  are the scope-invariant cores, and only the session adapters carry the
+  graph-lane divert, which is session-only by spec non-goal.
 
 - **Conversation scope contract (agent environment)** — a spawned agent is told
   its scope EXPLICITLY. `buildSessionEnvContract`
