@@ -22,7 +22,7 @@ const INFRASTRUCTURE_READERS: Readonly<Record<string, string>> = {
   "shared.ts":
     "owns the identity resolvers and `readSessionEnv`, the one falsy-checked env read every command routes through",
   "core.ts":
-    "reports identity for `doctor` and the best-effort help-context fetch; both normalize an empty session to absent",
+    "resolves identity for the best-effort help-context fetch, which normalizes an empty session to absent. `doctor` lived here too until its session-env read proved a command can hide inside a file classified as infrastructure — it now owns commands/doctor.ts",
   "help-render.ts":
     "documents `--session` defaulting to $CC_SESSION in usage text; reads no value",
   "session-env-inventory.ts": "is the inventory itself",
@@ -128,6 +128,21 @@ describe("cctl session-env inventory (R2.4)", () => {
       unknown,
       "these inventory keys do not name a cctl command — a typo would silently classify nothing",
     ).toEqual([]);
+  });
+
+  it("sees `doctor` as a command reader, not as core infrastructure", async () => {
+    // `doctor` reads the session env and PUBLISHES the resolved identity to
+    // /api/agent/handshake, so it is a session-env-reading command under R2.4.
+    // While it lived in `core.ts` the file-level scan attributed it to the
+    // infrastructure entry for that file, so the inventory could omit it and this
+    // test still passed — the ratchet cannot classify a command it cannot see.
+    const { commands } = await sessionEnvReaders();
+
+    expect(
+      commands.has("doctor"),
+      "doctor must be scanned as a command, or an unclassified session-env command can hide inside a file classified as infrastructure",
+    ).toBe(true);
+    expect(classifyCliCommand("doctor")?.support).toBe("project-supported");
   });
 
   it("resolves a leaf entry over its group so a session-only verb is not swallowed", () => {

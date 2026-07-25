@@ -114,6 +114,33 @@ describe("cctl at project conversation scope — project-supported commands", ()
     );
   });
 
+  it("doctor diagnoses at project scope without publishing an empty session", async () => {
+    // `doctor` reads the session env and PUBLISHES the resolved identity as
+    // handshake query params. A `?session=` built from the neutralized "" would
+    // be echoed back and logged as a session name — the same silent misrouting
+    // an empty URL segment causes, on a payload surface instead of a path.
+    const host = makeHost(
+      () =>
+        new Response(
+          JSON.stringify({
+            serverBuild: "dev",
+            identity: { project: "cc", session: null, conversation: "conv-1" },
+            tokenValid: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const result = await runCli(["doctor"], projectEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    const url = new URL(onlyRequest(host).url);
+    expect(url.pathname).toBe("/api/agent/handshake");
+    expect(url.searchParams.has("session")).toBe(false);
+    expect(url.searchParams.get("project")).toBe("cc");
+    expect(url.searchParams.get("conversation")).toBe("conv-1");
+    expect(result.stdout).toContain("session=-");
+  });
+
   it("conversation read builds the project route, never an empty session segment", async () => {
     const host = makeHost(
       () =>
@@ -265,6 +292,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
     const projectSupportedInvocations: Record<string, string[]> = {
       ask: ["ask", "--file", "/tmp/ask.json"],
       conversation: ["conversation", "read", "conv-1"],
+      doctor: ["doctor"],
       notify: ["notify", "done"],
       spec: ["spec", "abandon", "feat", "--reason", "x"],
       ticket: ["ticket", "list"],

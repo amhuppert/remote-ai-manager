@@ -39,7 +39,10 @@ locality); domain terms name the concepts the code is about.
   exports `CC_CONVERSATION_SCOPE` (`session` | `project`); for a project
   conversation it exports `CC_SESSION` as an explicitly neutralized `""` — present,
   because the contract is merged OVER `process.env` and a deleted key resurrects
-  the ambient value. Scope reaches both backend runtimes as
+  the ambient value. A session target carrying the sentinel is REFUSED rather than
+  exported, the way `conversationTargetApiBase` refuses it for URLs — the agent env
+  is a public surface because the agent routes with what it reads. Scope reaches
+  both backend runtimes as
   `ConversationBackendCreateInput.conversationTarget`, never re-derived from a
   session name or worktree path. In `cctl`, `readSessionEnv` is the one sanctioned
   env session read (a falsy check — `?? null` would pass `""` through and build

@@ -124,6 +124,12 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // reach them — a project conversation routes to the `logs/projects/` tree
   // instead. Both are asserted in `logging/sentinel-sink-guard.test.ts`.
   ["lib/logging/logger.ts", "refusal-guard"],
+  // The agent ENVIRONMENT is a public surface in the same sense a URL is: the
+  // spawned agent reads `CC_SESSION` and routes with it. `ConversationTarget` is
+  // structural, so a caller holding a store session name can spell the session
+  // variant with the sentinel; the env builder refuses that target rather than
+  // exporting it, mirroring `conversationTargetApiBase`'s throw.
+  ["lib/agent-gateway/session-env.ts", "refusal-guard"],
   ["lib/agent-capabilities/route-handlers.ts", "refusal-guard"],
   ["lib/agent-capabilities/schemas.ts", "refusal-guard"],
   // The listed session variant refuses a sentinel-valued `sessionName`.

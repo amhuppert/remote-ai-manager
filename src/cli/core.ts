@@ -1,5 +1,3 @@
-import { z } from "zod";
-import { getErrorMessage } from "@/lib/shared/errors";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { runAgent } from "./commands/agent";
 import { runAsk } from "./commands/ask";
@@ -7,6 +5,7 @@ import { runCharter } from "./commands/charter";
 import { runConversation } from "./commands/conversation";
 import { runDecisions } from "./commands/decisions";
 import { runDev } from "./commands/dev";
+import { runDoctor } from "./commands/doctor";
 import { runDocs } from "./commands/docs";
 import { runFixture } from "./commands/fixture";
 import { runNotify } from "./commands/notify";
@@ -27,9 +26,7 @@ import type { HelpContextBlock } from "./help-render";
 import type { CommandHelpEntry } from "./help-types";
 import { pathKey } from "./help-types";
 import {
-  EXIT_CONNECTION,
   EXIT_OK,
-  EXIT_OPERATION_FAILED,
   EXIT_USAGE,
   USAGE,
   ccTempPayloadAdvisory,
@@ -60,16 +57,6 @@ export type {
   FetchInit,
   FetchLike,
 } from "./shared";
-
-const handshakeResponseSchema = z.object({
-  serverBuild: z.string(),
-  identity: z.object({
-    project: z.string().nullable(),
-    session: z.string().nullable(),
-    conversation: z.string().nullable(),
-  }),
-  tokenValid: z.boolean(),
-});
 
 function helpResult(text: string, json: boolean): CliResult {
   return {
@@ -203,123 +190,6 @@ function runVersion(flags: GlobalFlags): CliResult {
     exitCode: EXIT_OK,
     stdout: render(flags.json, `cctl ${cliBuild}\n`, { ok: true, cliBuild }),
     stderr: "",
-  };
-}
-
-async function runDoctor(
-  flags: GlobalFlags,
-  env: CliEnv,
-  host: CliHost,
-): Promise<CliResult> {
-  const json = flags.json;
-  const server = flags.server ?? env["CC_SERVER_URL"];
-  if (!server) {
-    return failure({
-      exitCode: EXIT_USAGE,
-      message:
-        "cctl doctor: no server URL — pass --server or set CC_SERVER_URL",
-      json,
-    });
-  }
-
-  const { token, source: tokenSource } = await resolveToken(flags, env, host);
-  // A project conversation's neutralized session must report as absent here, not
-  // as an empty `?session=` query param the handshake would treat as a name.
-  const identity = {
-    project: flags.project ?? env["CC_PROJECT"] ?? null,
-    session: flags.session ?? readSessionEnv(env),
-    conversation: flags.conversation ?? env["CC_CONVERSATION_ID"] ?? null,
-  };
-
-  const cliBuild = formatBuildStamp(BUILD_INFO);
-  const url = new URL("/api/agent/handshake", server);
-  for (const [key, value] of Object.entries(identity)) {
-    if (value !== null) url.searchParams.set(key, value);
-  }
-  const headers: Record<string, string> = { "x-cc-cli-build": cliBuild };
-  if (token !== null) headers["authorization"] = `Bearer ${token}`;
-
-  let response: Response;
-  try {
-    response = await host.fetch(url.toString(), { method: "GET", headers });
-  } catch (error) {
-    return failure({
-      exitCode: EXIT_CONNECTION,
-      message: `cctl doctor: cannot reach the CC server at ${server} — is the CC server running?`,
-      detail: getErrorMessage(error),
-      hint: "start the CC server, then re-run `cctl doctor`",
-      json,
-    });
-  }
-
-  if (response.status === 401) {
-    const message =
-      token === null
-        ? "cctl doctor: no API token — pass --token, set CC_API_TOKEN, or run the CC server once to provision <configDir>/api-token"
-        : `cctl doctor: the server rejected the API token (source: ${tokenSource})`;
-    return failure({
-      exitCode: EXIT_CONNECTION,
-      message,
-      hint: "pass --token or set CC_API_TOKEN to the server's <configDir>/api-token value, then re-run `cctl doctor`",
-      json,
-    });
-  }
-  if (!response.ok) {
-    return failure({
-      exitCode: EXIT_OPERATION_FAILED,
-      message: `cctl doctor: handshake failed (HTTP ${response.status})`,
-      json,
-    });
-  }
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = undefined;
-  }
-  const parsed = handshakeResponseSchema.safeParse(body);
-  if (!parsed.success) {
-    return failure({
-      exitCode: EXIT_OPERATION_FAILED,
-      message:
-        "cctl doctor: unexpected handshake response — is this a CC server?",
-      json,
-    });
-  }
-
-  const { serverBuild, identity: echoedIdentity, tokenValid } = parsed.data;
-  const buildMatch = serverBuild === cliBuild;
-  const warning = buildMatch
-    ? ""
-    : `warning: cctl build differs from server (cli=${cliBuild} server=${serverBuild}) — transient across a server restart\n`;
-
-  const identityLine = [
-    `project=${echoedIdentity.project ?? "-"}`,
-    `session=${echoedIdentity.session ?? "-"}`,
-    `conversation=${echoedIdentity.conversation ?? "-"}`,
-  ].join(" ");
-  const humanStdout = [
-    `server        ${server}`,
-    `server build  ${serverBuild}`,
-    `cli build     ${cliBuild}`,
-    `identity      ${identityLine}`,
-    `token         valid (source: ${tokenSource ?? "-"})`,
-  ].join("\n");
-
-  return {
-    exitCode: EXIT_OK,
-    stdout: render(json, `${humanStdout}\n`, {
-      ok: true,
-      server,
-      serverBuild,
-      cliBuild,
-      buildMatch,
-      identity: echoedIdentity,
-      tokenValid,
-      tokenSource,
-    }),
-    stderr: warning,
   };
 }
 

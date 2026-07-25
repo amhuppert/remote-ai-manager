@@ -144,6 +144,15 @@ demanding a session. Exercise each classified verb, not one representative per
 group — a single sample is how a project-supported verb hides inside a
 session-only group.
 
+**A command implementation belongs in `src/cli/commands/<name>.ts`.** The scan
+attributes a session-env read to a command by source file, so a command
+implemented anywhere else is attributed to that file's INFRASTRUCTURE entry and
+becomes invisible to the ratchet — it can be missing from the inventory while the
+test stays green. `doctor` is the worked example: it read the session env and
+published the identity to `/api/agent/handshake` from inside `core.ts`, so it
+carried no classification until it moved to `commands/doctor.ts`. Keep `core.ts`
+to dispatch, help resolution, and the shared identity plumbing.
+
 **A CLI test cannot prove the route exists.** `CliHost.fetch` is a test double
 that answers any path with 200, so a project-supported command that points at a
 route nobody wrote still passes every test above — that is exactly how `cctl ask`

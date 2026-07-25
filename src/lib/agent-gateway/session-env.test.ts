@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   projectConversationTarget,
   sessionConversationTarget,
+  type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { buildSessionEnvContract } from "./session-env";
 
 const IDENTITY = {
@@ -281,5 +283,36 @@ describe("buildSessionEnvContract", () => {
     });
 
     expect(env["CC_SESSION"]).toBe("");
+  });
+
+  it("refuses a hand-written session target carrying the sentinel instead of exporting it as CC_SESSION", () => {
+    // The builders validate, but `ConversationTarget` is a structural type: a
+    // caller holding a STORE session name can spell the session variant with the
+    // sentinel. `conversationTargetApiBase` throws for exactly this so no public
+    // URL can emit it; the env contract is the same kind of public surface (the
+    // agent reads CC_SESSION and routes with it), so it needs the same last line
+    // of defence rather than exporting `CC_SESSION=__project__`.
+    const smuggled: ConversationTarget = {
+      scope: "session",
+      projectName: "command-center",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      conversationId: "conv-123",
+    };
+
+    const build = () =>
+      buildSessionEnvContract({
+        target: smuggled,
+        configDir: "/cfg",
+        baseEnv: {},
+        serverUrl: null,
+        apiToken: null,
+      });
+
+    expect(build).toThrow(/sentinel/);
+    // The refusal must not echo the value it refuses — the same rule the other
+    // sentinel refusal guards follow, since this message reaches logs.
+    expect(build).not.toThrow(
+      new RegExp(PROJECT_CONVERSATION_SESSION_SENTINEL),
+    );
   });
 });

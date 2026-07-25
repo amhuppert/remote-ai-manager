@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("session-env");
@@ -67,6 +68,20 @@ export function neutralizeAmbientCcEnv(env: SessionEnv): SessionEnv {
 export function buildSessionEnvContract(
   input: SessionEnvContractInput,
 ): SessionEnv {
+  // The builders validate, but `ConversationTarget` is a structural type, so a
+  // caller holding a STORE session name can still spell the session variant with
+  // the sentinel. The agent env is a public surface in the same sense a URL is —
+  // the agent reads CC_SESSION and routes with it — so it gets the same last line
+  // of defence `conversationTargetApiBase` gives route construction.
+  if (
+    input.target.scope === "session" &&
+    isProjectSentinel(input.target.sessionName)
+  ) {
+    throw new Error(
+      "buildSessionEnvContract: the project sentinel is not a session identity — build the env from a project conversation target",
+    );
+  }
+
   // Key names only — an ambient CC_API_TOKEN value must never reach the logs.
   const contaminatedKeys = Object.keys(input.baseEnv).filter(
     (key) => key.startsWith("CC_") && input.baseEnv[key],

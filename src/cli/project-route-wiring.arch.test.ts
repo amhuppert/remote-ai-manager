@@ -152,6 +152,15 @@ const PROJECT_SCOPE_INVOCATIONS: { name: string; argv: string[]; body: unknown }
         window: { from: 0, to: 0, total: 0 },
       },
     },
+    {
+      name: "doctor",
+      argv: ["doctor"],
+      body: {
+        serverBuild: "dev",
+        identity: { project: "cc", session: null, conversation: "conv-1" },
+        tokenValid: true,
+      },
+    },
     { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },
     {
       name: "spec abandon",

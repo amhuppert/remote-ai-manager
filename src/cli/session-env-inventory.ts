@@ -40,6 +40,11 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "The custom asynchronous question protocol is the single cross-backend path for both scopes; a project agent must be able to ask.",
   },
+  doctor: {
+    support: "project-supported",
+    reason:
+      "Diagnosing the server connection must work at both scopes. The handshake endpoint is scope-agnostic and echoes whatever identity it is given, so a project agent gets a working diagnosis reporting `session=-` rather than losing the command.",
+  },
   conversation: {
     support: "project-supported",
     reason:
