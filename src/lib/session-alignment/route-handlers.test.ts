@@ -10,6 +10,7 @@ import {
   SCAFFOLD_TEMPLATE,
   computeAlignmentHash,
   renderAlignmentPromptSection,
+  usesDigestPointer,
 } from "@/lib/session-alignment/render";
 import {
   alignmentDiffSchema,
@@ -88,12 +89,21 @@ function makeRealService(fixture: PersistenceFixture): {
     render: {
       renderAlignmentPromptSection,
       computeAlignmentHash,
+      usesDigestPointer,
       scaffoldTemplate: SCAFFOLD_TEMPLATE,
     },
     mirror: {
       async write(input): Promise<CharterMirrorWriteResult> {
         mirrorCalls.push({ ...input });
         return { ok: true, filePath: ".cc/session-alignment/charter.md" };
+      },
+    },
+    snapshot: {
+      write() {
+        return Promise.resolve({
+          filePath: ".cc/session-alignment/snapshots/frozen.md",
+          created: true,
+        });
       },
     },
     broadcast(event) {
@@ -519,6 +529,7 @@ function makeFakeHandlers(
     getState: throwing,
     getActiveVersion: throwing,
     getActiveInjection: throwing,
+    captureActiveCharterForRun: throwing,
     diff: throwing,
     rollback: throwing,
     copyActiveCharter: throwing,

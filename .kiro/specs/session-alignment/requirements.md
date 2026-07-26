@@ -130,7 +130,9 @@ are deliberately deferred to the design phase.
   transparency preview of exactly what agents receive, and a worktree copy of the active charter;
   removal of the `focus` creation mode and the `objective` field across all user-facing surfaces.
 - **Out of scope**: graph-workflow charters (the existing immutable mechanism is unchanged and gains
-  no competing alignment mechanism); alignment for `optimistic`/autonomous sessions; manual charter
+  no competing alignment mechanism); alignment for `optimistic`/autonomous sessions — an
+  autonomous *session*, not the internal backend calls a single attended turn makes on the user's
+  behalf (Requirement 12.4); manual charter
   editing (user markdown editor); manual "Log decision" capture; a required-schema charter template
   (the template is a soft scaffold); an alignment workshop flow; a concurrency guard while a draft is
   open; a per-update charter diff/approval gate beyond the decision approval; an agent-proposed
@@ -275,3 +277,6 @@ are deliberately deferred to the design phase.
 1. Command Center shall not apply the session Alignment feature to graph-workflow execution and shall not alter the existing immutable graph-workflow charter mechanism.
 2. Command Center shall not provide an Alignment charter for `optimistic` sessions.
 3. Command Center shall not include any auto-approval or auto-activation path for alignment that operates without a human approval; the feature shall be attended (normal-session) only.
+4. When a user invokes a standalone Collaboration Mode run from a conversation in a `normal` session, Command Center shall treat that run as attended session work — one attended logical originating turn — and shall deliver the session's active charter to both collaborating agents as governing context, even though the run's internal backend calls execute with the autonomous flag set.
+5. Command Center shall apply Acceptance Criterion 4 only to a user-invoked standalone Collaboration Mode run in a `normal` session; graph-workflow collaboration remains excluded under Acceptance Criterion 1, and an `optimistic` session remains excluded under Acceptance Criterion 2.
+6. Command Center shall not deliver the `/align` suggestion of Requirement 2.5 to a Collaboration Mode agent lane; where such a run's session has no active charter, its agents shall receive no alignment instruction at all.

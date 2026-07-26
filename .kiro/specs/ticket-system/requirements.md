@@ -89,6 +89,8 @@ The Ticket System gives Command Center a durable place to capture upcoming work 
 4. While a session is linked to a ticket, the Ticket System shall make a current view of the ticket — identifier, title, status, and attachment index — available to the agent on every turn.
 5. When attachments are added or changed after the ticket session was created, the Ticket System shall reflect the changes in the agent's ticket view on subsequent turns without any manual refresh step.
 6. While a session is linked to a ticket, the Ticket System shall allow agents in that session to retrieve the full content of any attachment on demand, including the content of attached conversations.
+7. When a user invokes a standalone Collaboration Mode run from a conversation in a ticket-linked session, the Ticket System shall treat the whole run — every phase, both collaborating agents, and any pause and later resume — as one logical originating conversation turn: it shall capture one current ticket view when the run starts and supply that same captured view to both agents throughout, rather than re-reading the ticket per phase or per resume.
+8. While a standalone Collaboration Mode run is executing, the retrieval commands carried in its captured ticket view shall be executable from either collaborating agent's backend lane, resolved through the originating conversation's Command Center scope, so that Acceptance Criterion 6 holds for both agents regardless of which backend each one runs on.
 
 ### Requirement 6: Ticket References in Conversations
 **Objective:** As a Command Center user, I want to hand any agent a ticket by reference in any conversation, so that ticket context is usable beyond the ticket's own session.

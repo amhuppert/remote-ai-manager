@@ -527,6 +527,21 @@ describe("CodexConversationRuntime", () => {
       expect("CC_WORKFLOW_CONTEXT_ID" in env).toBe(false);
     });
 
+    it("injects the CC-scope conversation id when the runtime's own id is synthetic", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          conversationId: "collab-wf-1-9f3a2b",
+          ccScopeConversationId: "conv-originating",
+        }),
+        deps,
+      );
+
+      await runtime.sendTurn(makeTurnInput());
+
+      expect(envOfFirstTurn().CC_CONVERSATION_ID).toBe("conv-originating");
+    });
+
     it("injects both lane identity vars for a graph-workflow lane conversation", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(

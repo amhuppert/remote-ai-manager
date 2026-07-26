@@ -214,13 +214,14 @@ export interface ConversationBackendRuntime {
 export interface ConversationBackendCreateInput {
   conversationId: string;
   /**
-   * Conversation ID used to scope the session MCP server (and any
-   * conversation-bound MCP tools registered on it). Defaults to
-   * `conversationId` when omitted. Collaboration lanes set this to the
-   * originating conversation so the synthetic per-lane SDK session ID
-   * doesn't have to exist in CC session state.
+   * Conversation ID this runtime addresses on the CC side: the identity put
+   * into the session env contract, so `cctl` inside the agent resolves a
+   * conversation that exists in CC state. Defaults to `conversationId` when
+   * omitted. Collaboration lanes set this to the originating conversation
+   * because their own `conversationId` is a synthetic per-lane handle (or a
+   * raw backend session id) that CC state cannot resolve.
    */
-  mcpScopeConversationId?: string;
+  ccScopeConversationId?: string;
   projectPath: string;
   projectName: string;
   sessionName: string;

@@ -17,7 +17,11 @@ import type {
   CodexConversationRuntimeDeps,
   CodexThreadLike,
 } from "../codex/conversation-runtime";
-import type { CodexTaskRunnerDeps } from "../codex/task-runner";
+import {
+  CodexTaskRunner,
+  type CodexTaskRunnerDeps,
+} from "../codex/task-runner";
+import type { AgentTaskRunner } from "../task";
 
 export const FAKE_CODEX_THREAD_ID = "conformance-codex-thread-1";
 export const FAKE_CODEX_TURN_TEXT = "conformance scripted codex turn";
@@ -220,6 +224,11 @@ export function createFakeCodexTaskPort(
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     listNativeCodexMcpServers: async () => [],
     getCodexPricingOverrides: async () => null,
+    // Conformance runs carry no `ccSessionScope`, so no session env contract
+    // is ever built from these.
+    getServerUrl: () => null,
+    getApiToken: () => null,
+    getConfigDir: () => "/conformance/config",
   };
 
   return {
@@ -228,4 +237,60 @@ export function createFakeCodexTaskPort(
       return lastOutputSchema;
     },
   };
+}
+
+export interface EnvCapturingCodexTaskRunner {
+  runner: AgentTaskRunner;
+  /** Child env of each Codex client the runner spawned, oldest first. */
+  readonly capturedEnvs: ReadonlyArray<Record<string, string>>;
+}
+
+/**
+ * The REAL `CodexTaskRunner` over a capturing provider, exposing the child env
+ * it would spawn a codex process with.
+ *
+ * Lives on the backend testing surface because the runner class itself is an
+ * adapter internal: a consumer outside `src/lib/agent-backends/` (e.g. the
+ * collaboration production caller) cannot import it, yet proving what identity
+ * and credentials reach a task subprocess requires the real env construction,
+ * not a request-shaped assertion that stops at the seam.
+ */
+export function createEnvCapturingCodexTaskRunner(config: {
+  ambientEnv: NodeJS.ProcessEnv;
+  /** Server coordinates the runner resolves server-side for a scoped run. */
+  serverUrl?: string | null;
+  apiToken?: string | null;
+  configDir?: string;
+}): EnvCapturingCodexTaskRunner {
+  const capturedEnvs: Array<Record<string, string>> = [];
+
+  const runner = new CodexTaskRunner({
+    createCodex: (options) => {
+      capturedEnvs.push(options.env ?? {});
+      const thread = {
+        id: null as string | null,
+        async run() {
+          thread.id = thread.id ?? FAKE_CODEX_TASK_THREAD_ID;
+          return {
+            finalResponse: FAKE_CODEX_TASK_TEXT,
+            usage: {
+              input_tokens: FAKE_CODEX_INPUT_TOKENS,
+              cached_input_tokens: 10,
+              output_tokens: 42,
+            },
+            error: null,
+          };
+        },
+      };
+      return { startThread: () => thread, resumeThread: () => thread };
+    },
+    buildChildEnv: () => ({ ...config.ambientEnv }),
+    listNativeCodexMcpServers: async () => [],
+    getCodexPricingOverrides: async () => null,
+    getServerUrl: () => config.serverUrl ?? null,
+    getApiToken: () => config.apiToken ?? null,
+    getConfigDir: () => config.configDir ?? "/conformance/config",
+  });
+
+  return { runner, capturedEnvs };
 }

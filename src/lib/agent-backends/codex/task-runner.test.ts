@@ -12,14 +12,24 @@ vi.mock("@openai/codex-sdk", () => ({
   })),
 }));
 
-vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+// Records every emitted event so the secrets-discipline checks can read the
+// payloads the real loggers (this module's and session-env's) would write.
+const logState = vi.hoisted(() => ({
+  entries: [] as Array<{ event: string; fields?: unknown }>,
 }));
+vi.mock("@/lib/logging", () => {
+  const record = (event: string, fields?: unknown) => {
+    logState.entries.push({ event, fields });
+  };
+  return {
+    createLogger: () => ({
+      info: record,
+      debug: record,
+      warn: record,
+      error: record,
+    }),
+  };
+});
 
 vi.mock("@/lib/shared/child-env", () => ({
   buildChildEnv: () => ({}),
@@ -46,6 +56,7 @@ describe("CodexTaskRunner", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    logState.entries = [];
     listNativeCodexMcpServers = vi.fn().mockResolvedValue([]);
     runner = new CodexTaskRunner({
       createCodex: (options) =>
@@ -55,6 +66,9 @@ describe("CodexTaskRunner", () => {
       buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
       listNativeCodexMcpServers,
       getCodexPricingOverrides: async () => null,
+      getServerUrl: () => null,
+      getApiToken: () => null,
+      getConfigDir: () => "/test/config",
     });
 
     // Model the real SDK: a fresh thread has `id: null` until the
@@ -109,6 +123,9 @@ describe("CodexTaskRunner", () => {
         }) as NodeJS.ProcessEnv,
       listNativeCodexMcpServers,
       getCodexPricingOverrides: async () => null,
+      getServerUrl: () => null,
+      getApiToken: () => null,
+      getConfigDir: () => "/test/config",
     });
 
     await contaminatedRunner.run(makeRequest());
@@ -121,6 +138,140 @@ describe("CodexTaskRunner", () => {
       CC_API_TOKEN: "",
       PATH: "/usr/bin",
       CLAUDECODE: "",
+    });
+  });
+
+  describe("opted-in CC session scope", () => {
+    const SCOPE = {
+      project: "command-center",
+      session: "csm/collab-session",
+      conversationId: "conv-originating",
+    } as const;
+    const RESOLVED_SERVER_URL = "http://127.0.0.1:4321";
+    const RESOLVED_TOKEN = "instance-token-secret";
+
+    const AMBIENT_ENV = {
+      NODE_ENV: "development",
+      PATH: "/usr/bin",
+      CC_SERVER_URL: "http://ambient-prod:3000",
+      CC_API_TOKEN: "ambient-token",
+      CC_CONVERSATION_ID: "ambient-conversation",
+      CC_WORKFLOW_EXECUTION_ID: "ambient-exec",
+      CC_WORKFLOW_CONTEXT_ID: "ambient-ctx",
+    };
+
+    function makeScopedRunner(): {
+      runner: CodexTaskRunner;
+      readEnv: () => Record<string, string> | undefined;
+    } {
+      const createCodex = vi.fn(
+        (options) =>
+          new Codex(options) as unknown as ReturnType<
+            CodexTaskRunnerDeps["createCodex"]
+          >,
+      );
+      return {
+        runner: new CodexTaskRunner({
+          createCodex,
+          buildChildEnv: () => ({ ...AMBIENT_ENV }) as NodeJS.ProcessEnv,
+          listNativeCodexMcpServers,
+          getCodexPricingOverrides: async () => null,
+          getServerUrl: () => RESOLVED_SERVER_URL,
+          getApiToken: () => RESOLVED_TOKEN,
+          getConfigDir: () => "/cc/config",
+        }),
+        readEnv: () =>
+          (
+            createCodex.mock.calls[0]?.[0] as
+              | { env?: Record<string, string> }
+              | undefined
+          )?.env,
+      };
+    }
+
+    it("gives the child the originating session identity with server-side credentials", async () => {
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      await scopedRunner.run(makeRequest({ ccSessionScope: { ...SCOPE } }));
+
+      expect(readEnv()).toMatchObject({
+        CC_SERVER_URL: RESOLVED_SERVER_URL,
+        CC_API_TOKEN: RESOLVED_TOKEN,
+        CC_PROJECT: SCOPE.project,
+        CC_SESSION: SCOPE.session,
+        CC_CONVERSATION_ID: SCOPE.conversationId,
+        CLAUDECODE: "",
+      });
+    });
+
+    it("neutralizes ambient CC_* first, so no outer workflow identity survives", async () => {
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      await scopedRunner.run(makeRequest({ ccSessionScope: { ...SCOPE } }));
+
+      // A lane's own workflow ids must never leak into a collaboration task
+      // subprocess: no workflow ids are supplied, and the ambient ones are
+      // blanked rather than inherited.
+      expect(readEnv()).toMatchObject({
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+      });
+    });
+
+    it("makes cctl resolvable by prepending the config bin directory to PATH", async () => {
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      await scopedRunner.run(makeRequest({ ccSessionScope: { ...SCOPE } }));
+
+      expect(readEnv()?.PATH).toBe("/cc/config/bin:/usr/bin");
+    });
+
+    it("keeps the server URL and token out of logs and the task result", async () => {
+      const { runner: scopedRunner } = makeScopedRunner();
+
+      const result = await scopedRunner.run(
+        makeRequest({ ccSessionScope: { ...SCOPE } }),
+      );
+
+      const emittedLogs = JSON.stringify(logState.entries);
+      expect(emittedLogs).not.toContain(RESOLVED_TOKEN);
+      expect(emittedLogs).not.toContain(RESOLVED_SERVER_URL);
+      expect(logState.entries.length).toBeGreaterThan(0);
+      const serializedResult = JSON.stringify(result);
+      expect(serializedResult).not.toContain(RESOLVED_TOKEN);
+      expect(serializedResult).not.toContain(RESOLVED_SERVER_URL);
+    });
+
+    it("leaves a scope-less run's env byte-identical to the neutralized env", async () => {
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      await scopedRunner.run(makeRequest());
+
+      // Exact object equality, not a subset match: a generic task run gains no
+      // identity, no credentials, no PATH prepend, and no BASH ceiling.
+      expect(readEnv()).toEqual({
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "",
+        CC_API_TOKEN: "",
+        CC_CONVERSATION_ID: "",
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+        CLAUDECODE: "",
+      });
+    });
+
+    it("fails the run without dispatching when the scope is malformed", async () => {
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      const result = await scopedRunner.run(
+        makeRequest({ ccSessionScope: { ...SCOPE, conversationId: "" } }),
+      );
+
+      expect(result.error).toContain("ccSessionScope");
+      expect(result.text).toBeNull();
+      expect(readEnv()).toBeUndefined();
+      expect(startThreadMock).not.toHaveBeenCalled();
     });
   });
 
@@ -808,6 +959,9 @@ describe("CodexTaskRunner", () => {
             outputPerMillion: 100,
           },
         }),
+        getServerUrl: () => null,
+        getApiToken: () => null,
+        getConfigDir: () => "/test/config",
       });
 
       const result = await overriddenRunner.run(

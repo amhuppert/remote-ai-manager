@@ -80,6 +80,7 @@ import {
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import type { CollaborationSessionContext } from "./session-context";
 import {
   findGeneratedArtifactRef,
   readGeneratedArtifactFile,
@@ -123,6 +124,13 @@ export interface AsymmetricCollaborationSliceInput {
   agentModelSettings?: CollaborationAgentModelSettingsMap;
   negotiationRounds: number;
   autonomousResolutionThreshold: CollaborationAutonomousResolutionThreshold;
+  /**
+   * The session's governing Alignment charter and linked-ticket view, captured
+   * once at kickoff. Required so every caller makes an explicit context
+   * decision: a run that silently omitted the charter would look identical to
+   * one the session never had a charter for.
+   */
+  sessionContext: CollaborationSessionContext;
   /**
    * Optional originating conversation. When set and `appendTranscriptEntry`
    * is provided, the final answer body is appended back into the conversation
@@ -243,6 +251,17 @@ export interface AsymmetricCollaborationSliceDeps {
     conversationId: string,
     ref: AgentSessionRef,
   ): Promise<unknown>;
+  /**
+   * Records the charter version both peers have now received on the
+   * originating conversation, for the Alignment panel's stale detection.
+   * Invoked once per run, after both initial drafts succeed — the first moment
+   * the charter has actually reached both agents. Omit in tests that do not
+   * assert on the seen-version record.
+   */
+  recordAlignmentSeen?(
+    conversationId: string,
+    alignmentVersion: number,
+  ): Promise<void>;
   /**
    * Appends one artifact to the workflow's durable JSONL sidecar. Called once
    * per tracked artifact (via the tracker's append sink). The persisted
@@ -722,6 +741,10 @@ async function initializeEnvelope(
         negotiationRounds: input.negotiationRounds,
         negotiationRoundsCompleted: previousRoundsCompleted,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,
+        // The run's captured premises. Written on every entry with the same
+        // snapshot the caller resolved once — on resume that is the value
+        // parsed back out of this field, so the record never drifts.
+        sessionContext: input.sessionContext,
         userAnswersByQuestionId: mergedAnswers,
         ...(input.conversationId !== undefined
           ? { conversationId: input.conversationId }

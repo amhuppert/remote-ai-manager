@@ -45,6 +45,47 @@ export function isAlignmentEligibleTurn(input: {
 }
 
 /**
+ * The governance shapes alignment eligibility is decided for. Tagged rather
+ * than one widened input because the two arms answer different questions: an
+ * ordinary turn's execution mode is the thing being judged, while a standalone
+ * collaboration run is judged on how it originated.
+ */
+export type AlignmentGovernanceContext =
+  | {
+      kind: "conversation_turn";
+      creationMode: SessionState["creationMode"] | undefined;
+      isProjectConversation: boolean;
+      autonomous: boolean | undefined;
+    }
+  | {
+      kind: "standalone_collaboration";
+      creationMode: SessionState["creationMode"] | undefined;
+      userInitiated: true;
+    };
+
+/**
+ * R12.1/R12.2/R12.4: the single owner of alignment eligibility.
+ *
+ * The `standalone_collaboration` arm is the explicit product exception (R12.4):
+ * a user-invoked `/collab` run is one attended logical originating turn, so it
+ * receives the charter even though each internal lane call dispatches with the
+ * autonomous flag set. Judging those calls individually through the turn
+ * predicate would deny the charter to an attended run; passing them
+ * `autonomous: false` would instead assert something false about how they
+ * execute. Keeping the exception in its own arm also means it cannot be
+ * reached by graph-workflow collaboration, which owns an immutable charter of
+ * its own (R12.1/R12.5).
+ */
+export function isAlignmentEligibleContext(
+  context: AlignmentGovernanceContext,
+): boolean {
+  if (context.kind === "standalone_collaboration") {
+    return context.creationMode === "normal" && context.userInitiated;
+  }
+  return isAlignmentEligibleTurn(context);
+}
+
+/**
  * Cheap active-version read for the reused-runtime recreate gate (R7.3).
  * Returns null (no comparison) for ineligible turns; a new runtime bakes in
  * the current version directly, so this is only read when a runtime exists.

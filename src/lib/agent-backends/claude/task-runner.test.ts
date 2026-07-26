@@ -5,14 +5,24 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
 }));
 
-vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+// Records every emitted event so the secrets-discipline checks can read the
+// payloads the real loggers (this module's and session-env's) would write.
+const logState = vi.hoisted(() => ({
+  entries: [] as Array<{ event: string; fields?: unknown }>,
 }));
+vi.mock("@/lib/logging", () => {
+  const record = (event: string, fields?: unknown) => {
+    logState.entries.push({ event, fields });
+  };
+  return {
+    createLogger: () => ({
+      info: record,
+      debug: record,
+      warn: record,
+      error: record,
+    }),
+  };
+});
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
@@ -72,6 +82,7 @@ describe("ClaudeTaskRunner", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    logState.entries = [];
     childEnvState.env = {};
     runner = new ClaudeTaskRunner();
   });
@@ -94,6 +105,115 @@ describe("ClaudeTaskRunner", () => {
       CC_SERVER_URL: "",
       CC_API_TOKEN: "",
       PATH: "/usr/bin",
+    });
+  });
+
+  describe("opted-in CC session scope", () => {
+    const SCOPE = {
+      project: "command-center",
+      session: "csm/collab-session",
+      conversationId: "conv-originating",
+    } as const;
+    const RESOLVED_SERVER_URL = "http://127.0.0.1:4321";
+    const RESOLVED_TOKEN = "instance-token-secret";
+
+    function makeScopedRunner(): ClaudeTaskRunner {
+      return new ClaudeTaskRunner({
+        runQuery: (args) => query(args),
+        getServerUrl: () => RESOLVED_SERVER_URL,
+        getApiToken: () => RESOLVED_TOKEN,
+        getConfigDir: () => "/cc/config",
+      });
+    }
+
+    beforeEach(() => {
+      childEnvState.env = {
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "http://ambient-prod:3000",
+        CC_API_TOKEN: "ambient-token",
+        CC_CONVERSATION_ID: "ambient-conversation",
+        CC_WORKFLOW_EXECUTION_ID: "ambient-exec",
+        CC_WORKFLOW_CONTEXT_ID: "ambient-ctx",
+      };
+      mockQuery.mockReturnValue(
+        makeStream([successResultMessage()]) as ReturnType<typeof query>,
+      );
+    });
+
+    it("gives the child the originating session identity with server-side credentials", async () => {
+      await makeScopedRunner().run(
+        makeRequest({ ccSessionScope: { ...SCOPE } }),
+      );
+
+      expect(mockQuery.mock.calls[0]?.[0]?.options?.env).toMatchObject({
+        CC_SERVER_URL: RESOLVED_SERVER_URL,
+        CC_API_TOKEN: RESOLVED_TOKEN,
+        CC_PROJECT: SCOPE.project,
+        CC_SESSION: SCOPE.session,
+        CC_CONVERSATION_ID: SCOPE.conversationId,
+      });
+    });
+
+    it("neutralizes ambient CC_* first, so no outer workflow identity survives", async () => {
+      await makeScopedRunner().run(
+        makeRequest({ ccSessionScope: { ...SCOPE } }),
+      );
+
+      expect(mockQuery.mock.calls[0]?.[0]?.options?.env).toMatchObject({
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+      });
+    });
+
+    it("makes cctl resolvable by prepending the config bin directory to PATH", async () => {
+      await makeScopedRunner().run(
+        makeRequest({ ccSessionScope: { ...SCOPE } }),
+      );
+
+      expect(mockQuery.mock.calls[0]?.[0]?.options?.env?.PATH).toBe(
+        "/cc/config/bin:/usr/bin",
+      );
+    });
+
+    it("keeps the server URL and token out of logs and the task result", async () => {
+      const result = await makeScopedRunner().run(
+        makeRequest({ ccSessionScope: { ...SCOPE } }),
+      );
+
+      const emittedLogs = JSON.stringify(logState.entries);
+      expect(emittedLogs).not.toContain(RESOLVED_TOKEN);
+      expect(emittedLogs).not.toContain(RESOLVED_SERVER_URL);
+      expect(logState.entries.length).toBeGreaterThan(0);
+      const serializedResult = JSON.stringify(result);
+      expect(serializedResult).not.toContain(RESOLVED_TOKEN);
+      expect(serializedResult).not.toContain(RESOLVED_SERVER_URL);
+    });
+
+    it("leaves a scope-less run's env byte-identical to the neutralized env", async () => {
+      await makeScopedRunner().run(makeRequest());
+
+      // Exact object equality, not a subset match: a generic task run gains no
+      // identity, no credentials, no PATH prepend, and no BASH ceiling.
+      expect(mockQuery.mock.calls[0]?.[0]?.options?.env).toEqual({
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "",
+        CC_API_TOKEN: "",
+        CC_CONVERSATION_ID: "",
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+      });
+    });
+
+    it("fails the run without dispatching when the scope is malformed", async () => {
+      const result = await makeScopedRunner().run(
+        makeRequest({ ccSessionScope: { ...SCOPE, conversationId: "" } }),
+      );
+
+      expect(result.error).toContain("ccSessionScope");
+      expect(result.text).toBeNull();
+      expect(mockQuery).not.toHaveBeenCalled();
     });
   });
 

@@ -144,6 +144,13 @@ export class CodexConversationRuntime
   private readonly sessionInstructions: string[];
   private readonly worktreePath: string;
   private readonly conversationId: string;
+  /**
+   * Conversation identity written into the session env contract. Equals
+   * `conversationId` for every ordinary conversation; a caller whose own
+   * `conversationId` is a synthetic handle (collaboration lanes) overrides it
+   * so `cctl` inside the agent addresses a conversation CC state can resolve.
+   */
+  private readonly ccScopeConversationId: string;
   private readonly projectName: string;
   private readonly sessionName: string;
   /**
@@ -170,6 +177,8 @@ export class CodexConversationRuntime
     this.sessionInstructions = input.sessionInstructions;
     this.worktreePath = input.worktreePath;
     this.conversationId = input.conversationId;
+    this.ccScopeConversationId =
+      input.ccScopeConversationId ?? input.conversationId;
     this.projectName = input.projectName;
     this.sessionName = input.sessionName;
     this.workflowExecutionId = input.workflowExecutionId;
@@ -540,7 +549,7 @@ export class CodexConversationRuntime
         apiToken: this.deps.getApiToken(),
         project: this.projectName,
         session: this.sessionName,
-        conversationId: this.conversationId,
+        conversationId: this.ccScopeConversationId,
         configDir: this.deps.getConfigDir(),
         ...(this.workflowExecutionId !== undefined
           ? { workflowExecutionId: this.workflowExecutionId }

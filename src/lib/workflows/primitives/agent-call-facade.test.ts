@@ -28,14 +28,16 @@ import {
   STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS,
 } from "@/lib/agent-backends/structured-output-repair";
 import {
+  buildStructuredOutputRepairRequest,
   executeAgentCall,
   resolveSchedulingHint,
   type AgentCallFacadeDeps,
 } from "./agent-call-facade";
 import { runStructuredOutputGate } from "./structured-output-gate";
-import type {
-  ArtifactRef,
-  BackendCapabilityView,
+import {
+  agentCallRequestSchema,
+  type ArtifactRef,
+  type BackendCapabilityView,
 } from "./agent-call-vocabulary";
 
 const CLAUDE_VIEW: BackendCapabilityView = {
@@ -991,6 +993,59 @@ describe("executeAgentCall — semantic task execution intent", () => {
       executeAgentCall({ kind: "task_run", backend: "codex", prompt: "x" }, {}),
     ).rejects.toThrow(/taskExecution.*or deps\.resolveTaskRunner/);
   });
+
+  it("grants no CC session scope from the intent path — every graph-workflow and generic task run stays neutralized", async () => {
+    const capture = { value: null as AgentTaskRequest | null };
+    const runner = makeTaskRunner("codex", { capture });
+
+    // Every graph-workflow task run (validator, planner, implementer) and every
+    // generic conversation task run dispatches through this intent path, which
+    // has no way to name a session; only a resolver-callback caller that owns
+    // the originating session can grant identity.
+    await executeAgentCall(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        taskExecution: {
+          workingDirectory: "/tmp/wt-graph",
+          autonomous: true,
+          sandboxMode: "danger-full-access",
+          approvalPolicy: "never",
+          skipGitRepoCheck: true,
+          networkAccessEnabled: true,
+        },
+        getTaskRunner: () => runner,
+      },
+    );
+
+    expect(capture.value?.ccSessionScope).toBeUndefined();
+  });
+
+  it("forwards a resolver-supplied CC session scope verbatim to the runner", async () => {
+    const capture = { value: null as AgentTaskRequest | null };
+    const runner = makeTaskRunner("codex", { capture });
+
+    await executeAgentCall(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        resolveTaskRunner: () => ({
+          runner,
+          capabilityView: CODEX_VIEW,
+          workingDirectory: "/tmp/wt-collab",
+          ccSessionScope: {
+            project: "example",
+            session: "sess-1",
+            conversationId: "conv-originating",
+          },
+        }),
+      },
+    );
+
+    expect(capture.value?.ccSessionScope).toEqual({
+      project: "example",
+      session: "sess-1",
+      conversationId: "conv-originating",
+    });
+  });
 });
 
 describe("executeAgentCall — pre-turn MCP apply hook", () => {
@@ -1349,7 +1404,9 @@ describe("executeAgentCall — structured-output repair", () => {
       resumeRef: null,
       outputSchema: schema,
     });
-    expect(requests[1]?.systemInstructions).toBeUndefined();
+    // The repair is an isolated one-shot, but it must still run under the
+    // instructions that governed the original call.
+    expect(requests[1]?.systemInstructions).toEqual(["use the project tools"]);
     expect(requests[1]?.tooling).toBeUndefined();
     expect(requests[1]?.imagePaths).toBeUndefined();
     expect(result.backendRef).toEqual({
@@ -2014,5 +2071,94 @@ describe("executeAgentCall — structured-output repair", () => {
 
     expect(calls).toBe(1);
     expect(result.outcome.kind).toBe("failed");
+  });
+});
+
+describe("buildStructuredOutputRepairRequest", () => {
+  const schema = { type: "object", required: ["summary"] };
+  const governingFields = {
+    systemInstructions: "the governing charter",
+    laneRef: { workflowId: "wf-1", laneId: "primary" },
+    writeCapability: "read_only" as const,
+    timeoutMs: 30_000,
+    modelId: "model-x",
+    reasoningEffort: "high",
+  };
+  const perTurnPayload = {
+    tooling: { servers: [] },
+    imageRefs: [
+      {
+        index: 1,
+        mediaType: "image/png",
+        path: "/tmp/reference.png",
+        base64Data: "image-data",
+      },
+    ],
+  };
+
+  it("carries the governing fields of a conversation_turn into the repair turn", () => {
+    const repair = buildStructuredOutputRepairRequest({
+      request: {
+        kind: "conversation_turn",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+        ...governingFields,
+        ...perTurnPayload,
+      },
+      prompt: "your prior output failed validation",
+      backend: "claude",
+    });
+
+    expect(repair).toEqual({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: "your prior output failed validation",
+      outputSchema: schema,
+      ...governingFields,
+    });
+    expect(agentCallRequestSchema.parse(repair)).toEqual(repair);
+  });
+
+  it("carries the governing fields of a task_run into the repair run", () => {
+    const repair = buildStructuredOutputRepairRequest({
+      request: {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+        ...governingFields,
+        ...perTurnPayload,
+      },
+      prompt: "your prior output failed validation",
+      backend: "codex",
+    });
+
+    expect(repair).toEqual({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "your prior output failed validation",
+      outputSchema: schema,
+      ...governingFields,
+    });
+    expect(agentCallRequestSchema.parse(repair)).toEqual(repair);
+  });
+
+  it("omits governing fields the original request never set", () => {
+    const repair = buildStructuredOutputRepairRequest({
+      request: {
+        kind: "conversation_turn",
+        prompt: "produce a manifest",
+        outputSchema: schema,
+      },
+      prompt: "your prior output failed validation",
+      backend: "claude",
+    });
+
+    expect(repair).toEqual({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: "your prior output failed validation",
+      outputSchema: schema,
+    });
   });
 });

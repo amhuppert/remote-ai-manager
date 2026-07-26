@@ -8,12 +8,20 @@ import type {
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
-import { neutralizeAmbientCcEnv } from "@/lib/agent-gateway/session-env";
+import {
+  buildSessionEnvContract,
+  neutralizeAmbientCcEnv,
+  type SessionEnv,
+} from "@/lib/agent-gateway/session-env";
+import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
+import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
+import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
-import type {
-  AgentTaskRequest,
-  AgentTaskResult,
-  AgentTaskRunner,
+import {
+  ccTaskSessionScopeSchema,
+  type AgentTaskRequest,
+  type AgentTaskResult,
+  type AgentTaskRunner,
 } from "../task";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
@@ -66,16 +74,79 @@ export interface ClaudeTaskRunnerDeps {
     prompt: string;
     options: Options;
   }): AsyncIterable<SDKMessage>;
+  /**
+   * Server coordinates and config location for the session env contract, read
+   * here (never from the request) so a scoped run cannot be handed credentials
+   * by its caller. Only consulted for a run carrying a `ccSessionScope`.
+   */
+  getServerUrl(): string | null;
+  getApiToken(): string | null;
+  getConfigDir(): string;
 }
 
 const defaultDeps: ClaudeTaskRunnerDeps = {
   runQuery: (args) => query(args),
+  getServerUrl: getServerBaseUrl,
+  getApiToken: getCachedInstanceToken,
+  getConfigDir: getConfigDirPath,
 };
 
 export class ClaudeTaskRunner implements AgentTaskRunner {
   readonly backend: AgentBackendId = "claude";
 
   constructor(private readonly deps: ClaudeTaskRunnerDeps = defaultDeps) {}
+
+  /**
+   * Ambient CC_* (an outer instance's server URL/token, an outer lane's
+   * workflow ids) is blanked FIRST, whether or not this run is scoped, so
+   * nothing inherited can survive into the child. A run carrying a trusted
+   * `ccSessionScope` then gets the full session env contract on top —
+   * credentials and paths resolved here, server-side: the scope names an
+   * identity, it never carries the means to act as one.
+   */
+  private resolveChildEnv(
+    input: AgentTaskRequest,
+    isolatedOneShot: boolean,
+  ):
+    | { kind: "resolved"; env: Record<string, string> }
+    | { kind: "invalid_scope"; invalidFields: string } {
+    const neutralizedEnv: SessionEnv = {
+      ...neutralizeAmbientCcEnv(buildChildEnv()),
+      ...(isolatedOneShot ? { CLAUDECODE: "" } : {}),
+    };
+
+    if (input.ccSessionScope === undefined) {
+      return {
+        kind: "resolved",
+        env: neutralizedEnv as Record<string, string>,
+      };
+    }
+
+    const scope = ccTaskSessionScopeSchema.safeParse(input.ccSessionScope);
+    if (!scope.success) {
+      // Field paths only — a scope value could be any string the caller built,
+      // and this error travels into results and logs.
+      return {
+        kind: "invalid_scope",
+        invalidFields: [
+          ...new Set(scope.error.issues.map((issue) => issue.path.join("."))),
+        ].join(", "),
+      };
+    }
+
+    return {
+      kind: "resolved",
+      env: buildSessionEnvContract({
+        baseEnv: neutralizedEnv,
+        serverUrl: this.deps.getServerUrl(),
+        apiToken: this.deps.getApiToken(),
+        project: scope.data.project,
+        session: scope.data.session,
+        conversationId: scope.data.conversationId,
+        configDir: this.deps.getConfigDir(),
+      }) as Record<string, string>,
+    };
+  }
 
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
     const isolatedOneShot = input.executionProfile === "isolated-one-shot";
@@ -86,6 +157,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       timeoutMs: input.timeoutMs,
       executionProfile: input.executionProfile ?? "standard",
       hasOutputSchema: input.outputSchema !== undefined,
+      hasCcSessionScope: input.ccSessionScope !== undefined,
     });
 
     let validatedReasoningEffort: ClaudeEffortLevel | undefined;
@@ -187,6 +259,22 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       ? appendStructuredOutputInstruction(input.prompt, input.outputSchema)
       : input.prompt;
 
+    const childEnv = this.resolveChildEnv(input, isolatedOneShot);
+    if (childEnv.kind === "invalid_scope") {
+      const error = `Invalid ccSessionScope for a Claude task run: ${childEnv.invalidFields}`;
+      logger.error("claude-task-runner.invalid_session_scope", {
+        workingDirectory: input.workingDirectory,
+        invalidFields: childEnv.invalidFields,
+      });
+      return {
+        ...resolveTaskContinuation(null, error),
+        text: null,
+        usage: null,
+        error,
+        timedOut: false,
+      };
+    }
+
     // Set up timeout via AbortController
     const abortController = new AbortController();
     let timedOut = false;
@@ -259,12 +347,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           persistSession: !isolatedOneShot,
           mcpServers: mcpServers as Record<string, never>,
           abortController,
-          // Task subprocesses get no session-env contract, so ambient CC_*
-          // (an outer instance's server URL/token) must be blanked here.
-          env: {
-            ...neutralizeAmbientCcEnv(buildChildEnv()),
-            ...(isolatedOneShot ? { CLAUDECODE: "" } : {}),
-          } as Record<string, string>,
+          env: childEnv.env,
         },
       });
 

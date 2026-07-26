@@ -1,12 +1,19 @@
 import { Codex } from "@openai/codex-sdk";
 import type { CodexOptions, ThreadOptions } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
-import { neutralizeAmbientCcEnv } from "@/lib/agent-gateway/session-env";
+import {
+  buildSessionEnvContract,
+  neutralizeAmbientCcEnv,
+  type SessionEnv,
+} from "@/lib/agent-gateway/session-env";
+import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
+import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { createLogger } from "@/lib/logging";
-import type {
-  AgentTaskRequest,
-  AgentTaskResult,
-  AgentTaskRunner,
+import {
+  ccTaskSessionScopeSchema,
+  type AgentTaskRequest,
+  type AgentTaskResult,
+  type AgentTaskRunner,
 } from "../task";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import {
@@ -25,7 +32,7 @@ import {
   type CodexPricingTable,
   type CodexReasoningEffort,
 } from "@/lib/agent-backends/schemas";
-import { readConfig } from "@/lib/config/loader";
+import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import {
   estimateCodexCostUsd,
   resolveConfiguredCodexPricingOverrides,
@@ -143,6 +150,14 @@ export interface CodexTaskRunnerDeps {
   }): Promise<NativeCodexMcpServer[]>;
   /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
+  /**
+   * Server coordinates and config location for the session env contract, read
+   * here (never from the request) so a scoped run cannot be handed credentials
+   * by its caller. Only consulted for a run carrying a `ccSessionScope`.
+   */
+  getServerUrl(): string | null;
+  getApiToken(): string | null;
+  getConfigDir(): string;
 }
 
 const defaultDeps: CodexTaskRunnerDeps = {
@@ -152,6 +167,9 @@ const defaultDeps: CodexTaskRunnerDeps = {
   listNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
     resolveConfiguredCodexPricingOverrides(await readConfig()),
+  getServerUrl: getServerBaseUrl,
+  getApiToken: getCachedInstanceToken,
+  getConfigDir: getConfigDirPath,
 };
 
 function buildPrompt(input: AgentTaskRequest): CodexTaskInput {
@@ -322,6 +340,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       webSearchMode: threadOptions.webSearchMode,
       skipGitRepoCheck: threadOptions.skipGitRepoCheck,
       executionProfile: input.executionProfile ?? "standard",
+      hasCcSessionScope: input.ccSessionScope !== undefined,
     });
 
     if (
@@ -342,14 +361,50 @@ export class CodexTaskRunner implements AgentTaskRunner {
       };
     }
 
-    // Task subprocesses get no session-env contract, so ambient CC_* (an
-    // outer instance's server URL/token) must be blanked here. Copy before
-    // neutralizing — the helper mutates, and an injected dep may hand out a
-    // shared object.
-    const env = toStringEnv({
+    // Ambient CC_* (an outer instance's server URL/token, an outer lane's
+    // workflow ids) is blanked FIRST, whether or not this run is scoped, so
+    // nothing inherited can survive into the child. Copy before neutralizing —
+    // the helper mutates, and an injected dep may hand out a shared object.
+    const neutralizedEnv: SessionEnv = {
       ...neutralizeAmbientCcEnv({ ...this.deps.buildChildEnv() }),
       CLAUDECODE: "",
-    });
+    };
+
+    let sessionEnv = neutralizedEnv;
+    if (input.ccSessionScope !== undefined) {
+      const scope = ccTaskSessionScopeSchema.safeParse(input.ccSessionScope);
+      if (!scope.success) {
+        // Field paths only — a scope value could be any string the caller
+        // built, and this error travels into results and logs.
+        const invalidFields = [
+          ...new Set(scope.error.issues.map((issue) => issue.path.join("."))),
+        ].join(", ");
+        const error = `Invalid ccSessionScope for a Codex task run: ${invalidFields}`;
+        logger.error("codex-task-runner.invalid_session_scope", {
+          workingDirectory: input.workingDirectory,
+          invalidFields,
+        });
+        return {
+          ...classifiedContinuation(null, error),
+          text: null,
+          usage: null,
+          error,
+          timedOut: false,
+        };
+      }
+      // Credentials and paths are resolved here, server-side: the scope names
+      // an identity, it never carries the means to act as one.
+      sessionEnv = buildSessionEnvContract({
+        baseEnv: neutralizedEnv,
+        serverUrl: this.deps.getServerUrl(),
+        apiToken: this.deps.getApiToken(),
+        project: scope.data.project,
+        session: scope.data.session,
+        conversationId: scope.data.conversationId,
+        configDir: this.deps.getConfigDir(),
+      });
+    }
+    const env = toStringEnv(sessionEnv);
     let mcpServersConfig: Record<string, unknown> | undefined;
     if (isolatedOneShot) {
       const nativeServers = await listNativeMcpServers(

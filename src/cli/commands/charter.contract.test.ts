@@ -12,6 +12,7 @@ import {
   SCAFFOLD_TEMPLATE,
   computeAlignmentHash,
   renderAlignmentPromptSection,
+  usesDigestPointer,
 } from "@/lib/session-alignment/render";
 import {
   createSessionAlignmentService,
@@ -75,11 +76,20 @@ function buildService(): SessionAlignmentService {
     render: {
       renderAlignmentPromptSection,
       computeAlignmentHash,
+      usesDigestPointer,
       scaffoldTemplate: SCAFFOLD_TEMPLATE,
     },
     mirror: {
       async write(): Promise<CharterMirrorWriteResult> {
         return { ok: true, filePath: ".cc/session-alignment/charter.md" };
+      },
+    },
+    snapshot: {
+      write() {
+        return Promise.resolve({
+          filePath: ".cc/session-alignment/snapshots/frozen.md",
+          created: true,
+        });
       },
     },
     broadcast: () => ({ delivered: true }),

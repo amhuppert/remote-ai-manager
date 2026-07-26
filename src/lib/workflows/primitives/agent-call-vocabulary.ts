@@ -79,6 +79,11 @@ const structuredOutputRepairInputSchema = z.object({
 const baseRequestFields = {
   laneRef: laneRefSchema.optional(),
   prompt: z.string().min(1),
+  // Governing instructions for the call, expressed uniformly across
+  // transports: each dispatch path maps this onto its own governance channel
+  // (the task runner's `systemInstructions`, the conversation runtime's
+  // session instructions) rather than folding it into the prompt.
+  systemInstructions: z.string().optional(),
   tooling: portableMcpConfigInputSchema.optional(),
   outputSchema: outputSchemaInputSchema.optional(),
   structuredOutputRepair: structuredOutputRepairInputSchema.optional(),
@@ -106,7 +111,6 @@ export const agentCallRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("task_run"),
     backend: agentBackendIdShapeSchema,
-    systemInstructions: z.string().optional(),
     ...baseRequestFields,
   }),
 ]);

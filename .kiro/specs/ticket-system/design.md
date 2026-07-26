@@ -316,6 +316,10 @@ refresh: cctl ticket get command-center#12
 </active-ticket>
 ```
 
+A standalone Collaboration Mode run is one logical originating conversation turn, not a turn per phase. It therefore reads `getForSession` exactly once at kickoff, persists that captured block with the run, and prefixes it onto every substantive work prompt for both agents — including after a pause and resume, which reuses the captured block rather than re-reading the ticket. Refreshing mid-run would give the two peers different premises for the same question; the next run picks up subsequent attachment changes (5.7).
+
+Because the block carries retrieval commands rather than attachment bodies, 5.6 holds for a collaboration agent only if `cctl` resolves from that agent's lane. Both lanes therefore execute within the originating conversation's Command Center scope regardless of which backend each agent runs on, including the lane that executes as a task run rather than a conversation (5.8).
+
 ## Requirements Traceability
 
 | Req | Summary | Components | Interfaces / Flows |
@@ -352,6 +356,8 @@ refresh: cctl ticket get command-center#12
 | 5.4 | Ticket view every turn | LiveTicketContext, complete index | Per-turn effective-prompt prepend |
 | 5.5 | Post-start changes flow in | Per-turn rebuild from live rows | Live context flow |
 | 5.6 | Full content on demand incl. conversations | resolve: snapshot + live transcript read commands | attachment get route/CLI |
+| 5.7 | One ticket view per collaboration run, reused across phases and resume | LiveTicketContext read once at kickoff; captured block persisted with the run | Live context flow |
+| 5.8 | Retrieval commands work from either collaboration lane | Originating conversation's CC scope on both lanes, including the task-run lane | CLI transport |
 | 6.1 | Copy ticket reference | CopyTicketReferenceButton + references.ts | Clipboard XML |
 | 6.2 | Paste renders chip | ref-paste extension + TicketMentionNode | Prompt editor |
 | 6.3 | Chip removal excludes ref | Serializer emits only present atoms | Prompt editor |
@@ -388,7 +394,7 @@ refresh: cctl ticket get command-center#12
 | TicketContentStore | Infrastructure | Preserve bytes/compaction markdown outside worktrees | 3.3, 5.1, 5.2 | Config dir P0, fs P0 | Service |
 | TicketStartService | Orchestration | All-or-nothing ticket session start | 2.2–2.4, 4.1–5.3 | Session, compaction, Alignment, materializer P0 | Service, API |
 | TicketMaterializer | Integration | Creation-time worktree artifacts + reference docs | 5.1, 5.2 | Content P0, reference docs P0 | Service |
-| LiveTicketContext | Runtime | Complete current ticket block every turn | 5.4–5.6 | Repository P0, prompt actor P0 | Service |
+| LiveTicketContext | Runtime | Complete current ticket block every turn | 5.4–5.8 | Repository P0, prompt actor P0 | Service |
 | TicketReferenceAdapter | Conversation UI | Round-trip ticket-ref as text and chips | 6.1–6.4 | Tiptap P0, cctl P1 | State |
 | TicketCommandAdapter | Conversation command | Server-owned creation from accumulated context | 7.1–7.5 | executeWorkflowTaskRun P0, compaction P0, TicketService P0 | Service |
 | TicketApi | HTTP | Typed UI and agent operations | 1.1–10.2 | Ticket services P0, agent auth P0 | API |

@@ -4,7 +4,9 @@ import {
   conversationStateSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 import {
+  isAlignmentEligibleContext,
   isAlignmentEligibleTurn,
   resolveAlignmentGateForReusedRuntime,
   resolveAlignmentInstructionForNewRuntime,
@@ -58,6 +60,57 @@ describe("isAlignmentEligibleTurn", () => {
         creationMode: undefined,
         isProjectConversation: false,
         autonomous: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isAlignmentEligibleContext", () => {
+  const CREATION_MODES: Array<SessionState["creationMode"] | undefined> = [
+    "normal",
+    "optimistic",
+    undefined,
+  ];
+
+  it("matches isAlignmentEligibleTurn across the whole R12 matrix for conversation turns", () => {
+    for (const creationMode of CREATION_MODES) {
+      for (const isProjectConversation of [false, true]) {
+        for (const autonomous of [false, true, undefined]) {
+          const turn = { creationMode, isProjectConversation, autonomous };
+          expect(
+            isAlignmentEligibleContext({ kind: "conversation_turn", ...turn }),
+          ).toBe(isAlignmentEligibleTurn(turn));
+        }
+      }
+    }
+  });
+
+  it("is eligible for a user-invoked standalone collaboration run in a normal session", () => {
+    expect(
+      isAlignmentEligibleContext({
+        kind: "standalone_collaboration",
+        creationMode: "normal",
+        userInitiated: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("is ineligible for a standalone collaboration run in an optimistic session", () => {
+    expect(
+      isAlignmentEligibleContext({
+        kind: "standalone_collaboration",
+        creationMode: "optimistic",
+        userInitiated: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("is ineligible for a standalone collaboration run whose session is unknown", () => {
+    expect(
+      isAlignmentEligibleContext({
+        kind: "standalone_collaboration",
+        creationMode: undefined,
+        userInitiated: true,
       }),
     ).toBe(false);
   });

@@ -61,6 +61,12 @@ export interface DispatchTaskRunDeps {
    * be torn down (e.g. workflow abort cancelling a validator task-run). */
   signal?: AbortSignal;
   /**
+   * Opt-in CC session identity for the child process, forwarded verbatim to
+   * the runner (see the trust contract on `ccTaskSessionScopeSchema`). Only a
+   * caller that owns the originating session may supply it.
+   */
+  ccSessionScope?: AgentTaskRequest["ccSessionScope"];
+  /**
    * Backend failure classifier for thrown runner errors (the registered
    * descriptor's `errors.classify`). When absent, a thrown error normalizes
    * to `backend_error`.
@@ -148,6 +154,9 @@ export async function dispatchTaskRun(
       : {}),
     ...(deps.skipGitRepoCheck !== undefined
       ? { skipGitRepoCheck: deps.skipGitRepoCheck }
+      : {}),
+    ...(deps.ccSessionScope !== undefined
+      ? { ccSessionScope: deps.ccSessionScope }
       : {}),
   };
 

@@ -9,6 +9,10 @@ import {
 import type { SessionAlignmentRepo } from "./repo";
 import type { CharterMirrorInput, CharterMirrorWriteResult } from "./mirror";
 import type { AlignmentInjection, RenderAlignmentInput } from "./render";
+import type {
+  CharterSnapshotInput,
+  CharterSnapshotWriteResult,
+} from "./snapshot";
 import {
   alignmentDecisionSchema,
   alignmentDiffSchema,
@@ -119,6 +123,23 @@ export interface CreateAndActivateTicketCharterInput {
   description: string;
 }
 
+export interface CaptureActiveCharterInput {
+  projectPath: string;
+  sessionName: string;
+  /** Worktree the immutable snapshot is materialized in (digest mode only). */
+  worktreePath: string;
+}
+
+/**
+ * The governing injection for a run, plus—when the charter is large enough to
+ * be delivered as a digest—the worktree-relative path of the frozen full
+ * content the digest dereferences. Absent in inline mode, where the whole
+ * charter already travels in `text`.
+ */
+export interface CapturedAlignmentCharter extends AlignmentInjection {
+  snapshotPath?: string;
+}
+
 export type FillDraftResult =
   | { status: "draft_ready"; version: null }
   | { status: "activated"; version: number };
@@ -155,6 +176,20 @@ export interface SessionAlignmentService {
     projectPath: string,
     sessionName: string,
   ): Promise<AlignmentInjection | null>;
+  /**
+   * Capture the active charter once, for a run whose premises must not shift
+   * while it executes (null when no charter is active). Inline charters return
+   * exactly what an ordinary turn would be injected. A digest-mode charter is
+   * first frozen at a hash-addressed snapshot path, and the returned digest
+   * dereferences that immutable file rather than the mutable active mirror —
+   * so activating a later charter mid-run cannot change what the run reads.
+   *
+   * Fail-closed: a snapshot that cannot be materialized rejects rather than
+   * yielding a pointer to bytes that do not exist.
+   */
+  captureActiveCharterForRun(
+    input: CaptureActiveCharterInput,
+  ): Promise<CapturedAlignmentCharter | null>;
   /** Per-version content diff between two activated versions. */
   diff(
     projectPath: string,
@@ -195,6 +230,8 @@ export interface SessionAlignmentService {
 export interface SessionAlignmentRenderDeps {
   renderAlignmentPromptSection(input: RenderAlignmentInput): string;
   computeAlignmentHash(content: string): string;
+  /** Whether this charter renders as a digest pointing at a file (vs inlined). */
+  usesDigestPointer(content: string): boolean;
   /** The soft-scaffold template seeded into a first-charter authoring prompt. */
   scaffoldTemplate: string;
 }
@@ -202,6 +239,11 @@ export interface SessionAlignmentRenderDeps {
 /** The mirror writer surface (3.1) — only `write` is needed by activation. */
 export interface SessionAlignmentMirrorDeps {
   write(input: CharterMirrorInput): Promise<CharterMirrorWriteResult>;
+}
+
+/** The immutable hash-addressed snapshot boundary, used only by run capture. */
+export interface SessionAlignmentSnapshotDeps {
+  write(input: CharterSnapshotInput): Promise<CharterSnapshotWriteResult>;
 }
 
 /** Recorded mirror call shape; exported so tests can assert materialization. */
@@ -230,6 +272,7 @@ export interface SessionAlignmentServiceDeps {
   repo: SessionAlignmentRepo;
   render: SessionAlignmentRenderDeps;
   mirror: SessionAlignmentMirrorDeps;
+  snapshot: SessionAlignmentSnapshotDeps;
   /** Best-effort SSE broadcaster; failures are swallowed + logged, never thrown. */
   broadcast: PublishFn;
   promptQueue: SessionAlignmentPromptQueueDeps;
@@ -827,6 +870,41 @@ export function createSessionAlignmentService(
         }),
       };
       return Promise.resolve(injection);
+    },
+
+    async captureActiveCharterForRun(input) {
+      const { projectPath, sessionName, worktreePath } = input;
+      // One read: everything below describes this exact version, even if a
+      // later charter is activated while the run is still going.
+      const active = deps.repo.findActiveVersion(projectPath, sessionName);
+      if (!active || active.version === null) {
+        return null;
+      }
+
+      if (!deps.render.usesDigestPointer(active.content)) {
+        return {
+          version: active.version,
+          contentHash: active.contentHash,
+          text: deps.render.renderAlignmentPromptSection({
+            content: active.content,
+          }),
+        };
+      }
+
+      const snapshot = await deps.snapshot.write({
+        worktreePath,
+        contentHash: active.contentHash,
+        content: active.content,
+      });
+      return {
+        version: active.version,
+        contentHash: active.contentHash,
+        text: deps.render.renderAlignmentPromptSection({
+          content: active.content,
+          filePath: snapshot.filePath,
+        }),
+        snapshotPath: snapshot.filePath,
+      };
     },
 
     async diff(projectPath, sessionName, from, to) {

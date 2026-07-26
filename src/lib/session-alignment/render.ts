@@ -78,6 +78,15 @@ export interface AlignmentInjection {
 }
 
 /**
+ * Whether a charter of this size renders as a digest that dereferences a file
+ * rather than inlining its whole content. Callers that must materialize the
+ * file the pointer targets ask here instead of re-deriving the threshold.
+ */
+export function usesDigestPointer(content: string): boolean {
+  return content.length > ALIGNMENT_INLINE_THRESHOLD;
+}
+
+/**
  * Render the governing-context section for an active charter. Below
  * ALIGNMENT_INLINE_THRESHOLD the full content is inlined; above it, a bounded
  * head digest plus an explicit read-the-full-file pointer is emitted. Both
@@ -89,7 +98,7 @@ export function renderAlignmentPromptSection(
   const { content } = input;
   const filePath = input.filePath ?? ALIGNMENT_DOCUMENT_PATH;
 
-  if (content.length <= ALIGNMENT_INLINE_THRESHOLD) {
+  if (!usesDigestPointer(content)) {
     return [GOVERNING_PREAMBLE, content].join("\n\n");
   }
 

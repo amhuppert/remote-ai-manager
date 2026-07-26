@@ -10,6 +10,13 @@ import {
   COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA,
   type CollaborationInitialDraftContent,
 } from "./types";
+import {
+  buildLaneSystemInstructions,
+  prefixPromptWithTicketBlock,
+  CHARTER_SUPERSEDES_NOTICE,
+  type CollaborationSessionContext,
+} from "./session-context";
+import { createEnvCapturingCodexTaskRunner } from "@/lib/agent-backends/testing/fake-codex-provider";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
   AgentTaskRequest,
@@ -100,7 +107,7 @@ function makeRecordingClaudeFactory(
 }
 
 describe("createCollaborationProductionCallAgent", () => {
-  it("passes the originating conversationId to the Claude runtime as mcpScopeConversationId so the session MCP server resolves to a real CC conversation", async () => {
+  it("passes the originating conversationId to the Claude runtime as ccScopeConversationId so cctl inside the lane resolves a real CC conversation", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-mcp-scope",
@@ -180,7 +187,7 @@ describe("createCollaborationProductionCallAgent", () => {
         >,
     });
 
-    expect(createRuntimeInputs[0]?.mcpScopeConversationId).toBe(
+    expect(createRuntimeInputs[0]?.ccScopeConversationId).toBe(
       "real-conv-uuid-1",
     );
   });
@@ -1163,5 +1170,576 @@ describe("createCollaborationProductionCallAgent", () => {
     ).rejects.toThrow(/requires a laneRef/);
     // The scheduler is never bypassed: no backend call ran.
     expect(runnerInvoked).toBe(false);
+  });
+});
+
+/**
+ * Semantic → transport mapping for the run's captured session context.
+ *
+ * `callPrimitive` expresses the charter as `request.systemInstructions`; this
+ * caller is where that intent becomes the Claude conversation's session
+ * instructions. Both the runtime it creates and the turn it dispatches have to
+ * carry it, because the runtime bakes governance at creation while the turn
+ * carries what actually reaches the model.
+ */
+describe("createCollaborationProductionCallAgent session-context transport", () => {
+  const SESSION_CONTEXT: CollaborationSessionContext = {
+    alignment: {
+      version: 9,
+      contentHash: "hash-9",
+      text: "<session-alignment>\ncharter v9 body\n</session-alignment>",
+    },
+    activeTicketBlock: "<active-ticket>\nCC-77: ship parity\n</active-ticket>",
+  };
+  const CHARTER_INSTRUCTION = buildLaneSystemInstructions(SESSION_CONTEXT)!;
+  const TICKET_BLOCK = SESSION_CONTEXT.activeTicketBlock!;
+  const WORK_BODY = "do the actual work and cover every field";
+
+  interface ClaudeRecorder {
+    factory: ConversationBackendFactory;
+    createRuntimeInputs: Array<
+      Parameters<ConversationBackendFactory["createRuntime"]>[0]
+    >;
+    turnInputs: ConversationBackendTurnInput[];
+  }
+
+  /**
+   * Claude factory double recording both governance surfaces: what the runtime
+   * was created with and what each dispatched turn carried.
+   */
+  function makeClaudeRecorder(options?: {
+    staleOnTurn?: number;
+  }): ClaudeRecorder {
+    const createRuntimeInputs: Array<
+      Parameters<ConversationBackendFactory["createRuntime"]>[0]
+    > = [];
+    const turnInputs: ConversationBackendTurnInput[] = [];
+    let sendTurnCount = 0;
+    const factory: ConversationBackendFactory = {
+      backend: "claude",
+      async createRuntime(input): Promise<ConversationBackendRuntime> {
+        createRuntimeInputs.push(input);
+        return {
+          backend: "claude",
+          status: "alive",
+          modelId: input.modelId,
+          reasoningEffort: input.reasoningEffort,
+          outputFormat: input.outputFormat,
+          alignmentVersion: input.alignmentVersion ?? null,
+          applyPortableMcpConfig: async () => ({
+            disposition: "applied_now",
+            droppedServerIds: [],
+            droppedFields: [],
+            errors: {},
+          }),
+          async sendTurn(turn): Promise<ConversationBackendTurnResult> {
+            turnInputs.push(turn);
+            sendTurnCount += 1;
+            if (options?.staleOnTurn === sendTurnCount) {
+              return {
+                backendRef: { backend: "claude", ref: "stale-session" },
+                costUsd: null,
+                durationMs: 10,
+                numTurns: 1,
+                contextTokens: null,
+                contextWindowMax: null,
+                contentBlocks: [],
+                aborted: false,
+                compacted: false,
+                failure: {
+                  kind: "stale_resume_ref",
+                  message: "resume session not found",
+                  retryable: true,
+                },
+                continuationDisposition: "retain",
+              };
+            }
+            const structuredOutput = draftOutput(sendTurnCount);
+            return {
+              backendRef: {
+                backend: "claude",
+                ref: `real-session-${sendTurnCount}`,
+              },
+              costUsd: null,
+              durationMs: 10,
+              numTurns: 1,
+              contextTokens: null,
+              contextWindowMax: null,
+              contentBlocks: [{ type: "text", text: structuredOutput.summary }],
+              structuredOutput,
+              aborted: false,
+              compacted: false,
+              failure: null,
+              continuationDisposition: "retain",
+            };
+          },
+          close: () => undefined,
+        };
+      },
+    };
+    return { factory, createRuntimeInputs, turnInputs };
+  }
+
+  async function claudeLaneService(
+    workflowId: string,
+    ref: string | null,
+  ): Promise<ReturnType<typeof createLaneService>> {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId,
+      laneId: "claude",
+      backend: "claude",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      ref,
+      metrics: { rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+    return laneService;
+  }
+
+  const SCHEMA = COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+    string,
+    unknown
+  >;
+
+  function governedRequest(workflowId: string): AgentCallRequest {
+    return {
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: prefixPromptWithTicketBlock(
+        SESSION_CONTEXT,
+        `${WORK_BODY}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
+      ),
+      systemInstructions: CHARTER_INSTRUCTION,
+      laneRef: { workflowId, laneId: "claude" },
+      writeCapability: "write_capable",
+      outputSchema: SCHEMA,
+    };
+  }
+
+  it("maps systemInstructions onto the Claude runtime's session instructions at creation and on every dispatched turn", async () => {
+    const workflowId = "wf-session-instructions";
+    const laneService = await claudeLaneService(workflowId, null);
+    const recorder = makeClaudeRecorder();
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent(governedRequest(workflowId));
+
+    expect(recorder.createRuntimeInputs.length).toBeGreaterThan(0);
+    for (const created of recorder.createRuntimeInputs) {
+      expect(created.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+    }
+    expect(recorder.turnInputs.length).toBeGreaterThan(0);
+    for (const turn of recorder.turnInputs) {
+      expect(turn.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+    }
+  });
+
+  it("passes empty session instructions when the request carries none", async () => {
+    const workflowId = "wf-no-session-instructions";
+    const laneService = await claudeLaneService(workflowId, null);
+    const recorder = makeClaudeRecorder();
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: "round 1",
+      laneRef: { workflowId, laneId: "claude" },
+      writeCapability: "write_capable",
+      outputSchema: SCHEMA,
+    });
+
+    for (const created of recorder.createRuntimeInputs) {
+      expect(created.sessionInstructions).toEqual([]);
+    }
+    for (const turn of recorder.turnInputs) {
+      expect(turn.sessionInstructions).toEqual([]);
+    }
+  });
+
+  it("does not stamp an alignmentVersion onto the runtime, whose per-call lifecycle can never fire the recreate gate", async () => {
+    const workflowId = "wf-no-alignment-version";
+    const laneService = await claudeLaneService(workflowId, null);
+    const recorder = makeClaudeRecorder();
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent(governedRequest(workflowId));
+
+    for (const created of recorder.createRuntimeInputs) {
+      expect(created.alignmentVersion).toBeUndefined();
+    }
+  });
+
+  it("keeps the charter on the format follow-up while dropping the ticket block with it", async () => {
+    const workflowId = "wf-format-turn-governance";
+    const laneService = await claudeLaneService(workflowId, null);
+    const recorder = makeClaudeRecorder();
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent(governedRequest(workflowId));
+
+    expect(recorder.turnInputs).toHaveLength(2);
+    const [workTurn, formatTurn] = recorder.turnInputs;
+    // Work turn: ticket block prefixed once, prose directive swapped in.
+    expect(workTurn?.promptText).toBe(
+      `${TICKET_BLOCK}\n\n${WORK_BODY}\n\n${COLLABORATION_PROSE_TURN_INSTRUCTION}`,
+    );
+    expect(workTurn?.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+    // Format turn: same governance, restate-as-JSON prompt only — the ticket
+    // block is task context for producing the answer, not for reformatting it.
+    expect(formatTurn?.promptText).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
+    expect(formatTurn?.promptText).not.toContain(TICKET_BLOCK);
+    expect(formatTurn?.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+  });
+
+  it("swaps only the builder's trailing reminder, leaving a ticket block that happens to quote it byte-identical", async () => {
+    const workflowId = "wf-ticket-bytes-preserved";
+    const laneService = await claudeLaneService(workflowId, null);
+    const recorder = makeClaudeRecorder();
+
+    // Ticket titles and descriptions are unrestricted user text: a ticket about
+    // this very reminder carries its exact bytes. The canonical block must
+    // survive the prose-turn rewrite unchanged — only the builder-owned
+    // terminal reminder is the caller's to swap.
+    const adversarialTicketBlock = [
+      "<active-ticket>",
+      `CC-99: "${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}" leaks into drafts`,
+      "</active-ticket>",
+    ].join("\n");
+    const adversarialContext: CollaborationSessionContext = {
+      alignment: SESSION_CONTEXT.alignment,
+      activeTicketBlock: adversarialTicketBlock,
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: prefixPromptWithTicketBlock(
+        adversarialContext,
+        `${WORK_BODY}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
+      ),
+      systemInstructions: CHARTER_INSTRUCTION,
+      laneRef: { workflowId, laneId: "claude" },
+      writeCapability: "write_capable",
+      outputSchema: SCHEMA,
+    });
+
+    const workTurn = recorder.turnInputs[0];
+    expect(workTurn?.promptText).toBe(
+      `${adversarialTicketBlock}\n\n${WORK_BODY}\n\n${COLLABORATION_PROSE_TURN_INSTRUCTION}`,
+    );
+    // The captured block is reproduced verbatim…
+    expect(workTurn?.promptText.startsWith(adversarialTicketBlock)).toBe(true);
+    // …including the reminder bytes inside it, while the builder's own trailing
+    // reminder is the one that got swapped.
+    expect(
+      workTurn?.promptText.split(COLLABORATION_STRUCTURED_OUTPUT_REMINDER),
+    ).toHaveLength(2);
+    expect(
+      workTurn?.promptText.endsWith(COLLABORATION_PROSE_TURN_INSTRUCTION),
+    ).toBe(true);
+  });
+
+  it("re-issues a stale-ref fresh retry with the same session instructions and prompt", async () => {
+    const workflowId = "wf-stale-governance";
+    const laneService = await claudeLaneService(workflowId, null);
+    // Turn 2 is the format follow-up resuming the work turn's session; it fails
+    // stale, and the caller recovers once with a fresh runtime.
+    const recorder = makeClaudeRecorder({ staleOnTurn: 2 });
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent(governedRequest(workflowId));
+
+    expect(recorder.turnInputs.length).toBeGreaterThan(2);
+    const staleTurn = recorder.turnInputs[1]!;
+    const retryTurn = recorder.turnInputs[2]!;
+    expect(retryTurn.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+    expect(retryTurn.promptText).toBe(staleTurn.promptText);
+    for (const created of recorder.createRuntimeInputs) {
+      expect(created.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+    }
+  });
+
+  it("governs a resumed primary lane with the captured charter, whose supersedes clause outranks any charter in the inherited session", async () => {
+    const workflowId = "wf-prior-backend-ref";
+    // priorBackendRef seeding is retained by design: agent_one resumes the
+    // originating conversation's session, which may contain an older charter
+    // that neutral collaboration code cannot inspect.
+    const laneService = await claudeLaneService(
+      workflowId,
+      "originating-session-with-charter-8",
+    );
+    const recorder = makeClaudeRecorder();
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId,
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => recorder.factory,
+    });
+
+    await callAgent(governedRequest(workflowId));
+    await callAgent(governedRequest(workflowId));
+
+    // The seeded ref is still resumed…
+    expect(recorder.createRuntimeInputs[0]?.persistedRef).toEqual({
+      backend: "claude",
+      ref: "originating-session-with-charter-8",
+    });
+    // …and every call in that resumed lane carries the captured charter with
+    // its supersedes clause, so the newer version governs.
+    expect(recorder.turnInputs.length).toBeGreaterThan(1);
+    for (const turn of recorder.turnInputs) {
+      expect(turn.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+      expect(turn.sessionInstructions[0]).toContain(CHARTER_SUPERSEDES_NOTICE);
+    }
+  });
+
+  describe("CC session scope for the Codex task lane", () => {
+    const SESSION_SCOPE_INPUT = {
+      workflowId: "wf-session-scope",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "conv-originating",
+    } as const;
+
+    async function makeCodexLaneService() {
+      const laneService = createLaneService({
+        store: createInMemoryLaneStore(),
+      });
+      await laneService.initialize({
+        workflowId: SESSION_SCOPE_INPUT.workflowId,
+        laneId: "codex",
+        backend: "codex",
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        ref: null,
+        metrics: { rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-04-28T10:00:00.000Z",
+      });
+      return laneService;
+    }
+
+    function codexWorkRequest(): AgentCallRequest {
+      return {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "do the collaborative work",
+        laneRef: {
+          workflowId: SESSION_SCOPE_INPUT.workflowId,
+          laneId: "codex",
+        },
+        writeCapability: "write_capable",
+      };
+    }
+
+    function makeRecordingRunner(sink: AgentTaskRequest[]): AgentTaskRunner {
+      return {
+        backend: "codex",
+        async run(request): Promise<AgentTaskResult> {
+          sink.push(request);
+          return {
+            backendRef: { backend: "codex", ref: "real-thread-1" },
+            text: "prose answer",
+            usage: null,
+            error: null,
+            timedOut: false,
+            failure: null,
+            continuationDisposition: "retain",
+          };
+        },
+      };
+    }
+
+    /**
+     * The REAL Codex task runner over a capturing provider: the request-level
+     * assertions below stop at the seam, and only the runner's own env
+     * construction proves the identity reaches a subprocess.
+     */
+    function makeRealCodexRunner() {
+      return createEnvCapturingCodexTaskRunner({
+        ambientEnv: {
+          NODE_ENV: "test",
+          PATH: "/usr/bin",
+          CC_CONVERSATION_ID: "ambient-conversation",
+          CC_API_TOKEN: "ambient-token",
+        },
+        serverUrl: "http://127.0.0.1:4321",
+        apiToken: "instance-token-secret",
+        configDir: "/cc/config",
+      });
+    }
+
+    it("gives an opted-in Codex collaboration task the originating session's CC identity", async () => {
+      const laneService = await makeCodexLaneService();
+      const codex = makeRealCodexRunner();
+
+      const callAgent = createCollaborationProductionCallAgent({
+        ...SESSION_SCOPE_INPUT,
+        laneService,
+        grantsOriginatingSessionScope: true,
+        getTaskRunner: () => codex.runner,
+      });
+
+      await callAgent(codexWorkRequest());
+
+      // `cctl ticket get` inside the lane must resolve the conversation that
+      // started the collaboration, not an ambient or synthetic one.
+      expect(codex.capturedEnvs[0]).toMatchObject({
+        CC_CONVERSATION_ID: "conv-originating",
+        CC_PROJECT: "example",
+        CC_SESSION: "sess-1",
+        CC_SERVER_URL: "http://127.0.0.1:4321",
+        CC_API_TOKEN: "instance-token-secret",
+      });
+      expect(codex.capturedEnvs[0]?.PATH).toBe("/cc/config/bin:/usr/bin");
+    });
+
+    it("leaves the task env neutralized for a caller composed without the grant (the graph-workflow shape)", async () => {
+      const laneService = await makeCodexLaneService();
+      const codex = makeRealCodexRunner();
+
+      const callAgent = createCollaborationProductionCallAgent({
+        ...SESSION_SCOPE_INPUT,
+        laneService,
+        getTaskRunner: () => codex.runner,
+      });
+
+      await callAgent(codexWorkRequest());
+
+      expect(codex.capturedEnvs[0]).toEqual({
+        NODE_ENV: "test",
+        PATH: "/usr/bin",
+        CC_CONVERSATION_ID: "",
+        CC_API_TOKEN: "",
+        CLAUDECODE: "",
+      });
+    });
+
+    it("supplies the scope on every task request of an opted-in run", async () => {
+      const laneService = await makeCodexLaneService();
+      const taskRequests: AgentTaskRequest[] = [];
+
+      const callAgent = createCollaborationProductionCallAgent({
+        ...SESSION_SCOPE_INPUT,
+        laneService,
+        grantsOriginatingSessionScope: true,
+        getTaskRunner: () => makeRecordingRunner(taskRequests),
+      });
+
+      await callAgent(codexWorkRequest());
+
+      expect(taskRequests).toHaveLength(1);
+      expect(taskRequests[0]?.ccSessionScope).toEqual({
+        project: "example",
+        session: "sess-1",
+        conversationId: "conv-originating",
+      });
+    });
+
+    it("supplies no scope at all when the grant is absent", async () => {
+      const laneService = await makeCodexLaneService();
+      const taskRequests: AgentTaskRequest[] = [];
+
+      const callAgent = createCollaborationProductionCallAgent({
+        ...SESSION_SCOPE_INPUT,
+        laneService,
+        getTaskRunner: () => makeRecordingRunner(taskRequests),
+      });
+
+      await callAgent(codexWorkRequest());
+
+      expect(taskRequests).toHaveLength(1);
+      expect(taskRequests[0]?.ccSessionScope).toBeUndefined();
+    });
+
+    it("keeps the resolved token and server URL out of the collaboration task request", async () => {
+      const laneService = await makeCodexLaneService();
+      const taskRequests: AgentTaskRequest[] = [];
+
+      const callAgent = createCollaborationProductionCallAgent({
+        ...SESSION_SCOPE_INPUT,
+        laneService,
+        grantsOriginatingSessionScope: true,
+        getTaskRunner: () => makeRecordingRunner(taskRequests),
+      });
+
+      await callAgent(codexWorkRequest());
+
+      // The scope names an identity; credentials are resolved server-side by
+      // the runner and never travel through the request.
+      const serialized = JSON.stringify(taskRequests[0]);
+      expect(serialized).not.toContain("instance-token-secret");
+      expect(serialized).not.toContain("127.0.0.1:4321");
+    });
   });
 });

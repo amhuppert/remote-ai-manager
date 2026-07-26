@@ -25,6 +25,7 @@ import {
   type AsymmetricCollaborationSliceDeps,
   type AsymmetricCollaborationSliceInput,
 } from "./envelope";
+import { EMPTY_COLLABORATION_SESSION_CONTEXT } from "./session-context";
 import { createCollaborationProductionCallAgent } from "./agent-caller-production";
 import {
   makeAgentOneInitialDraft,
@@ -336,6 +337,7 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       primaryAgentBackend: "claude",
       negotiationRounds: 1,
       autonomousResolutionThreshold: "major",
+      sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
     };
 
     const result = await runAsymmetricCollaborationSlice(input, deps);

@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
@@ -7,10 +11,18 @@ import {
   type SessionAlignmentRepo,
 } from "@/lib/session-alignment/repo";
 import {
+  ALIGNMENT_DOCUMENT_PATH,
   SCAFFOLD_TEMPLATE,
   computeAlignmentHash,
   renderAlignmentPromptSection,
+  usesDigestPointer,
 } from "@/lib/session-alignment/render";
+import {
+  ALIGNMENT_SNAPSHOT_DIR,
+  CharterSnapshotConflictError,
+  alignmentSnapshotPath,
+  createCharterSnapshotWriter,
+} from "@/lib/session-alignment/snapshot";
 import type {
   AlignmentVersion,
   SessionAlignmentUpdatedEvent,
@@ -18,11 +30,15 @@ import type {
 import {
   composeTicketCharter,
   createSessionAlignmentService,
+  type CapturedAlignmentCharter,
   type CharterMirrorCall,
   type SessionAlignmentService,
   type SessionAlignmentServiceDeps,
 } from "@/lib/session-alignment/service";
-import type { CharterMirrorWriteResult } from "@/lib/session-alignment/mirror";
+import {
+  createCharterMirrorWriter,
+  type CharterMirrorWriteResult,
+} from "@/lib/session-alignment/mirror";
 
 const PROJECT_PATH = "/p1";
 const SESSION_NAME = "s1";
@@ -68,12 +84,21 @@ function makeService(
     render: {
       renderAlignmentPromptSection,
       computeAlignmentHash,
+      usesDigestPointer,
       scaffoldTemplate: SCAFFOLD_TEMPLATE,
     },
     mirror: {
       async write(input): Promise<CharterMirrorWriteResult> {
         mirrorCalls.push({ ...input });
         return { ok: true, filePath: ".cc/session-alignment/charter.md" };
+      },
+    },
+    snapshot: {
+      write({ contentHash }) {
+        return Promise.resolve({
+          filePath: alignmentSnapshotPath(contentHash),
+          created: true,
+        });
       },
     },
     broadcast(event) {
@@ -1532,5 +1557,191 @@ describe("createAndActivateTicketCharter", () => {
         sessionName: "missing-session",
       }),
     ).rejects.toThrow("session not found");
+  });
+});
+
+describe("captureActiveCharterForRun", () => {
+  let worktreePath: string;
+  let service: SessionAlignmentService;
+
+  /** Charter comfortably above ALIGNMENT_INLINE_THRESHOLD, so it renders as a digest. */
+  const largeCharter = (marker: string) =>
+    `# Mission\n${marker}\n${`${marker} governs this session. `.repeat(300)}`;
+
+  /** Activate `content` as the next version through the standard `/align` path. */
+  async function activate(content: string): Promise<void> {
+    const begin = await service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+    await service.fillDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      content,
+    });
+    await service.approveDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      draftId: begin.draftId,
+    });
+  }
+
+  const capture = () =>
+    service.captureActiveCharterForRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      worktreePath,
+    });
+
+  /** Capture and narrow to digest mode, where a snapshot pointer is required. */
+  async function requireDigestCapture(): Promise<
+    CapturedAlignmentCharter & { snapshotPath: string }
+  > {
+    const captured = await capture();
+    if (!captured?.snapshotPath) {
+      throw new Error("expected a digest-mode capture with a snapshot path");
+    }
+    return { ...captured, snapshotPath: captured.snapshotPath };
+  }
+
+  const readWorktreeFile = (relativePath: string) =>
+    readFile(path.join(worktreePath, relativePath), "utf-8");
+
+  beforeEach(async () => {
+    worktreePath = await mkdtemp(path.join(tmpdir(), "cc-align-capture-"));
+    // Real file boundaries over a temp worktree: the mutable mirror and the
+    // immutable snapshot must be provably different files on disk.
+    ({ service } = makeService(h.fixture, {
+      mirror: createCharterMirrorWriter({
+        registerReferenceDocument: (_projectPath, _sessionName, filePath) =>
+          Promise.resolve({ id: `doc-${filePath}`, filePath }),
+      }),
+      snapshot: createCharterSnapshotWriter(),
+      loadSession: () =>
+        Promise.resolve({ worktreePath, creationMode: "normal" as const }),
+    }));
+  });
+
+  afterEach(async () => {
+    await rm(worktreePath, { recursive: true, force: true });
+  });
+
+  it("returns null when the session has no active charter", async () => {
+    expect(await capture()).toBeNull();
+    await expect(
+      stat(path.join(worktreePath, ALIGNMENT_SNAPSHOT_DIR)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("inline mode returns the canonical injection text byte-for-byte with no snapshot", async () => {
+    const content = "# Mission\nShip the capture API.";
+    await activate(content);
+
+    const captured = await capture();
+    const injection = await service.getActiveInjection(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+
+    expect(captured?.version).toBe(1);
+    expect(captured?.contentHash).toBe(computeAlignmentHash(content));
+    // Byte-identical to the ordinary-turn injection: one renderer, one text.
+    expect(captured?.text).toBe(injection?.text);
+    expect(captured?.snapshotPath).toBeUndefined();
+    await expect(
+      stat(path.join(worktreePath, ALIGNMENT_SNAPSHOT_DIR)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("digest mode freezes the full charter and points the governing text at the immutable snapshot", async () => {
+    const content = largeCharter("charter-N");
+    expect(usesDigestPointer(content)).toBe(true);
+    await activate(content);
+
+    const captured = await requireDigestCapture();
+
+    expect(captured.snapshotPath).toBe(
+      alignmentSnapshotPath(computeAlignmentHash(content)),
+    );
+    // The governing instruction dereferences the frozen bytes, never the
+    // mutable active mirror.
+    expect(captured.text).toContain(captured.snapshotPath);
+    expect(captured.text).not.toContain(ALIGNMENT_DOCUMENT_PATH);
+    expect(await readWorktreeFile(captured.snapshotPath)).toBe(content);
+
+    // The ordinary-turn injection is untouched: it still points at the mirror.
+    const injection = await service.getActiveInjection(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(injection?.text).toContain(ALIGNMENT_DOCUMENT_PATH);
+    expect(injection?.text).toBe(renderAlignmentPromptSection({ content }));
+  });
+
+  it("keeps a captured charter dereferenceable after a later charter is activated", async () => {
+    const charterN = largeCharter("charter-N");
+    const charterNext = largeCharter("charter-N-plus-1");
+    await activate(charterN);
+
+    const captured = await requireDigestCapture();
+
+    await activate(charterNext);
+
+    // The mutable mirror moved on to N+1 ...
+    expect(await readWorktreeFile(ALIGNMENT_DOCUMENT_PATH)).toBe(charterNext);
+    // ... while the captured pointer still yields charter N's exact bytes.
+    expect(await readWorktreeFile(captured.snapshotPath)).toBe(charterN);
+    expect(captured.text).toContain(captured.snapshotPath);
+    expect(captured.text).toContain("charter-N");
+
+    // A fresh capture addresses different bytes rather than clobbering N's.
+    const recaptured = await requireDigestCapture();
+    expect(recaptured.snapshotPath).not.toBe(captured.snapshotPath);
+    expect(await readWorktreeFile(recaptured.snapshotPath)).toBe(charterNext);
+    expect(await readWorktreeFile(captured.snapshotPath)).toBe(charterN);
+  });
+
+  it("refuses to hand out a snapshot whose bytes are not the charter it just rendered", async () => {
+    const charterN = largeCharter("charter-N");
+    // A version boundary is the normalized hash, so a CRLF twin is the same
+    // content hash — and would address charter N's already-frozen snapshot.
+    const charterTwin = charterN.replace(/\n/g, "\r\n");
+    expect(computeAlignmentHash(charterTwin)).toBe(
+      computeAlignmentHash(charterN),
+    );
+
+    await activate(charterN);
+    const captured = await requireDigestCapture();
+
+    await activate(charterTwin);
+
+    // Rather than render the twin's digest over a pointer to charter N's
+    // bytes, capture fails closed.
+    await expect(capture()).rejects.toBeInstanceOf(
+      CharterSnapshotConflictError,
+    );
+    expect(await readWorktreeFile(captured.snapshotPath)).toBe(charterN);
+  });
+
+  it("fails closed when the snapshot cannot be materialized", async () => {
+    const failure = new Error("disk full");
+    const { service: failing } = makeService(h.fixture, {
+      snapshot: {
+        write: () => Promise.reject(failure),
+      },
+      loadSession: () =>
+        Promise.resolve({ worktreePath, creationMode: "normal" as const }),
+    });
+    await activate(largeCharter("charter-N"));
+
+    await expect(
+      failing.captureActiveCharterForRun({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        worktreePath,
+      }),
+    ).rejects.toBe(failure);
   });
 });

@@ -33,10 +33,18 @@ import {
   collaborationResolutionDecisionOutputSchema,
   resolvedCollaborationConfigSchema,
 } from "@/lib/workflow-graph/collaboration-schemas";
+import { collaborationSessionContextSchema } from "./session-context";
 
 const collaborationFeatureSnapshotUserSchema = z
   .object({
     origin: z.literal("user"),
+    /**
+     * The run's captured Alignment charter and linked-ticket view. Optional
+     * because envelopes written before the capture existed must still decode
+     * for display; execution paths gate on the strict parser instead, which
+     * refuses to run a slice on premises it cannot prove.
+     */
+    sessionContext: collaborationSessionContextSchema.optional(),
   })
   .passthrough();
 

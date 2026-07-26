@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationToolingOverrides } from "./types";
 import type { AgentTranscriptEntry } from "./transcript";
@@ -12,6 +13,30 @@ import type {
  * continuation reference returned to the caller.
  */
 export type AgentTaskExecutionProfile = "standard" | "isolated-one-shot";
+
+/**
+ * The CC session a task subprocess is permitted to act as.
+ *
+ * TRUST CONTRACT — this is a server-side value supplied ONLY by trusted
+ * orchestration code (today: the standalone-collaboration production caller,
+ * which derives it from the originating session and conversation). It must
+ * never be populated from user input, request bodies, prompts, or agent
+ * output: its presence opts the subprocess into the CC session environment
+ * contract, which hands the child an instance API token and server URL that
+ * the runner resolves server-side. Whoever supplies a scope decides which
+ * session's data the child can read and write through `cctl`.
+ *
+ * The scope carries identity only — never credentials, paths, or an arbitrary
+ * env map — and unknown keys are stripped, so it cannot be used to smuggle
+ * environment variables into a child process.
+ */
+export const ccTaskSessionScopeSchema = z.object({
+  project: z.string().min(1),
+  session: z.string().min(1),
+  conversationId: z.string().min(1),
+});
+
+export type CcTaskSessionScope = z.infer<typeof ccTaskSessionScopeSchema>;
 
 export interface AgentTaskRequest {
   workingDirectory: string;
@@ -46,6 +71,13 @@ export interface AgentTaskRequest {
    * default; 0 (or a negative value) disables the bound.
    */
   stallTimeoutMs?: number;
+  /**
+   * Opt-in CC session identity for the child process — see the trust contract
+   * on {@link ccTaskSessionScopeSchema} before supplying it. Absent for every
+   * generic and graph-workflow task run, whose child env keeps its ambient
+   * `CC_*` neutralized and therefore has no CC identity at all.
+   */
+  ccSessionScope?: CcTaskSessionScope;
 }
 
 export interface AgentTaskResult {

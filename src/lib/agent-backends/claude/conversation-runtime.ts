@@ -698,12 +698,12 @@ const claudeConversationBackendFactory = {
   async createRuntime(
     input: ConversationBackendCreateInput,
   ): Promise<ConversationBackendRuntime> {
-    const mcpScopeConversationId =
-      input.mcpScopeConversationId ?? input.conversationId;
+    const ccScopeConversationId =
+      input.ccScopeConversationId ?? input.conversationId;
 
     logger.info("claude-factory.create_runtime", {
       conversationId: input.conversationId,
-      mcpScopeConversationId,
+      ccScopeConversationId,
       projectName: input.projectName,
       sessionName: input.sessionName,
       modelId: input.modelId,
@@ -842,7 +842,7 @@ const claudeConversationBackendFactory = {
         apiToken: getCachedInstanceToken(),
         project: input.projectName,
         session: input.sessionName,
-        conversationId: input.conversationId,
+        conversationId: ccScopeConversationId,
         configDir: getConfigDirPath(),
         ...(input.workflowExecutionId !== undefined
           ? { workflowExecutionId: input.workflowExecutionId }
