@@ -6,6 +6,7 @@ import {
   useOptimisticMessagesFor,
   useOptimisticQueueFor,
   useReconcileMessages,
+  useResolveOptimisticQueueEntries,
   useSendingFor,
 } from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
@@ -81,10 +82,19 @@ export function buildDisplayProjection({
       ? [...messages.slice(0, messageCountBeforeSubmit), ...optimisticMessages]
       : [...messages];
 
+  // Delivery stamps the transcript user row with the durable queue row's id,
+  // so a queue entry (durable or optimistic) whose id already appears as a
+  // transcript row id has been delivered — the transcript row alone shows it.
+  const transcriptIds = new Set<string>();
+  for (const message of messages) {
+    if (message.id !== undefined) transcriptIds.add(message.id);
+  }
+
   const durableRows: DisplayMessage[] = [];
   const durableIds = new Set<string>();
   for (const entry of pendingQueue) {
     if (entry.status !== "pending" && entry.status !== "delivering") continue;
+    if (transcriptIds.has(entry.id)) continue;
     durableIds.add(entry.id);
     durableRows.push({
       role: "user",
@@ -101,9 +111,14 @@ export function buildDisplayProjection({
   const optimisticRows: DisplayMessage[] = [];
   for (const entry of optimisticQueue) {
     if (entry.status === "failed") continue;
-    // Durable row wins: skip an optimistic entry already represented by an
-    // included durable pending row (deduped by server queue id).
-    if (entry.queueId !== null && durableIds.has(entry.queueId)) continue;
+    // Durable representation wins: skip an optimistic entry already shown by
+    // an included durable pending row or by the transcript row its delivery
+    // stamped (both keyed by server queue id).
+    if (
+      entry.queueId !== null &&
+      (durableIds.has(entry.queueId) || transcriptIds.has(entry.queueId))
+    )
+      continue;
     optimisticRows.push({
       role: "user",
       content: entry.content,
@@ -145,6 +160,7 @@ export function useDisplayMessages(
     useMessageCountBeforeSubmitFor(conversationId);
   const sending = useSendingFor(conversationId);
   const reconcileMessages = useReconcileMessages();
+  const resolveOptimisticQueueEntries = useResolveOptimisticQueueEntries();
 
   // The reconcile is keyed to this conversation, so it only ever clears this
   // conversation's optimistic echo — multiple surfaces mounting the same
@@ -161,6 +177,40 @@ export function useDisplayMessages(
     messageCountBeforeSubmit,
     sending,
     reconcileMessages,
+  ]);
+
+  // Reconcile accepted optimistic queue entries: once an entry's durable
+  // representation is observed — its durable queue row, or the transcript row
+  // its delivery stamped with the queue id — drop the bridge entry from the
+  // store. Delivery prunes the durable row server-side, so an unreconciled
+  // accepted entry would outlive its dedup key and re-render the message as a
+  // duplicate at the end of the feed.
+  useEffect(() => {
+    if (optimisticQueue.length === 0) return;
+    const represented = new Set<string>();
+    for (const message of messages) {
+      if (message.id !== undefined) represented.add(message.id);
+    }
+    for (const entry of pendingQueue) {
+      if (entry.status === "pending" || entry.status === "delivering") {
+        represented.add(entry.id);
+      }
+    }
+    const resolved: string[] = [];
+    for (const entry of optimisticQueue) {
+      if (entry.queueId !== null && represented.has(entry.queueId)) {
+        resolved.push(entry.queueId);
+      }
+    }
+    if (resolved.length > 0) {
+      resolveOptimisticQueueEntries(conversationId, resolved);
+    }
+  }, [
+    conversationId,
+    messages,
+    pendingQueue,
+    optimisticQueue,
+    resolveOptimisticQueueEntries,
   ]);
 
   return useMemo(() => {
