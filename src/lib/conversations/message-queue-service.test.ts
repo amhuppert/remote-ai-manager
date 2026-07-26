@@ -719,6 +719,8 @@ describe("messageQueueService.enqueue", () => {
     expect(event?.type).toBe("message-queued");
     if (event?.type !== "message-queued") throw new Error("wrong event type");
     expect(event.projectName).toBe("my-project");
+    expect(event.scope).toBe("session");
+    if (event.scope !== "session") throw new Error("wrong event scope");
     expect(event.sessionName).toBe("csm/feature");
     expect(event.conversationId).toBe("conv-1");
     expect(event.text).toBe("queued message");

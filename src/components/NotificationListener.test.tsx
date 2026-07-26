@@ -26,6 +26,8 @@ import { debugLogKeys } from "@/lib/debug-log/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { alignmentKeys } from "@/lib/session-alignment/query-keys";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
+import type { PendingQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import { normalizeTicketListFilters } from "@/lib/tickets/list-filters";
@@ -101,6 +103,29 @@ function stubBrowserNotifications(permission: NotificationPermission) {
     Promise.resolve(permission),
   );
   vi.stubGlobal("Notification", FakeBrowserNotification);
+}
+
+/** A durable queue row as the `message-queue-updated` wire payload carries it. */
+function queuedMessageView(id: string, status: PendingQueuedMessageStatus) {
+  return {
+    id,
+    content: [{ type: "text", text: "follow up" }],
+    status,
+    enqueuedAt: "2026-04-28T00:00:00.000Z",
+    updatedAt: "2026-04-28T00:00:01.000Z",
+    deliveredAt: status === "delivered" ? "2026-04-28T00:00:01.000Z" : null,
+    cancelledAt: status === "cancelled" ? "2026-04-28T00:00:01.000Z" : null,
+    failedAt: status === "failed" ? "2026-04-28T00:00:01.000Z" : null,
+    error: null,
+  };
+}
+
+/** The pending rows this client would still render for a conversation. */
+function optimisticQueueFor(conversationId: string) {
+  return (
+    useSessionDetailStore.getState().inFlight[conversationId]
+      ?.optimisticQueue ?? []
+  );
 }
 
 function makeProjectConversation(overrides: Record<string, unknown> = {}) {
@@ -1397,6 +1422,7 @@ describe("NotificationListener", () => {
 
     es.emit("message-queued", {
       type: "message-queued",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -1440,6 +1466,7 @@ describe("NotificationListener", () => {
 
     es.emit("message-queue-updated", {
       type: "message-queue-updated",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -1469,6 +1496,138 @@ describe("NotificationListener", () => {
     });
     const cached = client.getQueryData<Array<{ seq: number }>>(messagesKey);
     expect(cached?.length).toBe(1);
+  });
+
+  it("drops the optimistic queue entry when a PROJECT queue row is delivered", async () => {
+    const client = makeClient();
+    useSessionDetailStore.setState({ inFlight: {} });
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry("conv-1", "temp-1", [
+      { type: "text", text: "follow up" },
+    ]);
+    store.acceptOptimisticQueueEntry("conv-1", "temp-1", "q-1");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-queue-updated", {
+      type: "message-queue-updated",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "conv-1",
+      message: queuedMessageView("q-1", "delivered"),
+    });
+
+    // Delivered: the message is now a transcript row, so leaving the optimistic
+    // stand-in behind would render it a second time as still-pending.
+    await waitFor(() =>
+      expect(optimisticQueueFor("conv-1")).toHaveLength(0),
+    );
+  });
+
+  it("drops the optimistic queue entry when a SESSION queue row is cancelled or fails", async () => {
+    const client = makeClient();
+    useSessionDetailStore.setState({ inFlight: {} });
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry("conv-1", "temp-1", [
+      { type: "text", text: "cancelled elsewhere" },
+    ]);
+    store.acceptOptimisticQueueEntry("conv-1", "temp-1", "q-1");
+    store.addOptimisticQueueEntry("conv-1", "temp-2", [
+      { type: "text", text: "gave up" },
+    ]);
+    store.acceptOptimisticQueueEntry("conv-1", "temp-2", "q-2");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    for (const [id, status] of [
+      ["q-1", "cancelled"],
+      ["q-2", "failed"],
+    ] as const) {
+      es.emit("message-queue-updated", {
+        type: "message-queue-updated",
+        scope: "session",
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv-1",
+        message: queuedMessageView(id, status),
+      });
+    }
+
+    // Neither will ever be delivered, so neither has a row left to show.
+    await waitFor(() =>
+      expect(optimisticQueueFor("conv-1")).toHaveLength(0),
+    );
+  });
+
+  it("keeps the optimistic queue entry while the row is still being delivered", async () => {
+    const client = makeClient();
+    useSessionDetailStore.setState({ inFlight: {} });
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry("conv-1", "temp-1", [
+      { type: "text", text: "follow up" },
+    ]);
+    store.acceptOptimisticQueueEntry("conv-1", "temp-1", "q-1");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-queue-updated", {
+      type: "message-queue-updated",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "conv-1",
+      message: queuedMessageView("q-1", "delivering"),
+    });
+
+    // `delivering` is not terminal: the message is still owed to the user's
+    // view, so it stays pending rather than vanishing mid-flight.
+    expect(optimisticQueueFor("conv-1")).toHaveLength(1);
+  });
+
+  it("refreshes the PROJECT conversation caches on a scope:project queue event", async () => {
+    const client = makeClient();
+    const messagesKey = projectConversationKeys.messages("proj", "conv-1");
+    client.setQueryData(messagesKey, []);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    // No `sessionName`: a project conversation's queue row is addressed by
+    // project + conversation, so the event has no field for the internal
+    // sentinel and the client routes on the scope instead (R6.1 / R1.3).
+    es.emit("message-queued", {
+      type: "message-queued",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "conv-1",
+      text: "follow up",
+    });
+
+    // The project conversation list is where `pendingQueue` lives for the
+    // cockpit, so this is what makes another client's queued row appear.
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: projectConversationKeys.list("proj"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    // A queued message is not a transcript row at project scope either.
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: messagesKey,
+    });
   });
 
   it("invalidates the execution detail and event log (not session detail) on graph-workflow-status", async () => {

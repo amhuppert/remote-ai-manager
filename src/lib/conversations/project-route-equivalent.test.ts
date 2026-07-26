@@ -107,8 +107,21 @@ describe("projectRouteForSessionRequestPath", () => {
     });
   });
 
+  it("names the project queue route, including the cancellation leaf", () => {
+    for (const leaf of ["queue", "queue/msg-1"]) {
+      expect(
+        projectRouteForSessionRequestPath(
+          `/api/projects/demo/sessions/feature-x/conversations/conv-1/${leaf}`,
+        ),
+      ).toEqual({
+        kind: "project-route",
+        route: `/api/projects/demo/conversations/conv-1/${leaf}`,
+      });
+    }
+  });
+
   it("reports a conversation operation that has no project route as session-only", () => {
-    for (const leaf of ["queue", "fork", "abort", "debug-mode/logs"]) {
+    for (const leaf of ["fork", "abort", "debug-mode/logs"]) {
       expect(
         projectRouteForSessionRequestPath(
           `/api/projects/demo/sessions/feature-x/conversations/conv-1/${leaf}`,

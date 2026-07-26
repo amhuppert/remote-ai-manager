@@ -20,7 +20,17 @@ import {
   useCompletePrompt,
   useReassignInFlight,
   useDiscardInFlight,
+  useAddOptimisticQueueEntry,
+  useAcceptOptimisticQueueEntry,
+  useRollbackOptimisticQueueEntry,
+  useSetQueueError,
 } from "@/stores/session-detail.store";
+import { tracedFetch } from "@/lib/shared/traced-fetch";
+import {
+  conversationTargetApiBase,
+  projectConversationTarget,
+} from "@/lib/conversations/conversation-target";
+import type { QueueEnqueueResponse } from "@/lib/prompt/schemas";
 import type {
   ActiveConversation,
   ActiveConversationsResponse,
@@ -53,8 +63,7 @@ function patchListedConversation(
 ): void {
   queryClient.setQueryData<ConversationState[]>(
     projectConversationKeys.list(projectName),
-    (old) =>
-      old?.map((c) => (c.id === conversationId ? patch(c) : c)),
+    (old) => old?.map((c) => (c.id === conversationId ? patch(c) : c)),
   );
 }
 
@@ -292,6 +301,108 @@ export function useAnswerProjectQuestionMutation(
   );
 }
 
+/** Module-scoped so two composers never mint the same optimistic entry id. */
+let queueSequence = 0;
+
+export interface QueueProjectMessageInput {
+  conversationId: string;
+  text: string;
+  images?: ImagePayload[];
+}
+
+export interface UseQueueProjectMessageResult {
+  /**
+   * Enqueue a follow-up into a project conversation that is already running.
+   * Resolves `true` when the server durably queued it — a `false` result means
+   * the composer keeps the user's text.
+   */
+  queue(input: QueueProjectMessageInput): Promise<boolean>;
+}
+
+/**
+ * Queue a follow-up into a running project conversation.
+ *
+ * The queue row is durable server-side, but the user must see their message the
+ * moment they send it, so an optimistic entry is added first and reconciled
+ * against the server id on success (or rolled back on refusal). That optimistic
+ * store is keyed by conversation id and is scope-agnostic, so a project
+ * conversation's pending row renders through exactly the same transcript
+ * projection a session conversation's does.
+ */
+export function useQueueProjectMessage(
+  projectName: string,
+): UseQueueProjectMessageResult {
+  const queryClient = useQueryClient();
+  const addOptimisticQueueEntry = useAddOptimisticQueueEntry();
+  const acceptOptimisticQueueEntry = useAcceptOptimisticQueueEntry();
+  const rollbackOptimisticQueueEntry = useRollbackOptimisticQueueEntry();
+  const setQueueError = useSetQueueError();
+
+  const queue = useCallback(
+    async ({
+      conversationId,
+      text,
+      images,
+    }: QueueProjectMessageInput): Promise<boolean> => {
+      const content = buildUserContent(text, images);
+      if (content.length === 0) return false;
+
+      const tempId = `queued-${queueSequence++}`;
+      addOptimisticQueueEntry(conversationId, tempId, content);
+
+      const url = `${conversationTargetApiBase(
+        projectConversationTarget(projectName, conversationId),
+      )}/queue`;
+      let res: Response;
+      try {
+        res = await tracedFetch(url, "queue-project-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            ...(images && images.length > 0 ? { images } : {}),
+          }),
+        });
+      } catch {
+        rollbackOptimisticQueueEntry(conversationId, tempId);
+        setQueueError(conversationId, "Failed to queue message");
+        return false;
+      }
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        rollbackOptimisticQueueEntry(conversationId, tempId);
+        setQueueError(conversationId, body?.error ?? "Failed to queue message");
+        return false;
+      }
+
+      const data = (await res
+        .json()
+        .catch(() => null)) as QueueEnqueueResponse | null;
+      // Adopting the server id is what makes the pending row cancellable and
+      // lets the durable row that arrives next supersede it instead of
+      // double-rendering the same message.
+      if (data && data.queued) {
+        acceptOptimisticQueueEntry(conversationId, tempId, data.message.id);
+      }
+      invalidateProjectLifecycle(queryClient, projectName);
+      return true;
+    },
+    [
+      projectName,
+      queryClient,
+      addOptimisticQueueEntry,
+      acceptOptimisticQueueEntry,
+      rollbackOptimisticQueueEntry,
+      setQueueError,
+    ],
+  );
+
+  return { queue };
+}
+
 /** A turn addressed by the conversation it runs in. */
 export interface ConversationTurnKey {
   readonly kind: "conversation";
@@ -404,6 +515,18 @@ export interface ProjectTurnSubmission {
    * issued, so the caller can address the turn from the moment it submits.
    */
   readonly key: ProjectTurnKey;
+  /**
+   * Whether the server took the submission, resolved as soon as the response
+   * status is known rather than when the turn ends. This is what lets a composer
+   * hand the user's text back on a refusal (a busy 409, a transport failure, or
+   * a duplicate submission this client dropped) instead of clearing it into
+   * nothing.
+   *
+   * A turn that opened its stream and then failed resolves `true`: the
+   * submission WAS accepted, and the failure is the turn's, surfaced through the
+   * error envelope.
+   */
+  readonly accepted: Promise<boolean>;
   /** Resolves when the turn has streamed to completion, failed, or aborted. */
   readonly settled: Promise<void>;
 }
@@ -771,6 +894,7 @@ export function useSendProjectPrompt(
       unnamedTurn: UnnamedTurn | null,
       input: SendProjectPromptInput,
       userContent: MessageContentBlock[],
+      reportAccepted: (accepted: boolean) => void,
     ): Promise<void> => {
       /** The key this turn's state is attributed to right now. */
       const currentKey = (): ProjectTurnKey =>
@@ -808,6 +932,7 @@ export function useSendProjectPrompt(
         });
 
         if (!res.ok) {
+          reportAccepted(false);
           const errBody = (await res.json().catch(() => null)) as {
             error?: string;
             code?: string;
@@ -818,6 +943,7 @@ export function useSendProjectPrompt(
           });
           return;
         }
+        reportAccepted(true);
 
         const streamBlocks: MessageContentBlock[] = [];
         await consumePromptStream(res.body, (event) => {
@@ -875,6 +1001,7 @@ export function useSendProjectPrompt(
           }
         });
       } catch {
+        reportAccepted(false);
         failTurn({ message: "Failed to send prompt" });
       } finally {
         const settledKey = currentKey();
@@ -941,7 +1068,13 @@ export function useSendProjectPrompt(
       // allocated provisional key is never in flight, so a create-and-send is
       // never blocked by another one.
       if (inFlight.current.has(storageId)) {
-        return { key, settled: Promise.resolve() };
+        // Dropped, not sent: reporting it unaccepted is what hands the user's
+        // text back rather than clearing it into a submission that never was.
+        return {
+          key,
+          accepted: Promise.resolve(false),
+          settled: Promise.resolve(),
+        };
       }
       inFlight.current.add(storageId);
 
@@ -965,7 +1098,28 @@ export function useSendProjectPrompt(
         unnamed.current.set(unnamedTurn.key.provisionalId, unnamedTurn);
       }
 
-      return { key, settled: runTurn(key, unnamedTurn, input, userContent) };
+      // Settled exactly once, by whichever outcome the request reaches first;
+      // the `finally` below covers a turn that returns without reporting.
+      let report: ((accepted: boolean) => void) | null = null;
+      const accepted = new Promise<boolean>((resolve) => {
+        report = resolve;
+      });
+      const reportAccepted = (value: boolean): void => {
+        report?.(value);
+        report = null;
+      };
+
+      return {
+        key,
+        accepted,
+        settled: runTurn(
+          key,
+          unnamedTurn,
+          input,
+          userContent,
+          reportAccepted,
+        ).finally(() => reportAccepted(true)),
+      };
     },
     [runTurn, releaseProvisional, submitPrompt, cachedMessageCount],
   );

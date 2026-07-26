@@ -758,25 +758,50 @@ export const askQuestionEventSchema = z.discriminatedUnion("scope", [
 ]);
 export type AskQuestionEvent = z.infer<typeof askQuestionEventSchema>;
 
-export const messageQueuedEventSchema = z.object({
-  type: z.literal("message-queued"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  text: z.string(),
-  // The durable queued message projection. Optional so a producer that has not
-  // yet built the projection still validates without it.
-  message: queuedMessageViewSchema.optional(),
-});
+// The queue is session-keyed storage that serves both scopes, so its producer
+// derives the identity fields from the store key via
+// `conversationEventScopeFields`: a project conversation's queue events carry
+// `scope: "project"` and have no `sessionName` field for the internal sentinel
+// to occupy (R1.3), and the client reacts on the scope rather than guessing from
+// a session name it cannot route with.
+export const messageQueuedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-queued"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    text: z.string(),
+    // The durable queued message projection. Optional so a producer that has not
+    // yet built the projection still validates without it.
+    message: queuedMessageViewSchema.optional(),
+  }),
+  z
+    .object({
+      type: z.literal("message-queued"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      text: z.string(),
+      message: queuedMessageViewSchema.optional(),
+    })
+    .strict(),
+]);
 export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
 
-export const messageQueueUpdatedEventSchema = z.object({
-  type: z.literal("message-queue-updated"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  message: queuedMessageViewSchema,
-});
+export const messageQueueUpdatedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-queue-updated"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    message: queuedMessageViewSchema,
+  }),
+  z
+    .object({
+      type: z.literal("message-queue-updated"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      message: queuedMessageViewSchema,
+    })
+    .strict(),
+]);
 export type MessageQueueUpdatedEvent = z.infer<
   typeof messageQueueUpdatedEventSchema
 >;

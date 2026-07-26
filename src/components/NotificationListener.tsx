@@ -27,6 +27,7 @@ import {
   useEnqueueInputToast,
   useEnqueuePromptErrorToast,
 } from "@/stores/notification.store";
+import { useSettleOptimisticQueueEntry } from "@/stores/session-detail.store";
 
 /**
  * Client assembly point for the shared `/api/events` EventSource: opens the
@@ -41,12 +42,14 @@ export default function NotificationListener(): null {
   const enqueueToast = useEnqueueToast();
   const enqueueInputToast = useEnqueueInputToast();
   const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
+  const settleOptimisticQueueEntry = useSettleOptimisticQueueEntry();
   const actionsRef = useRef({
     addOrUpdateJob,
     reconcileJobs,
     enqueueToast,
     enqueueInputToast,
     enqueuePromptErrorToast,
+    settleOptimisticQueueEntry,
   });
   // eslint-disable-next-line react-hooks/refs -- event handlers read this after render without reconnecting the SSE effect.
   actionsRef.current = {
@@ -55,6 +58,7 @@ export default function NotificationListener(): null {
     enqueueToast,
     enqueueInputToast,
     enqueuePromptErrorToast,
+    settleOptimisticQueueEntry,
   };
 
   useEffect(() => {
@@ -67,6 +71,8 @@ export default function NotificationListener(): null {
       enqueuePromptErrorToast: (item) =>
         actionsRef.current.enqueuePromptErrorToast(item),
       showBrowserNotification,
+      settleOptimisticQueueEntry: (conversationId, queueId) =>
+        actionsRef.current.settleOptimisticQueueEntry(conversationId, queueId),
     });
     registerChatSpawningSseReactions(es, { queryClient });
     registerJobSseReactions(es, {

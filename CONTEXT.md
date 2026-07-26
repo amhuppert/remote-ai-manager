@@ -31,7 +31,16 @@ locality); domain terms name the concepts the code is about.
   `ConversationScopeRef`) and never forks by scope. Ask and answer are the shape
   to copy: `registerAskBatchAfterRoleGate` and `deliverAnswers` are the scope-
   invariant cores, and only the session adapter carries the graph-lane divert,
-  which is session-only by spec non-goal.
+  which is session-only by spec non-goal. The message queue is the same shape:
+  `enqueueQueuedMessage` and `cancelQueuedMessage`
+  (`src/lib/prompt/queue-operations.ts`) hold the guards, the enqueue-then-drain
+  ordering, and the cancellation semantics for both scopes, and each adapter
+  supplies only its own 404 ladder and scope ref. On the client, a pending queue
+  row is retired by ONE path for both scopes: the `message-queue-updated`
+  reaction settles the optimistic entry when the durable row reaches a terminal
+  status (`isTerminalQueuedMessageStatus`). Nothing else can — the durable row
+  leaves the active queue in the same write, so a stand-in left behind would
+  render the delivered message a second time as still-queued.
 
 - **Conversation scope contract (agent environment)** — a spawned agent is told
   its scope EXPLICITLY. `buildSessionEnvContract`

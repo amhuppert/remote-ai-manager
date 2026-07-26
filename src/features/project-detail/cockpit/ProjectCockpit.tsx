@@ -21,10 +21,15 @@ import {
   useSendProjectPrompt,
   useCreateProjectConversation,
   useCloseProjectConversation,
+  useQueueProjectMessage,
   conversationTurnKey,
   type ProjectConversationCreation,
   type ProjectTurnKey,
 } from "@/lib/project-conversations-client/mutations";
+import type {
+  UnifiedComposerSendInput,
+  UnifiedComposerSendResult,
+} from "../composer/UnifiedComposer";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
 import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/useConversationSpawnCards";
 import type { FilterToken } from "../components/filter-tokens";
@@ -248,6 +253,7 @@ export default function ProjectCockpit({
   });
   const createConversation = useCreateProjectConversation(projectName);
   const closeConversation = useCloseProjectConversation(projectName);
+  const queueMessage = useQueueProjectMessage(projectName);
 
   const serverOpenIds = useMemo(
     () => openConversations.map((c) => c.id),
@@ -375,6 +381,59 @@ export default function ProjectCockpit({
     clearPromptError(composerTurnKey);
   }, [clearPromptError, composerTurnKey]);
 
+  // A turn is active when this tab's own submission is streaming OR the server
+  // reports the conversation running — a turn started before a reload, from
+  // another client, or by a drained queued message. Reading only this tab's flag
+  // would send a direct prompt into a busy conversation and lose it to a 409.
+  //
+  // Both halves are read from THIS conversation, never the project: a sibling
+  // conversation running is not a reason to queue here, and treating it as one
+  // would reintroduce the cross-conversation block the cockpit removed.
+  const turnActive =
+    sender.isSending(composerTurnKey) ||
+    activeConversation?.status === "running";
+
+  const queueTurnState = useMemo(
+    () => ({
+      pendingQueue: activeConversation?.pendingQueue ?? [],
+      running: turnActive,
+    }),
+    [activeConversation?.pendingQueue, turnActive],
+  );
+
+  const queueProjectMessage = queueMessage.queue;
+  const sendPrompt = sender.send;
+  const handleSendPrompt = useCallback(
+    async (
+      input: UnifiedComposerSendInput,
+    ): Promise<UnifiedComposerSendResult> => {
+      // Queue rather than send when this conversation already has a turn in
+      // flight; a conversation that does not exist yet has nothing to queue into.
+      if (turnActive && activeTabId !== null) {
+        const queued = await queueProjectMessage({
+          conversationId: activeTabId,
+          text: input.text,
+          ...(input.images.length > 0 ? { images: input.images } : {}),
+        });
+        return queued ? "accepted" : "rejected";
+      }
+
+      const submission = sendPrompt({
+        target:
+          activeTabId !== null
+            ? conversationTurnKey(activeTabId)
+            : { kind: "create" },
+        text: input.text,
+        images: input.images,
+        backend: input.backend,
+        modelId: input.modelId,
+        ...(input.effort !== undefined ? { effort: input.effort } : {}),
+      });
+      return (await submission.accepted) ? "accepted" : "rejected";
+    },
+    [turnActive, activeTabId, queueProjectMessage, sendPrompt],
+  );
+
   const transcript = activeTabId ? (
     <ProjectTranscriptHost
       projectName={projectName}
@@ -382,6 +441,7 @@ export default function ProjectCockpit({
       selectedBackend={agentBackend}
       spawnCards={spawnCards}
       renderSpawnCardRow={renderSpawnCardRow}
+      pendingQueue={queueTurnState.pendingQueue}
       {...(activeConversation ? { status: activeConversation.status } : {})}
     />
   ) : null;
@@ -404,19 +464,8 @@ export default function ProjectCockpit({
       lastUsedModelId={lastUserTurnAgentSettings.modelId}
       lastUsedEffort={lastUserTurnAgentSettings.effort}
       onRunCommand={onRunCommand}
-      onSendPrompt={(input) => {
-        sender.send({
-          target:
-            activeTabId !== null
-              ? conversationTurnKey(activeTabId)
-              : { kind: "create" },
-          text: input.text,
-          images: input.images,
-          backend: input.backend,
-          modelId: input.modelId,
-          ...(input.effort !== undefined ? { effort: input.effort } : {}),
-        });
-      }}
+      onSendPrompt={handleSendPrompt}
+      queueTurnState={queueTurnState}
     />
   );
 

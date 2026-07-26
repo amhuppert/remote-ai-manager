@@ -181,6 +181,38 @@ describe("useDisplayMessages", () => {
     expect(result.current).toBe(serverMessages);
     expect(optimisticMessagesFor(A)).toHaveLength(0);
   });
+
+  it("shows a settled queued message by its transcript row only (R6.1/R6.3)", () => {
+    const store = useSessionDetailStore.getState();
+    // The enqueue-to-delivery lifecycle, driven through the production store
+    // actions: the user's follow-up is shown pending, adopts the server queue
+    // id, and is delivered.
+    store.addOptimisticQueueEntry(A, "temp-1", [
+      { type: "text", text: "queued A" },
+    ]);
+    store.acceptOptimisticQueueEntry(A, "temp-1", "q-1");
+
+    const running: TranscriptMessage[] = [msg("assistant", "working")];
+    const { result, rerender } = renderHook(
+      ({ messages }: { messages: TranscriptMessage[] }) =>
+        useDisplayMessages(A, messages),
+      { initialProps: { messages: running } },
+    );
+    expect(result.current.filter((m) => m.queued)).toHaveLength(1);
+
+    // Delivery: the durable row leaves the active queue and the message becomes
+    // a real transcript row. The optimistic stand-in has nothing left to show —
+    // rendering it too would duplicate the delivered message.
+    store.settleOptimisticQueueEntry(A, "q-1");
+    const delivered: TranscriptMessage[] = [
+      msg("assistant", "working"),
+      msg("user", "queued A"),
+    ];
+    rerender({ messages: delivered });
+
+    expect(result.current).toBe(delivered);
+    expect(result.current.filter((m) => m.queued)).toHaveLength(0);
+  });
 });
 
 describe("buildDisplayProjection", () => {

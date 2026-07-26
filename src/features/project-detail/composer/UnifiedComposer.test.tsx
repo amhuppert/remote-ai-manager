@@ -95,7 +95,7 @@ function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
     onTokensChange: vi.fn(),
     sessions: [runningSession],
     archivedCount: 0,
-    onSendPrompt: vi.fn(),
+    onSendPrompt: vi.fn(async () => "accepted" as const),
     onRunCommand: vi.fn(),
     busy: false,
     ...overrides,

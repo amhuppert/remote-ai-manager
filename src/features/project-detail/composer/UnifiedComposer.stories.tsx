@@ -100,7 +100,7 @@ function Harness({
         onTokensChange={setTokens}
         sessions={sessions}
         archivedCount={12}
-        onSendPrompt={fn()}
+        onSendPrompt={fn(async () => "accepted" as const)}
         onRunCommand={fn()}
         busy={false}
       />
