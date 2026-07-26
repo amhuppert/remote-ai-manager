@@ -107,7 +107,7 @@ and spreads it:
 | Transcript | `prompt/transcript.ts` | `documents-index.index_failed`, `notice_appended` |
 | Message queue | `prompt/queue.ts`, `conversations/message-queue-drain.ts` | `queue.accepted`, `queue.drain_*` |
 
-Three further project-reachable stages sit outside the turn and follow the same
+Four further project-reachable stages sit outside the turn and follow the same
 rule:
 
 | Stage | Module | Events |
@@ -115,6 +115,7 @@ rule:
 | Startup rehydration | `workflows/conversation/rehydration.ts` | `conversation-manager.rehydrated`, `queue.recover_failed` |
 | Workflow task run (project compaction, ticket generation) | `workflows/conversation/execute-workflow-task-run.ts` | `conversation.execute_workflow_task_run.{dispatch,finalized}` |
 | State-store reads | `state-store/accessors.ts` | `state.read.timing` |
+| Conversation draft | `prompt/route-handlers.ts` (`persistPendingPromptText`) | `pending_prompt.{update_completed,compare_and_clear_completed,update_failed}` |
 
 Three traps this chain teaches:
 

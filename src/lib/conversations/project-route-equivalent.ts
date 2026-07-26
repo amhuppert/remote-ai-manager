@@ -48,6 +48,7 @@ export const PROJECT_CONVERSATION_ROUTE_OPERATIONS: ReadonlySet<string> =
     "messages",
     "notifications",
     "open",
+    "pending-prompt",
     "prompt",
     "read",
     "rename",
