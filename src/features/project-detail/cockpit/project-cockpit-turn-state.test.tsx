@@ -824,7 +824,10 @@ describe("project cockpit: stopping a running turn", () => {
   }
 
   it("offers no Stop while the conversation is idle", async () => {
-    vi.stubGlobal("fetch", promptFetch(() => null));
+    vi.stubGlobal(
+      "fetch",
+      promptFetch(() => null),
+    );
 
     render(
       <QueryClientProvider client={seededClient(["c1"])}>
@@ -882,9 +885,9 @@ describe("project cockpit: stopping a running turn", () => {
     // The local in-flight state settles rather than waiting on a stream the
     // aborted turn will never close.
     await waitFor(() =>
-      expect(
-        useSessionDetailStore.getState().inFlight["c1"]?.sending,
-      ).toBe(false),
+      expect(useSessionDetailStore.getState().inFlight["c1"]?.sending).toBe(
+        false,
+      ),
     );
     await waitFor(() => expect(composerBusy()).toBe(false));
   });
@@ -940,9 +943,9 @@ describe("project cockpit: stopping a running turn", () => {
       expect(posts).toEqual(["/api/projects/proj/conversations/c2/abort"]),
     );
     await waitFor(() =>
-      expect(
-        useSessionDetailStore.getState().inFlight["c2"]?.sending,
-      ).toBe(false),
+      expect(useSessionDetailStore.getState().inFlight["c2"]?.sending).toBe(
+        false,
+      ),
     );
 
     // c1's turn is still streaming: its indicator, its optimistic prompt, and
@@ -992,16 +995,19 @@ describe("project cockpit: stopping a running turn", () => {
     fireEvent.click(stop);
 
     await waitFor(() =>
-      expect(
-        useSessionDetailStore.getState().inFlight["c1"]?.sending,
-      ).toBe(false),
+      expect(useSessionDetailStore.getState().inFlight["c1"]?.sending).toBe(
+        false,
+      ),
     );
     // A user-initiated stop is not a prompt failure.
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("offers Stop for a turn this client did not start (R5.1)", async () => {
-    vi.stubGlobal("fetch", promptFetch(() => null));
+    vi.stubGlobal(
+      "fetch",
+      promptFetch(() => null),
+    );
 
     render(
       <QueryClientProvider client={seededClient(["c1"])}>

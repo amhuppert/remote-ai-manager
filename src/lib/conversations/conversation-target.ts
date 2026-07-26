@@ -180,7 +180,9 @@ export function scopeRefFromStoreSessionName(
 }
 
 /** The session name to address a scope-ref with, or undefined at project scope. */
-export function scopeRefSessionName(ref: ConversationScopeRef): string | undefined {
+export function scopeRefSessionName(
+  ref: ConversationScopeRef,
+): string | undefined {
   return ref.scope === "session" ? ref.sessionName : undefined;
 }
 
@@ -191,7 +193,9 @@ export function scopeRefSessionName(ref: ConversationScopeRef): string | undefin
  * site is what keeps the sentinel out of diagnostics: there is no sentinel-valued
  * `sessionName` variable in scope for a log line to pick up (R1.3).
  */
-export function storeSessionNameFromScopeRef(ref: ConversationScopeRef): string {
+export function storeSessionNameFromScopeRef(
+  ref: ConversationScopeRef,
+): string {
   return ref.scope === "session"
     ? ref.sessionName
     : PROJECT_CONVERSATION_SESSION_SENTINEL;

@@ -145,8 +145,7 @@ export function ConversationMentionChipBody({
 
   // The scope's user-visible name: the session name, or "project" for a
   // session-less project conversation — never an empty segment (R1.3).
-  const scopeLabel =
-    attrs.scope === "session" ? attrs.sessionName : "project";
+  const scopeLabel = attrs.scope === "session" ? attrs.sessionName : "project";
   const tooltip =
     attrs.backend === null
       ? `${attrs.projectName} · ${scopeLabel} · unknown agent backend`

@@ -841,9 +841,7 @@ describe("ConversationSidebar", () => {
       .map((query) => JSON.stringify(query.queryKey));
     expect(keys.length).toBeGreaterThan(0);
     expect(
-      keys.filter((key) =>
-        key.includes(PROJECT_CONVERSATION_SESSION_SENTINEL),
-      ),
+      keys.filter((key) => key.includes(PROJECT_CONVERSATION_SESSION_SENTINEL)),
     ).toEqual([]);
   });
 });

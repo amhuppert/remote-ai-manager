@@ -897,7 +897,6 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
     expect(result.stdout).toContain("[s0] fix the bug");
   });
 
-
   it("resolves the owning project/session by id after a scope miss, then reads that scope", async () => {
     const host = makeHost((req) => {
       const { pathname } = new URL(req.url);

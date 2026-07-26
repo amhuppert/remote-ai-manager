@@ -931,8 +931,7 @@ export async function executePromptStream(
     conversationId,
     streamId,
     emit,
-    onAccepted: () =>
-      notifyPromptAccepted(options, scopeRef, conversationId),
+    onAccepted: () => notifyPromptAccepted(options, scopeRef, conversationId),
     turn: {
       promptText,
       images,

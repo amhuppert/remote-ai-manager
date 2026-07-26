@@ -138,7 +138,10 @@ type CommandResult<T> =
   | { ok: true; value: T }
   | { ok: false; result: CliResult };
 
-function specBasePath(context: ProjectConversationContext, slug: string): string {
+function specBasePath(
+  context: ProjectConversationContext,
+  slug: string,
+): string {
   return `/api/specs/${encodePathSegment(context.project)}/${encodePathSegment(slug)}`;
 }
 

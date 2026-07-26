@@ -986,7 +986,8 @@ describe("executePromptForMachine", () => {
       // sentinel as `sessionName`.
       const scoped = log.entries.filter(
         (e) =>
-          e.message === "prompt.complete" || e.message === "prompt.runtime_create",
+          e.message === "prompt.complete" ||
+          e.message === "prompt.runtime_create",
       );
       expect(scoped.length).toBeGreaterThan(0);
       for (const entry of scoped) {

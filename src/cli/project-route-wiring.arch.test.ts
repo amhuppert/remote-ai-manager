@@ -124,56 +124,63 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
  * entry is a real `cctl` invocation driven through the production dispatch; the
  * response body only has to satisfy the command's own output parsing.
  */
-const PROJECT_SCOPE_INVOCATIONS: { name: string; argv: string[]; body: unknown }[] =
-  [
-    { name: "notify", argv: ["notify", "done"], body: { ok: true } },
-    {
-      name: "ask",
-      argv: [
-        "ask",
-        "--question",
-        "Ship it?",
-        "--option",
-        "Yes",
-        "--option",
-        "No",
-        "--header",
-        "Ship",
-      ],
-      body: { ok: true, questionBatchId: "b-1" },
+const PROJECT_SCOPE_INVOCATIONS: {
+  name: string;
+  argv: string[];
+  body: unknown;
+}[] = [
+  { name: "notify", argv: ["notify", "done"], body: { ok: true } },
+  {
+    name: "ask",
+    argv: [
+      "ask",
+      "--question",
+      "Ship it?",
+      "--option",
+      "Yes",
+      "--option",
+      "No",
+      "--header",
+      "Ship",
+    ],
+    body: { ok: true, questionBatchId: "b-1" },
+  },
+  {
+    name: "conversation read",
+    argv: ["conversation", "read", "conv-1"],
+    body: {
+      ok: true,
+      conversationId: "conv-1",
+      messages: [],
+      window: { from: 0, to: 0, total: 0 },
     },
-    {
-      name: "conversation read",
-      argv: ["conversation", "read", "conv-1"],
-      body: {
-        ok: true,
-        conversationId: "conv-1",
-        messages: [],
-        window: { from: 0, to: 0, total: 0 },
-      },
+  },
+  {
+    name: "doctor",
+    argv: ["doctor"],
+    body: {
+      serverBuild: "dev",
+      identity: { project: "cc", session: null, conversation: "conv-1" },
+      tokenValid: true,
     },
-    {
-      name: "doctor",
-      argv: ["doctor"],
-      body: {
-        serverBuild: "dev",
-        identity: { project: "cc", session: null, conversation: "conv-1" },
-        tokenValid: true,
-      },
-    },
-    { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },
-    {
-      name: "spec abandon",
-      argv: ["spec", "abandon", "feat", "--reason", "x"],
-      body: { spec: { slug: "feat", status: "abandoned" } },
-    },
-    { name: "workflow list", argv: ["workflow", "list"], body: { workflows: [] } },
-    {
-      name: "workflow templates",
-      argv: ["workflow", "templates"],
-      body: { templates: [] },
-    },
-  ];
+  },
+  { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },
+  {
+    name: "spec abandon",
+    argv: ["spec", "abandon", "feat", "--reason", "x"],
+    body: { spec: { slug: "feat", status: "abandoned" } },
+  },
+  {
+    name: "workflow list",
+    argv: ["workflow", "list"],
+    body: { workflows: [] },
+  },
+  {
+    name: "workflow templates",
+    argv: ["workflow", "templates"],
+    body: { templates: [] },
+  },
+];
 
 describe("route enumeration", () => {
   it("discovers the API route tree", () => {
@@ -184,13 +191,19 @@ describe("route enumeration", () => {
   it("rejects a path with no route, and an empty dynamic segment (red proof)", () => {
     // Without these, `findRoute` returning a match for everything would let the
     // per-command assertions pass no matter what the CLI built.
-    expect(findRoute("/api/projects/cc/conversations/conv-1/definitely-not-a-route")).toBeNull();
+    expect(
+      findRoute("/api/projects/cc/conversations/conv-1/definitely-not-a-route"),
+    ).toBeNull();
     // The exact shape a non-neutralized session env would produce.
-    expect(findRoute("/api/projects/cc/sessions//conversations/conv-1/read")).toBeNull();
+    expect(
+      findRoute("/api/projects/cc/sessions//conversations/conv-1/read"),
+    ).toBeNull();
   });
 
   it("matches a known concrete route and a catch-all route", () => {
-    expect(findRoute("/api/projects/cc/conversations/conv-1/ask")).not.toBeNull();
+    expect(
+      findRoute("/api/projects/cc/conversations/conv-1/ask"),
+    ).not.toBeNull();
     expect(
       findRoute(
         "/api/projects/cc/sessions/s1/graph-workflow/shared-documents/a/b.md",

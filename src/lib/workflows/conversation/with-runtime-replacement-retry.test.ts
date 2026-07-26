@@ -408,7 +408,9 @@ describe("withRuntimeReplacementRetry", () => {
     it("emits scope:project with no session identity on the retry event", async () => {
       const log = await retryOnce(PROJECT_META);
 
-      const retry = log.entries.find((e) => e.message === "prompt.runtime_retry");
+      const retry = log.entries.find(
+        (e) => e.message === "prompt.runtime_retry",
+      );
       expect(retry).toBeDefined();
       expect(retry?.fields).toMatchObject({ scope: "project", attempt: 1 });
       expect(retry?.fields).not.toHaveProperty("sessionName");

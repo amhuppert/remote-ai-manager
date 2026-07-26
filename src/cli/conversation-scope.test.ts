@@ -59,7 +59,9 @@ function makeHost(
 function onlyRequest(host: { requests: RecordedRequest[] }): RecordedRequest {
   const [first, ...rest] = host.requests;
   if (first === undefined) {
-    throw new Error("expected the command to issue exactly one request, got none");
+    throw new Error(
+      "expected the command to issue exactly one request, got none",
+    );
   }
   if (rest.length > 0) {
     throw new Error(

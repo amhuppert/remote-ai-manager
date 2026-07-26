@@ -172,7 +172,10 @@ async function gateAnswerRequest(
     };
   }
   if (conversation.pendingQuestionId !== body.questionId) {
-    return { ok: false, response: notFound("No pending question found with that ID") };
+    return {
+      ok: false,
+      response: notFound("No pending question found with that ID"),
+    };
   }
   return { ok: true, body };
 }
@@ -193,7 +196,8 @@ async function deliverAnswers(
     body: AnswerQuestionRequest;
   },
 ): Promise<Response> {
-  const { projectPath, scopeRef, conversationId, conversation, body } = resolved;
+  const { projectPath, scopeRef, conversationId, conversation, body } =
+    resolved;
   // The one place the sentinel is materialized: the session-keyed storage APIs
   // (A5). Bound to a name that says so, so no log line can pick it up as a
   // session identity.
