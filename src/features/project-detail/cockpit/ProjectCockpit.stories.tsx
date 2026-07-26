@@ -3,7 +3,10 @@ import { fn } from "storybook/test";
 import { useState } from "react";
 import ProjectCockpit from "./ProjectCockpit";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type {
+  AskQuestionItem,
+  ConversationState,
+} from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
@@ -62,6 +65,58 @@ const openConversations: ConversationState[] = [
   makeConversation("parser-bug", { name: "Parser bug", unread: true }),
 ];
 
+// A question batch as the ask route persists it on the conversation row. The
+// panel below is hydrated from these durable fields alone — no live event.
+const pendingQuestions: AskQuestionItem[] = [
+  {
+    id: "storage",
+    question: "Where should the refreshed token live?",
+    header: "Storage",
+    options: [
+      {
+        label: "httpOnly cookie",
+        description: "Not readable from JS; needs a same-site policy.",
+        recommended: true,
+        tradeoff: {
+          pro: "Immune to XSS token theft",
+          con: "Harder to use from a native client",
+        },
+      },
+      {
+        label: "In-memory only",
+        description: "Lost on reload; every refresh re-authenticates.",
+        recommended: false,
+      },
+    ],
+    multiSelect: false,
+    required: true,
+    allowNote: true,
+  },
+  {
+    id: "rollout",
+    question: "Which callers should move first?",
+    header: "Rollout",
+    options: [
+      { label: "Web app", recommended: false },
+      { label: "CLI", recommended: false },
+      { label: "Background jobs", recommended: false },
+    ],
+    multiSelect: true,
+    required: false,
+    allowNote: false,
+  },
+];
+
+const waitingConversations: ConversationState[] = [
+  makeConversation("auth-refactor", {
+    name: "Auth refactor",
+    status: "waiting_for_input",
+    pendingQuestionId: "q_ask_1",
+    pendingQuestions,
+  }),
+  makeConversation("parser-bug", { name: "Parser bug", unread: true }),
+];
+
 const messages: TranscriptMessage[] = [
   {
     role: "user",
@@ -114,15 +169,19 @@ function RailStub() {
   );
 }
 
-function Harness() {
+function Harness({
+  conversations = openConversations,
+}: {
+  conversations?: ConversationState[];
+}) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);
   const [backend, setBackend] = useState<AgentBackendId>("claude");
   return (
     <div style={{ height: 640 }}>
       <ProjectCockpit
         projectName={PROJECT}
-        openConversations={openConversations}
-        conversationCreations={openConversations.map((c) => ({
+        openConversations={conversations}
+        conversationCreations={conversations.map((c) => ({
           conversationId: c.id,
           creationRequestId: null,
         }))}
@@ -156,4 +215,12 @@ type Story = StoryObj<typeof ProjectCockpit>;
 
 export const ThreeColumn: Story = {
   render: () => <Harness />,
+};
+
+/**
+ * The active conversation is `waiting_for_input` with a persisted question
+ * batch, so the shared Ask Question panel takes the composer's place.
+ */
+export const PendingQuestion: Story = {
+  render: () => <Harness conversations={waitingConversations} />,
 };

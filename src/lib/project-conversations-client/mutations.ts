@@ -9,6 +9,8 @@ import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import { consumePromptStream } from "@/lib/prompt/stream-transport";
 import {
   conversationStateSchema,
+  type AnswerQuestionRequest,
+  type AskQuestionItem,
   type ConversationState,
   type MessageContentBlock,
 } from "@/lib/conversations/schemas";
@@ -35,6 +37,46 @@ function invalidateProjectLifecycle(
   void queryClient.invalidateQueries({
     queryKey: projectConversationKeys.list(projectName),
   });
+}
+
+/**
+ * Patch one project conversation in the list cache — the cockpit's own view of
+ * server truth for every conversation it has a tab for. `undefined` (no list
+ * fetched yet) is left alone: a conversation cannot be invented from a partial
+ * patch, and the fetch that resolves will carry the server's own state anyway.
+ */
+function patchListedConversation(
+  queryClient: ReturnType<typeof useQueryClient>,
+  projectName: string,
+  conversationId: string,
+  patch: (c: ConversationState) => ConversationState,
+): void {
+  queryClient.setQueryData<ConversationState[]>(
+    projectConversationKeys.list(projectName),
+    (old) =>
+      old?.map((c) => (c.id === conversationId ? patch(c) : c)),
+  );
+}
+
+/**
+ * Record a question batch on the conversation that asked it, in the same shape
+ * the server persists — so the panel the cockpit mounts is driven by one set of
+ * fields whether they arrived on this turn's stream, over SSE, or from a fetch
+ * after a reload.
+ */
+function recordPendingQuestion(
+  queryClient: ReturnType<typeof useQueryClient>,
+  projectName: string,
+  conversationId: string,
+  questionId: string,
+  questions: AskQuestionItem[],
+): void {
+  patchListedConversation(queryClient, projectName, conversationId, (c) => ({
+    ...c,
+    status: "waiting_for_input",
+    pendingQuestionId: questionId,
+    pendingQuestions: questions,
+  }));
 }
 
 function patchedActiveConversation(
@@ -167,6 +209,84 @@ export function useMarkProjectConversationReadMutation(): UseMutationResult<
               unread: false,
             })),
         }),
+      ],
+    }),
+  );
+}
+
+/** What answering a project conversation's question batch reports back. */
+export type ProjectAnswerResult =
+  | { status: "ok" }
+  | { status: "gone"; error: string | null };
+
+/**
+ * Submit answers to a project conversation's pending question batch through the
+ * project route — the conversation has no session to address it by.
+ *
+ * A 410 is not an error: the batch was already answered or superseded (another
+ * tab, or the turn moving on), and the caller clears the panel and says so.
+ * Optimistically clearing the pending fields is what makes the panel disappear
+ * on submit rather than on the refetch.
+ */
+export function useAnswerProjectQuestionMutation(
+  projectName: string,
+  conversationId: string,
+): UseMutationResult<ProjectAnswerResult, Error, AnswerQuestionRequest> {
+  const queryClient = useQueryClient();
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      mutationFn: async ({
+        questionId,
+        answers,
+      }: AnswerQuestionRequest): Promise<ProjectAnswerResult> => {
+        const res = await fetch(
+          `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/answer`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ questionId, answers }),
+          },
+        );
+        if (res.ok) return { status: "ok" };
+        if (res.status === 410) {
+          const body = (await res.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          return { status: "gone", error: body?.error ?? null };
+        }
+        throw new Error(`Answer submission failed: ${res.status}`);
+      },
+      updates: [
+        cacheUpdate<AnswerQuestionRequest, ConversationState[]>({
+          key: () => projectConversationKeys.list(projectName),
+          update: (old) =>
+            old?.map((c) =>
+              c.id === conversationId
+                ? {
+                    ...c,
+                    status: "running" as const,
+                    pendingQuestionId: null,
+                    pendingQuestions: null,
+                  }
+                : c,
+            ),
+        }),
+        cacheUpdate<AnswerQuestionRequest, ActiveConversationsResponse>({
+          key: () => conversationKeys.active(),
+          update: (old) =>
+            patchedActiveConversation(old, conversationId, (c) => ({
+              ...c,
+              status: "running" as const,
+              pendingQuestion: null,
+              pendingQuestionId: null,
+              pendingQuestions: null,
+            })),
+        }),
+      ],
+      invalidateKeys: () => [
+        projectConversationKeys.list(projectName),
+        projectConversationKeys.messages(projectName, conversationId),
+        conversationKeys.active(),
       ],
     }),
   );
@@ -725,13 +845,30 @@ export function useSendProjectPrompt(
                 ...(event.code !== undefined ? { code: event.code } : {}),
               });
               break;
-            // Project conversations answer questions through the durable
-            // pending-question record on the conversation, not this per-request
-            // stream — so a pending question cannot exist before the
-            // conversation does, and is reachable only through it. The
-            // create-and-send entry names its conversation ahead of running the
-            // turn, so any question this stream carries arrives after adoption.
-            case "ask-question":
+            case "ask-question": {
+              // The cockpit reads pending questions off the conversation's
+              // DURABLE fields, so the streamed batch is recorded there rather
+              // than in a live-event-only slot: one source of truth that renders
+              // now and survives a reload. Keyed to the conversation the turn is
+              // running in — the create-and-send entry names its conversation
+              // ahead of the turn, so this key is a real one by the time a
+              // question can arrive.
+              const questionKey = currentKey();
+              if (questionKey.kind === "conversation") {
+                recordPendingQuestion(
+                  queryClient,
+                  projectName,
+                  questionKey.conversationId,
+                  event.questionId,
+                  event.questions,
+                );
+              }
+              break;
+            }
+            // Terminal frames. `consumePromptStream` returns on either, and the
+            // settle block below clears the turn's busy flag and reconciles the
+            // caches — an abort is a cancelled turn, not a failure, so neither
+            // surfaces an error (mirroring the session sender).
             case "aborted":
             case "done":
               break;

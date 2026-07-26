@@ -541,6 +541,7 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
       prompt: "Do the task.",
       timeoutMs: 30_000,
       actorInput: {
+        conversationScope: "session",
         projectName: "proj",
         sessionWorktreePath: opts.worktreePath,
         persistence: opts.persistence,

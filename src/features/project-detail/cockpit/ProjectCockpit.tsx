@@ -30,6 +30,7 @@ import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
 import ConversationPane from "./ConversationPane";
+import ProjectQuestionSlot from "./ProjectQuestionSlot";
 import ProjectTranscriptHost from "./ProjectTranscriptHost";
 import MainDiffSurface from "./MainDiffSurface";
 import SessionsPanel from "./SessionsPanel";
@@ -385,7 +386,7 @@ export default function ProjectCockpit({
     />
   ) : null;
 
-  const composer = (
+  const composerInput = (
     <UnifiedComposer
       projectName={projectName}
       activeConversationId={activeTabId}
@@ -416,6 +417,18 @@ export default function ProjectCockpit({
           ...(input.effort !== undefined ? { effort: input.effort } : {}),
         });
       }}
+    />
+  );
+
+  // A pending question takes the composer's place, exactly as it does on the
+  // session page. It is hydrated from the active conversation's persisted
+  // fields, so it is there after a reload and on whichever client opens the tab.
+  const composer = (
+    <ProjectQuestionSlot
+      projectName={projectName}
+      conversation={activeConversation}
+      agentBackend={agentBackend}
+      composer={composerInput}
     />
   );
 

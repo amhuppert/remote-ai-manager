@@ -485,6 +485,10 @@ export function createCompactionService(
       modelId: model,
       effort: config.effort,
       actorInput: {
+        // The compaction lane inherits the scope of the conversation it
+        // compacts — a project conversation has no session name, which is why
+        // the store name above falls back to the sentinel.
+        conversationScope: input.sessionName === null ? "project" : "session",
         projectName: input.projectName,
         sessionWorktreePath: input.projectPath,
         // No ConversationState record exists for this synthetic lane, so the

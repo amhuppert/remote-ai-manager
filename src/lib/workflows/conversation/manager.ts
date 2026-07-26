@@ -17,11 +17,7 @@
 
 import { createActor } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
-import type {
-  ConversationInput,
-  ConversationEvent,
-  ConversationPersistenceMode,
-} from "./types";
+import type { ConversationInput, ConversationEvent } from "./types";
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
@@ -37,13 +33,14 @@ import {
   unregisterRuntime,
 } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
-import type { AgentSessionRef } from "@/lib/shared/schemas";
+import {
+  loadActorInput,
+  type EnsureActorInputData,
+} from "./actor-input-loader";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { ForkedFrom, ConversationRole } from "@/lib/conversations/schemas";
 import {
   drainConversationQueue,
   getConversationQueueDeps,
@@ -62,29 +59,7 @@ export {
   deriveActiveTurnSource,
 } from "./persistence-adapter";
 
-export interface EnsureActorInputData {
-  conversationScope?: "session" | "project";
-  projectName: string;
-  sessionWorktreePath: string;
-  /**
-   * Required construction-time persistence choice. `ephemeral` marks a
-   * synthetic lane with no persisted `ConversationState` record (compaction,
-   * workflow-graph validator): the injected ephemeral persistence adapter makes
-   * every durable side effect inert and snapshot/queue-drain are skipped. Every
-   * lane whose conversation exists in the state store passes `durable`.
-   */
-  persistence: ConversationPersistenceMode;
-  conversation: {
-    createdAt: string;
-    forkedFrom: ForkedFrom;
-    role: ConversationRole;
-    transcriptPath: string | null;
-    agentBackend: AgentBackendId;
-    backendRef: AgentSessionRef | null;
-    promptCount: number;
-    debugMode: DebugModeState | null;
-  };
-}
+export type { EnsureActorInputData };
 
 /** Domain input for one user-facing conversation turn. Machine event names
  * and actor state topology remain private to this lifecycle module. */
@@ -166,38 +141,18 @@ async function defaultLoadActorInput(
   sessionName: string,
   conversationId: string,
 ): Promise<EnsureActorInputData> {
-  const { getSession } = await import("@/lib/state-store");
+  // Dynamic so the state-store / resolver graph stays out of this module's
+  // import-time cost, as it was when the loader body lived here.
+  const { getSession, getProjectConversation } =
+    await import("@/lib/state-store");
   const { getProjectDisplayName } = await import("@/lib/projects/resolver");
 
-  const session = await getSession(projectPath, sessionName);
-  if (!session) {
-    throw new Error(`Session not found: ${sessionName}`);
-  }
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
+  return loadActorInput(
+    { getSession, getProjectConversation, getProjectDisplayName },
+    projectPath,
+    sessionName,
+    conversationId,
   );
-  if (!conversation) {
-    throw new Error(`Conversation not found: ${conversationId}`);
-  }
-
-  return {
-    conversationScope: "session",
-    projectName: getProjectDisplayName(projectPath),
-    sessionWorktreePath: session.worktreePath,
-    // Loaded from the state store, so a real ConversationState record exists.
-    persistence: "durable",
-    conversation: {
-      createdAt: conversation.createdAt,
-      forkedFrom: conversation.forkedFrom ?? null,
-      role: conversation.role ?? null,
-      transcriptPath: conversation.transcriptPath ?? null,
-      agentBackend: conversation.agentBackend ?? "claude",
-      backendRef: conversation.backendRef ?? null,
-      promptCount: conversation.promptCount ?? 0,
-      debugMode: conversation.debugMode?.active ? conversation.debugMode : null,
-    },
-  };
 }
 
 // ============================================================
@@ -644,7 +599,7 @@ export async function ensureConversationActor(
   const worktreePath = requestedWorktreePath ?? data.sessionWorktreePath;
 
   return startConversationActor({
-    conversationScope: data.conversationScope ?? "session",
+    conversationScope: data.conversationScope,
     projectPath,
     projectName: data.projectName,
     sessionName,

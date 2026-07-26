@@ -75,6 +75,10 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/prompt/sdk-driver.ts", "internal-adapter"],
   ["lib/conversations/message-queue-drain.ts", "internal-adapter"],
   ["lib/workflows/conversation/actor-implementations.ts", "internal-adapter"],
+  // The session-keyed actor materialization seam: it reads the store key to
+  // decide WHICH repository holds the conversation (project vs session) and
+  // emits nothing — no URL, key, payload, label, or log field.
+  ["lib/workflows/conversation/actor-input-loader.ts", "internal-adapter"],
   ["lib/workflows/conversation/persistence.ts", "internal-adapter"],
   ["lib/workflows/conversation/persistence-adapter.ts", "internal-adapter"],
   ["lib/workflows/conversation/rehydration.ts", "internal-adapter"],

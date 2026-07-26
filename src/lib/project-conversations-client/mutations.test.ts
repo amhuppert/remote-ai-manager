@@ -1650,3 +1650,201 @@ describe("useSendProjectPrompt: provisional conversation identity", () => {
     expect(inFlightKeys()).toEqual([]);
   });
 });
+
+/**
+ * R4.5: the project prompt stream consumer processes the SAME event set the
+ * session sender does — assistant content, ask-question, error, aborted, and
+ * done — with the lifecycle semantics keyed to the conversation the turn is
+ * running in. Only `error` and `content` were handled before, so a streamed
+ * question was decoded and then discarded.
+ */
+describe("useSendProjectPrompt: full stream event set (R4.5)", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+  let client: QueryClient;
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    useSessionDetailStore.getState().resetStore();
+    client = new QueryClient();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useSessionDetailStore.getState().resetStore();
+  });
+
+  const askFrame = (questionId: string, questionText: string) =>
+    `event: ask-question\ndata: ${JSON.stringify({
+      questionId,
+      questions: [
+        {
+          id: "approach",
+          question: questionText,
+          options: [{ label: "A" }, { label: "B" }],
+          multiSelect: false,
+          required: true,
+          allowNote: false,
+        },
+      ],
+    })}\n\n`;
+
+  /** The cockpit's own source of durable conversation state. */
+  function seedList(...conversations: ConversationState[]) {
+    client.setQueryData(projectConversationKeys.list("proj"), conversations);
+  }
+
+  function listed(id: string): ConversationState | undefined {
+    return client
+      .getQueryData<ConversationState[]>(projectConversationKeys.list("proj"))
+      ?.find((c) => c.id === id);
+  }
+
+  function renderSender(
+    options?: Parameters<typeof useSendProjectPrompt>[1],
+  ) {
+    return renderHook(() => useSendProjectPrompt("proj", options), {
+      wrapper: wrapperFor(client),
+    });
+  }
+
+  function serveStreams(...streams: Array<{ response: Response }>) {
+    let served = 0;
+    fetchSpy.mockImplementation(() => {
+      const stream = streams[served];
+      served += 1;
+      if (stream === undefined) throw new Error("unexpected extra request");
+      return Promise.resolve(stream.response);
+    });
+  }
+
+  it("records a streamed question on the originating conversation's durable fields", async () => {
+    seedList(
+      { ...okConversation, id: "c1" },
+      { ...okConversation, id: "c2" },
+    );
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const submission = startTurn(() => result.current, {
+      target: conversationTurnKey("c1"),
+      text: "go",
+    });
+    await waitFor(() =>
+      expect(result.current.isSending(conversationTurnKey("c1"))).toBe(true),
+    );
+
+    await stream.push(askFrame("q_1", "Which approach?"));
+
+    // The question is written where the cockpit reads pending questions from —
+    // the same fields a reload would hydrate from — so it renders immediately
+    // AND survives one.
+    await waitFor(() => {
+      expect(listed("c1")?.pendingQuestionId).toBe("q_1");
+    });
+    expect(listed("c1")?.pendingQuestions).toMatchObject([
+      { id: "approach", question: "Which approach?" },
+    ]);
+    expect(listed("c1")?.status).toBe("waiting_for_input");
+
+    // Keyed to the originating conversation: the other tab is untouched.
+    expect(listed("c2")?.pendingQuestionId).toBeNull();
+
+    await stream.push(DONE_FRAME);
+    await stream.close();
+    await act(async () => {
+      await submission.settled;
+    });
+  });
+
+  it("records a streamed question on the conversation a create-and-send turn adopted", async () => {
+    seedList({ ...okConversation, id: "c1" });
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const submission = startTurn(() => result.current, {
+      target: CREATE,
+      text: "go",
+    });
+    await stream.push(conversationFrame("c1"));
+    await stream.push(askFrame("q_2", "Which approach?"));
+
+    await waitFor(() => {
+      expect(listed("c1")?.pendingQuestionId).toBe("q_2");
+    });
+
+    await stream.push(DONE_FRAME);
+    await stream.close();
+    await act(async () => {
+      await submission.settled;
+    });
+  });
+
+  it("settles the turn on `aborted` with no error, exactly as the session sender does", async () => {
+    seedList({ ...okConversation, id: "c1" });
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const key = conversationTurnKey("c1");
+    const submission = startTurn(() => result.current, {
+      target: key,
+      text: "go",
+    });
+    await waitFor(() => expect(result.current.isSending(key)).toBe(true));
+
+    await stream.push(ABORTED_FRAME);
+    await act(async () => {
+      await submission.settled;
+    });
+
+    // An abort is a cancelled turn, not a failure: no error is surfaced and the
+    // conversation stops reporting busy.
+    expect(result.current.isSending(key)).toBe(false);
+    expect(result.current.errorFor(key)).toBeNull();
+  });
+
+  it("settles the turn on `done` and leaves streamed content on its conversation", async () => {
+    seedList({ ...okConversation, id: "c1" });
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const key = conversationTurnKey("c1");
+    const submission = startTurn(() => result.current, {
+      target: key,
+      text: "go",
+    });
+    await stream.push(textFrame("partial answer"));
+    await stream.push(DONE_FRAME);
+    await act(async () => {
+      await submission.settled;
+    });
+
+    expect(assistantTextFor("c1")).toEqual(["partial answer"]);
+    expect(result.current.isSending(key)).toBe(false);
+    expect(result.current.errorFor(key)).toBeNull();
+  });
+
+  it("surfaces a streamed error on the originating conversation without touching its pending question", async () => {
+    seedList({ ...okConversation, id: "c1" });
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const key = conversationTurnKey("c1");
+    const submission = startTurn(() => result.current, {
+      target: key,
+      text: "go",
+    });
+    await stream.push(errorFrame("backend exploded"));
+    await stream.push(DONE_FRAME);
+    await act(async () => {
+      await submission.settled;
+    });
+
+    expect(result.current.errorFor(key)?.message).toBe("backend exploded");
+    expect(listed("c1")?.pendingQuestionId).toBeNull();
+  });
+});

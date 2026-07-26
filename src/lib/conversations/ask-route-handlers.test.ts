@@ -532,6 +532,61 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
     });
   });
 
+  // R4.6: graph workflow execution at project scope is a spec non-goal, and the
+  // guarantee is structural rather than a policy check — the project adapter has
+  // no lane branch and no gate dependency to reach one with. These pin that: a
+  // lane branch grown here would have to make one of them fail.
+  describe("never enters the graph-workflow lane path (R4.6)", () => {
+    for (const role of ["iteration", "validator"] as const) {
+      it(`denies a ${role}-role project conversation as autonomous instead of consulting a lane gate`, async () => {
+        const { deps, send } = projectDeps(conv({ scope: "project", role }));
+        // A gate the project adapter must never call. It is not part of
+        // `ProjectAskRouteDeps`, so reaching it would require adding the
+        // dependency back — spreading it in here is how the test can observe
+        // that it stays unreached.
+        const resolveLaneAskPermission = vi.fn(async () => ({
+          allowed: true as const,
+        }));
+        const handlers = createProjectAskQuestionHandlers({
+          ...deps,
+          resolveLaneAskPermission,
+        } as ProjectAskRouteDeps);
+
+        const res = await handlers.POST(
+          projectRequest({
+            questions: [{ question: "Ship it?", options: [{ label: "Yes" }] }],
+          }),
+          { params: projectParams },
+        );
+
+        // The session adapter would have let this through (the gate allows).
+        // The project adapter treats every roled conversation as autonomous.
+        expect(res.status).toBe(403);
+        expect(resolveLaneAskPermission).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+      });
+    }
+
+    it("the session adapter still reaches the lane gate on the same conversation", async () => {
+      // Contrast, so the assertions above cannot pass because lane asks are
+      // broken everywhere: the same role, through the session route, consults
+      // the gate and registers the batch.
+      const { deps, send, resolveLaneAskPermission } = makeDeps({
+        async getSession() {
+          return { conversations: [conv({ role: "iteration" })] };
+        },
+        resolveLaneAskPermission: vi.fn(async () => ({ allowed: true })),
+      });
+      const handlers = createAskQuestionHandlers(deps);
+
+      const res = await handlers.POST(makeRequest(validBody), { params });
+
+      expect(res.status).toBe(200);
+      expect(resolveLaneAskPermission).toHaveBeenCalled();
+      expect(send).toHaveBeenCalled();
+    });
+  });
+
   // R1.3: structured-log fields are a public identity surface. The project
   // adapter hands the shared core a scope ref, so no log line can report the
   // sentinel as a `sessionName` — previously every one of these sites did.

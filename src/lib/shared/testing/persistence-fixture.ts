@@ -81,6 +81,14 @@ export interface PersistenceFixture {
     projectPath: string,
     conversation: ConversationState,
   ): Promise<void>;
+  /**
+   * A brand-new `StateStore` over the SAME database — the state a restarted
+   * server comes up with. Proving a recovery path needs this: reusing the
+   * original store would leave whatever it holds in memory available to the
+   * assertion, which is exactly what the recovery is supposed to survive
+   * without.
+   */
+  recreateStore(): StateStore;
   reset(): void;
   close(): void;
 }
@@ -97,6 +105,22 @@ function buildSeedSession(
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
     ...overrides,
+  });
+}
+
+function buildStore(db: Db): StateStore {
+  return createStateStore({
+    db,
+    writeQueue: createWriteQueue(),
+    repos: {
+      projects: createProjectsRepo(db),
+      sessions: createSessionsRepo(db),
+      conversations: createConversationsRepo(db),
+      graphWorkflowEvents: createGraphWorkflowEventsRepo(db),
+      graphWorkflowArchivedExecutions:
+        createGraphWorkflowArchivedExecutionsRepo(db),
+      projectConversations: createProjectConversationsRepo(db),
+    },
   });
 }
 
@@ -154,6 +178,9 @@ export function createPersistenceFixture(): PersistenceFixture {
     async seedProjectConversation(projectPath, conversation) {
       const validated = conversationStateSchema.parse(conversation);
       projectConversations.upsert(projectPath, validated);
+    },
+    recreateStore() {
+      return buildStore(db);
     },
     reset() {
       truncateAllTables(db);

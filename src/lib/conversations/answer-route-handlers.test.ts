@@ -739,5 +739,135 @@ describe("POST conversation answer (async consume + enqueue)", () => {
 
       expect(res.status).toBe(404);
     });
+
+    // R4.4: the idempotency and atomicity guarantees are the shared core's, so
+    // these assert the project ADDRESSING reaches them — a project adapter that
+    // grew its own consume/enqueue would fail here rather than silently diverge.
+    it("404s a stale questionId and leaves the pending batch intact", async () => {
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      const res = await POST(
+        makeProjectRequest({ questionId: "q_superseded", answers }),
+        { params: projectParams },
+      );
+
+      expect(res.status).toBe(404);
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBe("q_b1");
+      expect(reloaded?.pendingQueue).toHaveLength(0);
+    });
+
+    it("leaves the marker intact when the enqueue write fails (atomic consume+enqueue)", async () => {
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      failNextEnqueueWrite = true;
+      await expect(
+        POST(makeProjectRequest({ questionId: "q_b1", answers }), {
+          params: projectParams,
+        }),
+      ).rejects.toThrow("simulated write failure");
+
+      const afterFailure = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(afterFailure?.pendingQuestionId).toBe("q_b1");
+      expect(afterFailure?.pendingQueue).toHaveLength(0);
+
+      const retry = await POST(
+        makeProjectRequest({ questionId: "q_b1", answers }),
+        { params: projectParams },
+      );
+      expect(retry.status).toBe(200);
+
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBeNull();
+      expect(reloaded?.pendingQueue).toHaveLength(1);
+    });
+
+    // R4.6: lane answer recording is session-only by spec non-goal, and the
+    // guarantee is structural — the project adapter has no lane branch and
+    // `ProjectAnswerRouteDeps` has no gate to divert to. A lane branch grown
+    // here would have to fail one of these.
+    describe("never enters the graph-workflow lane path (R4.6)", () => {
+      for (const role of ["iteration", "validator"] as const) {
+        it(`treats a ${role}-role project conversation as an ordinary conversation`, async () => {
+          await fixture.seedProjectConversation(
+            PROJECT,
+            seedConversation({ scope: "project", role }),
+          );
+          const { deps, drain } = makeProjectDeps();
+          // A gate the project adapter must never reach. It is absent from
+          // `ProjectAnswerRouteDeps`, so spreading it in is the only way to
+          // observe that it stays unreached.
+          const recordLaneAnswers = vi.fn(
+            async (): Promise<RecordAnswersResult> => ({ ok: true }),
+          );
+          const { POST } = createProjectAnswerHandlers({
+            ...deps,
+            recordLaneAnswers,
+          } as ProjectAnswerRouteDeps);
+
+          const res = await POST(
+            makeProjectRequest({ questionId: "q_b1", answers }),
+            { params: projectParams },
+          );
+
+          expect(res.status).toBe(200);
+          expect(recordLaneAnswers).not.toHaveBeenCalled();
+
+          // The ordinary path ran instead: the marker is consumed and the
+          // answers block is queued for the next turn — a lane divert would
+          // have recorded on the gate and queued nothing.
+          const reloaded = await fixture.deps.getConversation(
+            PROJECT,
+            PROJECT_CONVERSATION_SESSION_SENTINEL,
+            CONV,
+          );
+          expect(reloaded?.pendingQuestionId).toBeNull();
+          expect(reloaded?.pendingQueue).toHaveLength(1);
+          expect(drain).toHaveBeenCalled();
+        });
+      }
+
+      it("the session adapter still diverts the same role to the gate", async () => {
+        // Contrast, so the assertions above cannot pass because lane answering
+        // is broken everywhere.
+        await fixture.seedConversation(
+          PROJECT,
+          SESSION,
+          seedConversation({ role: "iteration" }),
+        );
+        const { deps, recordLaneAnswers, drain } = makeDeps();
+        const { POST } = createAnswerHandlers(deps);
+
+        const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
+          params,
+        });
+
+        expect(res.status).toBe(200);
+        expect(recordLaneAnswers).toHaveBeenCalled();
+        expect(drain).not.toHaveBeenCalled();
+      });
+    });
   });
 });

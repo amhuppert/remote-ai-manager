@@ -4,9 +4,14 @@ import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
-import { conversationMachine } from "@/lib/workflows/conversation/machine";
+import type { SSEEvent } from "@/lib/api/sse-events";
+import {
+  setPublicationBroadcastForTesting,
+  _resetPublicationForTesting,
+} from "@/lib/events/publication";
 import { applySyncDerivedFields } from "@/lib/workflows/conversation/persistence-adapter";
 import {
+  createProvidedMachine,
   sendConversationEvent,
   setMachineFactory,
   startConversationActor,
@@ -41,10 +46,13 @@ const ts = "2026-01-01T00:00:00.000Z";
 describe("project ask persists the pending question (R1.1 / R2.4)", () => {
   let fixture: ReturnType<typeof createPersistenceFixture>;
   let syncWrites: Promise<unknown>[];
+  let published: SSEEvent[];
 
   beforeEach(async () => {
     fixture = createPersistenceFixture();
     syncWrites = [];
+    published = [];
+    setPublicationBroadcastForTesting((event) => published.push(event));
     fixture.seedProject(PROJECT_PATH);
     await fixture.seedProjectConversation(
       PROJECT_PATH,
@@ -60,12 +68,15 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
       }),
     );
 
-    // The production machine with the prompt actors stubbed (the turn is held
-    // open) and PRODUCTION persistence: `applySyncDerivedFields` is the real
-    // function the durable adapter calls, writing through the real store, which
-    // routes the sentinel key to the project-conversations table.
-    setMachineFactory(() =>
-      conversationMachine.provide({
+    // The exact machine production starts actors with (`createProvidedMachine`)
+    // with the prompt actors stubbed (the turn is held open). PRODUCTION
+    // persistence: `applySyncDerivedFields` is the real function the durable
+    // adapter calls, writing through the real store, which routes the sentinel
+    // key to the project-conversations table. `broadcastAskQuestion` is left
+    // PRODUCTION too — the scope-discriminated SSE it emits is the other half of
+    // R4.1, and stubbing it would leave the request's last hop unproven.
+    setMachineFactory((adapter) =>
+      createProvidedMachine(adapter).provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
             async () => ({ transcriptPath: "/tmp/t.jsonl" }),
@@ -86,10 +97,10 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
               ),
             );
           },
-          // Out of scope here: snapshot codec durability has its own contract.
+          // Out of scope here: snapshot codec durability has its own contract,
+          // and status/push/queue behaviour is owned by other requirements.
           persistSnapshot: () => {},
           broadcastConversationStatus: () => {},
-          broadcastAskQuestion: () => {},
           broadcastDebugModeStatus: () => {},
           releaseResources: () => {},
           dispatchPushNotification: () => {},
@@ -104,6 +115,7 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
   afterEach(() => {
     _resetForTesting();
     _resetMachineFactoryForTesting();
+    _resetPublicationForTesting();
     fixture.close();
   });
 
@@ -206,6 +218,33 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
       { id: "ship", question: "Ship it?" },
     ]);
     expect(reloaded?.status).toBe("waiting_for_input");
+  });
+
+  it("broadcasts the PROJECT-scoped ask-question event (R4.1)", async () => {
+    await startProjectTurn();
+
+    const res = await projectHandlers().POST(askRequest(askBody), { params });
+    expect(res.status).toBe(200);
+
+    // Publication is fire-and-forget behind a dynamic import.
+    const event = await vi.waitFor(() => {
+      const found = published.find((e) => e.type === "ask-question");
+      expect(found).toBeDefined();
+      return found;
+    });
+
+    // The scope discriminator is what routes this to the project cockpit. A
+    // session-shaped variant would carry `sessionName: "__project__"` and no
+    // project client would ever see it.
+    expect(event).toMatchObject({
+      type: "ask-question",
+      scope: "project",
+      projectName: "cc",
+      conversationId: CONVERSATION_ID,
+      questionId: "q_durable1",
+      questions: [expect.objectContaining({ id: "ship" })],
+    });
+    expect(event).not.toHaveProperty("sessionName");
   });
 
   it("recovers the pending question after the actor is gone (restart)", async () => {

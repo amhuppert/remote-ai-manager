@@ -631,6 +631,7 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
       );
       setEnsureConversationActorDeps({
         loadActorInput: async () => ({
+          conversationScope: "session",
           projectName: PROJECT_NAME,
           sessionWorktreePath: WORKTREE_PATH,
           persistence: "durable",

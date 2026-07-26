@@ -123,6 +123,7 @@ function makeActorInputData(
   overrides: Partial<EnsureActorInputData> = {},
 ): EnsureActorInputData {
   return {
+    conversationScope: "session",
     projectName: "test-project",
     sessionWorktreePath: "/test/project/.worktrees/test-session",
     persistence: "ephemeral",
