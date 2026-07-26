@@ -110,11 +110,21 @@ locality); domain terms name the concepts the code is about.
 
 - **ConversationScopeRef** — the scope union for surfaces that know their
   project but may have no conversation id yet (the composer's file and
-  slash-command popups). `scopeRefFromStoreSessionName` is the single conversion
-  from a stored session name into public scope, applied once in `PromptEditor`;
-  every popup downstream branches on `scope` alone. An optional `sessionName`
-  where `undefined` meant "project" is what let the sentinel build
-  `/sessions/__project__/files` and session-keyed query keys.
+  slash-command popups). `scopeRefFromStoreSessionName` is the only conversion
+  from a stored session name into public scope, and each composer host applies
+  it once at its own boundary — `PromptEditor` for its popups, `PromptComposer`
+  for the capability drawer it and its toolbar mount; everything downstream
+  branches on `scope` alone. An optional `sessionName` where `undefined` meant
+  "project" is what let the sentinel build `/sessions/__project__/files` and
+  session-keyed query keys.
+
+  The composer's two capability surfaces — the slash-command popup's
+  enabled/disabled filter and the configuration drawer where overrides are set —
+  derive their cascade layer through one function,
+  `conversationCapabilityScope`
+  (`src/components/agent-capabilities/conversation-capability-scope.ts`), so a
+  project conversation resolves `conversationScope: "project"` on both rather
+  than one surface asking whether a session name looks absent.
 
   Server-side, the same ref is the DIAGNOSTIC identity of a turn. Structured-log
   fields are a public identity surface, and the project turn path is handed the

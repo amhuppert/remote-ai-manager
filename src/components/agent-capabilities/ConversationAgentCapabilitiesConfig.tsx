@@ -6,10 +6,14 @@ import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 import { Dialog, DialogContent } from "@/components/ui/Dialog";
 import { triggerBase, triggerHover } from "@/components/mcp/styles";
 import { cn } from "@/lib/ui/cn";
-import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
 
 import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
+import {
+  conversationCapabilityLayers,
+  conversationCapabilityScope,
+} from "./conversation-capability-scope";
 import {
   capabilitiesDrawerContent,
   capabilitiesDrawerScrim,
@@ -17,7 +21,12 @@ import {
 
 interface ConversationAgentCapabilitiesConfigProps {
   projectName: string;
-  sessionName: string;
+  /**
+   * The conversation's explicit scope (D1). A project conversation has no
+   * session layer to configure, and reading that off an absent or
+   * sentinel-valued session name is what made its cascade session-shaped.
+   */
+  scope: ConversationScopeRef;
   conversationId: string;
   disabled?: boolean;
   disabledTooltip?: string;
@@ -31,7 +40,7 @@ interface ConversationAgentCapabilitiesConfigProps {
 
 export default function ConversationAgentCapabilitiesConfig({
   projectName,
-  sessionName,
+  scope,
   conversationId,
   disabled,
   disabledTooltip,
@@ -43,41 +52,13 @@ export default function ConversationAgentCapabilitiesConfig({
   useEffect(() => {
     onOpenChange?.(open);
   }, [open, onOpenChange]);
-  // Project-level conversations (the `__project__` sentinel) cascade
-  // global → project → conversation; there is no session layer to configure.
-  const projectScoped = isProjectSentinel(sessionName);
   const initialScope = useMemo<AgentCapabilityScope>(
-    () =>
-      projectScoped
-        ? {
-            level: "conversation",
-            projectName,
-            conversationScope: "project",
-            conversationId,
-          }
-        : {
-            level: "conversation",
-            projectName,
-            sessionName,
-            conversationId,
-          },
-    [projectScoped, conversationId, projectName, sessionName],
+    () => conversationCapabilityScope({ scope, projectName, conversationId }),
+    [scope, conversationId, projectName],
   );
   const layerOptions = useMemo<readonly AgentCapabilityLayerOption[]>(
-    () => [
-      { label: "Global", scope: { level: "global" } },
-      { label: "Project", scope: { level: "project", projectName } },
-      ...(projectScoped
-        ? []
-        : [
-            {
-              label: "Session",
-              scope: { level: "session", projectName, sessionName } as const,
-            },
-          ]),
-      { label: "Conversation", scope: initialScope },
-    ],
-    [initialScope, projectScoped, projectName, sessionName],
+    () => conversationCapabilityLayers({ scope, projectName, conversationId }),
+    [scope, conversationId, projectName],
   );
 
   const title = disabled

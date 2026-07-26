@@ -32,9 +32,8 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-sc
  *
  * Scoped to identity surfaces, not to every component prop: passing a
  * sentinel-valued `sessionName` prop into a session-shaped component is an
- * internal adapter decision (that component's own scope handling is T1/T11
- * work), while what such a component EMITS — a URL, a key, a payload, a label —
- * is in scope here.
+ * internal adapter decision, while what such a component EMITS — a URL, a key,
+ * a payload, a label — is in scope here.
  */
 
 const SRC_ROOT = path.resolve(__dirname, "../..");
@@ -137,10 +136,12 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
 
   ["features/project-detail/ProjectDetailView.tsx", "client-prop"],
   ["features/project-detail/composer/UnifiedComposer.tsx", "client-prop"],
-  [
-    "components/agent-capabilities/ConversationAgentCapabilitiesConfig.tsx",
-    "client-prop",
-  ],
+  // NOTE: `components/agent-capabilities/ConversationAgentCapabilitiesConfig.tsx`
+  // no longer reaches the sentinel. It took a session-keyed `sessionName` prop
+  // and asked `isProjectSentinel` whether to cascade through a session layer;
+  // it now takes a `ConversationScopeRef` and branches on `scope` alone (T11),
+  // so the composer converts once and the drawer cannot mistake an absent name
+  // for a project conversation.
 ]);
 
 function listSourceFiles(dir: string): string[] {
