@@ -8,8 +8,17 @@ import { Button } from "./Button";
 import { FormError, FormHint, FormInput, FormLabel } from "./FormField";
 import { IconButton } from "./IconButton";
 import { Spinner } from "./Spinner";
-import { StatusChip } from "./StatusChip";
+import { StatusChip, type StatusChipTone } from "./StatusChip";
 import { Tab, TabCount } from "./Tabs";
+
+const CHIP_TONES: StatusChipTone[] = [
+  "neutral",
+  "cyan",
+  "amber",
+  "green",
+  "red",
+  "violet",
+];
 
 describe("Spinner", () => {
   it("is hidden from assistive technology", () => {
@@ -124,6 +133,24 @@ describe("StatusChip", () => {
 
     expect(button).toHaveAttribute("type", "button");
     expect(clicks).toBe(1);
+  });
+
+  // Preflight is off, so a <button> that declares no background inherits the
+  // UA `buttonface` fill — an opaque light pill on CC's dark chrome. Every tone
+  // must therefore name its own background rather than leave it unset.
+  it("gives every tone a background so an interactive chip never falls back to the UA button fill", () => {
+    for (const tone of CHIP_TONES) {
+      const { getByRole, unmount } = render(
+        <StatusChip as="button" tone={tone} aria-label={tone}>
+          Phase
+        </StatusChip>,
+      );
+
+      expect(getByRole("button", { name: tone }).className).toMatch(
+        /(?:^|\s)bg-\S/,
+      );
+      unmount();
+    }
   });
 });
 

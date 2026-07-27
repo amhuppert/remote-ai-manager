@@ -142,6 +142,22 @@ describe("SpecsInventory", () => {
     expect(within(row).getByText("1 conversation")).toBeInTheDocument();
   });
 
+  it("renders unselected phase filters transparently instead of on the UA button fill", () => {
+    render(<SpecsInventory specs={inventory} projectName="command-center" />);
+
+    const filters = within(
+      screen.getByRole("group", { name: "Filter specs by phase" }),
+    ).getAllByRole("button");
+    const unselected = filters.filter(
+      (chip) => chip.getAttribute("aria-pressed") === "false",
+    );
+
+    expect(unselected).toHaveLength(filters.length - 1);
+    for (const chip of unselected) {
+      expect(chip).toHaveClass("bg-transparent");
+    }
+  });
+
   it("filters rows by primary phase without changing the inventory route", async () => {
     const user = userEvent.setup();
     render(<SpecsInventory specs={inventory} projectName="command-center" />);

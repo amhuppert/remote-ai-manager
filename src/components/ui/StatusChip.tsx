@@ -30,8 +30,10 @@ const wrapClass = "[overflow-wrap:anywhere]";
 
 // `neutral` is the muted default (subtle border, tertiary text); the accent
 // tones pair a translucent border with the matching glow fill and accent text.
+// Every tone names a background: Preflight is off, so a tone that left it unset
+// would inherit the UA `buttonface` fill on the `as="button"` chip.
 const toneClass: Record<StatusChipTone, string> = {
-  neutral: "border-border-subtle text-text-tertiary",
+  neutral: "border-border-subtle bg-transparent text-text-tertiary",
   cyan: "border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan",
   amber: "border-[var(--cc-amber-a25)] bg-amber-glow text-amber",
   green: "border-[var(--cc-green-a20)] bg-green-glow text-green",
